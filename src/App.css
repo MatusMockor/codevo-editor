@@ -64,7 +64,12 @@
   color: var(--color-text);
   background: var(--color-app);
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
     sans-serif;
   font-size: 14px;
   font-synthesis: none;
@@ -661,8 +666,7 @@ button {
   display: grid;
   width: 100%;
   height: 100%;
-  grid-template-columns:
-    46px minmax(180px, var(--sidebar-width, 300px)) minmax(0, 1fr);
+  grid-template-columns: 46px minmax(180px, var(--sidebar-width, 300px)) minmax(0, 1fr);
   grid-template-rows: var(--window-chrome-height) minmax(0, 1fr) 28px;
   background: var(--color-app);
 }
@@ -685,12 +689,11 @@ button {
   min-width: 0;
   min-height: var(--window-chrome-height);
   border-bottom: 1px solid var(--color-border);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-panel-deep) 90%, var(--color-surface)) 0%,
-      var(--color-panel-deep) 100%
-    );
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-panel-deep) 90%, var(--color-surface)) 0%,
+    var(--color-panel-deep) 100%
+  );
   color: var(--color-text);
   user-select: none;
 }
@@ -881,7 +884,8 @@ button {
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
 }
 
@@ -928,7 +932,8 @@ button {
   width: 1px;
   background: transparent;
   content: "";
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     width var(--motion-fast) var(--ease-standard);
 }
 
@@ -964,6 +969,12 @@ button {
   gap: 4px;
 }
 
+.sidebar-subview-panel {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
 .sidebar-tab {
   height: 28px;
   padding: 0 6px;
@@ -972,7 +983,8 @@ button {
   background: transparent !important;
   color: var(--color-text-muted);
   box-shadow: inset 0 -2px 0 transparent;
-  transition: color var(--motion-fast) var(--ease-standard),
+  transition:
+    color var(--motion-fast) var(--ease-standard),
     box-shadow var(--motion-fast) var(--ease-standard);
 }
 
@@ -1084,7 +1096,8 @@ button {
   cursor: pointer;
   padding: 0 8px 0 calc(8px + var(--tree-level) * 16px);
   text-align: left;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
 }
 
@@ -1960,7 +1973,8 @@ button {
   border-radius: var(--radius-sm);
   color: var(--color-text-subtle);
   opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-standard),
+  transition:
+    opacity var(--motion-fast) var(--ease-standard),
     background-color var(--motion-fast) var(--ease-standard);
 }
 
@@ -1999,7 +2013,8 @@ button {
   font-size: 12.5px;
   font-weight: 600;
   padding: 0 8px 0 12px;
-  transition: color var(--motion-fast) var(--ease-standard),
+  transition:
+    color var(--motion-fast) var(--ease-standard),
     border-color var(--motion-fast) var(--ease-standard);
 }
 
@@ -2033,7 +2048,8 @@ button {
   border-radius: var(--radius-pill);
   background: var(--color-text-muted);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  transition: transform var(--motion-fast) var(--ease-standard),
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
     background-color var(--motion-fast) var(--ease-standard);
 }
 
@@ -2093,7 +2109,8 @@ button {
   font-size: 12px;
   font-weight: 600;
   padding: 0 11px;
-  transition: border-color var(--motion-fast) var(--ease-standard),
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
 }
 
@@ -2209,7 +2226,8 @@ button {
 
 .breadcrumb-symbol {
   cursor: pointer;
-  transition: color var(--motion-fast) var(--ease-standard),
+  transition:
+    color var(--motion-fast) var(--ease-standard),
     background-color var(--motion-fast) var(--ease-standard);
 }
 
@@ -2285,20 +2303,17 @@ button {
 
 .monaco-editor .editor-change-glyph-added::before {
   background: var(--change-added);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--change-added) 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--change-added) 28%, transparent);
 }
 
 .monaco-editor .editor-change-glyph-modified::before {
   background: var(--change-modified);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--change-modified) 30%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--change-modified) 30%, transparent);
 }
 
 .monaco-editor .editor-change-glyph-deleted::before {
   background: var(--change-deleted);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--change-deleted) 30%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--change-deleted) 30%, transparent);
 }
 
 .monaco-editor .editor-change-line-added,
@@ -2430,6 +2445,48 @@ button {
   background: #ffc266;
 }
 
+.monaco-editor .js-test-coverage-gutter {
+  width: 3px !important;
+  margin-left: 4px;
+}
+
+.monaco-editor .js-test-coverage-covered-gutter {
+  background: #45b96f;
+}
+
+.monaco-editor .js-test-coverage-uncovered-gutter {
+  background: #e05d68;
+}
+
+.monaco-editor .js-test-coverage-covered-line {
+  background: color-mix(in srgb, #45b96f 5%, transparent);
+}
+
+.monaco-editor .js-test-coverage-uncovered-line {
+  background: color-mix(in srgb, #e05d68 9%, transparent);
+}
+
+.monaco-editor .coverage-gutter {
+  width: 3px !important;
+  margin-left: 4px;
+}
+
+.monaco-editor .coverage-covered-gutter {
+  background: #45b96f;
+}
+
+.monaco-editor .coverage-uncovered-gutter {
+  background: #e05d68;
+}
+
+.monaco-editor .coverage-covered-line {
+  background: color-mix(in srgb, #45b96f 5%, transparent);
+}
+
+.monaco-editor .coverage-uncovered-line {
+  background: color-mix(in srgb, #e05d68 9%, transparent);
+}
+
 .monaco-editor .breakpoint-glyph {
   position: relative;
   width: 18px !important;
@@ -2465,8 +2522,159 @@ button {
   opacity: 0.7;
 }
 
+.monaco-editor .breakpoint-glyph-conditional::before {
+  border-radius: 2px;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.monaco-editor .breakpoint-glyph-logpoint::before {
+  border-radius: 2px;
+  background: var(--color-info, #4aa3df);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.monaco-editor .breakpoint-glyph-logpoint::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: var(--color-surface, #111827);
+  content: ">";
+  font-size: 8px;
+  font-weight: 700;
+  transform: translate(-50%, -55%);
+}
+
+.monaco-editor .breakpoint-glyph-disabled.breakpoint-glyph-logpoint::before {
+  background: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.monaco-editor .inline-breakpoint-marker {
+  margin-left: 1px;
+  color: var(--color-error);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+
+.monaco-editor .inline-breakpoint-marker.breakpoint-glyph-unverified {
+  color: var(--color-text-muted);
+  -webkit-text-stroke: 1px var(--color-text-muted);
+  -webkit-text-fill-color: transparent;
+}
+
+.monaco-editor .inline-breakpoint-marker.breakpoint-glyph-disabled {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.monaco-editor .inline-breakpoint-marker-conditional {
+  color: var(--color-warning, #e7c66c);
+}
+
+.monaco-editor .inline-breakpoint-marker-logpoint {
+  color: var(--color-info, #4aa3df);
+}
+
+.monaco-editor .inline-breakpoint-marker.breakpoint-glyph-unverified {
+  color: var(--color-text-muted);
+  -webkit-text-stroke: 1px var(--color-text-muted);
+  -webkit-text-fill-color: transparent;
+}
+
+.monaco-editor .inline-breakpoint-marker.breakpoint-glyph-disabled {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.breakpoint-editor-popover {
+  position: fixed;
+  z-index: 90;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shadow) 45%, transparent);
+  color: var(--color-text);
+}
+
+.breakpoint-editor-menu {
+  display: grid;
+  gap: 2px;
+}
+
+.breakpoint-editor-menu button {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.breakpoint-editor-menu button:hover,
+.breakpoint-editor-menu button:focus-visible {
+  background: var(--color-surface-hover);
+  outline: none;
+}
+
+.breakpoint-editor-dialog {
+  display: grid;
+  gap: 7px;
+  width: min(360px, calc(100vw - 16px));
+}
+
+.breakpoint-editor-dialog label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.breakpoint-editor-dialog input {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-input-background);
+  color: var(--color-text);
+}
+
+.breakpoint-editor-dialog input:focus {
+  border-color: var(--color-accent);
+  outline: 1px solid var(--color-accent);
+}
+
+.breakpoint-editor-error {
+  color: var(--color-error);
+  font-size: 11px;
+}
+
+.breakpoint-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .monaco-editor .debug-stopped-line {
   background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+}
+
+.monaco-editor .debug-inline-value {
+  color: var(--color-text-muted);
+  font-style: italic;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.monaco-editor .js-test-problem-line {
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+
+.monaco-editor .js-test-problem-inline-message {
+  color: var(--color-error);
+  margin-left: 1.25ch;
+  opacity: 0.9;
 }
 
 /* Git blame annotation: inline author + relative date rendered as injected
@@ -2495,24 +2703,14 @@ button {
   width: min(620px, calc(100% - 92px));
   max-height: min(360px, calc(100% - 42px));
   overflow: hidden;
-  border: 1px solid
-    color-mix(
-      in srgb,
-      var(--change-popover-accent) 44%,
-      var(--color-border-strong)
-    );
+  border: 1px solid color-mix(in srgb, var(--change-popover-accent) 44%, var(--color-border-strong));
   border-radius: 8px;
   background:
     linear-gradient(90deg, var(--change-popover-accent) 0 3px, transparent 3px),
     var(--color-panel-deep);
   box-shadow:
     var(--shadow-pop),
-    0 0 0 1px
-      color-mix(
-        in srgb,
-        var(--change-popover-accent) 22%,
-        rgba(0, 0, 0, 0.5)
-      );
+    0 0 0 1px color-mix(in srgb, var(--change-popover-accent) 22%, rgba(0, 0, 0, 0.5));
   color: var(--color-text);
   isolation: isolate;
 }
@@ -2542,18 +2740,12 @@ button {
   gap: 12px;
   min-height: 34px;
   min-width: 0;
-  border-bottom: 1px solid
-    color-mix(
-      in srgb,
-      var(--change-popover-accent) 24%,
-      var(--color-border)
-    );
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--change-popover-accent) 14%, var(--color-control)),
-      var(--color-control) 78%
-    );
+  border-bottom: 1px solid color-mix(in srgb, var(--change-popover-accent) 24%, var(--color-border));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--change-popover-accent) 14%, var(--color-control)),
+    var(--color-control) 78%
+  );
   padding: 5px 8px 5px 12px;
 }
 
@@ -2571,9 +2763,7 @@ button {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  box-shadow:
-    0 0 0 3px
-      color-mix(in srgb, var(--change-popover-accent) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--change-popover-accent) 18%, transparent);
   content: "";
 }
 
@@ -2595,7 +2785,8 @@ button {
   background: var(--color-control);
   color: var(--color-text);
   cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     border-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
 }
@@ -2618,24 +2809,9 @@ button {
 }
 
 .editor-change-popover-section-label {
-  background:
-    color-mix(
-      in srgb,
-      var(--change-popover-soft) 55%,
-      var(--color-panel-deep)
-    );
-  border-bottom: 1px solid
-    color-mix(
-      in srgb,
-      var(--change-popover-accent) 18%,
-      var(--color-border)
-    );
-  color:
-    color-mix(
-      in srgb,
-      var(--change-popover-accent-strong) 65%,
-      var(--color-text-strong)
-    );
+  background: color-mix(in srgb, var(--change-popover-soft) 55%, var(--color-panel-deep));
+  border-bottom: 1px solid color-mix(in srgb, var(--change-popover-accent) 18%, var(--color-border));
+  color: color-mix(in srgb, var(--change-popover-accent-strong) 65%, var(--color-text-strong));
   font-size: 11px;
   font-weight: 800;
   padding: 7px 12px;
@@ -2655,8 +2831,7 @@ button {
     ),
     color-mix(in srgb, var(--change-popover-soft) 28%, var(--color-panel-deep));
   color: var(--color-text);
-  font-family: "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas,
-    monospace;
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
   padding: 10px 12px;
@@ -2689,18 +2864,8 @@ button {
 .editor-change-popover-actions {
   display: flex;
   justify-content: flex-end;
-  background:
-    color-mix(
-      in srgb,
-      var(--change-popover-soft) 42%,
-      var(--color-control)
-    );
-  border-top: 1px solid
-    color-mix(
-      in srgb,
-      var(--change-popover-accent) 18%,
-      var(--color-border)
-    );
+  background: color-mix(in srgb, var(--change-popover-soft) 42%, var(--color-control));
+  border-top: 1px solid color-mix(in srgb, var(--change-popover-accent) 18%, var(--color-border));
   padding: 8px 10px 8px 12px;
 }
 
@@ -2718,11 +2883,7 @@ button {
 .editor-change-popover-icon-button:hover,
 .editor-change-popover-action:hover {
   border-color: var(--change-popover-accent);
-  background: color-mix(
-    in srgb,
-    var(--change-popover-soft) 60%,
-    var(--color-hover)
-  );
+  background: color-mix(in srgb, var(--change-popover-soft) 60%, var(--color-hover));
   color: var(--color-text-strong);
 }
 
@@ -3183,7 +3344,6 @@ button {
   text-align: center;
 }
 
-
 .git-history-panel {
   display: grid;
   height: 100%;
@@ -3208,8 +3368,7 @@ button {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-surface) 66%, transparent);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-surface) 82%, var(--color-text-muted));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-surface) 82%, var(--color-text-muted));
   overflow: hidden;
 }
 
@@ -3887,8 +4046,7 @@ button.problem-row:focus-visible {
 }
 
 .file-structure .symbol-label .signature {
-  font-family:
-    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   color: var(--color-text-subtle);
   overflow: hidden;
@@ -4024,7 +4182,8 @@ button.problem-row:focus-visible {
   border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: transparent;
   color: var(--color-text-muted);
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     box-shadow var(--motion-fast) var(--ease-standard);
 }
@@ -4145,7 +4304,8 @@ button.problem-row:focus-visible {
   border-radius: var(--radius-sm);
   color: var(--color-text-subtle);
   opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-standard),
+  transition:
+    opacity var(--motion-fast) var(--ease-standard),
     background-color var(--motion-fast) var(--ease-standard);
 }
 
@@ -4211,6 +4371,37 @@ button.problem-row:focus-visible {
 
 .status-ide-activity:hover {
   background: var(--color-border);
+}
+
+.status-node-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 12px;
+}
+
+.status-node-run:hover:not(:disabled) {
+  background: var(--color-border);
+}
+
+.status-node-run:disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.status-node-run.running {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.status-node-run.stopping {
+  color: var(--color-warning);
 }
 
 .status-ide-activity::after {
@@ -4309,7 +4500,8 @@ button.problem-row:focus-visible {
   background: var(--color-border);
 }
 
-.status-bar-menu {
+.status-bar-menu,
+.context-menu {
   position: fixed;
   z-index: 20;
   display: grid;
@@ -4320,6 +4512,24 @@ button.problem-row:focus-visible {
   background: var(--color-modal);
   box-shadow: var(--shadow-pop);
   padding: 6px;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.context-menu-item:hover {
+  background: var(--color-hover);
 }
 
 .status-bar-menu-item {
@@ -4402,7 +4612,8 @@ button.problem-row:focus-visible {
   background: transparent;
   color: var(--color-text-subtle);
   cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     border-color var(--motion-fast) var(--ease-standard);
 }
@@ -4488,7 +4699,8 @@ button.problem-row:focus-visible {
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     opacity var(--motion-fast) var(--ease-standard);
 }
@@ -4526,7 +4738,8 @@ button.problem-row:focus-visible {
   color: var(--color-text-subtle);
   cursor: pointer;
   opacity: 0;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     opacity var(--motion-fast) var(--ease-standard);
 }
@@ -4548,7 +4761,8 @@ button.problem-row:focus-visible {
   color: var(--color-text-subtle);
   cursor: pointer;
   opacity: 0;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     opacity var(--motion-fast) var(--ease-standard);
 }
@@ -5739,7 +5953,8 @@ button.problem-row:focus-visible {
   cursor: pointer;
   padding: 4px 10px;
   text-align: left;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
 }
 
@@ -6043,8 +6258,7 @@ button.problem-row:focus-visible {
 .setup-command code {
   color: var(--color-success);
   max-width: 100%;
-  font-family:
-    SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
 }
 
@@ -6260,7 +6474,8 @@ button.problem-row:focus-visible {
   background: transparent;
   color: var(--color-text-subtle);
   cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
 }
 
@@ -6293,7 +6508,8 @@ button.problem-row:focus-visible {
   cursor: pointer;
   padding: 0 10px;
   text-align: left;
-  transition: background-color var(--motion-fast) var(--ease-standard),
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
 }
 
@@ -6381,6 +6597,13 @@ button.problem-row:focus-visible {
   white-space: normal;
 }
 
+.keymap-chord-hint {
+  grid-column: 1 / -1;
+  color: var(--color-accent);
+  font-size: 11px;
+  white-space: normal;
+}
+
 /* Compact, settings-appropriate variant of the palette search row: a bordered
    box rather than the palette's full-width underline, theme-aware via tokens. */
 .keymap-search {
@@ -6422,7 +6645,8 @@ button.problem-row:focus-visible {
   color: var(--color-text);
   outline: 0;
   padding: 0 10px;
-  transition: border-color var(--motion-fast) var(--ease-standard),
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
     box-shadow var(--motion-fast) var(--ease-standard);
 }
 
@@ -6501,8 +6725,7 @@ button.problem-row:focus-visible {
   min-width: 0;
   overflow: hidden;
   color: var(--color-success);
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6520,8 +6743,7 @@ button.problem-row:focus-visible {
   min-width: 0;
   overflow: hidden;
   color: var(--color-text);
-  font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6566,8 +6788,7 @@ kbd {
 /* Subtle, blended scrollbars — thin overlay-style thumb, no visible track */
 * {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--color-text-subtle) 35%, transparent)
-    transparent;
+  scrollbar-color: color-mix(in srgb, var(--color-text-subtle) 35%, transparent) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -6698,10 +6919,7 @@ kbd {
   border-radius: var(--radius-sm);
 }
 
-.monaco-menu
-  .monaco-action-bar.vertical
-  .action-item.focused
-  .action-menu-item {
+.monaco-menu .monaco-action-bar.vertical .action-item.focused .action-menu-item {
   background: var(--color-accent-soft);
 }
 
@@ -6840,7 +7058,11 @@ kbd {
   color: var(--color-text-muted);
 }
 
-.monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled) .codicon::before {
+.monaco-editor
+  .action-widget
+  .monaco-list
+  .monaco-list-row.action.focused:not(.option-disabled)
+  .codicon::before {
   color: var(--color-text-strong);
 }
 
@@ -7133,11 +7355,31 @@ kbd {
 .image-viewer-canvas {
   align-items: center;
   background-image:
-    linear-gradient(45deg, color-mix(in srgb, var(--color-text) 4%, transparent) 25%, transparent 25%),
-    linear-gradient(-45deg, color-mix(in srgb, var(--color-text) 4%, transparent) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--color-text) 4%, transparent) 75%),
-    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--color-text) 4%, transparent) 75%);
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--color-text) 4%, transparent) 25%,
+      transparent 25%
+    ),
+    linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--color-text) 4%, transparent) 25%,
+      transparent 25%
+    ),
+    linear-gradient(
+      45deg,
+      transparent 75%,
+      color-mix(in srgb, var(--color-text) 4%, transparent) 75%
+    ),
+    linear-gradient(
+      -45deg,
+      transparent 75%,
+      color-mix(in srgb, var(--color-text) 4%, transparent) 75%
+    );
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
   background-size: 16px 16px;
   display: flex;
   flex: 1;

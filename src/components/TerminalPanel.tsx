@@ -3,13 +3,12 @@ import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
-import {
-  createTerminalSession,
-  type TerminalSession,
-} from "./terminalSession";
+import { createTerminalSession, type TerminalSession } from "./terminalSession";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPanelProps {
+  labelledBy?: string;
+  panelId?: string;
   isActive: boolean;
   onCwdChange?: (cwd: string | null) => void;
   onOpenLink?: (path: string, line?: number, column?: number) => void;
@@ -28,9 +27,11 @@ interface TerminalPanelProps {
 
 export function TerminalPanel({
   isActive,
+  labelledBy,
   onCwdChange,
   onOpenLink,
   onSessionReady,
+  panelId,
   profileId,
   rootPath,
   terminalGateway,
@@ -40,6 +41,8 @@ export function TerminalPanel({
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const terminalThemeRef = useRef(terminalTheme);
+  terminalThemeRef.current = terminalTheme;
   // Keep the latest callback in a ref so the session effect (which must only
   // re-run on profile/root/gateway changes) always invokes the current handler
   // without listing it as a dependency and remounting the terminal.
@@ -66,20 +69,23 @@ export function TerminalPanel({
       fontSize: 13,
       lineHeight: 1.25,
       scrollback: 2000,
-      theme: terminalTheme,
+      theme: terminalThemeRef.current,
     });
     terminalRef.current = terminal;
     const fitAddon = new FitAddon();
     const sessionRootPath = rootPath;
+    let generationActive = true;
     const session = createTerminalSession({
       cancelFrame: (frameId) => cancelAnimationFrame(frameId),
       createResizeObserver: (callback) => new ResizeObserver(callback),
       fitAddon,
       gateway: terminalGateway,
       host,
-      onCwdChange: (cwd) => onCwdChangeRef.current?.(cwd),
+      onCwdChange: (cwd) => {
+        if (generationActive) onCwdChangeRef.current?.(cwd);
+      },
       onOpenLink: (path, line, column) => {
-        if (!sessionRootPath) {
+        if (!generationActive || !sessionRootPath) {
           return;
         }
 
@@ -95,7 +101,11 @@ export function TerminalPanel({
 
         onOpenLinkRef.current?.(resolvedPath, line, column);
       },
-      onSessionReady: (sessionId) => onSessionReadyRef.current?.(sessionId),
+      onSessionReady: (sessionId) => {
+        if (generationActive && rootPathRef.current === sessionRootPath) {
+          onSessionReadyRef.current?.(sessionId);
+        }
+      },
       profileId,
       rootPath,
       shellIntegrationEnabled,
@@ -107,8 +117,7 @@ export function TerminalPanel({
         get rows() {
           return terminal.rows;
         },
-        attachCustomKeyEventHandler: (handler) =>
-          terminal.attachCustomKeyEventHandler(handler),
+        attachCustomKeyEventHandler: (handler) => terminal.attachCustomKeyEventHandler(handler),
         dispose: () => terminal.dispose(),
         loadAddon: (addon) => terminal.loadAddon(addon as FitAddon),
         onData: (listener) => terminal.onData(listener),
@@ -117,10 +126,8 @@ export function TerminalPanel({
         get buffer() {
           return terminal.buffer;
         },
-        registerLinkProvider: (provider) =>
-          terminal.registerLinkProvider(provider),
-        registerMarker: (cursorYOffset) =>
-          terminal.registerMarker(cursorYOffset),
+        registerLinkProvider: (provider) => terminal.registerLinkProvider(provider),
+        registerMarker: (cursorYOffset) => terminal.registerMarker(cursorYOffset),
         registerDecoration: (options) => {
           const decoration = terminal.registerDecoration({
             marker: options.marker as ReturnType<Terminal["registerMarker"]>,
@@ -151,9 +158,12 @@ export function TerminalPanel({
     sessionRef.current = session;
 
     return () => {
+      generationActive = false;
       terminalRef.current = null;
       sessionRef.current = null;
       session.dispose();
+      onSessionReadyRef.current?.(null);
+      onCwdChangeRef.current?.(null);
     };
   }, [profileId, rootPath, shellIntegrationEnabled, terminalGateway]);
 
@@ -183,9 +193,11 @@ export function TerminalPanel({
 
   return (
     <div
-      aria-label="Terminal"
+      aria-label={labelledBy ? undefined : "Terminal"}
+      aria-labelledby={labelledBy}
       className="terminal-panel"
       hidden={!isActive}
+      id={panelId}
       role="tabpanel"
     >
       <div className="terminal-viewport" ref={terminalHostRef} />
@@ -193,10 +205,7 @@ export function TerminalPanel({
   );
 }
 
-export function resolveTerminalLinkPath(
-  rootPath: string,
-  path: string,
-): string | null {
+function resolveTerminalLinkPath(rootPath: string, path: string): string | null {
   const normalizedRoot = normalizeTerminalPath(rootPath);
 
   if (!normalizedRoot.startsWith("/")) {

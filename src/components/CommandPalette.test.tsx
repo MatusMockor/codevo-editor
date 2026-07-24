@@ -13,11 +13,7 @@ const context: CommandContext = {
   activeDocumentDirty: false,
 };
 
-function command(
-  id: string,
-  title: string,
-  overrides: Partial<Command> = {},
-): Command {
+function command(id: string, title: string, overrides: Partial<Command> = {}): Command {
   return {
     id,
     title,
@@ -44,9 +40,7 @@ describe("CommandPalette", () => {
     host.remove();
   });
 
-  function render(
-    props: Partial<Parameters<typeof CommandPalette>[0]> = {},
-  ) {
+  function render(props: Partial<Parameters<typeof CommandPalette>[0]> = {}) {
     const onClose = vi.fn();
     const onCommandError = vi.fn();
 
@@ -73,6 +67,18 @@ describe("CommandPalette", () => {
     render();
     const rows = host.querySelectorAll(".palette-command");
     expect(rows).toHaveLength(2);
+  });
+
+  it("keeps context-only commands callable by the registry but out of Command Palette", () => {
+    const contextOnly = command("workbench.action.debug.restartFrame", "Restart Frame", {
+      visibleInCommandPalette: false,
+    });
+    render({ commands: [contextOnly, command("editor.save", "Save File")] });
+
+    const rows = [...host.querySelectorAll<HTMLButtonElement>(".palette-command")];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("Save File");
+    expect(contextOnly.run).not.toHaveBeenCalled();
   });
 
   it("renders a footer hint row", () => {
@@ -283,10 +289,7 @@ describe("CommandPalette", () => {
     const { onClose } = render();
     const field = host.querySelector<HTMLInputElement>(".palette-search input");
 
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      "value",
-    )?.set;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
 
     if (field && setter) {
       act(() => {
@@ -303,10 +306,7 @@ describe("CommandPalette", () => {
 
   function setQuery(value: string) {
     const field = input();
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      "value",
-    )?.set;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
 
     if (field && setter) {
       act(() => {
@@ -332,17 +332,13 @@ describe("CommandPalette", () => {
     const field = input();
 
     act(() => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
     let rows = host.querySelectorAll(".palette-command");
     expect(rows[1]?.className).toContain("active");
 
     act(() => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }));
     });
     rows = host.querySelectorAll(".palette-command");
     expect(rows[0]?.className).toContain("active");
@@ -354,18 +350,14 @@ describe("CommandPalette", () => {
 
     // ArrowUp from the first row wraps to the last.
     act(() => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }));
     });
     let rows = host.querySelectorAll(".palette-command");
     expect(rows[1]?.className).toContain("active");
 
     // ArrowDown from the last row wraps back to the first.
     act(() => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
     rows = host.querySelectorAll(".palette-command");
     expect(rows[0]?.className).toContain("active");
@@ -383,14 +375,10 @@ describe("CommandPalette", () => {
     const field = input();
 
     act(() => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
     await act(async () => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     });
 
     expect(format).toHaveBeenCalledTimes(1);
@@ -403,9 +391,7 @@ describe("CommandPalette", () => {
     const field = input();
 
     act(() => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -424,13 +410,9 @@ describe("CommandPalette", () => {
     const field = input();
 
     act(() => {
-      field?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
-      );
+      field?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
-    expect(host.querySelectorAll(".palette-command")[1]?.className).toContain(
-      "active",
-    );
+    expect(host.querySelectorAll(".palette-command")[1]?.className).toContain("active");
 
     setQuery("s");
     const rows = host.querySelectorAll(".palette-command");

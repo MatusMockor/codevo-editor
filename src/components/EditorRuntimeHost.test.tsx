@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, StrictMode, useEffect, useRef, useState } from "react";
+import { act, StrictMode, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,15 +10,18 @@ import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort
 import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import {
   EditorRuntimeHost,
-  useEditorRuntimeContext,
   type EditorRuntimeSurfaceRegistration,
   type EditorRuntimeSurfaceRouting,
 } from "./EditorRuntimeHost";
-import type {
-  EditorSurfaceLanguageProviderRegistrationRefs,
-} from "./editorSurfaceLanguageProviderOptions";
+import { useEditorRuntimeContext } from "./editorRuntimeContext";
+import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./editorSurfaceLanguageProviderOptions";
 
 const runtimeMocks = vi.hoisted(() => ({
+  debugHoverContext: null as {
+    getAdmittedWorkspaceRoot(): string | null;
+    resolveDocumentForModel(model: Monaco.editor.ITextModel): EditorDocument | null;
+  } | null,
+  debugHoverDispose: vi.fn(),
   javaScriptContext: null as {
     getActiveDocument(): EditorDocument | null;
   } | null,
@@ -36,6 +39,10 @@ const runtimeMocks = vi.hoisted(() => ({
     runtimeMocks.javaScriptContext = context;
     return { dispose: vi.fn() };
   }),
+  registerDebugHover: vi.fn((_monaco, context) => {
+    runtimeMocks.debugHoverContext = context;
+    return { dispose: runtimeMocks.debugHoverDispose };
+  }),
   configureTypescriptJavascriptDefaultsOnce: vi.fn(),
 }));
 
@@ -51,18 +58,18 @@ vi.mock("./npmManifestMonacoProviders", async (importOriginal) => ({
   ...(await importOriginal()),
   registerNpmManifestMonacoProviders: runtimeMocks.registerNpm,
 }));
-vi.mock(
-  "./javascriptTypescriptLanguageServerMonacoProviders",
-  async (importOriginal) => ({
-    ...(await importOriginal()),
-    registerJavaScriptTypeScriptLanguageServerMonacoProviders:
-      runtimeMocks.registerJavaScriptTypeScript,
-  }),
-);
+vi.mock("./javascriptTypescriptLanguageServerMonacoProviders", async (importOriginal) => ({
+  ...(await importOriginal()),
+  registerJavaScriptTypeScriptLanguageServerMonacoProviders:
+    runtimeMocks.registerJavaScriptTypeScript,
+}));
 vi.mock("./typescriptJavascriptDefaults", async (importOriginal) => ({
   ...(await importOriginal()),
-  configureTypescriptJavascriptDefaultsOnce:
-    runtimeMocks.configureTypescriptJavascriptDefaultsOnce,
+  configureTypescriptJavascriptDefaultsOnce: runtimeMocks.configureTypescriptJavascriptDefaultsOnce,
+}));
+vi.mock("./debugHoverMonacoProvider", async (importOriginal) => ({
+  ...(await importOriginal()),
+  registerDebugHoverMonacoProviders: runtimeMocks.registerDebugHover,
 }));
 
 describe("EditorRuntimeHost", () => {
@@ -70,13 +77,13 @@ describe("EditorRuntimeHost", () => {
   let root: Root;
 
   beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      true;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
     runtimeMocks.javaScriptContext = null;
     runtimeMocks.providerContext = null;
+    runtimeMocks.debugHoverContext = null;
     vi.clearAllMocks();
   });
 
@@ -103,30 +110,21 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.registerNpm).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.registerJavaScriptTypeScript).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "left.php",
-    );
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("left.php");
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>("[data-group='right']")?.click();
     });
 
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("right.php");
+    expect(runtimeMocks.providerContext?.getDocumentForModel?.(fixture.model)?.name).toBe(
       "right.php",
     );
-    expect(
-      runtimeMocks.providerContext?.getDocumentForModel?.(fixture.model)?.name,
-    ).toBe("right.php");
 
     await act(async () => {
       root.render(
         <EditorRuntimeHost>
-          <RuntimeSurface
-            {...fixture}
-            groupId="right"
-            key="right"
-            name="right.php"
-          />
+          <RuntimeSurface {...fixture} groupId="right" key="right" name="right.php" />
         </EditorRuntimeHost>,
       );
     });
@@ -134,6 +132,36 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.registerLanguage).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.registerJavaScriptTypeScript).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers debug hover against the admitted workspace model resolver", async () => {
+    const fixture = runtimeFixture();
+    const debugHover = {
+      copyEvaluatePath: vi.fn(async () => false),
+      evaluate: vi.fn(),
+      getOwner: vi.fn(() => null),
+      registerCopyEvaluatePath: vi.fn(() => null),
+      revokeCopyEvaluatePath: vi.fn(),
+    };
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost debugHover={debugHover}>
+          <RuntimeSurface {...fixture} groupId="left" name="left.ts" />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    expect(runtimeMocks.registerDebugHover).toHaveBeenCalledOnce();
+    expect(runtimeMocks.debugHoverContext?.getAdmittedWorkspaceRoot()).toBe("/workspace");
+    expect(runtimeMocks.debugHoverContext?.resolveDocumentForModel(fixture.model)?.name).toBe(
+      "left.ts",
+    );
+
+    await act(async () =>
+      root.render(<EditorRuntimeHost debugHover={debugHover}>{null}</EditorRuntimeHost>),
+    );
+    expect(runtimeMocks.debugHoverDispose).toHaveBeenCalledOnce();
   });
 
   it("routes PHP code actions by source when the focused group is different", async () => {
@@ -265,18 +293,8 @@ describe("EditorRuntimeHost", () => {
     await act(async () => {
       root.render(
         <EditorRuntimeHost>
-          <RuntimeSurface
-            {...fixture}
-            groupId="left"
-            name="left.ts"
-            validationEnabled={false}
-          />
-          <RuntimeSurface
-            {...fixture}
-            groupId="right"
-            name="right.ts"
-            validationEnabled={false}
-          />
+          <RuntimeSurface {...fixture} groupId="left" name="left.ts" validationEnabled={false} />
+          <RuntimeSurface {...fixture} groupId="right" name="right.ts" validationEnabled={false} />
         </EditorRuntimeHost>,
       );
     });
@@ -337,9 +355,7 @@ describe("EditorRuntimeHost", () => {
     await act(async () => animationFrames.flush());
 
     expect(fixture.rightEditor.focus).toHaveBeenCalledOnce();
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "right.php",
-    );
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("right.php");
   });
 
   it("cancels stale scheduled focus when the target group is removed", async () => {
@@ -373,9 +389,7 @@ describe("EditorRuntimeHost", () => {
     await act(async () => animationFrames.flush());
 
     expect(fixture.rightEditor.focus).not.toHaveBeenCalled();
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "left.php",
-    );
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("left.php");
   });
 
   it("does not carry a scheduled group focus into another workspace", async () => {
@@ -416,9 +430,7 @@ describe("EditorRuntimeHost", () => {
 
     expect(first.leftEditor.focus).not.toHaveBeenCalled();
     expect(second.leftEditor.focus).not.toHaveBeenCalled();
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "second.php",
-    );
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("second.php");
   });
 
   it("shares a model, reconciles its markers once, and retains it until host teardown", async () => {
@@ -436,24 +448,15 @@ describe("EditorRuntimeHost", () => {
     expect(fixture.leftEditor.getModel()).toBe(fixture.model);
     expect(fixture.rightEditor.getModel()).toBe(fixture.model);
     expect(fixture.monaco.editor.setModelMarkers).toHaveBeenCalledTimes(1);
-    const modelReadsBeforeStableUpdate = vi.mocked(
-      fixture.monaco.editor.getModels,
-    ).mock.calls.length;
+    const modelReadsBeforeStableUpdate = vi.mocked(fixture.monaco.editor.getModels).mock.calls
+      .length;
 
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>("[data-update='left']")
-        ?.click();
+      container.querySelector<HTMLButtonElement>("[data-update='left']")?.click();
     });
-    expect(fixture.monaco.editor.getModels).toHaveBeenCalledTimes(
-      modelReadsBeforeStableUpdate,
-    );
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "shared.php updated",
-    );
-    expect(runtimeMocks.javaScriptContext?.getActiveDocument()?.name).toBe(
-      "shared.php updated",
-    );
+    expect(fixture.monaco.editor.getModels).toHaveBeenCalledTimes(modelReadsBeforeStableUpdate);
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("shared.php updated");
+    expect(runtimeMocks.javaScriptContext?.getActiveDocument()?.name).toBe("shared.php updated");
 
     await act(async () => {
       root.render(
@@ -495,9 +498,9 @@ describe("EditorRuntimeHost", () => {
     });
 
     expect(
-      vi.mocked(fixture.monaco.editor.setModelMarkers).mock.calls.filter(
-        ([, owner]) => owner === "php-syntax",
-      ),
+      vi
+        .mocked(fixture.monaco.editor.setModelMarkers)
+        .mock.calls.filter(([, owner]) => owner === "php-syntax"),
     ).toEqual([[fixture.model, "php-syntax", localMarkers]]);
   });
 
@@ -541,12 +544,7 @@ describe("EditorRuntimeHost", () => {
         <EditorRuntimeHost>
           <RuntimeSurface {...fixture} groupId="left" key="left" name="shared.php" />
           {split ? (
-            <RuntimeSurface
-              {...fixture}
-              groupId="right"
-              key="right"
-              name="shared.php"
-            />
+            <RuntimeSurface {...fixture} groupId="right" key="right" name="shared.php" />
           ) : null}
           <button data-split onClick={() => setSplit(true)} />
         </EditorRuntimeHost>
@@ -589,22 +587,8 @@ describe("EditorRuntimeHost", () => {
 
     function DynamicSplitHarness() {
       const [stage, setStage] = useState(0);
-      const left = (
-        <RuntimeSurface
-          {...fixture}
-          groupId="left"
-          key="left"
-          name="shared.php"
-        />
-      );
-      const right = (
-        <RuntimeSurface
-          {...fixture}
-          groupId="right"
-          key="right"
-          name="shared.php"
-        />
-      );
+      const left = <RuntimeSurface {...fixture} groupId="left" key="left" name="shared.php" />;
+      const right = <RuntimeSurface {...fixture} groupId="right" key="right" name="shared.php" />;
 
       return (
         <EditorRuntimeHost>
@@ -643,9 +627,9 @@ describe("EditorRuntimeHost", () => {
 
       expect(fixture.model.dispose).not.toHaveBeenCalled();
       expect(() => fixture.model.getValue()).not.toThrow();
-      expect(
-        runtimeMocks.providerContext?.getDocumentForModel?.(fixture.model),
-      ).toEqual(expect.objectContaining({ path: fixture.path }));
+      expect(runtimeMocks.providerContext?.getDocumentForModel?.(fixture.model)).toEqual(
+        expect.objectContaining({ path: fixture.path }),
+      );
     }
 
     expect(container.querySelectorAll("[data-group]")).toHaveLength(2);
@@ -693,12 +677,7 @@ describe("EditorRuntimeHost", () => {
     const first = runtimeFixture();
     const secondModel = runtimeModel("/workspace", first.path);
     const secondMonaco = runtimeMonaco([secondModel]);
-    const second = runtimeFixture(
-      "/workspace",
-      secondMonaco,
-      secondModel,
-      first.path,
-    );
+    const second = runtimeFixture("/workspace", secondMonaco, secondModel, first.path);
 
     await act(async () => {
       root.render(
@@ -740,12 +719,7 @@ describe("EditorRuntimeHost", () => {
       root.render(
         <EditorRuntimeHost>
           <RuntimeSurface {...first} groupId="first" key="first" name="first.php" />
-          <RuntimeSurface
-            {...second}
-            groupId="second"
-            key="second"
-            name="second.php"
-          />
+          <RuntimeSurface {...second} groupId="second" key="second" name="second.php" />
         </EditorRuntimeHost>,
       );
     });
@@ -759,14 +733,10 @@ describe("EditorRuntimeHost", () => {
     );
 
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>("[data-group='second']")
-        ?.click();
+      container.querySelector<HTMLButtonElement>("[data-group='second']")?.click();
     });
 
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "first.php",
-    );
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("first.php");
     expect(firstModel.dispose).not.toHaveBeenCalled();
     expect(secondModel.dispose).not.toHaveBeenCalled();
 
@@ -783,80 +753,43 @@ describe("EditorRuntimeHost", () => {
       uri: URI.parse("file:///foreign/shared.php"),
     } as unknown as Monaco.editor.ITextModel;
     const monaco = runtimeMonaco([admittedModel, foreignModel]);
-    const rootless = runtimeFixture(
-      null,
-      monaco,
-      foreignModel,
-      "/foreign/shared.php",
-    );
+    const rootless = runtimeFixture(null, monaco, foreignModel, "/foreign/shared.php");
     const admitted = runtimeFixture("/workspace", monaco, admittedModel);
 
     await act(async () => {
       root.render(
         <EditorRuntimeHost>
-          <RuntimeSurface
-            {...admitted}
-            groupId="admitted"
-            key="admitted"
-            name="admitted.php"
-          />
+          <RuntimeSurface {...admitted} groupId="admitted" key="admitted" name="admitted.php" />
         </EditorRuntimeHost>,
       );
     });
 
-    const modelReadsAfterAdmission = vi.mocked(monaco.editor.getModels).mock
-      .calls.length;
+    const modelReadsAfterAdmission = vi.mocked(monaco.editor.getModels).mock.calls.length;
 
     await act(async () => {
       root.render(
         <EditorRuntimeHost>
-          <RuntimeSurface
-            {...admitted}
-            groupId="admitted"
-            key="admitted"
-            name="admitted.php"
-          />
-          <RuntimeSurface
-            {...rootless}
-            groupId="rootless"
-            key="rootless"
-            name="foreign.php"
-          />
+          <RuntimeSurface {...admitted} groupId="admitted" key="admitted" name="admitted.php" />
+          <RuntimeSurface {...rootless} groupId="rootless" key="rootless" name="foreign.php" />
         </EditorRuntimeHost>,
       );
     });
 
-    expect(monaco.editor.getModels).toHaveBeenCalledTimes(
-      modelReadsAfterAdmission,
-    );
+    expect(monaco.editor.getModels).toHaveBeenCalledTimes(modelReadsAfterAdmission);
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>("[data-group='rootless']")
-        ?.click();
+      container.querySelector<HTMLButtonElement>("[data-group='rootless']")?.click();
     });
 
-    expect(monaco.editor.getModels).toHaveBeenCalledTimes(
-      modelReadsAfterAdmission,
-    );
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "admitted.php",
-    );
+    expect(monaco.editor.getModels).toHaveBeenCalledTimes(modelReadsAfterAdmission);
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("admitted.php");
     expect(foreignModel.dispose).not.toHaveBeenCalled();
   });
 
   it("activates only a rootless registration's workspace on its same-id transition", async () => {
-    const workspaceModel = runtimeModel(
-      "/workspace",
-      "/workspace/shared.php",
-    );
+    const workspaceModel = runtimeModel("/workspace", "/workspace/shared.php");
     const foreignModel = runtimeModel("/foreign", "/foreign/shared.php");
     const monaco = runtimeMonaco([workspaceModel, foreignModel]);
-    const pending = runtimeFixture(
-      null,
-      monaco,
-      workspaceModel,
-      "/workspace/shared.php",
-    );
+    const pending = runtimeFixture(null, monaco, workspaceModel, "/workspace/shared.php");
 
     await act(async () => {
       root.render(
@@ -879,9 +812,7 @@ describe("EditorRuntimeHost", () => {
     expect(foreignModel.dispose).not.toHaveBeenCalled();
 
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>("[data-transition='pending']")
-        ?.click();
+      container.querySelector<HTMLButtonElement>("[data-transition='pending']")?.click();
     });
 
     expect(runtimeMocks.registerLanguage).toHaveBeenCalledTimes(1);
@@ -891,9 +822,7 @@ describe("EditorRuntimeHost", () => {
       expect.any(Array),
     );
     expect(
-      vi.mocked(monaco.editor.setModelMarkers).mock.calls.some(
-        ([model]) => model === foreignModel,
-      ),
+      vi.mocked(monaco.editor.setModelMarkers).mock.calls.some(([model]) => model === foreignModel),
     ).toBe(false);
     expect(workspaceModel.dispose).not.toHaveBeenCalled();
     expect(foreignModel.dispose).not.toHaveBeenCalled();
@@ -913,18 +842,8 @@ describe("EditorRuntimeHost", () => {
     await act(async () => {
       root.render(
         <EditorRuntimeHost>
-          <RuntimeSurface
-            {...canonical}
-            groupId="canonical"
-            key="canonical"
-            name="canonical.php"
-          />
-          <RuntimeSurface
-            {...trailingSlashAlias}
-            groupId="alias"
-            key="alias"
-            name="alias.php"
-          />
+          <RuntimeSurface {...canonical} groupId="canonical" key="canonical" name="canonical.php" />
+          <RuntimeSurface {...trailingSlashAlias} groupId="alias" key="alias" name="alias.php" />
         </EditorRuntimeHost>,
       );
     });
@@ -933,9 +852,7 @@ describe("EditorRuntimeHost", () => {
       container.querySelector<HTMLButtonElement>("[data-group='alias']")?.click();
     });
 
-    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
-      "alias.php",
-    );
+    expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe("alias.php");
     expect(model.dispose).not.toHaveBeenCalled();
   });
 });
@@ -968,13 +885,16 @@ function RuntimeSurface({
 }) {
   const runtime = useEditorRuntimeContext();
   const registrationRef = useRef<EditorRuntimeSurfaceRegistration | null>(null);
-  const document: EditorDocument = {
-    content,
-    language: "php",
-    name,
-    path,
-    savedContent: content,
-  };
+  const document = useMemo<EditorDocument>(
+    () => ({
+      content,
+      language: "php",
+      name,
+      path,
+      savedContent: content,
+    }),
+    [content, name, path],
+  );
 
   useEffect(() => {
     const currentRef = { current: document };
@@ -982,9 +902,7 @@ function RuntimeSurface({
     const registration = {
       activePath: document.path,
       diagnosticsByPath: {
-        [document.path]: [
-          { character: 0, line: 0, message: "warning", severity: "warning" },
-        ],
+        [document.path]: [{ character: 0, line: 0, message: "warning", severity: "warning" }],
       },
       editor: (groupId === "left" ? leftEditor : rightEditor) as never,
       groupId,
@@ -1029,7 +947,7 @@ function RuntimeSurface({
 
     return runtime?.registerSurface(groupId, registration);
   }, [
-    document.path,
+    document,
     featuresGateway,
     groupId,
     leftEditor,
@@ -1247,15 +1165,21 @@ function runtimeMarkerChanges() {
 function animationFrameFixture() {
   let nextFrameId = 1;
   const callbacks = new Map<number, FrameRequestCallback>();
-  vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
-    const frameId = nextFrameId;
-    nextFrameId += 1;
-    callbacks.set(frameId, callback);
-    return frameId;
-  }));
-  vi.stubGlobal("cancelAnimationFrame", vi.fn((frameId: number) => {
-    callbacks.delete(frameId);
-  }));
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    vi.fn((callback: FrameRequestCallback) => {
+      const frameId = nextFrameId;
+      nextFrameId += 1;
+      callbacks.set(frameId, callback);
+      return frameId;
+    }),
+  );
+  vi.stubGlobal(
+    "cancelAnimationFrame",
+    vi.fn((frameId: number) => {
+      callbacks.delete(frameId);
+    }),
+  );
 
   return {
     flush() {

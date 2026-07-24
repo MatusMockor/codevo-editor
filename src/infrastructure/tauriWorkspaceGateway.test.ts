@@ -20,15 +20,35 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
   beforeEach(() => invoke.mockReset());
 
   it("routes trusted workspace edits through the descriptor command with relative paths", async () => {
-    invoke.mockResolvedValue({ status: "success", appliedFileOperations: 1, appliedTextFiles: 1, appliedCount: 2 });
+    invoke.mockResolvedValue({
+      status: "success",
+      appliedFileOperations: 1,
+      appliedTextFiles: 1,
+      appliedCount: 2,
+    });
     const edit = {
       changes: {
-        "file:///selected/project/src/App.ts": [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: "next" }],
+        "file:///selected/project/src/App.ts": [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            newText: "next",
+          },
+        ],
       },
-      fileOperations: [{ kind: "rename" as const, oldUri: "file:///selected/project/src/Old.ts", newUri: "file:///selected/project/src/New.ts" }],
+      fileOperations: [
+        {
+          kind: "rename" as const,
+          oldUri: "file:///selected/project/src/Old.ts",
+          newUri: "file:///selected/project/src/New.ts",
+        },
+      ],
     };
 
-    await expect(trustedGateway().applyWorkspaceEdit("/selected/project", edit, ["/selected/project/src/Open.ts"])).resolves.toBe(2);
+    await expect(
+      trustedGateway().applyWorkspaceEdit("/selected/project", edit, [
+        "/selected/project/src/Open.ts",
+      ]),
+    ).resolves.toBe(2);
     expect(invoke).toHaveBeenCalledWith("workspace_apply_workspace_edit", {
       workspaceId: "ws-1",
       edit: {
@@ -89,35 +109,27 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       { "/selected/project/src/App.ts": "123" },
     );
     expect(transaction.appliedCount).toBe(1);
-    expect(invoke).toHaveBeenNthCalledWith(
-      1,
-      "workspace_apply_workspace_edit_transaction",
-      {
-        workspaceId: "ws-1",
-        edit: {
-          changes: {
-            "src/App.ts": edit.changes["file:///selected/project/src/App.ts"],
-          },
+    expect(invoke).toHaveBeenNthCalledWith(1, "workspace_apply_workspace_edit_transaction", {
+      workspaceId: "ws-1",
+      edit: {
+        changes: {
+          "src/App.ts": edit.changes["file:///selected/project/src/App.ts"],
         },
-        skippedPaths: ["src/Open.ts"],
-        expectedStates: { "src/App.ts": "123" },
-        fileModes: {},
       },
-    );
+      skippedPaths: ["src/Open.ts"],
+      expectedStates: { "src/App.ts": "123" },
+      fileModes: {},
+    });
 
     await transaction.rollback();
     await transaction.rollback();
-    expect(invoke).toHaveBeenNthCalledWith(
-      2,
-      "workspace_apply_workspace_edit_transaction",
-      {
-        workspaceId: "ws-1",
-        edit: rollbackEdit,
-        skippedPaths: [],
-        expectedStates: { "src/App.ts": "abc" },
-        fileModes: { "src/App.ts": 0o644 },
-      },
-    );
+    expect(invoke).toHaveBeenNthCalledWith(2, "workspace_apply_workspace_edit_transaction", {
+      workspaceId: "ws-1",
+      edit: rollbackEdit,
+      skippedPaths: [],
+      expectedStates: { "src/App.ts": "abc" },
+      fileModes: { "src/App.ts": 0o644 },
+    });
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
@@ -127,51 +139,96 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     const edit = { changes: {} };
 
     await expect(gateway.applyWorkspaceEdit("/legacy", edit, [])).resolves.toBe(3);
-    expect(invoke).toHaveBeenCalledWith("apply_workspace_edit", { rootPath: "/legacy", edit, skippedPaths: [] });
-  });
-
-  it("drops skipped open documents outside the trusted workspace", async () => {
-    invoke.mockResolvedValue({ status: "success", appliedFileOperations: 0, appliedTextFiles: 1, appliedCount: 1 });
-
-    await expect(trustedGateway().applyWorkspaceEdit(
-      "/selected/project",
-      { changes: { "file:///selected/project/src/App.ts": [] } },
-      ["/selected/project/src/Open.ts", "/external/Definition.ts"],
-    )).resolves.toBe(1);
-    expect(invoke).toHaveBeenCalledWith("workspace_apply_workspace_edit", expect.objectContaining({ skippedPaths: ["src/Open.ts"] }));
-  });
-
-  it.each(["untitled:Scratch", "file:///selected/project/src/bad%value.ts"])("skips an unresolvable %s URI while applying valid entries", async (invalidUri) => {
-    invoke.mockResolvedValue({ status: "success", appliedFileOperations: 0, appliedTextFiles: 1, appliedCount: 1 });
-    const validEdits = [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: "valid" }];
-
-    await expect(trustedGateway().applyWorkspaceEdit("/selected/project", {
-      changes: {
-        [invalidUri]: [],
-        "file:///selected/project/src/App.ts": validEdits,
-      },
-      documentVersions: { [invalidUri]: 1, "file:///selected/project/src/App.ts": 2 },
-      fileOperations: [
-        { kind: "delete", uri: invalidUri },
-        { kind: "create", uri: "file:///selected/project/src/New.ts" },
-      ],
-    }, [])).resolves.toBe(1);
-    expect(invoke).toHaveBeenCalledWith("workspace_apply_workspace_edit", {
-      workspaceId: "ws-1",
-      edit: {
-        changes: { "src/App.ts": validEdits },
-        documentVersions: { "src/App.ts": 2 },
-        fileOperations: [{ kind: "create", uri: "src/New.ts" }],
-      },
+    expect(invoke).toHaveBeenCalledWith("apply_workspace_edit", {
+      rootPath: "/legacy",
+      edit,
       skippedPaths: [],
     });
   });
 
-  it.each(["partial", "conflict", "error"])("rejects a typed %s workspace edit outcome", async (status) => {
-    invoke.mockResolvedValue({ status, appliedFileOperations: 1, appliedTextFiles: 0, appliedCount: 1, failedPath: "src/App.ts", message: "file changed" });
+  it("drops skipped open documents outside the trusted workspace", async () => {
+    invoke.mockResolvedValue({
+      status: "success",
+      appliedFileOperations: 0,
+      appliedTextFiles: 1,
+      appliedCount: 1,
+    });
 
-    await expect(trustedGateway().applyWorkspaceEdit("/selected/project", { changes: {} }, [])).rejects.toThrow("src/App.ts: file changed");
+    await expect(
+      trustedGateway().applyWorkspaceEdit(
+        "/selected/project",
+        { changes: { "file:///selected/project/src/App.ts": [] } },
+        ["/selected/project/src/Open.ts", "/external/Definition.ts"],
+      ),
+    ).resolves.toBe(1);
+    expect(invoke).toHaveBeenCalledWith(
+      "workspace_apply_workspace_edit",
+      expect.objectContaining({ skippedPaths: ["src/Open.ts"] }),
+    );
   });
+
+  it.each(["untitled:Scratch", "file:///selected/project/src/bad%value.ts"])(
+    "skips an unresolvable %s URI while applying valid entries",
+    async (invalidUri) => {
+      invoke.mockResolvedValue({
+        status: "success",
+        appliedFileOperations: 0,
+        appliedTextFiles: 1,
+        appliedCount: 1,
+      });
+      const validEdits = [
+        {
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+          newText: "valid",
+        },
+      ];
+
+      await expect(
+        trustedGateway().applyWorkspaceEdit(
+          "/selected/project",
+          {
+            changes: {
+              [invalidUri]: [],
+              "file:///selected/project/src/App.ts": validEdits,
+            },
+            documentVersions: { [invalidUri]: 1, "file:///selected/project/src/App.ts": 2 },
+            fileOperations: [
+              { kind: "delete", uri: invalidUri },
+              { kind: "create", uri: "file:///selected/project/src/New.ts" },
+            ],
+          },
+          [],
+        ),
+      ).resolves.toBe(1);
+      expect(invoke).toHaveBeenCalledWith("workspace_apply_workspace_edit", {
+        workspaceId: "ws-1",
+        edit: {
+          changes: { "src/App.ts": validEdits },
+          documentVersions: { "src/App.ts": 2 },
+          fileOperations: [{ kind: "create", uri: "src/New.ts" }],
+        },
+        skippedPaths: [],
+      });
+    },
+  );
+
+  it.each(["partial", "conflict", "error"])(
+    "rejects a typed %s workspace edit outcome",
+    async (status) => {
+      invoke.mockResolvedValue({
+        status,
+        appliedFileOperations: 1,
+        appliedTextFiles: 0,
+        appliedCount: 1,
+        failedPath: "src/App.ts",
+        message: "file changed",
+      });
+
+      await expect(
+        trustedGateway().applyWorkspaceEdit("/selected/project", { changes: {} }, []),
+      ).rejects.toThrow("src/App.ts: file changed");
+    },
+  );
 
   it("routes selected and canonical aliases through workspace-relative reads", async () => {
     invoke.mockResolvedValue({ content: "", revision: revision() });
@@ -215,9 +272,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
 
     await expect(gateway.readTextFile("/legacy/file.ts")).resolves.toBe("legacy");
-    expect(() => gateway.writeTextFile("/legacy/file.ts", "next")).toThrow(
-      "Reopen it explicitly",
-    );
+    expect(() => gateway.writeTextFile("/legacy/file.ts", "next")).toThrow("Reopen it explicitly");
 
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("read_text_file", {
@@ -229,11 +284,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     invoke.mockResolvedValueOnce({ status: "conflict", message: "changed" });
 
     await expect(
-      trustedGateway().writeTextFile(
-        "/selected/project/src/App.ts",
-        "editor",
-        revision(),
-      ),
+      trustedGateway().writeTextFile("/selected/project/src/App.ts", "editor", revision()),
     ).resolves.toEqual({ status: "conflict", message: "changed" });
     expect(invoke).toHaveBeenCalledWith("workspace_save_text_file", {
       workspaceId: "ws-1",
@@ -281,6 +332,32 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
   });
 
+  it("routes owner-scoped directory and atomic content creation with relative paths", async () => {
+    invoke
+      .mockResolvedValueOnce({ status: "success" })
+      .mockResolvedValueOnce({ status: "success", revision: revision() });
+    const gateway = trustedGateway();
+
+    await gateway.createDirectoryForWorkspace("ws-1", "/selected/project/.codevo");
+    await expect(
+      gateway.createTextFileWithContentForWorkspace(
+        "ws-1",
+        "/selected/project/.codevo/launch.json",
+        "{}\n",
+      ),
+    ).resolves.toEqual({ status: "success", revision: revision() });
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "workspace_create_directory", {
+      workspaceId: "ws-1",
+      relativePath: ".codevo",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "workspace_create_text_file_with_content", {
+      workspaceId: "ws-1",
+      relativePath: ".codevo/launch.json",
+      content: "{}\n",
+    });
+  });
+
   it("rejects an owner-scoped save when the captured workspace no longer owns the path", () => {
     const gateway = new TauriWorkspaceGateway({
       descriptorForPath: () => descriptor,
@@ -293,14 +370,22 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
         "/selected/project/src/App.php",
         "<?php",
         revision(),
-      )
+      ),
     ).toThrow("does not belong to the captured workspace");
     expect(invoke).not.toHaveBeenCalled();
   });
 
   it("maps descriptor-scoped replace payloads and presentation paths", async () => {
-    invoke.mockResolvedValue({ status: "partial", files: [{ relativePath: "src/a.ts", replacements: 1 }], totalReplacements: 1, conflicts: [{ relativePath: "src/b.ts", message: "changed" }], errors: [], message: "partial" });
-    await expect(trustedGateway().replaceInPath(
+    invoke.mockResolvedValue({
+      status: "partial",
+      files: [{ relativePath: "src/a.ts", replacements: 1 }],
+      totalReplacements: 1,
+      conflicts: [{ relativePath: "src/b.ts", message: "changed" }],
+      errors: [],
+      message: "partial",
+    });
+    await expect(
+      trustedGateway().replaceInPath(
         "/selected/project",
         "before",
         "after",
@@ -312,8 +397,25 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
           fileMask: "",
         },
         "/selected/project/src",
-      )).resolves.toMatchObject({ status: "partial", files: [{ path: "/selected/project/src/a.ts" }], conflicts: [{ path: "/selected/project/src/b.ts" }] });
-    expect(invoke).toHaveBeenCalledWith("workspace_replace_in_path", { workspaceId: "ws-1", relativePath: "src", query: "before", replacement: "after", options: { caseSensitive: false, wholeWord: false, isRegex: false, preserveCase: true, fileMask: "" } });
+      ),
+    ).resolves.toMatchObject({
+      status: "partial",
+      files: [{ path: "/selected/project/src/a.ts" }],
+      conflicts: [{ path: "/selected/project/src/b.ts" }],
+    });
+    expect(invoke).toHaveBeenCalledWith("workspace_replace_in_path", {
+      workspaceId: "ws-1",
+      relativePath: "src",
+      query: "before",
+      replacement: "after",
+      options: {
+        caseSensitive: false,
+        wholeWord: false,
+        isRegex: false,
+        preserveCase: true,
+        fileMask: "",
+      },
+    });
   });
 
   it("rejects a replace scope from another trusted workspace", async () => {
@@ -328,7 +430,13 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
 
     await expect(
-      gateway.replaceInPath("/selected/project", "before", "after", undefined, "/selected/other/src"),
+      gateway.replaceInPath(
+        "/selected/project",
+        "before",
+        "after",
+        undefined,
+        "/selected/other/src",
+      ),
     ).rejects.toThrow("Replace scope must belong to the selected workspace.");
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -342,11 +450,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     const gateway = trustedGateway();
 
     await gateway.readTextFile("/selected/project/src/App.ts");
-    await gateway.writeTextFile(
-      "/selected/project/src/App.ts",
-      "editor",
-      first,
-    );
+    await gateway.writeTextFile("/selected/project/src/App.ts", "editor", first);
 
     expect(invoke).toHaveBeenLastCalledWith("workspace_save_text_file", {
       workspaceId: "ws-1",
@@ -368,9 +472,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       .mockResolvedValueOnce({ status: "success", revision: exactRevision });
     const gateway = trustedGateway();
 
-    const snapshot = await gateway.readTextFileSnapshot(
-      "/selected/project/src/App.ts",
-    );
+    const snapshot = await gateway.readTextFileSnapshot("/selected/project/src/App.ts");
     await gateway.writeTextFile(
       "/selected/project/src/App.ts",
       "editor",
@@ -414,16 +516,62 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     await gateway.readDirectory("/selected/project/src");
     await gateway.searchFiles("/selected/project", "App", 10);
     await gateway.searchText("/selected/project", "App", 10);
-    expect(invoke).toHaveBeenNthCalledWith(1, "workspace_read_directory", { workspaceId: "ws-1", relativePath: "src" });
-    expect(invoke).toHaveBeenNthCalledWith(2, "workspace_search_files", { workspaceId: "ws-1", relativePath: "", query: "App", limit: 10 });
-    expect(invoke).toHaveBeenNthCalledWith(3, "workspace_search_text", { workspaceId: "ws-1", relativePath: "", query: "App", limit: 10, options: null });
+    expect(invoke).toHaveBeenNthCalledWith(1, "workspace_read_directory", {
+      workspaceId: "ws-1",
+      relativePath: "src",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "workspace_search_files", {
+      workspaceId: "ws-1",
+      relativePath: "",
+      query: "App",
+      limit: 10,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, "workspace_search_text", {
+      workspaceId: "ws-1",
+      relativePath: "",
+      query: "App",
+      limit: 10,
+      options: null,
+    });
+  });
+
+  it("uses the strict bounded workspace read contract", async () => {
+    invoke.mockResolvedValue({ status: "tooLarge" });
+    await expect(
+      trustedGateway().readTextFileBounded("/selected/project/.codevo/launch.json", 262_144),
+    ).resolves.toEqual({ status: "tooLarge" });
+    expect(invoke).toHaveBeenCalledWith("workspace_read_text_file_bounded", {
+      workspaceId: "ws-1",
+      relativePath: ".codevo/launch.json",
+      maxBytes: 262_144,
+    });
+  });
+
+  it("uses the strict bounded directory contract and preserves the selected alias", async () => {
+    invoke.mockResolvedValue({
+      entries: [{ name: "App.php", relativePath: "App.php", kind: "file" }],
+      truncated: true,
+    });
+    await expect(
+      trustedGateway().readDirectoryBounded("/selected/project/src", 20_000),
+    ).resolves.toEqual({
+      entries: [{ name: "App.php", path: "/selected/project/src/App.php", kind: "file" }],
+      truncated: true,
+    });
+    expect(invoke).toHaveBeenCalledWith("workspace_read_directory_bounded", {
+      workspaceId: "ws-1",
+      relativePath: "src",
+      maxEntries: 20_000,
+    });
   });
 
   it("preserves the selected alias identity in returned explorer and search paths", async () => {
     invoke
       .mockResolvedValueOnce([{ name: "App.ts", relativePath: "App.ts", kind: "file" }])
       .mockResolvedValueOnce([{ name: "App.ts", relativePath: "App.ts" }])
-      .mockResolvedValueOnce([{ relativePath: "App.ts", lineNumber: 1, column: 1, lineText: "App" }]);
+      .mockResolvedValueOnce([
+        { relativePath: "App.ts", lineNumber: 1, column: 1, lineText: "App" },
+      ]);
     const gateway = trustedGateway();
     await expect(gateway.readDirectory("/selected/project/src")).resolves.toEqual([
       { name: "App.ts", path: "/selected/project/src/App.ts", kind: "file" },
@@ -454,10 +602,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       descriptorForPath: (path) => (path.includes("other") ? second : descriptor),
     });
     await expect(
-      gateway.renamePath(
-        "/selected/project/file.ts",
-        "/selected/other/file.ts",
-      ),
+      gateway.renamePath("/selected/project/file.ts", "/selected/other/file.ts"),
     ).rejects.toThrow("between trusted workspaces");
     expect(invoke).not.toHaveBeenCalled();
   });

@@ -1,6 +1,6 @@
 import { PanelBottomClose, ShieldCheck, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import type { PointerEvent } from "react";
+import type { PointerEvent, ReactNode } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import { bottomPanelLabel } from "../domain/bottomPanel";
 import type {
@@ -8,10 +8,7 @@ import type {
   ArtisanRoute,
   WorkbenchBottomPanelView,
 } from "../domain/artisanRoutes";
-import type {
-  IndexHealthLogEntry,
-  IndexProgressState,
-} from "../domain/indexProgress";
+import type { IndexHealthLogEntry, IndexProgressState } from "../domain/indexProgress";
 import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
 import { IndexHealthPanel } from "./IndexHealthPanel";
@@ -25,23 +22,39 @@ import { workspaceRelativePath } from "../domain/pathDerivation";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { ArtisanRoutesPanel } from "./ArtisanRoutesPanel";
 import type { PhpTestCase, PhpTestRunOk } from "../domain/phpTestResults";
-import type { TestCase, TestRunOk } from "../domain/testResults";
+import type { PhpCoverageMetric } from "../domain/phpCloverCoverage";
 import { PhpTestResultsPanel } from "./PhpTestResultsPanel";
-import { JsTestResultsPanel } from "./JsTestResultsPanel";
-import { DebugPanel, type DebugPanelProps } from "./DebugPanel";
+import { JsTestExplorerPanel, type JsTestExplorerPanelProps } from "./JsTestExplorerPanel";
+import { ExpressRoutesPanel, type ExpressRoutesPanelProps } from "./ExpressRoutesPanel";
+import {
+  PackageDependenciesPanel,
+  type PackageDependenciesPanelProps,
+} from "./PackageDependenciesPanel";
+import { SymfonyWorkspacePanel, type SymfonyWorkspacePanelProps } from "./SymfonyWorkspacePanel";
+import {
+  NetteOperationalWorkspacePanel,
+  type NetteOperationalWorkspacePanelProps,
+} from "./NetteOperationalWorkspacePanel";
 
 interface BottomPanelProps {
   activeView: WorkbenchBottomPanelView;
-  debug?: DebugPanelProps;
+  debug?: ReactNode;
   artisanRoutes?: ArtisanRoute[];
   artisanRoutesError?: string | null;
   artisanRoutesLoading?: boolean;
   artisanRoutesQuery?: string;
   artisanRoutesTotal?: number;
   artisanRoutesUnavailable?: string | null;
+  expressRoutesPanel?: ExpressRoutesPanelProps;
+  packageDependenciesPanel?: PackageDependenciesPanelProps;
+  netteWorkspacePanel?: NetteOperationalWorkspacePanelProps;
+  symfonyWorkspacePanel?: SymfonyWorkspacePanelProps;
   hasArtisan?: boolean;
+  hasExpressRoutes?: boolean;
   hasJsWorkspace?: boolean;
+  hasNette?: boolean;
   hasPhpWorkspace?: boolean;
+  hasSymfony?: boolean;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
@@ -54,9 +67,9 @@ interface BottomPanelProps {
   onOpenPhpTestCase?(testCase: PhpTestCase): void;
   onRunPhpTestCase?(testCase: PhpTestCase): void;
   onRunPhpTests?(): void;
-  onOpenJsTestCase?(testCase: TestCase): void;
-  onRunJsTestCase?(testCase: TestCase): void;
-  onRunJsTests?(): void;
+  onRunPhpTestCoverage?(): void;
+  onClearPhpTestCoverage?(): void;
+  jsTestExplorer?: JsTestExplorerPanelProps;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onRevealDirectoryInTree?(path: string): void;
@@ -76,6 +89,7 @@ interface BottomPanelProps {
     files?: FileChange[],
   ): Promise<void> | void;
   terminalGateway: TerminalGateway;
+  terminalOwnerKey?: string | null;
   terminalShellIntegrationEnabled: boolean;
   terminalTheme: TerminalTheme;
   workspaceTrusted: boolean;
@@ -85,11 +99,11 @@ interface BottomPanelProps {
   phpTestIsRunning?: boolean;
   phpTestResult?: PhpTestRunOk | null;
   phpTestUnavailable?: string | null;
-  jsTestError?: string | null;
-  jsTestFilter?: string | null;
-  jsTestIsRunning?: boolean;
-  jsTestResult?: TestRunOk | null;
-  jsTestUnavailable?: string | null;
+  phpTestCanRunCoverage?: boolean;
+  phpTestCoverageError?: string | null;
+  phpTestCoverageRunning?: boolean;
+  phpTestCoverageSummary?: PhpCoverageMetric | null;
+  phpTestCoverageUnavailable?: string | null;
 }
 
 const bottomPanelViews: WorkbenchBottomPanelView[] = [
@@ -100,9 +114,9 @@ const bottomPanelViews: WorkbenchBottomPanelView[] = [
   "terminal",
   "debug",
 ];
-const LazyTerminalPanel = lazy(() =>
-  import("./TerminalPanel").then((module) => ({
-    default: module.TerminalPanel,
+const LazyTerminalTabsPanel = lazy(() =>
+  import("./TerminalTabsPanel").then((module) => ({
+    default: module.TerminalTabsPanel,
   })),
 );
 
@@ -115,9 +129,16 @@ export function BottomPanel({
   artisanRoutesQuery = "",
   artisanRoutesTotal = 0,
   artisanRoutesUnavailable = null,
+  expressRoutesPanel,
+  packageDependenciesPanel,
+  netteWorkspacePanel,
+  symfonyWorkspacePanel,
   hasArtisan = false,
+  hasExpressRoutes = false,
   hasJsWorkspace = false,
+  hasNette = false,
   hasPhpWorkspace = false,
+  hasSymfony = false,
   indexHealthLogs,
   indexProgress,
   notices,
@@ -130,9 +151,9 @@ export function BottomPanel({
   onOpenPhpTestCase = () => undefined,
   onRunPhpTestCase = () => undefined,
   onRunPhpTests = () => undefined,
-  onOpenJsTestCase = () => undefined,
-  onRunJsTestCase = () => undefined,
-  onRunJsTests = () => undefined,
+  onRunPhpTestCoverage = () => undefined,
+  onClearPhpTestCoverage = () => undefined,
+  jsTestExplorer,
   onOpenProblem,
   onPhpReindex,
   onRevealDirectoryInTree,
@@ -147,6 +168,7 @@ export function BottomPanel({
   onTerminalSessionReady,
   onTrustWorkspace,
   terminalGateway,
+  terminalOwnerKey = null,
   terminalShellIntegrationEnabled,
   terminalTheme,
   workspaceTrusted,
@@ -156,32 +178,33 @@ export function BottomPanel({
   phpTestIsRunning = false,
   phpTestResult = null,
   phpTestUnavailable = null,
-  jsTestError = null,
-  jsTestFilter = null,
-  jsTestIsRunning = false,
-  jsTestResult = null,
-  jsTestUnavailable = null,
+  phpTestCanRunCoverage = false,
+  phpTestCoverageError = null,
+  phpTestCoverageRunning = false,
+  phpTestCoverageSummary = null,
+  phpTestCoverageUnavailable = null,
 }: BottomPanelProps) {
-  const [terminalMounted, setTerminalMounted] = useState(
-    activeView === "terminal",
-  );
-  const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>(
-    [],
-  );
-  const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<
-    string | null
-  >(null);
+  const effectiveActiveView =
+    (activeView === "expressRoutes" && !hasExpressRoutes) ||
+    (activeView === "packages" && !hasJsWorkspace) ||
+    (activeView === "nette" && !hasNette) ||
+    (activeView === "symfony" && !hasSymfony)
+      ? "problems"
+      : activeView;
+  const [terminalMounted, setTerminalMounted] = useState(effectiveActiveView === "terminal");
+  const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([]);
+  const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<string | null>(null);
   const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
   const workspaceRootRef = useRef(workspaceRoot);
   workspaceRootRef.current = workspaceRoot;
 
   useEffect(() => {
-    if (activeView !== "terminal") {
+    if (effectiveActiveView !== "terminal") {
       return;
     }
 
     setTerminalMounted(true);
-  }, [activeView]);
+  }, [effectiveActiveView]);
 
   useEffect(() => {
     setTerminalCwd(null);
@@ -225,7 +248,7 @@ export function BottomPanel({
   }, [terminalGateway, terminalMounted]);
 
   const activePanel = renderActivePanel({
-    activeView,
+    activeView: effectiveActiveView,
     debug,
     artisanRoutes,
     artisanRoutesError,
@@ -233,19 +256,27 @@ export function BottomPanel({
     artisanRoutesQuery,
     artisanRoutesTotal,
     artisanRoutesUnavailable,
+    expressRoutesPanel,
+    packageDependenciesPanel,
+    netteWorkspacePanel,
+    symfonyWorkspacePanel,
     hasArtisan,
+    hasExpressRoutes,
     hasJsWorkspace,
+    hasNette,
     hasPhpWorkspace,
+    hasSymfony,
     phpTestError,
     phpTestFilter,
     phpTestIsRunning,
     phpTestResult,
     phpTestUnavailable,
-    jsTestError,
-    jsTestFilter,
-    jsTestIsRunning,
-    jsTestResult,
-    jsTestUnavailable,
+    phpTestCanRunCoverage,
+    phpTestCoverageError,
+    phpTestCoverageRunning,
+    phpTestCoverageSummary,
+    phpTestCoverageUnavailable,
+    jsTestExplorer,
     indexHealthLogs,
     indexProgress,
     notices,
@@ -256,9 +287,8 @@ export function BottomPanel({
     onOpenPhpTestCase,
     onRunPhpTestCase,
     onRunPhpTests,
-    onOpenJsTestCase,
-    onRunJsTestCase,
-    onRunJsTests,
+    onRunPhpTestCoverage,
+    onClearPhpTestCoverage,
     onOpenProblem,
     onPhpReindex,
     onOpenCommitFileDiff,
@@ -280,24 +310,20 @@ export function BottomPanel({
         role="separator"
       />
       <header className="bottom-panel-header">
-        <div
-          aria-label="Panel views"
-          className="bottom-panel-tabs"
-          role="tablist"
-        >
+        <div aria-label="Panel views" className="bottom-panel-tabs" role="tablist">
           {[
             ...bottomPanelViews,
             ...(hasArtisan ? (["routes"] as const) : []),
-            ...(hasArtisan || hasPhpWorkspace || hasJsWorkspace
-              ? (["testResults"] as const)
-              : []),
+            ...(hasExpressRoutes ? (["expressRoutes"] as const) : []),
+            ...(hasJsWorkspace ? (["packages"] as const) : []),
+            ...(hasNette ? (["nette"] as const) : []),
+            ...(hasSymfony ? (["symfony"] as const) : []),
+            ...(hasArtisan || hasPhpWorkspace || hasJsWorkspace ? (["testResults"] as const) : []),
           ].map((view) => (
             <button
-              aria-selected={activeView === view}
+              aria-selected={effectiveActiveView === view}
               className={
-                activeView === view
-                  ? "bottom-panel-tab active"
-                  : "bottom-panel-tab"
+                effectiveActiveView === view ? "bottom-panel-tab active" : "bottom-panel-tab"
               }
               key={view}
               onClick={() => onSelectView(view)}
@@ -306,13 +332,21 @@ export function BottomPanel({
             >
               {view === "routes"
                 ? "Routes"
-                : view === "testResults"
-                  ? "Tests"
-                  : bottomPanelLabel(view)}
+                : view === "expressRoutes"
+                  ? "Express Routes"
+                  : view === "packages"
+                    ? "Packages"
+                    : view === "nette"
+                      ? "Nette"
+                      : view === "symfony"
+                        ? "Symfony"
+                        : view === "testResults"
+                          ? "Tests"
+                          : bottomPanelLabel(view)}
             </button>
           ))}
         </div>
-        {activeView === "problems" && notices.length > 0 ? (
+        {effectiveActiveView === "problems" && notices.length > 0 ? (
           <button
             className="bottom-panel-action"
             onClick={onClearProblems}
@@ -322,7 +356,7 @@ export function BottomPanel({
             <X aria-hidden="true" size={14} />
           </button>
         ) : null}
-        {activeView === "terminal" && workspaceRoot && !workspaceTrusted ? (
+        {effectiveActiveView === "terminal" && workspaceRoot && !workspaceTrusted ? (
           <button
             className="bottom-panel-text-action"
             onClick={onTrustWorkspace}
@@ -333,7 +367,18 @@ export function BottomPanel({
             Trust
           </button>
         ) : null}
-        {activeView === "terminal" && terminalProfiles.length > 0 ? (
+        {effectiveActiveView === "symfony" && workspaceRoot && !workspaceTrusted ? (
+          <button
+            className="bottom-panel-text-action"
+            onClick={onTrustWorkspace}
+            title="Trust workspace"
+            type="button"
+          >
+            <ShieldCheck aria-hidden="true" size={14} />
+            Trust
+          </button>
+        ) : null}
+        {effectiveActiveView === "terminal" && terminalProfiles.length > 0 ? (
           <select
             aria-label="Terminal profile"
             className="terminal-profile-select"
@@ -347,7 +392,7 @@ export function BottomPanel({
             ))}
           </select>
         ) : null}
-        {activeView === "terminal" &&
+        {effectiveActiveView === "terminal" &&
         terminalCwd &&
         workspaceRoot &&
         onRevealDirectoryInTree &&
@@ -361,17 +406,12 @@ export function BottomPanel({
           >
             {terminalCwd}
           </button>
-        ) : activeView === "terminal" && terminalCwd ? (
+        ) : effectiveActiveView === "terminal" && terminalCwd ? (
           <span className="bottom-panel-subtitle" title={terminalCwd}>
             {terminalCwd}
           </span>
         ) : null}
-        <button
-          className="bottom-panel-action"
-          onClick={onClose}
-          title="Hide panel"
-          type="button"
-        >
+        <button className="bottom-panel-action" onClick={onClose} title="Hide panel" type="button">
           <PanelBottomClose aria-hidden="true" size={14} />
         </button>
       </header>
@@ -383,14 +423,18 @@ export function BottomPanel({
               <div
                 aria-label="Terminal"
                 className="terminal-panel"
-                hidden={activeView !== "terminal"}
+                hidden={effectiveActiveView !== "terminal"}
                 role="tabpanel"
               />
             }
           >
-            <LazyTerminalPanel
-              isActive={activeView === "terminal"}
-              onCwdChange={setTerminalCwd}
+            <LazyTerminalTabsPanel
+              isActive={effectiveActiveView === "terminal"}
+              key={terminalTabsOwnerKey(terminalOwnerKey, workspaceRoot)}
+              onActiveCwdChange={setTerminalCwd}
+              onActiveProfileChange={(profileId) =>
+                setSelectedTerminalProfileId(profileId ?? terminalProfiles[0]?.id ?? null)
+              }
               onOpenLink={(path, line, column) => {
                 const requestedRoot = workspaceRoot;
 
@@ -398,12 +442,7 @@ export function BottomPanel({
                   return;
                 }
 
-                if (
-                  !workspaceRootKeysEqual(
-                    workspaceRootRef.current,
-                    requestedRoot,
-                  )
-                ) {
+                if (!workspaceRootKeysEqual(workspaceRootRef.current, requestedRoot)) {
                   return;
                 }
 
@@ -422,8 +461,12 @@ export function BottomPanel({
                   source: "Terminal",
                 });
               }}
-              onSessionReady={onTerminalSessionReady}
+              onActiveSessionReady={onTerminalSessionReady}
+              ownerKey={terminalTabsOwnerKey(terminalOwnerKey, workspaceRoot)}
               profileId={selectedTerminalProfileId}
+              profileLabel={
+                terminalProfiles.find(({ id }) => id === selectedTerminalProfileId)?.label ?? null
+              }
               shellIntegrationEnabled={terminalShellIntegrationEnabled}
               rootPath={workspaceRoot}
               terminalGateway={terminalGateway}
@@ -436,28 +479,40 @@ export function BottomPanel({
   );
 }
 
+function terminalTabsOwnerKey(ownerKey: string | null, rootPath: string | null): string {
+  return ownerKey && rootPath ? JSON.stringify([ownerKey, rootPath]) : "no-workspace";
+}
+
 interface RenderActivePanelOptions {
   activeView: WorkbenchBottomPanelView;
-  debug?: DebugPanelProps;
+  debug?: ReactNode;
   artisanRoutes: ArtisanRoute[];
   artisanRoutesError: string | null;
   artisanRoutesLoading: boolean;
   artisanRoutesQuery: string;
   artisanRoutesTotal: number;
   artisanRoutesUnavailable: string | null;
+  expressRoutesPanel?: ExpressRoutesPanelProps;
+  packageDependenciesPanel?: PackageDependenciesPanelProps;
+  netteWorkspacePanel?: NetteOperationalWorkspacePanelProps;
+  symfonyWorkspacePanel?: SymfonyWorkspacePanelProps;
   hasArtisan: boolean;
+  hasExpressRoutes: boolean;
   hasJsWorkspace: boolean;
+  hasNette: boolean;
   hasPhpWorkspace: boolean;
+  hasSymfony: boolean;
   phpTestError: string | null;
   phpTestFilter: string | null;
   phpTestIsRunning: boolean;
   phpTestResult: PhpTestRunOk | null;
   phpTestUnavailable: string | null;
-  jsTestError: string | null;
-  jsTestFilter: string | null;
-  jsTestIsRunning: boolean;
-  jsTestResult: TestRunOk | null;
-  jsTestUnavailable: string | null;
+  phpTestCanRunCoverage: boolean;
+  phpTestCoverageError: string | null;
+  phpTestCoverageRunning: boolean;
+  phpTestCoverageSummary: PhpCoverageMetric | null;
+  phpTestCoverageUnavailable: string | null;
+  jsTestExplorer?: JsTestExplorerPanelProps;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
@@ -468,9 +523,8 @@ interface RenderActivePanelOptions {
   onOpenPhpTestCase(testCase: PhpTestCase): void;
   onRunPhpTestCase(testCase: PhpTestCase): void;
   onRunPhpTests(): void;
-  onOpenJsTestCase(testCase: TestCase): void;
-  onRunJsTestCase(testCase: TestCase): void;
-  onRunJsTests(): void;
+  onRunPhpTestCoverage(): void;
+  onClearPhpTestCoverage(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onSoftReindex(): void;
@@ -510,19 +564,27 @@ function renderActivePanel({
   artisanRoutesQuery,
   artisanRoutesTotal,
   artisanRoutesUnavailable,
+  expressRoutesPanel,
+  packageDependenciesPanel,
+  netteWorkspacePanel,
+  symfonyWorkspacePanel,
   hasArtisan,
+  hasExpressRoutes,
   hasJsWorkspace,
+  hasNette,
   hasPhpWorkspace,
+  hasSymfony,
   phpTestError,
   phpTestFilter,
   phpTestIsRunning,
   phpTestResult,
   phpTestUnavailable,
-  jsTestError,
-  jsTestFilter,
-  jsTestIsRunning,
-  jsTestResult,
-  jsTestUnavailable,
+  phpTestCanRunCoverage,
+  phpTestCoverageError,
+  phpTestCoverageRunning,
+  phpTestCoverageSummary,
+  phpTestCoverageUnavailable,
+  jsTestExplorer,
   indexHealthLogs,
   indexProgress,
   notices,
@@ -533,9 +595,8 @@ function renderActivePanel({
   onOpenPhpTestCase,
   onRunPhpTestCase,
   onRunPhpTests,
-  onOpenJsTestCase,
-  onRunJsTestCase,
-  onRunJsTests,
+  onRunPhpTestCoverage,
+  onClearPhpTestCoverage,
   onOpenProblem,
   onPhpReindex,
   onOpenCommitFileDiff,
@@ -546,41 +607,60 @@ function renderActivePanel({
   getLatencySnapshot,
   workspaceRoot,
 }: RenderActivePanelOptions) {
+  if (activeView === "nette") {
+    return hasNette && netteWorkspacePanel ? (
+      <NetteOperationalWorkspacePanel {...netteWorkspacePanel} />
+    ) : null;
+  }
+
+  if (activeView === "symfony") {
+    return hasSymfony && symfonyWorkspacePanel ? (
+      <SymfonyWorkspacePanel {...symfonyWorkspacePanel} />
+    ) : null;
+  }
+
+  if (activeView === "packages") {
+    return hasJsWorkspace && packageDependenciesPanel ? (
+      <PackageDependenciesPanel {...packageDependenciesPanel} />
+    ) : null;
+  }
+
+  if (activeView === "expressRoutes") {
+    return hasExpressRoutes && expressRoutesPanel ? (
+      <ExpressRoutesPanel {...expressRoutesPanel} />
+    ) : null;
+  }
+
   if (activeView === "debug") {
     if (!debug) {
       return null;
     }
 
-    return <DebugPanel {...debug} />;
+    return debug;
   }
 
   if (activeView === "testResults") {
     const phpPanel = (
       <PhpTestResultsPanel
+        canRunCoverage={phpTestCanRunCoverage}
+        coverageError={phpTestCoverageError}
+        coverageRunning={phpTestCoverageRunning}
+        coverageSummary={phpTestCoverageSummary}
+        coverageUnavailable={phpTestCoverageUnavailable}
         error={phpTestError}
         filter={phpTestFilter}
         isRunning={phpTestIsRunning}
         onOpenCase={onOpenPhpTestCase}
+        onClearCoverage={onClearPhpTestCoverage}
         onRun={onRunPhpTests}
+        onRunCoverage={onRunPhpTestCoverage}
         onRunCase={onRunPhpTestCase}
         result={phpTestResult}
         rootPath={workspaceRoot}
         unavailable={phpTestUnavailable}
       />
     );
-    const jsPanel = (
-      <JsTestResultsPanel
-        error={jsTestError}
-        filter={jsTestFilter}
-        isRunning={jsTestIsRunning}
-        onOpenCase={onOpenJsTestCase}
-        onRun={onRunJsTests}
-        onRunCase={onRunJsTestCase}
-        result={jsTestResult}
-        rootPath={workspaceRoot}
-        unavailable={jsTestUnavailable}
-      />
-    );
+    const jsPanel = jsTestExplorer ? <JsTestExplorerPanel {...jsTestExplorer} /> : null;
     const showJsBlock = hasJsWorkspace;
     const showPhpBlock = hasArtisan || hasPhpWorkspace || !showJsBlock;
 

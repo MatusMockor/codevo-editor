@@ -1,13 +1,20 @@
 import {
   ArrowDownToDot,
   ArrowUpFromDot,
+  CircleCheckBig,
+  CircleOff,
+  Copy,
   Pause,
   Play,
+  RotateCw,
   Square,
   StepForward,
+  Trash2,
+  Unplug,
   X,
 } from "lucide-react";
 import {
+  useId,
   useEffect,
   useRef,
   useState,
@@ -17,43 +24,166 @@ import {
 } from "react";
 import type {
   Breakpoint,
+  BreakpointHitCondition,
+  DebugExceptionPauseMode,
   DebugScope,
   DebugVariable,
   StackFrame,
   StepKind,
 } from "../domain/debug";
 import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
-import type { DebugOutputLine } from "../application/useDebugSession";
+import type { ActiveDebugAdapterKind } from "../application/useDebugSession";
+import type { DebugVariableMutationRows } from "../application/debugSessionContracts";
+import type { UseDebugConsoleResult } from "../application/useDebugConsole";
+import type { DebugConsoleFocusRequest } from "../application/useDebugConsoleSurfaceCommands";
 import { workspaceRelativePath } from "../domain/pathDerivation";
+import { isBreakpointPathSupported } from "../domain/debugBreakpointPolicy";
+import {
+  breakpointHitConditionError,
+  formatBreakpointHitCondition,
+  parseBreakpointHitCondition,
+} from "../domain/debugBreakpointHitCondition";
+import {
+  breakpointLogMessageError,
+  isBreakpointLogMessage,
+} from "../domain/debugBreakpointLogMessage";
+import { DebugWatchesPanel, type DebugWatchesPanelProps } from "./DebugWatchesPanel";
+import {
+  DebugConsolePanel,
+  type DebugConsoleCompletionItem,
+  type DebugConsoleCompletionModel,
+  type DebugConsoleCompletionReplacement,
+  type DebugConsoleCompletionRequest,
+} from "./DebugConsolePanel";
+import type { DebugInspectionOwner, DebugVariablePagesState } from "../domain/debugVariablePages";
+import { DebugVariableTree, type DebugVariableTreeRoot } from "./DebugVariableTree";
+import {
+  NodeDebugLaunchSelector,
+  type NodeDebugLaunchSelectorProps,
+} from "./NodeDebugLaunchSelector";
+import { NodeDebugConfigurationPicker } from "./NodeDebugConfigurationPicker";
+import type { NodeLaunchConfigurationPickerDiagnosticNotice } from "./NodeLaunchConfigurationPicker";
+import {
+  NodeRunWithoutDebuggingPickerAction,
+  type NodeRunWithoutDebuggingPickerCommand,
+} from "./NodeRunWithoutDebuggingPickerAction";
+import { NodeLaunchConfigurationsAction } from "./NodeLaunchConfigurationsAction";
+import type {
+  DebugCopyDisplayedValueSurface,
+  DebugCopyValueSurface,
+} from "./debugCopyValueSurface";
+import type { DebugSetVariableSurface } from "./debugSetVariableSurface";
+import type { DebugAddToWatchVariableSurface } from "./debugAddToWatchSurface";
+
+type NodeLaunchConfigurationsProps = Omit<
+  NodeDebugLaunchSelectorProps,
+  "mutationPending" | "sessionActive" | "workspaceTrusted"
+> & {
+  readonly diagnosticNotice?: NodeLaunchConfigurationPickerDiagnosticNotice;
+  readonly onClosePicker?: () => void;
+  readonly onStartNamed?: (name: string) => void;
+  readonly pickerOpen?: boolean;
+};
+
+const EMPTY_STACK_FRAMES: readonly StackFrame[] = Object.freeze([]);
+
+export interface DebugCopyStackTraceCommand {
+  canCopyStackTrace(): boolean;
+  copyStackTrace(): boolean;
+}
+
+export interface DebugRestartFrameCommand {
+  canRestartFrame(): boolean;
+  restartFrame(): boolean;
+}
+
+export interface DebugCopyValuePanelSurfaces {
+  readonly console: DebugCopyDisplayedValueSurface;
+  readonly variables: DebugCopyValueSurface;
+  readonly watch: DebugCopyValueSurface;
+}
 
 export interface DebugPanelProps {
+  breakpointBulkMutationPending?: boolean;
+  breakpointsActivated?: boolean;
+  canToggleBreakpointsActivated?: boolean;
+  breakpointCounts?: {
+    readonly disabled: number;
+    readonly enabled: number;
+  };
   breakpoints: Breakpoint[];
-  evaluationHistory: string[];
+  canRestartDebug?: boolean;
+  canClearConsole?: boolean;
+  console: UseDebugConsoleResult;
+  consoleCompletion?: DebugConsoleCompletionModel | null;
+  consoleFocusRequest?: DebugConsoleFocusRequest | null;
+  consoleWorkspaceOwnerKey?: string | null;
+  debugAdapterKind: ActiveDebugAdapterKind;
+  debugAddToWatch?: DebugAddToWatchVariableSurface;
+  debugControlPending?: boolean;
+  debugCompoundStartPending?: boolean;
+  debugCopyValue?: DebugCopyValuePanelSurfaces;
+  debugSetVariable?: DebugSetVariableSurface;
+  debugCopyStackTrace?: DebugCopyStackTraceCommand;
+  debugRestartFrame?: DebugRestartFrameCommand;
+  debugRestartPending?: boolean;
+  debugStopPending?: boolean;
+  debugSessionAttached?: boolean;
   lastStartError: string | null;
+  exceptionPauseError: string | null;
+  exceptionPauseMode: DebugExceptionPauseMode;
+  exceptionPausePending: boolean;
+  hasJavaScriptTypeScriptWorkspace: boolean;
+  nodeLaunchConfigurations?: NodeLaunchConfigurationsProps;
+  nodeRunWithoutDebuggingPicker?: NodeRunWithoutDebuggingPickerCommand;
+  onOpenNodeLaunchConfigurations?: () => void;
   onLoadVariables(variablesReference: number): void;
-  onEvaluate(expression: string): Promise<DebugVariable | null>;
+  onClearConsole?(): void;
+  onConsoleFocusRequestHandled?(request: DebugConsoleFocusRequest): void;
+  onConsoleCompletionAccept?(
+    item: DebugConsoleCompletionItem,
+    request: DebugConsoleCompletionRequest,
+  ): DebugConsoleCompletionReplacement | null;
+  onConsoleCompletionDismiss?(): void;
+  onConsoleCompletionInputChanged?(request: DebugConsoleCompletionRequest): void;
+  onConsoleCompletionRequest?(request: DebugConsoleCompletionRequest): void;
+  onDisableAllBreakpoints?(): void;
+  onDisconnect(): void;
+  onEnableAllBreakpoints?(): void;
+  onToggleBreakpointsActivated?(): void;
   onNavigateToBreakpoint(breakpoint: Breakpoint): void;
   onNavigateToFrame(filePath: string, lineNumber: number): void;
   onPause(): void;
+  onRestart?(): void;
   onRemoveBreakpoint(id: string): void;
+  onRemoveAllBreakpoints?(): void;
   onSelectFrame(frameId: number): void;
   onSetBreakpointCondition(id: string, condition: string | null): void;
+  onSetBreakpointHitCondition(id: string, hitCondition: BreakpointHitCondition | null): void;
+  onSetBreakpointLogMessage(id: string, logMessage: string | null): void;
   onSetBreakpointEnabled(id: string, enabled: boolean): void;
+  onSetExceptionPauseMode(mode: DebugExceptionPauseMode): void;
   onStep(kind: StepKind): void;
   onStop(): void;
-  output: DebugOutputLine[];
   rootPath: string | null;
   scopes: DebugScope[];
   selectedFrameId: number | null;
   snapshot: DebuggerSessionSnapshot;
   variablesByReference: Record<number, DebugVariable[]>;
+  inspectionOwner?: DebugInspectionOwner | null;
+  variablePages?: DebugVariablePagesState;
+  variableMutationRows?: DebugVariableMutationRows;
+  onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
+  watches: Omit<
+    DebugWatchesPanelProps,
+    | "debugAdapterKind"
+    | "sessionState"
+    | "setVariableSurface"
+    | "variableMutationRows"
+    | "workspaceRoot"
+    | "workspaceTrusted"
+  >;
   workspaceTrusted: boolean;
-}
-
-interface DebugConsoleEvaluation {
-  expression: string;
-  result: DebugVariable | null;
-  error: string | null;
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -72,6 +202,12 @@ const styles: Record<string, CSSProperties> = {
     gap: 6,
     padding: "3px 8px",
   },
+  exceptionPause: {
+    borderBottom: "1px solid var(--border-subtle)",
+    display: "grid",
+    gap: 4,
+    padding: "6px 8px",
+  },
   column: {
     borderRight: "1px solid var(--border-subtle)",
     minHeight: 0,
@@ -82,9 +218,21 @@ const styles: Record<string, CSSProperties> = {
     display: "block",
     padding: "4px 8px",
   },
+  columnTitleBar: {
+    alignItems: "center",
+    borderBottom: "1px solid var(--border-subtle)",
+    display: "flex",
+    justifyContent: "space-between",
+    padding: "4px 8px",
+  },
+  columnTitleActions: {
+    alignItems: "center",
+    display: "inline-flex",
+    gap: 4,
+  },
   columns: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     minHeight: 0,
   },
   conditionInput: {
@@ -102,25 +250,6 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
-  },
-  consoleBody: {
-    flex: 1,
-    fontFamily: "var(--font-mono, monospace)",
-    fontSize: 12,
-    overflow: "auto",
-    padding: "4px 8px",
-  },
-  consoleInput: {
-    background: "transparent",
-    border: 0,
-    borderTop: "1px solid var(--border-subtle)",
-    boxSizing: "border-box",
-    color: "inherit",
-    fontFamily: "var(--font-mono, monospace)",
-    fontSize: 12,
-    outline: "none",
-    padding: "5px 8px",
-    width: "100%",
   },
   frame: {
     background: "transparent",
@@ -151,7 +280,6 @@ const styles: Record<string, CSSProperties> = {
   },
   message: { color: "var(--text-muted)", padding: 8 },
   muted: { color: "var(--text-muted)" },
-  outputLine: { whiteSpace: "pre-wrap" },
   panel: {
     display: "grid",
     gridTemplateRows: "auto minmax(0, 1fr) minmax(0, 35%)",
@@ -174,73 +302,191 @@ const styles: Record<string, CSSProperties> = {
 };
 
 export function DebugPanel({
+  breakpointBulkMutationPending = false,
+  breakpointsActivated = true,
+  breakpointCounts = { disabled: 0, enabled: 0 },
   breakpoints,
-  evaluationHistory,
+  canRestartDebug = false,
+  canToggleBreakpointsActivated = false,
+  canClearConsole = false,
+  console,
+  consoleCompletion,
+  consoleFocusRequest = null,
+  consoleWorkspaceOwnerKey = null,
+  debugAdapterKind,
+  debugAddToWatch,
+  debugControlPending = false,
+  debugCompoundStartPending = false,
+  debugCopyValue,
+  debugSetVariable,
+  debugCopyStackTrace,
+  debugRestartFrame,
+  debugRestartPending = false,
+  debugStopPending = false,
+  debugSessionAttached = false,
+  exceptionPauseError,
+  exceptionPauseMode,
+  exceptionPausePending,
+  hasJavaScriptTypeScriptWorkspace,
   lastStartError,
+  nodeLaunchConfigurations,
+  nodeRunWithoutDebuggingPicker,
+  onOpenNodeLaunchConfigurations,
+  onDisableAllBreakpoints,
+  onDisconnect,
+  onEnableAllBreakpoints,
+  onToggleBreakpointsActivated,
   onLoadVariables,
-  onEvaluate,
+  onClearConsole,
+  onConsoleCompletionAccept,
+  onConsoleCompletionDismiss,
+  onConsoleCompletionInputChanged,
+  onConsoleCompletionRequest,
+  onConsoleFocusRequestHandled,
+  onLoadVariablePage,
   onNavigateToBreakpoint,
   onNavigateToFrame,
   onPause,
+  onRestart,
   onRemoveBreakpoint,
+  onRemoveAllBreakpoints,
   onSelectFrame,
   onSetBreakpointCondition,
+  onSetBreakpointHitCondition,
+  onSetBreakpointLogMessage,
   onSetBreakpointEnabled,
+  onSetExceptionPauseMode,
   onStep,
   onStop,
-  output,
   rootPath,
   scopes,
   selectedFrameId,
   snapshot,
   variablesByReference,
+  inspectionOwner,
+  variablePages,
+  variableMutationRows,
+  watches,
   workspaceTrusted,
 }: DebugPanelProps) {
   const state = snapshot.state;
   const stopped = state.kind === "stopped";
   const running = state.kind === "running";
+  const sessionActive =
+    running || stopped || state.kind === "starting" || debugCompoundStartPending;
+  const copyStackTraceVisible = canCopyStackTrace(debugCopyStackTrace);
+  const nodeConfigurationPickerVisible =
+    hasJavaScriptTypeScriptWorkspace &&
+    Boolean(nodeLaunchConfigurations?.pickerOpen) &&
+    workspaceTrusted &&
+    !sessionActive &&
+    !debugStopPending &&
+    !debugRestartPending;
+  const exceptionPauseDisabled =
+    exceptionPausePending ||
+    !workspaceTrusted ||
+    (sessionActive ? debugAdapterKind !== "node" : !hasJavaScriptTypeScriptWorkspace);
 
   return (
     <div aria-label="Debug" role="tabpanel" style={styles.panel}>
       <div style={styles.toolbar}>
         <ToolbarButton
-          disabled={!stopped}
+          disabled={!stopped || !workspaceTrusted || debugRestartPending || debugStopPending}
           label="Continue"
           onClick={() => onStep("continue")}
         >
           <Play aria-hidden="true" size={14} />
         </ToolbarButton>
-        <ToolbarButton disabled={!running} label="Pause" onClick={onPause}>
+        <ToolbarButton
+          disabled={!running || !workspaceTrusted || debugRestartPending || debugStopPending}
+          label="Pause"
+          onClick={onPause}
+        >
           <Pause aria-hidden="true" size={14} />
         </ToolbarButton>
         <ToolbarButton
-          disabled={!stopped}
+          busy={debugRestartPending}
+          disabled={
+            (!running && !stopped) ||
+            debugAdapterKind !== "node" ||
+            !workspaceTrusted ||
+            !canRestartDebug ||
+            debugRestartPending ||
+            debugStopPending ||
+            !onRestart
+          }
+          label="Restart debugging"
+          onClick={() => onRestart?.()}
+          title={
+            debugRestartPending
+              ? "Restarting debugging"
+              : debugStopPending
+                ? "Stopping debugging"
+                : "Restart debugging"
+          }
+        >
+          <RotateCw aria-hidden="true" size={14} />
+        </ToolbarButton>
+        <ToolbarButton
+          disabled={!stopped || !workspaceTrusted || debugRestartPending || debugStopPending}
           label="Step over"
           onClick={() => onStep("stepOver")}
         >
           <StepForward aria-hidden="true" size={14} />
         </ToolbarButton>
         <ToolbarButton
-          disabled={!stopped}
+          disabled={!stopped || !workspaceTrusted || debugRestartPending || debugStopPending}
           label="Step into"
           onClick={() => onStep("stepInto")}
         >
           <ArrowDownToDot aria-hidden="true" size={14} />
         </ToolbarButton>
         <ToolbarButton
-          disabled={!stopped}
+          disabled={!stopped || !workspaceTrusted || debugRestartPending || debugStopPending}
           label="Step out"
           onClick={() => onStep("stepOut")}
         >
           <ArrowUpFromDot aria-hidden="true" size={14} />
         </ToolbarButton>
         <ToolbarButton
-          disabled={!running && !stopped && state.kind !== "starting"}
-          label="Stop debugging"
-          onClick={onStop}
+          busy={debugStopPending}
+          disabled={
+            debugRestartPending ||
+            debugStopPending ||
+            (!running && !stopped && state.kind !== "starting" && !debugCompoundStartPending)
+          }
+          label={debugSessionAttached ? "Disconnect debugging" : "Stop debugging"}
+          onClick={debugSessionAttached ? onDisconnect : onStop}
+          title={
+            debugStopPending
+              ? debugSessionAttached
+                ? "Disconnecting debugging"
+                : "Stopping debugging"
+              : debugSessionAttached
+                ? "Disconnect debugging"
+                : "Stop debugging"
+          }
         >
-          <Square aria-hidden="true" size={14} />
+          {debugSessionAttached ? (
+            <Unplug aria-hidden="true" size={14} />
+          ) : (
+            <Square aria-hidden="true" size={14} />
+          )}
         </ToolbarButton>
+        {hasJavaScriptTypeScriptWorkspace && nodeLaunchConfigurations ? (
+          <NodeDebugLaunchSelector
+            {...nodeLaunchConfigurations}
+            mutationPending={debugStopPending || debugRestartPending}
+            sessionActive={sessionActive}
+            workspaceTrusted={workspaceTrusted}
+          />
+        ) : null}
+        {hasJavaScriptTypeScriptWorkspace && nodeRunWithoutDebuggingPicker ? (
+          <NodeRunWithoutDebuggingPickerAction command={nodeRunWithoutDebuggingPicker} />
+        ) : null}
+        {hasJavaScriptTypeScriptWorkspace && onOpenNodeLaunchConfigurations ? (
+          <NodeLaunchConfigurationsAction onOpen={onOpenNodeLaunchConfigurations} />
+        ) : null}
         <span data-testid="debug-status" style={styles.muted}>
           {debuggerStatusLabel(snapshot)}
         </span>
@@ -252,72 +498,268 @@ export function DebugPanel({
       </div>
       <div style={styles.columns}>
         <section aria-label="Call Stack" style={styles.column}>
-          <strong style={styles.columnTitle}>Call Stack</strong>
+          <div style={styles.columnTitleBar}>
+            <strong>Call Stack</strong>
+            {copyStackTraceVisible ? (
+              <span
+                aria-label="Call stack actions"
+                role="toolbar"
+                style={styles.columnTitleActions}
+              >
+                <ToolbarButton
+                  disabled={false}
+                  label="Copy Call Stack"
+                  onClick={() => {
+                    if (canCopyStackTrace(debugCopyStackTrace)) {
+                      debugCopyStackTrace?.copyStackTrace();
+                    }
+                  }}
+                  title="Copy Call Stack"
+                >
+                  <Copy aria-hidden="true" size={12} />
+                </ToolbarButton>
+              </span>
+            ) : null}
+          </div>
           <CallStack
+            debugAdapterKind={debugAdapterKind}
+            debugControlPending={debugControlPending}
+            debugRestartFrame={debugRestartFrame}
             onNavigateToFrame={onNavigateToFrame}
             onSelectFrame={onSelectFrame}
             rootPath={rootPath}
             selectedFrameId={selectedFrameId}
             snapshot={snapshot}
+            workspaceTrusted={workspaceTrusted}
           />
         </section>
         <section aria-label="Variables" style={styles.column}>
           <strong style={styles.columnTitle}>Variables</strong>
           <Variables
+            addToWatchSurface={debugAddToWatch}
+            copyValueSurface={debugCopyValue?.variables}
+            inspectionOwner={inspectionOwner}
+            onLoadVariablePage={onLoadVariablePage}
             onLoadVariables={onLoadVariables}
             scopes={scopes}
+            setVariableSurface={debugSetVariable}
             stopped={stopped}
+            variablePages={variablePages}
+            variableMutationRows={variableMutationRows}
             variablesByReference={variablesByReference}
           />
         </section>
-        <section
-          aria-label="Breakpoints"
-          style={{ ...styles.column, borderRight: 0 }}
-        >
-          <strong style={styles.columnTitle}>Breakpoints</strong>
+        <section aria-label="Breakpoints" style={styles.column}>
+          <div style={styles.columnTitleBar}>
+            <strong>Breakpoints</strong>
+            <span
+              aria-busy={breakpointBulkMutationPending || undefined}
+              aria-label="Breakpoint actions"
+              role="toolbar"
+              style={styles.columnTitleActions}
+            >
+              {debugAdapterKind === "node" ? (
+                <ToolbarButton
+                  busy={debugControlPending}
+                  disabled={
+                    !canToggleBreakpointsActivated ||
+                    breakpointBulkMutationPending ||
+                    debugControlPending ||
+                    !onToggleBreakpointsActivated
+                  }
+                  label={breakpointsActivated ? "Deactivate breakpoints" : "Activate breakpoints"}
+                  onClick={() => onToggleBreakpointsActivated?.()}
+                  pressed={breakpointsActivated}
+                  title={
+                    debugControlPending
+                      ? "Updating breakpoint activation"
+                      : breakpointsActivated
+                        ? "Deactivate breakpoints"
+                        : "Activate breakpoints"
+                  }
+                >
+                  {breakpointsActivated ? (
+                    <CircleCheckBig aria-hidden="true" size={12} />
+                  ) : (
+                    <CircleOff aria-hidden="true" size={12} />
+                  )}
+                </ToolbarButton>
+              ) : null}
+              <ToolbarButton
+                busy={breakpointBulkMutationPending}
+                disabled={
+                  breakpointCounts.disabled === 0 ||
+                  breakpointBulkMutationPending ||
+                  !onEnableAllBreakpoints
+                }
+                label="Enable all breakpoints"
+                onClick={() => onEnableAllBreakpoints?.()}
+                title={
+                  breakpointBulkMutationPending ? "Updating breakpoints" : "Enable all breakpoints"
+                }
+              >
+                <CircleCheckBig aria-hidden="true" size={12} />
+              </ToolbarButton>
+              <ToolbarButton
+                busy={breakpointBulkMutationPending}
+                disabled={
+                  breakpointCounts.enabled === 0 ||
+                  breakpointBulkMutationPending ||
+                  !onDisableAllBreakpoints
+                }
+                label="Disable all breakpoints"
+                onClick={() => onDisableAllBreakpoints?.()}
+                title={
+                  breakpointBulkMutationPending ? "Updating breakpoints" : "Disable all breakpoints"
+                }
+              >
+                <CircleOff aria-hidden="true" size={12} />
+              </ToolbarButton>
+              <ToolbarButton
+                busy={breakpointBulkMutationPending}
+                disabled={
+                  breakpointCounts.enabled + breakpointCounts.disabled === 0 ||
+                  breakpointBulkMutationPending ||
+                  !onRemoveAllBreakpoints
+                }
+                label="Remove all breakpoints"
+                onClick={() => onRemoveAllBreakpoints?.()}
+                title={
+                  breakpointBulkMutationPending ? "Updating breakpoints" : "Remove all breakpoints"
+                }
+              >
+                <Trash2 aria-hidden="true" size={12} />
+              </ToolbarButton>
+            </span>
+          </div>
+          <label aria-busy={exceptionPausePending} style={styles.exceptionPause}>
+            <span>Pause on exceptions</span>
+            <select
+              aria-label="Pause on exceptions"
+              disabled={exceptionPauseDisabled}
+              onChange={(event) =>
+                onSetExceptionPauseMode(event.target.value as DebugExceptionPauseMode)
+              }
+              value={exceptionPauseMode}
+            >
+              <option value="none">None</option>
+              <option value="uncaught">Uncaught</option>
+              <option value="all">All</option>
+            </select>
+            {exceptionPauseError ? (
+              <span role="alert" style={styles.stderr}>
+                {exceptionPauseError}
+              </span>
+            ) : null}
+          </label>
           <Breakpoints
             breakpoints={breakpoints}
             onNavigateToBreakpoint={onNavigateToBreakpoint}
             onRemoveBreakpoint={onRemoveBreakpoint}
             onSetBreakpointCondition={onSetBreakpointCondition}
+            onSetBreakpointHitCondition={onSetBreakpointHitCondition}
+            onSetBreakpointLogMessage={onSetBreakpointLogMessage}
             onSetBreakpointEnabled={onSetBreakpointEnabled}
+            supportsHitConditions={debugAdapterKind !== "php" && hasJavaScriptTypeScriptWorkspace}
+            supportsLogpoints={debugAdapterKind !== "php" && hasJavaScriptTypeScriptWorkspace}
             rootPath={rootPath}
           />
         </section>
+        <div style={{ ...styles.column, borderRight: 0 }}>
+          <DebugWatchesPanel
+            {...watches}
+            copyValueSurface={debugCopyValue?.watch}
+            debugAdapterKind={debugAdapterKind}
+            onLoadVariablePage={onLoadVariablePage}
+            setVariableSurface={debugSetVariable}
+            sessionState={state.kind}
+            variablePages={variablePages}
+            variableMutationRows={variableMutationRows}
+            workspaceRoot={rootPath}
+            workspaceTrusted={workspaceTrusted}
+          />
+        </div>
       </div>
       <section aria-label="Debug console" style={styles.console}>
-        <strong style={styles.columnTitle}>Console</strong>
-        <DebugConsole
+        <div style={styles.columnTitleBar}>
+          <strong>Console</strong>
+          <span aria-label="Debug console actions" role="toolbar" style={styles.columnTitleActions}>
+            <ToolbarButton
+              disabled={!workspaceTrusted || !canClearConsole || !onClearConsole}
+              label="Clear debug console"
+              onClick={() => onClearConsole?.()}
+            >
+              <Trash2 aria-hidden="true" size={12} />
+            </ToolbarButton>
+          </span>
+        </div>
+        <DebugConsolePanel
+          completion={consoleCompletion}
+          console={console}
+          copyDisplayedValueSurface={debugCopyValue?.console}
           enabled={stopped && workspaceTrusted}
-          history={evaluationHistory}
-          onEvaluate={onEvaluate}
-          output={output}
-          rootPath={rootPath}
-          sessionId={state.kind === "inactive" ? null : state.sessionId}
+          focusRequest={consoleFocusRequest}
+          onAccept={onConsoleCompletionAccept}
+          onDismiss={onConsoleCompletionDismiss}
+          onFocusRequestHandled={onConsoleFocusRequestHandled}
+          onInputChanged={onConsoleCompletionInputChanged}
+          onRequest={onConsoleCompletionRequest}
+          inspectionOwner={inspectionOwner}
+          workspaceOwnerKey={consoleWorkspaceOwnerKey}
         />
       </section>
+      {nodeConfigurationPickerVisible && nodeLaunchConfigurations ? (
+        <NodeDebugConfigurationPicker
+          busy={nodeLaunchConfigurations.busy}
+          choices={nodeLaunchConfigurations.choices}
+          diagnosticNotice={nodeLaunchConfigurations.diagnosticNotice}
+          error={nodeLaunchConfigurations.error}
+          onClose={nodeLaunchConfigurations.onClosePicker ?? (() => undefined)}
+          onRefresh={nodeLaunchConfigurations.onRefresh}
+          onStartNamed={nodeLaunchConfigurations.onStartNamed ?? (() => undefined)}
+          open
+          selectedName={nodeLaunchConfigurations.selectedName}
+          state={nodeLaunchConfigurations.state}
+        />
+      ) : null}
     </div>
   );
 }
 
+function canCopyStackTrace(command: DebugPanelProps["debugCopyStackTrace"]): boolean {
+  try {
+    return command?.canCopyStackTrace() === true;
+  } catch {
+    return false;
+  }
+}
+
 function ToolbarButton({
+  busy,
   children,
   disabled,
   label,
   onClick,
+  pressed,
+  title,
 }: {
+  busy?: boolean;
   children: ReactNode;
   disabled: boolean;
   label: string;
   onClick(): void;
+  pressed?: boolean;
+  title?: string;
 }) {
   return (
     <button
+      aria-busy={busy || undefined}
       aria-label={label}
+      aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
       style={styles.action}
-      title={label}
+      title={title ?? label}
       type="button"
     >
       {children}
@@ -359,54 +801,194 @@ function displayPath(rootPath: string | null, filePath: string): string {
   return workspaceRelativePath(rootPath, filePath) ?? filePath;
 }
 
+function breakpointLocationLabel(breakpoint: Breakpoint, rootPath?: string | null): string {
+  const path =
+    rootPath === undefined ? breakpoint.filePath : displayPath(rootPath, breakpoint.filePath);
+  const column = breakpoint.columnNumber === undefined ? "" : `:${breakpoint.columnNumber}`;
+  return `${path}:${breakpoint.lineNumber}${column}`;
+}
+
 function CallStack({
+  debugAdapterKind,
+  debugControlPending,
+  debugRestartFrame,
   onNavigateToFrame,
   onSelectFrame,
   rootPath,
   selectedFrameId,
   snapshot,
+  workspaceTrusted,
 }: {
+  debugAdapterKind: ActiveDebugAdapterKind;
+  debugControlPending: boolean;
+  debugRestartFrame?: DebugRestartFrameCommand;
   onNavigateToFrame(filePath: string, lineNumber: number): void;
   onSelectFrame(frameId: number): void;
   rootPath: string | null;
   selectedFrameId: number | null;
   snapshot: DebuggerSessionSnapshot;
+  workspaceTrusted: boolean;
 }) {
   const state = snapshot.state;
+  const [rovingFrameId, setRovingFrameId] = useState<number | null>(null);
+  const frameButtonRefs = useRef(new Map<number, HTMLButtonElement>());
+  const frameFocusOwnedRef = useRef(false);
+  const previousSelectedFrameIdRef = useRef(selectedFrameId);
+  const visibleFrames = state.kind === "stopped" ? state.frames : EMPTY_STACK_FRAMES;
+  const highlightedFrameId =
+    state.kind === "stopped" ? (selectedFrameId ?? state.topFrame?.frameId ?? null) : null;
+  const visibleFrameIds = visibleFrames.map(({ frameId }) => frameId).join(":");
+
+  useEffect(() => {
+    const selectionChanged = previousSelectedFrameIdRef.current !== selectedFrameId;
+    previousSelectedFrameIdRef.current = selectedFrameId;
+    if (visibleFrames.length === 0) {
+      frameFocusOwnedRef.current = false;
+      if (rovingFrameId !== null) setRovingFrameId(null);
+      return;
+    }
+    const selectedIsVisible = visibleFrames.some(({ frameId }) => frameId === selectedFrameId);
+    const rovingIsVisible = visibleFrames.some(({ frameId }) => frameId === rovingFrameId);
+    const highlightedIsVisible = visibleFrames.some(
+      ({ frameId }) => frameId === highlightedFrameId,
+    );
+    const nextFrameId: number =
+      selectionChanged && selectedIsVisible
+        ? selectedFrameId!
+        : rovingIsVisible
+          ? rovingFrameId!
+          : highlightedIsVisible
+            ? highlightedFrameId!
+            : visibleFrames[0]!.frameId;
+    const activeFrameIsVisible = [...frameButtonRefs.current.values()].some(
+      (element) => element === document.activeElement,
+    );
+    if (rovingFrameId !== nextFrameId) setRovingFrameId(nextFrameId);
+    if (frameFocusOwnedRef.current && !activeFrameIsVisible) {
+      frameButtonRefs.current.get(nextFrameId)?.focus();
+    }
+  }, [highlightedFrameId, rovingFrameId, selectedFrameId, visibleFrameIds, visibleFrames]);
 
   if (state.kind !== "stopped") {
     return <div style={styles.message}>Not paused</div>;
   }
 
-  const highlightedFrameId = selectedFrameId ?? state.topFrame?.frameId ?? null;
+  const rovingFrame = state.frames.some(({ frameId }) => frameId === rovingFrameId)
+    ? rovingFrameId
+    : state.frames.some(({ frameId }) => frameId === highlightedFrameId)
+      ? highlightedFrameId
+      : (state.frames[0]?.frameId ?? null);
+
+  if (state.frames.length === 0) {
+    return <div style={styles.message}>No stack frames</div>;
+  }
+
+  const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, frameId: number) => {
+    const currentIndex = state.frames.findIndex((frame) => frame.frameId === frameId);
+    if (currentIndex < 0) return;
+    let nextIndex: number;
+    switch (event.key) {
+      case "ArrowDown":
+        nextIndex = Math.min(currentIndex + 1, state.frames.length - 1);
+        break;
+      case "ArrowUp":
+        nextIndex = Math.max(currentIndex - 1, 0);
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = state.frames.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const nextFrameId = state.frames[nextIndex]?.frameId;
+    if (nextFrameId === undefined) return;
+    setRovingFrameId(nextFrameId);
+    frameButtonRefs.current.get(nextFrameId)?.focus();
+  };
 
   return (
     <div>
-      {state.frames.map((frame) => (
-        <button
-          aria-current={
-            frame.frameId === highlightedFrameId ? "true" : undefined
-          }
-          data-testid="debug-frame"
-          key={frame.frameId}
-          onClick={() => activateFrame(frame, onSelectFrame, onNavigateToFrame)}
-          style={
-            frame.frameId === highlightedFrameId
-              ? { ...styles.frame, ...styles.frameActive }
-              : styles.frame
-          }
-          type="button"
-        >
-          {frame.name}{" "}
-          <span style={styles.muted}>
-            {frame.filePath
-              ? `${displayPath(rootPath, frame.filePath)}:${frame.lineNumber}`
-              : `line ${frame.lineNumber}`}
-          </span>
-        </button>
-      ))}
+      {state.frames.map((frame, index) => {
+        const selected = frame.frameId === highlightedFrameId;
+        const showRestart =
+          selected &&
+          index === state.frames.findIndex(({ frameId }) => frameId === highlightedFrameId) &&
+          debugAdapterKind === "node" &&
+          !debugControlPending &&
+          workspaceTrusted &&
+          frameAllowsInlineActions(frame) &&
+          canRestartFrame(debugRestartFrame);
+        return (
+          <div
+            key={frame.frameId}
+            style={
+              selected ? { ...styles.breakpointRow, ...styles.frameActive } : styles.breakpointRow
+            }
+          >
+            <button
+              aria-current={selected ? "true" : undefined}
+              data-testid="debug-frame"
+              onClick={() => activateFrame(frame, onSelectFrame, onNavigateToFrame)}
+              onBlur={(event) => {
+                const next = event.relatedTarget;
+                if (!(next instanceof HTMLElement) || next.dataset.testid !== "debug-frame") {
+                  frameFocusOwnedRef.current = false;
+                }
+              }}
+              onFocus={() => {
+                frameFocusOwnedRef.current = true;
+                setRovingFrameId(frame.frameId);
+              }}
+              onKeyDown={(event) => moveFocus(event, frame.frameId)}
+              ref={(element) => {
+                if (element) frameButtonRefs.current.set(frame.frameId, element);
+                else frameButtonRefs.current.delete(frame.frameId);
+              }}
+              style={{ ...styles.frame, padding: 0 }}
+              tabIndex={frame.frameId === rovingFrame ? 0 : -1}
+              type="button"
+            >
+              {frame.name}{" "}
+              <span style={styles.muted}>
+                {frame.filePath
+                  ? `${displayPath(rootPath, frame.filePath)}:${frame.lineNumber}`
+                  : `line ${frame.lineNumber}`}
+              </span>
+            </button>
+            {showRestart ? (
+              <ToolbarButton
+                disabled={false}
+                label="Restart Frame"
+                onClick={() => {
+                  if (canRestartFrame(debugRestartFrame)) debugRestartFrame?.restartFrame();
+                }}
+                title="Restart Frame"
+              >
+                <RotateCw aria-hidden="true" size={12} />
+              </ToolbarButton>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+function canRestartFrame(command: DebugRestartFrameCommand | undefined): boolean {
+  try {
+    return command?.canRestartFrame() === true;
+  } catch {
+    return false;
+  }
+}
+
+function frameAllowsInlineActions(frame: StackFrame): boolean {
+  const presentationHint = (frame as StackFrame & { presentationHint?: unknown }).presentationHint;
+  return presentationHint !== "label" && presentationHint !== "subtle";
 }
 
 function activateFrame(
@@ -424,154 +1006,58 @@ function activateFrame(
 }
 
 function Variables({
+  addToWatchSurface,
+  copyValueSurface,
+  inspectionOwner,
+  onLoadVariablePage,
   onLoadVariables,
   scopes,
+  setVariableSurface,
   stopped,
+  variablePages,
+  variableMutationRows,
   variablesByReference,
 }: {
+  addToWatchSurface?: DebugAddToWatchVariableSurface;
+  copyValueSurface?: DebugCopyValueSurface;
+  inspectionOwner?: DebugInspectionOwner | null;
+  onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
   onLoadVariables(variablesReference: number): void;
   scopes: DebugScope[];
+  setVariableSurface?: DebugSetVariableSurface;
   stopped: boolean;
+  variablePages?: DebugVariablePagesState;
+  variableMutationRows?: DebugVariableMutationRows;
   variablesByReference: Record<number, DebugVariable[]>;
 }) {
-  const [expandedReferences, setExpandedReferences] = useState<Set<number>>(
-    new Set(),
-  );
-
   if (!stopped) {
     return <div style={styles.message}>Not paused</div>;
   }
 
   if (scopes.length === 0) {
-    return (
-      <div style={styles.message}>Select a frame to inspect variables</div>
-    );
+    return <div style={styles.message}>Select a frame to inspect variables</div>;
   }
 
-  const toggleReference = (variablesReference: number) => {
-    setExpandedReferences((current) => {
-      const next = new Set(current);
-
-      if (next.has(variablesReference)) {
-        next.delete(variablesReference);
-        return next;
-      }
-
-      next.add(variablesReference);
-      return next;
-    });
-
-    if (expandedReferences.has(variablesReference)) {
-      return;
-    }
-
-    if (variablesByReference[variablesReference]) {
-      return;
-    }
-
-    onLoadVariables(variablesReference);
-  };
-
+  const roots: DebugVariableTreeRoot[] = scopes.map((scope, index) => ({
+    id: `${index}:${scope.variablesReference}`,
+    label: scope.name,
+    owner: inspectionOwner ?? null,
+    variablesReference: scope.variablesReference,
+    testId: "debug-scope",
+  }));
   return (
-    <div>
-      {scopes.map((scope) => (
-        <div key={scope.variablesReference}>
-          <button
-            aria-expanded={expandedReferences.has(scope.variablesReference)}
-            data-testid="debug-scope"
-            onClick={() => toggleReference(scope.variablesReference)}
-            style={styles.frame}
-            type="button"
-          >
-            {expandedReferences.has(scope.variablesReference) ? "▾ " : "▸ "}
-            {scope.name}
-          </button>
-          {expandedReferences.has(scope.variablesReference) ? (
-            <VariableList
-              ancestors={new Set([scope.variablesReference])}
-              depth={1}
-              expandedReferences={expandedReferences}
-              onToggleReference={toggleReference}
-              variables={variablesByReference[scope.variablesReference] ?? []}
-              variablesByReference={variablesByReference}
-            />
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-const MAX_VARIABLE_DEPTH = 10;
-
-function VariableList({
-  ancestors,
-  depth,
-  expandedReferences,
-  onToggleReference,
-  variables,
-  variablesByReference,
-}: {
-  ancestors: ReadonlySet<number>;
-  depth: number;
-  expandedReferences: Set<number>;
-  onToggleReference(variablesReference: number): void;
-  variables: DebugVariable[];
-  variablesByReference: Record<number, DebugVariable[]>;
-}) {
-  return (
-    <div>
-      {variables.map((variable) => {
-        const expandable =
-          variable.variablesReference > 0 &&
-          !ancestors.has(variable.variablesReference) &&
-          depth < MAX_VARIABLE_DEPTH;
-
-        return (
-          <div key={`${variable.name}:${variable.variablesReference}`}>
-            <div
-              data-testid="debug-variable"
-              style={{ ...styles.variableRow, paddingLeft: 8 + depth * 12 }}
-            >
-              {expandable ? (
-                <button
-                  aria-expanded={expandedReferences.has(
-                    variable.variablesReference,
-                  )}
-                  aria-label={`Expand ${variable.name}`}
-                  onClick={() => onToggleReference(variable.variablesReference)}
-                  style={styles.action}
-                  type="button"
-                >
-                  {expandedReferences.has(variable.variablesReference)
-                    ? "▾"
-                    : "▸"}
-                </button>
-              ) : null}
-              {variable.name}
-              <span style={styles.muted}>
-                {" = "}
-                {variable.value}
-                {variable.type ? ` (${variable.type})` : ""}
-              </span>
-            </div>
-            {expandable &&
-            expandedReferences.has(variable.variablesReference) ? (
-              <VariableList
-                ancestors={new Set([...ancestors, variable.variablesReference])}
-                depth={depth + 1}
-                expandedReferences={expandedReferences}
-                onToggleReference={onToggleReference}
-                variables={
-                  variablesByReference[variable.variablesReference] ?? []
-                }
-                variablesByReference={variablesByReference}
-              />
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
+    <DebugVariableTree
+      addToWatchSurface={addToWatchSurface}
+      ariaLabel="Variables"
+      copyValueSurface={copyValueSurface}
+      onLoadPage={onLoadVariablePage}
+      onLoadVariables={onLoadVariables}
+      roots={roots}
+      setVariableSurface={setVariableSurface}
+      variablePages={variablePages}
+      variableMutationRows={variableMutationRows}
+      variablesByReference={variablesByReference}
+    />
   );
 }
 
@@ -580,14 +1066,22 @@ function Breakpoints({
   onNavigateToBreakpoint,
   onRemoveBreakpoint,
   onSetBreakpointCondition,
+  onSetBreakpointHitCondition,
+  onSetBreakpointLogMessage,
   onSetBreakpointEnabled,
+  supportsHitConditions,
+  supportsLogpoints,
   rootPath,
 }: {
   breakpoints: Breakpoint[];
   onNavigateToBreakpoint(breakpoint: Breakpoint): void;
   onRemoveBreakpoint(id: string): void;
   onSetBreakpointCondition(id: string, condition: string | null): void;
+  onSetBreakpointHitCondition(id: string, hitCondition: BreakpointHitCondition | null): void;
+  onSetBreakpointLogMessage(id: string, logMessage: string | null): void;
   onSetBreakpointEnabled(id: string, enabled: boolean): void;
+  supportsHitConditions: boolean;
+  supportsLogpoints: boolean;
   rootPath: string | null;
 }) {
   if (breakpoints.length === 0) {
@@ -597,36 +1091,46 @@ function Breakpoints({
   return (
     <div>
       {breakpoints.map((breakpoint) => (
-        <div
-          data-testid="debug-breakpoint"
-          key={breakpoint.id}
-          style={styles.breakpointRow}
-        >
+        <div data-testid="debug-breakpoint" key={breakpoint.id} style={styles.breakpointRow}>
           <input
-            aria-label={`Enable breakpoint ${breakpoint.filePath}:${breakpoint.lineNumber}`}
+            aria-label={`Enable breakpoint ${breakpointLocationLabel(breakpoint)}`}
             checked={breakpoint.enabled}
-            onChange={(event) =>
-              onSetBreakpointEnabled(breakpoint.id, event.target.checked)
-            }
+            onChange={(event) => onSetBreakpointEnabled(breakpoint.id, event.target.checked)}
             type="checkbox"
           />
           <button
             data-testid="debug-breakpoint-location"
             onClick={() => onNavigateToBreakpoint(breakpoint)}
             style={styles.location}
-            title={`${breakpoint.filePath}:${breakpoint.lineNumber}`}
+            title={breakpointLocationLabel(breakpoint)}
             type="button"
           >
-            {displayPath(rootPath, breakpoint.filePath)}:{breakpoint.lineNumber}
-            {breakpoint.verified === false ? (
-              <span style={styles.muted}> (unverified)</span>
-            ) : null}
+            {breakpointLocationLabel(breakpoint, rootPath)}
+            {breakpoint.verified === false ? <span style={styles.muted}> (unverified)</span> : null}
           </button>
           <BreakpointConditionInput
             breakpoint={breakpoint}
-            key={`${breakpoint.id}:${breakpoint.condition ?? ""}`}
+            key={`condition:${breakpoint.id}:${breakpoint.condition ?? ""}`}
             onSetBreakpointCondition={onSetBreakpointCondition}
           />
+          {supportsHitConditions &&
+          rootPath &&
+          isBreakpointPathSupported(rootPath, "node", breakpoint.filePath) ? (
+            <BreakpointHitConditionInput
+              breakpoint={breakpoint}
+              key={`hit:${breakpoint.id}:${formatBreakpointHitCondition(breakpoint.hitCondition)}`}
+              onSetBreakpointHitCondition={onSetBreakpointHitCondition}
+            />
+          ) : null}
+          {supportsLogpoints &&
+          rootPath &&
+          isBreakpointPathSupported(rootPath, "node", breakpoint.filePath) ? (
+            <BreakpointLogMessageInput
+              breakpoint={breakpoint}
+              key={`log:${breakpoint.id}:${breakpoint.logMessage ?? ""}`}
+              onSetBreakpointLogMessage={onSetBreakpointLogMessage}
+            />
+          ) : null}
           <button
             aria-label="Remove breakpoint"
             onClick={() => onRemoveBreakpoint(breakpoint.id)}
@@ -638,6 +1142,96 @@ function Breakpoints({
         </div>
       ))}
     </div>
+  );
+}
+
+function BreakpointLogMessageInput({
+  breakpoint,
+  onSetBreakpointLogMessage,
+}: {
+  breakpoint: Breakpoint;
+  onSetBreakpointLogMessage(id: string, logMessage: string | null): void;
+}) {
+  const [value, setValue] = useState(breakpoint.logMessage ?? "");
+  const error = breakpointLogMessageError(value);
+  const errorId = `${useId()}-logpoint-error`;
+
+  const commit = () => {
+    if (error) return;
+    const logMessage = isBreakpointLogMessage(value) ? value : null;
+    if (logMessage === (breakpoint.logMessage ?? null)) return;
+    onSetBreakpointLogMessage(breakpoint.id, logMessage);
+  };
+
+  return (
+    <>
+      <input
+        aria-describedby={error ? errorId : undefined}
+        aria-invalid={error ? "true" : undefined}
+        aria-label={`Log message for ${breakpointLocationLabel(breakpoint)}`}
+        onBlur={commit}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+        }}
+        placeholder="Log Message"
+        style={styles.conditionInput}
+        title={error ?? "Use text and expressions in {braces}"}
+        value={value}
+      />
+      {error ? (
+        <span id={errorId} role="alert" style={styles.muted}>
+          {error}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function BreakpointHitConditionInput({
+  breakpoint,
+  onSetBreakpointHitCondition,
+}: {
+  breakpoint: Breakpoint;
+  onSetBreakpointHitCondition(id: string, hitCondition: BreakpointHitCondition | null): void;
+}) {
+  const [value, setValue] = useState(formatBreakpointHitCondition(breakpoint.hitCondition));
+  const error = breakpointHitConditionError(value);
+  const errorId = `${useId()}-hit-count-error`;
+
+  const commit = () => {
+    if (error) return;
+    const hitCondition = parseBreakpointHitCondition(value);
+    if (
+      formatBreakpointHitCondition(hitCondition) ===
+      formatBreakpointHitCondition(breakpoint.hitCondition)
+    )
+      return;
+    onSetBreakpointHitCondition(breakpoint.id, hitCondition);
+  };
+
+  return (
+    <>
+      <input
+        aria-describedby={error ? errorId : undefined}
+        aria-invalid={error ? "true" : undefined}
+        aria-label="Hit Count"
+        onBlur={commit}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+        }}
+        placeholder="Hit Count"
+        style={styles.conditionInput}
+        title={error ?? "Use N, >=N, or %N"}
+        value={value}
+      />
+      {error ? (
+        <span id={errorId} role="alert" style={styles.muted}>
+          {error}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -680,228 +1274,4 @@ function BreakpointConditionInput({
       value={value}
     />
   );
-}
-
-const SCROLL_BOTTOM_TOLERANCE = 4;
-
-function DebugConsole({
-  enabled,
-  history,
-  onEvaluate,
-  output,
-  rootPath,
-  sessionId,
-}: {
-  enabled: boolean;
-  history: string[];
-  onEvaluate(expression: string): Promise<DebugVariable | null>;
-  output: DebugOutputLine[];
-  rootPath: string | null;
-  sessionId: number | null;
-}) {
-  const sessionKey = `${rootPath ?? ""}\0${sessionId ?? "inactive"}`;
-  const evaluationsRef = useRef(new Map<string, DebugConsoleEvaluation[]>());
-  const [expression, setExpression] = useState("");
-  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
-  const [, setRevision] = useState(0);
-  const evaluations = evaluationsRef.current.get(sessionKey) ?? [];
-
-  useEffect(() => {
-    setExpression("");
-    setHistoryIndex(null);
-  }, [sessionKey]);
-
-  const submit = async () => {
-    const candidate = expression.trim();
-
-    if (!enabled || candidate === "") {
-      return;
-    }
-
-    const submittedKey = sessionKey;
-    setExpression("");
-    setHistoryIndex(null);
-
-    let evaluation: DebugConsoleEvaluation;
-
-    try {
-      const result = await onEvaluate(candidate);
-
-      if (!result) {
-        return;
-      }
-
-      evaluation = { error: null, expression: candidate, result };
-    } catch (error) {
-      evaluation = {
-        error: error instanceof Error ? error.message : String(error),
-        expression: candidate,
-        result: null,
-      };
-    }
-
-    const current = evaluationsRef.current.get(submittedKey) ?? [];
-    evaluationsRef.current.set(
-      submittedKey,
-      [...current, evaluation].slice(-500),
-    );
-    setRevision((value) => value + 1);
-  };
-
-  const navigateHistory = (direction: -1 | 1) => {
-    if (history.length === 0) {
-      return;
-    }
-
-    if (direction === -1 && (historyIndex === null || historyIndex === 0)) {
-      setHistoryIndex(null);
-      setExpression("");
-      return;
-    }
-
-    const nextIndex = Math.max(
-      0,
-      Math.min(history.length - 1, (historyIndex ?? -1) + direction),
-    );
-    setHistoryIndex(nextIndex);
-    setExpression(history[nextIndex] ?? "");
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void submit();
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setExpression("");
-      setHistoryIndex(null);
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      navigateHistory(1);
-      return;
-    }
-
-    if (event.key !== "ArrowDown") {
-      return;
-    }
-
-    event.preventDefault();
-    navigateHistory(-1);
-  };
-
-  return (
-    <>
-      <ConsoleOutput evaluations={evaluations} output={output} />
-      <input
-        aria-label="Debug expression"
-        disabled={!enabled}
-        onChange={(event) => setExpression(event.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={enabled ? "Evaluate expression" : "Pause to evaluate"}
-        style={styles.consoleInput}
-        value={expression}
-      />
-    </>
-  );
-}
-
-function ConsoleOutput({
-  evaluations,
-  output,
-}: {
-  evaluations: DebugConsoleEvaluation[];
-  output: DebugOutputLine[];
-}) {
-  const bodyRef = useRef<HTMLDivElement | null>(null);
-  const stickToBottomRef = useRef(true);
-
-  useEffect(() => {
-    const body = bodyRef.current;
-
-    if (!body) {
-      return;
-    }
-
-    if (!stickToBottomRef.current) {
-      return;
-    }
-
-    body.scrollTop = body.scrollHeight;
-  }, [evaluations, output]);
-
-  const handleScroll = () => {
-    const body = bodyRef.current;
-
-    if (!body) {
-      return;
-    }
-
-    stickToBottomRef.current =
-      body.scrollTop + body.clientHeight >=
-      body.scrollHeight - SCROLL_BOTTOM_TOLERANCE;
-  };
-
-  if (output.length === 0 && evaluations.length === 0) {
-    return (
-      <div
-        data-testid="debug-console-body"
-        onScroll={handleScroll}
-        ref={bodyRef}
-        style={styles.consoleBody}
-      >
-        <span data-testid="debug-output-empty" style={styles.muted}>
-          No output
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      data-testid="debug-console-body"
-      onScroll={handleScroll}
-      ref={bodyRef}
-      style={styles.consoleBody}
-    >
-      {output.map((line, index) => (
-        <div
-          data-stream={line.stream}
-          data-testid="debug-output-line"
-          key={index}
-          style={
-            line.stream === "stderr"
-              ? { ...styles.outputLine, ...styles.stderr }
-              : styles.outputLine
-          }
-        >
-          {line.text}
-        </div>
-      ))}
-      {evaluations.map((evaluation, index) => (
-        <div
-          data-testid="debug-evaluation"
-          key={`${evaluation.expression}:${index}`}
-        >
-          <div style={styles.outputLine}>{`> ${evaluation.expression}`}</div>
-          <div style={evaluation.error ? styles.stderr : styles.outputLine}>
-            {evaluation.error ?? formatEvaluationResult(evaluation.result)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function formatEvaluationResult(result: DebugVariable | null): string {
-  if (!result) {
-    return "No result";
-  }
-
-  return result.type ? `${result.value} (${result.type})` : result.value;
 }

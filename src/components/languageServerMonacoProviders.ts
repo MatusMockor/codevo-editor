@@ -9,20 +9,12 @@ import {
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionList,
   type LanguageServerCodeLens,
-  type LanguageServerDocumentSymbol,
   type LanguageServerDocumentLink,
-  type LanguageServerDocumentHighlight,
-  type LanguageServerFoldingRange,
-  type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
   type LanguageServerInlayHint,
-  type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
-  type LanguageServerRange,
   type LanguageServerRefreshEvent,
   type LanguageServerRefreshGateway,
-  type LanguageServerSelectionRange,
-  type LanguageServerSemanticTokens,
   type LanguageServerSignature,
   type LanguageServerSignatureHelp,
   type LanguageServerSignatureHelpContext,
@@ -106,6 +98,19 @@ import {
   toWorkspaceMonacoUri,
   type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
+import {
+  flattenSelectionRange,
+  monacoSymbolKind,
+  toLanguageServerFormattingOptions,
+  toLanguageServerRange,
+  toMonacoDocumentHighlight,
+  toMonacoDocumentSymbol,
+  toMonacoFoldingRange,
+  toMonacoLinkedEditingRanges,
+  toMonacoRange,
+  toMonacoSemanticTokens,
+  toMonacoTextEdit,
+} from "./languageServerMonacoMappings";
 
 export type {
   BladeCompletion,
@@ -2962,19 +2967,6 @@ function markerTouchesRange(
   return true;
 }
 
-function toLanguageServerRange(range: Monaco.Range): LanguageServerRange {
-  return {
-    end: {
-      character: Math.max(0, range.endColumn - 1),
-      line: Math.max(0, range.endLineNumber - 1),
-    },
-    start: {
-      character: Math.max(0, range.startColumn - 1),
-      line: Math.max(0, range.startLineNumber - 1),
-    },
-  };
-}
-
 function toLanguageServerCodeActionContext(
   monaco: MonacoApi,
   context: Monaco.languages.CodeActionContext,
@@ -2999,15 +2991,6 @@ function toLanguageServerCodeActionContext(
     })),
     only: context.only ? [context.only] : null,
     triggerKind: codeActionTriggerKind(monaco, context.trigger),
-  };
-}
-
-function toLanguageServerFormattingOptions(
-  options: Monaco.languages.FormattingOptions,
-): LanguageServerFormattingOptions {
-  return {
-    insertSpaces: options.insertSpaces,
-    tabSize: options.tabSize,
   };
 }
 
@@ -3537,34 +3520,6 @@ function toMonacoLocation(
   ];
 }
 
-function toMonacoDocumentHighlight(
-  monaco: MonacoApi,
-  highlight: LanguageServerDocumentHighlight,
-): Monaco.languages.DocumentHighlight {
-  return {
-    kind: monacoDocumentHighlightKindFromLspKind(monaco, highlight.kind),
-    range: toMonacoRange(monaco, highlight.range),
-  };
-}
-
-function toMonacoDocumentSymbol(
-  monaco: MonacoApi,
-  symbol: LanguageServerDocumentSymbol,
-): Monaco.languages.DocumentSymbol {
-  return {
-    children: symbol.children.map((child) =>
-      toMonacoDocumentSymbol(monaco, child),
-    ),
-    containerName: symbol.containerName ?? undefined,
-    detail: symbol.detail ?? "",
-    kind: monacoSymbolKindFromLspKind(monaco, symbol.kind),
-    name: symbol.name,
-    range: toMonacoRange(monaco, symbol.range),
-    selectionRange: toMonacoRange(monaco, symbol.selectionRange),
-    tags: monacoSymbolTagsFromLspTags(monaco, symbol.tags),
-  };
-}
-
 function toMonacoWorkspaceSymbol(
   monaco: MonacoApi,
   rootPath: string,
@@ -3583,7 +3538,7 @@ function toMonacoWorkspaceSymbol(
   return [
     {
       ...(symbol.containerName ? { containerName: symbol.containerName } : {}),
-      kind: monacoSymbolKindFromLspKind(monaco, symbol.kind),
+      kind: monacoSymbolKind(monaco, symbol.kind),
       location,
       name: symbol.name,
     },
@@ -3610,176 +3565,6 @@ function toMonacoDocumentLink(
     tooltip: link.tooltip ?? undefined,
     url: link.target ?? undefined,
   };
-}
-
-function monacoDocumentHighlightKindFromLspKind(
-  monaco: MonacoApi,
-  kind: number | null,
-): Monaco.languages.DocumentHighlightKind {
-  switch (kind) {
-    case 2:
-      return monaco.languages.DocumentHighlightKind.Read;
-    case 3:
-      return monaco.languages.DocumentHighlightKind.Write;
-    default:
-      return monaco.languages.DocumentHighlightKind.Text;
-  }
-}
-
-function monacoSymbolKindFromLspKind(
-  monaco: MonacoApi,
-  kind: number,
-): Monaco.languages.SymbolKind {
-  switch (kind) {
-    case 1:
-      return monaco.languages.SymbolKind.File;
-    case 2:
-      return monaco.languages.SymbolKind.Module;
-    case 3:
-      return monaco.languages.SymbolKind.Namespace;
-    case 4:
-      return monaco.languages.SymbolKind.Package;
-    case 5:
-      return monaco.languages.SymbolKind.Class;
-    case 6:
-      return monaco.languages.SymbolKind.Method;
-    case 7:
-      return monaco.languages.SymbolKind.Property;
-    case 8:
-      return monaco.languages.SymbolKind.Field;
-    case 9:
-      return monaco.languages.SymbolKind.Constructor;
-    case 10:
-      return monaco.languages.SymbolKind.Enum;
-    case 11:
-      return monaco.languages.SymbolKind.Interface;
-    case 12:
-      return monaco.languages.SymbolKind.Function;
-    case 13:
-      return monaco.languages.SymbolKind.Variable;
-    case 14:
-      return monaco.languages.SymbolKind.Constant;
-    case 15:
-      return monaco.languages.SymbolKind.String;
-    case 16:
-      return monaco.languages.SymbolKind.Number;
-    case 17:
-      return monaco.languages.SymbolKind.Boolean;
-    case 18:
-      return monaco.languages.SymbolKind.Array;
-    case 19:
-      return monaco.languages.SymbolKind.Object;
-    case 20:
-      return monaco.languages.SymbolKind.Key;
-    case 21:
-      return monaco.languages.SymbolKind.Null;
-    case 22:
-      return monaco.languages.SymbolKind.EnumMember;
-    case 23:
-      return monaco.languages.SymbolKind.Struct;
-    case 24:
-      return monaco.languages.SymbolKind.Event;
-    case 25:
-      return monaco.languages.SymbolKind.Operator;
-    case 26:
-      return monaco.languages.SymbolKind.TypeParameter;
-    default:
-      return monaco.languages.SymbolKind.Variable;
-  }
-}
-
-function monacoSymbolTagsFromLspTags(
-  monaco: MonacoApi,
-  tags: number[] | undefined,
-): Monaco.languages.SymbolTag[] {
-  return tags?.includes(1) ? [monaco.languages.SymbolTag.Deprecated] : [];
-}
-
-function toMonacoFoldingRange(
-  monaco: MonacoApi,
-  range: LanguageServerFoldingRange,
-): Monaco.languages.FoldingRange {
-  return {
-    end: range.endLine + 1,
-    kind: range.kind
-      ? monaco.languages.FoldingRangeKind.fromValue(range.kind)
-      : undefined,
-    start: range.startLine + 1,
-  };
-}
-
-function toMonacoLinkedEditingRanges(
-  monaco: MonacoApi,
-  ranges: LanguageServerLinkedEditingRanges | null,
-): Monaco.languages.LinkedEditingRanges | null {
-  if (!ranges || ranges.ranges.length === 0) {
-    return null;
-  }
-
-  return {
-    ranges: ranges.ranges.map((range) => toMonacoRange(monaco, range)),
-    ...(ranges.wordPattern
-      ? { wordPattern: safeRegExp(ranges.wordPattern) }
-      : {}),
-  };
-}
-
-function toMonacoSemanticTokens(
-  tokens: LanguageServerSemanticTokens | null,
-): Monaco.languages.SemanticTokens | null {
-  if (!tokens || tokens.data.length === 0) {
-    return null;
-  }
-
-  return {
-    data: Uint32Array.from(tokens.data),
-    ...(tokens.resultId ? { resultId: tokens.resultId } : {}),
-  };
-}
-
-function safeRegExp(pattern: string): RegExp | undefined {
-  try {
-    return new RegExp(pattern);
-  } catch {
-    return undefined;
-  }
-}
-
-function toMonacoTextEdit(
-  monaco: MonacoApi,
-  edit: LanguageServerTextEdit,
-): Monaco.languages.TextEdit {
-  return {
-    range: toMonacoRange(monaco, edit.range),
-    text: edit.newText,
-  };
-}
-
-function toMonacoRange(
-  monaco: MonacoApi,
-  range: LanguageServerRange,
-): Monaco.Range {
-  return new monaco.Range(
-    range.start.line + 1,
-    range.start.character + 1,
-    range.end.line + 1,
-    range.end.character + 1,
-  );
-}
-
-function flattenSelectionRange(
-  monaco: MonacoApi,
-  selectionRange: LanguageServerSelectionRange,
-): Monaco.languages.SelectionRange[] {
-  const ranges: Monaco.languages.SelectionRange[] = [];
-  let current: LanguageServerSelectionRange | null = selectionRange;
-
-  while (current) {
-    ranges.push({ range: toMonacoRange(monaco, current.range) });
-    current = current.parent;
-  }
-
-  return ranges;
 }
 
 function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {

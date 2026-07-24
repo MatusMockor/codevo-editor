@@ -7,47 +7,48 @@ import type {
   UnsubscribeFn,
 } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  decodeLanguageServerRuntimeLogPath,
+  decodeLanguageServerRuntimeStatus,
+  invokeLanguageServerRuntimeIpc,
+  type InvokeLanguageServerRuntimeCommand,
+  type LanguageServerRuntimeCommandProfile,
+  type LanguageServerRuntimeIpcArgs,
+} from "./tauriLanguageServerRuntimeIpcContract";
 
 const STATUS_EVENT = "language-server://status";
-const DESKTOP_RUNTIME_REQUIRED =
-  "Language server requires the Tauri desktop runtime.";
+const DESKTOP_RUNTIME_REQUIRED = "Language server requires the Tauri desktop runtime.";
 const DEFAULT_RUNTIME_COMMANDS = {
   getStatus: "get_php_language_server_status",
   start: "start_php_language_server",
   stop: "stop_php_language_server",
   statusEvent: STATUS_EVENT,
-};
+} as const;
 
 export const JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS = {
   getStatus: "get_javascript_typescript_language_server_status",
-  openLog: "open_javascript_typescript_language_server_log",
+  openLog: "open_language_runtime_log",
+  openLogKind: "tsserver",
   start: "start_javascript_typescript_language_server",
   statusEvent: "javascript-typescript-language-server://status",
   stop: "stop_javascript_typescript_language_server",
-};
+} as const;
 
-export interface TauriLanguageServerRuntimeCommands {
-  getStatus: string;
-  openLog?: string;
-  start: string;
+export interface TauriLanguageServerRuntimeCommands extends LanguageServerRuntimeCommandProfile {
+  openLogKind?: "phpactor" | "tsserver";
   statusEvent: string;
-  stop: string;
 }
 
-type InvokeRuntimeCommand = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<unknown>;
 type ListenToRuntimeStatus = (
   event: string,
-  handler: (event: { payload: LanguageServerRuntimeStatus }) => void,
+  handler: (event: { payload: unknown }) => void,
 ) => Promise<UnsubscribeFn>;
 type RuntimeDetector = () => boolean;
 
-const invokeRuntimeCommand: InvokeRuntimeCommand = (command, args) =>
+const invokeRuntimeCommand: InvokeLanguageServerRuntimeCommand = (command, args) =>
   invoke(command, args);
 const listenToRuntimeStatus: ListenToRuntimeStatus = (event, handler) =>
-  listen<LanguageServerRuntimeStatus>(event, handler);
+  listen<unknown>(event, handler);
 
 function stoppedStatus(rootPath: string): LanguageServerRuntimeStatus {
   return { kind: "stopped", rootPath };
@@ -64,15 +65,12 @@ function statusForRequestedRoot(
   return stoppedStatus(rootPath);
 }
 
-export class TauriLanguageServerRuntimeGateway
-  implements LanguageServerRuntimeGateway
-{
+export class TauriLanguageServerRuntimeGateway implements LanguageServerRuntimeGateway {
   constructor(
-    private readonly invokeCommand: InvokeRuntimeCommand = invokeRuntimeCommand,
+    private readonly invokeCommand: InvokeLanguageServerRuntimeCommand = invokeRuntimeCommand,
     private readonly listenToEvent: ListenToRuntimeStatus = listenToRuntimeStatus,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
-    private readonly commands: TauriLanguageServerRuntimeCommands =
-      DEFAULT_RUNTIME_COMMANDS,
+    private readonly commands: TauriLanguageServerRuntimeCommands = DEFAULT_RUNTIME_COMMANDS,
   ) {}
 
   getStatus(rootPath: string): Promise<LanguageServerRuntimeStatus> {
@@ -80,9 +78,10 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve(stoppedStatus(rootPath));
     }
 
-    return this.invokeCommand(this.commands.getStatus, { rootPath }).then(
-      (status) =>
-        statusForRequestedRoot(status as LanguageServerRuntimeStatus, rootPath),
+    return invokeLanguageServerRuntimeIpc(this.invokeCommand, this.commands, "getStatus", {
+      rootPath,
+    }).then((status) =>
+      statusForRequestedRoot(decodeLanguageServerRuntimeStatus(status), rootPath),
     );
   }
 
@@ -98,15 +97,14 @@ export class TauriLanguageServerRuntimeGateway
       });
     }
 
-    const args: Record<string, unknown> = { rootPath };
+    const args: LanguageServerRuntimeIpcArgs<"start"> = { rootPath };
 
     if (options.autoImportsEnabled !== undefined) {
       args.autoImportsEnabled = options.autoImportsEnabled;
     }
 
     if (options.automaticTypeAcquisitionEnabled !== undefined) {
-      args.automaticTypeAcquisitionEnabled =
-        options.automaticTypeAcquisitionEnabled;
+      args.automaticTypeAcquisitionEnabled = options.automaticTypeAcquisitionEnabled;
     }
 
     if (options.codeLensEnabled !== undefined) {
@@ -122,8 +120,7 @@ export class TauriLanguageServerRuntimeGateway
     }
 
     if (options.importModuleSpecifierPreference) {
-      args.importModuleSpecifierPreference =
-        options.importModuleSpecifierPreference;
+      args.importModuleSpecifierPreference = options.importModuleSpecifierPreference;
     }
 
     if (options.typeScriptVersionPreference) {
@@ -158,8 +155,8 @@ export class TauriLanguageServerRuntimeGateway
       args.validationEnabled = options.validationEnabled;
     }
 
-    return this.invokeCommand(this.commands.start, args).then((status) =>
-      statusForRequestedRoot(status as LanguageServerRuntimeStatus, rootPath),
+    return invokeLanguageServerRuntimeIpc(this.invokeCommand, this.commands, "start", args).then(
+      (status) => statusForRequestedRoot(decodeLanguageServerRuntimeStatus(status), rootPath),
     );
   }
 
@@ -168,28 +165,31 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve(stoppedStatus(rootPath));
     }
 
-    return this.invokeCommand(this.commands.stop, { rootPath }).then((status) =>
-      statusForRequestedRoot(status as LanguageServerRuntimeStatus, rootPath),
+    return invokeLanguageServerRuntimeIpc(this.invokeCommand, this.commands, "stop", {
+      rootPath,
+    }).then((status) =>
+      statusForRequestedRoot(decodeLanguageServerRuntimeStatus(status), rootPath),
     );
   }
 
   openLog(rootPath: string): Promise<string | null> {
-    if (!this.isRuntimeAvailable() || !this.commands.openLog) {
+    if (!this.isRuntimeAvailable() || !this.commands.openLog || !this.commands.openLogKind) {
       return Promise.resolve(null);
     }
 
-    return this.invokeCommand(this.commands.openLog, { rootPath }) as Promise<string>;
+    return invokeLanguageServerRuntimeIpc(this.invokeCommand, this.commands, "openLog", {
+      kind: this.commands.openLogKind,
+      rootPath,
+    }).then(decodeLanguageServerRuntimeLogPath);
   }
 
-  subscribeStatus(
-    listener: (status: LanguageServerRuntimeStatus) => void,
-  ): Promise<UnsubscribeFn> {
+  subscribeStatus(listener: (status: LanguageServerRuntimeStatus) => void): Promise<UnsubscribeFn> {
     if (!this.isRuntimeAvailable()) {
       return Promise.resolve(() => undefined);
     }
 
     return this.listenToEvent(this.commands.statusEvent, (event) => {
-      listener(event.payload);
+      listener(decodeLanguageServerRuntimeStatus(event.payload));
     });
   }
 }

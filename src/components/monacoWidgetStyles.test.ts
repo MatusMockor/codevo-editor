@@ -171,7 +171,12 @@ describe("Monaco widget chrome (JetBrains classic)", () => {
         [["background", "--color-accent-soft"]],
       ],
       [
-        ".monaco-menu\n  .monaco-action-bar.vertical\n  .action-item.focused\n  .action-menu-item",
+        [
+          ".monaco-menu",
+          ".monaco-action-bar.vertical",
+          ".action-item.focused",
+          ".action-menu-item",
+        ].join(" "),
         [["background", "--color-accent-soft"]],
       ],
       [

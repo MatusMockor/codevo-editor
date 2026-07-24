@@ -3,10 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  terminalThemeForAppTheme,
-  type TerminalTheme,
-} from "../domain/settings";
+import { terminalThemeForAppTheme, type TerminalTheme } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import { TerminalPanel } from "./TerminalPanel";
 
@@ -42,7 +39,9 @@ interface FakeSession {
 }
 
 interface FakeSessionOptions {
+  onCwdChange(cwd: string | null): void;
   onOpenLink(path: string, line?: number, column?: number): void;
+  onSessionReady(sessionId: number | null): void;
   terminal: {
     buffer: {
       active: {
@@ -238,8 +237,7 @@ describe("TerminalPanel", () => {
     });
 
     const staleOpenLink = (
-      terminalPanelMocks.createTerminalSession.mock.calls[0]?.[0] as
-        FakeSessionOptions
+      terminalPanelMocks.createTerminalSession.mock.calls[0]?.[0] as FakeSessionOptions
     ).onOpenLink;
 
     act(() => {
@@ -258,6 +256,50 @@ describe("TerminalPanel", () => {
 
     staleOpenLink("src/Foo.php", 2, 3);
 
+    expect(onOpenLink).not.toHaveBeenCalled();
+  });
+
+  it("drops late callbacks from a replaced same-root session generation", () => {
+    const onCwdChange = vi.fn();
+    const onOpenLink = vi.fn();
+    const onSessionReady = vi.fn();
+    const gateway = terminalGateway();
+    const theme = terminalThemeForAppTheme("dark");
+    const render = (profileId: string) => {
+      act(() => {
+        root.render(
+          <TerminalPanel
+            isActive
+            onCwdChange={onCwdChange}
+            onOpenLink={onOpenLink}
+            onSessionReady={onSessionReady}
+            profileId={profileId}
+            rootPath="/workspace"
+            shellIntegrationEnabled={false}
+            terminalGateway={gateway}
+            terminalTheme={theme}
+          />,
+        );
+      });
+    };
+
+    render("first");
+    const stale = terminalPanelMocks.createTerminalSession.mock.calls[0]?.[0] as FakeSessionOptions;
+    render("second");
+    const current = terminalPanelMocks.createTerminalSession.mock
+      .calls[1]?.[0] as FakeSessionOptions;
+    onCwdChange.mockClear();
+    onOpenLink.mockClear();
+    onSessionReady.mockClear();
+
+    current.onSessionReady(22);
+    current.onCwdChange("/workspace/current");
+    stale.onSessionReady(null);
+    stale.onCwdChange("/workspace/stale");
+    stale.onOpenLink("stale.ts", 1, 1);
+
+    expect(onSessionReady).toHaveBeenCalledExactlyOnceWith(22);
+    expect(onCwdChange).toHaveBeenCalledExactlyOnceWith("/workspace/current");
     expect(onOpenLink).not.toHaveBeenCalled();
   });
 
@@ -306,6 +348,7 @@ describe("TerminalPanel", () => {
 
 function terminalGateway(): TerminalGateway {
   return {
+    acknowledgeStart: vi.fn(async () => undefined),
     listProfiles: vi.fn(async () => []),
     resize: vi.fn(async () => undefined),
     start: vi.fn(async () => ({

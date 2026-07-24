@@ -32,6 +32,7 @@ export interface EditorSurfaceLanguageProviderRegistrationDependencies {
   refreshGateway?: LanguageServerRefreshGateway;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   workspaceRoot: string | null;
+  workspaceTrusted?: boolean;
   workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
 }
 
@@ -44,24 +45,29 @@ export function useEditorSurfaceLanguageProviderRegistration({
   dependencies: EditorSurfaceLanguageProviderRegistrationDependencies | null;
   refs: EditorSurfaceLanguageProviderRegistrationRefs;
 }) {
+  const hasDependencies = dependencies !== null;
   const {
-    featuresGateway,
     coordinatePhpDocumentSymbols,
+    featuresGateway,
     monacoApi,
     refreshGateway,
     workspaceEditGateway,
     workspaceIdentityDescriptor,
     workspaceRoot,
+    workspaceTrusted,
   } = dependencies ?? ({} as Partial<EditorSurfaceLanguageProviderRegistrationDependencies>);
   const {
     activeDocumentRef,
-    resolveDocumentForModelRef,
     applyPhpCodeActionNewFileRef,
     applyPhpWorkspaceEditRef,
     clearLanguageServerDiagnosticsForPathRef,
     errorReporterRef,
     flushPendingRef,
+    getLanguageServerDocumentLifecycleIdentityRef,
+    isLanguageServerDocumentRequestLeaseCurrentRef,
     isLanguageServerDocumentSyncedRef,
+    largeSmartDocumentPolicyRef,
+    openPhpChangeSignatureRef,
     phpCodeActionsRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
@@ -69,17 +75,19 @@ export function useEditorSurfaceLanguageProviderRegistration({
     phpMethodCompletionsRef,
     phpMethodSignatureRef,
     phpParameterInlayHintsRef,
-    phpPresenterLinkCompletionsRef,
     phpPresenterLinkCompletionContextRef,
+    phpPresenterLinkCompletionsRef,
     phpPresenterLinkDefinitionRef,
     recordCompletionLatencyRef,
+    requestLanguageServerDocumentLeaseRef,
+    resolveDocumentForModelRef,
     runtimeStatusRef,
     templateLanguageProvidersRef,
     userSnippetsRef,
   } = refs;
 
   useEffect(() => {
-    if (!dependencies || !featuresGateway || !monacoApi) {
+    if (!hasDependencies || !featuresGateway || !monacoApi) {
       return;
     }
 
@@ -93,14 +101,42 @@ export function useEditorSurfaceLanguageProviderRegistration({
           workspaceEditGateway,
           workspaceIdentityDescriptor,
           workspaceRoot: workspaceRoot ?? null,
+          workspaceTrusted,
         },
-        refs,
+        refs: {
+          activeDocumentRef,
+          applyPhpCodeActionNewFileRef,
+          applyPhpWorkspaceEditRef,
+          clearLanguageServerDiagnosticsForPathRef,
+          errorReporterRef,
+          flushPendingRef,
+          getLanguageServerDocumentLifecycleIdentityRef,
+          isLanguageServerDocumentRequestLeaseCurrentRef,
+          isLanguageServerDocumentSyncedRef,
+          largeSmartDocumentPolicyRef,
+          openPhpChangeSignatureRef,
+          phpCodeActionsRef,
+          phpFrameworkDefinitionRef,
+          phpFrameworkStringCompletionContextRef,
+          phpInlayHintsEnabledRef,
+          phpMethodCompletionsRef,
+          phpMethodSignatureRef,
+          phpParameterInlayHintsRef,
+          phpPresenterLinkCompletionContextRef,
+          phpPresenterLinkCompletionsRef,
+          phpPresenterLinkDefinitionRef,
+          recordCompletionLatencyRef,
+          requestLanguageServerDocumentLeaseRef,
+          resolveDocumentForModelRef,
+          runtimeStatusRef,
+          templateLanguageProvidersRef,
+          userSnippetsRef,
+        },
       }),
     );
-    const composerManifestProviders = registerComposerManifestMonacoProviders(
-      monacoApi,
-      { getWorkspace: activeComposerManifestWorkspace },
-    );
+    const composerManifestProviders = registerComposerManifestMonacoProviders(monacoApi, {
+      getWorkspace: activeComposerManifestWorkspace,
+    });
     const npmManifestProviders = registerNpmManifestMonacoProviders(monacoApi, {
       getWorkspace: activeNpmManifestWorkspace,
     });
@@ -112,7 +148,6 @@ export function useEditorSurfaceLanguageProviderRegistration({
     };
   }, [
     activeDocumentRef,
-    resolveDocumentForModelRef,
     applyPhpCodeActionNewFileRef,
     applyPhpWorkspaceEditRef,
     clearLanguageServerDiagnosticsForPathRef,
@@ -120,8 +155,13 @@ export function useEditorSurfaceLanguageProviderRegistration({
     errorReporterRef,
     featuresGateway,
     flushPendingRef,
+    getLanguageServerDocumentLifecycleIdentityRef,
+    hasDependencies,
+    isLanguageServerDocumentRequestLeaseCurrentRef,
     isLanguageServerDocumentSyncedRef,
+    largeSmartDocumentPolicyRef,
     monacoApi,
+    openPhpChangeSignatureRef,
     phpCodeActionsRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
@@ -129,16 +169,19 @@ export function useEditorSurfaceLanguageProviderRegistration({
     phpMethodCompletionsRef,
     phpMethodSignatureRef,
     phpParameterInlayHintsRef,
-    phpPresenterLinkCompletionsRef,
     phpPresenterLinkCompletionContextRef,
+    phpPresenterLinkCompletionsRef,
     phpPresenterLinkDefinitionRef,
     recordCompletionLatencyRef,
     refreshGateway,
+    requestLanguageServerDocumentLeaseRef,
+    resolveDocumentForModelRef,
     runtimeStatusRef,
     templateLanguageProvidersRef,
     userSnippetsRef,
     workspaceEditGateway,
     workspaceIdentityDescriptor,
     workspaceRoot,
+    workspaceTrusted,
   ]);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TauriDebugGateway } from "./tauriDebugGateway";
-import type { Breakpoint, DebugEvent } from "../domain/debug";
+import type { Breakpoint, DebugCompoundStartRequest, DebugEvent } from "../domain/debug";
 
 type DebugGatewayConstructor = ConstructorParameters<typeof TauriDebugGateway>;
 type InvokeCommand = NonNullable<DebugGatewayConstructor[0]>;
@@ -22,14 +22,44 @@ const frame = {
 };
 
 describe("TauriDebugGateway", () => {
+  it("keeps compound startup private, bounded, and unavailable outside Tauri", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>();
+    const request: DebugCompoundStartRequest = {
+      rootPath: "/workspace",
+      stopAll: true,
+      members: [
+        {
+          launch: { kind: "node-script", scriptPath: "/workspace/a.js" },
+          breakpoints: [],
+          exceptionPauseMode: "none",
+        },
+        {
+          launch: { kind: "node-script", scriptPath: "/workspace/b.js" },
+          breakpoints: [],
+          exceptionPauseMode: "none",
+        },
+      ],
+    };
+    const browserGateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => false);
+    await expect(browserGateway.startCompound(request)).resolves.toEqual({
+      kind: "unavailable",
+      message: "Debugging requires the Tauri desktop runtime.",
+    });
+    expect(invokeCommand).not.toHaveBeenCalled();
+
+    invokeCommand.mockResolvedValue({ status: "ok", sessionIds: [7, 8] });
+    const desktopGateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+    await expect(desktopGateway.startCompound(request)).resolves.toEqual({
+      kind: "ok",
+      sessionIds: [7, 8],
+    });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_compound", { request });
+  });
+
   it("keeps browser development runtime quiet outside Tauri", async () => {
     const invokeCommand = vi.fn<InvokeCommand>();
     const listenToEvent = vi.fn<ListenToEvent>();
-    const gateway = new TauriDebugGateway(
-      invokeCommand,
-      listenToEvent,
-      () => false,
-    );
+    const gateway = new TauriDebugGateway(invokeCommand, listenToEvent, () => false);
 
     await expect(
       gateway.start(
@@ -43,15 +73,83 @@ describe("TauriDebugGateway", () => {
     });
     await expect(gateway.stop(1)).resolves.toBeUndefined();
     await expect(
-      gateway.setBreakpoints(1, "/workspace/one/index.js", [breakpoint]),
+      gateway.disconnect({ rootPath: "/workspace/one", sessionId: 1 }),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.setBreakpoints("/workspace/one", 1, "/workspace/one/index.js", [breakpoint]),
     ).resolves.toEqual([]);
+    await expect(
+      gateway.setBreakpointsActive?.({
+        rootPath: "/workspace/one",
+        sessionId: 1,
+        active: false,
+      }),
+    ).resolves.toBeUndefined();
     await expect(gateway.step(1, "continue")).resolves.toBeUndefined();
     await expect(gateway.pause(1)).resolves.toBeUndefined();
-    await expect(gateway.stackTrace(1)).resolves.toEqual([]);
-    await expect(gateway.scopes(1, 11)).resolves.toEqual([]);
-    await expect(gateway.variables(1, 21)).resolves.toEqual([]);
     await expect(
-      gateway.evaluate("/workspace/one", 1, 11, "count"),
+      gateway.restartFrame({
+        rootPath: "/workspace/one",
+        sessionId: 1,
+        pauseGeneration: 2,
+        frameId: 11,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.runToLocation({
+        rootPath: "/workspace/one",
+        sessionId: 1,
+        pauseGeneration: 2,
+        filePath: "/workspace/one/index.js",
+        lineNumber: 4,
+        columnNumber: 2,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(gateway.setExceptionPause(1, "all")).resolves.toBeUndefined();
+    await expect(gateway.stackTrace(1)).resolves.toEqual([]);
+    await expect(
+      gateway.scopesAtPause({
+        rootPath: "/workspace/one",
+        sessionId: 1,
+        pauseGeneration: 1,
+        frameId: 11,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.variablesPage({
+        rootPath: "/workspace/one",
+        sessionId: 1,
+        pauseGeneration: 1,
+        frameId: 11,
+        variablesReference: 21,
+        start: 0,
+        count: 100,
+      }),
+    ).resolves.toEqual({ variables: [], start: 0, returned: 0, truncated: false });
+    await expect(
+      gateway.setVariable({
+        rootPath: "/workspace/one",
+        sessionId: 1,
+        pauseGeneration: 1,
+        frameId: 11,
+        variablesReference: 21,
+        name: "count",
+        value: "43",
+      }),
+    ).rejects.toThrow("Debugging requires the Tauri desktop runtime.");
+    await expect(
+      gateway.setExpression({
+        rootPath: "/workspace/one",
+        sessionId: 1,
+        pauseGeneration: 1,
+        frameId: 11,
+        setExpressionReference: 31,
+        expression: "count",
+        value: "43",
+      }),
+    ).rejects.toThrow("Debugging requires the Tauri desktop runtime.");
+    await expect(
+      gateway.evaluate("/workspace/one", 1, 11, "count", "watch", false, 1),
     ).resolves.toBeNull();
 
     const unsubscribe = gateway.subscribe(vi.fn());
@@ -61,12 +159,66 @@ describe("TauriDebugGateway", () => {
     expect(listenToEvent).not.toHaveBeenCalled();
   });
 
+  it("invokes the exact Set Variable command and returns the decoded variable", async () => {
+    const result = {
+      name: "count",
+      value: "43",
+      type: "number",
+      canSetValue: true as const,
+      variablesReference: 7,
+    };
+    const invokeCommand = vi.fn<InvokeCommand>().mockResolvedValue(result);
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+    const request = {
+      rootPath: "/workspace",
+      sessionId: 1,
+      pauseGeneration: 2,
+      frameId: 3,
+      variablesReference: 4,
+      name: "count",
+      value: "43",
+    };
+    await expect(gateway.setVariable(request)).resolves.toEqual(result);
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_set_variable", { request });
+  });
+
+  it("invokes the exact Set Expression command and validates its echoed authority", async () => {
+    const request = {
+      rootPath: "/workspace",
+      sessionId: 1,
+      pauseGeneration: 2,
+      frameId: 3,
+      setExpressionReference: 31,
+      expression: "count",
+      value: "43",
+    };
+    const wire = {
+      setExpressionReference: 31,
+      expression: "count",
+      value: {
+        name: "count",
+        value: "43",
+        type: "number",
+        variablesReference: 0,
+      },
+    };
+    const invokeCommand = vi.fn<InvokeCommand>().mockResolvedValue(wire);
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+    await expect(gateway.setExpression(request)).resolves.toEqual({
+      setExpressionReference: 31,
+      expression: "count",
+      value: { status: "ok", value: "43", type: "number", variablesReference: 0 },
+    });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_set_expression", { request });
+  });
+
   it("delegates debug commands inside Tauri", async () => {
     const scope = { name: "Local", variablesReference: 21, expensive: false };
     const variable = {
       name: "count",
       value: "3",
       type: "number",
+      evaluateName: "state.count",
       variablesReference: 0,
     };
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
@@ -87,11 +239,15 @@ describe("TauriDebugGateway", () => {
       }
 
       if (command === "debug_variables") {
-        return [variable];
+        return { variables: [variable], start: 0, returned: 1, truncated: false };
       }
 
       if (command === "debug_evaluate") {
-        return variable;
+        return { status: "ok", value: variable };
+      }
+
+      if (command === "debug_set_exception_pause") {
+        return null;
       }
 
       return undefined;
@@ -107,49 +263,241 @@ describe("TauriDebugGateway", () => {
     ).resolves.toEqual({ kind: "ok", sessionId: 4 });
     await expect(gateway.stop(4)).resolves.toBeUndefined();
     await expect(
-      gateway.setBreakpoints(4, "/workspace/one/index.js", [breakpoint]),
+      gateway.disconnect({ rootPath: "/workspace/one", sessionId: 4 }),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.setBreakpoints("/workspace/one", 4, "/workspace/one/index.js", [breakpoint]),
     ).resolves.toEqual([{ ...breakpoint, verified: true }]);
+    await expect(
+      gateway.setBreakpointsActive?.({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        active: false,
+      }),
+    ).resolves.toBeUndefined();
     await expect(gateway.step(4, "stepOver")).resolves.toBeUndefined();
     await expect(gateway.pause(4)).resolves.toBeUndefined();
-    await expect(gateway.stackTrace(4)).resolves.toEqual([frame]);
-    await expect(gateway.scopes(4, 11)).resolves.toEqual([scope]);
-    await expect(gateway.variables(4, 21)).resolves.toEqual([variable]);
     await expect(
-      gateway.evaluate("/workspace/one", 4, 11, "count"),
-    ).resolves.toEqual(variable);
+      gateway.restartFrame({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      gateway.runToLocation({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        filePath: "/workspace/one/index.js",
+        lineNumber: 4,
+        columnNumber: 2,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(gateway.setExceptionPause(4, "uncaught")).resolves.toBeUndefined();
+    await expect(gateway.stackTrace(4)).resolves.toEqual([frame]);
+    await expect(
+      gateway.scopesAtPause({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+      }),
+    ).resolves.toEqual([scope]);
+    await expect(
+      gateway.variablesPage({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+        variablesReference: 21,
+        start: 0,
+        count: 100,
+      }),
+    ).resolves.toEqual({ variables: [variable], start: 0, returned: 1, truncated: false });
+    await expect(
+      gateway.evaluate("/workspace/one", 4, 11, "count", "repl", true, 3),
+    ).resolves.toEqual({
+      status: "ok",
+      value: "3",
+      type: "number",
+      evaluateName: "state.count",
+      variablesReference: 0,
+    });
 
     expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
       rootPath: "/workspace/one",
       launch: { kind: "node-script", scriptPath: "/workspace/one/index.js" },
       breakpoints: [breakpoint],
+      exceptionPauseMode: "none",
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_stop", { sessionId: 4 });
+    expect(invokeCommand).toHaveBeenCalledWith("debug_disconnect", {
+      request: { rootPath: "/workspace/one", sessionId: 4 },
+    });
     expect(invokeCommand).toHaveBeenCalledWith("debug_set_breakpoints", {
-      sessionId: 4,
-      filePath: "/workspace/one/index.js",
-      breakpoints: [breakpoint],
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        filePath: "/workspace/one/index.js",
+        breakpoints: [breakpoint],
+      },
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("debug_set_breakpoints_active", {
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        active: false,
+      },
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_step", {
       sessionId: 4,
       kind: "stepOver",
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_pause", { sessionId: 4 });
+    expect(invokeCommand).toHaveBeenCalledWith("debug_restart_frame", {
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+      },
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("debug_run_to_location", {
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        filePath: "/workspace/one/index.js",
+        lineNumber: 4,
+        columnNumber: 2,
+      },
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("debug_set_exception_pause", {
+      sessionId: 4,
+      mode: "uncaught",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("debug_stack_trace", {
       sessionId: 4,
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_scopes", {
-      sessionId: 4,
-      frameId: 11,
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+      },
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_variables", {
-      sessionId: 4,
-      variablesReference: 21,
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+        variablesReference: 21,
+        start: 0,
+        count: 100,
+      },
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_evaluate", {
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        frameId: 11,
+        pauseGeneration: 3,
+        expression: "count",
+        context: "repl",
+        allowSideEffects: true,
+      },
+    });
+  });
+
+  it("does not leak runtime details when run-to-location fails", async () => {
+    const invokeCommand = vi
+      .fn<InvokeCommand>()
+      .mockRejectedValue(new Error("adapter secret at /private/workspace/index.ts"));
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+
+    await expect(
+      gateway.runToLocation({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        filePath: "/workspace/one/index.js",
+        lineNumber: 4,
+        columnNumber: 2,
+      }),
+    ).rejects.toThrow("Unable to run debugging to the selected location.");
+    await expect(
+      gateway.runToLocation({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        filePath: "/workspace/one/index.js",
+        lineNumber: 4,
+        columnNumber: 2,
+      }),
+    ).rejects.not.toThrow("/private/workspace/index.ts");
+  });
+
+  it("does not leak runtime details when restart-frame fails", async () => {
+    const invokeCommand = vi
+      .fn<InvokeCommand>()
+      .mockRejectedValue(new Error("CDP secret callFrameId at /private/workspace/index.ts"));
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+
+    await expect(
+      gateway.restartFrame({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+      }),
+    ).rejects.toThrow("Unable to restart the selected stack frame.");
+    await expect(
+      gateway.restartFrame({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        pauseGeneration: 3,
+        frameId: 11,
+      }),
+    ).rejects.not.toThrow("callFrameId");
+  });
+
+  it("forwards an explicit startup exception pause mode", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => ({ status: "ok", sessionId: 4 }));
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+
+    await gateway.start(
+      "/workspace/one",
+      { kind: "node-script", scriptPath: "/workspace/one/index.js" },
+      [],
+      "all",
+    );
+
+    expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
       rootPath: "/workspace/one",
+      launch: { kind: "node-script", scriptPath: "/workspace/one/index.js" },
+      breakpoints: [],
+      exceptionPauseMode: "all",
+    });
+  });
+
+  it("forwards an exact Node attach launch", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => ({ status: "ok", sessionId: 4 }));
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+    const launch = { kind: "node-attach", port: 9229 } as const;
+
+    await expect(gateway.start("/workspace/one", launch, [], "uncaught")).resolves.toEqual({
+      kind: "ok",
       sessionId: 4,
-      frameId: 11,
-      expression: "count",
+    });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start", {
+      rootPath: "/workspace/one",
+      launch,
+      breakpoints: [],
+      exceptionPauseMode: "uncaught",
     });
   });
 
@@ -174,10 +522,51 @@ describe("TauriDebugGateway", () => {
     });
   });
 
+  it("rejects a malformed start response at the IPC boundary", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>().mockResolvedValue({
+      status: "ok",
+      session_id: 4,
+    });
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+
+    await expect(
+      gateway.start(
+        "/workspace/one",
+        { kind: "node-script", scriptPath: "/workspace/one/index.js" },
+        [],
+      ),
+    ).rejects.toThrow("Invalid debug IPC value at debug_start result");
+  });
+
+  it("forwards the captured nested package context when starting a JS test", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => ({
+      status: "ok",
+      sessionId: 9,
+    }));
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+    const launch = {
+      kind: "js-test-file",
+      runner: "vitest",
+      filePath: "/workspace/packages/math/src/sum.test.ts",
+      packageRootPath: "/workspace/packages/math",
+    } as const;
+
+    await expect(gateway.start("/workspace", launch, [])).resolves.toEqual({
+      kind: "ok",
+      sessionId: 9,
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
+      rootPath: "/workspace",
+      launch,
+      breakpoints: [],
+      exceptionPauseMode: "none",
+    });
+  });
+
   it("forwards debug events until unsubscribed", async () => {
     const unlisten = vi.fn();
     const captured: {
-      emit: ((event: { payload: DebugEvent }) => void) | null;
+      emit: ((event: { payload: unknown }) => void) | null;
     } = { emit: null };
     const listenToEvent = vi.fn<ListenToEvent>(async (_event, handler) => {
       captured.emit = handler;
@@ -195,13 +584,17 @@ describe("TauriDebugGateway", () => {
     const unsubscribe = gateway.subscribe(handler);
     await Promise.resolve();
 
-    expect(listenToEvent).toHaveBeenCalledWith(
-      "debug://event",
-      expect.any(Function),
-    );
+    expect(listenToEvent).toHaveBeenCalledWith("debug://event", expect.any(Function));
     expect(captured.emit).not.toBeNull();
     captured.emit?.({ payload: event });
     expect(handler).toHaveBeenCalledWith(event);
+
+    expect(() =>
+      captured.emit?.({
+        payload: { ...event, sessionId: -1 },
+      }),
+    ).toThrow("Invalid debug IPC value at debug event.sessionId");
+    expect(handler).toHaveBeenCalledTimes(1);
 
     unsubscribe();
     await Promise.resolve();

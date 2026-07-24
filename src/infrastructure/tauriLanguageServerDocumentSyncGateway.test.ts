@@ -73,10 +73,11 @@ describe("TauriSessionBoundLanguageServerDocumentSyncGateway", () => {
     expectTypeOf(gateway.didOpen).parameters.toEqualTypeOf<
       [string, LanguageServerTextDocument, number]
     >();
-    if (false) {
+    const invokeWithoutSessionIdentity = () => {
       // @ts-expect-error PHP document sync must always carry a session identity.
       void gateway.didOpen("/project", document());
-    }
+    };
+    void invokeWithoutSessionIdentity;
   });
 });
 
@@ -130,7 +131,7 @@ describe("TauriLanguageServerDocumentSyncGateway", () => {
   });
 
   it("does not expose legacy command selection", () => {
-    if (false) {
+    const constructWithLegacyCommands = () => {
       // @ts-expect-error Legacy sync cannot be configured with PHP commands.
       void new TauriLanguageServerDocumentSyncGateway(undefined, undefined, {
         didChange: "text_document_did_change",
@@ -138,7 +139,8 @@ describe("TauriLanguageServerDocumentSyncGateway", () => {
         didOpen: "text_document_did_open",
         didSave: "text_document_did_save",
       });
-    }
+    };
+    void constructWithLegacyCommands;
   });
 
   it("cannot be redirected to PHP commands by a subclass", async () => {

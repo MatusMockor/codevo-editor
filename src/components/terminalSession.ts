@@ -1,17 +1,15 @@
 import {
+  isTerminalRuntimeTerminal,
   terminalSessionId,
   type TerminalGateway,
   type TerminalOutputEvent,
+  type TerminalRuntimeStatus,
   type TerminalSize,
   type TerminalUnsubscribeFn,
 } from "../domain/terminal";
 import { terminalFileLinks } from "../domain/terminalFileLinks";
 import { terminalCommandDecoration } from "../domain/terminalCommandDecoration";
-import {
-  detectKeymapPlatform,
-  matchesShortcut,
-  type KeymapPlatform,
-} from "../domain/keymap";
+import { detectKeymapPlatform, matchesShortcut, type KeymapPlatform } from "../domain/keymap";
 import {
   nextCommandMarkerLine,
   type TerminalCommandNavigationDirection,
@@ -42,10 +40,7 @@ export interface TerminalLink {
 }
 
 export interface TerminalLinkProvider {
-  provideLinks(
-    lineNumber: number,
-    callback: (links: TerminalLink[] | undefined) => void,
-  ): void;
+  provideLinks(lineNumber: number, callback: (links: TerminalLink[] | undefined) => void): void;
 }
 
 export interface XtermTerminal {
@@ -64,9 +59,7 @@ export interface XtermTerminal {
   onData(listener: (data: string) => void): TerminalDisposable;
   onResize(listener: (size: TerminalSize) => void): TerminalDisposable;
   open(host: HTMLElement): void;
-  registerDecoration(
-    options: TerminalDecorationOptions,
-  ): TerminalDecoration | undefined;
+  registerDecoration(options: TerminalDecorationOptions): TerminalDecoration | undefined;
   registerLinkProvider(provider: TerminalLinkProvider): TerminalDisposable;
   registerMarker(cursorYOffset?: number): TerminalMarker | undefined;
   scrollToLine(line: number): void;
@@ -78,7 +71,7 @@ export interface TerminalMarker extends TerminalDisposable {
   readonly line: number;
 }
 
-export interface TerminalDecoration extends TerminalDisposable {}
+export type TerminalDecoration = TerminalDisposable;
 
 export interface TerminalDecorationOptions {
   backgroundColor: string;
@@ -202,12 +195,15 @@ export function createTerminalSession({
   let pendingResize: TerminalSize | null = null;
   let sessionId: number | null = null;
   let unsubscribeOutput: TerminalUnsubscribeFn = () => undefined;
+  let unsubscribeStatus: TerminalUnsubscribeFn = () => undefined;
   const shellIntegration = new TerminalShellIntegrationRegistry();
 
   const reportError = (error: unknown) => {
+    if (disposed) return;
     terminal.write(`\r\n${String(error)}\r\n`);
   };
   const sendResize = (size: TerminalSize) => {
+    if (disposed) return;
     if (!sessionId) {
       pendingResize = size;
       return;
@@ -216,7 +212,7 @@ export function createTerminalSession({
     void gateway.resize(sessionId, size).catch(reportError);
   };
   const flushPendingInput = () => {
-    if (!sessionId) {
+    if (disposed || !sessionId) {
       return;
     }
 
@@ -225,7 +221,7 @@ export function createTerminalSession({
     }
   };
   const flushPendingResize = () => {
-    if (!sessionId) {
+    if (disposed || !sessionId) {
       return;
     }
 
@@ -244,6 +240,7 @@ export function createTerminalSession({
   const scheduleFit = (afterFit?: () => void) => {
     const frameId = scheduleFrame(() => {
       pendingFrames.delete(frameId);
+      if (disposed) return;
       fitTerminal(fitAddon);
 
       if (afterFit) {
@@ -328,9 +325,7 @@ export function createTerminalSession({
       .filter((marker) => !marker.isDisposed)
       .map((marker) => marker.line)
       .sort((first, second) => first - second);
-  const navigateCommandMarkers = (
-    direction: TerminalCommandNavigationDirection,
-  ) => {
+  const navigateCommandMarkers = (direction: TerminalCommandNavigationDirection) => {
     const markerLines = liveCommandMarkerLines();
 
     if (markerLines.length === 0) {
@@ -391,7 +386,7 @@ export function createTerminalSession({
     }
   };
   const handleOutput = (event: TerminalOutputEvent) => {
-    if (event.sessionId !== sessionId) {
+    if (disposed || event.sessionId !== sessionId) {
       return;
     }
 
@@ -406,6 +401,16 @@ export function createTerminalSession({
       pendingWrite.completed = true;
       flushCompletedShellEventWrites();
     });
+  };
+  const handleStatus = (status: TerminalRuntimeStatus) => {
+    if (disposed || status.sessionId !== sessionId || !isTerminalRuntimeTerminal(status)) {
+      return;
+    }
+
+    sessionId = null;
+    pendingInput.splice(0);
+    pendingResize = null;
+    onSessionReady?.(null);
   };
 
   terminal.loadAddon(fitAddon);
@@ -441,14 +446,12 @@ export function createTerminalSession({
 
         const text = bufferLine.translateToString(true);
         const links = terminalFileLinks(text).map((link) => {
-          const range = terminalLinkRange(
-            bufferLine,
-            link.startIndex,
-            link.length,
-          );
+          const range = terminalLinkRange(bufferLine, link.startIndex, link.length);
 
           return {
-            activate: () => onOpenLink?.(link.path, link.line, link.column),
+            activate: () => {
+              if (!disposed) onOpenLink?.(link.path, link.line, link.column);
+            },
             range: {
               end: { x: range.end, y: lineNumber },
               start: { x: range.start, y: lineNumber },
@@ -463,6 +466,7 @@ export function createTerminalSession({
   );
   disposables.push(
     terminal.onData((data) => {
+      if (disposed) return;
       if (!sessionId) {
         pendingInput.push(data);
         return;
@@ -483,15 +487,19 @@ export function createTerminalSession({
   }
 
   if (rootPath) {
-    void gateway
-      .subscribeOutput(handleOutput)
-      .then((unsubscribe) => {
+    void Promise.all([
+      gateway.subscribeOutput(handleOutput),
+      gateway.subscribeStatus?.(handleStatus) ?? Promise.resolve(() => undefined),
+    ])
+      .then(([outputListener, statusListener]) => {
         if (disposed) {
-          unsubscribe();
+          outputListener();
+          statusListener();
           return false;
         }
 
-        unsubscribeOutput = unsubscribe;
+        unsubscribeOutput = outputListener;
+        unsubscribeStatus = statusListener;
         return true;
       })
       .then((ready) => {
@@ -501,13 +509,8 @@ export function createTerminalSession({
 
         scheduleFit(() => {
           void gateway
-            .start(
-              rootPath,
-              currentSize(),
-              profileId || undefined,
-              shellIntegrationEnabled,
-            )
-            .then((status) => {
+            .start(rootPath, currentSize(), profileId || undefined, shellIntegrationEnabled)
+            .then(async (status) => {
               const startedSessionId = terminalSessionId(status);
 
               if (!startedSessionId) {
@@ -521,6 +524,25 @@ export function createTerminalSession({
               }
 
               sessionId = startedSessionId;
+              try {
+                await gateway.acknowledgeStart(startedSessionId);
+              } catch (error) {
+                if (sessionId === startedSessionId) {
+                  sessionId = null;
+                }
+                void gateway.stop(startedSessionId).catch(reportError);
+                reportError(error);
+                return;
+              }
+
+              if (disposed) {
+                void gateway.stop(startedSessionId).catch(reportError);
+                return;
+              }
+              if (sessionId !== startedSessionId) {
+                return;
+              }
+
               onSessionReady?.(startedSessionId);
               flushPendingInput();
               flushPendingResize();
@@ -533,6 +555,7 @@ export function createTerminalSession({
 
   return {
     dispose: () => {
+      if (disposed) return;
       disposed = true;
       onSessionReady?.(null);
       onCwdChange?.(null);
@@ -544,6 +567,7 @@ export function createTerminalSession({
       pendingFrames.clear();
       resizeObserver.disconnect();
       unsubscribeOutput();
+      unsubscribeStatus();
 
       for (const disposable of disposables) {
         disposable.dispose();

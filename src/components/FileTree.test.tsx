@@ -109,7 +109,6 @@ describe("FileTree", () => {
       "Open in Terminal",
       "Rename",
     ]);
-
     clickMenuItem("Reveal in Finder");
     expect(onRevealEntry).toHaveBeenCalledWith(
       expect.objectContaining({ path: "/workspace/User.php" }),

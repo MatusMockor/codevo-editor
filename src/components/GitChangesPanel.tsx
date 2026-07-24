@@ -30,10 +30,7 @@ import {
   type GitStatus,
   type GitUpstreamTracking,
 } from "../domain/git";
-import {
-  gitRepositoryDisplayName,
-  type GitRepositoryStatus,
-} from "../domain/gitRepositoryMapping";
+import { gitRepositoryDisplayName, type GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import {
   completeConventionalType,
   matchConventionalCommitTypes,
@@ -73,10 +70,7 @@ interface GitChangesPanelProps {
   onRefresh(): void;
   onRevertChanges(changes: GitChangedFile[]): void;
   onStageChanges(changes: GitChangedFile[]): void;
-  onToggleChangeIncluded(
-    change: GitChangedFile,
-    repositoryRootRelative?: string,
-  ): void;
+  onToggleChangeIncluded(change: GitChangedFile, repositoryRootRelative?: string): void;
   onUnstageChanges(changes: GitChangedFile[]): void;
 }
 
@@ -101,16 +95,11 @@ function buildRepositorySections(
   workspaceRoot: string,
 ): RepositorySection[] {
   return repositoryStatuses
-    .filter(
-      (entry) => entry.status.isRepository && entry.status.changes.length > 0,
-    )
+    .filter((entry) => entry.status.isRepository && entry.status.changes.length > 0)
     .map((entry) => ({
       repositoryRoot: entry.status.rootPath,
       rootRelativePath: entry.mapping.rootRelativePath,
-      label: gitRepositoryDisplayName(
-        entry.mapping.rootRelativePath,
-        workspaceRoot,
-      ),
+      label: gitRepositoryDisplayName(entry.mapping.rootRelativePath, workspaceRoot),
       branch: entry.status.branch,
       changes: entry.status.changes,
       upstream: entry.status.upstream ?? null,
@@ -123,9 +112,7 @@ function selectedChangesForRepository(
   includedChangePaths: Set<string>,
 ): GitChangedFile[] {
   return changes.filter((change) =>
-    includedChangePaths.has(
-      gitChangeKeyForRepository(repositoryRootRelative, change),
-    ),
+    includedChangePaths.has(gitChangeKeyForRepository(repositoryRootRelative, change)),
   );
 }
 
@@ -137,10 +124,7 @@ function selectedChangesForRepository(
  * qualified (`gitChangeKeyForRepository`).
  */
 function bindRepositoryToggle(
-  onToggleChangeIncluded: (
-    change: GitChangedFile,
-    repositoryRootRelative?: string,
-  ) => void,
+  onToggleChangeIncluded: (change: GitChangedFile, repositoryRootRelative?: string) => void,
   repositoryRootRelative: string,
 ): (change: GitChangedFile) => void {
   if (repositoryRootRelative === "") {
@@ -189,16 +173,10 @@ function GitChangesPanelComponent({
   status,
   workspaceRoot,
 }: GitChangesPanelProps) {
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
-    new Set(),
-  );
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(new Set());
 
   const sections = useMemo(
-    () =>
-      buildRepositorySections(
-        repositoryStatuses ?? [],
-        workspaceRoot ?? status.rootPath ?? "",
-      ),
+    () => buildRepositorySections(repositoryStatuses ?? [], workspaceRoot ?? status.rootPath ?? ""),
     [repositoryStatuses, status.rootPath, workspaceRoot],
   );
 
@@ -208,29 +186,15 @@ function GitChangesPanelComponent({
   // stays "" for the primary so every key is byte-identical to `gitChangeKey`.
   const singleSection = sections.length === 1 ? sections[0] : null;
   const singleBranch = singleSection ? singleSection.branch : status.branch;
-  const singleUpstream = singleSection
-    ? singleSection.upstream
-    : (status.upstream ?? null);
+  const singleUpstream = singleSection ? singleSection.upstream : (status.upstream ?? null);
   const singleChanges = singleSection ? singleSection.changes : status.changes;
-  const singleRepoRootRelative = singleSection
-    ? singleSection.rootRelativePath
-    : "";
+  const singleRepoRootRelative = singleSection ? singleSection.rootRelativePath : "";
   const singleIsRepository = singleSection ? true : status.isRepository;
-  const singleRepositoryRoot = singleSection
-    ? singleSection.repositoryRoot
-    : status.rootPath;
+  const singleRepositoryRoot = singleSection ? singleSection.repositoryRoot : status.rootPath;
 
-  const singleGroups = useMemo(
-    () => groupGitChanges(singleChanges),
-    [singleChanges],
-  );
+  const singleGroups = useMemo(() => groupGitChanges(singleChanges), [singleChanges]);
   const singleSelectedChanges = useMemo(
-    () =>
-      selectedChangesForRepository(
-        singleChanges,
-        singleRepoRootRelative,
-        includedChangePaths,
-      ),
+    () => selectedChangesForRepository(singleChanges, singleRepoRootRelative, includedChangePaths),
     [includedChangePaths, singleChanges, singleRepoRootRelative],
   );
   const singleToggleChangeIncluded = useMemo(
@@ -238,21 +202,11 @@ function GitChangesPanelComponent({
     [onToggleChangeIncluded, singleRepoRootRelative],
   );
   const openSingleChange = useMemo(
-    () =>
-      bindRepositoryChangeAction(
-        onOpenChange,
-        singleRepositoryRoot,
-        singleRepoRootRelative,
-      ),
+    () => bindRepositoryChangeAction(onOpenChange, singleRepositoryRoot, singleRepoRootRelative),
     [onOpenChange, singleRepoRootRelative, singleRepositoryRoot],
   );
   const previewSingleChange = useMemo(
-    () =>
-      bindRepositoryChangeAction(
-        onPreviewChange,
-        singleRepositoryRoot,
-        singleRepoRootRelative,
-      ),
+    () => bindRepositoryChangeAction(onPreviewChange, singleRepositoryRoot, singleRepoRootRelative),
     [onPreviewChange, singleRepoRootRelative, singleRepositoryRoot],
   );
 
@@ -293,16 +247,9 @@ function GitChangesPanelComponent({
   // repositories have changes, each under its own header.
   if (sections.length >= 2) {
     const selectedChanges = sections.flatMap((section) =>
-      selectedChangesForRepository(
-        section.changes,
-        section.rootRelativePath,
-        includedChangePaths,
-      ),
+      selectedChangesForRepository(section.changes, section.rootRelativePath, includedChangePaths),
     );
-    const totalChangeCount = sections.reduce(
-      (total, section) => total + section.changes.length,
-      0,
-    );
+    const totalChangeCount = sections.reduce((total, section) => total + section.changes.length, 0);
 
     return (
       <section aria-label="Commit" className="git-commit-panel">
@@ -405,9 +352,7 @@ function GitChangesPanelComponent({
             disabled={gitOperationLoading}
             group={group}
             includedChangePaths={includedChangePaths}
-            isCollapsed={collapsedGroupIds.has(
-              `${singleRepoRootRelative}:${group.id}`,
-            )}
+            isCollapsed={collapsedGroupIds.has(`${singleRepoRootRelative}:${group.id}`)}
             key={group.id}
             onOpenChange={openSingleChange}
             onPreviewChange={previewSingleChange}
@@ -472,16 +417,11 @@ function GitCommitFooter({
   const historyContainerRef = useRef<HTMLDivElement>(null);
   const historyListRef = useRef<HTMLDivElement>(null);
   const canSubmit =
-    hasSelectedChanges &&
-    (amendEnabled || commitMessage.trim().length > 0) &&
-    !disabled;
+    hasSelectedChanges && (amendEnabled || commitMessage.trim().length > 0) && !disabled;
   const firstLine = commitMessage.split(/\r?\n/, 1)[0];
-  const conventionalToken = firstLine.match(
-    /^[^(:!\s]+(?:\([^)]*\)?)?!?/,
-  )?.[0] ?? "";
+  const conventionalToken = firstLine.match(/^[^(:!\s]+(?:\([^)]*\)?)?!?/)?.[0] ?? "";
   const caretWithinLeadingWord =
-    commitCaretPosition > 0 &&
-    commitCaretPosition <= conventionalToken.length;
+    commitCaretPosition > 0 && commitCaretPosition <= conventionalToken.length;
   const conventionalTypeMatches = caretWithinLeadingWord
     ? matchConventionalCommitTypes(conventionalToken)
     : [];
@@ -526,10 +466,7 @@ function GitCommitFooter({
     }
 
     const dismissHistory = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        historyContainerRef.current?.contains(event.target)
-      ) {
+      if (event.target instanceof Node && historyContainerRef.current?.contains(event.target)) {
         return;
       }
 
@@ -549,8 +486,7 @@ function GitCommitFooter({
   const selectConventionalType = (type: ConventionalCommitType) => {
     const nextMessage = completeConventionalType(commitMessage, type);
     const nextCaretPosition =
-      nextMessage.match(/^[^(:!\s]+(?:\([^)]*\))?!?:[ \t]*/)?.[0].length ??
-      `${type}: `.length;
+      nextMessage.match(/^[^(:!\s]+(?:\([^)]*\))?!?:[ \t]*/)?.[0].length ?? `${type}: `.length;
     pendingCommitCaretRef.current = nextCaretPosition;
     commitMessageRef.current?.focus();
     onCommitMessageChange(nextMessage);
@@ -560,9 +496,7 @@ function GitCommitFooter({
     setCommitCaretPosition(textarea.selectionStart);
   };
 
-  const handleHistoryKeyDown = (
-    event: React.KeyboardEvent<HTMLDivElement>,
-  ) => {
+  const handleHistoryKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
       closeHistory(true);
@@ -571,9 +505,7 @@ function GitCommitFooter({
 
     if (event.key === "Enter") {
       event.preventDefault();
-      selectHistoryMessage(
-        commitMessageHistory[activeHistoryIndexRef.current],
-      );
+      selectHistoryMessage(commitMessageHistory[activeHistoryIndexRef.current]);
       return;
     }
 
@@ -584,8 +516,7 @@ function GitCommitFooter({
     event.preventDefault();
     const direction = event.key === "ArrowDown" ? 1 : -1;
     const nextIndex =
-      (activeHistoryIndexRef.current + direction +
-        commitMessageHistory.length) %
+      (activeHistoryIndexRef.current + direction + commitMessageHistory.length) %
       commitMessageHistory.length;
     activeHistoryIndexRef.current = nextIndex;
     setActiveHistoryIndex(nextIndex);
@@ -713,10 +644,7 @@ interface GitRepositorySectionViewProps {
   section: RepositorySection;
   onOpenChange(change: GitChangedFile, repositoryRoot?: string): void;
   onPreviewChange(change: GitChangedFile, repositoryRoot?: string): void;
-  onToggleChangeIncluded(
-    change: GitChangedFile,
-    repositoryRootRelative?: string,
-  ): void;
+  onToggleChangeIncluded(change: GitChangedFile, repositoryRootRelative?: string): void;
   onToggleCollapsed(collapseKey: string): void;
 }
 
@@ -734,28 +662,19 @@ function GitRepositorySectionViewComponent({
   onToggleCollapsed,
   section,
 }: GitRepositorySectionViewProps) {
-  const groups = useMemo(
-    () => groupGitChanges(section.changes),
-    [section.changes],
-  );
+  const groups = useMemo(() => groupGitChanges(section.changes), [section.changes]);
   const toggleChangeIncluded = useMemo(
     () => bindRepositoryToggle(onToggleChangeIncluded, section.rootRelativePath),
     [onToggleChangeIncluded, section.rootRelativePath],
   );
-  const openChange = useCallback(
-    bindRepositoryChangeAction(
-      onOpenChange,
-      section.repositoryRoot,
-      section.rootRelativePath,
-    ),
+  const openChange = useMemo(
+    () =>
+      bindRepositoryChangeAction(onOpenChange, section.repositoryRoot, section.rootRelativePath),
     [onOpenChange, section.repositoryRoot, section.rootRelativePath],
   );
-  const previewChange = useCallback(
-    bindRepositoryChangeAction(
-      onPreviewChange,
-      section.repositoryRoot,
-      section.rootRelativePath,
-    ),
+  const previewChange = useMemo(
+    () =>
+      bindRepositoryChangeAction(onPreviewChange, section.repositoryRoot, section.rootRelativePath),
     [onPreviewChange, section.repositoryRoot, section.rootRelativePath],
   );
 
@@ -842,10 +761,7 @@ function GitCommitHeader({
         <span className="git-commit-title-row">
           <span>Commit</span>
           {changeCount > 0 ? (
-            <span
-              aria-label={changeCountLabel(changeCount)}
-              className="git-changes-summary"
-            >
+            <span aria-label={changeCountLabel(changeCount)} className="git-changes-summary">
               {changeCount}
             </span>
           ) : null}
@@ -877,12 +793,7 @@ function GitCommitHeader({
         >
           <Download aria-hidden="true" size={14} />
         </button>
-        <button
-          disabled={disabled}
-          onClick={onRefresh}
-          title="Refresh Git changes"
-          type="button"
-        >
+        <button disabled={disabled} onClick={onRefresh} title="Refresh Git changes" type="button">
           <RefreshCw aria-hidden="true" size={14} />
         </button>
         <button
@@ -914,11 +825,7 @@ function GitCommitHeader({
   );
 }
 
-function GitUpstreamBadge({
-  upstream,
-}: {
-  upstream: GitUpstreamTracking | null;
-}) {
+function GitUpstreamBadge({ upstream }: { upstream: GitUpstreamTracking | null }) {
   if (!upstream || (upstream.ahead === 0 && upstream.behind === 0)) {
     return null;
   }
@@ -971,9 +878,7 @@ function GitChangeGroupViewComponent({
   const selectedChanges = useMemo(
     () =>
       group.changes.filter((change) =>
-        includedChangePaths.has(
-          gitChangeKeyForRepository(repositoryRootRelative, change),
-        ),
+        includedChangePaths.has(gitChangeKeyForRepository(repositoryRootRelative, change)),
       ),
     [group.changes, includedChangePaths, repositoryRootRelative],
   );
@@ -988,9 +893,7 @@ function GitChangeGroupViewComponent({
     group.changes
       .filter(
         (change) =>
-          !includedChangePaths.has(
-            gitChangeKeyForRepository(repositoryRootRelative, change),
-          ),
+          !includedChangePaths.has(gitChangeKeyForRepository(repositoryRootRelative, change)),
       )
       .forEach(onToggleChangeIncluded);
   };
@@ -1050,10 +953,7 @@ const GitChangeGroupView = memo(GitChangeGroupViewComponent);
 // Active-row match by absolute path (unique across repositories), so a nested
 // repo's active diff highlights the right row and never a same-named sibling in
 // another repository.
-function isSameActiveChange(
-  activeChange: GitChangedFile | null,
-  change: GitChangedFile,
-): boolean {
+function isSameActiveChange(activeChange: GitChangedFile | null, change: GitChangedFile): boolean {
   return (
     activeChange !== null &&
     activeChange.path === change.path &&
@@ -1083,18 +983,10 @@ function GitChangeRowComponent({
 }: GitChangeRowProps) {
   const statusTitle = gitStatusTitle(change.status);
   const stageLabel =
-    change.status === "conflicted"
-      ? "Mark resolved"
-      : isIncluded
-        ? "Unstage"
-        : "Stage";
+    change.status === "conflicted" ? "Mark resolved" : isIncluded ? "Unstage" : "Stage";
 
   return (
-    <div
-      className={
-        isActive ? "git-change-row-wrapper active" : "git-change-row-wrapper"
-      }
-    >
+    <div className={isActive ? "git-change-row-wrapper active" : "git-change-row-wrapper"}>
       <ThemedCheckbox
         checked={isIncluded}
         className="git-change-checkbox"
@@ -1126,13 +1018,8 @@ function GitChangeRowComponent({
       >
         <GitChangeStatusIcon status={change.status} />
         <span className="git-change-name">{fileName(change.relativePath)}</span>
-        <small className="git-change-directory">
-          {directoryName(change.relativePath)}
-        </small>
-        <span
-          aria-label={statusTitle}
-          className={getTreeGitStatusClassName(change.status)}
-        >
+        <small className="git-change-directory">{directoryName(change.relativePath)}</small>
+        <span aria-label={statusTitle} className={getTreeGitStatusClassName(change.status)}>
           {gitStatusLabel(change.status)}
         </span>
       </button>

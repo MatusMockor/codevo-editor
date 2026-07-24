@@ -2,41 +2,66 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   Breakpoint,
+  DebugCompoundRuntimeStatus,
+  DebugCompoundStartRequest,
   DebugEvent,
+  DebugDisconnectRequest,
+  DebugExceptionPauseMode,
   DebugGateway,
   DebugLaunchTarget,
   DebugRuntimeStatus,
+  DebugRestartFrameRequest,
+  DebugSetBreakpointsActiveRequest,
+  DebugSetExpressionRequest,
+  DebugSetExpressionResult,
+  DebugSetVariableRequest,
+  DebugRunToLocationRequest,
   DebugScope,
+  DebugScopesRequest,
   DebugVariable,
+  DebugVariablePage,
+  DebugVariablePageRequest,
   StackFrame,
   StepKind,
 } from "../domain/debug";
+import type {
+  DebugEvaluationContext,
+  DebugEvaluationResult,
+} from "../domain/debugEvaluationPolicy";
+import type {
+  DebugConsoleCompletionRequest,
+  DebugConsoleCompletionResponse,
+} from "../domain/debugConsoleCompletions";
+import type {
+  NativeNodeWatchDebugGateway,
+  NativeNodeWatchDebugStartRequest,
+} from "../domain/nativeNodeWatchDebugGateway";
+import {
+  DEBUG_IPC_COMMANDS,
+  decodeDebugEvent,
+  invokeDebugIpc,
+  type DebugStartResponseWire,
+  type DebugCompoundStartResponseWire,
+  type DebugEvaluationResultWire,
+  type InvokeDebugCommand,
+} from "./tauriDebugIpcContract";
 
 const DEBUG_EVENT = "debug://event";
-const DESKTOP_RUNTIME_REQUIRED =
-  "Debugging requires the Tauri desktop runtime.";
+const DESKTOP_RUNTIME_REQUIRED = "Debugging requires the Tauri desktop runtime.";
+const DEBUG_RUN_TO_LOCATION_FAILED = "Unable to run debugging to the selected location.";
+const DEBUG_RESTART_FRAME_FAILED = "Unable to restart the selected stack frame.";
 
-type InvokeDebugCommand = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<unknown>;
 type ListenToDebugEvents = (
   event: string,
-  handler: (event: { payload: DebugEvent }) => void,
+  handler: (event: { payload: unknown }) => void,
 ) => Promise<() => void>;
 type RuntimeDetector = () => boolean;
 
-type WireStartResponse =
-  | { status: "ok"; sessionId: number }
-  | { status: "unavailable"; message: string }
-  | { status: "error"; message: string };
-
-const invokeDebugCommand: InvokeDebugCommand = (command, args) =>
-  invoke(command, args);
+const invokeDebugCommand: InvokeDebugCommand = (command, args) => invoke(command, args);
 const listenToDebugEvents: ListenToDebugEvents = (event, handler) =>
-  listen<DebugEvent>(event, handler);
+  listen<unknown>(event, handler);
 
-function toRuntimeStatus(response: WireStartResponse): DebugRuntimeStatus {
+function toRuntimeStatus(response: DebugStartResponseWire): DebugRuntimeStatus {
   if (response.status === "ok") {
     return { kind: "ok", sessionId: response.sessionId };
   }
@@ -48,7 +73,16 @@ function toRuntimeStatus(response: WireStartResponse): DebugRuntimeStatus {
   return { kind: "error", message: response.message };
 }
 
-export class TauriDebugGateway implements DebugGateway {
+function toCompoundRuntimeStatus(
+  response: DebugCompoundStartResponseWire,
+): DebugCompoundRuntimeStatus {
+  if (response.status === "ok") {
+    return { kind: "ok", sessionIds: Object.freeze([...response.sessionIds]) };
+  }
+  return { kind: response.status, message: response.message };
+}
+
+export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGateway {
   constructor(
     private readonly invokeCommand: InvokeDebugCommand = invokeDebugCommand,
     private readonly listenToEvent: ListenToDebugEvents = listenToDebugEvents,
@@ -59,18 +93,57 @@ export class TauriDebugGateway implements DebugGateway {
     rootPath: string,
     launch: DebugLaunchTarget,
     breakpoints: readonly Breakpoint[],
+    exceptionPauseMode: DebugExceptionPauseMode = "none",
   ): Promise<DebugRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return { kind: "unavailable", message: DESKTOP_RUNTIME_REQUIRED };
     }
 
-    const response = (await this.invokeCommand("debug_start", {
+    const response = await invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.start, {
       rootPath,
       launch,
       breakpoints: [...breakpoints],
-    })) as WireStartResponse;
+      exceptionPauseMode,
+    });
 
     return toRuntimeStatus(response);
+  }
+
+  async startCompound(request: DebugCompoundStartRequest): Promise<DebugCompoundRuntimeStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return { kind: "unavailable", message: DESKTOP_RUNTIME_REQUIRED };
+    }
+    const response = await invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.startCompound, {
+      request,
+    });
+    return toCompoundRuntimeStatus(response);
+  }
+
+  async startNativeNodeWatch(
+    request: NativeNodeWatchDebugStartRequest,
+  ): Promise<DebugRuntimeStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return { kind: "unavailable", message: DESKTOP_RUNTIME_REQUIRED };
+    }
+    const response = await invokeDebugIpc(
+      this.invokeCommand,
+      DEBUG_IPC_COMMANDS.startNativeNodeWatch,
+      {
+        ...request,
+        breakpoints: [...request.breakpoints],
+      },
+    );
+    return toRuntimeStatus(response);
+  }
+
+  async confirmNativeNodeWatch(rootPath: string, sessionId: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      throw new Error(DESKTOP_RUNTIME_REQUIRED);
+    }
+    await invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.confirmNativeNodeWatch, {
+      rootPath,
+      sessionId,
+    });
   }
 
   stop(sessionId: number): Promise<void> {
@@ -78,10 +151,19 @@ export class TauriDebugGateway implements DebugGateway {
       return Promise.resolve();
     }
 
-    return this.invokeCommand("debug_stop", { sessionId }) as Promise<void>;
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.stop, { sessionId });
+  }
+
+  disconnect(request: DebugDisconnectRequest): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.disconnect, { request });
   }
 
   setBreakpoints(
+    rootPath: string,
     sessionId: number,
     filePath: string,
     breakpoints: readonly Breakpoint[],
@@ -90,11 +172,24 @@ export class TauriDebugGateway implements DebugGateway {
       return Promise.resolve([]);
     }
 
-    return this.invokeCommand("debug_set_breakpoints", {
-      sessionId,
-      filePath,
-      breakpoints: [...breakpoints],
-    }) as Promise<Breakpoint[]>;
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setBreakpoints, {
+      request: {
+        rootPath,
+        sessionId,
+        filePath,
+        breakpoints: [...breakpoints],
+      },
+    });
+  }
+
+  setBreakpointsActive(request: DebugSetBreakpointsActiveRequest): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setBreakpointsActive, {
+      request,
+    });
   }
 
   step(sessionId: number, kind: StepKind): Promise<void> {
@@ -102,10 +197,10 @@ export class TauriDebugGateway implements DebugGateway {
       return Promise.resolve();
     }
 
-    return this.invokeCommand("debug_step", {
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.step, {
       sessionId,
       kind,
-    }) as Promise<void>;
+    });
   }
 
   pause(sessionId: number): Promise<void> {
@@ -113,7 +208,42 @@ export class TauriDebugGateway implements DebugGateway {
       return Promise.resolve();
     }
 
-    return this.invokeCommand("debug_pause", { sessionId }) as Promise<void>;
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.pause, { sessionId });
+  }
+
+  restartFrame(request: DebugRestartFrameRequest): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.restartFrame, {
+      request,
+    }).catch(() => {
+      throw new Error(DEBUG_RESTART_FRAME_FAILED);
+    });
+  }
+
+  runToLocation(request: DebugRunToLocationRequest): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.runToLocation, {
+      request,
+    }).catch(() => {
+      throw new Error(DEBUG_RUN_TO_LOCATION_FAILED);
+    });
+  }
+
+  setExceptionPause(sessionId: number, mode: DebugExceptionPauseMode): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
+      sessionId,
+      mode,
+    });
   }
 
   stackTrace(sessionId: number): Promise<StackFrame[]> {
@@ -121,52 +251,92 @@ export class TauriDebugGateway implements DebugGateway {
       return Promise.resolve([]);
     }
 
-    return this.invokeCommand("debug_stack_trace", {
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.stackTrace, {
       sessionId,
-    }) as Promise<StackFrame[]>;
+    });
   }
 
-  scopes(sessionId: number, frameId: number): Promise<DebugScope[]> {
+  scopesAtPause(request: DebugScopesRequest): Promise<DebugScope[]> {
+    if (!this.isRuntimeAvailable()) return Promise.resolve([]);
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.scopes, {
+      request,
+    });
+  }
+
+  variablesPage(request: DebugVariablePageRequest): Promise<DebugVariablePage> {
     if (!this.isRuntimeAvailable()) {
-      return Promise.resolve([]);
+      return Promise.resolve({
+        variables: [],
+        start: request.start,
+        returned: 0,
+        truncated: false,
+      });
     }
 
-    return this.invokeCommand("debug_scopes", {
-      sessionId,
-      frameId,
-    }) as Promise<DebugScope[]>;
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.variables, { request });
   }
 
-  variables(
-    sessionId: number,
-    variablesReference: number,
-  ): Promise<DebugVariable[]> {
+  setVariable(request: DebugSetVariableRequest): Promise<DebugVariable> {
     if (!this.isRuntimeAvailable()) {
-      return Promise.resolve([]);
+      return Promise.reject(new Error(DESKTOP_RUNTIME_REQUIRED));
     }
-
-    return this.invokeCommand("debug_variables", {
-      sessionId,
-      variablesReference,
-    }) as Promise<DebugVariable[]>;
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setVariable, { request });
   }
 
-  evaluate(
+  setExpression(request: DebugSetExpressionRequest): Promise<DebugSetExpressionResult> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.reject(new Error(DESKTOP_RUNTIME_REQUIRED));
+    }
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setExpression, { request });
+  }
+
+  completions(request: DebugConsoleCompletionRequest): Promise<DebugConsoleCompletionResponse> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve(Object.freeze({ items: Object.freeze([]), isIncomplete: false }));
+    }
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.completions, { request });
+  }
+
+  async evaluate(
     rootPath: string,
     sessionId: number,
     frameId: number,
     expression: string,
-  ): Promise<DebugVariable | null> {
+    context: DebugEvaluationContext,
+    allowSideEffects: boolean,
+    pauseGeneration: number,
+  ): Promise<DebugEvaluationResult | null> {
     if (!this.isRuntimeAvailable()) {
-      return Promise.resolve(null);
+      return null;
     }
-
-    return this.invokeCommand("debug_evaluate", {
-      rootPath,
-      sessionId,
-      frameId,
-      expression,
-    }) as Promise<DebugVariable | null>;
+    const result: DebugEvaluationResultWire = await invokeDebugIpc(
+      this.invokeCommand,
+      DEBUG_IPC_COMMANDS.evaluate,
+      {
+        request: {
+          rootPath,
+          sessionId,
+          frameId,
+          pauseGeneration,
+          expression,
+          context,
+          allowSideEffects,
+        },
+      },
+    );
+    if (result.status === "error") return result;
+    return {
+      status: "ok",
+      value: result.value.value,
+      type: result.value.type,
+      ...(result.value.evaluateName === undefined
+        ? {}
+        : { evaluateName: result.value.evaluateName }),
+      variablesReference: result.value.variablesReference,
+      ...(result.value.setExpressionReference === undefined
+        ? {}
+        : { setExpressionReference: result.value.setExpressionReference }),
+    };
   }
 
   subscribe(handler: (event: DebugEvent) => void): () => void {
@@ -180,7 +350,7 @@ export class TauriDebugGateway implements DebugGateway {
         return;
       }
 
-      handler(event.payload);
+      handler(decodeDebugEvent(event.payload));
     });
     unlistenPromise.catch(() => undefined);
 

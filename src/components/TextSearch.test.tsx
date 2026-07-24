@@ -9,7 +9,8 @@ import {
   type TextSearchResult,
 } from "../domain/workspace";
 import { searchQueryHistorySession } from "../domain/searchQueryHistory";
-import { splitMatchHighlight, TextSearch } from "./TextSearch";
+import { splitMatchHighlight } from "../domain/textSearchHighlight";
+import { TextSearch } from "./TextSearch";
 
 describe("TextSearch", () => {
   let host: HTMLDivElement;

@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -28,12 +29,7 @@ interface MenuPosition {
 
 const VIEWPORT_PADDING = 8;
 
-function BreadcrumbsComponent({
-  fileName,
-  path,
-  symbols,
-  onNavigate,
-}: BreadcrumbsProps) {
+function BreadcrumbsComponent({ fileName, path, symbols, onNavigate }: BreadcrumbsProps) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [menuPosition, setMenuPosition] = useState<MenuPosition>({
     left: 0,
@@ -43,10 +39,10 @@ function BreadcrumbsComponent({
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const siblings =
-    openIndex === null
-      ? []
-      : breadcrumbSiblingsAt(symbols, path, openIndex);
+  const siblings = useMemo(
+    () => (openIndex === null ? [] : breadcrumbSiblingsAt(symbols, path, openIndex)),
+    [openIndex, path, symbols],
+  );
 
   const closeMenu = useCallback(() => {
     if (openIndex === null) {
@@ -86,14 +82,8 @@ function BreadcrumbsComponent({
     );
 
     setMenuPosition({
-      left: Math.max(
-        VIEWPORT_PADDING,
-        Math.min(triggerRect.left, maximumLeft),
-      ),
-      top: Math.max(
-        VIEWPORT_PADDING,
-        Math.min(triggerRect.bottom, maximumTop),
-      ),
+      left: Math.max(VIEWPORT_PADDING, Math.min(triggerRect.left, maximumLeft)),
+      top: Math.max(VIEWPORT_PADDING, Math.min(triggerRect.bottom, maximumTop)),
     });
   }, [openIndex]);
 
@@ -110,10 +100,7 @@ function BreadcrumbsComponent({
     const closeOnOutsideClick = (event: MouseEvent) => {
       const target = event.target as Node;
 
-      if (
-        navRef.current?.contains(target) ||
-        menuRef.current?.contains(target)
-      ) {
+      if (navRef.current?.contains(target) || menuRef.current?.contains(target)) {
         return;
       }
 
@@ -141,9 +128,7 @@ function BreadcrumbsComponent({
       return;
     }
 
-    const currentIndex = itemRefs.current.findIndex(
-      (item) => item === document.activeElement,
-    );
+    const currentIndex = itemRefs.current.findIndex((item) => item === document.activeElement);
 
     if (event.key === "Enter") {
       event.preventDefault();
@@ -162,8 +147,7 @@ function BreadcrumbsComponent({
 
     event.preventDefault();
     const direction = event.key === "ArrowDown" ? 1 : -1;
-    const nextIndex =
-      (currentIndex + direction + siblings.length) % siblings.length;
+    const nextIndex = (currentIndex + direction + siblings.length) % siblings.length;
     itemRefs.current[nextIndex]?.focus();
   };
 
@@ -177,11 +161,7 @@ function BreadcrumbsComponent({
       <span className="breadcrumb-segment breadcrumb-file">{fileName}</span>
       {path.map((symbol, index) => (
         <Fragment key={`${index}:${symbol.name}`}>
-          <ChevronRight
-            aria-hidden="true"
-            className="breadcrumb-separator"
-            size={12}
-          />
+          <ChevronRight aria-hidden="true" className="breadcrumb-separator" size={12} />
           <button
             aria-expanded={openIndex === index}
             aria-haspopup="menu"
@@ -215,9 +195,7 @@ function BreadcrumbsComponent({
             >
               {siblings.map((symbol, index) => (
                 <button
-                  aria-current={
-                    symbol === path[openIndex] ? "true" : undefined
-                  }
+                  aria-current={symbol === path[openIndex] ? "true" : undefined}
                   className="breadcrumb-menu-item"
                   key={`${index}:${symbol.name}`}
                   onClick={() => selectSymbol(symbol)}

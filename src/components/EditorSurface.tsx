@@ -10,46 +10,56 @@ import {
   useRef,
   useState,
   useId,
-  type CSSProperties,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
 } from "react";
 import type * as Monaco from "monaco-editor";
-import type {
-  EditorChangeHunk,
-  EditorChangeKind,
-} from "../domain/editorChangeMarkers";
-import type {
-  CommandContext,
-  CommandExecutionRunner,
-} from "../application/commandRegistry";
+import {
+  isSmartBlankLineIndentDocument,
+  leadingWhitespace,
+  smartBlankLineIndent,
+  smartBlankLineIndentTargetLineNumber,
+} from "./editorSmartIndent";
+import type { EditorChangeHunk } from "../domain/editorChangeMarkers";
+import type { CommandContext, CommandExecutionRunner } from "../application/commandRegistry";
+import { useNpmRunSelectedScriptMonacoAction } from "./npmRunSelectedScriptMonacoAction";
 import type { NavigationRequest } from "../application/navigationRequest";
 import type { PhpCodeActionWorkspaceEditApplier } from "../application/phpCodeActionTypes";
 import {
   nextEditorSelectionExpansionRange,
   type EditorSelectionTextRange,
 } from "../domain/editorSelectionRanges";
-import type {
-  EditorMenuCommand,
-  EditorMenuCommandRunner,
-} from "../domain/editorMenuCommand";
+import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
+import { editorActionForMenuCommand } from "./editorMenuCommandAction";
 import type {
   EditorSurfaceCommandId,
   EditorSurfaceCommandInvocationScope,
   EditorSurfaceCommandRunner,
 } from "../domain/editorSurfaceCommand";
 import { editorSurfaceCommandInvocationScopesEqual } from "../domain/editorSurfaceCommand";
-import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import { useEditorSurfaceImportActions } from "./useEditorSurfaceImportActions";
 import {
-  applicableEslintFixes,
-  type EslintFix,
-} from "../domain/eslintDiagnostics";
+  type IncompleteWorkspaceIdentityDescriptor,
+  modelForPath,
+  modelMatchesProject,
+  resolveCompleteWorkspaceIdentityDescriptor,
+  synchronizeActiveDocumentModel,
+} from "./editorSurfaceModelIdentity";
+import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import type { DebugWatchAtCursorCaptureReader } from "../domain/debugWatchAtCursorCapture";
+import type { DebugBreakpointNavigationCaptureReader } from "../domain/debugBreakpointNavigationCapture";
+import type { DebugInlineBreakpointCaptureReader } from "../domain/debugInlineBreakpointCapture";
+import type { DebugEvaluateInConsoleCaptureReader } from "../domain/debugEvaluateInConsoleCapture";
+import { applicableEslintFixes, type EslintFix } from "../domain/eslintDiagnostics";
 import type {
   EditorSurfaceBufferFixRunner,
   EditorSurfacePhpstanIgnoreRunner,
 } from "../application/useWorkbenchCodeQualityDiagnostics";
 import type { EditorSurfaceEslintDisableRunner } from "../application/workbenchEslintDisableCommand";
+import type { DebugInlineValueContext } from "../application/debugInlineValueContext";
+import type { JsTestExplorerCurrentFileIdentity } from "../domain/jsTestExplorerFilter";
+import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import type {
   EditorPosition,
   EditorRevealTarget,
@@ -58,9 +68,7 @@ import type {
   LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
-import {
-  breadcrumbPathFromCursorAndSymbols,
-} from "../domain/breadcrumbs";
+import { breadcrumbPathFromCursorAndSymbols } from "../domain/breadcrumbs";
 import {
   BackgroundTokenizer,
   idleCallbackScheduler,
@@ -69,13 +77,17 @@ import {
 import {
   defaultShortcutForCommand,
   detectKeymapPlatform,
-  keymapCommandIdForShortcut,
-  parseShortcut,
+  keymapCommandIdsForShortcut,
   shortcutForCommand,
   type KeymapCommandId,
-  type KeymapPlatform,
   type KeymapSettings,
 } from "../domain/keymap";
+import { monacoKeybindingsForShortcut } from "./monacoKeybindings";
+import {
+  requestRegisteredCommand,
+  runCommandChain,
+  runRegisteredCommand,
+} from "../application/commandChain";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 import {
   isJavaScriptTypeScriptLanguageServerDocument,
@@ -84,32 +96,22 @@ import {
 import {
   defaultLargeSmartDocumentPolicy,
   isLargeSmartDocument,
-  normalizeLargeSmartDocumentPolicy,
+  isLargeSmartDocumentContent,
   type LargeSmartDocumentPolicy,
 } from "../domain/largeDocumentPolicy";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { SurroundWithPicker } from "./SurroundWithPicker";
-import {
-  surroundWithSnippet,
-  type SurroundWithTemplateId,
-} from "../domain/surroundWith";
+import { surroundWithSnippet, type SurroundWithTemplateId } from "../domain/surroundWith";
 import { completePhpStatement } from "../domain/phpCompleteStatement";
 import {
   advanceHippieSession,
   startHippieSession,
   type HippieSession,
 } from "../domain/hippieCompletion";
-import {
-  phpMoveStatement,
-  type MoveStatementDirection,
-} from "../domain/phpMoveStatement";
+import { phpMoveStatement, type MoveStatementDirection } from "../domain/phpMoveStatement";
 import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import {
-  gitBlameAnnotation,
-  isUncommittedBlameLine,
-  type GitBlameLine,
-} from "../domain/git";
+import { gitBlameShaAtLine, type GitBlameLine } from "../domain/git";
 import { jsGutterTargetsCoordinator } from "../domain/jsGutterTargetsCoordinator";
 import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
@@ -125,10 +127,7 @@ import {
 import type { PhpInspectionDiagnostic } from "../domain/phpInspections";
 import { phpInspectionDiagnostics } from "../domain/phpInspections";
 import { useDebouncedPhpEditTick } from "./useDebouncedPhpEditTick";
-import type {
-  PhpMethodCompletion,
-  PhpMethodSignature,
-} from "../domain/phpMethodCompletions";
+import type { PhpMethodCompletion, PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import {
   phpMemberAccessCompletionContextAt,
@@ -149,9 +148,7 @@ import {
   type MonacoAppTheme,
   type WorkspaceSessionViewState,
 } from "../domain/settings";
-import {
-  type JavaScriptTypeScriptWorkspaceEditApplicationContext,
-} from "./javascriptTypescriptLanguageServerMonacoProviders";
+import { type JavaScriptTypeScriptWorkspaceEditApplicationContext } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
   type LanguageServerMonacoDocumentRequestLease,
   type PhpCodeActionDescriptor,
@@ -167,10 +164,44 @@ import {
 import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./useEditorSurfaceLanguageProviderRegistration";
 import {
   EditorRuntimeHost,
-  useEditorRuntimeContext,
   type EditorRuntimeSurfaceRegistration,
   type LocalPhpValidationSnapshot,
 } from "./EditorRuntimeHost";
+import { useEditorRuntimeContext } from "./editorRuntimeContext";
+import { editorActionForSurfaceCommand } from "./editorSurfaceCommandAction";
+import {
+  EditorBreakpointInteractionLayer,
+  type EditorBreakpointActions,
+} from "./EditorBreakpointInteractionLayer";
+import {
+  toDiagnosticOverviewDecoration,
+  toLocalPhpDiagnostic,
+  toMonacoDiagnosticMarker,
+  toMonacoInspectionMarker,
+  toMonacoSyntaxDiagnosticMarker,
+  toSyntaxOverviewDecoration,
+} from "./editorDiagnosticMonacoMappings";
+import {
+  changePreviewText,
+  clampNumber,
+  editorChangeKindLabel,
+  editorChangePopoverStyle,
+  findChangeHunkAtLine,
+  glyphMarginLaneFromMouseEvent,
+  jumpToChangeHunk,
+  navigateChangeHunkFromPopover,
+  toBookmarkDecoration,
+  toEditorChangeDecoration,
+  toGitBlameDecoration,
+} from "./editorChangeMonacoMappings";
+import { shouldTriggerLatteMemberSuggest } from "./editorLatteMemberSuggestTrigger";
+import type { EditorSurfaceCoverageProps } from "./useEditorSurfaceCoverageDecorations";
+import { useEditorBreakpointDecorations } from "./useEditorBreakpointDecorations";
+import { useEditorRuntimeDecorations } from "./useEditorRuntimeDecorations";
+import {
+  isJavaScriptTypeScriptRuntimeActiveForWorkspace,
+  isLargeSmartModel,
+} from "./editorSurfaceModelGuards";
 import type { EditorRuntimeMembershipInput } from "./editorRuntimeMembership";
 import {
   useEditorSurfaceFrameworkProviderRefs,
@@ -197,46 +228,17 @@ import {
   type WorkspaceIdentityDescriptor,
   workspaceModelUri,
 } from "./phpMonacoDocumentContext";
+import { createDebugWatchAtCursorCaptureReader } from "./debugWatchAtCursorMonacoReader";
+import { createDebugBreakpointNavigationCaptureReader } from "./debugBreakpointNavigationMonacoReader";
+import { createDebugInlineBreakpointCaptureReader } from "./debugInlineBreakpointMonacoReader";
+import { createDebugEvaluateInConsoleCaptureReader } from "./debugEvaluateInConsoleMonacoReader";
 
 interface ChangePreviewState {
   anchorLineNumber: number;
   hunk: EditorChangeHunk;
 }
 
-function shouldTriggerLatteMemberSuggest(
-  language: EditorDocument["language"],
-  model: Monaco.editor.ITextModel,
-  position: EditorPosition,
-  changes: readonly { text: string }[],
-): boolean {
-  if (language !== "latte") {
-    return false;
-  }
-
-  if (!changes.some((change) => /[\w>-]/.test(change.text))) {
-    return false;
-  }
-
-  const linePrefix = model
-    .getLineContent(position.lineNumber)
-    .slice(0, Math.max(0, position.column - 1));
-  const lastOpenBrace = linePrefix.lastIndexOf("{");
-  const lastCloseBrace = linePrefix.lastIndexOf("}");
-
-  if (lastOpenBrace <= lastCloseBrace) {
-    return false;
-  }
-
-  return /\$[A-Za-z_]\w*(?:\[[^\]]+\]|\->[A-Za-z_]\w*)*->\w*$/.test(
-    linePrefix.slice(lastOpenBrace + 1),
-  );
-}
-
-type IncompleteWorkspaceIdentityDescriptor =
-  | { canonicalRoot?: string; workspaceId?: undefined }
-  | { canonicalRoot?: undefined; workspaceId?: string };
-
-export interface EditorSurfaceProps {
+export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   activeDocument: EditorDocument | null;
   activeDocumentContentReady?: boolean;
   /**
@@ -265,17 +267,15 @@ export interface EditorSurfaceProps {
   clearLanguageServerDiagnosticsForPath?(path: string): void;
   bookmarkedLineNumbers?: readonly number[];
   breakpoints?: readonly Breakpoint[];
+  breakpointActions?: Partial<EditorBreakpointActions>;
   changeHunks: EditorChangeHunk[];
   debugStoppedLocation?: { filePath: string; lineNumber: number } | null;
+  debugInlineValueContext?: DebugInlineValueContext | null;
   editorRevealTarget: EditorRevealTarget | null;
-  flushPendingJavaScriptTypeScriptLanguageServerDocument?(
-    path: string,
-  ): Promise<void>;
+  flushPendingJavaScriptTypeScriptLanguageServerDocument?(path: string): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
-  getLanguageServerDocumentLifecycleIdentity?(
-    rootPath: string,
-    path: string,
-  ): number | null;
+  getLanguageServerDocumentLifecycleIdentity?(rootPath: string, path: string): number | null;
+  getJavaScriptTypeScriptDocumentSyncVersion?(rootPath: string, path: string): number | null;
   requestLanguageServerDocumentLease?(
     rootPath: string,
     path: string,
@@ -292,6 +292,8 @@ export interface EditorSurfaceProps {
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   javaScriptTypeScriptCompleteFunctionCalls?: boolean;
   javaScriptTypeScriptValidationEnabled?: boolean;
+  jsTestProblemCurrentFileIdentity?: JsTestExplorerCurrentFileIdentity | null;
+  jsTestProblemSnapshot?: JsTestProblemsSnapshot | null;
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRefreshGateway?: LanguageServerRefreshGateway;
@@ -311,29 +313,27 @@ export interface EditorSurfaceProps {
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   userSnippets?: readonly UserSnippet[];
   workspaceRoot?: string | null;
+  workspaceTrusted?: boolean;
   workspaceIdentityDescriptor?:
-    | WorkspaceIdentityDescriptor
-    | IncompleteWorkspaceIdentityDescriptor
-    | null;
+    WorkspaceIdentityDescriptor | IncompleteWorkspaceIdentityDescriptor | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
-  onEditorViewStateChange?(
-    path: string,
-    viewState: WorkspaceSessionViewState,
-  ): void;
+  onEditorViewStateChange?(path: string, viewState: WorkspaceSessionViewState): void;
   onEditorMenuCommandRunnerChange?(runner: EditorMenuCommandRunner | null): void;
-  onEditorSurfaceCommandRunnerChange?(
-    runner: EditorSurfaceCommandRunner | null,
+  onEditorSurfaceCommandRunnerChange?(runner: EditorSurfaceCommandRunner | null): void;
+  onDebugWatchAtCursorCaptureReaderChange?(reader: DebugWatchAtCursorCaptureReader | null): void;
+  onDebugEvaluateInConsoleCaptureReaderChange?(
+    reader: DebugEvaluateInConsoleCaptureReader | null,
   ): void;
-  onEditorSurfaceBufferFixRunnerChange?(
-    runner: EditorSurfaceBufferFixRunner | null,
+  onDebugBreakpointNavigationCaptureReaderChange?(
+    reader: DebugBreakpointNavigationCaptureReader | null,
   ): void;
-  onEditorSurfaceEslintDisableRunnerChange?(
-    runner: EditorSurfaceEslintDisableRunner | null,
+  onDebugInlineBreakpointCaptureReaderChange?(
+    reader: DebugInlineBreakpointCaptureReader | null,
   ): void;
-  onEditorSurfacePhpstanIgnoreRunnerChange?(
-    runner: EditorSurfacePhpstanIgnoreRunner | null,
-  ): void;
+  onEditorSurfaceBufferFixRunnerChange?(runner: EditorSurfaceBufferFixRunner | null): void;
+  onEditorSurfaceEslintDisableRunnerChange?(runner: EditorSurfaceEslintDisableRunner | null): void;
+  onEditorSurfacePhpstanIgnoreRunnerChange?(runner: EditorSurfacePhpstanIgnoreRunner | null): void;
   onGoBack(): void;
   onGoForward(): void;
   onGoToDefinition(): void;
@@ -342,7 +342,7 @@ export interface EditorSurfaceProps {
   onCloseFloatingSurface?(): boolean;
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
-  onToggleBreakpoint?(filePath: string, lineNumber: number): void;
+  onToggleBreakpoint?(filePath: string, lineNumber: number): void | Promise<void>;
   onToggleGitBlame?(): void;
   onRevealGitBlameCommit?(path: string, sha: string): void;
   provideGitBlame?(path: string): Promise<GitBlameLine[]>;
@@ -358,10 +358,7 @@ export interface EditorSurfaceProps {
   onEditorFocused(): void;
   onOpenClass(): void;
   onOpenFile(): void;
-  onOpenWorkspaceFile?(
-    path: string,
-    request: EditorQaOpenWorkspaceFileRequest,
-  ): Promise<boolean>;
+  onOpenWorkspaceFile?(path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean>;
   onOpenWorkspaceRoot?(path: string): Promise<boolean>;
   onOpenFileStructure(): void;
   onChange(content: string): void;
@@ -376,10 +373,7 @@ export interface EditorSurfaceProps {
    * skips the timestamp delta entirely (no hot-path cost).
    */
   onRecordCompletionLatency?(durationMs: number, rootPath?: string): void;
-  onLocalPhpDiagnosticsChange?(
-    path: string,
-    diagnostics: LanguageServerDiagnostic[],
-  ): void;
+  onLocalPhpDiagnosticsChange?(path: string, diagnostics: LanguageServerDiagnostic[]): void;
   onRevealTargetHandled(target: EditorRevealTarget): void;
   onRevertChangeHunk(hunk: EditorChangeHunk): void;
   phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
@@ -479,12 +473,15 @@ function EditorSurfaceComponent({
   clearLanguageServerDiagnosticsForPath = () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   breakpoints = EMPTY_BREAKPOINTS,
+  breakpointActions,
   changeHunks,
   debugStoppedLocation = null,
+  debugInlineValueContext = null,
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
   getLanguageServerDocumentLifecycleIdentity,
+  getJavaScriptTypeScriptDocumentSyncVersion = () => null,
   requestLanguageServerDocumentLease,
   isLanguageServerDocumentRequestLeaseCurrent,
   formatOnPaste = false,
@@ -503,6 +500,11 @@ function EditorSurfaceComponent({
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
   javaScriptTypeScriptCompleteFunctionCalls = false,
   javaScriptTypeScriptValidationEnabled = true,
+  jsTestCoverageReport = null,
+  jsTestProblemCurrentFileIdentity = null,
+  jsTestProblemSnapshot = null,
+  phpCoverageActiveOwner,
+  phpCoveragePublication,
   keymap,
   monacoTheme,
   runCommand,
@@ -517,12 +519,17 @@ function EditorSurfaceComponent({
   phpLanguageServerWorkspaceEditGateway,
   userSnippets = EMPTY_USER_SNIPPETS,
   workspaceRoot = null,
+  workspaceTrusted = false,
   workspaceIdentityDescriptor = null,
   onCloseActiveTab,
   onCursorPositionChange,
   onEditorViewStateChange,
   onEditorMenuCommandRunnerChange,
   onEditorSurfaceCommandRunnerChange,
+  onDebugWatchAtCursorCaptureReaderChange,
+  onDebugEvaluateInConsoleCaptureReaderChange,
+  onDebugBreakpointNavigationCaptureReaderChange,
+  onDebugInlineBreakpointCaptureReaderChange,
   onEditorSurfaceBufferFixRunnerChange,
   onEditorSurfaceEslintDisableRunnerChange,
   onEditorSurfacePhpstanIgnoreRunnerChange,
@@ -563,6 +570,14 @@ function EditorSurfaceComponent({
   const runtime = useEditorRuntimeContext();
   const generatedSurfaceId = useId();
   const groupId = runtimeMembership?.groupId ?? generatedSurfaceId;
+  const activeDocumentPath = activeDocument?.path;
+  const activeDocumentLanguage = activeDocument?.language;
+  const activeDocumentContent = activeDocument?.content;
+  const editorConfigEndOfLine = editorConfig?.endOfLine;
+  const editorConfigIndentSize = editorConfig?.indentSize;
+  const editorConfigIndentStyle = editorConfig?.indentStyle;
+  const editorConfigTabWidth = editorConfig?.tabWidth;
+  const editorViewStateCaptureEnabled = !!onEditorViewStateChange;
   const {
     templateLanguageProvidersRef,
     phpPresenterLinkCompletionsRef,
@@ -575,50 +590,79 @@ function EditorSurfaceComponent({
     providePhpFrameworkDefinition,
   });
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
-  const [editorApi, setEditorApi] =
-    useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const surfaceIdentityRef = useRef<object>({});
-  const activeDocumentRef = useRef(activeDocument);
-  const workspaceRootRef = useRef(workspaceRoot);
-  activeDocumentRef.current = activeDocument;
-  workspaceRootRef.current = workspaceRoot;
-  const completeWorkspaceIdentityDescriptor =
-    resolveCompleteWorkspaceIdentityDescriptor(workspaceIdentityDescriptor);
+  const [editorApi, setEditorApi] = useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const editorSessionOwnerKey = useMemo(() => {
     if (!workspaceRoot) {
       return null;
     }
 
-    return createWorkspaceEditorSessionOwnerKey(
-      workspaceRoot,
-      workspaceIdentityDescriptor,
-    );
+    return createWorkspaceEditorSessionOwnerKey(workspaceRoot, workspaceIdentityDescriptor);
   }, [workspaceIdentityDescriptor, workspaceRoot]);
-  const captureEditorSurfaceScope = useCallback(
-    (): EditorSurfaceCommandInvocationScope | null => {
-      const document = activeDocumentRef.current;
-      const model = editorApi?.getModel();
-
-      if (
-        !document ||
-        !model ||
-        !modelMatchesProject(model, workspaceRootRef.current, document.path)
-      ) {
-        return null;
-      }
-
-      return {
-        documentPath: document.path,
-        modelIdentity: model,
-        ownerKey: editorSessionOwnerKey,
-        surfaceIdentity: surfaceIdentityRef.current,
-      };
-    }, [editorApi, editorSessionOwnerKey]);
-  const monacoFontLigatures =
-    monacoFontLigaturesForEditorSetting(editorFontLigatures);
-  const commandExecutionRunnerRef = useRef<CommandExecutionRunner | undefined>(
-    undefined,
+  const breakpointModel = editorApi?.getModel();
+  const currentBreakpointModel =
+    breakpointModel &&
+    activeDocumentPath &&
+    modelMatchesProject(breakpointModel, workspaceRoot, activeDocumentPath)
+      ? breakpointModel
+      : null;
+  const toggleBreakpointAction = breakpointActions?.toggleBreakpoint ?? onToggleBreakpoint;
+  const resolvedBreakpointActions = breakpointActions ?? { toggleBreakpoint: onToggleBreakpoint };
+  useEditorBreakpointDecorations(
+    editorApi,
+    monacoApi,
+    activeDocumentPath,
+    currentBreakpointModel,
+    breakpoints,
+    {
+      relocateBreakpoint: resolvedBreakpointActions.relocateBreakpoint,
+      workspaceOwnerKey: editorSessionOwnerKey,
+      workspaceRoot,
+    },
   );
+  useEditorRuntimeDecorations({
+    activeDocument,
+    currentFileIdentity: jsTestProblemCurrentFileIdentity,
+    currentModel: currentBreakpointModel,
+    debugInlineValueContext,
+    debugStoppedLocation,
+    editor: editorApi,
+    jsTestCoverageReport,
+    monaco: monacoApi,
+    phpCoverageActiveOwner,
+    phpCoveragePublication,
+    problemSnapshot: jsTestProblemSnapshot,
+    rootPath: workspaceRoot,
+    workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
+  });
+  const surfaceIdentityRef = useRef<object>({});
+  const activeDocumentRef = useRef(activeDocument);
+  const workspaceRootRef = useRef(workspaceRoot);
+  activeDocumentRef.current = activeDocument;
+  workspaceRootRef.current = workspaceRoot;
+  const completeWorkspaceIdentityDescriptor = resolveCompleteWorkspaceIdentityDescriptor(
+    workspaceIdentityDescriptor,
+  );
+  const captureEditorSurfaceScope = useCallback((): EditorSurfaceCommandInvocationScope | null => {
+    const document = activeDocumentRef.current;
+    const model = editorApi?.getModel();
+
+    if (
+      !document ||
+      !model ||
+      !modelMatchesProject(model, workspaceRootRef.current, document.path)
+    ) {
+      return null;
+    }
+
+    return {
+      documentPath: document.path,
+      modelIdentity: model,
+      ownerKey: editorSessionOwnerKey,
+      surfaceIdentity: surfaceIdentityRef.current,
+    };
+  }, [editorApi, editorSessionOwnerKey]);
+  const monacoFontLigatures = monacoFontLigaturesForEditorSetting(editorFontLigatures);
+  const commandExecutionRunnerRef = useRef<CommandExecutionRunner | undefined>(undefined);
   const onEditorFocusedRef = useRef(onEditorFocused);
   const onCursorPositionChangeRef = useRef(onCursorPositionChange);
   const onEditorViewStateChangeRef = useRef(onEditorViewStateChange);
@@ -639,16 +683,35 @@ function EditorSurfaceComponent({
   onCursorPositionChangeRef.current = onCursorPositionChange;
   onEditorViewStateChangeRef.current = onEditorViewStateChange;
   const surfaceCommandContext: CommandContext = {
-    hasWorkspace: Boolean(workspaceRoot),
-    hasActiveDocument: Boolean(activeDocument),
+    hasWorkspace: !!workspaceRoot,
+    hasActiveDocument: !!activeDocument,
     activeDocumentDirty: Boolean(
       activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
     ),
     editorSurfaceScope: captureEditorSurfaceScope() ?? undefined,
   };
+  const npmRunSelectedScriptKeybindings = useMemo(() => {
+    if (!monacoApi) return [];
+    const platform = detectKeymapPlatform();
+    return monacoKeybindingsForShortcut(
+      monacoApi,
+      shortcutForCommand(keymap, "npm.runSelectedScript", platform),
+      platform,
+    );
+  }, [keymap, monacoApi]);
   commandExecutionRunnerRef.current = runCommand
     ? (commandId) => runCommand(commandId, surfaceCommandContext)
     : undefined;
+  useNpmRunSelectedScriptMonacoAction({
+    activeDocumentPath,
+    activeDocumentRef,
+    commandContext: surfaceCommandContext,
+    editor: editorApi,
+    keybindings: npmRunSelectedScriptKeybindings,
+    modelMatchesDocument: modelMatchesProject,
+    runCommand,
+    workspaceRootRef,
+  });
   useLayoutEffect(() => {
     editorActionCommandPortRef.current = {
       closeActiveTab: onCloseActiveTab,
@@ -677,9 +740,7 @@ function EditorSurfaceComponent({
   const resolveDocumentForModelRef = useRef(
     (_model: Monaco.editor.ITextModel): EditorDocument | null => null,
   );
-  const previousActiveDocumentPathRef = useRef<string | null>(
-    activeDocument?.path ?? null,
-  );
+  const previousActiveDocumentPathRef = useRef<string | null>(activeDocument?.path ?? null);
   const previousTransientWidgetDismissKeyRef = useRef(transientWidgetDismissKey);
   // Warms TextMate tokens for the active model on idle, off the synchronous
   // reveal/jump path, so a far Cmd+B / click / scroll after open reads cached
@@ -688,9 +749,7 @@ function EditorSurfaceComponent({
   // warming, so only the active model is ever warmed (per-tab isolation).
   const backgroundTokenizerRef = useRef<BackgroundTokenizer | null>(null);
   if (!backgroundTokenizerRef.current) {
-    backgroundTokenizerRef.current = new BackgroundTokenizer(
-      idleCallbackScheduler(),
-    );
+    backgroundTokenizerRef.current = new BackgroundTokenizer(idleCallbackScheduler());
   }
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const largeSmartDocumentPolicyRef = useRef(largeSmartDocumentPolicy);
@@ -701,9 +760,10 @@ function EditorSurfaceComponent({
   const getLanguageServerDocumentLifecycleIdentityRef = useRef(
     getLanguageServerDocumentLifecycleIdentity,
   );
-  const requestLanguageServerDocumentLeaseRef = useRef(
-    requestLanguageServerDocumentLease,
+  const getJavaScriptTypeScriptDocumentSyncVersionRef = useRef(
+    getJavaScriptTypeScriptDocumentSyncVersion,
   );
+  const requestLanguageServerDocumentLeaseRef = useRef(requestLanguageServerDocumentLease);
   const isLanguageServerDocumentRequestLeaseCurrentRef = useRef(
     isLanguageServerDocumentRequestLeaseCurrent,
   );
@@ -719,17 +779,38 @@ function EditorSurfaceComponent({
   // Holds the latest parent onChange so the Editor can receive a single stable
   // handler (see handleEditorChange) without the closure ever going stale.
   const onChangeRef = useRef(onChange);
+  const onLocalPhpDiagnosticsChangeRef = useRef(onLocalPhpDiagnosticsChange);
+  onLocalPhpDiagnosticsChangeRef.current = onLocalPhpDiagnosticsChange;
   const openWorkspaceFileRef = useRef(onOpenWorkspaceFile);
   const openWorkspaceRootRef = useRef(onOpenWorkspaceRoot);
-  const isLanguageServerDocumentSyncedRef = useRef(
-    isLanguageServerDocumentSynced,
-  );
+  const isLanguageServerDocumentSyncedRef = useRef(isLanguageServerDocumentSynced);
   const changeDecorationIdsRef = useRef<string[]>([]);
   const conflictMarkerDecorationIdsRef = useRef<string[]>([]);
   // Tracks whether persistent column-selection mode is on so the toggle action
   // flips it. Per-editor state (one EditorSurface instance per tab), so it never
   // leaks between open project tabs.
   const columnSelectionEnabledRef = useRef(false);
+  const {
+    invalidateAuthority: invalidateEditorSurfaceImportActionAuthority,
+    isEnabled: isEditorSurfaceImportActionEnabled,
+    run: runEditorSurfaceImportAction,
+  } = useEditorSurfaceImportActions({
+    activeDocumentRef,
+    captureScope: captureEditorSurfaceScope,
+    editor: editorApi,
+    featureGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
+    flushPendingDocumentRef: flushPendingJavaScriptTypeScriptRef,
+    getDocumentSyncVersionRef: getJavaScriptTypeScriptDocumentSyncVersionRef,
+    modelMatchesDocument: modelMatchesProject,
+    reportErrorRef: errorReporterRef,
+    runtimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
+    runtimeStatusRef: javaScriptTypeScriptRuntimeStatusRef,
+    workspaceOwnerKey: editorSessionOwnerKey,
+    workspacePathPolicy: completeWorkspaceIdentityDescriptor?.policy,
+    workspaceRoot,
+    workspaceRootRef,
+    workspaceTrusted,
+  });
   // Active cyclic-expand-word (hippie) session. Per-editor state (one
   // EditorSurface per tab) so completion candidates never leak between project
   // tabs. Reset whenever the caret/buffer no longer matches the last expansion.
@@ -757,8 +838,6 @@ function EditorSurfaceComponent({
   // Right=test-run) so they never collide with those glyphs or their click
   // handlers, and work on every language (not just PHP).
   const bookmarkDecorationIdsRef = useRef<string[]>([]);
-  const breakpointDecorationIdsRef = useRef<string[]>([]);
-  const debugStoppedDecorationIdsRef = useRef<string[]>([]);
   // Git blame annotations. Rendered as inline `before` injected text at the start
   // of each line (the content area), so they occupy NONE of the four gutter lanes
   // (glyph margin Left=git, Center=impl, Right=test-run; lines-decorations=
@@ -775,9 +854,7 @@ function EditorSurfaceComponent({
   const gitBlameDecoratedPathRef = useRef<string | null>(null);
   const provideGitBlameRef = useRef(provideGitBlame);
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
-  const languageServerDiagnosticsByPathRef = useRef(
-    languageServerDiagnosticsByPath,
-  );
+  const languageServerDiagnosticsByPathRef = useRef(languageServerDiagnosticsByPath);
   // Tracks the active document's path + total diagnostic count from the previous
   // diagnostics-decoration run, so a stale content hover can be dismissed when
   // that count drops (markers removed/cleared) for the same document.
@@ -788,9 +865,7 @@ function EditorSurfaceComponent({
   const phpCodeActionsRef = useRef(providePhpCodeActions);
   const openPhpChangeSignatureRef = useRef(onOpenPhpChangeSignature);
   const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
-  const clearLanguageServerDiagnosticsForPathRef = useRef(
-    clearLanguageServerDiagnosticsForPath,
-  );
+  const clearLanguageServerDiagnosticsForPathRef = useRef(clearLanguageServerDiagnosticsForPath);
   const pendingLocalPhpValidationRef = useRef<{
     key: string;
     model: Monaco.editor.ITextModel;
@@ -803,31 +878,28 @@ function EditorSurfaceComponent({
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
     Record<string, PhpSyntaxDiagnostic[]>
   >({});
-  const [
-    phpInspectionDiagnosticCountsByPath,
-    setPhpInspectionDiagnosticCountsByPath,
-  ] = useState<Record<string, number>>({});
-  const [changePreview, setChangePreview] = useState<ChangePreviewState | null>(
-    null,
-  );
-  const [cursorPosition, setCursorPosition] = useState<EditorPosition | null>(
-    null,
-  );
+  const [phpInspectionDiagnosticCountsByPath, setPhpInspectionDiagnosticCountsByPath] = useState<
+    Record<string, number>
+  >({});
+  const [changePreview, setChangePreview] = useState<ChangePreviewState | null>(null);
+  const [cursorPosition, setCursorPosition] = useState<EditorPosition | null>(null);
   const [breadcrumbSymbolsByPath, setBreadcrumbSymbolsByPath] = useState<
     Record<string, LanguageServerDocumentSymbol[]>
   >({});
   // Holds the captured selection context while the Surround With quick-pick is
   // open. It is scoped to this editor surface and cleared as soon as a template
   // is chosen or the picker is dismissed, so nothing leaks across tabs.
-  const [surroundWithRequest, setSurroundWithRequest] =
-    useState<SurroundWithRequest | null>(null);
+  const [surroundWithRequest, setSurroundWithRequest] = useState<SurroundWithRequest | null>(null);
   const activeDocumentIsLargeSmart = useMemo(
     () =>
-      activeDocument
-        ? isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
-        : false,
+      activeDocumentContent === undefined
+        ? false
+        : isLargeSmartDocumentContent(activeDocumentContent, {
+            characterLimit: largeSmartDocumentPolicy.characterLimit,
+            lineLimit: largeSmartDocumentPolicy.lineLimit,
+          }),
     [
-      activeDocument?.content,
+      activeDocumentContent,
       largeSmartDocumentPolicy.characterLimit,
       largeSmartDocumentPolicy.lineLimit,
     ],
@@ -840,7 +912,7 @@ function EditorSurfaceComponent({
   useEffect(() => {
     setSurroundWithRequest(null);
     hippieSessionRef.current = null;
-  }, [activeDocument?.path]);
+  }, [activeDocumentPath]);
 
   useEffect(() => {
     changeHunksRef.current = changeHunks;
@@ -849,9 +921,7 @@ function EditorSurfaceComponent({
         return null;
       }
 
-      const hunk = changeHunks.find(
-        (candidate) => candidate.id === current.hunk.id,
-      );
+      const hunk = changeHunks.find((candidate) => candidate.id === current.hunk.id);
 
       return hunk
         ? {
@@ -875,8 +945,7 @@ function EditorSurfaceComponent({
   }, [largeSmartDocumentPolicy]);
 
   useEffect(() => {
-    javaScriptTypeScriptRuntimeStatusRef.current =
-      javaScriptTypeScriptLanguageServerRuntimeStatus;
+    javaScriptTypeScriptRuntimeStatusRef.current = javaScriptTypeScriptLanguageServerRuntimeStatus;
   }, [javaScriptTypeScriptLanguageServerRuntimeStatus]);
 
   // Registers the local JSON Schema declared by the active document's `$schema`
@@ -892,12 +961,7 @@ function EditorSurfaceComponent({
   // tab switch - one project's schema can never be registered while the user is
   // already looking at another.
   useEffect(() => {
-    if (
-      !monacoApi ||
-      !activeDocument ||
-      activeDocument.language !== "json" ||
-      !readWorkspaceFile
-    ) {
+    if (!monacoApi || !activeDocument || activeDocument.language !== "json" || !readWorkspaceFile) {
       return;
     }
 
@@ -927,8 +991,11 @@ function EditorSurfaceComponent({
       getLanguageServerDocumentLifecycleIdentity;
   }, [getLanguageServerDocumentLifecycleIdentity]);
   useEffect(() => {
-    requestLanguageServerDocumentLeaseRef.current =
-      requestLanguageServerDocumentLease;
+    getJavaScriptTypeScriptDocumentSyncVersionRef.current =
+      getJavaScriptTypeScriptDocumentSyncVersion;
+  }, [getJavaScriptTypeScriptDocumentSyncVersion]);
+  useEffect(() => {
+    requestLanguageServerDocumentLeaseRef.current = requestLanguageServerDocumentLease;
   }, [requestLanguageServerDocumentLease]);
   useEffect(() => {
     isLanguageServerDocumentRequestLeaseCurrentRef.current =
@@ -990,8 +1057,7 @@ function EditorSurfaceComponent({
   }, [applyPhpCodeActionNewFile]);
 
   useEffect(() => {
-    clearLanguageServerDiagnosticsForPathRef.current =
-      clearLanguageServerDiagnosticsForPath;
+    clearLanguageServerDiagnosticsForPathRef.current = clearLanguageServerDiagnosticsForPath;
   }, [clearLanguageServerDiagnosticsForPath]);
 
   useEffect(() => {
@@ -1023,7 +1089,7 @@ function EditorSurfaceComponent({
   }, [provideGitBlame]);
 
   useEffect(() => {
-    if (!activeDocument || activeDocument.language !== "php") {
+    if (!activeDocumentPath || activeDocumentLanguage !== "php") {
       return;
     }
 
@@ -1034,15 +1100,15 @@ function EditorSurfaceComponent({
     const model = editorApi.getModel();
     const position = editorApi.getPosition();
 
-    if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
     const source = model.getValue();
     const isPhpCompletionContext = Boolean(
       phpMemberAccessCompletionContextAt(source, position) ||
-        phpStaticAccessCompletionContextAt(source, position) ||
-        phpFrameworkStringCompletionContextRef.current(source, position),
+      phpStaticAccessCompletionContextAt(source, position) ||
+      phpFrameworkStringCompletionContextRef.current(source, position),
     );
 
     if (!isPhpCompletionContext) {
@@ -1060,9 +1126,10 @@ function EditorSurfaceComponent({
     // `phpIdeReadinessVersion`, the path/language keys, and the provider becoming
     // ready - never per keystroke.
   }, [
-    activeDocument?.path,
-    activeDocument?.language,
+    activeDocumentPath,
+    activeDocumentLanguage,
     editorApi,
+    phpFrameworkStringCompletionContextRef,
     phpIdeReadinessVersion,
     providePhpMethodCompletions,
     workspaceRoot,
@@ -1073,12 +1140,12 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (!editorApi || !activeDocument) {
+    if (!editorApi || !activeDocumentPath) {
       onEditorMenuCommandRunnerChange(null);
       return;
     }
 
-    const targetPath = activeDocument.path;
+    const targetPath = activeDocumentPath;
     const runner: EditorMenuCommandRunner = (command) => {
       const model = editorApi.getModel();
 
@@ -1087,11 +1154,7 @@ function EditorSurfaceComponent({
       }
 
       editorApi.focus();
-      editorApi.trigger(
-        "mockor.windowChrome",
-        editorActionForMenuCommand(command),
-        null,
-      );
+      editorApi.trigger("mockor.windowChrome", editorActionForMenuCommand(command), null);
     };
 
     onEditorMenuCommandRunnerChange(runner);
@@ -1099,14 +1162,14 @@ function EditorSurfaceComponent({
     return () => {
       onEditorMenuCommandRunnerChange(null);
     };
-  }, [activeDocument?.path, editorApi, onEditorMenuCommandRunnerChange, workspaceRoot]);
+  }, [activeDocumentPath, editorApi, onEditorMenuCommandRunnerChange, workspaceRoot]);
 
   useEffect(() => {
     if (!onEditorSurfaceCommandRunnerChange) {
       return;
     }
 
-    if (!editorApi || !activeDocument) {
+    if (!editorApi || !activeDocumentPath) {
       onEditorSurfaceCommandRunnerChange(null);
       return;
     }
@@ -1117,22 +1180,122 @@ function EditorSurfaceComponent({
           captureScope: captureEditorSurfaceScope,
           changeHunksRef,
           editor: editorApi,
+          isImportActionEnabled: isEditorSurfaceImportActionEnabled,
+          runImportAction: runEditorSurfaceImportAction,
         }),
       );
     };
 
     publishRunner();
-    const modelChangeDisposable = editorApi.onDidChangeModel(publishRunner);
+    const modelChangeDisposable = editorApi.onDidChangeModel(() => {
+      invalidateEditorSurfaceImportActionAuthority();
+      publishRunner();
+    });
 
     return () => {
       modelChangeDisposable.dispose();
       onEditorSurfaceCommandRunnerChange(null);
     };
   }, [
-    activeDocument?.path,
+    activeDocumentPath,
     captureEditorSurfaceScope,
     editorApi,
+    invalidateEditorSurfaceImportActionAuthority,
+    isEditorSurfaceImportActionEnabled,
     onEditorSurfaceCommandRunnerChange,
+    runEditorSurfaceImportAction,
+  ]);
+
+  useEffect(() => {
+    if (!onDebugWatchAtCursorCaptureReaderChange) return;
+    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
+      onDebugWatchAtCursorCaptureReaderChange(null);
+      return;
+    }
+
+    const reader = createDebugWatchAtCursorCaptureReader({
+      activeDocumentRef,
+      editor: editorApi,
+      workspaceOwnerKey: editorSessionOwnerKey,
+      workspaceRootRef,
+    });
+    onDebugWatchAtCursorCaptureReaderChange(reader);
+    return () => onDebugWatchAtCursorCaptureReaderChange(null);
+  }, [
+    activeDocumentPath,
+    editorApi,
+    editorSessionOwnerKey,
+    onDebugWatchAtCursorCaptureReaderChange,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!onDebugEvaluateInConsoleCaptureReaderChange) return;
+    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
+      onDebugEvaluateInConsoleCaptureReaderChange(null);
+      return;
+    }
+
+    const reader = createDebugEvaluateInConsoleCaptureReader({
+      activeDocumentRef,
+      editor: editorApi,
+      workspaceOwnerKey: editorSessionOwnerKey,
+      workspaceRootRef,
+    });
+    onDebugEvaluateInConsoleCaptureReaderChange(reader);
+    return () => onDebugEvaluateInConsoleCaptureReaderChange(null);
+  }, [
+    activeDocumentPath,
+    editorApi,
+    editorSessionOwnerKey,
+    onDebugEvaluateInConsoleCaptureReaderChange,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!onDebugBreakpointNavigationCaptureReaderChange) return;
+    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
+      onDebugBreakpointNavigationCaptureReaderChange(null);
+      return;
+    }
+
+    const reader = createDebugBreakpointNavigationCaptureReader({
+      activeDocumentRef,
+      editor: editorApi,
+      workspaceOwnerKey: editorSessionOwnerKey,
+      workspaceRootRef,
+    });
+    onDebugBreakpointNavigationCaptureReaderChange(reader);
+    return () => onDebugBreakpointNavigationCaptureReaderChange(null);
+  }, [
+    activeDocumentPath,
+    editorApi,
+    editorSessionOwnerKey,
+    onDebugBreakpointNavigationCaptureReaderChange,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!onDebugInlineBreakpointCaptureReaderChange) return;
+    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
+      onDebugInlineBreakpointCaptureReaderChange(null);
+      return;
+    }
+
+    const reader = createDebugInlineBreakpointCaptureReader({
+      activeDocumentRef,
+      editor: editorApi,
+      workspaceOwnerKey: editorSessionOwnerKey,
+      workspaceRootRef,
+    });
+    onDebugInlineBreakpointCaptureReaderChange(reader);
+    return () => onDebugInlineBreakpointCaptureReaderChange(null);
+  }, [
+    activeDocumentPath,
+    editorApi,
+    editorSessionOwnerKey,
+    onDebugInlineBreakpointCaptureReaderChange,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -1140,12 +1303,12 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (!editorApi || !monacoApi || !activeDocument) {
+    if (!editorApi || !monacoApi || !activeDocumentPath) {
       onEditorSurfaceBufferFixRunnerChange(null);
       return;
     }
 
-    const targetPath = activeDocument.path;
+    const targetPath = activeDocumentPath;
     const runner: EditorSurfaceBufferFixRunner = (expectedContent, fixes) => {
       const model = editorApi.getModel();
 
@@ -1169,12 +1332,7 @@ function EditorSurfaceComponent({
 
         return {
           forceMoveMarkers: true,
-          range: new monacoApi.Range(
-            start.lineNumber,
-            start.column,
-            end.lineNumber,
-            end.column,
-          ),
+          range: new monacoApi.Range(start.lineNumber, start.column, end.lineNumber, end.column),
           text: fix.text,
         };
       });
@@ -1192,7 +1350,7 @@ function EditorSurfaceComponent({
       onEditorSurfaceBufferFixRunnerChange(null);
     };
   }, [
-    activeDocument?.path,
+    activeDocumentPath,
     editorApi,
     monacoApi,
     onEditorSurfaceBufferFixRunnerChange,
@@ -1204,17 +1362,13 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (!editorApi || !monacoApi || !activeDocument) {
+    if (!editorApi || !monacoApi || !activeDocumentPath) {
       onEditorSurfaceEslintDisableRunnerChange(null);
       return;
     }
 
-    const targetPath = activeDocument.path;
-    const runner: EditorSurfaceEslintDisableRunner = (
-      expectedContent,
-      lineNumber,
-      identifiers,
-    ) => {
+    const targetPath = activeDocumentPath;
+    const runner: EditorSurfaceEslintDisableRunner = (expectedContent, lineNumber, identifiers) => {
       const model = editorApi.getModel();
 
       if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
@@ -1225,16 +1379,11 @@ function EditorSurfaceComponent({
         return null;
       }
 
-      if (
-        identifiers.length === 0 ||
-        lineNumber < 1 ||
-        lineNumber > model.getLineCount()
-      ) {
+      if (identifiers.length === 0 || lineNumber < 1 || lineNumber > model.getLineCount()) {
         return 0;
       }
 
-      const indentation =
-        /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
+      const indentation = /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
       const edit = {
         forceMoveMarkers: true,
         range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
@@ -1254,7 +1403,7 @@ function EditorSurfaceComponent({
       onEditorSurfaceEslintDisableRunnerChange(null);
     };
   }, [
-    activeDocument?.path,
+    activeDocumentPath,
     editorApi,
     monacoApi,
     onEditorSurfaceEslintDisableRunnerChange,
@@ -1266,17 +1415,13 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (!editorApi || !monacoApi || !activeDocument) {
+    if (!editorApi || !monacoApi || !activeDocumentPath) {
       onEditorSurfacePhpstanIgnoreRunnerChange(null);
       return;
     }
 
-    const targetPath = activeDocument.path;
-    const runner: EditorSurfacePhpstanIgnoreRunner = (
-      expectedContent,
-      lineNumber,
-      identifiers,
-    ) => {
+    const targetPath = activeDocumentPath;
+    const runner: EditorSurfacePhpstanIgnoreRunner = (expectedContent, lineNumber, identifiers) => {
       const model = editorApi.getModel();
 
       if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
@@ -1287,16 +1432,11 @@ function EditorSurfaceComponent({
         return null;
       }
 
-      if (
-        identifiers.length === 0 ||
-        lineNumber < 1 ||
-        lineNumber > model.getLineCount()
-      ) {
+      if (identifiers.length === 0 || lineNumber < 1 || lineNumber > model.getLineCount()) {
         return 0;
       }
 
-      const indentation =
-        /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
+      const indentation = /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
       const edit = {
         forceMoveMarkers: true,
         range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
@@ -1316,7 +1456,7 @@ function EditorSurfaceComponent({
       onEditorSurfacePhpstanIgnoreRunnerChange(null);
     };
   }, [
-    activeDocument?.path,
+    activeDocumentPath,
     editorApi,
     monacoApi,
     onEditorSurfacePhpstanIgnoreRunnerChange,
@@ -1325,34 +1465,22 @@ function EditorSurfaceComponent({
 
   const recoverVisibleLocalPhpDiagnostics = useCallback(
     (uris: readonly Monaco.Uri[] = []) => {
-      if (
-        !activeDocument ||
-        activeDocument.language !== "php" ||
-        !monacoApi
-      ) {
+      if (!activeDocumentPath || activeDocumentLanguage !== "php" || !monacoApi) {
         return;
       }
 
       const model = monacoApi.editor
         .getModels()
-        .find((candidate) =>
-          modelMatchesProject(candidate, workspaceRoot, activeDocument.path),
-        );
+        .find((candidate) => modelMatchesProject(candidate, workspaceRoot, activeDocumentPath));
       if (!model) {
         return;
       }
 
-      if (
-        uris.length > 0 &&
-        !uris.some((uri) => model.uri.toString() === uri.toString())
-      ) {
+      if (uris.length > 0 && !uris.some((uri) => model.uri.toString() === uri.toString())) {
         return;
       }
 
-      const diagnostics = localPhpDiagnosticsFromVisibleMarkers(
-        monacoApi,
-        model,
-      );
+      const diagnostics = localPhpDiagnosticsFromVisibleMarkers(monacoApi, model);
 
       // Recovery bridge only: parser-driven validation owns clears. This keeps
       // a visible local PHP marker from being absent in Problems/status during
@@ -1362,11 +1490,11 @@ function EditorSurfaceComponent({
         return;
       }
 
-      onLocalPhpDiagnosticsChange(activeDocument.path, diagnostics);
+      onLocalPhpDiagnosticsChange(activeDocumentPath, diagnostics);
     },
     [
-      activeDocument?.language,
-      activeDocument?.path,
+      activeDocumentLanguage,
+      activeDocumentPath,
       monacoApi,
       onLocalPhpDiagnosticsChange,
       workspaceRoot,
@@ -1382,9 +1510,7 @@ function EditorSurfaceComponent({
     errorReporterRef,
     flushPendingRef,
     getLanguageServerDocumentLifecycleIdentityRef,
-    ...(requestLanguageServerDocumentLease
-      ? { requestLanguageServerDocumentLeaseRef }
-      : {}),
+    ...(requestLanguageServerDocumentLease ? { requestLanguageServerDocumentLeaseRef } : {}),
     ...(isLanguageServerDocumentRequestLeaseCurrent
       ? { isLanguageServerDocumentRequestLeaseCurrentRef }
       : {}),
@@ -1422,6 +1548,7 @@ function EditorSurfaceComponent({
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,
       workspaceIdentityDescriptor: completeWorkspaceIdentityDescriptor,
       workspaceRoot,
+      workspaceTrusted,
     },
     routing: {
       activeDocumentRef,
@@ -1430,19 +1557,17 @@ function EditorSurfaceComponent({
           applyJavaScriptTypeScriptWorkspaceEditRef.current(edit, editContext),
         completeFunctionCalls: javaScriptTypeScriptCompleteFunctionCalls,
         featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
-        flushPendingDocumentChange: (path) =>
-          flushPendingJavaScriptTypeScriptRef.current(path),
+        flushPendingDocumentChange: (path) => flushPendingJavaScriptTypeScriptRef.current(path),
         getActiveDocument: () => activeDocumentRef.current,
+        getActiveModel: () => editorApi?.getModel() ?? null,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
         getUserSnippets: () => userSnippetsRef.current,
-        getWorkspaceIdentityDescriptor: () =>
-          completeWorkspaceIdentityDescriptor,
+        getWorkspaceIdentityDescriptor: () => completeWorkspaceIdentityDescriptor,
         getWorkspaceRoot: () => workspaceRoot,
         limitNavigationResultsToOpenModels: true,
         refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
         reportError: (error) => errorReporterRef.current(error),
-        workspaceEditGateway:
-          javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
+        workspaceEditGateway: javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
       },
       providerRefs: runtimeProviderRefs,
       resolveDocumentForModel: (model) => {
@@ -1470,18 +1595,16 @@ function EditorSurfaceComponent({
     ],
     toMarker: (diagnostic) => toMonacoDiagnosticMarker(monacoApi!, diagnostic),
     typescriptJavascriptDefaults: {
-      managedLanguageServerActive:
-        isJavaScriptTypeScriptRuntimeActiveForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          workspaceRoot,
-        ),
+      managedLanguageServerActive: isJavaScriptTypeScriptRuntimeActiveForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        workspaceRoot,
+      ),
       validationEnabled: javaScriptTypeScriptValidationEnabled,
     },
     workspaceIdentityDescriptor: completeWorkspaceIdentityDescriptor,
     workspaceRoot,
   };
-  resolveDocumentForModelRef.current =
-    runtimeRegistration.routing.resolveDocumentForModel;
+  resolveDocumentForModelRef.current = runtimeRegistration.routing.resolveDocumentForModel;
   const runtimeRegistrationRef = useRef(runtimeRegistration);
   runtimeRegistrationRef.current = runtimeRegistration;
 
@@ -1490,10 +1613,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    return runtime.registerSurface(
-      generatedSurfaceId,
-      runtimeRegistrationRef.current,
-    );
+    return runtime.registerSurface(generatedSurfaceId, runtimeRegistrationRef.current);
   }, [generatedSurfaceId, runtime]);
 
   useEffect(() => {
@@ -1534,10 +1654,8 @@ function EditorSurfaceComponent({
       getActiveDocument: () => activeDocumentRef.current,
       getWorkspaceRoot: () => workspaceRootRef.current,
       openWorkspaceFile: (path, request) =>
-        openWorkspaceFileRef.current?.(path, request) ??
-        Promise.resolve(false),
-      openWorkspaceRoot: (path) =>
-        openWorkspaceRootRef.current?.(path) ?? Promise.resolve(false),
+        openWorkspaceFileRef.current?.(path, request) ?? Promise.resolve(false),
+      openWorkspaceRoot: (path) => openWorkspaceRootRef.current?.(path) ?? Promise.resolve(false),
       provideBladeDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
           templateLanguageProvidersRef.current.blade.provideDefinition,
@@ -1546,10 +1664,7 @@ function EditorSurfaceComponent({
           request,
         ),
       provideBladeCompletions: (source, position) =>
-        templateLanguageProvidersRef.current.blade.provideCompletions(
-          source,
-          position,
-        ),
+        templateLanguageProvidersRef.current.blade.provideCompletions(source, position),
       provideLatteDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
           templateLanguageProvidersRef.current.latte.provideDefinition,
@@ -1558,10 +1673,7 @@ function EditorSurfaceComponent({
           request,
         ),
       provideLatteCompletions: (source, position) =>
-        templateLanguageProvidersRef.current.latte.provideCompletions(
-          source,
-          position,
-        ),
+        templateLanguageProvidersRef.current.latte.provideCompletions(source, position),
       provideNeonDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
           templateLanguageProvidersRef.current.neon.provideDefinition,
@@ -1570,28 +1682,21 @@ function EditorSurfaceComponent({
           request,
         ),
       provideNeonCompletions: (source, position) =>
-        templateLanguageProvidersRef.current.neon.provideCompletions(
-          source,
-          position,
-        ),
+        templateLanguageProvidersRef.current.neon.provideCompletions(source, position),
       providePhpFrameworkDefinition: (source, offset, request) =>
-        provideGuardedQaDefinition(
-          phpFrameworkDefinitionRef.current,
-          source,
-          offset,
-          request,
-        ),
+        provideGuardedQaDefinition(phpFrameworkDefinitionRef.current, source, offset, request),
       providePhpMethodCompletions: (source, position) =>
         phpMethodCompletionsRef.current(source, position),
       providePhpPresenterLinkDefinition: (source, offset, request) =>
-        provideGuardedQaDefinition(
-          phpPresenterLinkDefinitionRef.current,
-          source,
-          offset,
-          request,
-        ),
+        provideGuardedQaDefinition(phpPresenterLinkDefinitionRef.current, source, offset, request),
     });
-  }, [editorApi, workspaceRoot]);
+  }, [
+    editorApi,
+    phpFrameworkDefinitionRef,
+    phpPresenterLinkDefinitionRef,
+    templateLanguageProvidersRef,
+    workspaceRoot,
+  ]);
 
   const handleMount: OnMount = useCallback((_editor, monaco) => {
     setEditorApi(_editor);
@@ -1616,9 +1721,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const disposable = editorApi.onDidFocusEditorWidget(
-      activateEditorGroupFromInteraction,
-    );
+    const disposable = editorApi.onDidFocusEditorWidget(activateEditorGroupFromInteraction);
     return () => disposable.dispose();
   }, [activateEditorGroupFromInteraction, editorApi]);
 
@@ -1651,17 +1754,22 @@ function EditorSurfaceComponent({
   // Monaco's own detection (`detectIndentation`) and the file's existing EOL
   // untouched, preserving the no-`.editorconfig` default behaviour.
   useEffect(() => {
-    if (!editorApi || !monacoApi || !activeDocument) {
+    if (!editorApi || !monacoApi || !activeDocumentPath) {
       return;
     }
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
-    const resolved: ResolvedEditorConfig = editorConfig ?? {};
+    const resolved: ResolvedEditorConfig = {
+      endOfLine: editorConfigEndOfLine,
+      indentSize: editorConfigIndentSize,
+      indentStyle: editorConfigIndentStyle,
+      tabWidth: editorConfigTabWidth,
+    };
     const formattingOptions = editorConfigFormattingOptions(resolved);
 
     if (formattingOptions) {
@@ -1681,12 +1789,12 @@ function EditorSurfaceComponent({
       );
     }
   }, [
-    activeDocument?.path,
+    activeDocumentPath,
     editorApi,
-    editorConfig?.endOfLine,
-    editorConfig?.indentSize,
-    editorConfig?.indentStyle,
-    editorConfig?.tabWidth,
+    editorConfigEndOfLine,
+    editorConfigIndentSize,
+    editorConfigIndentStyle,
+    editorConfigTabWidth,
     monacoApi,
     workspaceRoot,
   ]);
@@ -1698,9 +1806,7 @@ function EditorSurfaceComponent({
 
     const disposable = editorApi.onDidChangeCursorPosition((event) => {
       onCursorPositionChangeRef.current(event.position);
-      setCursorPosition((previous) =>
-        nextCursorPosition(previous, event.position),
-      );
+      setCursorPosition((previous) => nextCursorPosition(previous, event.position));
     });
     const position = editorApi.getPosition();
 
@@ -1721,7 +1827,7 @@ function EditorSurfaceComponent({
   useEffect(() => {
     const tokenizer = backgroundTokenizerRef.current;
 
-    if (!editorApi || !activeDocument || !tokenizer) {
+    if (!editorApi || !activeDocumentPath || !tokenizer) {
       return;
     }
 
@@ -1730,7 +1836,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const requestedPath = activeDocument.path;
+    const requestedPath = activeDocumentPath;
     const model = editorApi.getModel();
 
     // Only warm the model that actually backs the requested document. During a
@@ -1743,12 +1849,7 @@ function EditorSurfaceComponent({
     tokenizer.start(model as unknown as BackgroundTokenizableModel);
 
     return () => tokenizer.stop();
-  }, [
-    activeDocument?.path,
-    activeDocumentIsLargeSmart,
-    editorApi,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentPath, activeDocumentIsLargeSmart, editorApi, workspaceRoot]);
 
   // Permanent teardown so a disposed surface leaves no pending idle slice.
   useEffect(() => {
@@ -1790,10 +1891,8 @@ function EditorSurfaceComponent({
     // UnknownDocument, and `isLanguageServerDocumentSynced` tracks exactly the
     // PHP synced set. JS/TS breadcrumbs keep their prior on-demand behaviour.
     const requiresSync = isLanguageServerDocument(activeDocument);
-    const requestDocumentLease =
-      requestLanguageServerDocumentLeaseRef.current;
-    const isDocumentLeaseCurrent =
-      isLanguageServerDocumentRequestLeaseCurrentRef.current;
+    const requestDocumentLease = requestLanguageServerDocumentLeaseRef.current;
+    const isDocumentLeaseCurrent = isLanguageServerDocumentRequestLeaseCurrentRef.current;
     const canUseDocumentLease = Boolean(
       requiresSync && requestDocumentLease && isDocumentLeaseCurrent,
     );
@@ -1805,22 +1904,18 @@ function EditorSurfaceComponent({
 
       try {
         documentLease = canUseDocumentLease
-          ? (await requestDocumentLease?.(requestedRoot, requestedPath)) ?? null
+          ? ((await requestDocumentLease?.(requestedRoot, requestedPath)) ?? null)
           : null;
 
         if (!active) {
           return;
         }
 
-        if (
-          canUseDocumentLease &&
-          (!documentLease || !isDocumentLeaseCurrent?.(documentLease))
-        ) {
+        if (canUseDocumentLease && (!documentLease || !isDocumentLeaseCurrent?.(documentLease))) {
           return;
         }
 
-        let load = () =>
-          breadcrumbGateway.documentSymbols(requestedRoot, requestedPath);
+        let load = () => breadcrumbGateway.documentSymbols(requestedRoot, requestedPath);
         if (requiresSync) {
           if (!canUseDocumentLease) {
             await flushPendingLanguageServerDocument(requestedPath);
@@ -1837,8 +1932,7 @@ function EditorSurfaceComponent({
 
           if (
             documentLease &&
-            (status?.kind !== "running" ||
-              status.sessionId !== documentLease.sessionId)
+            (status?.kind !== "running" || status.sessionId !== documentLease.sessionId)
           ) {
             return;
           }
@@ -1937,16 +2031,14 @@ function EditorSurfaceComponent({
   ]);
 
   useEffect(() => {
-    if (!activeDocument || !editorApi) {
+    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi) {
       return;
     }
 
-    if (activeDocument.language !== "latte") {
+    if (activeDocumentLanguage !== "latte") {
       return;
     }
 
-    const activeDocumentLanguage = activeDocument.language;
-    const activeDocumentPath = activeDocument.path;
     const disposable = editorApi.onDidChangeModelContent((event) => {
       const model = editorApi.getModel();
       const position = editorApi.getPosition();
@@ -1956,39 +2048,28 @@ function EditorSurfaceComponent({
       }
 
       if (
-        !shouldTriggerLatteMemberSuggest(
-          activeDocumentLanguage,
-          model,
-          position,
-          event.changes,
-        )
+        !shouldTriggerLatteMemberSuggest(activeDocumentLanguage, model, position, event.changes)
       ) {
         return;
       }
 
-      editorApi.trigger(
-        "mockor.latteMemberCompletion",
-        "editor.action.triggerSuggest",
-        {},
-      );
+      editorApi.trigger("mockor.latteMemberCompletion", "editor.action.triggerSuggest", {});
     });
 
     return () => disposable.dispose();
-  }, [activeDocument?.language, activeDocument?.path, editorApi, workspaceRoot]);
+  }, [activeDocumentLanguage, activeDocumentPath, editorApi, workspaceRoot]);
 
   useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
+    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi || !monacoApi) {
       return;
     }
 
-    if (!isSmartBlankLineIndentDocument(activeDocument)) {
+    if (!isSmartBlankLineIndentDocument({ language: activeDocumentLanguage })) {
       return;
     }
 
     const disposable = editorApi.onDidChangeModelContent((event) => {
-      const insertedNewLine = event.changes.some((change) =>
-        change.text.includes("\n"),
-      );
+      const insertedNewLine = event.changes.some((change) => change.text.includes("\n"));
       const insertedBlankLineWhitespace = event.changes.some((change) =>
         /^[\t ]+$/.test(change.text),
       );
@@ -2000,15 +2081,12 @@ function EditorSurfaceComponent({
       const model = editorApi.getModel();
       const position = editorApi.getPosition();
 
-      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
         return;
       }
 
       const targetLineNumber = insertedNewLine
-        ? smartBlankLineIndentTargetLineNumber(
-            event.changes,
-            position.lineNumber,
-          )
+        ? smartBlankLineIndentTargetLineNumber(event.changes, position.lineNumber)
         : position.lineNumber;
       const indent = smartBlankLineIndent(model, targetLineNumber);
 
@@ -2046,13 +2124,7 @@ function EditorSurfaceComponent({
     });
 
     return () => disposable.dispose();
-  }, [
-    activeDocument?.language,
-    activeDocument?.path,
-    editorApi,
-    monacoApi,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentLanguage, activeDocumentPath, editorApi, monacoApi, workspaceRoot]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {
@@ -2066,32 +2138,26 @@ function EditorSurfaceComponent({
         shortcutForCommand(keymap, commandId, keymapPlatform),
         keymapPlatform,
       ).filter((binding) => binding !== monacoApi.KeyCode.F12);
-    const configuredF12CommandId = keymapCommandIdForShortcut(
-      keymap,
-      "F12",
-      keymapPlatform,
-    );
+    const configuredF12CommandIds = keymapCommandIdsForShortcut(keymap, "F12", keymapPlatform);
     const definitionUsesDefaultShortcut =
-      shortcutForCommand(
-        keymap,
-        "editor.goToDefinition",
-        keymapPlatform,
-      ) ===
+      shortcutForCommand(keymap, "editor.goToDefinition", keymapPlatform) ===
       defaultShortcutForCommand("editor.goToDefinition", keymapPlatform);
-    const f12CommandId =
-      configuredF12CommandId ??
-      (definitionUsesDefaultShortcut ? "editor.goToDefinition" : null);
     const disposables = [
       editorApi.addAction({
         id: "mockor.dispatchF12",
         label: "Dispatch F12",
         keybindings: [monacoApi.KeyCode.F12],
         run: () => {
-          if (!f12CommandId) {
+          if (configuredF12CommandIds.length > 0) {
+            runCommandChain(commandExecutionRunnerRef.current, configuredF12CommandIds);
             return;
           }
 
-          requestRegisteredCommand(commandExecutionRunnerRef, f12CommandId);
+          if (definitionUsesDefaultShortcut) {
+            runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", () =>
+              editorActionCommandPortRef.current.goToDefinition(),
+            );
+          }
         },
       }),
       editorApi.addAction({
@@ -2099,21 +2165,15 @@ function EditorSurfaceComponent({
         label: "Go to Definition",
         keybindings: keybinding("editor.goToDefinition"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.goToDefinition",
-            () => editorActionCommandPortRef.current.goToDefinition(),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", () =>
+            editorActionCommandPortRef.current.goToDefinition(),
           ),
       }),
       editorApi.addAction({
         id: "mockor.quickDefinition",
         label: "Quick Definition",
         keybindings: keybinding("editor.quickDefinition"),
-        run: () =>
-          requestRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.quickDefinition",
-          ),
+        run: () => requestRegisteredCommand(commandExecutionRunnerRef, "editor.quickDefinition"),
       }),
       editorApi.addAction({
         id: "mockor.goToSourceDefinition",
@@ -2131,11 +2191,8 @@ function EditorSurfaceComponent({
         label: "Go to Declaration",
         keybindings: keybinding("editor.goToDeclaration"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.goToDeclaration",
-            () =>
-              triggerEditorAction(editorApi, "editor.action.revealDeclaration"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDeclaration", () =>
+            triggerEditorAction(editorApi, "editor.action.revealDeclaration"),
           ),
       }),
       editorApi.addAction({
@@ -2143,11 +2200,8 @@ function EditorSurfaceComponent({
         label: "Go to Type Definition",
         keybindings: keybinding("editor.goToTypeDefinition"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.goToTypeDefinition",
-            () =>
-              triggerEditorAction(editorApi, "editor.action.goToTypeDefinition"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToTypeDefinition", () =>
+            triggerEditorAction(editorApi, "editor.action.goToTypeDefinition"),
           ),
       }),
       editorApi.addAction({
@@ -2155,19 +2209,15 @@ function EditorSurfaceComponent({
         label: "Go to Implementation",
         keybindings: keybinding("editor.goToImplementation"),
         run: () => {
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.goToImplementation",
-            () => {
-              const position = editorApi.getPosition();
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToImplementation", () => {
+            const position = editorApi.getPosition();
 
-              if (!position) {
-                return;
-              }
+            if (!position) {
+              return;
+            }
 
-              editorActionCommandPortRef.current.goToImplementationAt(position);
-            },
-          );
+            editorActionCommandPortRef.current.goToImplementationAt(position);
+          });
         },
       }),
       editorApi.addAction({
@@ -2175,10 +2225,8 @@ function EditorSurfaceComponent({
         label: "Go to Super Method",
         keybindings: keybinding("editor.goToSuperMethod"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.goToSuperMethod",
-            () => editorActionCommandPortRef.current.goToSuperMethod(),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToSuperMethod", () =>
+            editorActionCommandPortRef.current.goToSuperMethod(),
           ),
       }),
       editorApi.addAction({
@@ -2187,10 +2235,8 @@ function EditorSurfaceComponent({
         keybindingContext: "!referenceSearchVisible && !inReferenceSearchEditor",
         keybindings: keybinding("editor.findReferences"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.findReferences",
-            () => triggerEditorAction(editorApi, "editor.action.goToReferences"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.findReferences", () =>
+            triggerEditorAction(editorApi, "editor.action.goToReferences"),
           ),
       }),
       editorApi.addAction({
@@ -2198,11 +2244,8 @@ function EditorSurfaceComponent({
         label: "Find File References",
         keybindings: keybinding("editor.findFileReferences"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.findFileReferences",
-            () =>
-              triggerEditorAction(editorApi, "editor.action.peekImplementation"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.findFileReferences", () =>
+            triggerEditorAction(editorApi, "editor.action.peekImplementation"),
           ),
       }),
       editorApi.addAction({
@@ -2210,10 +2253,8 @@ function EditorSurfaceComponent({
         label: "Open Class",
         keybindings: keybinding("class.quickOpen"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "class.quickOpen",
-            () => editorActionCommandPortRef.current.openClass(),
+          runRegisteredCommand(commandExecutionRunnerRef, "class.quickOpen", () =>
+            editorActionCommandPortRef.current.openClass(),
           ),
       }),
       editorApi.addAction({
@@ -2221,10 +2262,8 @@ function EditorSurfaceComponent({
         label: "Open File",
         keybindings: keybinding("file.quickOpen"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "file.quickOpen",
-            () => editorActionCommandPortRef.current.openFile(),
+          runRegisteredCommand(commandExecutionRunnerRef, "file.quickOpen", () =>
+            editorActionCommandPortRef.current.openFile(),
           ),
       }),
       editorApi.addAction({
@@ -2232,10 +2271,8 @@ function EditorSurfaceComponent({
         label: "File Structure",
         keybindings: keybinding("editor.fileStructure"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.fileStructure",
-            () => editorActionCommandPortRef.current.openFileStructure(),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.fileStructure", () =>
+            editorActionCommandPortRef.current.openFileStructure(),
           ),
       }),
       editorApi.addAction({
@@ -2243,10 +2280,8 @@ function EditorSurfaceComponent({
         label: "Go to Line/Column",
         keybindings: keybinding("editor.gotoLine"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.gotoLine",
-            () => triggerEditorSurfaceCommand(editorApi, "editor.gotoLine"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.gotoLine", () =>
+            triggerEditorSurfaceCommand(editorApi, "editor.gotoLine"),
           ),
       }),
       editorApi.addAction({
@@ -2263,10 +2298,8 @@ function EditorSurfaceComponent({
         label: "Annotate with Git Blame",
         keybindings: keybinding("editor.toggleGitBlame"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.toggleGitBlame",
-            () => editorActionCommandPortRef.current.toggleGitBlame?.(),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.toggleGitBlame", () =>
+            editorActionCommandPortRef.current.toggleGitBlame?.(),
           ),
       }),
       editorApi.addAction({
@@ -2274,11 +2307,8 @@ function EditorSurfaceComponent({
         label: "Format Document",
         keybindings: keybinding("editor.formatDocument"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.formatDocument",
-            () =>
-              triggerEditorSurfaceCommand(editorApi, "editor.formatDocument"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.formatDocument", () =>
+            triggerEditorSurfaceCommand(editorApi, "editor.formatDocument"),
           ),
       }),
       editorApi.addAction({
@@ -2286,11 +2316,8 @@ function EditorSurfaceComponent({
         label: "Format Selection",
         keybindings: keybinding("editor.formatSelection"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.formatSelection",
-            () =>
-              triggerEditorSurfaceCommand(editorApi, "editor.formatSelection"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.formatSelection", () =>
+            triggerEditorSurfaceCommand(editorApi, "editor.formatSelection"),
           ),
       }),
       editorApi.addAction({
@@ -2301,10 +2328,8 @@ function EditorSurfaceComponent({
           monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.Period,
         ],
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.quickFix",
-            () => triggerEditorSurfaceCommand(editorApi, "editor.quickFix"),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.quickFix", () =>
+            triggerEditorSurfaceCommand(editorApi, "editor.quickFix"),
           ),
       }),
       editorApi.addAction({
@@ -2323,29 +2348,25 @@ function EditorSurfaceComponent({
         id: "mockor.shrinkSelection",
         label: "Shrink Selection",
         keybindings: keybinding("editor.shrinkSelection"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.smartSelect.shrink"),
+        run: () => triggerEditorAction(editorApi, "editor.action.smartSelect.shrink"),
       }),
       editorApi.addAction({
         id: "mockor.insertCursorAbove",
         label: "Add Caret Above",
         keybindings: keybinding("editor.insertCursorAbove"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.insertCursorAbove"),
+        run: () => triggerEditorAction(editorApi, "editor.action.insertCursorAbove"),
       }),
       editorApi.addAction({
         id: "mockor.insertCursorBelow",
         label: "Add Caret Below",
         keybindings: keybinding("editor.insertCursorBelow"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.insertCursorBelow"),
+        run: () => triggerEditorAction(editorApi, "editor.action.insertCursorBelow"),
       }),
       editorApi.addAction({
         id: "mockor.selectAllOccurrences",
         label: "Select All Occurrences",
         keybindings: keybinding("editor.selectAllOccurrences"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.selectHighlights"),
+        run: () => triggerEditorAction(editorApi, "editor.action.selectHighlights"),
       }),
       editorApi.addAction({
         id: "mockor.toggleColumnSelection",
@@ -2396,39 +2417,31 @@ function EditorSurfaceComponent({
         id: "mockor.moveLineUp",
         label: "Move Line Up",
         keybindings: keybinding("editor.moveLineUp"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.moveLinesUpAction"),
+        run: () => triggerEditorAction(editorApi, "editor.action.moveLinesUpAction"),
       }),
       editorApi.addAction({
         id: "mockor.moveLineDown",
         label: "Move Line Down",
         keybindings: keybinding("editor.moveLineDown"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.moveLinesDownAction"),
+        run: () => triggerEditorAction(editorApi, "editor.action.moveLinesDownAction"),
       }),
       editorApi.addAction({
         id: "mockor.duplicateLine",
         label: "Duplicate Line or Selection",
         keybindings: keybinding("editor.duplicateLine"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.copyLinesDownAction"),
+        run: () => triggerEditorAction(editorApi, "editor.action.copyLinesDownAction"),
       }),
       editorApi.addAction({
         id: "mockor.addSelectionToNextMatch",
         label: "Add Selection to Next Match",
         keybindings: keybinding("editor.addSelectionToNextMatch"),
-        run: () =>
-          triggerEditorAction(
-            editorApi,
-            "editor.action.addSelectionToNextFindMatch",
-          ),
+        run: () => triggerEditorAction(editorApi, "editor.action.addSelectionToNextFindMatch"),
       }),
       editorApi.addAction({
         id: "mockor.deleteLine",
         label: "Delete Line",
         keybindings: keybinding("editor.deleteLine"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.deleteLines"),
+        run: () => triggerEditorAction(editorApi, "editor.action.deleteLines"),
       }),
       editorApi.addAction({
         id: "mockor.joinLines",
@@ -2464,29 +2477,25 @@ function EditorSurfaceComponent({
         id: "mockor.sortLinesAscending",
         label: "Sort Lines Ascending",
         keybindings: keybinding("editor.sortLinesAscending"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.sortLinesAscending"),
+        run: () => triggerEditorAction(editorApi, "editor.action.sortLinesAscending"),
       }),
       editorApi.addAction({
         id: "mockor.sortLinesDescending",
         label: "Sort Lines Descending",
         keybindings: keybinding("editor.sortLinesDescending"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.sortLinesDescending"),
+        run: () => triggerEditorAction(editorApi, "editor.action.sortLinesDescending"),
       }),
       editorApi.addAction({
         id: "mockor.toggleCase",
         label: "Toggle Case",
         keybindings: keybinding("editor.toggleCase"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.transformToUppercase"),
+        run: () => triggerEditorAction(editorApi, "editor.action.transformToUppercase"),
       }),
       editorApi.addAction({
         id: "mockor.transformToLowercase",
         label: "Transform to Lowercase",
         keybindings: keybinding("editor.transformToLowercase"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.transformToLowercase"),
+        run: () => triggerEditorAction(editorApi, "editor.action.transformToLowercase"),
       }),
       editorApi.addAction({
         id: "mockor.surroundWith",
@@ -2527,10 +2536,8 @@ function EditorSurfaceComponent({
         label: "Close Tab",
         keybindings: keybinding("editor.closeTab"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.closeTab",
-            () => editorActionCommandPortRef.current.closeActiveTab(),
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.closeTab", () =>
+            editorActionCommandPortRef.current.closeActiveTab(),
           ),
       }),
       editorApi.addAction({
@@ -2538,10 +2545,8 @@ function EditorSurfaceComponent({
         label: "Go Back",
         keybindings: keybinding("navigation.back"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "navigation.back",
-            () => editorActionCommandPortRef.current.goBack(),
+          runRegisteredCommand(commandExecutionRunnerRef, "navigation.back", () =>
+            editorActionCommandPortRef.current.goBack(),
           ),
       }),
       editorApi.addAction({
@@ -2549,28 +2554,21 @@ function EditorSurfaceComponent({
         label: "Go Forward",
         keybindings: keybinding("navigation.forward"),
         run: () =>
-          runRegisteredCommand(
-            commandExecutionRunnerRef,
-            "navigation.forward",
-            () => editorActionCommandPortRef.current.goForward(),
+          runRegisteredCommand(commandExecutionRunnerRef, "navigation.forward", () =>
+            editorActionCommandPortRef.current.goForward(),
           ),
       }),
       editorApi.addAction({
         id: "mockor.nextChange",
         label: "Go to Next Change",
         keybindings: keybinding("editor.nextChange"),
-        run: () =>
-          requestRegisteredCommand(commandExecutionRunnerRef, "editor.nextChange"),
+        run: () => requestRegisteredCommand(commandExecutionRunnerRef, "editor.nextChange"),
       }),
       editorApi.addAction({
         id: "mockor.previousChange",
         label: "Go to Previous Change",
         keybindings: keybinding("editor.previousChange"),
-        run: () =>
-          requestRegisteredCommand(
-            commandExecutionRunnerRef,
-            "editor.previousChange",
-          ),
+        run: () => requestRegisteredCommand(commandExecutionRunnerRef, "editor.previousChange"),
       }),
     ];
 
@@ -2585,8 +2583,7 @@ function EditorSurfaceComponent({
     }
 
     const disposables = registerConflictMarkerCodeActions(monacoApi, editorApi, {
-      shouldInspectModel: (model) =>
-        !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current),
+      shouldInspectModel: (model) => !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current),
     });
 
     return () => {
@@ -2603,12 +2600,9 @@ function EditorSurfaceComponent({
       const model = editorApi.getModel();
       const document = activeDocumentRef.current;
       const matchesActiveDocument =
-        model &&
-        document &&
-        modelMatchesProject(model, workspaceRootRef.current, document.path);
+        model && document && modelMatchesProject(model, workspaceRootRef.current, document.path);
       const decorations =
-        matchesActiveDocument &&
-        !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current)
+        matchesActiveDocument && !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current)
           ? conflictMarkerDecorations(model)
           : [];
 
@@ -2619,10 +2613,8 @@ function EditorSurfaceComponent({
     };
 
     refreshDecorations();
-    const contentChangeDisposable =
-      editorApi.onDidChangeModelContent(refreshDecorations);
-    const modelChangeDisposable =
-      editorApi.onDidChangeModel(refreshDecorations);
+    const contentChangeDisposable = editorApi.onDidChangeModelContent(refreshDecorations);
+    const modelChangeDisposable = editorApi.onDidChangeModel(refreshDecorations);
 
     return () => {
       contentChangeDisposable.dispose();
@@ -2640,10 +2632,7 @@ function EditorSurfaceComponent({
     }
 
     const disposable = editorApi.onKeyDown((event) => {
-      if (
-        event.keyCode !== monacoApi.KeyCode.Escape &&
-        event.browserEvent.key !== "Escape"
-      ) {
+      if (event.keyCode !== monacoApi.KeyCode.Escape && event.browserEvent.key !== "Escape") {
         return;
       }
 
@@ -2677,9 +2666,7 @@ function EditorSurfaceComponent({
         event.target.element?.closest(".git-blame-annotation")
       ) {
         const lineNumber = event.target.position?.lineNumber;
-        const sha = lineNumber
-          ? gitBlameShaAtLine(gitBlameLinesRef.current, lineNumber)
-          : null;
+        const sha = lineNumber ? gitBlameShaAtLine(gitBlameLinesRef.current, lineNumber) : null;
         const path = activeDocumentRef.current?.path;
 
         if (!sha || !path) {
@@ -2715,8 +2702,7 @@ function EditorSurfaceComponent({
       // Ctrl+click is the OS secondary/context click, so we navigate solely on
       // Cmd (metaKey) and explicitly bail when Ctrl is held - otherwise a Mac
       // user opening the context menu would be yanked to the definition instead.
-      const isContentText =
-        targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT;
+      const isContentText = targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT;
       const isLeftClick = event.event.leftButton === true;
       const isMiddleClick = event.event.middleButton === true;
       const definitionModifierPressed =
@@ -2727,19 +2713,11 @@ function EditorSurfaceComponent({
         (isLeftClick && definitionModifierPressed) || isMiddleClick;
       const contentPosition = event.target.position;
 
-      if (
-        isContentText &&
-        shouldNavigateToDefinition &&
-        contentPosition
-      ) {
+      if (isContentText && shouldNavigateToDefinition && contentPosition) {
         event.event.preventDefault();
         event.event.stopPropagation();
         editorApi.setPosition(contentPosition);
-        runRegisteredCommand(
-          commandExecutionRunnerRef,
-          "editor.goToDefinition",
-          onGoToDefinition,
-        );
+        runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", onGoToDefinition);
         return;
       }
 
@@ -2753,16 +2731,17 @@ function EditorSurfaceComponent({
           event.event.shiftKey !== true &&
           event.event.altKey !== true;
 
-        if (!onToggleBreakpoint || !isPlainLeftClick || !lineNumber || !path) {
+        if (!toggleBreakpointAction || !isPlainLeftClick || !lineNumber || !path) {
           return;
         }
 
-        onToggleBreakpoint(path, lineNumber);
+        toggleBreakpointAction(path, lineNumber);
         return;
       }
 
-      const isGlyphMargin =
-        targetType === monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN;
+      if (event.event.rightButton) return;
+
+      const isGlyphMargin = targetType === monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN;
       const isLineDecorations =
         targetType === monacoApi.editor.MouseTargetType.GUTTER_LINE_DECORATIONS;
 
@@ -2791,17 +2770,10 @@ function EditorSurfaceComponent({
       }
 
       const lane = glyphMarginLaneFromMouseEvent(event);
-      const changeHunk = findChangeHunkAtLine(
-        changeHunksRef.current,
-        lineNumber,
-      );
+      const changeHunk = findChangeHunkAtLine(changeHunksRef.current, lineNumber);
       const testTarget = testGutterTargetsRef.current.get(lineNumber);
 
-      if (
-        testTarget &&
-        onRunTestAt &&
-        lane === monacoApi.editor.GlyphMarginLane.Right
-      ) {
+      if (testTarget && onRunTestAt && lane === monacoApi.editor.GlyphMarginLane.Right) {
         event.event.preventDefault();
         event.event.stopPropagation();
         onRunTestAt(testTarget);
@@ -2814,10 +2786,8 @@ function EditorSurfaceComponent({
         event.event.preventDefault();
         event.event.stopPropagation();
         editorApi.setPosition(target);
-        runRegisteredCommand(
-          commandExecutionRunnerRef,
-          "editor.goToImplementation",
-          () => editorActionCommandPortRef.current.goToImplementationAt(target),
+        runRegisteredCommand(commandExecutionRunnerRef, "editor.goToImplementation", () =>
+          editorActionCommandPortRef.current.goToImplementationAt(target),
         );
         return;
       }
@@ -2841,7 +2811,7 @@ function EditorSurfaceComponent({
     onRevealGitBlameCommit,
     onRunTestAt,
     onToggleBookmarkAtLine,
-    onToggleBreakpoint,
+    toggleBreakpointAction,
   ]);
 
   // Monaco ships a built-in "go to definition on Cmd/Ctrl" gesture
@@ -2881,10 +2851,7 @@ function EditorSurfaceComponent({
       "editor.contrib.gotodefinitionatposition",
     ) as { gotoDefinition?: (...args: unknown[]) => unknown } | null;
 
-    if (
-      !gotoDefinitionGesture ||
-      typeof gotoDefinitionGesture.gotoDefinition !== "function"
-    ) {
+    if (!gotoDefinitionGesture || typeof gotoDefinitionGesture.gotoDefinition !== "function") {
       return;
     }
 
@@ -2892,13 +2859,13 @@ function EditorSurfaceComponent({
   }, [editorApi]);
 
   useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
+    if (!activeDocumentPath || !editorApi || !monacoApi) {
       return;
     }
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
@@ -2918,7 +2885,7 @@ function EditorSurfaceComponent({
     // the per-tab stale guard) plus changeHunks, so the path covers file
     // switches and changeHunks covers actual hunk changes. Mirrors the
     // bookmark / diagnostic-overview / gutter path-gated effects.
-  }, [activeDocument?.path, changeHunks, editorApi, monacoApi, workspaceRoot]);
+  }, [activeDocumentPath, changeHunks, editorApi, monacoApi, workspaceRoot]);
 
   // Renders a bookmark marker in the lines-decorations margin plus an overview
   // ruler tick for each bookmarked line of the active document. The stale-guard
@@ -2926,21 +2893,19 @@ function EditorSurfaceComponent({
   // invariant intact: a switch repaints from the new tab's bookmarked lines and
   // the previous tab's markers are dropped via deltaDecorations.
   useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
+    if (!activeDocumentPath || !editorApi || !monacoApi) {
       return;
     }
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
     bookmarkDecorationIdsRef.current = editorApi.deltaDecorations(
       bookmarkDecorationIdsRef.current,
-      bookmarkedLineNumbers.map((lineNumber) =>
-        toBookmarkDecoration(monacoApi, lineNumber),
-      ),
+      bookmarkedLineNumbers.map((lineNumber) => toBookmarkDecoration(monacoApi, lineNumber)),
     );
 
     return () => {
@@ -2953,102 +2918,7 @@ function EditorSurfaceComponent({
     // not re-run this effect every keystroke. The body reads only the path (for
     // the per-tab stale guard) plus bookmarkedLineNumbers, so the path covers
     // file switches and bookmarkedLineNumbers covers bookmark toggles.
-  }, [
-    activeDocument?.path,
-    bookmarkedLineNumbers,
-    editorApi,
-    monacoApi,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
-      return;
-    }
-
-    breakpointDecorationIdsRef.current = editorApi.deltaDecorations(
-      breakpointDecorationIdsRef.current,
-      breakpoints
-        .filter((breakpoint) => breakpoint.filePath === activeDocument.path)
-        .map((breakpoint) => toBreakpointDecoration(monacoApi, breakpoint)),
-    );
-
-    return () => {
-      breakpointDecorationIdsRef.current = editorApi.deltaDecorations(
-        breakpointDecorationIdsRef.current,
-        [],
-      );
-    };
-  }, [activeDocument?.path, breakpoints, editorApi, monacoApi, workspaceRoot]);
-
-  useEffect(() => {
-    if (!editorApi || !monacoApi) {
-      return;
-    }
-
-    const clearStoppedLineDecoration = () => {
-      debugStoppedDecorationIdsRef.current = editorApi.deltaDecorations(
-        debugStoppedDecorationIdsRef.current,
-        [],
-      );
-    };
-
-    if (
-      !activeDocument ||
-      !debugStoppedLocation ||
-      debugStoppedLocation.filePath !== activeDocument.path
-    ) {
-      clearStoppedLineDecoration();
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
-      return;
-    }
-
-    debugStoppedDecorationIdsRef.current = editorApi.deltaDecorations(
-      debugStoppedDecorationIdsRef.current,
-      [
-        {
-          options: {
-            className: "debug-stopped-line",
-            isWholeLine: true,
-            overviewRuler: {
-              color: "#e7c66c",
-              position: monacoApi.editor.OverviewRulerLane.Left,
-            },
-            stickiness:
-              monacoApi.editor.TrackedRangeStickiness
-                .NeverGrowsWhenTypingAtEdges,
-          },
-          range: new monacoApi.Range(
-            debugStoppedLocation.lineNumber,
-            1,
-            debugStoppedLocation.lineNumber,
-            1,
-          ),
-        },
-      ],
-    );
-    editorApi.revealLineInCenter(debugStoppedLocation.lineNumber);
-
-    return clearStoppedLineDecoration;
-  }, [
-    activeDocument?.path,
-    debugStoppedLocation?.filePath,
-    debugStoppedLocation?.lineNumber,
-    editorApi,
-    monacoApi,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentPath, bookmarkedLineNumbers, editorApi, monacoApi, workspaceRoot]);
 
   // Git blame annotations (PhpStorm "Annotate with Git Blame"). When enabled for
   // the active document, fetch per-line blame off the parent gateway and render
@@ -3058,13 +2928,13 @@ function EditorSurfaceComponent({
   // flight drops the stale result (per-tab + per-document isolation). Disabling
   // (or switching away) clears the annotations synchronously.
   useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
+    if (!activeDocumentPath || !editorApi || !monacoApi) {
       return;
     }
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
@@ -3085,7 +2955,7 @@ function EditorSurfaceComponent({
     }
 
     // Capture the requested path BEFORE the await so a switch can be detected.
-    const requestedPath = activeDocument.path;
+    const requestedPath = activeDocumentPath;
     let cancelled = false;
 
     void provider(requestedPath)
@@ -3111,9 +2981,7 @@ function EditorSurfaceComponent({
         gitBlameLinesRef.current = blameLines;
         gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
           gitBlameDecorationIdsRef.current,
-          blameLines.map((line) =>
-            toGitBlameDecoration(monacoApi, line, now),
-          ),
+          blameLines.map((line) => toGitBlameDecoration(monacoApi, line, now)),
         );
         gitBlameDecoratedPathRef.current = requestedPath;
       })
@@ -3130,13 +2998,7 @@ function EditorSurfaceComponent({
     // typing does not refetch blame every keystroke; a file switch or a toggle
     // re-runs it. Blame is anchored to committed lines and need not track live
     // edits between toggles.
-  }, [
-    activeDocument?.path,
-    editorApi,
-    gitBlameEnabled,
-    monacoApi,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentPath, editorApi, gitBlameEnabled, monacoApi, workspaceRoot]);
 
   useEffect(() => {
     if (!changePreview) {
@@ -3164,14 +3026,10 @@ function EditorSurfaceComponent({
   // to it. Gated to PHP documents (the union of the three consumers); the test
   // gutter applies its own narrower `isActiveDocumentPhpTest` gate downstream.
   const phpEditTick = useDebouncedPhpEditTick(
-    activeDocument &&
-      activeDocument.language === "php" &&
-      !activeDocumentIsLargeSmart
+    activeDocument && activeDocument.language === "php" && !activeDocumentIsLargeSmart
       ? activeDocument.path
       : null,
-    activeDocument &&
-      activeDocument.language === "php" &&
-      !activeDocumentIsLargeSmart
+    activeDocument && activeDocument.language === "php" && !activeDocumentIsLargeSmart
       ? activeDocument.content
       : null,
   );
@@ -3195,8 +3053,7 @@ function EditorSurfaceComponent({
         return false;
       }
 
-      const version =
-        typeof model.getVersionId === "function" ? model.getVersionId() : 0;
+      const version = typeof model.getVersionId === "function" ? model.getVersionId() : 0;
       const validationKey = `${path}\0${model.uri.toString()}\0${version}\0${content}`;
 
       if (
@@ -3223,34 +3080,24 @@ function EditorSurfaceComponent({
             workspaceRoot: workspaceRoot ?? "",
           },
           () => {
-            const structuralDiagnostics =
-              structuralPhpSyntaxDiagnostics(content);
-            const suspiciousDiagnostics =
-              suspiciousPhpBareIdentifierDiagnostics(content);
-            const immediateSyntaxDiagnostics = [
-              ...structuralDiagnostics,
-              ...suspiciousDiagnostics,
-            ];
-            const immediateInspectionDiagnostics =
-              phpInspectionDiagnostics(content);
+            const structuralDiagnostics = structuralPhpSyntaxDiagnostics(content);
+            const suspiciousDiagnostics = suspiciousPhpBareIdentifierDiagnostics(content);
+            const immediateSyntaxDiagnostics = [...structuralDiagnostics, ...suspiciousDiagnostics];
+            const immediateInspectionDiagnostics = phpInspectionDiagnostics(content);
 
             return {
               immediate: {
                 inspectionDiagnostics: immediateInspectionDiagnostics,
                 syntaxDiagnostics: immediateSyntaxDiagnostics,
               },
-              result: phpSyntaxDiagnosticsGateway.validate(content).then(
-                (diagnostics) => ({
-                  inspectionDiagnostics: immediateInspectionDiagnostics,
-                  syntaxDiagnostics: [
-                    ...diagnostics,
-                    ...(diagnostics.length === 0
-                      ? structuralDiagnostics
-                      : []),
-                    ...suspiciousDiagnostics,
-                  ],
-                }),
-              ),
+              result: phpSyntaxDiagnosticsGateway.validate(content).then((diagnostics) => ({
+                inspectionDiagnostics: immediateInspectionDiagnostics,
+                syntaxDiagnostics: [
+                  ...diagnostics,
+                  ...(diagnostics.length === 0 ? structuralDiagnostics : []),
+                  ...suspiciousDiagnostics,
+                ],
+              })),
             };
           },
         );
@@ -3261,12 +3108,7 @@ function EditorSurfaceComponent({
             monacoApi,
             path,
             (markers) =>
-              runtime.writeLocalPhpMarkers(
-                generatedSurfaceId,
-                monacoApi,
-                model,
-                markers,
-              ),
+              runtime.writeLocalPhpMarkers(generatedSurfaceId, monacoApi, model, markers),
             onLocalPhpDiagnosticsChange,
             setSyntaxDiagnosticsByPath,
             setPhpInspectionDiagnosticCountsByPath,
@@ -3283,13 +3125,7 @@ function EditorSurfaceComponent({
           result,
           monacoApi,
           path,
-          (markers) =>
-            runtime.writeLocalPhpMarkers(
-              generatedSurfaceId,
-              monacoApi,
-              model,
-              markers,
-            ),
+          (markers) => runtime.writeLocalPhpMarkers(generatedSurfaceId, monacoApi, model, markers),
           onLocalPhpDiagnosticsChange,
           setSyntaxDiagnosticsByPath,
           setPhpInspectionDiagnosticCountsByPath,
@@ -3316,13 +3152,13 @@ function EditorSurfaceComponent({
   );
 
   useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
+    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi || !monacoApi) {
       return;
     }
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
@@ -3332,10 +3168,9 @@ function EditorSurfaceComponent({
     // the existing glyphs stay put (and track edits via stickiness) until the
     // shared debounce tick flushes - no flicker.
     const decoratedPath = implementationGutterDecoratedPathRef.current;
-    const isPathSwitch =
-      decoratedPath !== null && decoratedPath !== activeDocument.path;
+    const isPathSwitch = decoratedPath !== null && decoratedPath !== activeDocumentPath;
 
-    if (activeDocument.language !== "php" || isPathSwitch) {
+    if (activeDocumentLanguage !== "php" || isPathSwitch) {
       implementationGutterTargetsRef.current = new Map();
       implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
         implementationGutterDecorationIdsRef.current,
@@ -3343,13 +3178,7 @@ function EditorSurfaceComponent({
       );
       implementationGutterDecoratedPathRef.current = null;
     }
-  }, [
-    activeDocument?.language,
-    activeDocument?.path,
-    editorApi,
-    monacoApi,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentLanguage, activeDocumentPath, editorApi, monacoApi, workspaceRoot]);
 
   // The debounced full-file parse + decoration replace. Driven by the shared
   // `phpEditTick` (one 160ms timer per edit for all PHP gutter/diagnostics
@@ -3389,16 +3218,10 @@ function EditorSurfaceComponent({
             value: "Go to implementation",
           },
           isWholeLine: false,
-          stickiness:
-            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          stickiness: monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
           zIndex: 20,
         },
-        range: new monacoApi.Range(
-          target.position.lineNumber,
-          1,
-          target.position.lineNumber,
-          1,
-        ),
+        range: new monacoApi.Range(target.position.lineNumber, 1, target.position.lineNumber, 1),
       })),
     );
     implementationGutterDecoratedPathRef.current = phpEditTick.path;
@@ -3411,13 +3234,13 @@ function EditorSurfaceComponent({
   // the active document path) plus the absolute-path-keyed cache keep the
   // per-tab isolation invariant intact.
   useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
+    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi || !monacoApi) {
       return;
     }
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
@@ -3426,11 +3249,9 @@ function EditorSurfaceComponent({
     // the shared debounce tick is pending. Mirrors the implementation-gutter
     // effect; see its comment for the no-flicker rationale.
     const decoratedPath = testGutterDecoratedPathRef.current;
-    const isPathSwitch =
-      decoratedPath !== null && decoratedPath !== activeDocument.path;
+    const isPathSwitch = decoratedPath !== null && decoratedPath !== activeDocumentPath;
     const isApplicable =
-      (activeDocument.language === "php" && isActiveDocumentPhpTest) ||
-      isActiveDocumentJsTest;
+      (activeDocumentLanguage === "php" && isActiveDocumentPhpTest) || isActiveDocumentJsTest;
 
     if (!isApplicable || isPathSwitch) {
       testGutterTargetsRef.current = new Map();
@@ -3441,8 +3262,8 @@ function EditorSurfaceComponent({
       testGutterDecoratedPathRef.current = null;
     }
   }, [
-    activeDocument?.language,
-    activeDocument?.path,
+    activeDocumentLanguage,
+    activeDocumentPath,
     editorApi,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
@@ -3496,16 +3317,10 @@ function EditorSurfaceComponent({
             value: target.label,
           },
           isWholeLine: false,
-          stickiness:
-            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          stickiness: monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
           zIndex: 20,
         },
-        range: new monacoApi.Range(
-          target.position.lineNumber,
-          1,
-          target.position.lineNumber,
-          1,
-        ),
+        range: new monacoApi.Range(target.position.lineNumber, 1, target.position.lineNumber, 1),
       })),
     );
     testGutterDecoratedPathRef.current = testEditTick.path;
@@ -3539,10 +3354,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (
-      previousTransientWidgetDismissKeyRef.current ===
-      transientWidgetDismissKey
-    ) {
+    if (previousTransientWidgetDismissKeyRef.current === transientWidgetDismissKey) {
       return;
     }
 
@@ -3588,11 +3400,7 @@ function EditorSurfaceComponent({
     }
 
     const reveal = (): boolean => {
-      const model = synchronizeActiveDocumentModel(
-        editorApi,
-        workspaceRoot,
-        activeDocument,
-      );
+      const model = synchronizeActiveDocumentModel(editorApi, workspaceRoot, activeDocument);
 
       if (!model) {
         return false;
@@ -3725,19 +3533,14 @@ function EditorSurfaceComponent({
   // content into another's buffer. Idempotent: typing keeps content equal to the
   // model value, so this never re-applies during editing or fights live input.
   useEffect(() => {
-    if (
-      !editorApi ||
-      !activeDocument ||
-      !activeDocumentContentReady ||
-      isOpeningFile
-    ) {
+    if (!editorApi || !activeDocumentPath || !activeDocumentContentReady || isOpeningFile) {
       return;
     }
 
     reconcileActiveModelContentRef.current();
   }, [
-    activeDocument?.content,
-    activeDocument?.path,
+    activeDocumentContent,
+    activeDocumentPath,
     activeDocumentContentReady,
     editorApi,
     isOpeningFile,
@@ -3765,17 +3568,17 @@ function EditorSurfaceComponent({
   const appliedRestoredViewStateKeysRef = useRef(new Set<string>());
 
   useEffect(() => {
-    if (!editorApi || !activeDocument || !workspaceRoot) {
+    if (!editorApi || !activeDocumentPath || !workspaceRoot) {
       return;
     }
 
-    const viewState = restoredViewStates[activeDocument.path];
+    const viewState = restoredViewStates[activeDocumentPath];
 
     if (!viewState) {
       return;
     }
 
-    const applicationKey = `${workspaceRoot}\0${activeDocument.path}\0${restoredViewStateRevision}`;
+    const applicationKey = `${workspaceRoot}\0${activeDocumentPath}\0${restoredViewStateRevision}`;
 
     if (appliedRestoredViewStateKeysRef.current.has(applicationKey)) {
       return;
@@ -3789,7 +3592,7 @@ function EditorSurfaceComponent({
     const activeModel = () => {
       const model = editorApi.getModel();
 
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
         return null;
       }
 
@@ -3801,14 +3604,8 @@ function EditorSurfaceComponent({
         return false;
       }
 
-      const lineNumber = Math.min(
-        Math.max(viewState.line, 1),
-        Math.max(model.getLineCount(), 1),
-      );
-      const column = Math.min(
-        Math.max(viewState.column, 1),
-        model.getLineMaxColumn(lineNumber),
-      );
+      const lineNumber = Math.min(Math.max(viewState.line, 1), Math.max(model.getLineCount(), 1));
+      const column = Math.min(Math.max(viewState.column, 1), model.getLineMaxColumn(lineNumber));
       const position = { column, lineNumber };
 
       editorApi.setPosition(position);
@@ -3944,16 +3741,10 @@ function EditorSurfaceComponent({
       disposable.dispose();
       retryDisposable?.dispose();
     };
-  }, [
-    activeDocument?.path,
-    editorApi,
-    restoredViewStateRevision,
-    restoredViewStates,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentPath, editorApi, restoredViewStateRevision, restoredViewStates, workspaceRoot]);
 
   useEffect(() => {
-    if (!editorApi || !activeDocument || !onEditorViewStateChange) {
+    if (!editorApi || !activeDocumentPath || !editorViewStateCaptureEnabled) {
       return;
     }
 
@@ -3972,7 +3763,7 @@ function EditorSurfaceComponent({
     const captureViewState = async () => {
       const model = editorApi.getModel();
 
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
         return;
       }
 
@@ -4005,10 +3796,7 @@ function EditorSurfaceComponent({
 
       const currentModel = editorApi.getModel();
 
-      if (
-        !currentModel ||
-        !modelMatchesProject(currentModel, workspaceRoot, activeDocument.path)
-      ) {
+      if (!currentModel || !modelMatchesProject(currentModel, workspaceRoot, activeDocumentPath)) {
         return;
       }
 
@@ -4028,7 +3816,7 @@ function EditorSurfaceComponent({
         }
       }
 
-      onEditorViewStateChangeRef.current?.(activeDocument.path, {
+      onEditorViewStateChangeRef.current?.(activeDocumentPath, {
         column: position.column,
         ...(foldedLines.length === 0 ? {} : { foldedLines }),
         line: position.lineNumber,
@@ -4055,17 +3843,12 @@ function EditorSurfaceComponent({
       resetFoldingBinding();
       scrollDisposable.dispose();
     };
-  }, [
-    activeDocument?.path,
-    Boolean(onEditorViewStateChange),
-    editorApi,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentPath, editorApi, editorViewStateCaptureEnabled, workspaceRoot]);
 
   useEffect(() => {
     if (
-      !activeDocument ||
-      activeDocument.language !== "php" ||
+      !activeDocumentPath ||
+      activeDocumentLanguage !== "php" ||
       activeDocumentIsLargeSmart ||
       !editorApi
     ) {
@@ -4077,7 +3860,7 @@ function EditorSurfaceComponent({
     const validateActiveModel = () => {
       const model = editorApi.getModel();
 
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
         return;
       }
 
@@ -4088,10 +3871,10 @@ function EditorSurfaceComponent({
       const isCurrentModel = () =>
         active &&
         editorApi.getModel() === model &&
-        modelMatchesProject(model, workspaceRoot, activeDocument.path);
+        modelMatchesProject(model, workspaceRoot, activeDocumentPath);
 
       void applyLocalPhpDiagnostics(
-        activeDocument.path,
+        activeDocumentPath,
         model.getValue(),
         model,
         isCurrentModel,
@@ -4107,9 +3890,7 @@ function EditorSurfaceComponent({
     const modelChangeDisposable = editorApi.onDidChangeModel(() => {
       validateActiveModel();
     });
-    const retryTimers = [80, 240].map((delay) =>
-      window.setTimeout(validateActiveModel, delay),
-    );
+    const retryTimers = [80, 240].map((delay) => window.setTimeout(validateActiveModel, delay));
 
     return () => {
       active = false;
@@ -4117,8 +3898,8 @@ function EditorSurfaceComponent({
       retryTimers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [
-    activeDocument?.language,
-    activeDocument?.path,
+    activeDocumentLanguage,
+    activeDocumentPath,
     activeDocumentIsLargeSmart,
     applyLocalPhpDiagnostics,
     editorApi,
@@ -4126,7 +3907,7 @@ function EditorSurfaceComponent({
   ]);
 
   useEffect(() => {
-    if (!activeDocument || activeDocument.language !== "php") {
+    if (!activeDocumentPath || activeDocumentLanguage !== "php") {
       return;
     }
 
@@ -4138,11 +3919,7 @@ function EditorSurfaceComponent({
     return () => {
       retryTimers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [
-    activeDocument?.language,
-    activeDocument?.path,
-    recoverVisibleLocalPhpDiagnostics,
-  ]);
+  }, [activeDocumentLanguage, activeDocumentPath, recoverVisibleLocalPhpDiagnostics]);
 
   useEffect(() => {
     if (!monacoApi) {
@@ -4175,15 +3952,9 @@ function EditorSurfaceComponent({
       }
     });
 
-    setSyntaxDiagnosticsByPath((current) =>
-      pruneClosedPaths(current, openPaths),
-    );
-    setPhpInspectionDiagnosticCountsByPath((current) =>
-      pruneClosedPaths(current, openPaths),
-    );
-    setBreadcrumbSymbolsByPath((current) =>
-      pruneClosedPaths(current, openPaths),
-    );
+    setSyntaxDiagnosticsByPath((current) => pruneClosedPaths(current, openPaths));
+    setPhpInspectionDiagnosticCountsByPath((current) => pruneClosedPaths(current, openPaths));
+    setBreadcrumbSymbolsByPath((current) => pruneClosedPaths(current, openPaths));
   }, [
     activeDocument?.path,
     monacoApi,
@@ -4201,32 +3972,25 @@ function EditorSurfaceComponent({
     if (activeDocument?.path) {
       onLocalPhpDiagnosticsChange(activeDocument.path, []);
     }
-  }, [
-    activeDocument?.language,
-    activeDocument?.path,
-    onLocalPhpDiagnosticsChange,
-  ]);
+  }, [activeDocument?.language, activeDocument?.path, onLocalPhpDiagnosticsChange]);
 
   useEffect(() => {
-    if (!activeDocument || !editorApi || !monacoApi) {
+    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi || !monacoApi) {
       return;
     }
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
       return;
     }
 
-    const languageServerDiagnostics =
-      languageServerDiagnosticsByPath[activeDocument.path] ?? [];
+    const languageServerDiagnostics = languageServerDiagnosticsByPath[activeDocumentPath] ?? [];
     const syntaxDiagnostics =
-      activeDocument.language === "php"
-        ? syntaxDiagnosticsByPath[activeDocument.path] ?? []
-        : [];
+      activeDocumentLanguage === "php" ? (syntaxDiagnosticsByPath[activeDocumentPath] ?? []) : [];
     const phpInspectionDiagnosticCount =
-      activeDocument.language === "php"
-        ? phpInspectionDiagnosticCountsByPath[activeDocument.path] ?? 0
+      activeDocumentLanguage === "php"
+        ? (phpInspectionDiagnosticCountsByPath[activeDocumentPath] ?? 0)
         : 0;
 
     // Monaco's content hover widget is mouse-driven and is NOT dismissed when its
@@ -4241,13 +4005,11 @@ function EditorSurfaceComponent({
     // is touched (the path match above), so a stale tab can never dismiss the
     // active editor's hover.
     const activeDiagnosticCount =
-      languageServerDiagnostics.length +
-      syntaxDiagnostics.length +
-      phpInspectionDiagnosticCount;
+      languageServerDiagnostics.length + syntaxDiagnostics.length + phpInspectionDiagnosticCount;
     const previousActiveDiagnostics = previousActiveDiagnosticCountRef.current;
     const diagnosticsClearedForActivePath =
       previousActiveDiagnostics !== null &&
-      previousActiveDiagnostics.path === activeDocument.path &&
+      previousActiveDiagnostics.path === activeDocumentPath &&
       activeDiagnosticCount < previousActiveDiagnostics.count;
 
     if (diagnosticsClearedForActivePath) {
@@ -4256,7 +4018,7 @@ function EditorSurfaceComponent({
 
     previousActiveDiagnosticCountRef.current = {
       count: activeDiagnosticCount,
-      path: activeDocument.path,
+      path: activeDocumentPath,
     };
 
     diagnosticOverviewDecorationIdsRef.current = editorApi.deltaDecorations(
@@ -4265,9 +4027,7 @@ function EditorSurfaceComponent({
         ...languageServerDiagnostics.map((diagnostic) =>
           toDiagnosticOverviewDecoration(monacoApi, diagnostic),
         ),
-        ...syntaxDiagnostics.map((diagnostic) =>
-          toSyntaxOverviewDecoration(monacoApi, diagnostic),
-        ),
+        ...syntaxDiagnostics.map((diagnostic) => toSyntaxOverviewDecoration(monacoApi, diagnostic)),
       ],
     );
 
@@ -4285,13 +4045,14 @@ function EditorSurfaceComponent({
     // keyed by path, so real changes are covered by the diagnostics deps and a
     // file switch is covered by the path/language keys.
   }, [
-    activeDocument?.path,
-    activeDocument?.language,
+    activeDocumentPath,
+    activeDocumentLanguage,
     editorApi,
     languageServerDiagnosticsByPath,
     monacoApi,
     phpInspectionDiagnosticCountsByPath,
     syntaxDiagnosticsByPath,
+    workspaceRoot,
   ]);
 
   // Synchronously clears the PHP syntax markers + cached diagnostics when the
@@ -4303,46 +4064,43 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (!activeDocument) {
+    if (!activeDocumentPath) {
       return;
     }
 
-    if (
-      activeDocument.language === "php" &&
-      !activeDocumentIsLargeSmart
-    ) {
+    if (activeDocumentLanguage === "php" && !activeDocumentIsLargeSmart) {
       return;
     }
 
-    const model = modelForPath(monacoApi, workspaceRoot, activeDocument.path);
+    const model = modelForPath(monacoApi, workspaceRoot, activeDocumentPath);
 
     if (!model) {
       return;
     }
 
     runtime?.writeLocalPhpMarkers(generatedSurfaceId, monacoApi, model, []);
-    onLocalPhpDiagnosticsChange(activeDocument.path, []);
+    onLocalPhpDiagnosticsChangeRef.current(activeDocumentPath, []);
     setSyntaxDiagnosticsByPath((current) => {
-      if (!current[activeDocument.path]) {
+      if (!current[activeDocumentPath]) {
         return current;
       }
 
       const next = { ...current };
-      delete next[activeDocument.path];
+      delete next[activeDocumentPath];
       return next;
     });
     setPhpInspectionDiagnosticCountsByPath((current) => {
-      if (current[activeDocument.path] === undefined) {
+      if (current[activeDocumentPath] === undefined) {
         return current;
       }
 
       const next = { ...current };
-      delete next[activeDocument.path];
+      delete next[activeDocumentPath];
       return next;
     });
   }, [
-    activeDocument?.language,
-    activeDocument?.path,
+    activeDocumentLanguage,
+    activeDocumentPath,
     activeDocumentIsLargeSmart,
     monacoApi,
     generatedSurfaceId,
@@ -4371,21 +4129,18 @@ function EditorSurfaceComponent({
       editorApi.getModel() === model &&
       modelMatchesProject(model, workspaceRoot, phpEditTick.path);
 
-    applyLocalPhpDiagnostics(
-      phpEditTick.path,
-      phpEditTick.content,
-      model,
-      isCurrentModel,
-    );
+    applyLocalPhpDiagnostics(phpEditTick.path, phpEditTick.content, model, isCurrentModel);
 
     return () => {
       active = false;
     };
   }, [applyLocalPhpDiagnostics, editorApi, monacoApi, phpEditTick, workspaceRoot]);
 
-  const breadcrumbSymbols = activeDocument
-    ? breadcrumbSymbolsByPath[activeDocument.path] ?? EMPTY_BREADCRUMB_SYMBOLS
+  const breadcrumbSymbols = activeDocumentPath
+    ? (breadcrumbSymbolsByPath[activeDocumentPath] ?? EMPTY_BREADCRUMB_SYMBOLS)
     : EMPTY_BREADCRUMB_SYMBOLS;
+  const cursorLineNumber = cursorPosition?.lineNumber;
+  const cursorColumn = cursorPosition?.column;
   // Recomputed only when the cursor actually moves (line OR column) or the
   // symbols change, so a re-render that leaves all three stable hands the same
   // path array to the memo'd Breadcrumbs and skips its render. Keyed on the raw
@@ -4393,15 +4148,13 @@ function EditorSurfaceComponent({
   // need to share identity for the memo to hold.
   const breadcrumbPath = useMemo(
     () =>
-      activeDocument && cursorPosition
-        ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
+      activeDocumentPath && cursorLineNumber !== undefined && cursorColumn !== undefined
+        ? breadcrumbPathFromCursorAndSymbols(
+            { column: cursorColumn, lineNumber: cursorLineNumber },
+            breadcrumbSymbols,
+          )
         : EMPTY_BREADCRUMB_PATH,
-    [
-      activeDocument,
-      breadcrumbSymbols,
-      cursorPosition?.lineNumber,
-      cursorPosition?.column,
-    ],
+    [activeDocumentPath, breadcrumbSymbols, cursorColumn, cursorLineNumber],
   );
 
   const navigateToBreadcrumbSymbol = useCallback(
@@ -4424,11 +4177,7 @@ function EditorSurfaceComponent({
 
   const changePreviewStyle =
     activeDocument && changePreview && editorApi
-      ? editorChangePopoverStyle(
-          editorApi,
-          changePreview.hunk,
-          changePreview.anchorLineNumber,
-        )
+      ? editorChangePopoverStyle(editorApi, changePreview.hunk, changePreview.anchorLineNumber)
       : undefined;
 
   // The gutter rollback popover mirrors JetBrains' change marker menu: Revert,
@@ -4567,13 +4316,15 @@ function EditorSurfaceComponent({
 
   return (
     <div
-      aria-labelledby={!embeddedInGroupPanel && activeDocument
-        ? getTabId(activeDocument.path, groupId)
-        : undefined}
+      aria-labelledby={
+        !embeddedInGroupPanel && activeDocument ? getTabId(activeDocument.path, groupId) : undefined
+      }
       className="editor-panel"
-      id={!embeddedInGroupPanel && activeDocument
-        ? getTabPanelId(activeDocument.path, groupId)
-        : undefined}
+      id={
+        !embeddedInGroupPanel && activeDocument
+          ? getTabPanelId(activeDocument.path, groupId)
+          : undefined
+      }
       onFocusCapture={() => {
         activateEditorGroupFromInteraction();
       }}
@@ -4600,8 +4351,7 @@ function EditorSurfaceComponent({
         options={editorOptions}
         path={
           activeDocument && workspaceRoot
-            ? workspaceModelUri(workspaceRoot, activeDocument.path) ??
-              activeDocument.path
+            ? (workspaceModelUri(workspaceRoot, activeDocument.path) ?? activeDocument.path)
             : PLACEHOLDER_PATH
         }
         theme={monacoTheme}
@@ -4612,6 +4362,15 @@ function EditorSurfaceComponent({
         }
       />
       {overlay}
+      <EditorBreakpointInteractionLayer
+        actions={resolvedBreakpointActions}
+        activeDocumentPath={activeDocumentPath}
+        breakpoints={breakpoints}
+        editor={editorApi}
+        modelIdentity={currentBreakpointModel}
+        monaco={monacoApi}
+        workspaceRoot={workspaceRoot}
+      />
       {activeDocument && changePreview ? (
         <div
           aria-label="Local change preview"
@@ -4620,15 +4379,10 @@ function EditorSurfaceComponent({
           style={changePreviewStyle}
         >
           <div className="editor-change-popover-header">
-            <span
-              className={`editor-change-popover-kind ${changePreview.hunk.kind}`}
-            >
+            <span className={`editor-change-popover-kind ${changePreview.hunk.kind}`}>
               {editorChangeKindLabel(changePreview.hunk.kind)}
             </span>
-            <div
-              aria-label="Change navigation"
-              className="editor-change-popover-nav"
-            >
+            <div aria-label="Change navigation" className="editor-change-popover-nav">
               <button
                 aria-label="Go to previous change"
                 className="editor-change-popover-icon-button editor-change-popover-action-previous"
@@ -4660,9 +4414,7 @@ function EditorSurfaceComponent({
           </div>
           {changePreview.hunk.originalLines.length > 0 ? (
             <>
-              <div className="editor-change-popover-section-label">
-                Previous content
-              </div>
+              <div className="editor-change-popover-section-label">Previous content</div>
               <pre className="editor-change-popover-code editor-change-popover-code-removed">
                 {changePreviewText(changePreview.hunk)}
               </pre>
@@ -4670,9 +4422,7 @@ function EditorSurfaceComponent({
           ) : null}
           {changePreview.hunk.currentLines.length > 0 ? (
             <>
-              <div className="editor-change-popover-section-label">
-                Current content
-              </div>
+              <div className="editor-change-popover-section-label">Current content</div>
               <pre className="editor-change-popover-code editor-change-popover-code-added">
                 {changePreview.hunk.currentLines.join("\n")}
               </pre>
@@ -4701,12 +4451,7 @@ function EditorSurfaceComponent({
         }}
         onSelect={(templateId) => {
           if (surroundWithRequest && editorApi && monacoApi) {
-            applySurroundWith(
-              monacoApi,
-              editorApi,
-              surroundWithRequest,
-              templateId,
-            );
+            applySurroundWith(monacoApi, editorApi, surroundWithRequest, templateId);
           }
 
           setSurroundWithRequest(null);
@@ -4721,9 +4466,7 @@ function EditorSurfaceComponent({
 // only when one of its props actually changes (active document, diagnostics, …).
 const MemoizedEditorSurfaceComponent = memo(EditorSurfaceComponent);
 
-export const EditorSurface = memo(function EditorSurface(
-  props: EditorSurfaceProps,
-) {
+export const EditorSurface = memo(function EditorSurface(props: EditorSurfaceProps) {
   const runtime = useEditorRuntimeContext();
 
   if (runtime) {
@@ -4736,47 +4479,6 @@ export const EditorSurface = memo(function EditorSurface(
     </EditorRuntimeHost>
   );
 });
-
-function editorActionForMenuCommand(command: EditorMenuCommand): string {
-  switch (command) {
-    case "copy":
-      return "editor.action.clipboardCopyAction";
-    case "cut":
-      return "editor.action.clipboardCutAction";
-    case "gotoLine":
-      return "editor.action.gotoLine";
-    case "paste":
-      return "editor.action.clipboardPasteAction";
-    case "redo":
-      return "redo";
-    case "selectAll":
-      return "editor.action.selectAll";
-    case "undo":
-      return "undo";
-  }
-}
-
-function editorActionForSurfaceCommand(
-  commandId: EditorSurfaceCommandId,
-): string | null {
-  switch (commandId) {
-    case "editor.formatDocument":
-      return "editor.action.formatDocument";
-    case "editor.formatSelection":
-      return "editor.action.formatSelection";
-    case "editor.gotoLine":
-      return "editor.action.gotoLine";
-    case "editor.nextChange":
-    case "editor.previousChange":
-      return null;
-    case "editor.quickDefinition":
-      return "editor.action.peekDefinition";
-    case "editor.quickFix":
-      return "editor.action.quickFix";
-    case "editor.rename":
-      return "editor.action.rename";
-  }
-}
 
 // The selection context captured when the Surround With quick-pick opens. It is
 // snapshotted up front so the wrap is always applied to the exact range the
@@ -4863,21 +4565,10 @@ function surroundWithTargetRange(
   model: Monaco.editor.ITextModel,
   selection: Monaco.Selection,
 ): Monaco.Range {
-  const startLineNumber = Math.min(
-    selection.startLineNumber,
-    selection.endLineNumber,
-  );
-  const endLineNumber = Math.max(
-    selection.startLineNumber,
-    selection.endLineNumber,
-  );
+  const startLineNumber = Math.min(selection.startLineNumber, selection.endLineNumber);
+  const endLineNumber = Math.max(selection.startLineNumber, selection.endLineNumber);
 
-  return new monaco.Range(
-    startLineNumber,
-    1,
-    endLineNumber,
-    model.getLineMaxColumn(endLineNumber),
-  );
+  return new monaco.Range(startLineNumber, 1, endLineNumber, model.getLineMaxColumn(endLineNumber));
 }
 
 function indentUnitFromModel(model: Monaco.editor.ITextModel): string {
@@ -4895,10 +4586,7 @@ function indentUnitFromModel(model: Monaco.editor.ITextModel): string {
 // completion analyser uses it to detect when the caret is nested inside a
 // multiline construct (an array, call or block opened earlier) so it can stay a
 // no-op instead of corrupting the enclosing statement.
-function precedingLinesSource(
-  model: Monaco.editor.ITextModel,
-  lineNumber: number,
-): string {
+function precedingLinesSource(model: Monaco.editor.ITextModel, lineNumber: number): string {
   if (lineNumber <= 1) {
     return "";
   }
@@ -4936,11 +4624,7 @@ function applyCyclicExpandWord(
 
   const documentText = model.getValue();
   const cursorOffset = model.getOffsetAt(position);
-  const session = continueOrStartHippieSession(
-    sessionRef.current,
-    documentText,
-    cursorOffset,
-  );
+  const session = continueOrStartHippieSession(sessionRef.current, documentText, cursorOffset);
 
   if (!session) {
     sessionRef.current = null;
@@ -4964,9 +4648,7 @@ function applyCyclicExpandWord(
     },
   ]);
 
-  const caretPosition = model.getPositionAt(
-    session.anchorOffset + session.word.length,
-  );
+  const caretPosition = model.getPositionAt(session.anchorOffset + session.word.length);
   editor.setPosition(caretPosition);
   sessionRef.current = session;
 }
@@ -4999,18 +4681,13 @@ function isLiveHippieSession(
     return false;
   }
 
-  return (
-    documentText.slice(session.anchorOffset, expectedEnd) === session.word
-  );
+  return documentText.slice(session.anchorOffset, expectedEnd) === session.word;
 }
 
 // The offset where the text being replaced ends. On a fresh expansion the caret
 // sits at the end of the typed prefix (anchor + prefix length); when cycling we
 // replace the previously inserted word (anchor + previous word length).
-function currentHippieEndOffset(
-  previous: HippieSession | null,
-  session: HippieSession,
-): number {
+function currentHippieEndOffset(previous: HippieSession | null, session: HippieSession): number {
   if (previous && previous.anchorOffset === session.anchorOffset) {
     return previous.anchorOffset + previous.word.length;
   }
@@ -5045,11 +4722,7 @@ function applyMoveStatement(
     return false;
   }
 
-  const edit = phpMoveStatement(
-    model.getValue(),
-    position.lineNumber,
-    direction,
-  );
+  const edit = phpMoveStatement(model.getValue(), position.lineNumber, direction);
 
   if (!edit) {
     return false;
@@ -5078,10 +4751,7 @@ function applyMoveStatement(
   return true;
 }
 
-function clampLine(
-  model: Monaco.editor.ITextModel,
-  lineNumber: number,
-): number {
+function clampLine(model: Monaco.editor.ITextModel, lineNumber: number): number {
   if (lineNumber < 1) {
     return 1;
   }
@@ -5110,22 +4780,13 @@ function applyCompleteStatement(
   const lineNumber = position.lineNumber;
   const lineText = model.getLineContent(lineNumber);
   const precedingSource = precedingLinesSource(model, lineNumber);
-  const completion = completePhpStatement(
-    lineText,
-    position.column,
-    precedingSource,
-  );
+  const completion = completePhpStatement(lineText, position.column, precedingSource);
 
   if (!completion) {
     return;
   }
 
-  const lineRange = new monaco.Range(
-    lineNumber,
-    1,
-    lineNumber,
-    model.getLineMaxColumn(lineNumber),
-  );
+  const lineRange = new monaco.Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber));
 
   if (completion.kind === "replaceLine") {
     editor.executeEdits("mockor.completeStatement", [
@@ -5157,9 +4818,8 @@ function insertStatementBlock(
   const eol = model.getEOL();
   const unit = indentUnitFromModel(model);
   const bodyIndent = completion.indent + unit;
-  const snippetController = editor.getContribution<SnippetInsertingContribution>(
-    "snippetController2",
-  );
+  const snippetController =
+    editor.getContribution<SnippetInsertingContribution>("snippetController2");
 
   if (snippetController) {
     editor.setSelection(
@@ -5212,11 +4872,7 @@ function applySurroundWith(
 
   // The picker may outlive a tab switch; never apply a wrap captured on one
   // document to a different one that is now active in this reused surface.
-  if (
-    !model ||
-    model.uri.toString() !== request.modelUri ||
-    modelPath(model) !== request.path
-  ) {
+  if (!model || model.uri.toString() !== request.modelUri || modelPath(model) !== request.path) {
     return;
   }
 
@@ -5238,9 +4894,8 @@ function applySurroundWith(
     ),
   );
 
-  const snippetController = editor.getContribution<SnippetInsertingContribution>(
-    "snippetController2",
-  );
+  const snippetController =
+    editor.getContribution<SnippetInsertingContribution>("snippetController2");
 
   if (snippetController) {
     snippetController.insert(snippet);
@@ -5288,10 +4943,7 @@ interface SnippetInsertingContribution extends Monaco.editor.IEditorContribution
 // duplicate / delete line, multi-cursor) registered through the keymap drives
 // the exact same Monaco behaviour as its native keybinding. Guarded on a live
 // model so the action is a no-op when the surface shows the placeholder.
-function triggerEditorAction(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  actionId: string,
-): void {
+function triggerEditorAction(editor: Monaco.editor.IStandaloneCodeEditor, actionId: string): void {
   if (!editor.getModel()) {
     return;
   }
@@ -5324,10 +4976,14 @@ function createEditorSurfaceCommandRunner({
   captureScope,
   changeHunksRef,
   editor,
+  isImportActionEnabled,
+  runImportAction,
 }: {
   captureScope(): EditorSurfaceCommandInvocationScope | null;
   changeHunksRef: MutableRefObject<EditorChangeHunk[]>;
   editor: Monaco.editor.IStandaloneCodeEditor;
+  isImportActionEnabled(commandId: EditorSurfaceCommandId): boolean;
+  runImportAction(commandId: EditorSurfaceCommandId): void;
 }): EditorSurfaceCommandRunner {
   const runner: EditorSurfaceCommandRunner = (commandId, scope) => {
     if (scope && !runner.isScopeCurrent?.(scope)) {
@@ -5335,6 +4991,14 @@ function createEditorSurfaceCommandRunner({
     }
 
     if (!captureScope()) {
+      return;
+    }
+
+    if (isEditorSurfaceImportCommand(commandId)) {
+      if (isImportActionEnabled(commandId)) {
+        editor.focus();
+        runImportAction(commandId);
+      }
       return;
     }
 
@@ -5371,10 +5035,11 @@ function createEditorSurfaceCommandRunner({
       return false;
     }
 
-    if (
-      commandId === "editor.nextChange" ||
-      commandId === "editor.previousChange"
-    ) {
+    if (isEditorSurfaceImportCommand(commandId)) {
+      return isImportActionEnabled(commandId);
+    }
+
+    if (commandId === "editor.nextChange" || commandId === "editor.previousChange") {
       return changeHunksRef.current.length > 0;
     }
 
@@ -5384,53 +5049,14 @@ function createEditorSurfaceCommandRunner({
   return runner;
 }
 
-function runRegisteredCommand(
-  runnerRef: MutableRefObject<CommandExecutionRunner | undefined>,
-  commandId: string,
-  fallback: () => void,
-): void {
-  const runner = runnerRef.current;
-
-  if (!runner) {
-    fallback();
-    return;
-  }
-
-  if (runner(commandId) !== "missing") {
-    return;
-  }
-
-  fallback();
-}
-
-function resolveCompleteWorkspaceIdentityDescriptor(
-  descriptor:
-    | WorkspaceIdentityDescriptor
-    | IncompleteWorkspaceIdentityDescriptor
-    | null,
-): WorkspaceIdentityDescriptor | null {
-  if (typeof descriptor?.workspaceId !== "string") {
-    return null;
-  }
-
-  if (typeof descriptor.canonicalRoot !== "string") {
-    return null;
-  }
-
-  return descriptor;
-}
-
-function requestRegisteredCommand(
-  runnerRef: MutableRefObject<CommandExecutionRunner | undefined>,
-  commandId: string,
-): void {
-  const runner = runnerRef.current;
-
-  if (!runner) {
-    return;
-  }
-
-  runner(commandId);
+function isEditorSurfaceImportCommand(commandId: EditorSurfaceCommandId): boolean {
+  return (
+    commandId === "editor.action.organizeImports" ||
+    commandId === "typescript.sortImports" ||
+    commandId === "javascript.sortImports" ||
+    commandId === "typescript.removeUnusedImports" ||
+    commandId === "javascript.removeUnusedImports"
+  );
 }
 
 function dismissTransientEditorWidgets(
@@ -5490,11 +5116,7 @@ function expandEditorSelection(
   const line = model.getLineContent(position.lineNumber);
   const selection = editor.getSelection();
   const currentRange = currentEditorTextRange(position, selection);
-  const nextRange = nextEditorSelectionExpansionRange(
-    line,
-    position.column - 1,
-    currentRange,
-  );
+  const nextRange = nextEditorSelectionExpansionRange(line, position.column - 1, currentRange);
 
   if (!nextRange) {
     return false;
@@ -5564,15 +5186,8 @@ const EDITOR_LOADING_PLACEHOLDER = <EditorLoadingPlaceholder />;
 // preserves referential identity and skips a re-render. A real move on either
 // line or column produces a fresh object so breadcrumbs (keyed on line+column)
 // stay correct.
-function nextCursorPosition(
-  previous: EditorPosition | null,
-  next: EditorPosition,
-): EditorPosition {
-  if (
-    previous &&
-    previous.lineNumber === next.lineNumber &&
-    previous.column === next.column
-  ) {
+function nextCursorPosition(previous: EditorPosition | null, next: EditorPosition): EditorPosition {
+  if (previous && previous.lineNumber === next.lineNumber && previous.column === next.column) {
     return previous;
   }
 
@@ -5592,772 +5207,14 @@ function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
   });
 }
 
-function isLargeSmartModel(
-  model: Monaco.editor.ITextModel,
-  policy: LargeSmartDocumentPolicy,
-): boolean {
-  if (
-    typeof model.getValueLength !== "function" ||
-    typeof model.getLineCount !== "function"
-  ) {
-    return false;
-  }
-
-  const normalizedPolicy = normalizeLargeSmartDocumentPolicy(policy);
-  if (model.getValueLength() > normalizedPolicy.characterLimit) {
-    return true;
-  }
-
-  return model.getLineCount() > normalizedPolicy.lineLimit;
-}
-
-function isJavaScriptTypeScriptRuntimeActiveForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  workspaceRoot: string | null,
-): boolean {
-  return (
-    status?.kind === "running" &&
-    Boolean(workspaceRoot) &&
-    Boolean(status.rootPath) &&
-    workspaceRootKeysEqual(status.rootPath, workspaceRoot)
-  );
-}
-
-function isSmartBlankLineIndentDocument(document: EditorDocument): boolean {
-  return (
-    document.language === "php" ||
-    document.language === "blade" ||
-    document.language === "latte" ||
-    document.language === "javascript" ||
-    document.language === "typescript"
-  );
-}
-
-function smartBlankLineIndent(
-  model: Monaco.editor.ITextModel,
-  lineNumber: number,
-): string | null {
-  const line = model.getLineContent(lineNumber);
-
-  if (line.trim().length > 0) {
-    return null;
-  }
-
-  const previousLine = lineNumber > 1 ? model.getLineContent(lineNumber - 1) : "";
-  const previousLineIndent = leadingWhitespace(previousLine);
-
-  if (
-    previousLine.length > 0 &&
-    previousLine.trim().length === 0 &&
-    previousLineIndent.length > 0
-  ) {
-    return previousLineIndent;
-  }
-
-  const previous = nearestNonEmptyLine(model, lineNumber, -1);
-
-  if (!previous) {
-    return null;
-  }
-
-  const previousIndent = leadingWhitespace(previous.content);
-
-  if (opensIndentedBlock(previous.content)) {
-    return previousIndent + indentationUnitNear(model, lineNumber, previousIndent);
-  }
-
-  return previousIndent;
-}
-
-function smartBlankLineIndentTargetLineNumber(
-  changes: readonly SmartIndentContentChange[],
-  fallbackLineNumber: number,
-): number {
-  const newLineChange = changes.find((change) => change.text.includes("\n"));
-
-  if (!newLineChange?.range) {
-    return fallbackLineNumber;
-  }
-
-  return (
-    newLineChange.range.startLineNumber + countOccurrences(newLineChange.text, "\n")
-  );
-}
-
-interface SmartIndentContentChange {
-  range?: {
-    startLineNumber: number;
-  };
-  text: string;
-}
-
-function countOccurrences(value: string, needle: string): number {
-  return value.split(needle).length - 1;
-}
-
-function nearestNonEmptyLine(
-  model: Monaco.editor.ITextModel,
-  lineNumber: number,
-  direction: -1 | 1,
-): { content: string; lineNumber: number } | null {
-  const lineCount = model.getLineCount();
-
-  for (
-    let candidate = lineNumber + direction;
-    candidate >= 1 && candidate <= lineCount;
-    candidate += direction
-  ) {
-    const content = model.getLineContent(candidate);
-
-    if (content.trim().length > 0) {
-      return {
-        content,
-        lineNumber: candidate,
-      };
-    }
-  }
-
-  return null;
-}
-
-function indentationUnitNear(
-  model: Monaco.editor.ITextModel,
-  lineNumber: number,
-  baseIndent: string,
-): string {
-  const next = nearestNonEmptyLine(model, lineNumber, 1);
-
-  if (next) {
-    const nextIndent = leadingWhitespace(next.content);
-
-    if (nextIndent.startsWith(baseIndent) && nextIndent.length > baseIndent.length) {
-      return nextIndent.slice(baseIndent.length);
-    }
-  }
-
-  const lineCount = model.getLineCount();
-
-  for (let candidate = 1; candidate < lineCount; candidate += 1) {
-    const currentIndent = leadingWhitespace(model.getLineContent(candidate));
-    const nextIndent = leadingWhitespace(model.getLineContent(candidate + 1));
-
-    if (nextIndent.startsWith(currentIndent) && nextIndent.length > currentIndent.length) {
-      return nextIndent.slice(currentIndent.length);
-    }
-  }
-
-  return "  ";
-}
-
-function leadingWhitespace(value: string): string {
-  return /^\s*/.exec(value)?.[0] ?? "";
-}
-
-function opensIndentedBlock(value: string): boolean {
-  const trimmed = value.trimEnd();
-
-  return /(?:\{|\[|\(|=>)\s*(?:\/\/.*)?$/.test(trimmed);
-}
-
-function editorChangePopoverStyle(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  hunk: EditorChangeHunk,
-  anchorLineNumber: number,
-): CSSProperties {
-  const layout = editor.getLayoutInfo();
-  const clampedAnchorLine = clampNumber(
-    anchorLineNumber,
-    hunk.startLineNumber,
-    hunk.endLineNumber,
-  );
-  const lineTop =
-    editor.getTopForLineNumber(clampedAnchorLine) - editor.getScrollTop();
-  const nextLineTop =
-    editor.getTopForLineNumber(clampedAnchorLine + 1) - editor.getScrollTop();
-  const lineHeight = Math.max(20, nextLineTop - lineTop);
-  const estimatedHeight = 170;
-  const minimumEdgeGap = 12;
-  const left = Math.max(
-    54,
-    Math.min(layout.contentLeft + 12, layout.width - 320),
-  );
-  const belowTop = lineTop + lineHeight + 6;
-  const aboveTop = lineTop - estimatedHeight - 6;
-  const maxTop = Math.max(
-    minimumEdgeGap,
-    layout.height - estimatedHeight - minimumEdgeGap,
-  );
-  const preferredTop =
-    belowTop <= maxTop ? belowTop : Math.max(minimumEdgeGap, aboveTop);
-  const top = clampNumber(preferredTop, minimumEdgeGap, maxTop);
-
-  return {
-    left: `${Math.round(left)}px`,
-    maxHeight: `min(360px, calc(100% - ${Math.round(top + minimumEdgeGap)}px))`,
-    top: `${Math.round(top)}px`,
-    width: `min(620px, calc(100% - ${Math.round(left + minimumEdgeGap)}px))`,
-  };
-}
-
-function clampNumber(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), maximum);
-}
-
-function toEditorChangeDecoration(
-  monaco: typeof Monaco,
-  hunk: EditorChangeHunk,
-): Monaco.editor.IModelDeltaDecoration {
-  return {
-    options: {
-      glyphMargin: {
-        position: monaco.editor.GlyphMarginLane.Left,
-      },
-      glyphMarginClassName: `editor-change-glyph editor-change-glyph-${hunk.kind}`,
-      glyphMarginHoverMessage: {
-        value: `${editorChangeKindLabel(hunk.kind)}. Click to preview or revert.`,
-      },
-      isWholeLine: true,
-      linesDecorationsClassName: `editor-change-line editor-change-line-${hunk.kind}`,
-      overviewRuler: {
-        color: editorChangeColor(hunk.kind),
-        position: monaco.editor.OverviewRulerLane.Left,
-      },
-      stickiness:
-        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-      zIndex: 15,
-    },
-    range: new monaco.Range(
-      hunk.startLineNumber,
-      1,
-      hunk.endLineNumber,
-      1,
-    ),
-  };
-}
-
-function toBookmarkDecoration(
-  monaco: typeof Monaco,
-  lineNumber: number,
-): Monaco.editor.IModelDeltaDecoration {
-  return {
-    options: {
-      isWholeLine: true,
-      linesDecorationsClassName: "bookmark-gutter-glyph",
-      overviewRuler: {
-        color: "#f0a73a",
-        position: monaco.editor.OverviewRulerLane.Right,
-      },
-      stickiness:
-        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-      zIndex: 10,
-    },
-    range: new monaco.Range(lineNumber, 1, lineNumber, 1),
-  };
-}
-
-function breakpointGlyphStateClassName(breakpoint: Breakpoint): string {
-  if (!breakpoint.enabled) {
-    return "breakpoint-glyph-disabled";
-  }
-
-  if (breakpoint.verified === false) {
-    return "breakpoint-glyph-unverified";
-  }
-
-  return "breakpoint-glyph-verified";
-}
-
-function toBreakpointDecoration(
-  monaco: typeof Monaco,
-  breakpoint: Breakpoint,
-): Monaco.editor.IModelDeltaDecoration {
-  return {
-    options: {
-      glyphMargin: {
-        position: monaco.editor.GlyphMarginLane.Left,
-      },
-      glyphMarginClassName: `breakpoint-glyph ${breakpointGlyphStateClassName(breakpoint)}`,
-      isWholeLine: false,
-      stickiness:
-        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-      zIndex: 30,
-    },
-    range: new monaco.Range(
-      breakpoint.lineNumber,
-      1,
-      breakpoint.lineNumber,
-      1,
-    ),
-  };
-}
-
-function toGitBlameDecoration(
-  monaco: typeof Monaco,
-  line: GitBlameLine,
-  now: number,
-): Monaco.editor.IModelDeltaDecoration {
-  const annotation = gitBlameAnnotation(line, now);
-
-  return {
-    options: {
-      before: {
-        content: annotation,
-        // A non-breaking space pads the annotation from the code without
-        // injecting selectable spaces into the document text.
-        inlineClassName: "git-blame-annotation",
-      },
-      // Full commit detail on hover (short SHA + author + relative date), the
-      // PhpStorm annotation tooltip equivalent.
-      hoverMessage: {
-        value: `\`${line.sha}\` ${annotation}`,
-      },
-      stickiness:
-        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-    },
-    range: new monaco.Range(line.lineNumber, 1, line.lineNumber, 1),
-  };
-}
-
-export function gitBlameShaAtLine(
-  lines: readonly GitBlameLine[],
-  lineNumber: number,
-): string | null {
-  const line = lines.find((candidate) => candidate.lineNumber === lineNumber);
-
-  if (!line || !line.sha || isUncommittedBlameLine(line)) {
-    return null;
-  }
-
-  return line.sha;
-}
-
-function findChangeHunkAtLine(
-  hunks: EditorChangeHunk[],
-  lineNumber: number,
-): EditorChangeHunk | null {
-  return (
-    hunks.find(
-      (hunk) =>
-        lineNumber >= hunk.startLineNumber &&
-        lineNumber <= hunk.endLineNumber,
-    ) ?? null
-  );
-}
-
-// Moves the caret to the next/previous gutter change hunk in the active editor,
-// mirroring VS Code's "Go to Next/Previous Change". The hunks come from the live
-// editorChangeMarkers (the same ranges that render the gutter glyphs), so the
-// jump always lands on a real change. The list wraps around (last -> first and
-// first -> last) so repeated presses cycle every change without dead-ending.
-function jumpToChangeHunk(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  hunks: EditorChangeHunk[],
-  direction: "next" | "previous",
-): void {
-  if (!hunks.length || !editor.getModel()) {
-    return;
-  }
-
-  const ordered = [...hunks].sort(
-    (left, right) => left.startLineNumber - right.startLineNumber,
-  );
-  const currentLine = editor.getPosition()?.lineNumber ?? 1;
-  const target = nextChangeHunk(ordered, currentLine, direction);
-
-  if (!target) {
-    return;
-  }
-
-  const position = { column: 1, lineNumber: target.startLineNumber };
-  editor.setPosition(position);
-  editor.revealPositionInCenter(position);
-  editor.focus();
-}
-
-// Popover-driven navigation. Like jumpToChangeHunk it moves the caret to the
-// next/previous hunk, but it is anchored on the hunk the popover is currently
-// showing (`fromLine`, not the caret) and it RETURNS the landed hunk so the
-// caller can move the gutter rollback popover onto it too - keeping the popover
-// and the editor in sync, the JetBrains behavior. The list wraps around so
-// repeated presses cycle every change without dead-ending.
-function navigateChangeHunkFromPopover(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  hunks: EditorChangeHunk[],
-  fromLine: number,
-  direction: "next" | "previous",
-): EditorChangeHunk | null {
-  if (!hunks.length || !editor.getModel()) {
-    return null;
-  }
-
-  const ordered = [...hunks].sort(
-    (left, right) => left.startLineNumber - right.startLineNumber,
-  );
-  const target = nextChangeHunk(ordered, fromLine, direction);
-
-  if (!target) {
-    return null;
-  }
-
-  const position = { column: 1, lineNumber: target.startLineNumber };
-  editor.setPosition(position);
-  editor.revealPositionInCenter(position);
-  editor.focus();
-  return target;
-}
-
-function nextChangeHunk(
-  ordered: EditorChangeHunk[],
-  currentLine: number,
-  direction: "next" | "previous",
-): EditorChangeHunk | null {
-  if (direction === "next") {
-    return (
-      ordered.find((hunk) => hunk.startLineNumber > currentLine) ??
-      ordered[0] ??
-      null
-    );
-  }
-
-  for (let index = ordered.length - 1; index >= 0; index -= 1) {
-    if (ordered[index].startLineNumber < currentLine) {
-      return ordered[index];
-    }
-  }
-
-  return ordered[ordered.length - 1] ?? null;
-}
-
-function glyphMarginLaneFromMouseEvent(
-  event: Monaco.editor.IEditorMouseEvent,
-): Monaco.editor.GlyphMarginLane | null {
-  const target = event.target as {
-    detail?: { glyphMarginLane?: Monaco.editor.GlyphMarginLane };
-  };
-
-  return target.detail?.glyphMarginLane ?? null;
-}
-
-function editorChangeKindLabel(kind: EditorChangeKind): string {
-  if (kind === "added") {
-    return "Added lines";
-  }
-
-  if (kind === "deleted") {
-    return "Deleted lines";
-  }
-
-  return "Modified lines";
-}
-
-function editorChangeColor(kind: EditorChangeKind): string {
-  if (kind === "added") {
-    return "#7ddc9f";
-  }
-
-  if (kind === "deleted") {
-    return "#ef7373";
-  }
-
-  return "#e7c66c";
-}
-
-function changePreviewText(hunk: EditorChangeHunk): string {
-  if (!hunk.originalLines.length) {
-    return "No previous lines.";
-  }
-
-  return hunk.originalLines.join("\n");
-}
-
-function toMonacoDiagnosticMarker(
-  monaco: typeof Monaco,
-  diagnostic: LanguageServerDiagnostic,
-): Monaco.editor.IMarkerData {
-  const range = diagnosticRange(diagnostic);
-
-  const marker: Monaco.editor.IMarkerData & { data?: unknown } = {
-    code: diagnosticCode(monaco, diagnostic),
-    endColumn: range.endCharacter + 1,
-    endLineNumber: range.endLine + 1,
-    message: diagnostic.message,
-    severity: diagnosticSeverity(monaco, diagnostic),
-    source: diagnostic.source || "Language Server",
-    startColumn: range.character + 1,
-    startLineNumber: range.line + 1,
-    tags: diagnosticTags(monaco, diagnostic.tags ?? []),
-    relatedInformation: diagnosticRelatedInformation(monaco, diagnostic),
-  };
-
-  if ("data" in diagnostic) {
-    marker.data = diagnostic.data;
-  }
-
-  return marker;
-}
-
-function diagnosticCode(
-  monaco: typeof Monaco,
-  diagnostic: LanguageServerDiagnostic,
-): Monaco.editor.IMarkerData["code"] {
-  if (diagnostic.code === null || typeof diagnostic.code === "undefined") {
-    return undefined;
-  }
-
-  const value = String(diagnostic.code);
-
-  if (!diagnostic.codeDescriptionHref) {
-    return value;
-  }
-
-  return {
-    target: monaco.Uri.parse(diagnostic.codeDescriptionHref),
-    value,
-  };
-}
-
-function toDiagnosticOverviewDecoration(
-  monaco: typeof Monaco,
-  diagnostic: LanguageServerDiagnostic,
-): Monaco.editor.IModelDeltaDecoration {
-  const range = diagnosticRange(diagnostic);
-
-  return {
-    options: {
-      hoverMessage: {
-        value: diagnosticHoverText(
-          diagnostic.source || "Language Server",
-          diagnostic.message,
-        ),
-      },
-      overviewRuler: {
-        color: diagnosticOverviewColor(diagnostic.severity),
-        position: monaco.editor.OverviewRulerLane.Right,
-      },
-      stickiness:
-        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-    },
-    range: new monaco.Range(
-      range.line + 1,
-      range.character + 1,
-      range.endLine + 1,
-      range.endCharacter + 1,
-    ),
-  };
-}
-
-function diagnosticRange(diagnostic: LanguageServerDiagnostic): {
-  character: number;
-  endCharacter: number;
-  endLine: number;
-  line: number;
-} {
-  return {
-    character: diagnostic.character,
-    endCharacter: diagnostic.endCharacter ?? diagnostic.character + 1,
-    endLine: diagnostic.endLine ?? diagnostic.line,
-    line: diagnostic.line,
-  };
-}
-
-function diagnosticRelatedInformation(
-  monaco: typeof Monaco,
-  diagnostic: LanguageServerDiagnostic,
-): Monaco.editor.IMarkerData["relatedInformation"] {
-  return diagnostic.relatedInformation?.map((info) => {
-    const range = diagnosticRange({
-      character: info.character,
-      endCharacter: info.endCharacter,
-      endLine: info.endLine,
-      line: info.line,
-      message: info.message,
-      severity: diagnostic.severity,
-      source: diagnostic.source,
-    });
-
-    return {
-      message: info.message,
-      resource: monaco.Uri.parse(info.uri),
-      startColumn: range.character + 1,
-      startLineNumber: range.line + 1,
-      endColumn: range.endCharacter + 1,
-      endLineNumber: range.endLine + 1,
-    };
-  });
-}
-
-function toSyntaxOverviewDecoration(
-  monaco: typeof Monaco,
-  diagnostic: PhpSyntaxDiagnostic,
-): Monaco.editor.IModelDeltaDecoration {
-  return {
-    options: {
-      hoverMessage: {
-        value: diagnosticHoverText("PHP Syntax", diagnostic.message),
-      },
-      overviewRuler: {
-        color: "#d98b8b",
-        position: monaco.editor.OverviewRulerLane.Right,
-      },
-      stickiness:
-        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-    },
-    range: new monaco.Range(
-      diagnostic.line + 1,
-      diagnostic.character + 1,
-      diagnostic.endLine + 1,
-      syntaxDiagnosticEndColumn(diagnostic),
-    ),
-  };
-}
-
-function diagnosticHoverText(source: string, message: string): string {
-  return `**${escapeMarkdown(source)}**: ${escapeMarkdown(message)}`;
-}
-
-function escapeMarkdown(value: string): string {
-  return value.replace(/[\\`*_{}[\]()#+\-.!|]/g, "\\$&");
-}
-
-function diagnosticOverviewColor(
-  severity: LanguageServerDiagnostic["severity"],
-): string {
-  if (severity === "warning") {
-    return "#d8b878";
-  }
-
-  if (severity === "hint" || severity === "information") {
-    return "#8fbcae";
-  }
-
-  return "#d98b8b";
-}
-
-function diagnosticSeverity(
-  monaco: typeof Monaco,
-  diagnostic: LanguageServerDiagnostic,
-): Monaco.MarkerSeverity {
-  if (diagnostic.severity === "error") {
-    return monaco.MarkerSeverity.Error;
-  }
-
-  if (diagnostic.severity === "warning") {
-    return monaco.MarkerSeverity.Warning;
-  }
-
-  if (diagnostic.severity === "hint") {
-    return monaco.MarkerSeverity.Hint;
-  }
-
-  return monaco.MarkerSeverity.Info;
-}
-
-function diagnosticTags(
-  monaco: typeof Monaco,
-  tags: number[],
-): Monaco.MarkerTag[] | undefined {
-  const markerTags = tags.flatMap((tag) => {
-    if (tag === 1) {
-      return [monaco.MarkerTag.Unnecessary];
-    }
-
-    if (tag === 2) {
-      return [monaco.MarkerTag.Deprecated];
-    }
-
-    return [];
-  });
-
-  return markerTags.length > 0 ? markerTags : undefined;
-}
-
-function toMonacoSyntaxDiagnosticMarker(
-  monaco: typeof Monaco,
-  diagnostic: PhpSyntaxDiagnostic,
-): Monaco.editor.IMarkerData {
-  return {
-    endColumn: syntaxDiagnosticEndColumn(diagnostic),
-    endLineNumber: diagnostic.endLine + 1,
-    message: diagnostic.message,
-    severity: monaco.MarkerSeverity.Error,
-    source: "PHP Syntax",
-    startColumn: diagnostic.character + 1,
-    startLineNumber: diagnostic.line + 1,
-  };
-}
-
-function syntaxDiagnosticEndColumn(diagnostic: PhpSyntaxDiagnostic): number {
-  if (diagnostic.endLine === diagnostic.line) {
-    return Math.max(diagnostic.endCharacter + 1, diagnostic.character + 2);
-  }
-
-  return diagnostic.endCharacter + 1;
-}
-
-/**
- * Marker for a lightweight PHP inspection (unused import / unused private
- * method). Rendered as a Warning with Monaco's `Unnecessary` tag so the editor
- * fades the span (PhpStorm's greyed-out "never used" look). Tagged with the
- * `PHP Inspection` source so quick-fix discovery and code-action matching can
- * recognise it.
- */
-function toMonacoInspectionMarker(
-  monaco: typeof Monaco,
-  diagnostic: PhpInspectionDiagnostic,
-): Monaco.editor.IMarkerData {
-  const endColumn =
-    diagnostic.endLine === diagnostic.line
-      ? Math.max(diagnostic.endCharacter + 1, diagnostic.character + 2)
-      : diagnostic.endCharacter + 1;
-
-  return {
-    endColumn,
-    endLineNumber: diagnostic.endLine + 1,
-    message: diagnostic.message,
-    severity: monaco.MarkerSeverity.Warning,
-    source: "PHP Inspection",
-    startColumn: diagnostic.character + 1,
-    startLineNumber: diagnostic.line + 1,
-    tags: [monaco.MarkerTag.Unnecessary],
-  };
-}
-
-function toLocalPhpDiagnostic(
-  diagnostic: PhpSyntaxDiagnostic | PhpInspectionDiagnostic,
-  source: string,
-  severity: LanguageServerDiagnostic["severity"],
-): LanguageServerDiagnostic {
-  return {
-    character: diagnostic.character,
-    endCharacter: diagnostic.endCharacter,
-    endLine: diagnostic.endLine,
-    line: diagnostic.line,
-    message: diagnostic.message,
-    severity,
-    source,
-    tags:
-      "unnecessary" in diagnostic && diagnostic.unnecessary ? [1] : undefined,
-  };
-}
-
 function applyLocalPhpValidationSnapshot(
-  snapshot: LocalPhpValidationSnapshot<
-    PhpSyntaxDiagnostic,
-    PhpInspectionDiagnostic
-  >,
+  snapshot: LocalPhpValidationSnapshot<PhpSyntaxDiagnostic, PhpInspectionDiagnostic>,
   monaco: typeof Monaco,
   path: string,
   writeMarkers: (markers: readonly Monaco.editor.IMarkerData[]) => void,
-  onDiagnosticsChange: (
-    path: string,
-    diagnostics: LanguageServerDiagnostic[],
-  ) => void,
-  setSyntaxDiagnostics: Dispatch<
-    SetStateAction<Record<string, PhpSyntaxDiagnostic[]>>
-  >,
-  setInspectionDiagnosticCounts: Dispatch<
-    SetStateAction<Record<string, number>>
-  >,
+  onDiagnosticsChange: (path: string, diagnostics: LanguageServerDiagnostic[]) => void,
+  setSyntaxDiagnostics: Dispatch<SetStateAction<Record<string, PhpSyntaxDiagnostic[]>>>,
+  setInspectionDiagnosticCounts: Dispatch<SetStateAction<Record<string, number>>>,
 ): void {
   const { inspectionDiagnostics, syntaxDiagnostics } = snapshot;
 
@@ -6389,12 +5246,8 @@ function applyLocalPhpValidationSnapshot(
     return next;
   });
   writeMarkers([
-    ...syntaxDiagnostics.map((diagnostic) =>
-      toMonacoSyntaxDiagnosticMarker(monaco, diagnostic),
-    ),
-    ...inspectionDiagnostics.map((diagnostic) =>
-      toMonacoInspectionMarker(monaco, diagnostic),
-    ),
+    ...syntaxDiagnostics.map((diagnostic) => toMonacoSyntaxDiagnosticMarker(monaco, diagnostic)),
+    ...inspectionDiagnostics.map((diagnostic) => toMonacoInspectionMarker(monaco, diagnostic)),
   ]);
 }
 
@@ -6417,10 +5270,7 @@ function localPhpDiagnosticsFromVisibleMarkers(
     }));
 }
 
-function isVisiblePhpProblemMarker(
-  monaco: typeof Monaco,
-  marker: Monaco.editor.IMarker,
-): boolean {
+function isVisiblePhpProblemMarker(monaco: typeof Monaco, marker: Monaco.editor.IMarker): boolean {
   return (
     marker.severity === monaco.MarkerSeverity.Error ||
     marker.severity === monaco.MarkerSeverity.Warning
@@ -6461,52 +5311,6 @@ function pruneClosedPaths<Value>(
   return next;
 }
 
-function modelForPath(
-  monaco: typeof Monaco,
-  workspaceRoot: string | null,
-  path: string,
-): Monaco.editor.ITextModel | null {
-  return monaco.editor
-    .getModels()
-    .find((model) => modelMatchesProject(model, workspaceRoot, path)) ?? null;
-}
-
-function modelMatchesProject(
-  model: Monaco.editor.ITextModel,
-  workspaceRoot: string | null,
-  path: string,
-): boolean {
-  return workspaceRoot
-    ? modelMatchesWorkspacePath(model, workspaceRoot, path)
-    : modelPath(model) === path;
-}
-
-function synchronizeActiveDocumentModel(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  workspaceRoot: string | null,
-  document: EditorDocument,
-): Monaco.editor.ITextModel | null {
-  const model = editor.getModel();
-
-  if (!model || model.isDisposed?.()) {
-    return null;
-  }
-
-  if (!modelMatchesProject(model, workspaceRoot, document.path)) {
-    return null;
-  }
-
-  if (model.getValue() !== document.content) {
-    model.setValue(document.content);
-  }
-
-  if (model.isDisposed?.() || editor.getModel() !== model) {
-    return null;
-  }
-
-  return model;
-}
-
 async function foldingModelForEditor(
   editor: Monaco.editor.IStandaloneCodeEditor,
 ): Promise<FoldingModelViewState | null> {
@@ -6541,74 +5345,4 @@ function breadcrumbFeaturesGateway(
   }
 
   return null;
-}
-
-function monacoKeybindingsForShortcut(
-  monaco: typeof Monaco,
-  shortcut: string,
-  platform: KeymapPlatform,
-): number[] {
-  const parsed = parseShortcut(shortcut);
-
-  if (!parsed) {
-    return [];
-  }
-
-  const keyCode = monacoKeyCode(monaco, parsed.key);
-
-  if (!keyCode) {
-    return [];
-  }
-
-  let keybinding = keyCode;
-  const primaryModifier =
-    platform === "mac" ? parsed.meta : parsed.meta || parsed.ctrl;
-  const controlModifier = platform === "mac" ? parsed.ctrl : false;
-
-  if (primaryModifier) {
-    keybinding |= monaco.KeyMod.CtrlCmd;
-  }
-
-  if (controlModifier) {
-    keybinding |= monaco.KeyMod.WinCtrl ?? monaco.KeyMod.CtrlCmd;
-  }
-
-  if (parsed.alt) {
-    keybinding |= monaco.KeyMod.Alt;
-  }
-
-  if (parsed.shift) {
-    keybinding |= monaco.KeyMod.Shift;
-  }
-
-  return [keybinding];
-}
-
-function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
-  if (/^[a-z]$/.test(key)) {
-    return monaco.KeyCode[`Key${key.toUpperCase()}` as keyof typeof monaco.KeyCode] ?? null;
-  }
-
-  const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
-    ",": "Comma",
-    ".": "Period",
-    "-": "Minus",
-    "/": "Slash",
-    "=": "Equal",
-    "`": "Backquote",
-    "[": "BracketLeft",
-    "]": "BracketRight",
-    arrowdown: "DownArrow",
-    arrowleft: "LeftArrow",
-    arrowright: "RightArrow",
-    arrowup: "UpArrow",
-    enter: "Enter",
-    escape: "Escape",
-    f12: "F12",
-    f2: "F2",
-    f5: "F5",
-  };
-  const keyCodeName = specialKeyCodes[key];
-
-  return keyCodeName ? monaco.KeyCode[keyCodeName] ?? null : null;
 }

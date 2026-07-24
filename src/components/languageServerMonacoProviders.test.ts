@@ -75,10 +75,12 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.referenceLanguage).toBe("php");
     expect(Object.keys(registered.renameProvidersByLanguage).sort()).toEqual([
       "latte",
+      "neon",
       "php",
     ]);
     expect(Object.keys(registered.referenceProvidersByLanguage).sort()).toEqual([
       "latte",
+      "neon",
       "php",
     ]);
     expect(registered.renameProvider).toBe(

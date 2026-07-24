@@ -10,52 +10,35 @@ describe("editor surface framework provider resolution", () => {
   it("uses no-op providers when no framework callbacks are registered", async () => {
     const resolved = resolveEditorSurfaceFrameworkProviders({});
 
-    await expect(resolved.providePhpFrameworkDefinition("", 0)).resolves.toBe(
-      false,
-    );
+    await expect(resolved.providePhpFrameworkDefinition("", 0)).resolves.toBe(false);
     await expect(
       resolved.templateLanguageProviders.blade.provideCodeActions("", range()),
     ).resolves.toEqual([]);
     await expect(
-      resolved.templateLanguageProviders.blade.provideCompletions(
-        "",
-        position(),
-      ),
+      resolved.templateLanguageProviders.blade.provideCompletions("", position()),
     ).resolves.toEqual([]);
+    await expect(resolved.templateLanguageProviders.blade.provideDefinition("", 0)).resolves.toBe(
+      false,
+    );
     await expect(
-      resolved.templateLanguageProviders.blade.provideDefinition("", 0),
-    ).resolves.toBe(false);
-    await expect(
-      resolved.templateLanguageProviders.latte.provideCompletions(
-        "",
-        position(),
-      ),
+      resolved.templateLanguageProviders.latte.provideCompletions("", position()),
     ).resolves.toEqual([]);
     await expect(
       resolved.templateLanguageProviders.latte.provideCodeActions("", range()),
     ).resolves.toEqual([]);
+    await expect(resolved.templateLanguageProviders.latte.provideDefinition("", 0)).resolves.toBe(
+      false,
+    );
     await expect(
-      resolved.templateLanguageProviders.latte.provideDefinition("", 0),
-    ).resolves.toBe(false);
-    await expect(
-      resolved.templateLanguageProviders.neon.provideCompletions(
-        "",
-        position(),
-      ),
+      resolved.templateLanguageProviders.neon.provideCompletions("", position()),
     ).resolves.toEqual([]);
-    await expect(
-      resolved.templateLanguageProviders.neon.provideDefinition("", 0),
-    ).resolves.toBe(false);
-    await expect(
-      resolved.providePhpPresenterLinkDefinition("", 0),
-    ).resolves.toBe(false);
-    await expect(
-      resolved.providePhpPresenterLinkCompletions("", 0),
-    ).resolves.toBeNull();
+    await expect(resolved.templateLanguageProviders.neon.provideDefinition("", 0)).resolves.toBe(
+      false,
+    );
+    await expect(resolved.providePhpPresenterLinkDefinition("", 0)).resolves.toBe(false);
+    await expect(resolved.providePhpPresenterLinkCompletions("", 0)).resolves.toBeNull();
     expect(resolved.isPhpPresenterLinkCompletionContext("", 0)).toBe(false);
-    expect(
-      resolved.isPhpFrameworkStringCompletionContext("", position()),
-    ).toBe(false);
+    expect(resolved.isPhpFrameworkStringCompletionContext("", position())).toBe(false);
   });
 
   it("uses the current framework definition callback when registered", async () => {
@@ -64,9 +47,7 @@ describe("editor surface framework provider resolution", () => {
       providePhpFrameworkDefinition,
     });
 
-    await expect(
-      resolved.providePhpFrameworkDefinition("source", 12),
-    ).resolves.toBe(true);
+    await expect(resolved.providePhpFrameworkDefinition("source", 12)).resolves.toBe(true);
     expect(providePhpFrameworkDefinition).toHaveBeenCalledWith("source", 12);
   });
 
@@ -82,22 +63,14 @@ describe("editor surface framework provider resolution", () => {
       },
     });
 
-    await expect(
-      resolved.providePhpPresenterLinkDefinition("source", 3),
-    ).resolves.toBe(true);
-    await expect(
-      resolved.providePhpPresenterLinkCompletions("source", 3),
-    ).resolves.toEqual([
+    await expect(resolved.providePhpPresenterLinkDefinition("source", 3)).resolves.toBe(true);
+    await expect(resolved.providePhpPresenterLinkCompletions("source", 3)).resolves.toEqual([
       { insertText: "Product:show", kind: "link", label: "Product:show" },
     ]);
     expect(providePhpPresenterLinkDefinition).toHaveBeenCalledWith("source", 3);
     expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith("source", 3);
-    expect(resolved.providePhpPresenterLinkDefinition).toBe(
-      providePhpPresenterLinkDefinition,
-    );
-    expect(resolved.providePhpPresenterLinkCompletions).toBe(
-      providePhpPresenterLinkCompletions,
-    );
+    expect(resolved.providePhpPresenterLinkDefinition).toBe(providePhpPresenterLinkDefinition);
+    expect(resolved.providePhpPresenterLinkCompletions).toBe(providePhpPresenterLinkCompletions);
     expect(resolved.templateLanguageProviders.latte).not.toHaveProperty(
       "providePhpPresenterLinkDefinition",
     );
@@ -126,6 +99,7 @@ describe("editor surface framework provider resolution", () => {
       provideLatteDefinition: vi.fn(async () => true),
       provideNeonCompletions: vi.fn(async () => []),
       provideNeonDefinition: vi.fn(async () => true),
+      provideNeonSemanticDiagnostics: vi.fn(async () => []),
     });
 
     const resolved = resolveEditorSurfaceFrameworkProviders({
@@ -133,30 +107,15 @@ describe("editor surface framework provider resolution", () => {
     });
     const registry = resolved.templateLanguageProviders;
 
-    expect(registry.blade.provideCodeActions).toBe(
-      providers.provideBladeCodeActions,
-    );
-    expect(registry.blade.provideCompletions).toBe(
-      providers.provideBladeCompletions,
-    );
-    expect(registry.blade.provideDefinition).toBe(
-      providers.provideBladeDefinition,
-    );
-    expect(registry.latte.provideCodeActions).toBe(
-      providers.provideLatteCodeActions,
-    );
-    expect(registry.latte.provideCompletions).toBe(
-      providers.provideLatteCompletions,
-    );
-    expect(registry.latte.provideDefinition).toBe(
-      providers.provideLatteDefinition,
-    );
-    expect(registry.neon.provideCompletions).toBe(
-      providers.provideNeonCompletions,
-    );
-    expect(registry.neon.provideDefinition).toBe(
-      providers.provideNeonDefinition,
-    );
+    expect(registry.blade.provideCodeActions).toBe(providers.provideBladeCodeActions);
+    expect(registry.blade.provideCompletions).toBe(providers.provideBladeCompletions);
+    expect(registry.blade.provideDefinition).toBe(providers.provideBladeDefinition);
+    expect(registry.latte.provideCodeActions).toBe(providers.provideLatteCodeActions);
+    expect(registry.latte.provideCompletions).toBe(providers.provideLatteCompletions);
+    expect(registry.latte.provideDefinition).toBe(providers.provideLatteDefinition);
+    expect(registry.neon.provideCompletions).toBe(providers.provideNeonCompletions);
+    expect(registry.neon.provideDefinition).toBe(providers.provideNeonDefinition);
+    expect(registry.neon.provideSemanticDiagnostics).toBe(providers.provideNeonSemanticDiagnostics);
   });
 
   it("preserves distinct callback identities for separate provider sets", () => {

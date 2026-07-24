@@ -79,9 +79,7 @@ describe("StatusBar", () => {
       );
     });
 
-    const problems = host.querySelector<HTMLButtonElement>(
-      ".status-problems",
-    );
+    const problems = host.querySelector<HTMLButtonElement>(".status-problems");
 
     expect(problems).not.toBeNull();
     expect(problems?.textContent).toContain("5");
@@ -151,11 +149,9 @@ describe("StatusBar", () => {
     const activity = host.querySelector<HTMLButtonElement>(".status-ide-activity");
 
     expect(activity?.tagName).toBe("BUTTON");
-    expect(
-      activity?.querySelector(".status-ide-activity-dot")?.classList.contains(
-        "active",
-      ),
-    ).toBe(true);
+    expect(activity?.querySelector(".status-ide-activity-dot")?.classList.contains("active")).toBe(
+      true,
+    );
     expect(activity?.getAttribute("title")).toBe(
       "IDE: PHPactor running\n\nPHPactor: running\nTS Server: stopped\nIndex: idle",
     );
@@ -214,15 +210,9 @@ describe("StatusBar", () => {
 
     const activity = host.querySelector(".status-ide-activity");
 
-    expect(activity?.textContent).toBe(
-      "IDE: TS Server running for this project",
-    );
-    expect(activity?.getAttribute("title")).toBe(
-      "IDE: TS Server running for this project",
-    );
-    expect(host.textContent).toContain(
-      "example-web · JS/TS · Inferred (partial) · npm",
-    );
+    expect(activity?.textContent).toBe("IDE: TS Server running for this project");
+    expect(activity?.getAttribute("title")).toBe("IDE: TS Server running for this project");
+    expect(host.textContent).toContain("example-web · JS/TS · Inferred (partial) · npm");
   });
 
   it("shows a passive large file mode chip with an explanatory tooltip", async () => {
@@ -252,9 +242,7 @@ describe("StatusBar", () => {
     const chip = host.querySelector(".status-large-file-mode");
 
     expect(chip?.textContent).toBe(LARGE_SMART_DOCUMENT_STATUS_LABEL);
-    expect(chip?.getAttribute("title")).toBe(
-      LARGE_SMART_DOCUMENT_STATUS_TITLE,
-    );
+    expect(chip?.getAttribute("title")).toBe(LARGE_SMART_DOCUMENT_STATUS_TITLE);
   });
 
   it("hides large file mode when its status bar item is toggled off", async () => {
@@ -408,9 +396,7 @@ describe("StatusBar", () => {
       );
     });
 
-    const cursor = host.querySelector<HTMLButtonElement>(
-      ".status-cursor-position",
-    );
+    const cursor = host.querySelector<HTMLButtonElement>(".status-cursor-position");
 
     expect(cursor).not.toBeNull();
     expect(cursor?.textContent).toBe("Ln 42, Col 7");
@@ -711,9 +697,7 @@ describe("StatusBar", () => {
       renderStatusBar("Saved User.php");
     });
 
-    expect(host.querySelector(".status-message")?.textContent).toBe(
-      "Saved User.php",
-    );
+    expect(host.querySelector(".status-message")?.textContent).toBe("Saved User.php");
   });
 
   it("auto-dismisses a transient status message so it does not linger forever", async () => {
@@ -724,9 +708,7 @@ describe("StatusBar", () => {
         renderStatusBar("Saved User.php");
       });
 
-      expect(host.querySelector(".status-message")?.textContent).toBe(
-        "Saved User.php",
-      );
+      expect(host.querySelector(".status-message")?.textContent).toBe("Saved User.php");
 
       await act(async () => {
         vi.advanceTimersByTime(6000);
@@ -787,10 +769,43 @@ describe("StatusBar", () => {
     }
   });
 
+  it("renders a sanitized Node run action and forwards Stop", async () => {
+    const onStopNodeRun = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="typescript"
+          activePath="/workspace/src/server.ts"
+          dirtyCount={0}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          nodeRunStatus={{
+            canStop: true,
+            label: "Node: Running",
+            phase: "running",
+            stopLabel: "Stop Node run — Running",
+          }}
+          onChangeVisibility={vi.fn()}
+          onStopNodeRun={onStopNodeRun}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const action = host.querySelector<HTMLButtonElement>(".status-node-run");
+    expect(action?.textContent).toBe("Node: Running");
+    await act(async () => action?.click());
+    expect(onStopNodeRun).toHaveBeenCalledOnce();
+  });
+
   function checkboxInStatusMenu(labelText: string): HTMLInputElement {
-    const labels = Array.from(
-      host.querySelectorAll<HTMLLabelElement>(".status-bar-menu-item"),
-    );
+    const labels = Array.from(host.querySelectorAll<HTMLLabelElement>(".status-bar-menu-item"));
     const label = labels.find((item) => item.textContent?.includes(labelText));
     const input = label?.querySelector<HTMLInputElement>("input");
 

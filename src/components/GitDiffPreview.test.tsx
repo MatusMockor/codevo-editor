@@ -6,7 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createEditorSessionOwnerKey, type EditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import {
+  createEditorSessionOwnerKey,
+  type EditorSessionOwnerKey,
+} from "../domain/editorSessionOwnerKey";
 import type { EditorGroupsState } from "../domain/editorGroups";
 import type { GitDiffHunk, GitFileDiff } from "../domain/git";
 import { maxEditorFontSize } from "../domain/settings";
@@ -58,11 +61,7 @@ vi.mock("@monaco-editor/react", () => ({
     useLayoutEffect(() => {
       const events: string[] = [];
       let attached = true;
-      const acquireModel = (
-        path: string,
-        side: string,
-        value: string,
-      ): MockTextModel => {
+      const acquireModel = (path: string, side: string, value: string): MockTextModel => {
         const existing = gitDiffPreviewMocks.modelRegistry.get(path);
         if (existing) {
           existing.attach();
@@ -80,9 +79,7 @@ vi.mock("@monaco-editor/react", () => ({
           },
           dispose: () => {
             if (attachmentCount > 0) {
-              throw new Error(
-                "TextModel got disposed before DiffEditorWidget model got reset",
-              );
+              throw new Error("TextModel got disposed before DiffEditorWidget model got reset");
             }
 
             events.push(`${side}-dispose`);
@@ -99,16 +96,8 @@ vi.mock("@monaco-editor/react", () => ({
       };
       const originalPath = String(props.originalModelPath);
       const modifiedPath = String(props.modifiedModelPath);
-      const originalModel = acquireModel(
-        originalPath,
-        "original",
-        String(props.original ?? ""),
-      );
-      const modifiedModel = acquireModel(
-        modifiedPath,
-        "modified",
-        String(props.modified ?? ""),
-      );
+      const originalModel = acquireModel(originalPath, "original", String(props.original ?? ""));
+      const modifiedModel = acquireModel(modifiedPath, "modified", String(props.modified ?? ""));
       const lifecycle = {
         disposed: false,
         events,
@@ -118,15 +107,15 @@ vi.mock("@monaco-editor/react", () => ({
       };
       lifecycleRef.current = lifecycle;
       const modifiedEditor = {
-        addContentWidget: (widget: typeof gitDiffPreviewMocks.hunkWidgets[number]) => {
+        addContentWidget: (widget: (typeof gitDiffPreviewMocks.hunkWidgets)[number]) => {
           gitDiffPreviewMocks.hunkWidgets.push(widget);
           document.body.append(widget.getDomNode());
         },
         getModel: () => ({ getLineCount: () => 100 }),
-        layoutContentWidget: (widget: typeof gitDiffPreviewMocks.hunkWidgets[number]) => {
+        layoutContentWidget: (widget: (typeof gitDiffPreviewMocks.hunkWidgets)[number]) => {
           gitDiffPreviewMocks.hunkWidgetLayouts.push(widget.getPosition()?.position ?? null);
         },
-        removeContentWidget: (widget: typeof gitDiffPreviewMocks.hunkWidgets[number]) => {
+        removeContentWidget: (widget: (typeof gitDiffPreviewMocks.hunkWidgets)[number]) => {
           const index = gitDiffPreviewMocks.hunkWidgets.indexOf(widget);
           if (index >= 0) {
             gitDiffPreviewMocks.hunkWidgets.splice(index, 1);
@@ -137,9 +126,7 @@ vi.mock("@monaco-editor/react", () => ({
       const editor = {
         getLineChanges: () => [],
         getModifiedEditor: () => modifiedEditor,
-        getModel: () => attached
-          ? { modified: modifiedModel, original: originalModel }
-          : null,
+        getModel: () => (attached ? { modified: modifiedModel, original: originalModel } : null),
         onDidUpdateDiff: (listener: () => void) => {
           gitDiffPreviewMocks.diffListeners.push(listener);
           return { dispose: vi.fn() };
@@ -160,7 +147,13 @@ vi.mock("@monaco-editor/react", () => ({
       onMount?.(editor, {});
 
       return undefined;
-    }, []);
+    }, [
+      props.modified,
+      props.modifiedModelPath,
+      props.onMount,
+      props.original,
+      props.originalModelPath,
+    ]);
 
     useEffect(() => {
       const lifecycle = lifecycleRef.current;
@@ -178,7 +171,7 @@ vi.mock("@monaco-editor/react", () => ({
           lifecycle.disposed = true;
         }
       };
-    }, []);
+    }, [props.keepCurrentModifiedModel, props.keepCurrentOriginalModel]);
 
     return <div data-testid="diff-editor" />;
   },
@@ -242,10 +235,7 @@ describe("GitDiffPreview", () => {
   });
 
   it("gives Monaco a definite flex height in WebKit", () => {
-    const appCss = readFileSync(
-      resolve(import.meta.dirname, "../App.css"),
-      "utf8",
-    );
+    const appCss = readFileSync(resolve(import.meta.dirname, "../App.css"), "utf8");
     const hostRule = appCss.match(/\.git-diff-editor\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(hostRule).toContain("flex: 1 1 auto");
@@ -270,9 +260,7 @@ describe("GitDiffPreview", () => {
 
     expect(host.querySelector('[data-testid="diff-editor"]')).toBeNull();
     expect(host.textContent).toContain("File metadata changed");
-    expect(host.textContent).toContain(
-      "Renamed: src/OldName.ts -> src/NewName.ts",
-    );
+    expect(host.textContent).toContain("Renamed: src/OldName.ts -> src/NewName.ts");
   });
 
   it("uses stable model URIs scoped by surface, side, and absolute path", async () => {
@@ -326,9 +314,7 @@ describe("GitDiffPreview", () => {
       current: GitFileDiff | null,
       isLoading: boolean,
     ) => {
-      const previewIdentity = `mockor-git-diff:worktree:${
-        current?.change.path ?? projectId
-      }`;
+      const previewIdentity = `mockor-git-diff:worktree:${current?.change.path ?? projectId}`;
       const document: EditorDocument = {
         content: "",
         language: "typescript",
@@ -416,14 +402,10 @@ describe("GitDiffPreview", () => {
       encodeURIComponent(secondProjectDiff.change.path),
     );
     const hydratedLifecycle =
-      gitDiffPreviewMocks.modelLifecycles[
-        gitDiffPreviewMocks.modelLifecycles.length - 1
-      ];
+      gitDiffPreviewMocks.modelLifecycles[gitDiffPreviewMocks.modelLifecycles.length - 1];
     expect(hydratedLifecycle?.disposed).toBe(false);
     expect(hydratedLifecycle?.modifiedModel.getLineCount()).toBe(917);
-    expect(hydratedLifecycle?.modifiedModel.getValue()).toBe(
-      productionHydratedContent,
-    );
+    expect(hydratedLifecycle?.modifiedModel.getValue()).toBe(productionHydratedContent);
   });
 
   it("isolates model URIs for concurrent previews of the same path", async () => {
@@ -457,9 +439,7 @@ describe("GitDiffPreview", () => {
   });
 
   it("disposes prior Monaco models and reanchors hunk widgets on replacement", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      gitHunk(0, false),
-    ]);
+    const loadFileHunks = vi.fn(async () => [gitHunk(0, false)]);
     await renderPreview(diff(), { loadFileHunks });
     const firstLifecycle = gitDiffPreviewMocks.modelLifecycles[0];
     const firstWidgetNode = gitDiffPreviewMocks.hunkWidgets[0]?.getDomNode();
@@ -467,14 +447,17 @@ describe("GitDiffPreview", () => {
     expect(firstLifecycle?.disposed).toBe(false);
     expect(hunkCheckboxes()).toHaveLength(1);
 
-    await renderPreview({
-      ...diff(),
-      change: {
-        ...diff().change,
-        path: "/workspace/src/other.ts",
-        relativePath: "src/other.ts",
+    await renderPreview(
+      {
+        ...diff(),
+        change: {
+          ...diff().change,
+          path: "/workspace/src/other.ts",
+          relativePath: "src/other.ts",
+        },
       },
-    }, { loadFileHunks });
+      { loadFileHunks },
+    );
 
     expect(firstLifecycle?.disposed).toBe(true);
     expect(firstWidgetNode?.isConnected).toBe(false);
@@ -670,9 +653,7 @@ describe("GitDiffPreview", () => {
 
     expect(queryButtonByTitle("Revert file")).toBeNull();
     expect(hunkRevertButtons()).toHaveLength(0);
-    expect(hunkCheckboxes()[0]?.getAttribute("aria-label")).toBe(
-      "Unstage hunk 1",
-    );
+    expect(hunkCheckboxes()[0]?.getAttribute("aria-label")).toBe("Unstage hunk 1");
   });
 
   it("disables file and hunk revert when the editor document is dirty", async () => {
@@ -708,10 +689,7 @@ describe("GitDiffPreview", () => {
 
   it("navigates Monaco logical line changes instead of individual rows", async () => {
     await renderPreview(diff());
-    await mountDiffEditor([
-      lineChange(2, 2),
-      lineChange(20, 24),
-    ]);
+    await mountDiffEditor([lineChange(2, 2), lineChange(20, 24)]);
 
     await act(async () => {
       queryButtonByTitle("Next change")?.click();
@@ -727,10 +705,7 @@ describe("GitDiffPreview", () => {
   });
 
   it("renders a stage checkbox per worktree hunk and stages the clicked hunk", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      gitHunk(0, false),
-      gitHunk(1, false),
-    ]);
+    const loadFileHunks = vi.fn(async () => [gitHunk(0, false), gitHunk(1, false)]);
     const onStageHunk = vi.fn();
 
     await renderPreview(diff(), {
@@ -747,10 +722,12 @@ describe("GitDiffPreview", () => {
     expect(checkboxes).toHaveLength(2);
     expect(checkboxes[0].getAttribute("aria-label")).toBe("Stage hunk 1");
     expect(checkboxes[0].title).toBe("Stage hunk 1");
-    expect(gitDiffPreviewMocks.hunkWidgets.map((widget) => widget.getPosition()?.position)).toEqual([
-      { column: 1, lineNumber: 1 },
-      { column: 1, lineNumber: 5 },
-    ]);
+    expect(gitDiffPreviewMocks.hunkWidgets.map((widget) => widget.getPosition()?.position)).toEqual(
+      [
+        { column: 1, lineNumber: 1 },
+        { column: 1, lineNumber: 5 },
+      ],
+    );
 
     await act(async () => {
       gitDiffPreviewMocks.diffListeners[0]?.();
@@ -961,9 +938,7 @@ describe("GitDiffPreview", () => {
   });
 
   it("clears loaded hunks and diff rows when rerendered without a diff", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      gitHunk(0, false),
-    ]);
+    const loadFileHunks = vi.fn(async () => [gitHunk(0, false)]);
 
     await renderPreview(diff(), {
       loadFileHunks,
@@ -989,9 +964,7 @@ describe("GitDiffPreview", () => {
   });
 
   it("unstages the clicked hunk when the change is staged", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      gitHunk(0, true),
-    ]);
+    const loadFileHunks = vi.fn(async () => [gitHunk(0, true)]);
     const onUnstageHunk = vi.fn();
 
     await renderPreview(
@@ -1041,9 +1014,7 @@ describe("GitDiffPreview", () => {
   });
 
   it("disables hunk checkboxes while a git operation is running", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      gitHunk(0, false),
-    ]);
+    const loadFileHunks = vi.fn(async () => [gitHunk(0, false)]);
     const onStageHunk = vi.fn();
 
     await renderPreview(diff(), {
@@ -1066,9 +1037,7 @@ describe("GitDiffPreview", () => {
 
   it("keeps the Monaco diff when loadFileHunks rejects", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const loadFileHunks = vi.fn(() =>
-      Promise.reject(new Error("get_git_file_hunks failed")),
-    );
+    const loadFileHunks = vi.fn(() => Promise.reject(new Error("get_git_file_hunks failed")));
 
     await renderPreview(diff(), {
       loadFileHunks,
@@ -1078,10 +1047,7 @@ describe("GitDiffPreview", () => {
 
     expect(host.querySelector('[data-testid="diff-editor"]')).not.toBeNull();
     expect(hunkCheckboxes()).toHaveLength(0);
-    expect(consoleError).toHaveBeenCalledWith(
-      "Loading git file hunks failed",
-      expect.any(Error),
-    );
+    expect(consoleError).toHaveBeenCalledWith("Loading git file hunks failed", expect.any(Error));
   });
 
   it("keeps the Monaco diff when loadFileHunks resolves malformed hunk data", async () => {
@@ -1173,17 +1139,18 @@ describe("GitDiffPreview", () => {
   });
 
   it("uses the backend large marker without receiving a large IPC payload", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      gitHunk(0, false),
-    ]);
-    await renderPreview({
-      ...diff(),
-      modifiedContent: "",
-      originalContent: "",
-      previewUnavailableReason: "large",
-    }, {
-      loadFileHunks,
-    });
+    const loadFileHunks = vi.fn(async () => [gitHunk(0, false)]);
+    await renderPreview(
+      {
+        ...diff(),
+        modifiedContent: "",
+        originalContent: "",
+        previewUnavailableReason: "large",
+      },
+      {
+        loadFileHunks,
+      },
+    );
 
     expect(host.querySelector('[data-testid="diff-editor"]')).toBeNull();
     expect(host.textContent).toContain("Large diff");
@@ -1241,9 +1208,7 @@ describe("GitDiffPreview", () => {
 
 function hunkCheckboxes(): HTMLInputElement[] {
   return Array.from(
-    document.querySelectorAll<HTMLInputElement>(
-      '.git-diff-hunk input[type="checkbox"]',
-    ),
+    document.querySelectorAll<HTMLInputElement>('.git-diff-hunk input[type="checkbox"]'),
   );
 }
 
@@ -1269,7 +1234,9 @@ function createDeferred<T>(): {
 function gitHunk(
   index: number,
   isStaged: boolean,
-  ranges: Partial<Pick<GitDiffHunk, "modifiedCount" | "modifiedStart" | "originalCount" | "originalStart">> = {},
+  ranges: Partial<
+    Pick<GitDiffHunk, "modifiedCount" | "modifiedStart" | "originalCount" | "originalStart">
+  > = {},
 ): GitDiffHunk {
   const line = index * 4 + 1;
   return {
@@ -1291,10 +1258,7 @@ function lastDiffEditorProps(): Record<string, unknown> & {
   options: Record<string, unknown>;
   originalModelPath: string;
 } {
-  const props =
-    gitDiffPreviewMocks.diffEditorProps[
-      gitDiffPreviewMocks.diffEditorProps.length - 1
-    ];
+  const props = gitDiffPreviewMocks.diffEditorProps[gitDiffPreviewMocks.diffEditorProps.length - 1];
   if (!props) {
     throw new Error("DiffEditor was not rendered");
   }
@@ -1307,9 +1271,8 @@ function beforeMount(): (monaco: object) => void {
 }
 
 function themeGuard(callIndex: number): () => boolean {
-  const options = gitDiffPreviewMocks.setupShikiTokenization.mock.calls[
-    callIndex
-  ]?.[2] as { shouldApply?: unknown } | undefined;
+  const options = gitDiffPreviewMocks.setupShikiTokenization.mock.calls[callIndex]?.[2] as
+    { shouldApply?: unknown } | undefined;
   const shouldApply = options?.shouldApply;
   if (typeof shouldApply !== "function") {
     throw new Error("Expected a theme cancellation guard");
@@ -1353,9 +1316,7 @@ function lineChange(originalStart: number, modifiedStart: number): Record<string
 }
 
 function queryButtonByTitle(title: string): HTMLButtonElement | null {
-  const buttons = Array.from(
-    document.querySelectorAll<HTMLButtonElement>("button"),
-  );
+  const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
   return buttons.find((button) => button.title === title) ?? null;
 }
 

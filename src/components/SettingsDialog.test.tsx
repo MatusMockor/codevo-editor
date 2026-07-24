@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { defaultKeymapSettings } from "../domain/keymap";
 import type { SystemFontGateway } from "../domain/systemFonts";
-import { SettingsDialog, snippetLanguageOptions } from "./SettingsDialog";
+import { snippetLanguageOptions } from "../domain/snippetLanguageOptions";
+import { KeymapSettingsPanel } from "./KeymapSettingsPanel";
+import { SettingsDialog } from "./SettingsDialog";
 
 describe("snippetLanguageOptions", () => {
   it("offers Latte and NEON alongside the existing snippet languages", () => {
@@ -183,9 +185,7 @@ describe("SettingsDialog", () => {
     ).toBe(false);
 
     await act(async () => {
-      revealActiveFileCheckbox().dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      revealActiveFileCheckbox().dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -264,9 +264,7 @@ describe("SettingsDialog", () => {
     expect(formatOnSaveCheckbox().checked).toBe(false);
 
     await act(async () => {
-      formatOnSaveCheckbox().dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      formatOnSaveCheckbox().dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -319,9 +317,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      settingsSectionButton("PHP").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      settingsSectionButton("PHP").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
     const phpstanCheckbox = inputWithLabel("PHPStan analyse on save");
@@ -367,9 +363,7 @@ describe("SettingsDialog", () => {
     const fixOnSaveCheckbox = inputWithLabel("ESLint fix on save");
     expect(fixOnSaveCheckbox.checked).toBe(false);
     await act(async () => {
-      fixOnSaveCheckbox.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      fixOnSaveCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -409,9 +403,7 @@ describe("SettingsDialog", () => {
     const prettierCheckbox = inputWithLabel("Prettier format on save");
     expect(prettierCheckbox.checked).toBe(false);
     await act(async () => {
-      prettierCheckbox.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      prettierCheckbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -450,9 +442,7 @@ describe("SettingsDialog", () => {
     expect(optimizeImportsOnSaveCheckbox().checked).toBe(false);
 
     await act(async () => {
-      optimizeImportsOnSaveCheckbox().dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      optimizeImportsOnSaveCheckbox().dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -491,9 +481,7 @@ describe("SettingsDialog", () => {
     expect(formatOnPasteCheckbox().checked).toBe(false);
 
     await act(async () => {
-      formatOnPasteCheckbox().dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      formatOnPasteCheckbox().dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -534,9 +522,7 @@ describe("SettingsDialog", () => {
 
     await act(async () => {
       defaultTabSizeSelect().value = "2";
-      defaultTabSizeSelect().dispatchEvent(
-        new Event("change", { bubbles: true }),
-      );
+      defaultTabSizeSelect().dispatchEvent(new Event("change", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -550,9 +536,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      defaultInsertSpacesCheckbox().dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      defaultInsertSpacesCheckbox().dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -643,9 +627,7 @@ describe("SettingsDialog", () => {
     expect(host.textContent).toContain("Auto-detected");
     // Manual mapping is listed and removable.
     expect(host.textContent).toContain("packages/lib");
-    expect(
-      checkboxWithLabel("Detect repositories automatically").checked,
-    ).toBe(true);
+    expect(checkboxWithLabel("Detect repositories automatically").checked).toBe(true);
   });
 
   it("persists large file limits from the Index section", async () => {
@@ -777,9 +759,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      settingsSectionButton("Add").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      settingsSectionButton("Add").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -793,9 +773,9 @@ describe("SettingsDialog", () => {
     });
 
     // Now remove it.
-    const removeButton = Array.from(
-      host.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.getAttribute("title") === "Remove mapping");
+    const removeButton = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.getAttribute("title") === "Remove mapping",
+    );
     expect(removeButton).toBeTruthy();
 
     await act(async () => {
@@ -837,9 +817,7 @@ describe("SettingsDialog", () => {
 
     await act(async () => {
       javaScriptTypeScriptServiceSelect().value = "off";
-      javaScriptTypeScriptServiceSelect().dispatchEvent(
-        new Event("change", { bubbles: true }),
-      );
+      javaScriptTypeScriptServiceSelect().dispatchEvent(new Event("change", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -866,6 +844,7 @@ describe("SettingsDialog", () => {
               "editor.save": "",
             },
           }}
+          initialSection="general"
           isOpen={true}
           onClose={vi.fn()}
           onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
@@ -882,9 +861,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      settingsSectionButton("Keymap").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      settingsSectionButton("Keymap").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -956,9 +933,7 @@ describe("SettingsDialog", () => {
     });
 
     const byId = Array.from(host.querySelectorAll(".keymap-field"));
-    expect(byId.some((field) => field.textContent?.includes("Save File"))).toBe(
-      true,
-    );
+    expect(byId.some((field) => field.textContent?.includes("Save File"))).toBe(true);
 
     await act(async () => {
       changeInputValue(search, "git");
@@ -967,11 +942,9 @@ describe("SettingsDialog", () => {
 
     const byCategory = Array.from(host.querySelectorAll(".keymap-field"));
     expect(byCategory.length).toBeGreaterThan(0);
-    expect(
-      byCategory.every((field) =>
-        field.textContent?.toLowerCase().includes("git"),
-      ),
-    ).toBe(true);
+    expect(byCategory.every((field) => field.textContent?.toLowerCase().includes("git"))).toBe(
+      true,
+    );
   });
 
   it("matches keymap commands by their current and default shortcuts", async () => {
@@ -1020,9 +993,7 @@ describe("SettingsDialog", () => {
 
     fields = Array.from(host.querySelectorAll(".keymap-field"));
     expect(fields.length).toBeGreaterThan(0);
-    expect(
-      fields.some((field) => field.textContent?.includes("Format Document")),
-    ).toBe(true);
+    expect(fields.some((field) => field.textContent?.includes("Format Document"))).toBe(true);
   });
 
   it("normalizes and persists keymap shortcut rebindings through app settings", async () => {
@@ -1135,12 +1106,8 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    expect(keymapConflictWarning("Save File")?.textContent).toContain(
-      "Close Tab or Window",
-    );
-    expect(keymapConflictWarning("Close Tab or Window")?.textContent).toContain(
-      "Save File",
-    );
+    expect(keymapConflictWarning("Save File")?.textContent).toContain("Close Tab or Window");
+    expect(keymapConflictWarning("Close Tab or Window")?.textContent).toContain("Save File");
   });
 
   it("does not warn once a rebound shortcut no longer collides", async () => {
@@ -1230,6 +1197,278 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
+  });
+
+  it("captures and persists a complete two-stroke key chord", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const onWindowKeyDown = vi.fn();
+    window.addEventListener("keydown", onWindowKeyDown);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const field = inputWithLabel("Save File");
+
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "k",
+          metaKey: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector(".keymap-chord-hint")?.textContent).toContain(
+      "Waiting for second key",
+    );
+    expect(onWindowKeyDown).not.toHaveBeenCalled();
+
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "s",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: {
+          ...defaultKeymapSettings(),
+          "editor.save": "Cmd+K S",
+        },
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+    expect(host.querySelector(".keymap-chord-hint")).toBeNull();
+    expect(onWindowKeyDown).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", onWindowKeyDown);
+  });
+
+  it("captures a safe bare function key as the first stroke without bubbling", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const onWindowKeyDown = vi.fn();
+    window.addEventListener("keydown", onWindowKeyDown);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      inputWithLabel("Save File").dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "F8",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: { ...defaultKeymapSettings(), "editor.save": "F8" },
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+    expect(onWindowKeyDown).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", onWindowKeyDown);
+  });
+
+  it("cancels a pending two-stroke capture with Escape without closing settings", async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={onClose}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const field = inputWithLabel("Save File");
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "k",
+          metaKey: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Escape",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+    expect(host.querySelector(".keymap-chord-hint")).toBeNull();
+  });
+
+  it("presents conflicts for identical two-stroke key chords", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings(),
+              "editor.closeTab": "Cmd+K Cmd+S",
+              "editor.save": "Cmd+K Cmd+S",
+            },
+          }}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(inputWithLabel("Save File").value).toBe("Cmd+K Cmd+S");
+    expect(keymapConflictWarning("Save File")?.textContent).toContain("Close Tab or Window");
+  });
+
+  it("presents exact conflicts before deterministic first-stroke prefix conflicts", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings(),
+              "editor.closeTab": "Cmd+K Cmd+S",
+              "editor.formatDocument": "Cmd+K Cmd+S",
+              "editor.save": "Cmd+K",
+            },
+          }}
+          initialSection="keymap"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const warning = keymapConflictWarning("Close Tab or Window")?.textContent ?? "";
+    expect(warning).toContain("Also used by Format Document");
+    expect(warning).toContain("Shares a first key with Save File");
+    expect(warning.indexOf("Also used by")).toBeLessThan(
+      warning.indexOf("Shares a first key with"),
+    );
+  });
+
+  it("presents Cmd and Ctrl key chords as the same conflict on Linux", async () => {
+    await act(async () => {
+      root.render(
+        <KeymapSettingsPanel
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings(),
+              "editor.closeTab": "Ctrl+K Ctrl+S",
+              "editor.save": "Cmd+K Cmd+S",
+            },
+          }}
+          onChangeShortcut={vi.fn()}
+          platform="linux"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(keymapConflictWarning("Save File")?.textContent).toContain(
+      "Also used by Close Tab or Window",
+    );
+    expect(keymapConflictWarning("Close Tab or Window")?.textContent).toContain(
+      "Also used by Save File",
+    );
   });
 
   it("does not hijack Shift+Tab or Shift-typed characters in a keymap field", async () => {
@@ -1410,11 +1649,7 @@ describe("SettingsDialog", () => {
 
   it("loads monospace font families from the system font gateway", async () => {
     const systemFontGateway: SystemFontGateway = {
-      listMonospaceFontFamilies: vi.fn(async () => [
-        "Iosevka",
-        "Fira Code",
-        "Iosevka",
-      ]),
+      listMonospaceFontFamilies: vi.fn(async () => ["Iosevka", "Fira Code", "Iosevka"]),
     };
 
     await act(async () => {
@@ -1438,18 +1673,12 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      settingsSectionButton("Appearance").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      settingsSectionButton("Appearance").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(selectWithLabel("Theme")).not.toBeNull();
     expect(systemFontGateway.listMonospaceFontFamilies).toHaveBeenCalled();
-    await waitForFontFamilyOptions([
-      "Fira Code",
-      "Iosevka",
-      defaultAppSettings().editorFontFamily,
-    ]);
+    await waitForFontFamilyOptions(["Fira Code", "Iosevka", defaultAppSettings().editorFontFamily]);
     expect(inputWithLabel("Font size").type).toBe("number");
     expect(checkboxWithLabel("Font ligatures").checked).toBe(false);
     expect(checkboxWithLabel("Minimap").checked).toBe(false);
@@ -1488,24 +1717,16 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      refreshFontsButton().dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      refreshFontsButton().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    await waitForFontFamilyOptions([
-      "Iosevka",
-      defaultAppSettings().editorFontFamily,
-    ]);
+    await waitForFontFamilyOptions(["Iosevka", defaultAppSettings().editorFontFamily]);
 
     await act(async () => {
       resolveInitialFonts(["Fira Code"]);
     });
 
-    await waitForFontFamilyOptions([
-      "Iosevka",
-      defaultAppSettings().editorFontFamily,
-    ]);
+    await waitForFontFamilyOptions(["Iosevka", defaultAppSettings().editorFontFamily]);
   });
 
   it("persists editor font appearance changes", async () => {
@@ -1534,21 +1755,14 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      settingsSectionButton("Appearance").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      settingsSectionButton("Appearance").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    await waitForFontFamilyOptions([
-      "Fira Code",
-      defaultAppSettings().editorFontFamily,
-    ]);
+    await waitForFontFamilyOptions(["Fira Code", defaultAppSettings().editorFontFamily]);
 
     await act(async () => {
       selectWithLabel("Font family").value = "Fira Code";
-      selectWithLabel("Font family").dispatchEvent(
-        new Event("change", { bubbles: true }),
-      );
+      selectWithLabel("Font family").dispatchEvent(new Event("change", { bubbles: true }));
     });
 
     expect(onSave).toHaveBeenLastCalledWith({
@@ -1576,9 +1790,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      checkboxWithLabel("Font ligatures").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      checkboxWithLabel("Font ligatures").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -1594,9 +1806,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      checkboxWithLabel("Minimap").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      checkboxWithLabel("Minimap").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -1613,9 +1823,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      checkboxWithLabel("Word wrap").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      checkboxWithLabel("Word wrap").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -1667,9 +1875,7 @@ describe("SettingsDialog", () => {
 
     await act(async () => {
       selectWithLabel("Theme").value = "oneDarkPro";
-      selectWithLabel("Theme").dispatchEvent(
-        new Event("change", { bubbles: true }),
-      );
+      selectWithLabel("Theme").dispatchEvent(new Event("change", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -1707,9 +1913,7 @@ describe("SettingsDialog", () => {
 
     await act(async () => {
       typeScriptVersionSelect().value = "workspace";
-      typeScriptVersionSelect().dispatchEvent(
-        new Event("change", { bubbles: true }),
-      );
+      typeScriptVersionSelect().dispatchEvent(new Event("change", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -1778,9 +1982,7 @@ describe("SettingsDialog", () => {
       },
     });
 
-    expect(
-      javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().checked,
-    ).toBe(false);
+    expect(javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().checked).toBe(false);
 
     await act(async () => {
       javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().dispatchEvent(
@@ -1884,8 +2086,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      javaScriptTypeScriptImportModuleSpecifierSelect().value =
-        "project-relative";
+      javaScriptTypeScriptImportModuleSpecifierSelect().value = "project-relative";
       javaScriptTypeScriptImportModuleSpecifierSelect().dispatchEvent(
         new Event("change", { bubbles: true }),
       );
@@ -1897,8 +2098,7 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        javaScriptTypeScriptImportModuleSpecifierPreference:
-          "project-relative",
+        javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
       },
     });
 
@@ -1916,8 +2116,7 @@ describe("SettingsDialog", () => {
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-        javaScriptTypeScriptImportModuleSpecifierPreference:
-          "project-relative",
+        javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
       },
     });
 
@@ -1935,8 +2134,7 @@ describe("SettingsDialog", () => {
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-        javaScriptTypeScriptImportModuleSpecifierPreference:
-          "project-relative",
+        javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
         javaScriptTypeScriptQuotePreference: "single",
       },
     });
@@ -1954,8 +2152,7 @@ describe("SettingsDialog", () => {
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-        javaScriptTypeScriptImportModuleSpecifierPreference:
-          "project-relative",
+        javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
         javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
         javaScriptTypeScriptQuotePreference: "single",
       },
@@ -1984,13 +2181,9 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    expect(javaScriptTypeScriptOrganizeImportsOnSaveCheckbox().checked).toBe(
-      false,
-    );
+    expect(javaScriptTypeScriptOrganizeImportsOnSaveCheckbox().checked).toBe(false);
     expect(javaScriptTypeScriptRemoveUnusedOnSaveCheckbox().checked).toBe(false);
-    expect(javaScriptTypeScriptAddMissingImportsOnSaveCheckbox().checked).toBe(
-      false,
-    );
+    expect(javaScriptTypeScriptAddMissingImportsOnSaveCheckbox().checked).toBe(false);
     expect(javaScriptTypeScriptFixAllOnSaveCheckbox().checked).toBe(false);
 
     await act(async () => {
@@ -2216,9 +2409,7 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    expect(javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().disabled).toBe(
-      true,
-    );
+    expect(javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox().disabled).toBe(true);
   });
 
   it("adds a user snippet from the Snippets section", async () => {
@@ -2244,9 +2435,7 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      settingsSectionButton("Snippets").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      settingsSectionButton("Snippets").dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -2256,8 +2445,7 @@ describe("SettingsDialog", () => {
     });
 
     const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
-      | { appSettings: { userSnippets: unknown[] } }
-      | undefined;
+      { appSettings: { userSnippets: unknown[] } } | undefined;
 
     expect(lastCall?.appSettings.userSnippets).toHaveLength(1);
   });
@@ -2346,15 +2534,12 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
-      deleteSnippetButtons()[0].dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      deleteSnippetButtons()[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
     const lastCall = (onSave.mock.calls as unknown[][])[onSave.mock.calls.length - 1]?.[0] as
-      | { appSettings: { userSnippets: unknown[] } }
-      | undefined;
+      { appSettings: { userSnippets: unknown[] } } | undefined;
 
     expect(lastCall?.appSettings.userSnippets).toEqual([]);
   });
@@ -2373,9 +2558,7 @@ describe("SettingsDialog", () => {
 
   function snippetPrefixInputs(): HTMLInputElement[] {
     return Array.from(
-      host.querySelectorAll<HTMLInputElement>(
-        "input[data-snippet-field='prefix']",
-      ),
+      host.querySelectorAll<HTMLInputElement>("input[data-snippet-field='prefix']"),
     );
   }
 
@@ -2387,9 +2570,7 @@ describe("SettingsDialog", () => {
 
   function revealActiveFileCheckbox(): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
-    const label = labels.find((item) =>
-      item.textContent?.includes("Reveal active file in tree"),
-    );
+    const label = labels.find((item) => item.textContent?.includes("Reveal active file in tree"));
     const input = label?.querySelector<HTMLInputElement>("input");
 
     if (!input) {
@@ -2421,9 +2602,7 @@ describe("SettingsDialog", () => {
 
   function defaultTabSizeSelect(): HTMLSelectElement {
     const labels = Array.from(host.querySelectorAll("label"));
-    const label = labels.find((item) =>
-      item.textContent?.includes("Default tab size"),
-    );
+    const label = labels.find((item) => item.textContent?.includes("Default tab size"));
     const select = label?.querySelector<HTMLSelectElement>("select");
 
     if (!select) {
@@ -2457,9 +2636,7 @@ describe("SettingsDialog", () => {
 
   function typeScriptVersionSelect(): HTMLSelectElement {
     const labels = Array.from(host.querySelectorAll("label"));
-    const label = labels.find((item) =>
-      item.textContent?.includes("TypeScript version"),
-    );
+    const label = labels.find((item) => item.textContent?.includes("TypeScript version"));
     const select = label?.querySelector<HTMLSelectElement>("select");
 
     if (!select) {
@@ -2499,9 +2676,7 @@ describe("SettingsDialog", () => {
     const select = label?.querySelector<HTMLSelectElement>("select");
 
     if (!select) {
-      throw new Error(
-        "JS/TS import module specifier ending select was not rendered.",
-      );
+      throw new Error("JS/TS import module specifier ending select was not rendered.");
     }
 
     return select;
@@ -2509,9 +2684,7 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptQuotePreferenceSelect(): HTMLSelectElement {
     const labels = Array.from(host.querySelectorAll("label"));
-    const label = labels.find((item) =>
-      item.textContent?.includes("JS/TS import quotes"),
-    );
+    const label = labels.find((item) => item.textContent?.includes("JS/TS import quotes"));
     const select = label?.querySelector<HTMLSelectElement>("select");
 
     if (!select) {
@@ -2526,9 +2699,7 @@ describe("SettingsDialog", () => {
   }
 
   function javaScriptTypeScriptAutomaticTypeAcquisitionCheckbox(): HTMLInputElement {
-    return checkboxWithLabel(
-      "JavaScript/TypeScript automatic type acquisition",
-    );
+    return checkboxWithLabel("JavaScript/TypeScript automatic type acquisition");
   }
 
   function javaScriptTypeScriptInlayHintsCheckbox(): HTMLInputElement {
@@ -2565,9 +2736,7 @@ describe("SettingsDialog", () => {
     );
 
     if (!button) {
-      throw new Error(
-        "Restart JavaScript/TypeScript service button was not rendered.",
-      );
+      throw new Error("Restart JavaScript/TypeScript service button was not rendered.");
     }
 
     return button;
@@ -2579,9 +2748,7 @@ describe("SettingsDialog", () => {
     );
 
     if (!button) {
-      throw new Error(
-        "Open JavaScript/TypeScript service log button was not rendered.",
-      );
+      throw new Error("Open JavaScript/TypeScript service log button was not rendered.");
     }
 
     return button;
@@ -2623,22 +2790,13 @@ describe("SettingsDialog", () => {
 
   function keymapConflictWarning(commandLabel: string): Element | null {
     const fields = Array.from(host.querySelectorAll(".keymap-field"));
-    const field = fields.find((item) =>
-      item.querySelector("strong")?.textContent === commandLabel,
-    );
+    const field = fields.find((item) => item.querySelector("strong")?.textContent === commandLabel);
 
     return field?.querySelector(".keymap-conflict") ?? null;
   }
 
-  function changeInputValue(
-    input: HTMLInputElement,
-    value: string,
-    eventName = "input",
-  ): void {
-    const valueSetter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      "value",
-    )?.set;
+  function changeInputValue(input: HTMLInputElement, value: string, eventName = "input"): void {
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
 
     valueSetter?.call(input, value);
     input.dispatchEvent(new Event(eventName, { bubbles: true }));
@@ -2668,14 +2826,10 @@ describe("SettingsDialog", () => {
     return button;
   }
 
-  async function waitForFontFamilyOptions(
-    expectedOptions: string[],
-  ): Promise<void> {
+  async function waitForFontFamilyOptions(expectedOptions: string[]): Promise<void> {
     await vi.waitFor(() => {
       expect(
-        Array.from(selectWithLabel("Font family").options).map(
-          (option) => option.value,
-        ),
+        Array.from(selectWithLabel("Font family").options).map((option) => option.value),
       ).toEqual(expectedOptions);
     });
   }

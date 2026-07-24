@@ -996,7 +996,7 @@ function createGateway(seed: {
   const graphByBranch = seed.graphByBranch ?? {};
   const commitDetailsByHash = new Map<string, CommitDetails>();
 
-  let commitLog = seed.commitLog ?? [];
+  const commitLog = seed.commitLog ?? [];
   let currentCommitLog = commitLog;
   let commitFiles = seed.commitFiles ?? [];
   let commitDetailsError = seed.commitDetailsError ?? false;

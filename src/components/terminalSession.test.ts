@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KeymapPlatform } from "../domain/keymap";
-import type { TerminalGateway, TerminalOutputEvent } from "../domain/terminal";
+import type {
+  TerminalGateway,
+  TerminalOutputEvent,
+  TerminalRuntimeStatus,
+} from "../domain/terminal";
 import {
   createTerminalSession,
   terminalCommandDecorationLimit,
@@ -42,10 +46,7 @@ describe("createTerminalSession", () => {
       "default",
       false,
     );
-    expect(harness.terminal.write).toHaveBeenCalledWith(
-      "ready\r\n",
-      expect.any(Function),
-    );
+    expect(harness.terminal.write).toHaveBeenCalledWith("ready\r\n", expect.any(Function));
   });
 
   it("tracks cwd from rendered output and clears it when the session exits", async () => {
@@ -216,9 +217,7 @@ describe("createTerminalSession", () => {
     }
 
     expect(harness.markers).toHaveLength(terminalCommandDecorationLimit + 1);
-    expect(harness.decorations).toHaveLength(
-      terminalCommandDecorationLimit + 1,
-    );
+    expect(harness.decorations).toHaveLength(terminalCommandDecorationLimit + 1);
     expect(harness.markers[0]?.dispose).toHaveBeenCalledTimes(1);
     expect(harness.decorations[0]?.dispose).toHaveBeenCalledTimes(1);
     expect(harness.markers[1]?.dispose).not.toHaveBeenCalled();
@@ -270,9 +269,7 @@ describe("createTerminalSession", () => {
     });
     harness.flushWrites();
 
-    expect(
-      harness.pressKey({ key: "ArrowUp", metaKey: true, shiftKey: true }),
-    ).toBe(true);
+    expect(harness.pressKey({ key: "ArrowUp", metaKey: true, shiftKey: true })).toBe(true);
     expect(harness.terminal.scrollToLine).not.toHaveBeenCalled();
   });
 
@@ -302,9 +299,7 @@ describe("createTerminalSession", () => {
 
     expect(harness.pressKey({ key: "ArrowUp" })).toBe(true);
     expect(harness.pressKey({ key: "ArrowDown", metaKey: true })).toBe(true);
-    expect(harness.pressKey({ key: "ArrowUp", metaKey: true, type: "keyup" })).toBe(
-      true,
-    );
+    expect(harness.pressKey({ key: "ArrowUp", metaKey: true, type: "keyup" })).toBe(true);
     expect(harness.terminal.scrollToLine).not.toHaveBeenCalled();
   });
 
@@ -402,15 +397,86 @@ describe("createTerminalSession", () => {
     expect(harness.gateway.stop).toHaveBeenCalledWith(1);
   });
 
+  it("ignores output, status, input, resize, and link activation after disposal", async () => {
+    const onOpenLink = vi.fn();
+    const onSessionReady = vi.fn();
+    const harness = terminalHarness({ onOpenLink, onSessionReady });
+    const session = createTerminalSession(harness.options);
+    await harness.startSession();
+    const links = harness.provideLinks(1, cells("src/x.ts:1"));
+    session.dispose();
+    onOpenLink.mockClear();
+    onSessionReady.mockClear();
+    harness.terminal.write.mockClear();
+    vi.mocked(harness.gateway.writeInput).mockClear();
+    vi.mocked(harness.gateway.resize).mockClear();
+
+    harness.emitOutput({ data: "late", sessionId: 1 });
+    harness.emitStatus({ exitCode: 0, kind: "exited", sessionId: 1 });
+    harness.emitInput("late");
+    harness.emitResize({ cols: 120, rows: 40 });
+    links[0]?.activate({} as MouseEvent, links[0].text);
+
+    expect(harness.terminal.write).not.toHaveBeenCalled();
+    expect(harness.gateway.writeInput).not.toHaveBeenCalled();
+    expect(harness.gateway.resize).not.toHaveBeenCalled();
+    expect(onOpenLink).not.toHaveBeenCalled();
+    expect(onSessionReady).not.toHaveBeenCalled();
+  });
+
+  it.each(["exited", "crashed", "stopped"] as const)(
+    "clears the active session after a natural %s status",
+    async (kind) => {
+      const onSessionReady = vi.fn();
+      const harness = terminalHarness({ onSessionReady });
+
+      createTerminalSession(harness.options);
+      await harness.startSession();
+      expect(onSessionReady).toHaveBeenCalledWith(1);
+      harness.emitStatus(
+        kind === "exited"
+          ? { exitCode: 0, kind, sessionId: 1 }
+          : kind === "crashed"
+            ? { kind, message: "shell closed", sessionId: 1 }
+            : { kind, sessionId: 1 },
+      );
+
+      expect(onSessionReady).toHaveBeenLastCalledWith(null);
+    },
+  );
+
+  it("accepts an immediate exit released by the start acknowledgement", async () => {
+    const onSessionReady = vi.fn();
+    const harness = terminalHarness({ onSessionReady });
+    harness.gateway.acknowledgeStart = vi.fn(async (sessionId) => {
+      harness.emitStatus({ exitCode: 0, kind: "exited", sessionId });
+    });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+
+    expect(harness.gateway.acknowledgeStart).toHaveBeenCalledWith(1);
+    expect(onSessionReady).not.toHaveBeenCalledWith(1);
+    expect(onSessionReady).toHaveBeenLastCalledWith(null);
+  });
+
+  it("ignores a terminal status owned by another session", async () => {
+    const onSessionReady = vi.fn();
+    const harness = terminalHarness({ onSessionReady });
+    createTerminalSession(harness.options);
+    await harness.startSession();
+
+    harness.emitStatus({ exitCode: 0, kind: "exited", sessionId: 99 });
+
+    expect(onSessionReady).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
   it("registers file links and activates them with parsed positions", () => {
     const onOpenLink = vi.fn();
     const harness = terminalHarness({ onOpenLink });
 
     createTerminalSession(harness.options);
-    const links = harness.provideLinks(
-      4,
-      cells("FAIL ./tests/x.spec.ts:3:5;"),
-    );
+    const links = harness.provideLinks(4, cells("FAIL ./tests/x.spec.ts:3:5;"));
 
     expect(harness.terminal.registerLinkProvider).toHaveBeenCalledTimes(1);
     expect(links).toHaveLength(1);
@@ -446,10 +512,7 @@ describe("createTerminalSession", () => {
     const harness = terminalHarness();
 
     createTerminalSession(harness.options);
-    const links = harness.provideLinks(3, [
-      ...wideCell("😀"),
-      ...cells(" src/x.ts:1"),
-    ]);
+    const links = harness.provideLinks(3, [...wideCell("😀"), ...cells(" src/x.ts:1")]);
 
     expect(links[0]?.range).toEqual({
       end: { x: 13, y: 3 },
@@ -461,11 +524,7 @@ describe("createTerminalSession", () => {
     const harness = terminalHarness();
 
     createTerminalSession(harness.options);
-    const links = harness.provideLinks(5, [
-      cell(""),
-      cell(""),
-      ...cells("src/x.ts:1"),
-    ]);
+    const links = harness.provideLinks(5, [cell(""), cell(""), ...cells("src/x.ts:1")]);
 
     expect(links[0]?.range).toEqual({
       end: { x: 12, y: 5 },
@@ -476,20 +535,17 @@ describe("createTerminalSession", () => {
   it.each([
     ["src/x.ts:1", 1, 10],
     ["FAIL src/x.ts:1", 6, 15],
-  ])(
-    "keeps ASCII file link ranges unchanged for %s",
-    (text, start, end) => {
-      const harness = terminalHarness();
+  ])("keeps ASCII file link ranges unchanged for %s", (text, start, end) => {
+    const harness = terminalHarness();
 
-      createTerminalSession(harness.options);
-      const links = harness.provideLinks(1, cells(text));
+    createTerminalSession(harness.options);
+    const links = harness.provideLinks(1, cells(text));
 
-      expect(links[0]?.range).toEqual({
-        end: { x: end, y: 1 },
-        start: { x: start, y: 1 },
-      });
-    },
-  );
+    expect(links[0]?.range).toEqual({
+      end: { x: end, y: 1 },
+      start: { x: start, y: 1 },
+    });
+  });
 
   it("shows a workspace prompt without starting outside a workspace", async () => {
     const harness = terminalHarness({ rootPath: null });
@@ -509,6 +565,7 @@ function terminalHarness(
   overrides: Partial<{
     onCwdChange: (cwd: string | null) => void;
     onOpenLink: (path: string, line?: number, column?: number) => void;
+    onSessionReady: (sessionId: number | null) => void;
     platform: KeymapPlatform;
     rootPath: string | null;
     shellIntegrationEnabled: boolean;
@@ -516,9 +573,9 @@ function terminalHarness(
 ) {
   let resizeCallback: ResizeObserverCallback | null = null;
   let outputListener: ((event: TerminalOutputEvent) => void) | null = null;
+  let statusListener: ((status: TerminalRuntimeStatus) => void) | null = null;
   let dataListener: ((data: string) => void) | null = null;
-  let resizeListener: ((size: { cols: number; rows: number }) => void) | null =
-    null;
+  let resizeListener: ((size: { cols: number; rows: number }) => void) | null = null;
   const frameCallbacks: FrameRequestCallback[] = [];
   const fitAddon = {
     fit: vi.fn(),
@@ -552,14 +609,18 @@ function terminalHarness(
     | {
         provideLinks(
           lineNumber: number,
-          callback: (links: Array<{
-            activate(event: MouseEvent, text: string): void;
-            range: {
-              end: { x: number; y: number };
-              start: { x: number; y: number };
-            };
-            text: string;
-          }> | undefined) => void,
+          callback: (
+            links:
+              | Array<{
+                  activate(event: MouseEvent, text: string): void;
+                  range: {
+                    end: { x: number; y: number };
+                    start: { x: number; y: number };
+                  };
+                  text: string;
+                }>
+              | undefined,
+          ) => void,
         ): void;
       }
     | undefined;
@@ -568,6 +629,7 @@ function terminalHarness(
     observe: vi.fn(),
   };
   const unsubscribeOutput = vi.fn();
+  const unsubscribeStatus = vi.fn();
   const terminal = {
     cols: 80,
     dispose: vi.fn(),
@@ -588,11 +650,9 @@ function terminalHarness(
         viewportY: 0,
       },
     },
-    attachCustomKeyEventHandler: vi.fn(
-      (handler: (event: KeyboardEvent) => boolean) => {
-        keyEventHandler = handler;
-      },
-    ),
+    attachCustomKeyEventHandler: vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+      keyEventHandler = handler;
+    }),
     registerLinkProvider: vi.fn((provider) => {
       linkProvider = provider;
       return linkDisposable;
@@ -605,8 +665,7 @@ function terminalHarness(
       return nextMarker;
     }),
     registerDecoration: vi.fn(() => {
-      const nextDecoration =
-        decorations.length === 0 ? decoration : { dispose: vi.fn() };
+      const nextDecoration = decorations.length === 0 ? decoration : { dispose: vi.fn() };
       decorations.push(nextDecoration);
       return nextDecoration;
     }),
@@ -623,6 +682,7 @@ function terminalHarness(
     }),
   };
   const gateway: TerminalGateway = {
+    acknowledgeStart: vi.fn(async () => undefined),
     listProfiles: vi.fn(async () => []),
     resize: vi.fn(async () => undefined),
     start: vi.fn(async () => ({
@@ -642,6 +702,10 @@ function terminalHarness(
       outputListener = listener;
       return unsubscribeOutput;
     }),
+    subscribeStatus: vi.fn(async (listener) => {
+      statusListener = listener;
+      return unsubscribeStatus;
+    }),
     writeInput: vi.fn(async () => undefined),
   };
 
@@ -651,6 +715,7 @@ function terminalHarness(
     dataDisposable,
     emitInput: (data: string) => dataListener?.(data),
     emitOutput: (event: TerminalOutputEvent) => outputListener?.(event),
+    emitStatus: (status: TerminalRuntimeStatus) => statusListener?.(status),
     emitResize: (size: { cols: number; rows: number }) => {
       terminal.cols = size.cols;
       terminal.rows = size.rows;
@@ -706,11 +771,10 @@ function terminalHarness(
       host,
       onCwdChange: overrides.onCwdChange,
       onOpenLink: overrides.onOpenLink,
+      onSessionReady: overrides.onSessionReady,
       platform: overrides.platform,
       profileId: "default",
-      rootPath: "rootPath" in overrides
-        ? overrides.rootPath ?? null
-        : "/workspace",
+      rootPath: "rootPath" in overrides ? (overrides.rootPath ?? null) : "/workspace",
       shellIntegrationEnabled: overrides.shellIntegrationEnabled ?? false,
       scheduleFrame: (callback: FrameRequestCallback) => {
         frameCallbacks.push(callback);
@@ -721,9 +785,7 @@ function terminalHarness(
     resize: () => {
       resizeCallback?.([], resizeObserver as unknown as ResizeObserver);
     },
-    pressKey: (
-      event: Partial<KeyboardEvent> & Pick<KeyboardEvent, "key">,
-    ) =>
+    pressKey: (event: Partial<KeyboardEvent> & Pick<KeyboardEvent, "key">) =>
       keyEventHandler?.({
         altKey: false,
         ctrlKey: false,
@@ -764,6 +826,7 @@ function terminalHarness(
       return provided;
     },
     unsubscribeOutput,
+    unsubscribeStatus,
   };
 }
 

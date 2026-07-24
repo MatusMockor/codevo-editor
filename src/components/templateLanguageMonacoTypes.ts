@@ -9,6 +9,18 @@ import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
+import type { NeonCrossFileRepository } from "../application/neonCrossFileSymbolSweep";
+import type { NeonCrossFileRenamePlan } from "../application/neonCrossFileSymbolSweep";
+import type {
+  NeonWorkspaceRenameCapture,
+  NeonWorkspaceRenameOpenDocumentCapture,
+  NeonWorkspaceRenameService,
+} from "../application/neonWorkspaceRenameService";
+import type { WorkspaceTextFileSnapshot } from "../domain/workspace";
+import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
+import type { LanguageServerWorkspaceEdit } from "../domain/languageServerFeatures";
+import type { WorkspaceEditApplicationContext } from "../application/workspaceEditApplication";
+import type { NeonSemanticDiagnostic } from "../domain/neonSemanticDiagnostics";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -20,12 +32,7 @@ type MonacoModel = Monaco.editor.ITextModel;
  * picks the Monaco icon (directive -> keyword, view -> file, component -> field).
  */
 export type BladeCompletionKind =
-  | "directive"
-  | "view"
-  | "component"
-  | "variable"
-  | "helper"
-  | "member";
+  "directive" | "view" | "component" | "variable" | "helper" | "member";
 
 export interface BladeCompletion {
   detail?: string;
@@ -99,10 +106,7 @@ export interface TemplateLanguageProviderRegistry {
       range: PhpCodeActionRange,
       context?: PhpCodeActionContext,
     ): Promise<PhpCodeActionDescriptor[]>;
-    provideCompletions(
-      source: string,
-      position: EditorPosition,
-    ): Promise<BladeCompletion[]>;
+    provideCompletions(source: string, position: EditorPosition): Promise<BladeCompletion[]>;
     provideDefinition(
       source: string,
       offset: number,
@@ -115,10 +119,7 @@ export interface TemplateLanguageProviderRegistry {
       range: PhpCodeActionRange,
       context?: PhpCodeActionContext,
     ): Promise<PhpCodeActionDescriptor[]>;
-    provideCompletions(
-      source: string,
-      position: EditorPosition,
-    ): Promise<LatteCompletion[]>;
+    provideCompletions(source: string, position: EditorPosition): Promise<LatteCompletion[]>;
     provideDefinition(
       source: string,
       offset: number,
@@ -126,19 +127,49 @@ export interface TemplateLanguageProviderRegistry {
     ): Promise<boolean>;
   };
   neon: {
-    provideCompletions(
-      source: string,
-      position: EditorPosition,
-    ): Promise<NeonCompletion[]>;
+    provideCompletions(source: string, position: EditorPosition): Promise<NeonCompletion[]>;
     provideDefinition(
       source: string,
       offset: number,
       request?: NavigationRequest,
     ): Promise<boolean>;
+    provideSemanticDiagnostics?(
+      repository: NeonCrossFileRepository,
+    ): Promise<readonly NeonSemanticDiagnostic[] | null>;
   };
 }
 
+export interface NeonSemanticDiagnosticsRepositoryRequest {
+  readonly activePath: string;
+  readonly isCurrent: () => boolean;
+  readonly openOverlays: ReadonlyMap<string, string>;
+  readonly rootPath: string;
+}
+
+export interface NeonWorkspaceRenameCaptureRequest {
+  readonly activePath: string;
+  readonly activeUri: string;
+  readonly activeVersionId: number;
+  readonly generation: number;
+  readonly isCurrent: () => boolean;
+  readonly openDocuments: readonly NeonWorkspaceRenameOpenDocumentCapture[];
+  readonly plan: Extract<NeonCrossFileRenamePlan, { kind: "ready" }>;
+  readonly rootPath: string;
+}
+
 export interface TemplateLanguageMonacoProviderContext {
+  createNeonSemanticDiagnosticsRepository?(
+    request: NeonSemanticDiagnosticsRepositoryRequest,
+  ): NeonCrossFileRepository | null;
+  createNeonWorkspaceRenameCapture?(
+    request: NeonWorkspaceRenameCaptureRequest,
+  ): Promise<NeonWorkspaceRenameCapture | null>;
+  getNeonWorkspaceRenameService?(): NeonWorkspaceRenameService | null;
+  applyNeonWorkspaceEdit?(
+    edit: LanguageServerWorkspaceEdit,
+    context: WorkspaceEditApplicationContext,
+  ): Promise<WorkspaceEditApplicationDecision>;
+  readNeonWorkspaceFileSnapshot?(path: string): Promise<WorkspaceTextFileSnapshot | null>;
   getActiveDocument(): EditorDocument | null;
   getLargeSmartDocumentPolicy?(): LargeSmartDocumentPolicy;
   getTemplateLanguageProviders(): TemplateLanguageProviderRegistry;

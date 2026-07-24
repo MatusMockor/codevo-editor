@@ -24,13 +24,16 @@ import type {
   WorkspaceTextFileSnapshot,
   WorkspaceEditTransaction,
 } from "../domain/workspace";
-import type {
-  WorkspaceIdentityDescriptorResolver,
-} from "./tauriWorkspaceIdentityGateway";
+import type { WorkspaceIdentityDescriptorResolver } from "./tauriWorkspaceIdentityGateway";
 import { workspaceRelativePathForDescriptor } from "./tauriWorkspaceIdentityGateway";
+import { invokeCreateWorkspaceTextWithContent } from "./tauriWorkspaceMutationIpcContract";
+import {
+  invokeWorkspaceTestDiscoveryIpc,
+  WORKSPACE_TEST_DISCOVERY_IPC_COMMANDS,
+} from "./tauriWorkspaceTestDiscoveryIpcContract";
+import { invokeWorkspaceDirectoryIpc } from "./tauriWorkspaceDirectoryIpcContract";
 
-const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT =
-  "php://managed-phpactor-install-completed";
+const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT = "php://managed-phpactor-install-completed";
 const MANAGED_TYPESCRIPT_INSTALL_COMPLETED_EVENT =
   "typescript://managed-language-server-install-completed";
 import {
@@ -48,9 +51,7 @@ export class TauriWorkspaceGateway
     WorkspaceFileGateway,
     WorkspaceOwnerFileGateway
 {
-  constructor(
-    private readonly workspaceIdentities?: WorkspaceIdentityDescriptorResolver,
-  ) {}
+  constructor(private readonly workspaceIdentities?: WorkspaceIdentityDescriptorResolver) {}
 
   applyWorkspaceEdit(
     rootPath: string,
@@ -63,15 +64,10 @@ export class TauriWorkspaceGateway
         workspaceId: target.workspaceId,
         edit: relativeWorkspaceEdit(
           edit,
-          (path) =>
-            this.optionalTrustedTarget(path, target.workspaceId)?.relativePath ??
-            null,
+          (path) => this.optionalTrustedTarget(path, target.workspaceId)?.relativePath ?? null,
         ),
         skippedPaths: skippedPaths.flatMap((path) => {
-          const relativePath = this.optionalTrustedTarget(
-            path,
-            target.workspaceId,
-          )?.relativePath;
+          const relativePath = this.optionalTrustedTarget(path, target.workspaceId)?.relativePath;
           return relativePath === undefined ? [] : [relativePath];
         }),
       }).then(workspaceEditCount);
@@ -93,26 +89,17 @@ export class TauriWorkspaceGateway
     const target = this.trustedTarget(rootPath);
     const relativeEdit = relativeWorkspaceEdit(
       edit,
-      (path) =>
-        this.optionalTrustedTarget(path, target.workspaceId)?.relativePath ?? null,
+      (path) => this.optionalTrustedTarget(path, target.workspaceId)?.relativePath ?? null,
     );
     const relativeSkippedPaths = skippedPaths.flatMap((path) => {
-      const relativePath = this.optionalTrustedTarget(
-        path,
-        target.workspaceId,
-      )?.relativePath;
+      const relativePath = this.optionalTrustedTarget(path, target.workspaceId)?.relativePath;
       return relativePath === undefined ? [] : [relativePath];
     });
     const relativeExpectedStates = Object.fromEntries(
       Object.entries(expectedStates).map(([path, hash]) => {
-        const relativePath = this.optionalTrustedTarget(
-          path,
-          target.workspaceId,
-        )?.relativePath;
+        const relativePath = this.optionalTrustedTarget(path, target.workspaceId)?.relativePath;
         if (relativePath === undefined) {
-          throw new Error(
-            "A workspace edit precondition is outside the captured workspace.",
-          );
+          throw new Error("A workspace edit precondition is outside the captured workspace.");
         }
         return [relativePath, hash];
       }),
@@ -151,17 +138,41 @@ export class TauriWorkspaceGateway
 
   createDirectory(path: string): Promise<void> {
     const target = this.trustedTarget(path);
-    return invoke<WorkspaceMutationResult>("workspace_create_directory", target).then(assertMutationSucceeded);
+    return invoke<WorkspaceMutationResult>("workspace_create_directory", target).then(
+      assertMutationSucceeded,
+    );
+  }
+
+  createDirectoryForWorkspace(workspaceId: string, path: string): Promise<void> {
+    const target = this.ownerTarget(workspaceId, path);
+    return invoke<WorkspaceMutationResult>("workspace_create_directory", target).then(
+      assertMutationSucceeded,
+    );
+  }
+
+  createTextFileWithContentForWorkspace(
+    workspaceId: string,
+    path: string,
+    content: string,
+  ): Promise<WorkspaceWriteResult> {
+    return invokeCreateWorkspaceTextWithContent(invoke, {
+      ...this.ownerTarget(workspaceId, path),
+      content,
+    });
   }
 
   createTextFile(path: string): Promise<void> {
     const target = this.trustedTarget(path);
-    return invoke<WorkspaceMutationResult>("workspace_create_text_file", target).then(assertMutationSucceeded);
+    return invoke<WorkspaceMutationResult>("workspace_create_text_file", target).then(
+      assertMutationSucceeded,
+    );
   }
 
   deletePath(path: string): Promise<void> {
     const target = this.trustedTarget(path);
-    return invoke<WorkspaceMutationResult>("workspace_delete_path", target).then(assertMutationSucceeded);
+    return invoke<WorkspaceMutationResult>("workspace_delete_path", target).then(
+      assertMutationSucceeded,
+    );
   }
 
   detectPhpTools(workspaceRoot: string | null): Promise<PhpToolAvailability> {
@@ -209,11 +220,27 @@ export class TauriWorkspaceGateway
     const target = this.optionalTrustedTarget(path);
     if (target) {
       return invoke<DescriptorFileEntry[]>("workspace_read_directory", target).then((entries) =>
-        entries.map((entry) => ({ name: entry.name, kind: entry.kind, path: joinWorkspacePath(path, entry.relativePath) })),
+        entries.map((entry) => ({
+          name: entry.name,
+          kind: entry.kind,
+          path: joinWorkspacePath(path, entry.relativePath),
+        })),
       );
     }
 
     return invoke<FileEntry[]>("read_directory", { path });
+  }
+
+  readDirectoryBounded(path: string, maxEntries: number) {
+    const target = this.trustedTarget(path);
+    return invokeWorkspaceDirectoryIpc(invoke, { ...target, maxEntries }).then((result) => ({
+      entries: result.entries.map((entry) => ({
+        name: entry.name,
+        kind: entry.kind,
+        path: joinWorkspacePath(path, entry.relativePath),
+      })),
+      truncated: result.truncated,
+    }));
   }
 
   async readImageFile(path: string): Promise<WorkspaceImageFile> {
@@ -223,6 +250,15 @@ export class TauriWorkspaceGateway
 
   readTextFile(path: string): Promise<string> {
     return this.readTextFileSnapshot(path).then((snapshot) => snapshot.content);
+  }
+
+  readTextFileBounded(path: string, maxBytes: number) {
+    const target = this.trustedTarget(path);
+    return invokeWorkspaceTestDiscoveryIpc(
+      invoke,
+      WORKSPACE_TEST_DISCOVERY_IPC_COMMANDS.readBounded,
+      { ...target, maxBytes },
+    );
   }
 
   readTextFileSnapshot(path: string): Promise<WorkspaceTextFileSnapshot> {
@@ -252,15 +288,18 @@ export class TauriWorkspaceGateway
     }).then(assertMutationSucceeded);
   }
 
-  searchFiles(
-    root: string,
-    query: string,
-    limit: number,
-  ): Promise<FileSearchResult[]> {
+  searchFiles(root: string, query: string, limit: number): Promise<FileSearchResult[]> {
     const target = this.optionalTrustedTarget(root);
     if (target) {
-      return invoke<DescriptorFileSearchResult[]>("workspace_search_files", { ...target, query, limit }).then((results) =>
-        results.map((result) => ({ ...result, path: joinWorkspacePath(root, result.relativePath) })),
+      return invoke<DescriptorFileSearchResult[]>("workspace_search_files", {
+        ...target,
+        query,
+        limit,
+      }).then((results) =>
+        results.map((result) => ({
+          ...result,
+          path: joinWorkspacePath(root, result.relativePath),
+        })),
       );
     }
 
@@ -275,8 +314,16 @@ export class TauriWorkspaceGateway
   ): Promise<TextSearchResult[]> {
     const target = this.optionalTrustedTarget(root);
     if (target) {
-      return invoke<DescriptorTextSearchResult[]>("workspace_search_text", { ...target, query, limit, options: options ?? null }).then((results) =>
-        results.map((result) => ({ ...result, path: joinWorkspacePath(root, result.relativePath) })),
+      return invoke<DescriptorTextSearchResult[]>("workspace_search_text", {
+        ...target,
+        query,
+        limit,
+        options: options ?? null,
+      }).then((results) =>
+        results.map((result) => ({
+          ...result,
+          path: joinWorkspacePath(root, result.relativePath),
+        })),
       );
     }
 
@@ -335,9 +382,7 @@ export class TauriWorkspaceGateway
   ): Promise<WorkspaceWriteResult> {
     const target = this.optionalTrustedTarget(path, workspaceId);
     if (!target) {
-      throw new Error(
-        "The requested file does not belong to the captured workspace.",
-      );
+      throw new Error("The requested file does not belong to the captured workspace.");
     }
 
     return invoke<WorkspaceWriteResult>("workspace_save_text_file", {
@@ -345,6 +390,14 @@ export class TauriWorkspaceGateway
       content,
       expectedRevision,
     });
+  }
+
+  private ownerTarget(workspaceId: string, path: string): TrustedWorkspaceTarget {
+    const target = this.optionalTrustedTarget(path, workspaceId);
+    if (!target) {
+      throw new Error("The requested file does not belong to the captured workspace.");
+    }
+    return target;
   }
 
   private trustedTarget(path: string): TrustedWorkspaceTarget {
@@ -358,10 +411,7 @@ export class TauriWorkspaceGateway
     );
   }
 
-  private optionalTrustedTarget(
-    path: string,
-    workspaceId?: string,
-  ): TrustedWorkspaceTarget | null {
+  private optionalTrustedTarget(path: string, workspaceId?: string): TrustedWorkspaceTarget | null {
     const match = this.workspaceIdentities?.matchForPath?.(path, workspaceId);
     if (match) {
       return {
@@ -411,9 +461,28 @@ type DescriptorReplaceFile = Omit<ReplaceInPathResult["files"][number], "path">;
 type DescriptorReplaceFailure = { relativePath: string; message: string };
 type DescriptorReplaceResult =
   | { status: "success"; files: DescriptorReplaceFile[]; totalReplacements: number }
-  | { status: "conflict"; files: DescriptorReplaceFile[]; totalReplacements: number; conflicts: DescriptorReplaceFailure[]; message: string }
-  | { status: "partial"; files: DescriptorReplaceFile[]; totalReplacements: number; conflicts: DescriptorReplaceFailure[]; errors: DescriptorReplaceFailure[]; message: string }
-  | { status: "error"; files: DescriptorReplaceFile[]; totalReplacements: number; errors: DescriptorReplaceFailure[]; message: string };
+  | {
+      status: "conflict";
+      files: DescriptorReplaceFile[];
+      totalReplacements: number;
+      conflicts: DescriptorReplaceFailure[];
+      message: string;
+    }
+  | {
+      status: "partial";
+      files: DescriptorReplaceFile[];
+      totalReplacements: number;
+      conflicts: DescriptorReplaceFailure[];
+      errors: DescriptorReplaceFailure[];
+      message: string;
+    }
+  | {
+      status: "error";
+      files: DescriptorReplaceFile[];
+      totalReplacements: number;
+      errors: DescriptorReplaceFailure[];
+      message: string;
+    };
 type WorkspaceEditResult = {
   status: "success" | "conflict" | "partial" | "error" | "notFound";
   appliedCount: number;
@@ -438,19 +507,23 @@ function relativeWorkspaceEdit(
   edit: LanguageServerWorkspaceEdit,
   relativePathForPath: (path: string) => string | null,
 ): LanguageServerWorkspaceEdit {
-  const changes = Object.fromEntries(Object.entries(edit.changes).flatMap(([uri, edits]) => {
-    const relativePath = relativePathFromUri(relativePathForPath, uri);
-    return relativePath === null ? [] : [[relativePath, edits]];
-  }));
+  const changes = Object.fromEntries(
+    Object.entries(edit.changes).flatMap(([uri, edits]) => {
+      const relativePath = relativePathFromUri(relativePathForPath, uri);
+      return relativePath === null ? [] : [[relativePath, edits]];
+    }),
+  );
   const fileOperations = edit.fileOperations?.flatMap((operation) => {
     const relativeOperation = relativeFileOperation(relativePathForPath, operation);
     return relativeOperation ? [relativeOperation] : [];
   });
   const documentVersions = edit.documentVersions
-    ? Object.fromEntries(Object.entries(edit.documentVersions).flatMap(([uri, version]) => {
-        const relativePath = relativePathFromUri(relativePathForPath, uri);
-        return relativePath === null ? [] : [[relativePath, version]];
-      }))
+    ? Object.fromEntries(
+        Object.entries(edit.documentVersions).flatMap(([uri, version]) => {
+          const relativePath = relativePathFromUri(relativePathForPath, uri);
+          return relativePath === null ? [] : [[relativePath, version]];
+        }),
+      )
     : undefined;
   return { ...edit, changes, documentVersions, fileOperations };
 }
@@ -479,11 +552,22 @@ function relativePathFromUri(
 }
 
 function mapReplaceResult(root: string, result: DescriptorReplaceResult): ReplaceInPathResult {
-  const files = result.files.map((file) => ({ ...file, path: joinWorkspacePath(root, file.relativePath) }));
+  const files = result.files.map((file) => ({
+    ...file,
+    path: joinWorkspacePath(root, file.relativePath),
+  }));
   if (result.status === "success") return { ...result, files };
-  const mapFailures = (items: DescriptorReplaceFailure[]) => items.map((item) => ({ ...item, path: joinWorkspacePath(root, item.relativePath) }));
-  if (result.status === "conflict") return { ...result, files, conflicts: mapFailures(result.conflicts) };
-  if (result.status === "partial") return { ...result, files, conflicts: mapFailures(result.conflicts), errors: mapFailures(result.errors) };
+  const mapFailures = (items: DescriptorReplaceFailure[]) =>
+    items.map((item) => ({ ...item, path: joinWorkspacePath(root, item.relativePath) }));
+  if (result.status === "conflict")
+    return { ...result, files, conflicts: mapFailures(result.conflicts) };
+  if (result.status === "partial")
+    return {
+      ...result,
+      files,
+      conflicts: mapFailures(result.conflicts),
+      errors: mapFailures(result.errors),
+    };
   return { ...result, files, errors: mapFailures(result.errors) };
 }
 

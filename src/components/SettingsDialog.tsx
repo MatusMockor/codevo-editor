@@ -1,13 +1,6 @@
-import { Search, Settings2, TriangleAlert, X } from "lucide-react";
+import { Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  defaultShortcutForCommand,
-  findKeymapConflicts,
-  keymapCommands,
-  normalizeShortcutInput,
-  shortcutFromKeyboardEvent,
-  type KeymapCommandId,
-} from "../domain/keymap";
+import { normalizeShortcutInput } from "../domain/keymap";
 import {
   appThemeOptions,
   maxEditorFontSize,
@@ -40,6 +33,7 @@ import {
   normalizeGitDirectoryMappings,
 } from "../domain/gitRepositoryMapping";
 import type { UserSnippet } from "../domain/snippets";
+import { snippetLanguageOptions } from "../domain/snippetLanguageOptions";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
 import type {
@@ -48,6 +42,12 @@ import type {
   PhpToolAvailability,
   ToolLocation,
 } from "../domain/workspace";
+import {
+  boundedPositiveIntegerInputValue,
+  newUserSnippet,
+  settingsDialogSections,
+} from "./settingsDialogModel";
+import { KeymapSettingsPanel } from "./KeymapSettingsPanel";
 
 export interface SettingsSaveInput {
   appSettings: AppSettings;
@@ -73,6 +73,7 @@ interface SettingsDialogProps {
   workspaceTrust: WorkspaceTrustState | null;
   onClose(): void;
   onOpenJavaScriptTypeScriptServiceLog(): Promise<void>;
+  onOpenNodeLaunchConfigurations?(): void;
   onRestartJavaScriptTypeScriptService(): Promise<void>;
   onSave(input: SettingsSaveInput): Promise<void>;
 }
@@ -81,39 +82,6 @@ const emptySystemFontGateway: SystemFontGateway = {
   listMonospaceFontFamilies: async () => [],
 };
 
-const sections: Array<{ id: SettingsSection; label: string }> = [
-  { id: "general", label: "General" },
-  { id: "keymap", label: "Keymap" },
-  { id: "php", label: "PHP" },
-  { id: "git", label: "Directory Mappings" },
-  { id: "index", label: "Index" },
-  { id: "snippets", label: "Snippets" },
-  { id: "appearance", label: "Appearance" },
-];
-
-const newUserSnippet = (): UserSnippet => ({
-  prefix: "",
-  body: "",
-  description: "",
-  languages: ["php"],
-});
-
-function boundedPositiveIntegerInputValue(
-  value: string,
-  min: number,
-  max: number,
-): number | null {
-  const numericValue = Number(value);
-
-  if (!Number.isFinite(numericValue) || numericValue < 1) {
-    return null;
-  }
-
-  const rounded = Math.floor(numericValue);
-
-  return Math.min(Math.max(rounded, min), max);
-}
-
 export function SettingsDialog({
   appSettings,
   gitDetectedRepositoryMappings = [],
@@ -121,6 +89,7 @@ export function SettingsDialog({
   isOpen,
   onClose,
   onOpenJavaScriptTypeScriptServiceLog,
+  onOpenNodeLaunchConfigurations = () => undefined,
   onRestartJavaScriptTypeScriptService,
   onSave,
   phpTools,
@@ -130,10 +99,8 @@ export function SettingsDialog({
   workspaceSettings,
   workspaceTrust,
 }: SettingsDialogProps) {
-  const [activeSection, setActiveSection] =
-    useState<SettingsSection>("general");
-  const [draftAppSettings, setDraftAppSettings] =
-    useState<AppSettings>(appSettings);
+  const [activeSection, setActiveSection] = useState<SettingsSection>("general");
+  const [draftAppSettings, setDraftAppSettings] = useState<AppSettings>(appSettings);
   const [draftWorkspaceSettings, setDraftWorkspaceSettings] =
     useState<WorkspaceSettings>(workspaceSettings);
   const [draftTrusted, setDraftTrusted] = useState(false);
@@ -162,9 +129,7 @@ export function SettingsDialog({
     draftAppSettingsRef.current = appSettings;
     draftWorkspaceSettingsRef.current = workspaceSettings;
     draftTrustedRef.current = Boolean(workspaceTrust?.trusted);
-    setIgnorePatternsText(
-      settingsIgnorePatternsText(workspaceSettings.extraIgnorePatterns),
-    );
+    setIgnorePatternsText(settingsIgnorePatternsText(workspaceSettings.extraIgnorePatterns));
   }, [appSettings, initialSection, isOpen, workspaceSettings, workspaceTrust]);
 
   useEffect(() => {
@@ -174,7 +139,7 @@ export function SettingsDialog({
   }, [initialSection, isOpen]);
 
   const selectedSectionLabel = useMemo(() => {
-    const section = sections.find((item) => item.id === activeSection);
+    const section = settingsDialogSections.find((item) => item.id === activeSection);
     return section?.label || "Settings";
   }, [activeSection]);
 
@@ -185,11 +150,8 @@ export function SettingsDialog({
   const saveDraft = (input: Partial<SettingsSaveInput>) => {
     void onSave({
       appSettings: input.appSettings ?? draftAppSettingsRef.current,
-      trusted: hasWorkspace
-        ? input.trusted ?? draftTrustedRef.current
-        : null,
-      workspaceSettings:
-        input.workspaceSettings ?? draftWorkspaceSettingsRef.current,
+      trusted: hasWorkspace ? (input.trusted ?? draftTrustedRef.current) : null,
+      workspaceSettings: input.workspaceSettings ?? draftWorkspaceSettingsRef.current,
     }).catch(() => undefined);
   };
 
@@ -236,13 +198,11 @@ export function SettingsDialog({
 
           <div className="settings-content">
             <nav aria-label="Settings sections" className="settings-nav">
-              {sections.map((section) => (
+              {settingsDialogSections.map((section) => (
                 <button
                   aria-selected={activeSection === section.id}
                   className={
-                    activeSection === section.id
-                      ? "settings-nav-item active"
-                      : "settings-nav-item"
+                    activeSection === section.id ? "settings-nav-item active" : "settings-nav-item"
                   }
                   key={section.id}
                   onClick={() => setActiveSection(section.id)}
@@ -253,11 +213,7 @@ export function SettingsDialog({
               ))}
             </nav>
 
-            <div
-              aria-label={selectedSectionLabel}
-              className="settings-section"
-              role="tabpanel"
-            >
+            <div aria-label={selectedSectionLabel} className="settings-section" role="tabpanel">
               {activeSection === "general" ? (
                 <GeneralSettings
                   appSettings={draftAppSettings}
@@ -269,9 +225,7 @@ export function SettingsDialog({
                       runtimePolicy,
                     })
                   }
-                  onChangeTerminalShellIntegrationEnabled={(
-                    terminalShellIntegrationEnabled,
-                  ) =>
+                  onChangeTerminalShellIntegrationEnabled={(terminalShellIntegrationEnabled) =>
                     updateAppSettings({
                       ...draftAppSettingsRef.current,
                       terminalShellIntegrationEnabled,
@@ -344,17 +298,13 @@ export function SettingsDialog({
                       optimizeImportsOnSave,
                     })
                   }
-                  onChangeJavaScriptTypeScriptService={(
-                    javaScriptTypeScriptService,
-                  ) =>
+                  onChangeJavaScriptTypeScriptService={(javaScriptTypeScriptService) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptService,
                     })
                   }
-                  onChangeJavaScriptTypeScriptAutoImports={(
-                    javaScriptTypeScriptAutoImports,
-                  ) =>
+                  onChangeJavaScriptTypeScriptAutoImports={(javaScriptTypeScriptAutoImports) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptAutoImports,
@@ -368,9 +318,7 @@ export function SettingsDialog({
                       javaScriptTypeScriptAutomaticTypeAcquisition,
                     })
                   }
-                  onChangeJavaScriptTypeScriptCodeLens={(
-                    javaScriptTypeScriptCodeLens,
-                  ) =>
+                  onChangeJavaScriptTypeScriptCodeLens={(javaScriptTypeScriptCodeLens) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptCodeLens,
@@ -416,17 +364,13 @@ export function SettingsDialog({
                       javaScriptTypeScriptAddMissingImportsOnSave,
                     })
                   }
-                  onChangeJavaScriptTypeScriptInlayHints={(
-                    javaScriptTypeScriptInlayHints,
-                  ) =>
+                  onChangeJavaScriptTypeScriptInlayHints={(javaScriptTypeScriptInlayHints) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptInlayHints,
                     })
                   }
-                  onChangeJavaScriptTypeScriptFixAllOnSave={(
-                    javaScriptTypeScriptFixAllOnSave,
-                  ) =>
+                  onChangeJavaScriptTypeScriptFixAllOnSave={(javaScriptTypeScriptFixAllOnSave) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptFixAllOnSave,
@@ -464,17 +408,13 @@ export function SettingsDialog({
                       javaScriptTypeScriptRemoveUnusedOnSave,
                     })
                   }
-                  onChangeJavaScriptTypeScriptValidation={(
-                    javaScriptTypeScriptValidation,
-                  ) =>
+                  onChangeJavaScriptTypeScriptValidation={(javaScriptTypeScriptValidation) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptValidation,
                     })
                   }
-                  onChangeJavaScriptTypeScriptVersion={(
-                    javaScriptTypeScriptVersion,
-                  ) =>
+                  onChangeJavaScriptTypeScriptVersion={(javaScriptTypeScriptVersion) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       javaScriptTypeScriptVersion,
@@ -496,12 +436,9 @@ export function SettingsDialog({
                     })
                   }
                   onChangeTrusted={updateTrusted}
-                  onRestartJavaScriptTypeScriptService={
-                    onRestartJavaScriptTypeScriptService
-                  }
-                  onOpenJavaScriptTypeScriptServiceLog={
-                    onOpenJavaScriptTypeScriptServiceLog
-                  }
+                  onRestartJavaScriptTypeScriptService={onRestartJavaScriptTypeScriptService}
+                  onOpenJavaScriptTypeScriptServiceLog={onOpenJavaScriptTypeScriptServiceLog}
+                  onOpenNodeLaunchConfigurations={onOpenNodeLaunchConfigurations}
                   workspaceRoot={workspaceRoot}
                   workspaceSettings={draftWorkspaceSettings}
                 />
@@ -564,12 +501,8 @@ export function SettingsDialog({
               {activeSection === "git" ? (
                 <GitMappingsSettings
                   detectedMappings={gitDetectedRepositoryMappings}
-                  gitDirectoryMappings={
-                    draftWorkspaceSettings.gitDirectoryMappings
-                  }
-                  gitDirectoryMappingsAuto={
-                    draftWorkspaceSettings.gitDirectoryMappingsAuto
-                  }
+                  gitDirectoryMappings={draftWorkspaceSettings.gitDirectoryMappings}
+                  gitDirectoryMappingsAuto={draftWorkspaceSettings.gitDirectoryMappingsAuto}
                   hasWorkspace={hasWorkspace}
                   onChangeGitDirectoryMappings={(gitDirectoryMappings) =>
                     updateWorkspaceSettings({
@@ -577,9 +510,7 @@ export function SettingsDialog({
                       gitDirectoryMappings,
                     })
                   }
-                  onChangeGitDirectoryMappingsAuto={(
-                    gitDirectoryMappingsAuto,
-                  ) =>
+                  onChangeGitDirectoryMappingsAuto={(gitDirectoryMappingsAuto) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
                       gitDirectoryMappingsAuto,
@@ -640,8 +571,7 @@ export function SettingsDialog({
                   onChangeEditorFontFamily={(editorFontFamily) =>
                     updateAppSettings({
                       ...draftAppSettingsRef.current,
-                      editorFontFamily:
-                        normalizeEditorFontFamily(editorFontFamily),
+                      editorFontFamily: normalizeEditorFontFamily(editorFontFamily),
                     })
                   }
                   onChangeEditorFontLigatures={(editorFontLigatures) =>
@@ -701,16 +631,12 @@ interface GeneralSettingsProps {
   onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
   onChangePrettierFormatOnSave(enabled: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
-  onChangeJavaScriptTypeScriptService(
-    mode: JavaScriptTypeScriptServiceMode,
-  ): void;
+  onChangeJavaScriptTypeScriptService(mode: JavaScriptTypeScriptServiceMode): void;
   onChangeJavaScriptTypeScriptAutoImports(enabled: boolean): void;
   onChangeJavaScriptTypeScriptAutomaticTypeAcquisition(enabled: boolean): void;
   onChangeJavaScriptTypeScriptAddMissingImportsOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
-  onChangeJavaScriptTypeScriptReferencesCodeLensOnAllFunctions(
-    enabled: boolean,
-  ): void;
+  onChangeJavaScriptTypeScriptReferencesCodeLensOnAllFunctions(enabled: boolean): void;
   onChangeJavaScriptTypeScriptCompleteFunctionCalls(enabled: boolean): void;
   onChangeJavaScriptTypeScriptFixAllOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptImportModuleSpecifierPreference(
@@ -727,18 +653,14 @@ interface GeneralSettingsProps {
   ): void;
   onChangeJavaScriptTypeScriptRemoveUnusedOnSave(enabled: boolean): void;
   onChangeJavaScriptTypeScriptValidation(enabled: boolean): void;
-  onChangeJavaScriptTypeScriptVersion(
-    preference: JavaScriptTypeScriptVersionPreference,
-  ): void;
+  onChangeJavaScriptTypeScriptVersion(preference: JavaScriptTypeScriptVersionPreference): void;
   onChangeRevealActiveFileInTree(enabled: boolean): void;
   onChangeRuntimePolicy(policy: BackgroundRuntimePolicy): void;
   onChangeTerminalShellIntegrationEnabled(enabled: boolean): void;
-  onChangeStatusBarVisibility(
-    key: keyof StatusBarItemVisibility,
-    visible: boolean,
-  ): void;
+  onChangeStatusBarVisibility(key: keyof StatusBarItemVisibility, visible: boolean): void;
   onChangeTrusted(trusted: boolean): void;
   onOpenJavaScriptTypeScriptServiceLog(): Promise<void>;
+  onOpenNodeLaunchConfigurations(): void;
   onRestartJavaScriptTypeScriptService(): Promise<void>;
 }
 
@@ -780,6 +702,7 @@ function GeneralSettings({
   onChangeStatusBarVisibility,
   onChangeTrusted,
   onOpenJavaScriptTypeScriptServiceLog,
+  onOpenNodeLaunchConfigurations,
   onRestartJavaScriptTypeScriptService,
   workspaceRoot,
   workspaceSettings,
@@ -796,9 +719,7 @@ function GeneralSettings({
         <select
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeIntelligenceMode(
-              event.currentTarget.value as IntelligenceMode,
-            )
+            onChangeIntelligenceMode(event.currentTarget.value as IntelligenceMode)
           }
           value={workspaceSettings.intelligenceMode}
         >
@@ -838,9 +759,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.eslintAnalyseOnSave}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeEslintAnalyseOnSave(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeEslintAnalyseOnSave(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>ESLint analyse on save</span>
@@ -850,9 +769,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.eslintFixOnSave}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeEslintFixOnSave(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeEslintFixOnSave(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>ESLint fix on save</span>
@@ -862,9 +779,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.prettierFormatOnSave}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangePrettierFormatOnSave(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangePrettierFormatOnSave(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Prettier format on save</span>
@@ -876,8 +791,7 @@ function GeneralSettings({
           disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeJavaScriptTypeScriptVersion(
-              event.currentTarget
-                .value as JavaScriptTypeScriptVersionPreference,
+              event.currentTarget.value as JavaScriptTypeScriptVersionPreference,
             )
           }
           value={workspaceSettings.javaScriptTypeScriptVersion}
@@ -891,9 +805,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.javaScriptTypeScriptValidation}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeJavaScriptTypeScriptValidation(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeJavaScriptTypeScriptValidation(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>JavaScript/TypeScript validation</span>
@@ -903,9 +815,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.javaScriptTypeScriptAutoImports}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeJavaScriptTypeScriptAutoImports(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeJavaScriptTypeScriptAutoImports(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>JavaScript/TypeScript auto imports</span>
@@ -917,13 +827,10 @@ function GeneralSettings({
           disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeJavaScriptTypeScriptImportModuleSpecifierPreference(
-              event.currentTarget
-                .value as JavaScriptTypeScriptImportModuleSpecifierPreference,
+              event.currentTarget.value as JavaScriptTypeScriptImportModuleSpecifierPreference,
             )
           }
-          value={
-            workspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference
-          }
+          value={workspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference}
         >
           <option value="shortest">Shortest</option>
           <option value="relative">Relative</option>
@@ -938,8 +845,7 @@ function GeneralSettings({
           disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeJavaScriptTypeScriptImportModuleSpecifierEnding(
-              event.currentTarget
-                .value as JavaScriptTypeScriptImportModuleSpecifierEnding,
+              event.currentTarget.value as JavaScriptTypeScriptImportModuleSpecifierEnding,
             )
           }
           value={workspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding}
@@ -973,9 +879,7 @@ function GeneralSettings({
           checked={workspaceSettings.javaScriptTypeScriptPreferTypeOnlyAutoImports}
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeJavaScriptTypeScriptPreferTypeOnlyAutoImports(
-              event.currentTarget.checked,
-            )
+            onChangeJavaScriptTypeScriptPreferTypeOnlyAutoImports(event.currentTarget.checked)
           }
           type="checkbox"
         />
@@ -984,14 +888,10 @@ function GeneralSettings({
 
       <label className="settings-toggle">
         <input
-          checked={
-            workspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition
-          }
+          checked={workspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition}
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeJavaScriptTypeScriptAutomaticTypeAcquisition(
-              event.currentTarget.checked,
-            )
+            onChangeJavaScriptTypeScriptAutomaticTypeAcquisition(event.currentTarget.checked)
           }
           type="checkbox"
         />
@@ -1002,9 +902,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.javaScriptTypeScriptInlayHints}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeJavaScriptTypeScriptInlayHints(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeJavaScriptTypeScriptInlayHints(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>JavaScript/TypeScript inlay hints</span>
@@ -1014,9 +912,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.javaScriptTypeScriptCodeLens}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeJavaScriptTypeScriptCodeLens(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeJavaScriptTypeScriptCodeLens(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>JavaScript/TypeScript CodeLens</span>
@@ -1024,9 +920,7 @@ function GeneralSettings({
 
       <label className="settings-toggle">
         <input
-          checked={
-            workspaceSettings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions
-          }
+          checked={workspaceSettings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions}
           disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeJavaScriptTypeScriptReferencesCodeLensOnAllFunctions(
@@ -1043,9 +937,7 @@ function GeneralSettings({
           checked={workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls}
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeJavaScriptTypeScriptCompleteFunctionCalls(
-              event.currentTarget.checked,
-            )
+            onChangeJavaScriptTypeScriptCompleteFunctionCalls(event.currentTarget.checked)
           }
           type="checkbox"
         />
@@ -1057,9 +949,7 @@ function GeneralSettings({
           checked={workspaceSettings.javaScriptTypeScriptOrganizeImportsOnSave}
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeJavaScriptTypeScriptOrganizeImportsOnSave(
-              event.currentTarget.checked,
-            )
+            onChangeJavaScriptTypeScriptOrganizeImportsOnSave(event.currentTarget.checked)
           }
           type="checkbox"
         />
@@ -1071,9 +961,7 @@ function GeneralSettings({
           checked={workspaceSettings.javaScriptTypeScriptRemoveUnusedOnSave}
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeJavaScriptTypeScriptRemoveUnusedOnSave(
-              event.currentTarget.checked,
-            )
+            onChangeJavaScriptTypeScriptRemoveUnusedOnSave(event.currentTarget.checked)
           }
           type="checkbox"
         />
@@ -1085,9 +973,7 @@ function GeneralSettings({
           checked={workspaceSettings.javaScriptTypeScriptAddMissingImportsOnSave}
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeJavaScriptTypeScriptAddMissingImportsOnSave(
-              event.currentTarget.checked,
-            )
+            onChangeJavaScriptTypeScriptAddMissingImportsOnSave(event.currentTarget.checked)
           }
           type="checkbox"
         />
@@ -1099,9 +985,7 @@ function GeneralSettings({
           checked={workspaceSettings.javaScriptTypeScriptFixAllOnSave}
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangeJavaScriptTypeScriptFixAllOnSave(
-              event.currentTarget.checked,
-            )
+            onChangeJavaScriptTypeScriptFixAllOnSave(event.currentTarget.checked)
           }
           type="checkbox"
         />
@@ -1109,11 +993,11 @@ function GeneralSettings({
       </label>
 
       <div className="settings-actions">
+        <button disabled={!hasWorkspace} onClick={onOpenNodeLaunchConfigurations} type="button">
+          Edit Node launch configurations
+        </button>
         <button
-          disabled={
-            !hasWorkspace ||
-            workspaceSettings.javaScriptTypeScriptService === "off"
-          }
+          disabled={!hasWorkspace || workspaceSettings.javaScriptTypeScriptService === "off"}
           onClick={() => void onRestartJavaScriptTypeScriptService()}
           type="button"
         >
@@ -1132,9 +1016,7 @@ function GeneralSettings({
         <span>Background IDE engines</span>
         <select
           onChange={(event) =>
-            onChangeRuntimePolicy(
-              event.currentTarget.value as BackgroundRuntimePolicy,
-            )
+            onChangeRuntimePolicy(event.currentTarget.value as BackgroundRuntimePolicy)
           }
           value={appSettings.runtimePolicy}
         >
@@ -1147,9 +1029,7 @@ function GeneralSettings({
       <label className="settings-toggle">
         <input
           checked={appSettings.terminalShellIntegrationEnabled}
-          onChange={(event) =>
-            onChangeTerminalShellIntegrationEnabled(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeTerminalShellIntegrationEnabled(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Terminal shell integration</span>
@@ -1179,9 +1059,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.optimizeImportsOnSave}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeOptimizeImportsOnSave(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeOptimizeImportsOnSave(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Optimize imports on save</span>
@@ -1191,9 +1069,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.formatOnPaste}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeFormatOnPaste(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeFormatOnPaste(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Format on Paste</span>
@@ -1203,9 +1079,7 @@ function GeneralSettings({
         <span>Default tab size</span>
         <select
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeDefaultTabSize(Number(event.currentTarget.value))
-          }
+          onChange={(event) => onChangeDefaultTabSize(Number(event.currentTarget.value))}
           value={workspaceSettings.defaultTabSize}
         >
           {[1, 2, 3, 4, 5, 6, 7, 8].map((tabSize) => (
@@ -1220,9 +1094,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.defaultInsertSpaces}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeDefaultInsertSpaces(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeDefaultInsertSpaces(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Insert spaces by default</span>
@@ -1232,9 +1104,7 @@ function GeneralSettings({
         <input
           checked={workspaceSettings.revealActiveFileInTree}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeRevealActiveFileInTree(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeRevealActiveFileInTree(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Reveal active file in tree</span>
@@ -1258,10 +1128,7 @@ function GeneralSettings({
               checked={workspaceSettings.statusBar[item.key]}
               disabled={!hasWorkspace}
               onChange={(event) =>
-                onChangeStatusBarVisibility(
-                  item.key,
-                  event.currentTarget.checked,
-                )
+                onChangeStatusBarVisibility(item.key, event.currentTarget.checked)
               }
               type="checkbox"
             />
@@ -1291,99 +1158,6 @@ const statusBarItems: Array<{
   { key: "message", label: "Messages" },
 ];
 
-interface KeymapSettingsPanelProps {
-  appSettings: AppSettings;
-  onChangeShortcut(commandId: KeymapCommandId, shortcut: string): void;
-}
-
-function KeymapSettingsPanel({
-  appSettings,
-  onChangeShortcut,
-}: KeymapSettingsPanelProps) {
-  const [filter, setFilter] = useState("");
-
-  const visibleCommands = useMemo(() => {
-    const normalizedFilter = filter.trim().toLowerCase();
-
-    if (!normalizedFilter) {
-      return keymapCommands;
-    }
-
-    return keymapCommands.filter((command) => {
-      const shortcut =
-        appSettings.keymap[command.id] || defaultShortcutForCommand(command.id);
-      const haystack = `${command.label} ${command.category} ${command.id} ${shortcut}`;
-      return haystack.toLowerCase().includes(normalizedFilter);
-    });
-  }, [appSettings.keymap, filter]);
-
-  return (
-    <div className="settings-group">
-      <div className="palette-search keymap-search">
-        <Search aria-hidden="true" size={16} />
-        <input
-          aria-label="Filter shortcuts"
-          onChange={(event) => setFilter(event.currentTarget.value)}
-          placeholder="Filter shortcuts"
-          spellCheck={false}
-          value={filter}
-        />
-      </div>
-
-      {visibleCommands.length === 0 ? (
-        <div className="keymap-empty">No matching shortcuts</div>
-      ) : null}
-
-      {visibleCommands.map((command) => {
-        const conflicts = findKeymapConflicts(appSettings.keymap, command.id);
-
-        return (
-          <label className="settings-field keymap-field" key={command.id}>
-            <span>
-              <strong>{command.label}</strong>
-              <small>{command.category}</small>
-            </span>
-            <input
-              onBlur={(event) =>
-                onChangeShortcut(command.id, event.currentTarget.value)
-              }
-              onChange={(event) =>
-                onChangeShortcut(command.id, event.currentTarget.value)
-              }
-              onKeyDown={(event) => {
-                // "Press the keys" capture (PhpStorm/VS Code keybinding editor
-                // convention): a real chord is bound immediately instead of
-                // requiring the user to type its name out. Everything that is
-                // not a standalone chord falls through (bare taps, Shift-typed
-                // characters like "+" or capitals, Shift+Tab), so Tab/Escape/
-                // Backspace keep their normal behaviour and typing free-form
-                // text into the field still works.
-                const captured = shortcutFromKeyboardEvent(event);
-
-                if (!captured) {
-                  return;
-                }
-
-                event.preventDefault();
-                onChangeShortcut(command.id, captured);
-              }}
-              placeholder={defaultShortcutForCommand(command.id)}
-              spellCheck={false}
-              value={appSettings.keymap[command.id]}
-            />
-            {conflicts.length > 0 ? (
-              <small className="keymap-conflict" role="alert">
-                <TriangleAlert aria-hidden="true" size={12} />
-                Also used by {conflicts.map((conflict) => conflict.label).join(", ")}
-              </small>
-            ) : null}
-          </label>
-        );
-      })}
-    </div>
-  );
-}
-
 interface PhpSettingsProps {
   hasWorkspace: boolean;
   phpTools: PhpToolAvailability | null;
@@ -1393,10 +1167,7 @@ interface PhpSettingsProps {
   onChangePhpInlayHints(enabled: boolean): void;
   onChangePhpstanAnalyseOnSave(enabled: boolean): void;
   onChangePhpVersionOverride(version: string): void;
-  onChangeToolPath(
-    key: "phpactorPath" | "intelephensePath" | "phpstanPath",
-    value: string,
-  ): void;
+  onChangeToolPath(key: "phpactorPath" | "intelephensePath" | "phpstanPath", value: string): void;
 }
 
 function PhpSettings({
@@ -1411,8 +1182,7 @@ function PhpSettings({
   workspaceSettings,
 }: PhpSettingsProps) {
   const detectedPhpVersion = detectedComposerPhpVersion(workspaceDescriptor);
-  const effectivePhpVersion =
-    workspaceSettings.phpVersionOverride || detectedPhpVersion || "Auto";
+  const effectivePhpVersion = workspaceSettings.phpVersionOverride || detectedPhpVersion || "Auto";
 
   return (
     <div className="settings-group">
@@ -1421,9 +1191,7 @@ function PhpSettings({
         <select
           disabled={!hasWorkspace}
           onChange={(event) =>
-            onChangePhpBackend(
-              event.currentTarget.value as PhpBackendPreference,
-            )
+            onChangePhpBackend(event.currentTarget.value as PhpBackendPreference)
           }
           value={workspaceSettings.phpBackend}
         >
@@ -1437,9 +1205,7 @@ function PhpSettings({
         <span>PHP language level override</span>
         <input
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangePhpVersionOverride(event.currentTarget.value)
-          }
+          onChange={(event) => onChangePhpVersionOverride(event.currentTarget.value)}
           placeholder={detectedPhpVersion || "Composer / Auto"}
           value={workspaceSettings.phpVersionOverride || ""}
         />
@@ -1449,9 +1215,7 @@ function PhpSettings({
         <span>PHP engine path</span>
         <input
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeToolPath("phpactorPath", event.currentTarget.value)
-          }
+          onChange={(event) => onChangeToolPath("phpactorPath", event.currentTarget.value)}
           placeholder={detectedToolPath(phpTools?.phpactor)}
           value={workspaceSettings.phpactorPath || ""}
         />
@@ -1461,9 +1225,7 @@ function PhpSettings({
         <span>Intelephense path</span>
         <input
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeToolPath("intelephensePath", event.currentTarget.value)
-          }
+          onChange={(event) => onChangeToolPath("intelephensePath", event.currentTarget.value)}
           placeholder={detectedToolPath(phpTools?.intelephense)}
           value={workspaceSettings.intelephensePath || ""}
         />
@@ -1473,9 +1235,7 @@ function PhpSettings({
         <span>PHPStan path</span>
         <input
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeToolPath("phpstanPath", event.currentTarget.value)
-          }
+          onChange={(event) => onChangeToolPath("phpstanPath", event.currentTarget.value)}
           placeholder="vendor/bin/phpstan / Auto"
           value={workspaceSettings.phpstanPath || ""}
         />
@@ -1485,9 +1245,7 @@ function PhpSettings({
         <input
           checked={workspaceSettings.phpstanAnalyseOnSave}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangePhpstanAnalyseOnSave(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangePhpstanAnalyseOnSave(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>PHPStan analyse on save</span>
@@ -1497,9 +1255,7 @@ function PhpSettings({
         <input
           checked={workspaceSettings.phpInlayHints}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangePhpInlayHints(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangePhpInlayHints(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>PHP inlay hints</span>
@@ -1559,9 +1315,7 @@ function GitMappingsSettings({
   onChangeGitDirectoryMappingsAuto,
 }: GitMappingsSettingsProps) {
   const [draftPath, setDraftPath] = useState("");
-  const manualByKey = new Set(
-    gitDirectoryMappings.map((path) => path.toLowerCase()),
-  );
+  const manualByKey = new Set(gitDirectoryMappings.map((path) => path.toLowerCase()));
   const autoOnlyMappings = detectedMappings.filter(
     (path) => path !== "" && !manualByKey.has(path.toLowerCase()),
   );
@@ -1576,27 +1330,22 @@ function GitMappingsSettings({
   };
 
   const removeMapping = (path: string) => {
-    onChangeGitDirectoryMappings(
-      gitDirectoryMappings.filter((mapping) => mapping !== path),
-    );
+    onChangeGitDirectoryMappings(gitDirectoryMappings.filter((mapping) => mapping !== path));
   };
 
   return (
     <div className="settings-group">
       <p className="settings-hint">
-        Route git operations per directory: a workspace can hold a main
-        repository at its root plus nested package repositories (for example{" "}
-        <code>workbench/lcsk/*</code>). Each file commits and pushes into the
-        repository that owns it.
+        Route git operations per directory: a workspace can hold a main repository at its root plus
+        nested package repositories (for example <code>workbench/lcsk/*</code>). Each file commits
+        and pushes into the repository that owns it.
       </p>
 
       <label className="settings-toggle">
         <input
           checked={gitDirectoryMappingsAuto}
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeGitDirectoryMappingsAuto(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeGitDirectoryMappingsAuto(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Detect repositories automatically</span>
@@ -1732,9 +1481,7 @@ function IndexSettings({
         <span>Extra ignores</span>
         <textarea
           disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangeIgnorePatternsText(event.currentTarget.value)
-          }
+          onChange={(event) => onChangeIgnorePatternsText(event.currentTarget.value)}
           rows={8}
           spellCheck={false}
           value={ignorePatternsText}
@@ -1749,26 +1496,12 @@ function IndexSettings({
   );
 }
 
-export const snippetLanguageOptions: Array<{ id: string; label: string }> = [
-  { id: "php", label: "PHP" },
-  { id: "blade", label: "Blade" },
-  { id: "latte", label: "Latte" },
-  { id: "neon", label: "NEON" },
-  { id: "javascript", label: "JavaScript" },
-  { id: "typescript", label: "TypeScript" },
-  { id: "javascriptreact", label: "JavaScript React" },
-  { id: "typescriptreact", label: "TypeScript React" },
-];
-
 interface SnippetsSettingsProps {
   userSnippets: UserSnippet[];
   onChangeUserSnippets(snippets: UserSnippet[]): void;
 }
 
-function SnippetsSettings({
-  userSnippets,
-  onChangeUserSnippets,
-}: SnippetsSettingsProps) {
+function SnippetsSettings({ userSnippets, onChangeUserSnippets }: SnippetsSettingsProps) {
   const updateSnippetAt = (index: number, patch: Partial<UserSnippet>) => {
     onChangeUserSnippets(
       userSnippets.map((snippet, position) =>
@@ -1778,9 +1511,7 @@ function SnippetsSettings({
   };
 
   const removeSnippetAt = (index: number) => {
-    onChangeUserSnippets(
-      userSnippets.filter((_snippet, position) => position !== index),
-    );
+    onChangeUserSnippets(userSnippets.filter((_snippet, position) => position !== index));
   };
 
   const toggleLanguage = (index: number, language: string, on: boolean) => {
@@ -1795,10 +1526,9 @@ function SnippetsSettings({
   return (
     <div className="settings-group">
       <p className="settings-hint">
-        Live templates expand a typed prefix using Monaco snippet syntax
-        (<code>$1</code>, <code>${"{1:default}"}</code>, <code>$0</code>). User
-        snippets are shared across every project and override a built-in with the
-        same prefix and language.
+        Live templates expand a typed prefix using Monaco snippet syntax (<code>$1</code>,{" "}
+        <code>${"{1:default}"}</code>, <code>$0</code>). User snippets are shared across every
+        project and override a built-in with the same prefix and language.
       </p>
 
       <div className="settings-actions">
@@ -1822,9 +1552,7 @@ function SnippetsSettings({
             <span>Prefix</span>
             <input
               data-snippet-field="prefix"
-              onChange={(event) =>
-                updateSnippetAt(index, { prefix: event.currentTarget.value })
-              }
+              onChange={(event) => updateSnippetAt(index, { prefix: event.currentTarget.value })}
               placeholder="myhelper"
               spellCheck={false}
               value={snippet.prefix}
@@ -1848,9 +1576,7 @@ function SnippetsSettings({
             <span>Body</span>
             <textarea
               data-snippet-field="body"
-              onChange={(event) =>
-                updateSnippetAt(index, { body: event.currentTarget.value })
-              }
+              onChange={(event) => updateSnippetAt(index, { body: event.currentTarget.value })}
               rows={5}
               spellCheck={false}
               value={snippet.body}
@@ -1908,11 +1634,7 @@ function AppearanceSettings({
   const [fontFamilyOptions, setFontFamilyOptions] = useState<string[]>([]);
   const fontFamilyLoadRequestRef = useRef(0);
   const visibleFontFamilyOptions = useMemo(
-    () =>
-      uniqueSortedStrings([
-        ...fontFamilyOptions,
-        appSettings.editorFontFamily,
-      ]),
+    () => uniqueSortedStrings([...fontFamilyOptions, appSettings.editorFontFamily]),
     [appSettings.editorFontFamily, fontFamilyOptions],
   );
 
@@ -1943,9 +1665,7 @@ function AppearanceSettings({
       <label className="settings-field">
         <span>Theme</span>
         <select
-          onChange={(event) =>
-            onChangeTheme(event.currentTarget.value as AppTheme)
-          }
+          onChange={(event) => onChangeTheme(event.currentTarget.value as AppTheme)}
           value={appSettings.theme}
         >
           {appThemeOptions.map((theme) => (
@@ -1959,9 +1679,7 @@ function AppearanceSettings({
       <label className="settings-field">
         <span>Font family</span>
         <select
-          onChange={(event) =>
-            onChangeEditorFontFamily(event.currentTarget.value)
-          }
+          onChange={(event) => onChangeEditorFontFamily(event.currentTarget.value)}
           value={appSettings.editorFontFamily}
         >
           {visibleFontFamilyOptions.map((fontFamily) => (
@@ -1973,10 +1691,7 @@ function AppearanceSettings({
       </label>
 
       <div className="settings-actions">
-        <button
-          onClick={() => void loadInstalledFonts()}
-          type="button"
-        >
+        <button onClick={() => void loadInstalledFonts()} type="button">
           Refresh fonts
         </button>
       </div>
@@ -1986,9 +1701,7 @@ function AppearanceSettings({
         <input
           max={maxEditorFontSize}
           min={minEditorFontSize}
-          onChange={(event) =>
-            onChangeEditorFontSize(event.currentTarget.valueAsNumber)
-          }
+          onChange={(event) => onChangeEditorFontSize(event.currentTarget.valueAsNumber)}
           type="number"
           value={appSettings.editorFontSize}
         />
@@ -1997,9 +1710,7 @@ function AppearanceSettings({
       <label className="settings-toggle">
         <input
           checked={appSettings.editorFontLigatures}
-          onChange={(event) =>
-            onChangeEditorFontLigatures(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeEditorFontLigatures(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Font ligatures</span>
@@ -2008,9 +1719,7 @@ function AppearanceSettings({
       <label className="settings-toggle">
         <input
           checked={appSettings.minimapEnabled === true}
-          onChange={(event) =>
-            onChangeMinimapEnabled(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeMinimapEnabled(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Minimap</span>
@@ -2019,9 +1728,7 @@ function AppearanceSettings({
       <label className="settings-toggle">
         <input
           checked={appSettings.wordWrapEnabled === true}
-          onChange={(event) =>
-            onChangeWordWrapEnabled(event.currentTarget.checked)
-          }
+          onChange={(event) => onChangeWordWrapEnabled(event.currentTarget.checked)}
           type="checkbox"
         />
         <span>Word wrap</span>
@@ -2031,8 +1738,9 @@ function AppearanceSettings({
 }
 
 function uniqueSortedStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
-    .sort((left, right) => left.localeCompare(right));
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort(
+    (left, right) => left.localeCompare(right),
+  );
 }
 
 function detectedToolPath(tool: ToolLocation | null | undefined): string {

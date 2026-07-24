@@ -1,5 +1,5 @@
 import { Play, RefreshCw } from "lucide-react";
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   sortTestCasesFailedFirst,
   testCaseCanNavigate,
@@ -25,6 +25,7 @@ export interface TestResultsPanelCopy {
 }
 
 export interface TestResultsPanelProps {
+  actionsDisabled?: boolean;
   copy: TestResultsPanelCopy;
   error: string | null;
   filter: string | null;
@@ -35,6 +36,8 @@ export interface TestResultsPanelProps {
   result: TestRunOk | null;
   rootPath: string | null;
   unavailable: string | null;
+  headerActions?: ReactNode;
+  supplementalStatus?: ReactNode;
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -52,8 +55,7 @@ const styles: Record<string, CSSProperties> = {
     borderTop: "1px solid var(--border-subtle)",
     display: "grid",
     gap: 8,
-    gridTemplateColumns:
-      "80px minmax(180px, 1fr) minmax(180px, 2fr) 70px 24px",
+    gridTemplateColumns: "80px minmax(180px, 1fr) minmax(180px, 2fr) 70px 24px",
     padding: "6px 10px 6px 26px",
   },
   chip: {
@@ -97,6 +99,7 @@ const statusFilters: { label: string; value: StatusFilter }[] = [
 ];
 
 export function TestResultsPanel({
+  actionsDisabled = false,
   copy,
   error,
   filter,
@@ -107,7 +110,10 @@ export function TestResultsPanel({
   result,
   rootPath,
   unavailable,
+  headerActions,
+  supplementalStatus,
 }: TestResultsPanelProps) {
+  const runDisabled = isRunning || actionsDisabled;
   const [filterState, setFilterState] = useState<{
     result: TestRunOk | null;
     status: StatusFilter;
@@ -119,8 +125,7 @@ export function TestResultsPanel({
         .sort(
           (left, right) =>
             testStatusRank(testSuiteStatus(left.suite)) -
-              testStatusRank(testSuiteStatus(right.suite)) ||
-            left.index - right.index,
+              testStatusRank(testSuiteStatus(right.suite)) || left.index - right.index,
         )
         .map(({ suite }) => ({
           cases: sortTestCasesFailedFirst(suite.cases).filter((testCase) =>
@@ -136,18 +141,14 @@ export function TestResultsPanel({
       <div style={styles.header}>
         <strong>{copy.title}</strong>
         {filter ? (
-          <span
-            data-testid={`${copy.testIdPrefix}-filter`}
-            style={styles.filtered}
-            title={filter}
-          >
+          <span data-testid={`${copy.testIdPrefix}-filter`} style={styles.filtered} title={filter}>
             Filtered: {filter}
           </span>
         ) : null}
         {filter ? (
           <button
             aria-label={copy.runAllLabel}
-            disabled={isRunning}
+            disabled={runDisabled}
             onClick={onRun}
             style={styles.action}
             type="button"
@@ -155,6 +156,7 @@ export function TestResultsPanel({
             Run all
           </button>
         ) : null}
+        {headerActions}
         {result
           ? statusFilters.map(({ label, value }) => (
               <button
@@ -181,7 +183,7 @@ export function TestResultsPanel({
         )}
         <button
           aria-label={copy.runLabel}
-          disabled={isRunning}
+          disabled={runDisabled}
           onClick={onRun}
           style={styles.action}
           type="button"
@@ -193,14 +195,13 @@ export function TestResultsPanel({
           )}
         </button>
       </div>
+      {supplementalStatus}
       {isRunning ? (
         <div role="status" style={styles.message}>
           {copy.runningMessage}
         </div>
       ) : null}
-      {!isRunning && unavailable ? (
-        <div style={styles.message}>{unavailable}</div>
-      ) : null}
+      {!isRunning && unavailable ? <div style={styles.message}>{unavailable}</div> : null}
       {!isRunning && error ? (
         <div role="alert" style={styles.message}>
           {error}
@@ -219,23 +220,16 @@ export function TestResultsPanel({
         const suiteStatus = testSuiteStatus(suite);
 
         return (
-          <section
-            key={`${suite.name ?? "suite"}:${suiteIndex}`}
-            style={styles.suite}
-          >
+          <section key={`${suite.name ?? "suite"}:${suiteIndex}`} style={styles.suite}>
             <div style={styles.suiteHeader}>
               <StatusBadge status={suiteStatus} />
               <strong data-testid={`${copy.testIdPrefix}-suite-name`}>
                 {suite.name ?? "Unnamed suite"}
               </strong>
-              <span style={styles.muted}>
-                {(suite.tests ?? 0).toLocaleString("en-US")} tests
-              </span>
+              <span style={styles.muted}>{(suite.tests ?? 0).toLocaleString("en-US")} tests</span>
             </div>
             {cases.map((testCase, caseIndex) => {
-              const navigable = rootPath
-                ? testCaseCanNavigate(rootPath, testCase)
-                : false;
+              const navigable = rootPath ? testCaseCanNavigate(rootPath, testCase) : false;
               const runnable = testCaseCanRun(testCase);
 
               return (
@@ -258,11 +252,7 @@ export function TestResultsPanel({
                     {testCase.name ?? "Unnamed test"}
                   </span>
                   <span
-                    data-testid={
-                      testCase.message
-                        ? `${copy.testIdPrefix}-message`
-                        : undefined
-                    }
+                    data-testid={testCase.message ? `${copy.testIdPrefix}-message` : undefined}
                     style={styles.text}
                     title={testCase.message ?? testCase.classname ?? undefined}
                   >
@@ -274,7 +264,7 @@ export function TestResultsPanel({
                   {testCase.status === "failed" || testCase.status === "error" ? (
                     <button
                       aria-label={`Run ${testCase.name ?? "unnamed test"}`}
-                      disabled={isRunning || !runnable}
+                      disabled={runDisabled || !runnable}
                       onClick={(event) => {
                         event.stopPropagation();
                         onRunCase(testCase);
@@ -297,10 +287,7 @@ export function TestResultsPanel({
   );
 }
 
-function statusMatchesFilter(
-  status: TestStatus,
-  filter: StatusFilter,
-): boolean {
+function statusMatchesFilter(status: TestStatus, filter: StatusFilter): boolean {
   if (filter === "all") {
     return true;
   }
@@ -313,7 +300,5 @@ function statusMatchesFilter(
 }
 
 function StatusBadge({ status }: { status: TestStatus }) {
-  return (
-    <span style={{ ...styles.badge, color: statusColors[status] }}>{status}</span>
-  );
+  return <span style={{ ...styles.badge, color: statusColors[status] }}>{status}</span>;
 }

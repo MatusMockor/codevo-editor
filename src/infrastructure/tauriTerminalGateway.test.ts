@@ -2,9 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TauriTerminalGateway } from "./tauriTerminalGateway";
 import type { TerminalOutputEvent } from "../domain/terminal";
 
-type TerminalGatewayConstructor = ConstructorParameters<
-  typeof TauriTerminalGateway
->;
+type TerminalGatewayConstructor = ConstructorParameters<typeof TauriTerminalGateway>;
 type InvokeCommand = NonNullable<TerminalGatewayConstructor[0]>;
 type ListenToEvent = NonNullable<TerminalGatewayConstructor[1]>;
 
@@ -12,20 +10,15 @@ describe("TauriTerminalGateway", () => {
   it("keeps browser development runtime quiet outside Tauri", async () => {
     const invokeCommand = vi.fn<InvokeCommand>();
     const listenToEvent = vi.fn<ListenToEvent>();
-    const gateway = new TauriTerminalGateway(
-      invokeCommand,
-      listenToEvent,
-      () => false,
-    );
+    const gateway = new TauriTerminalGateway(invokeCommand, listenToEvent, () => false);
 
     await expect(gateway.start("/workspace", { cols: 80, rows: 24 })).rejects.toThrow(
       "Terminal requires the Tauri desktop runtime.",
     );
     await expect(gateway.listProfiles()).resolves.toEqual([]);
+    await expect(gateway.acknowledgeStart(1)).resolves.toBeUndefined();
     await expect(gateway.writeInput(1, "ls\r")).resolves.toBeUndefined();
-    await expect(
-      gateway.resize(1, { cols: 100, rows: 30 }),
-    ).resolves.toBeUndefined();
+    await expect(gateway.resize(1, { cols: 100, rows: 30 })).resolves.toBeUndefined();
     await expect(gateway.stop(1)).resolves.toEqual({
       kind: "stopped",
       sessionId: 1,
@@ -35,6 +28,8 @@ describe("TauriTerminalGateway", () => {
 
     const unsubscribe = await gateway.subscribeOutput(vi.fn());
     unsubscribe();
+    const unsubscribeStatus = await gateway.subscribeStatus(vi.fn());
+    unsubscribeStatus();
 
     expect(invokeCommand).not.toHaveBeenCalled();
     expect(listenToEvent).not.toHaveBeenCalled();
@@ -62,6 +57,7 @@ describe("TauriTerminalGateway", () => {
       }
 
       if (
+        command === "acknowledge_terminal_session_start" ||
         command === "write_terminal_input" ||
         command === "resize_terminal_session" ||
         command === "stop_terminal_sessions_for_root" ||
@@ -72,29 +68,26 @@ describe("TauriTerminalGateway", () => {
 
       return running;
     });
-    const listenToEvent = vi.fn<ListenToEvent>(async (_event, handler) => {
-      handler({ payload: output });
+    const listenToEvent = vi.fn<ListenToEvent>(async (event, handler) => {
+      handler({ payload: event === "terminal://output" ? output : running });
       return () => undefined;
     });
     const listener = vi.fn();
-    const gateway = new TauriTerminalGateway(
-      invokeCommand,
-      listenToEvent,
-      () => true,
-    );
+    const statusListener = vi.fn();
+    const gateway = new TauriTerminalGateway(invokeCommand, listenToEvent, () => true);
 
     await expect(gateway.listProfiles()).resolves.toEqual(profiles);
-    await expect(
-      gateway.start("/workspace", { cols: 80, rows: 24 }, "default"),
-    ).resolves.toEqual(running);
+    await expect(gateway.start("/workspace", { cols: 80, rows: 24 }, "default")).resolves.toEqual(
+      running,
+    );
+    await expect(gateway.acknowledgeStart(7)).resolves.toBeUndefined();
     await expect(gateway.writeInput(7, "pwd\r")).resolves.toBeUndefined();
-    await expect(
-      gateway.resize(7, { cols: 120, rows: 40 }),
-    ).resolves.toBeUndefined();
+    await expect(gateway.resize(7, { cols: 120, rows: 40 })).resolves.toBeUndefined();
     await expect(gateway.stop(7)).resolves.toEqual(running);
     await expect(gateway.stopRoot("/workspace")).resolves.toBeUndefined();
     await expect(gateway.stopAll()).resolves.toBeUndefined();
     await gateway.subscribeOutput(listener);
+    await gateway.subscribeStatus(statusListener);
 
     expect(invokeCommand).toHaveBeenCalledWith("list_terminal_profiles");
     expect(invokeCommand).toHaveBeenCalledWith("start_terminal_session", {
@@ -107,6 +100,9 @@ describe("TauriTerminalGateway", () => {
       data: "pwd\r",
       sessionId: 7,
     });
+    expect(invokeCommand).toHaveBeenCalledWith("acknowledge_terminal_session_start", {
+      sessionId: 7,
+    });
     expect(invokeCommand).toHaveBeenCalledWith("resize_terminal_session", {
       sessionId: 7,
       size: { cols: 120, rows: 40 },
@@ -114,17 +110,13 @@ describe("TauriTerminalGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith("stop_terminal_session", {
       sessionId: 7,
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "stop_terminal_sessions_for_root",
-      {
-        rootPath: "/workspace",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("stop_terminal_sessions_for_root", {
+      rootPath: "/workspace",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("stop_all_terminal_sessions");
-    expect(listenToEvent).toHaveBeenCalledWith(
-      "terminal://output",
-      expect.any(Function),
-    );
+    expect(listenToEvent).toHaveBeenCalledWith("terminal://output", expect.any(Function));
     expect(listener).toHaveBeenCalledWith(output);
+    expect(listenToEvent).toHaveBeenCalledWith("terminal://status", expect.any(Function));
+    expect(statusListener).toHaveBeenCalledWith(running);
   });
 });

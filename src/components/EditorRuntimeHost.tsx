@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -12,35 +10,31 @@ import {
 import type * as Monaco from "monaco-editor";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
+import type { DebugHoverEvaluationPort } from "../application/useDebugHoverEvaluation";
 import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   disposeWorkspaceModels,
   registerWorkspaceIdentityDescriptor,
-  type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
 import {
   disposeUnretainedEditorRuntimeModels,
   reconcileEditorRuntimeMarkers,
 } from "./editorRuntimeModels";
-import type { EditorRuntimeEditorMembership } from "./editorRuntimeMembership";
 import {
   releaseEditorRuntimeWorkspace,
   retainEditorRuntimeWorkspace,
 } from "./editorRuntimeWorkspaceLease";
 import {
   useEditorSurfaceLanguageProviderRegistration,
-  type EditorSurfaceLanguageProviderRegistrationDependencies,
   type EditorSurfaceLanguageProviderRegistrationRefs,
 } from "./useEditorSurfaceLanguageProviderRegistration";
 import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
   type JavaScriptTypeScriptLanguageServerProviderContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
-import {
-  configureTypescriptJavascriptDefaultsOnce,
-  type TypescriptJavascriptDefaultsOptions,
-} from "./typescriptJavascriptDefaults";
+import { configureTypescriptJavascriptDefaultsOnce } from "./typescriptJavascriptDefaults";
+import { registerDebugHoverMonacoProviders } from "./debugHoverMonacoProvider";
 import { EditorModelContentSyncCoordinator } from "./editorModelContentSyncCoordinator";
 import {
   LocalPhpValidationCoordinator,
@@ -54,92 +48,28 @@ import {
   type PhpDocumentSymbolRequest,
 } from "../application/phpDocumentSymbolCoordinator";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
-
-export interface LocalPhpValidationSnapshot<TSyntax, TInspection> {
-  inspectionDiagnostics: TInspection[];
-  syntaxDiagnostics: TSyntax[];
-}
-
-interface EditorRuntimeSurfaceRouting {
-  activeDocumentRef: EditorRuntimeEditorMembership["activeDocumentRef"];
-  javaScriptTypeScriptProviderContext: JavaScriptTypeScriptLanguageServerProviderContext;
-  providerRefs: EditorSurfaceLanguageProviderRegistrationRefs;
-  resolveDocumentForModel: EditorRuntimeEditorMembership["resolveDocumentForModel"];
-}
-
-interface EditorRuntimeSurfaceRegistration {
-  activePath: string | null;
-  diagnosticsByPath: Readonly<
-    Record<string, readonly LanguageServerDiagnostic[]>
-  >;
-  editor: Monaco.editor.IStandaloneCodeEditor | null;
-  groupId: string;
-  monacoApi: typeof Monaco | null;
-  onModelContentChange(content: string): void;
-  onMarkerUrisChanged?(uris: readonly Monaco.Uri[]): void;
-  providerDependencies: EditorSurfaceLanguageProviderRegistrationDependencies;
-  retainPaths: readonly string[];
-  routing: EditorRuntimeSurfaceRouting;
-  toMarker(diagnostic: LanguageServerDiagnostic): Monaco.editor.IMarkerData;
-  typescriptJavascriptDefaults: TypescriptJavascriptDefaultsOptions;
-  workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
-  workspaceRoot: string | null;
-}
-
-interface EditorRuntimeContextValue {
-  coordinatePhpDocumentSymbols(
-    request: PhpDocumentSymbolRequest,
-    load: () => Promise<LanguageServerDocumentSymbol[]>,
-  ): Promise<LanguageServerDocumentSymbol[]>;
-  coordinateLocalPhpValidation<TSyntax, TInspection>(
-    request: LocalPhpValidationRequest,
-    compute: () => LocalPhpValidationComputation<
-      LocalPhpValidationSnapshot<TSyntax, TInspection>,
-      LocalPhpValidationSnapshot<TSyntax, TInspection>
-    >,
-  ): CoordinatedLocalPhpValidation<
-    LocalPhpValidationSnapshot<TSyntax, TInspection>,
-    LocalPhpValidationSnapshot<TSyntax, TInspection>
-  >;
-  focusGroup(groupId: string): void;
-  writeLocalPhpMarkers(
-    consumerId: string,
-    monacoApi: typeof Monaco,
-    model: Monaco.editor.ITextModel,
-    markers: readonly Monaco.editor.IMarkerData[],
-  ): void;
-  registerSurface(
-    id: string,
-    registration: EditorRuntimeSurfaceRegistration,
-  ): () => void;
-  updateSurface(
-    id: string,
-    registration: EditorRuntimeSurfaceRegistration,
-  ): void;
-}
-
-const EditorRuntimeContext = createContext<EditorRuntimeContextValue | null>(null);
-
-export function useEditorRuntimeContext(): EditorRuntimeContextValue | null {
-  return useContext(EditorRuntimeContext);
-}
+import {
+  EditorRuntimeContext,
+  type EditorRuntimeContextValue,
+  type EditorRuntimeSurfaceRegistration,
+  type EditorRuntimeSurfaceRouting,
+  type LocalPhpValidationSnapshot,
+} from "./editorRuntimeContext";
 
 export function EditorRuntimeHost({
   children,
+  debugHover,
   onGroupFocusRunnerChange,
 }: {
   children: ReactNode;
+  debugHover?: DebugHoverEvaluationPort | null;
   onGroupFocusRunnerChange?: (runner: EditorGroupFocusRunner | null) => void;
 }) {
-  const registrationsRef = useRef(
-    new Map<string, EditorRuntimeSurfaceRegistration>(),
-  );
+  const registrationsRef = useRef(new Map<string, EditorRuntimeSurfaceRegistration>());
   const [revision, setRevision] = useState(0);
   const admittedWorkspaceRootRef = useRef<string | null>(null);
   const focusedGroupRef = useRef<string | null>(null);
-  const activeRegistrationRef = useRef<EditorRuntimeSurfaceRegistration | null>(
-    null,
-  );
+  const activeRegistrationRef = useRef<EditorRuntimeSurfaceRegistration | null>(null);
   const runtimeWorkspaceRef = useRef<{
     monacoApi: typeof Monaco;
     root: string;
@@ -147,19 +77,13 @@ export function EditorRuntimeHost({
   const previousDiagnosticsRef = useRef<
     Readonly<Record<string, readonly LanguageServerDiagnostic[]>>
   >({});
-  const markedModelsRef = useRef<WeakSet<Monaco.editor.ITextModel>>(
-    new WeakSet(),
-  );
-  const disposedModelsRef = useRef<WeakSet<Monaco.editor.ITextModel>>(
-    new WeakSet(),
-  );
+  const markedModelsRef = useRef<WeakSet<Monaco.editor.ITextModel>>(new WeakSet());
+  const disposedModelsRef = useRef<WeakSet<Monaco.editor.ITextModel>>(new WeakSet());
   const lifecycleGenerationRef = useRef(0);
   const focusRequestGenerationRef = useRef(0);
   const pendingFocusFrameRef = useRef<number | null>(null);
   const workspaceLeaseOwnerRef = useRef(Symbol("editor-runtime-host"));
-  const contentSyncCoordinatorRef = useRef<EditorModelContentSyncCoordinator | null>(
-    null,
-  );
+  const contentSyncCoordinatorRef = useRef<EditorModelContentSyncCoordinator | null>(null);
   if (!contentSyncCoordinatorRef.current) {
     contentSyncCoordinatorRef.current = new EditorModelContentSyncCoordinator();
   }
@@ -167,15 +91,11 @@ export function EditorRuntimeHost({
     new LocalPhpValidationCoordinator<unknown, unknown>(),
   );
   const localPhpMarkerWriterRef = useRef(new LocalPhpMarkerWriter());
-  const phpDocumentSymbolCoordinatorRef = useRef(
-    new PhpDocumentSymbolCoordinator(),
-  );
+  const phpDocumentSymbolCoordinatorRef = useRef(new PhpDocumentSymbolCoordinator());
 
   const coordinatePhpDocumentSymbols = useCallback(
-    (
-      request: PhpDocumentSymbolRequest,
-      load: () => Promise<LanguageServerDocumentSymbol[]>,
-    ) => phpDocumentSymbolCoordinatorRef.current.coordinate(request, load),
+    (request: PhpDocumentSymbolRequest, load: () => Promise<LanguageServerDocumentSymbol[]>) =>
+      phpDocumentSymbolCoordinatorRef.current.coordinate(request, load),
     [],
   );
 
@@ -235,9 +155,7 @@ export function EditorRuntimeHost({
       if (activeRegistrationRef.current === current) {
         activeRegistrationRef.current = registration;
       }
-      admittedWorkspaceRootRef.current = admittedWorkspaceRoot(
-        registrationsRef.current,
-      );
+      admittedWorkspaceRootRef.current = admittedWorkspaceRoot(registrationsRef.current);
       if (registrationsStructurallyEqual(current, registration)) {
         return;
       }
@@ -264,19 +182,14 @@ export function EditorRuntimeHost({
       }
 
       registrationsRef.current.set(id, registration);
-      admittedWorkspaceRootRef.current = admittedWorkspaceRoot(
-        registrationsRef.current,
-      );
+      admittedWorkspaceRootRef.current = admittedWorkspaceRoot(registrationsRef.current);
       setRevision((current) => current + 1);
 
       return () => {
         const removedRegistration = registrationsRef.current.get(id);
         const removedOwnedRuntime = Boolean(
           removedRegistration &&
-            registrationOwnsRuntime(
-              removedRegistration,
-              admittedWorkspaceRootRef.current,
-            ),
+          registrationOwnsRuntime(removedRegistration, admittedWorkspaceRootRef.current),
         );
         const removed = registrationsRef.current.delete(id);
         if (!removed) {
@@ -284,9 +197,7 @@ export function EditorRuntimeHost({
         }
         localPhpValidationCoordinatorRef.current.releaseConsumer(id);
 
-        admittedWorkspaceRootRef.current = admittedWorkspaceRoot(
-          registrationsRef.current,
-        );
+        admittedWorkspaceRootRef.current = admittedWorkspaceRoot(registrationsRef.current);
         if (removedOwnedRuntime || removedRegistration?.monacoApi) {
           setRevision((current) => current + 1);
         }
@@ -299,10 +210,7 @@ export function EditorRuntimeHost({
     const groupIsRegistered = [...registrationsRef.current.values()].some(
       (registration) =>
         registration.groupId === groupId &&
-        registrationOwnsRuntime(
-          registration,
-          admittedWorkspaceRootRef.current,
-        ),
+        registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
     );
     if (!groupIsRegistered || focusedGroupRef.current === groupId) {
       return;
@@ -343,10 +251,7 @@ export function EditorRuntimeHost({
         if (
           !current ||
           current.monacoApi !== requestedMonacoApi ||
-          !workspaceRootKeysEqual(
-            current.workspaceRoot,
-            requestedWorkspaceRoot,
-          )
+          !workspaceRootKeysEqual(current.workspaceRoot, requestedWorkspaceRoot)
         ) {
           return;
         }
@@ -357,14 +262,17 @@ export function EditorRuntimeHost({
     [focusGroup],
   );
 
-  useEffect(() => () => {
-    focusRequestGenerationRef.current += 1;
-    if (pendingFocusFrameRef.current === null) {
-      return;
-    }
-    cancelAnimationFrame(pendingFocusFrameRef.current);
-    pendingFocusFrameRef.current = null;
-  }, []);
+  useEffect(
+    () => () => {
+      focusRequestGenerationRef.current += 1;
+      if (pendingFocusFrameRef.current === null) {
+        return;
+      }
+      cancelAnimationFrame(pendingFocusFrameRef.current);
+      pendingFocusFrameRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     onGroupFocusRunnerChange?.(focusRegisteredEditorGroup);
@@ -372,12 +280,8 @@ export function EditorRuntimeHost({
   }, [focusRegisteredEditorGroup, onGroupFocusRunnerChange]);
 
   const registrations = [...registrationsRef.current.values()];
-  const owningRegistrations = registrations.filter(
-    (registration) =>
-      registrationOwnsRuntime(
-        registration,
-        admittedWorkspaceRootRef.current,
-      ),
+  const owningRegistrations = registrations.filter((registration) =>
+    registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
   );
   const contentSyncRegistrations = admittedWorkspaceRootRef.current
     ? owningRegistrations
@@ -385,8 +289,7 @@ export function EditorRuntimeHost({
   const focusedRegistration = owningRegistrations.find(
     (registration) => registration.groupId === focusedGroupRef.current,
   );
-  const activeRegistration =
-    focusedRegistration ?? owningRegistrations[0] ?? null;
+  const activeRegistration = focusedRegistration ?? owningRegistrations[0] ?? null;
   const configurationRegistration =
     activeRegistration ?? registrations.find(({ monacoApi }) => monacoApi) ?? null;
   activeRegistrationRef.current = activeRegistration;
@@ -428,20 +331,26 @@ export function EditorRuntimeHost({
       new Proxy({} as JavaScriptTypeScriptLanguageServerProviderContext, {
         get(_target, property) {
           return Reflect.get(
-            activeRegistrationRef.current?.routing
-              .javaScriptTypeScriptProviderContext ?? {},
+            activeRegistrationRef.current?.routing.javaScriptTypeScriptProviderContext ?? {},
             property,
           );
         },
       }),
     [],
   );
+  const javaScriptTypeScriptProviderContext =
+    activeRegistration?.routing.javaScriptTypeScriptProviderContext;
+  const hasJavaScriptTypeScriptProviderContext = javaScriptTypeScriptProviderContext !== undefined;
+  const javaScriptTypeScriptCompleteFunctionCalls =
+    javaScriptTypeScriptProviderContext?.completeFunctionCalls;
+  const javaScriptTypeScriptFeaturesGateway = javaScriptTypeScriptProviderContext?.featuresGateway;
+  const javaScriptTypeScriptRefreshGateway = javaScriptTypeScriptProviderContext?.refreshGateway;
+  const javaScriptTypeScriptWorkspaceEditGateway =
+    javaScriptTypeScriptProviderContext?.workspaceEditGateway;
 
   useEffect(() => {
     const monacoApi = activeRegistration?.monacoApi;
-    const context =
-      activeRegistration?.routing.javaScriptTypeScriptProviderContext;
-    if (!monacoApi || !context) {
+    if (!monacoApi || !hasJavaScriptTypeScriptProviderContext) {
       return;
     }
 
@@ -451,27 +360,54 @@ export function EditorRuntimeHost({
     );
     return () => disposable.dispose();
   }, [
-    activeRegistration?.routing.javaScriptTypeScriptProviderContext.completeFunctionCalls,
-    activeRegistration?.routing.javaScriptTypeScriptProviderContext.featuresGateway,
-    activeRegistration?.routing.javaScriptTypeScriptProviderContext.refreshGateway,
-    activeRegistration?.routing.javaScriptTypeScriptProviderContext.workspaceEditGateway,
     activeRegistration?.monacoApi,
     activeRegistration?.workspaceRoot,
+    hasJavaScriptTypeScriptProviderContext,
+    javaScriptTypeScriptCompleteFunctionCalls,
+    javaScriptTypeScriptFeaturesGateway,
+    javaScriptTypeScriptRefreshGateway,
+    javaScriptTypeScriptWorkspaceEditGateway,
     routedJavaScriptTypeScriptContext,
   ]);
 
   useEffect(() => {
+    const monacoApi = activeRegistration?.monacoApi;
+    if (!monacoApi || !debugHover) return;
+    return registerDebugHoverMonacoProviders(monacoApi, {
+      debugHover,
+      getAdmittedWorkspaceRoot: () => admittedWorkspaceRootRef.current,
+      resolveDocumentForModel: (model) =>
+        resolveRuntimeDocumentForModel(
+          [...registrationsRef.current.values()].filter((registration) =>
+            registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
+          ),
+          model,
+          focusedGroupRef.current,
+        ),
+    }).dispose;
+  }, [activeRegistration?.monacoApi, activeRegistration?.workspaceRoot, debugHover]);
+
+  const hasTypescriptJavascriptDefaults =
+    configurationRegistration?.typescriptJavascriptDefaults !== undefined;
+  const managedLanguageServerActive =
+    configurationRegistration?.typescriptJavascriptDefaults.managedLanguageServerActive ?? false;
+  const typescriptJavascriptValidationEnabled =
+    configurationRegistration?.typescriptJavascriptDefaults.validationEnabled ?? false;
+  useEffect(() => {
     const monacoApi = configurationRegistration?.monacoApi;
-    const configuration = configurationRegistration?.typescriptJavascriptDefaults;
-    if (!monacoApi || !configuration) {
+    if (!monacoApi || !hasTypescriptJavascriptDefaults) {
       return;
     }
 
-    configureTypescriptJavascriptDefaultsOnce(monacoApi, configuration);
+    configureTypescriptJavascriptDefaultsOnce(monacoApi, {
+      managedLanguageServerActive,
+      validationEnabled: typescriptJavascriptValidationEnabled,
+    });
   }, [
     configurationRegistration?.monacoApi,
-    configurationRegistration?.typescriptJavascriptDefaults.managedLanguageServerActive,
-    configurationRegistration?.typescriptJavascriptDefaults.validationEnabled,
+    hasTypescriptJavascriptDefaults,
+    managedLanguageServerActive,
+    typescriptJavascriptValidationEnabled,
   ]);
 
   useEffect(() => {
@@ -488,29 +424,25 @@ export function EditorRuntimeHost({
         (previousWorkspace.monacoApi !== monacoApi ||
           !workspaceRootKeysEqual(previousWorkspace.root, workspaceRoot))
       ) {
-        if (releaseEditorRuntimeWorkspace(
-          previousWorkspace.monacoApi,
-          previousWorkspace.root,
-          workspaceLeaseOwnerRef.current,
-        )) {
+        if (
+          releaseEditorRuntimeWorkspace(
+            previousWorkspace.monacoApi,
+            previousWorkspace.root,
+            workspaceLeaseOwnerRef.current,
+          )
+        ) {
           const preserveWorkspaceMappings =
             previousWorkspace.monacoApi !== monacoApi &&
             workspaceRootKeysEqual(previousWorkspace.root, workspaceRoot);
-          disposeWorkspaceModels(
-            previousWorkspace.monacoApi,
-            previousWorkspace.root,
-            { preserveWorkspaceMappings },
-          );
+          disposeWorkspaceModels(previousWorkspace.monacoApi, previousWorkspace.root, {
+            preserveWorkspaceMappings,
+          });
         }
         markedModelsRef.current = new WeakSet();
         disposedModelsRef.current = new WeakSet();
         previousDiagnosticsRef.current = {};
       }
-      retainEditorRuntimeWorkspace(
-        monacoApi,
-        workspaceRoot,
-        workspaceLeaseOwnerRef.current,
-      );
+      retainEditorRuntimeWorkspace(monacoApi, workspaceRoot, workspaceLeaseOwnerRef.current);
       runtimeWorkspaceRef.current = { monacoApi, root: workspaceRoot };
     }
 
@@ -525,10 +457,13 @@ export function EditorRuntimeHost({
     );
     previousDiagnosticsRef.current = diagnosticsByPath;
 
+    const currentOwningRegistrations = [...registrationsRef.current.values()].filter(
+      (registration) => registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
+    );
     disposeUnretainedEditorRuntimeModels(
       monacoApi,
       workspaceRoot,
-      owningRegistrations.map((registration) => ({
+      currentOwningRegistrations.map((registration) => ({
         activePath: registration.activePath,
         retainPaths: registration.retainPaths,
       })),
@@ -538,10 +473,7 @@ export function EditorRuntimeHost({
 
   useEffect(() => {
     const monacoApi = configurationRegistration?.monacoApi;
-    if (
-      !monacoApi ||
-      typeof monacoApi.editor.onDidChangeMarkers !== "function"
-    ) {
+    if (!monacoApi || typeof monacoApi.editor.onDidChangeMarkers !== "function") {
       return;
     }
 
@@ -549,10 +481,7 @@ export function EditorRuntimeHost({
       for (const registration of registrationsRef.current.values()) {
         if (
           admittedWorkspaceRootRef.current &&
-          !registrationOwnsRuntime(
-            registration,
-            admittedWorkspaceRootRef.current,
-          )
+          !registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current)
         ) {
           continue;
         }
@@ -572,27 +501,19 @@ export function EditorRuntimeHost({
     }
 
     return registerWorkspaceIdentityDescriptor(descriptor, root);
-  }, [
-    activeRegistration?.workspaceIdentityDescriptor,
-    activeRegistration?.workspaceRoot,
-  ]);
+  }, [activeRegistration?.workspaceIdentityDescriptor, activeRegistration?.workspaceRoot]);
 
   useEffect(() => {
-    const generation = ++lifecycleGenerationRef.current;
+    const generationRef = lifecycleGenerationRef;
+    const leaseOwner = workspaceLeaseOwnerRef.current;
+    const generation = ++generationRef.current;
     return () => {
       const workspace = runtimeWorkspaceRef.current;
       queueMicrotask(() => {
-        if (
-          lifecycleGenerationRef.current !== generation ||
-          !workspace
-        ) {
+        if (generationRef.current !== generation || !workspace) {
           return;
         }
-        if (releaseEditorRuntimeWorkspace(
-          workspace.monacoApi,
-          workspace.root,
-          workspaceLeaseOwnerRef.current,
-        )) {
+        if (releaseEditorRuntimeWorkspace(workspace.monacoApi, workspace.root, leaseOwner)) {
           disposeWorkspaceModels(workspace.monacoApi, workspace.root);
         }
       });
@@ -627,14 +548,10 @@ export function EditorRuntimeHost({
     ],
   );
 
-  return (
-    <EditorRuntimeContext.Provider value={value}>
-      {children}
-    </EditorRuntimeContext.Provider>
-  );
+  return <EditorRuntimeContext.Provider value={value}>{children}</EditorRuntimeContext.Provider>;
 }
 
-export function resolveRuntimeDocumentForModel(
+function resolveRuntimeDocumentForModel(
   registrations: readonly EditorRuntimeSurfaceRegistration[],
   model: Monaco.editor.ITextModel,
   focusedGroupId: string | null,
@@ -655,12 +572,8 @@ export function resolveRuntimeDocumentForModel(
 }
 
 function routedRefs(
-  activeRegistrationRef: MutableRefObject<
-    EditorRuntimeSurfaceRegistration | null
-  >,
-  registrationsRef: MutableRefObject<
-    Map<string, EditorRuntimeSurfaceRegistration>
-  >,
+  activeRegistrationRef: MutableRefObject<EditorRuntimeSurfaceRegistration | null>,
+  registrationsRef: MutableRefObject<Map<string, EditorRuntimeSurfaceRegistration>>,
   focusedGroupRef: MutableRefObject<string | null>,
 ): EditorSurfaceLanguageProviderRegistrationRefs {
   const cache = new Map<PropertyKey, object>();
@@ -674,12 +587,11 @@ function routedRefs(
             get current() {
               return (model: Monaco.editor.ITextModel) =>
                 resolveRuntimeDocumentForModel(
-                  [...registrationsRef.current.values()].filter(
-                    (registration) =>
-                      registrationOwnsRuntime(
-                        registration,
-                        activeRegistrationRef.current?.workspaceRoot ?? null,
-                      ),
+                  [...registrationsRef.current.values()].filter((registration) =>
+                    registrationOwnsRuntime(
+                      registration,
+                      activeRegistrationRef.current?.workspaceRoot ?? null,
+                    ),
                   ),
                   model,
                   focusedGroupRef.current,
@@ -701,22 +613,19 @@ function routedRefs(
               ) => {
                 const registration =
                   registrationForPhpProviderSource(
-                    [...registrationsRef.current.values()].filter(
-                      (candidate) =>
-                        registrationOwnsRuntime(
-                          candidate,
-                          activeRegistrationRef.current?.workspaceRoot ?? null,
-                        ),
+                    [...registrationsRef.current.values()].filter((candidate) =>
+                      registrationOwnsRuntime(
+                        candidate,
+                        activeRegistrationRef.current?.workspaceRoot ?? null,
+                      ),
                     ),
                     source,
                     focusedGroupRef.current,
                   ) ?? activeRegistrationRef.current;
 
                 return (
-                  registration?.routing.providerRefs.phpCodeActionsRef.current(
-                    source,
-                    range,
-                  ) ?? Promise.resolve([])
+                  registration?.routing.providerRefs.phpCodeActionsRef.current(source, range) ??
+                  Promise.resolve([])
                 );
               };
             },
@@ -727,10 +636,8 @@ function routedRefs(
 
         routedRef = {
           get current() {
-            return Reflect.get(
-              activeRegistrationRef.current?.routing.providerRefs ?? {},
-              property,
-            )?.current;
+            return Reflect.get(activeRegistrationRef.current?.routing.providerRefs ?? {}, property)
+              ?.current;
           },
         };
         cache.set(property, routedRef);
@@ -757,9 +664,7 @@ function registrationForPhpProviderSource(
   }
 
   return (
-    matches.find((registration) => registration.groupId === focusedGroupId) ??
-    matches[0] ??
-    null
+    matches.find((registration) => registration.groupId === focusedGroupId) ?? matches[0] ?? null
   );
 }
 
@@ -770,10 +675,7 @@ function canAdmitRegistration(
   admittedRoot: string | null,
 ): boolean {
   if (!candidate.workspaceRoot) {
-    return (
-      !admittedRoot &&
-      (registrations.size === 0 || registrations.has(id))
-    );
+    return !admittedRoot && (registrations.size === 0 || registrations.has(id));
   }
 
   if (admittedRoot) {
@@ -845,18 +747,14 @@ function registrationsStructurallyEqual(
     left.editor === right.editor &&
     left.groupId === right.groupId &&
     left.monacoApi === right.monacoApi &&
-    left.providerDependencies.featuresGateway ===
-      right.providerDependencies.featuresGateway &&
-    left.providerDependencies.refreshGateway ===
-      right.providerDependencies.refreshGateway &&
+    left.providerDependencies.featuresGateway === right.providerDependencies.featuresGateway &&
+    left.providerDependencies.refreshGateway === right.providerDependencies.refreshGateway &&
     left.providerDependencies.workspaceEditGateway ===
       right.providerDependencies.workspaceEditGateway &&
-    leftJavaScript.completeFunctionCalls ===
-      rightJavaScript.completeFunctionCalls &&
+    leftJavaScript.completeFunctionCalls === rightJavaScript.completeFunctionCalls &&
     leftJavaScript.featuresGateway === rightJavaScript.featuresGateway &&
     leftJavaScript.refreshGateway === rightJavaScript.refreshGateway &&
-    leftJavaScript.workspaceEditGateway ===
-      rightJavaScript.workspaceEditGateway &&
+    leftJavaScript.workspaceEditGateway === rightJavaScript.workspaceEditGateway &&
     pathsEqual(left.retainPaths, right.retainPaths) &&
     left.typescriptJavascriptDefaults.managedLanguageServerActive ===
       right.typescriptJavascriptDefaults.managedLanguageServerActive &&
@@ -868,10 +766,11 @@ function registrationsStructurallyEqual(
 }
 
 function pathsEqual(left: readonly string[], right: readonly string[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((path, index) => path === right[index])
-  );
+  return left.length === right.length && left.every((path, index) => path === right[index]);
 }
 
-export type { EditorRuntimeSurfaceRegistration, EditorRuntimeSurfaceRouting };
+export type {
+  EditorRuntimeSurfaceRegistration,
+  EditorRuntimeSurfaceRouting,
+  LocalPhpValidationSnapshot,
+};

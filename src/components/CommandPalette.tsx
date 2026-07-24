@@ -39,12 +39,13 @@ export function CommandPalette({
 
   const filteredCommands = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
+    const visibleCommands = commands.filter((command) => command.visibleInCommandPalette !== false);
 
     if (!normalizedQuery) {
-      return commands;
+      return visibleCommands;
     }
 
-    return commands.filter((command) => {
+    return visibleCommands.filter((command) => {
       const haystack = `${command.category} ${command.title} ${command.id}`;
       return haystack.toLowerCase().includes(normalizedQuery);
     });
@@ -117,9 +118,7 @@ export function CommandPalette({
                 if (filteredCommands.length === 0) {
                   return;
                 }
-                setActiveIndex(
-                  (current) => (current + 1) % filteredCommands.length,
-                );
+                setActiveIndex((current) => (current + 1) % filteredCommands.length);
                 return;
               }
 
@@ -129,9 +128,7 @@ export function CommandPalette({
                   return;
                 }
                 setActiveIndex(
-                  (current) =>
-                    (current - 1 + filteredCommands.length) %
-                    filteredCommands.length,
+                  (current) => (current - 1 + filteredCommands.length) % filteredCommands.length,
                 );
                 return;
               }
@@ -155,11 +152,7 @@ export function CommandPalette({
 
             return (
               <button
-                className={
-                  index === activeIndex
-                    ? "palette-command active"
-                    : "palette-command"
-                }
+                className={index === activeIndex ? "palette-command active" : "palette-command"}
                 disabled={!enabled}
                 key={command.id}
                 onClick={() => {

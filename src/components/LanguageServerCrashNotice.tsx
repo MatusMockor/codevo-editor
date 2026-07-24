@@ -1,10 +1,11 @@
-import type { ReactElement, ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   languageServerCrashNoticeGroupKey,
   languageServerRequestErrorNoticeGroupKey,
 } from "../application/workbenchNotice";
 import { ToastNotification } from "./ToastNotification";
 import type { NoticeToastRenderer } from "./NoticeToastHost";
+import { LanguageServerCrashNotice } from "./LanguageServerCrashNoticeView";
 
 /**
  * "Crash visibility" for the PHP language server: the status-bar chip already
@@ -78,32 +79,3 @@ export {
   languageServerCrashNoticeGroupKey,
   languageServerRequestErrorNoticeGroupKey,
 };
-
-interface LanguageServerCrashNoticeProps {
-  message: string;
-  onDismiss(): void;
-  onOpenRuntimePanel(): void;
-}
-
-function LanguageServerCrashNotice({
-  message,
-  onDismiss,
-  onOpenRuntimePanel,
-}: LanguageServerCrashNoticeProps): ReactElement {
-  return (
-    <ToastNotification
-      actions={[
-        {
-          id: "open-runtime-panel",
-          label: "Open Runtime panel",
-          onClick: onOpenRuntimePanel,
-          tone: "primary",
-        },
-      ]}
-      description={message}
-      onClose={onDismiss}
-      template="error"
-      title="PHP IDE engine crashed"
-    />
-  );
-}

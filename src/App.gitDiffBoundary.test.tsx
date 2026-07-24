@@ -4,12 +4,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitFileDiff } from "./domain/git";
+import { createEmptyDebugWatches } from "./test/debugWatchMocks";
 
 vi.mock("./application/useWorkbenchController", () => ({
   useWorkbenchController: () => createWorkbench(),
 }));
 
-vi.mock("./application/useNoticeToastRenderers", () => ({
+vi.mock("./components/useNoticeToastRenderers", () => ({
   useNoticeToastRenderers: () => (notice: unknown) => String(notice),
 }));
 
@@ -94,9 +95,7 @@ describe("App Git diff render boundary", () => {
     );
 
     gitDiffBoundaryMockState.gitDiffPreviewShouldCrash = false;
-    const retry = host.querySelector<HTMLButtonElement>(
-      'button[data-action="retry"]',
-    );
+    const retry = host.querySelector<HTMLButtonElement>('button[data-action="retry"]');
     expect(retry).not.toBeNull();
 
     await act(async () => {
@@ -106,9 +105,7 @@ describe("App Git diff render boundary", () => {
 
     expect(gitDiffBoundaryMockState.closeGitDiffPreview).not.toHaveBeenCalled();
     expect(host.querySelector('[role="alert"]')).toBeNull();
-    expect(
-      host.querySelector('[data-testid="git-diff-preview-recovered"]'),
-    ).not.toBeNull();
+    expect(host.querySelector('[data-testid="git-diff-preview-recovered"]')).not.toBeNull();
   });
 
   it("recomputes the window title when the active document becomes dirty", async () => {
@@ -127,9 +124,7 @@ describe("App Git diff render boundary", () => {
       await Promise.resolve();
     });
 
-    expect(host.querySelector(".window-title")?.textContent).toBe(
-      "index.ts - workspace",
-    );
+    expect(host.querySelector(".window-title")?.textContent).toBe("index.ts - workspace");
 
     gitDiffBoundaryMockState.activeDocument = {
       ...gitDiffBoundaryMockState.activeDocument,
@@ -141,9 +136,7 @@ describe("App Git diff render boundary", () => {
       await Promise.resolve();
     });
 
-    expect(host.querySelector(".window-title")?.textContent).toBe(
-      "• index.ts - workspace",
-    );
+    expect(host.querySelector(".window-title")?.textContent).toBe("• index.ts - workspace");
   });
 });
 
@@ -171,6 +164,14 @@ function createWorkbench() {
       commandContext: {},
       commands: [],
       diagnosticsSummary: { errors: 0, warnings: 0 },
+      debugSession: {
+        canRestartDebug: () => false,
+        debugRestartPending: false,
+        debugStopPending: false,
+        isDebugStartBlocked: () => false,
+        restartDebug: vi.fn(async () => undefined),
+        watches: createEmptyDebugWatches(),
+      },
       dirtyCount: 0,
       fileHistoryPanelOpen: false,
       fileStructureOpen: false,

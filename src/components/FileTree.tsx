@@ -1,22 +1,10 @@
 import { ChevronRight } from "lucide-react";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
-import {
-  gitStatusLabel,
-  gitStatusTitle,
-  type GitChangeStatus,
-} from "../domain/git";
+import { gitStatusLabel, gitStatusTitle, type GitChangeStatus } from "../domain/git";
 import type { FileEntry } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/pathDerivation";
-import { FileTreeContextMenu } from "./FileTreeContextMenu";
+import { ContextMenu } from "./ContextMenu";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
 import { TreeEntryIcon } from "./TreeEntryIcon";
 
@@ -127,24 +115,18 @@ function FileTreeComponent({
   const effectiveViewportHeight =
     viewportHeight > 0 ? viewportHeight : TREE_VIEWPORT_FALLBACK_HEIGHT;
   const totalContentHeight = itemCount * TREE_ROW_HEIGHT;
-  const totalScrollHeight =
-    totalContentHeight + TREE_PADDING_TOP + TREE_PADDING_BOTTOM;
+  const totalScrollHeight = totalContentHeight + TREE_PADDING_TOP + TREE_PADDING_BOTTOM;
   const maxScrollTop = Math.max(0, totalScrollHeight - effectiveViewportHeight);
   const clampedScrollTop = Math.min(scrollTop, maxScrollTop);
   const normalizedScrollTop = Math.max(0, clampedScrollTop);
-  const normalizedRowsScrollTop = Math.max(
-    0,
-    normalizedScrollTop - TREE_PADDING_TOP,
-  );
+  const normalizedRowsScrollTop = Math.max(0, normalizedScrollTop - TREE_PADDING_TOP);
   const startIndex = Math.max(
     0,
     Math.floor(normalizedRowsScrollTop / TREE_ROW_HEIGHT) - TREE_ROW_OVERSCAN,
   );
   const endIndex = Math.min(
     itemCount,
-    startIndex +
-      Math.ceil(effectiveViewportHeight / TREE_ROW_HEIGHT) +
-      TREE_ROW_OVERSCAN * 2,
+    startIndex + Math.ceil(effectiveViewportHeight / TREE_ROW_HEIGHT) + TREE_ROW_OVERSCAN * 2,
   );
   const rowsToRender = visibleRows.slice(startIndex, endIndex);
   const renderedWindowOffset = startIndex * TREE_ROW_HEIGHT;
@@ -158,8 +140,7 @@ function FileTreeComponent({
 
     const currentRevealKey = `${activePath}:${revealActivePathSignal}`;
     const activePathChanged = previousActivePathRef.current !== activePath;
-    const signalChanged =
-      previousRevealSignalRef.current !== revealActivePathSignal;
+    const signalChanged = previousRevealSignalRef.current !== revealActivePathSignal;
 
     if (activePathChanged || signalChanged) {
       pendingRevealKeyRef.current = currentRevealKey;
@@ -189,10 +170,7 @@ function FileTreeComponent({
       return;
     }
 
-    const nextScrollTop = Math.min(
-      Math.max(0, rowTop),
-      maxScrollTop,
-    );
+    const nextScrollTop = Math.min(Math.max(0, rowTop), maxScrollTop);
     container.scrollTop = nextScrollTop;
     setScrollTop(nextScrollTop);
     pendingRevealKeyRef.current = null;
@@ -200,6 +178,7 @@ function FileTreeComponent({
     activePath,
     effectiveViewportHeight,
     itemCount,
+    maxScrollTop,
     activeRowIndex,
     revealActivePath,
     revealActivePathSignal,
@@ -284,19 +263,22 @@ function FileTreeComponent({
           ...(onRevealEntry
             ? [
                 {
+                  id: "reveal",
                   label: "Reveal in Finder",
-                  run: () => onRevealEntry(contextMenu.entry),
+                  onSelect: () => onRevealEntry(contextMenu.entry),
                 },
               ]
             : []),
-          { label: "Copy Path", run: () => copyText(contextMenu.entry.path) },
           {
+            id: "copy-path",
+            label: "Copy Path",
+            onSelect: () => copyText(contextMenu.entry.path),
+          },
+          {
+            id: "copy-relative-path",
             label: "Copy Relative Path",
-            run: () => {
-              const relativePath = workspaceRelativePath(
-                rootPath,
-                contextMenu.entry.path,
-              );
+            onSelect: () => {
+              const relativePath = workspaceRelativePath(rootPath, contextMenu.entry.path);
 
               if (relativePath === null) {
                 return;
@@ -308,13 +290,20 @@ function FileTreeComponent({
           ...(onOpenEntryInTerminal
             ? [
                 {
+                  id: "open-terminal",
                   label: "Open in Terminal",
-                  run: () => onOpenEntryInTerminal(contextMenu.entry),
+                  onSelect: () => onOpenEntryInTerminal(contextMenu.entry),
                 },
               ]
             : []),
           ...(onRenameEntry
-            ? [{ label: "Rename", run: () => onRenameEntry(contextMenu.entry) }]
+            ? [
+                {
+                  id: "rename",
+                  label: "Rename",
+                  onSelect: () => onRenameEntry(contextMenu.entry),
+                },
+              ]
             : []),
         ]
       : [];
@@ -366,7 +355,8 @@ function FileTreeComponent({
         </div>
       </div>
       {contextMenu && contextMenuItems.length > 0 ? (
-        <FileTreeContextMenu
+        <ContextMenu
+          ariaLabel="File actions"
           items={contextMenuItems}
           onClose={closeContextMenu}
           position={contextMenu.position}
@@ -429,9 +419,7 @@ const TreeRow = memo(function TreeRow({
   return (
     <button
       aria-expanded={isExpandable ? isExpanded : undefined}
-      className={
-        isActive ? "tree-row tree-row-virtual active" : "tree-row tree-row-virtual"
-      }
+      className={isActive ? "tree-row tree-row-virtual active" : "tree-row tree-row-virtual"}
       onClick={(event) => {
         if (event.detail > 1) {
           return;
@@ -553,10 +541,7 @@ function getVisibleTreeRows({
   };
 }
 
-function getChevronClassName(
-  isExpandable: boolean,
-  isExpanded: boolean,
-): string {
+function getChevronClassName(isExpandable: boolean, isExpanded: boolean): string {
   if (!isExpandable) {
     return "tree-chevron placeholder";
   }

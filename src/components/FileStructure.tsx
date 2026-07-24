@@ -19,7 +19,7 @@ import {
   type PhpSymbolVisibility,
 } from "../domain/phpFileOutline";
 import { PaletteFooter } from "./PaletteFooter";
-import { symbolKindLetter } from "./SymbolKindIcon";
+import { symbolKindLetter } from "../domain/symbolKind";
 
 interface FileStructureProps {
   canIncludeInheritedMembers: boolean;

@@ -551,7 +551,7 @@ const PHP_LIKE_LANGUAGE_CONFIGURATION: MonacoLanguageConfiguration = {
   indentationRules: {
     increaseIndentPattern:
       /^.*(?:\{[^}"'`]*|\([^)"'`]*|\[[^\]"'`]*)$/,
-    decreaseIndentPattern: /^\s*[\}\]\)].*$/,
+    decreaseIndentPattern: /^\s*[\u007D\u005D)].*$/,
   },
   onEnterRules: [
     {

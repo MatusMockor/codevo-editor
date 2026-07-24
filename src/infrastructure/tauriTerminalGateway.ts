@@ -10,28 +10,23 @@ import type {
 } from "../domain/terminal";
 
 const OUTPUT_EVENT = "terminal://output";
-const DESKTOP_RUNTIME_REQUIRED =
-  "Terminal requires the Tauri desktop runtime.";
+const STATUS_EVENT = "terminal://status";
+const DESKTOP_RUNTIME_REQUIRED = "Terminal requires the Tauri desktop runtime.";
 
-type InvokeTerminalCommand = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<unknown>;
-type ListenToTerminalOutput = (
+type InvokeTerminalCommand = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+type ListenToTerminalEvent = (
   event: string,
-  handler: (event: { payload: TerminalOutputEvent }) => void,
+  handler: (event: { payload: unknown }) => void,
 ) => Promise<TerminalUnsubscribeFn>;
 type RuntimeDetector = () => boolean;
 
-const invokeTerminalCommand: InvokeTerminalCommand = (command, args) =>
-  invoke(command, args);
-const listenToTerminalOutput: ListenToTerminalOutput = (event, handler) =>
-  listen<TerminalOutputEvent>(event, handler);
+const invokeTerminalCommand: InvokeTerminalCommand = (command, args) => invoke(command, args);
+const listenToTerminalEvent: ListenToTerminalEvent = (event, handler) => listen(event, handler);
 
 export class TauriTerminalGateway implements TerminalGateway {
   constructor(
     private readonly invokeCommand: InvokeTerminalCommand = invokeTerminalCommand,
-    private readonly listenToEvent: ListenToTerminalOutput = listenToTerminalOutput,
+    private readonly listenToEvent: ListenToTerminalEvent = listenToTerminalEvent,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
   ) {}
 
@@ -40,9 +35,17 @@ export class TauriTerminalGateway implements TerminalGateway {
       return Promise.resolve([]);
     }
 
-    return this.invokeCommand("list_terminal_profiles") as Promise<
-      TerminalProfile[]
-    >;
+    return this.invokeCommand("list_terminal_profiles") as Promise<TerminalProfile[]>;
+  }
+
+  acknowledgeStart(sessionId: number): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return this.invokeCommand("acknowledge_terminal_session_start", {
+      sessionId,
+    }) as Promise<void>;
   }
 
   start(
@@ -113,15 +116,25 @@ export class TauriTerminalGateway implements TerminalGateway {
     return this.invokeCommand("stop_all_terminal_sessions") as Promise<void>;
   }
 
-  subscribeOutput(
-    listener: (event: TerminalOutputEvent) => void,
-  ): Promise<TerminalUnsubscribeFn> {
+  subscribeOutput(listener: (event: TerminalOutputEvent) => void): Promise<TerminalUnsubscribeFn> {
     if (!this.isRuntimeAvailable()) {
       return Promise.resolve(() => undefined);
     }
 
     return this.listenToEvent(OUTPUT_EVENT, (event) => {
-      listener(event.payload);
+      listener(event.payload as TerminalOutputEvent);
+    });
+  }
+
+  subscribeStatus(
+    listener: (status: TerminalRuntimeStatus) => void,
+  ): Promise<TerminalUnsubscribeFn> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve(() => undefined);
+    }
+
+    return this.listenToEvent(STATUS_EVENT, (event) => {
+      listener(event.payload as unknown as TerminalRuntimeStatus);
     });
   }
 }

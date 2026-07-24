@@ -39,7 +39,7 @@ export interface ToastNotificationProps {
   title?: string;
 }
 
-export const TOAST_TEMPLATES: Record<ToastTemplateName, ToastTemplate> = {
+const TOAST_TEMPLATES: Record<ToastTemplateName, ToastTemplate> = {
   error: {
     color: "var(--color-error)",
     icon: CircleX,
@@ -61,15 +61,6 @@ export const TOAST_TEMPLATES: Record<ToastTemplateName, ToastTemplate> = {
     title: "Warning",
   },
 };
-
-export const toastActionTemplates = {
-  dismiss: (onClose: () => void): ToastNotificationAction => ({
-    id: "dismiss",
-    label: "Dismiss",
-    tone: "secondary",
-    onClick: onClose,
-  }),
-} as const;
 
 export function ToastNotification({
   actions,

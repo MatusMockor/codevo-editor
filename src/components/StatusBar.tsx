@@ -1,12 +1,13 @@
 import { CircleX, GitBranch, TriangleAlert } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
-import type {
-  StatusBarItemVisibility,
-} from "../domain/settings";
+import type { StatusBarItemVisibility } from "../domain/settings";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { LargeSmartDocumentStatus } from "../domain/largeDocumentPolicy";
+import type { IdeActivityState } from "../domain/ideActivity";
 import type { IntelligenceMode } from "../domain/workspace";
+import type { NodeRunStatusPresentation } from "../application/nodeRunWithoutDebuggingPresentation";
+import { NodeRunStatusAction } from "./NodeRunStatusAction";
 
 interface StatusBarProps {
   activeLanguage: string | null;
@@ -27,16 +28,15 @@ interface StatusBarProps {
   intelligenceMode: IntelligenceMode;
   largeDocumentStatus?: LargeSmartDocumentStatus | null;
   message: string | null;
+  nodeRunStatus?: NodeRunStatusPresentation | null;
   statusBar: StatusBarItemVisibility;
   warningCount?: number;
   workspaceInfoLabel: string | null;
   workspaceRoot: string | null;
   workspaceTrustLabel: string | null;
-  onChangeVisibility(
-    key: keyof StatusBarItemVisibility,
-    visible: boolean,
-  ): void;
+  onChangeVisibility(key: keyof StatusBarItemVisibility, visible: boolean): void;
   onOpenRuntimePanel?(): void;
+  onStopNodeRun?(): void;
   onShowGitBranches?(): void;
   onShowGoToLine?(): void;
   onShowProblems?(): void;
@@ -99,8 +99,10 @@ function StatusBarComponent({
   intelligenceMode,
   largeDocumentStatus = null,
   message,
+  nodeRunStatus = null,
   onChangeVisibility,
   onOpenRuntimePanel,
+  onStopNodeRun,
   onShowGitBranches,
   onShowGoToLine,
   onShowProblems,
@@ -198,11 +200,7 @@ function StatusBarComponent({
           {gitBranchLabel(gitBranch, gitBranchRepositoryLabel)}
         </button>
       ) : null}
-      {statusBar.activePath ? (
-        <span title={activePathLabel}>
-          {activePathLabel}
-        </span>
-      ) : null}
+      {statusBar.activePath ? <span title={activePathLabel}>{activePathLabel}</span> : null}
       {statusBar.workspaceInfo && workspaceInfoLabel ? (
         <span title={workspaceInfoLabel}>{workspaceInfoLabel}</span>
       ) : null}
@@ -222,17 +220,13 @@ function StatusBarComponent({
           {ideActivityLabel}
         </button>
       ) : null}
-      {statusBar.workspaceTrust && workspaceTrustLabel ? (
-        <span>{workspaceTrustLabel}</span>
+      {nodeRunStatus && onStopNodeRun ? (
+        <NodeRunStatusAction onStop={onStopNodeRun} status={nodeRunStatus} />
       ) : null}
-      {statusBar.mode ? (
-        <span className="status-mode">{formatMode(intelligenceMode)}</span>
-      ) : null}
+      {statusBar.workspaceTrust && workspaceTrustLabel ? <span>{workspaceTrustLabel}</span> : null}
+      {statusBar.mode ? <span className="status-mode">{formatMode(intelligenceMode)}</span> : null}
       {statusBar.largeFileMode && largeDocumentStatus ? (
-        <span
-          className="status-large-file-mode"
-          title={largeDocumentStatus.title}
-        >
+        <span className="status-large-file-mode" title={largeDocumentStatus.title}>
           {largeDocumentStatus.label}
         </span>
       ) : null}
@@ -249,9 +243,7 @@ function StatusBarComponent({
         </button>
       ) : null}
       {statusBar.language && activeLanguage ? <span>{activeLanguage}</span> : null}
-      {statusBar.dirtyCount && dirtyCount > 0 ? (
-        <span>{dirtyCount} unsaved</span>
-      ) : null}
+      {statusBar.dirtyCount && dirtyCount > 0 ? <span>{dirtyCount} unsaved</span> : null}
       {statusBar.message && visibleMessage ? (
         <span className="status-message">{visibleMessage}</span>
       ) : null}
@@ -270,9 +262,7 @@ function StatusBarComponent({
             <label className="status-bar-menu-item" key={item.key} role="menuitemcheckbox">
               <input
                 checked={statusBar[item.key]}
-                onChange={(event) =>
-                  onChangeVisibility(item.key, event.currentTarget.checked)
-                }
+                onChange={(event) => onChangeVisibility(item.key, event.currentTarget.checked)}
                 type="checkbox"
               />
               <span>{item.label}</span>
@@ -286,15 +276,10 @@ function StatusBarComponent({
 
 export const StatusBar = memo(StatusBarComponent);
 
-export type IdeActivityState = "active" | "idle" | "problem" | "scanning";
-
 // The headline label plus an optional per-runtime mini-overview (PHPactor/TS
 // Server/Index lines), so hovering the chip shows what is actually running for
 // the active project without opening the Runtime panel.
-function ideActivityTitle(
-  label: string,
-  detail: string | null,
-): string {
+function ideActivityTitle(label: string, detail: string | null): string {
   if (!detail) {
     return label;
   }
@@ -310,10 +295,7 @@ function pluralize(count: number, noun: string): string {
 // `repo: branch` label so the branch is unambiguous; the primary/single repo
 // shows the branch bare (pre-multi-repo look). The full context stays in the
 // tooltip either way.
-function gitBranchLabel(
-  branch: string,
-  repositoryLabel: string | null,
-): string {
+function gitBranchLabel(branch: string, repositoryLabel: string | null): string {
   if (!repositoryLabel) {
     return branch;
   }
@@ -321,10 +303,7 @@ function gitBranchLabel(
   return `${repositoryLabel}: ${branch}`;
 }
 
-function gitBranchTitle(
-  branch: string,
-  repositoryLabel: string | null,
-): string {
+function gitBranchTitle(branch: string, repositoryLabel: string | null): string {
   if (!repositoryLabel) {
     return `Git branch: ${branch}`;
   }
@@ -348,10 +327,7 @@ function formatMode(mode: IntelligenceMode): string {
   return "Editor Mode";
 }
 
-function activePathStatusLabel(
-  workspaceRoot: string | null,
-  activePath: string | null,
-): string {
+function activePathStatusLabel(workspaceRoot: string | null, activePath: string | null): string {
   if (workspaceRoot && activePath) {
     return relativeWorkspacePath(workspaceRoot, activePath);
   }

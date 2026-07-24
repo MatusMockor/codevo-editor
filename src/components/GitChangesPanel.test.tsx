@@ -937,7 +937,11 @@ describe("GitChangesPanel", () => {
         setIncluded((current) => {
           const next = new Set(current);
           const key = gitChangeKey(first);
-          next.has(key) ? next.delete(key) : next.add(key);
+          if (next.has(key)) {
+            next.delete(key);
+          } else {
+            next.add(key);
+          }
           return next;
         });
 
@@ -1029,7 +1033,11 @@ describe("GitChangesPanel", () => {
         setIncluded((current) => {
           const next = new Set(current);
           const key = gitChangeKey(target);
-          next.has(key) ? next.delete(key) : next.add(key);
+          if (next.has(key)) {
+            next.delete(key);
+          } else {
+            next.add(key);
+          }
           return next;
         });
 

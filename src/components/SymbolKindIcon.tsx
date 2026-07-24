@@ -2,21 +2,7 @@
 // (File Structure, Class Open, Search Everywhere). The colour comes from the
 // theme-aware --symbol-* tokens via the `.symbol-icon[data-kind=...]` rules in
 // App.css, so this stays presentation only and works across all themes.
-const SYMBOL_ICON_LETTERS: Record<string, string> = {
-  class: "C",
-  constant: "c",
-  enum: "E",
-  function: "ƒ",
-  interface: "I",
-  method: "m",
-  property: "p",
-  trait: "T",
-  variable: "v",
-};
-
-export function symbolKindLetter(kind: string): string {
-  return SYMBOL_ICON_LETTERS[kind] ?? "·";
-}
+import { symbolKindLetter } from "../domain/symbolKind";
 
 interface SymbolKindIconProps {
   kind: string;

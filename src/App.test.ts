@@ -15,8 +15,8 @@ import {
   ideActivityState,
   ideActivityStatus,
   phpLanguageServerActivityLabel,
-  preloadSyntaxHighlighter,
-} from "./App";
+} from "./domain/ideActivity";
+import { preloadSyntaxHighlighter } from "./application/preloadSyntaxHighlighter";
 import {
   emptyLanguageServerCapabilities,
   languageServerStatusLabel,
@@ -37,7 +37,7 @@ describe("preloadSyntaxHighlighter", () => {
   it("warms the Shiki highlighter so the first opened file has colors immediately", () => {
     appBootMocks.createAppHighlighter.mockResolvedValue({});
 
-    preloadSyntaxHighlighter();
+    preloadSyntaxHighlighter(appBootMocks.createAppHighlighter);
 
     expect(appBootMocks.createAppHighlighter).toHaveBeenCalledTimes(1);
   });
@@ -46,7 +46,7 @@ describe("preloadSyntaxHighlighter", () => {
     const rejection = Promise.reject(new Error("highlighter unavailable"));
     appBootMocks.createAppHighlighter.mockReturnValue(rejection);
 
-    expect(() => preloadSyntaxHighlighter()).not.toThrow();
+    expect(() => preloadSyntaxHighlighter(appBootMocks.createAppHighlighter)).not.toThrow();
 
     // Let the swallowed rejection settle without surfacing an unhandled rejection.
     await rejection.catch(() => {});
@@ -117,28 +117,17 @@ describe("ideActivityDetail", () => {
       },
     );
 
-    const detail = ideActivityDetail(
-      "/workspace",
-      runningPhp,
-      startingTs,
-      progress,
-    );
+    const detail = ideActivityDetail("/workspace", runningPhp, startingTs, progress);
 
     expect(detail).toBe(
-      [
-        "PHPactor: running",
-        "TS Server: starting",
-        "Index: 500 of 1000 (50%)",
-      ].join("\n"),
+      ["PHPactor: running", "TS Server: starting", "Index: 500 of 1000 (50%)"].join("\n"),
     );
   });
 
   it("reports a stopped runtime and idle index when nothing is active", () => {
     const detail = ideActivityDetail("/workspace", null, null, initialIndexProgress());
 
-    expect(detail).toBe(
-      ["PHPactor: stopped", "TS Server: stopped", "Index: idle"].join("\n"),
-    );
+    expect(detail).toBe(["PHPactor: stopped", "TS Server: stopped", "Index: idle"].join("\n"));
   });
 
   it("reports a crashed runtime distinctly from stopped", () => {
@@ -148,16 +137,9 @@ describe("ideActivityDetail", () => {
       rootPath: "/workspace",
     };
 
-    const detail = ideActivityDetail(
-      "/workspace",
-      crashedPhp,
-      null,
-      initialIndexProgress(),
-    );
+    const detail = ideActivityDetail("/workspace", crashedPhp, null, initialIndexProgress());
 
-    expect(detail).toBe(
-      ["PHPactor: crashed", "TS Server: stopped", "Index: idle"].join("\n"),
-    );
+    expect(detail).toBe(["PHPactor: crashed", "TS Server: stopped", "Index: idle"].join("\n"));
   });
 
   it("ignores runtime statuses that belong to a different workspace", () => {
@@ -168,16 +150,9 @@ describe("ideActivityDetail", () => {
       sessionId: 1,
     };
 
-    const detail = ideActivityDetail(
-      "/workspace",
-      otherWorkspacePhp,
-      null,
-      initialIndexProgress(),
-    );
+    const detail = ideActivityDetail("/workspace", otherWorkspacePhp, null, initialIndexProgress());
 
-    expect(detail).toBe(
-      ["PHPactor: stopped", "TS Server: stopped", "Index: idle"].join("\n"),
-    );
+    expect(detail).toBe(["PHPactor: stopped", "TS Server: stopped", "Index: idle"].join("\n"));
   });
 });
 
@@ -204,12 +179,8 @@ describe("phpLanguageServerActivityLabel", () => {
   });
 
   it("returns null when the workspace is not running in fullSmart mode", () => {
-    expect(
-      phpLanguageServerActivityLabel("basic", null, "/workspace", null),
-    ).toBeNull();
-    expect(
-      phpLanguageServerActivityLabel("lightSmart", null, "/workspace", null),
-    ).toBeNull();
+    expect(phpLanguageServerActivityLabel("basic", null, "/workspace", null)).toBeNull();
+    expect(phpLanguageServerActivityLabel("lightSmart", null, "/workspace", null)).toBeNull();
   });
 });
 
@@ -234,12 +205,7 @@ describe("ideActivityStatus composed with the PHPactor and TS Server labels", ()
       status: "completed" as const,
     };
 
-    const phpLabel = phpLanguageServerActivityLabel(
-      "fullSmart",
-      runningPhp,
-      "/workspace",
-      null,
-    );
+    const phpLabel = phpLanguageServerActivityLabel("fullSmart", runningPhp, "/workspace", null);
     const tsLabel = languageServerStatusLabel(runningTs, "TS Server", {
       workspaceRoot: "/workspace",
     });
@@ -280,14 +246,7 @@ describe("ideActivityStatus index progress", () => {
       },
     );
 
-    const activity = ideActivityStatus(
-      "/workspace",
-      null,
-      null,
-      progress,
-      null,
-      null,
-    );
+    const activity = ideActivityStatus("/workspace", null, null, progress, null, null);
 
     expect(activity.state).toBe("scanning");
     expect(activity.label).toBe("IDE: Indexing 500 of 1000 (50%)");
@@ -308,14 +267,7 @@ describe("ideActivityStatus index progress", () => {
       },
     );
 
-    const activity = ideActivityStatus(
-      "/workspace",
-      null,
-      null,
-      progress,
-      null,
-      null,
-    );
+    const activity = ideActivityStatus("/workspace", null, null, progress, null, null);
 
     expect(activity.label).toBe("IDE: Indexing 320 files");
   });
@@ -336,34 +288,17 @@ describe("ideActivityStatus framework profile segment", () => {
   };
 
   function phpChipLabel(): string | null {
-    return phpLanguageServerActivityLabel(
-      "fullSmart",
-      runningPhp,
-      "/workspace",
-      null,
-    );
+    return phpLanguageServerActivityLabel("fullSmart", runningPhp, "/workspace", null);
   }
 
   it("adds a compact Laravel/Nette segment after the runtime label", () => {
     expect(
-      ideActivityStatus(
-        "/workspace",
-        runningPhp,
-        null,
-        completedIndex,
-        phpChipLabel(),
-        "Laravel",
-      ).label,
+      ideActivityStatus("/workspace", runningPhp, null, completedIndex, phpChipLabel(), "Laravel")
+        .label,
     ).toBe("IDE: PHPactor running · Laravel · Index 610 files");
     expect(
-      ideActivityStatus(
-        "/workspace",
-        runningPhp,
-        null,
-        completedIndex,
-        phpChipLabel(),
-        "Nette",
-      ).label,
+      ideActivityStatus("/workspace", runningPhp, null, completedIndex, phpChipLabel(), "Nette")
+        .label,
     ).toBe("IDE: PHPactor running · Nette · Index 610 files");
   });
 
@@ -389,10 +324,7 @@ describe("ideActivityStatus framework profile segment", () => {
       status: "idle" as const,
     };
 
-    expect(
-      ideActivityStatus("/workspace", null, null, idleIndex, null, "Nette")
-        .label,
-    ).toBeNull();
+    expect(ideActivityStatus("/workspace", null, null, idleIndex, null, "Nette").label).toBeNull();
   });
 });
 

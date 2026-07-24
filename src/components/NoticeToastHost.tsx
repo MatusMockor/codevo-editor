@@ -1,11 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 
@@ -29,9 +22,7 @@ export function NoticeToastHost({
   notices,
   renderNotice,
 }: NoticeToastHostProps): ReactNode {
-  const [dismissedNoticeKeys, setDismissedNoticeKeys] = useState<Set<string>>(
-    new Set(),
-  );
+  const [dismissedNoticeKeys, setDismissedNoticeKeys] = useState<Set<string>>(new Set());
   const previousGroupNoticeKeys = useRef<Set<string>>(new Set());
 
   const getNoticeDismissKey = useCallback((notice: WorkbenchNotice) => {
@@ -42,24 +33,23 @@ export function NoticeToastHost({
     return notice.groupKey ? `group:${notice.groupKey}` : `id:${notice.id}`;
   }, []);
 
-  const dismissNotice = (notice: WorkbenchNotice) => {
-    const key = getNoticeDismissKey(notice);
-    setDismissedNoticeKeys((current) => {
-      const next = new Set(current);
-      next.add(key);
-      return next;
-    });
-  };
+  const dismissNotice = useCallback(
+    (notice: WorkbenchNotice) => {
+      const key = getNoticeDismissKey(notice);
+      setDismissedNoticeKeys((current) => {
+        const next = new Set(current);
+        next.add(key);
+        return next;
+      });
+    },
+    [getNoticeDismissKey],
+  );
 
   useEffect(() => {
     const activeNoticeKeys = new Set(notices.map(getNoticeDismissKey));
     const activeGroupNoticeKeys = new Set(
       notices
-        .filter(
-          (notice) =>
-            notice.groupKey !== undefined &&
-            notice.toastDismissKey === undefined,
-        )
+        .filter((notice) => notice.groupKey !== undefined && notice.toastDismissKey === undefined)
         .map(getNoticeDismissKey),
     );
 
@@ -77,9 +67,7 @@ export function NoticeToastHost({
         const currentlyActive = activeGroupNoticeKeys.has(key);
 
         if (
-          (key.startsWith("group:") &&
-            previouslyActive &&
-            currentlyActive) ||
+          (key.startsWith("group:") && previouslyActive && currentlyActive) ||
           (!key.startsWith("group:") && activeNoticeKeys.has(key))
         ) {
           next.add(key);
@@ -110,11 +98,7 @@ export function NoticeToastHost({
         continue;
       }
 
-      rendered.push(
-        <Fragment key={notice.id}>
-          {output}
-        </Fragment>,
-      );
+      rendered.push(<Fragment key={notice.id}>{output}</Fragment>);
 
       if (rendered.length >= maxVisible) {
         break;
@@ -122,13 +106,7 @@ export function NoticeToastHost({
     }
 
     return rendered;
-  }, [
-    dismissedNoticeKeys,
-    getNoticeDismissKey,
-    maxVisible,
-    notices,
-    renderNotice,
-  ]);
+  }, [dismissedNoticeKeys, dismissNotice, getNoticeDismissKey, maxVisible, notices, renderNotice]);
 
   if (renderedNotices.length === 0) {
     return null;

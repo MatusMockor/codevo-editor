@@ -19,12 +19,7 @@ import {
   monacoFontLigaturesForEditorSetting,
   type MonacoAppTheme,
 } from "../domain/settings";
-import type {
-  GitChangedFile,
-  GitChangeStatus,
-  GitDiffHunk,
-  GitFileDiff,
-} from "../domain/git";
+import type { GitChangedFile, GitChangeStatus, GitDiffHunk, GitFileDiff } from "../domain/git";
 import {
   applyImmediateFallbackTheme,
   setupShikiTokenization,
@@ -91,27 +86,23 @@ export function GitDiffPreview({
   const diffEditorRef = useRef<Monaco.editor.IStandaloneDiffEditor | null>(null);
   const diffListenerRef = useRef<Monaco.IDisposable | null>(null);
   const hunkWidgetsRef = useRef<GitDiffHunkWidgetRegistration[]>([]);
-  const monacoRef = useRef<Parameters<typeof setupShikiTokenization>[0] | null>(
-    null,
-  );
+  const monacoRef = useRef<Parameters<typeof setupShikiTokenization>[0] | null>(null);
   const requestedThemeRef = useRef<MonacoAppTheme | null>(null);
   const themeRequestRef = useRef(0);
   const previewInstanceId = useId();
   const changeRelativePath = diff?.change.relativePath ?? null;
   const changeIsStaged = diff?.change.isStaged ?? false;
   const changeStatus = diff?.change.status ?? null;
-  const hunkSelectionIdentity = gitDiffHunkSelectionIdentity(
-    diff?.change ?? null,
-    previewIdentity,
-  );
+  const hunkSelectionIdentity = gitDiffHunkSelectionIdentity(diff?.change ?? null, previewIdentity);
   const currentHunkSelectionIdentityRef = useRef(hunkSelectionIdentity);
   currentHunkSelectionIdentityRef.current = hunkSelectionIdentity;
   const loadedHunkSelectionIdentityRef = useRef(loadedHunks.selectionIdentity);
   loadedHunkSelectionIdentityRef.current = loadedHunks.selectionIdentity;
-  const hunks =
-    loadedHunks.selectionIdentity === hunkSelectionIdentity
-      ? loadedHunks.hunks
-      : [];
+  const hunks = useMemo(
+    () => (loadedHunks.selectionIdentity === hunkSelectionIdentity ? loadedHunks.hunks : []),
+    [hunkSelectionIdentity, loadedHunks],
+  );
+  const diffChange = diff?.change ?? null;
   const originalContent = safeDiffContent(diff?.originalContent);
   const modifiedContent = safeDiffContent(diff?.modifiedContent);
   const fallbackReason = useMemo(
@@ -125,23 +116,10 @@ export function GitDiffPreview({
     changeStatus !== "untracked" &&
     changeStatus !== "conflicted";
   const modelPaths = useMemo(
-    () =>
-      gitDiffModelPaths(
-        diff?.change ?? null,
-        previewInstanceId,
-        previewIdentity,
-      ),
-    [
-      changeIsStaged,
-      changeRelativePath,
-      diff?.change.path,
-      previewIdentity,
-      previewInstanceId,
-    ],
+    () => gitDiffModelPaths(diff?.change ?? null, previewInstanceId, previewIdentity),
+    [diff?.change, previewIdentity, previewInstanceId],
   );
-  const fontLigatures = monacoFontLigaturesForEditorSetting(
-    editorFontLigatures,
-  );
+  const fontLigatures = monacoFontLigaturesForEditorSetting(editorFontLigatures);
 
   const disposeHunkWidgets = useCallback(() => {
     for (const registration of hunkWidgetsRef.current) {
@@ -152,18 +130,14 @@ export function GitDiffPreview({
   }, []);
 
   const requestThemeSetup = useCallback(
-    (
-      monaco: Parameters<typeof setupShikiTokenization>[0],
-      theme: MonacoAppTheme,
-    ) => {
+    (monaco: Parameters<typeof setupShikiTokenization>[0], theme: MonacoAppTheme) => {
       const request = ++themeRequestRef.current;
       monacoRef.current = monaco;
       requestedThemeRef.current = theme;
       applyImmediateFallbackTheme(monaco, theme);
 
       setupShikiTokenization(monaco, theme, {
-        shouldApply: () =>
-          request === themeRequestRef.current && monacoRef.current === monaco,
+        shouldApply: () => request === themeRequestRef.current && monacoRef.current === monaco,
       }).catch((error) => {
         if (request !== themeRequestRef.current) {
           return;
@@ -181,15 +155,10 @@ export function GitDiffPreview({
   }, [changeIsStaged, changeRelativePath, modifiedContent, originalContent]);
 
   useLayoutEffect(() => {
-    const change = diff?.change;
+    const change = diffChange;
 
     setLoadedHunks({ hunks: [], selectionIdentity: null });
-    if (
-      !loadFileHunks ||
-      !change ||
-      !supportsHunkStaging ||
-      !hunkSelectionIdentity
-    ) {
+    if (!loadFileHunks || !change || !supportsHunkStaging || !hunkSelectionIdentity) {
       return;
     }
 
@@ -200,10 +169,7 @@ export function GitDiffPreview({
     void Promise.resolve()
       .then(() => loadFileHunks(change, staged))
       .then((loaded) => {
-        if (
-          cancelled ||
-          currentHunkSelectionIdentityRef.current !== selectionIdentity
-        ) {
+        if (cancelled || currentHunkSelectionIdentityRef.current !== selectionIdentity) {
           return;
         }
 
@@ -232,6 +198,7 @@ export function GitDiffPreview({
   }, [
     changeIsStaged,
     changeRelativePath,
+    diffChange,
     hunkSelectionIdentity,
     modifiedContent,
     originalContent,
@@ -261,24 +228,21 @@ export function GitDiffPreview({
     requestThemeSetup(monaco, monacoTheme);
   }, [monacoTheme, requestThemeSetup]);
 
-  const refreshLineChanges = useCallback(
-    (editor: Monaco.editor.IStandaloneDiffEditor) => {
-      const next = editor.getLineChanges() ?? [];
-      setLineChanges(next);
-      setActiveChangeIndex((current) => {
-        if (next.length === 0) {
-          return -1;
-        }
-
-        return Math.min(Math.max(current, 0), next.length - 1);
-      });
-
-      for (const registration of hunkWidgetsRef.current) {
-        registration.editor.layoutContentWidget(registration.widget);
+  const refreshLineChanges = useCallback((editor: Monaco.editor.IStandaloneDiffEditor) => {
+    const next = editor.getLineChanges() ?? [];
+    setLineChanges(next);
+    setActiveChangeIndex((current) => {
+      if (next.length === 0) {
+        return -1;
       }
-    },
-    [],
-  );
+
+      return Math.min(Math.max(current, 0), next.length - 1);
+    });
+
+    for (const registration of hunkWidgetsRef.current) {
+      registration.editor.layoutContentWidget(registration.widget);
+    }
+  }, []);
 
   const onDiffEditorMount = useCallback(
     (editor: Monaco.editor.IStandaloneDiffEditor) => {
@@ -373,12 +337,7 @@ export function GitDiffPreview({
   useLayoutEffect(() => {
     disposeHunkWidgets();
     const editor = diffEditorRef.current;
-    if (
-      !editor ||
-      !supportsHunkStaging ||
-      !hunkSelectionIdentity ||
-      hunks.length === 0
-    ) {
+    if (!editor || !supportsHunkStaging || !hunkSelectionIdentity || hunks.length === 0) {
       return;
     }
 
@@ -517,16 +476,11 @@ export function GitDiffPreview({
   );
 }
 
-interface ManagedGitDiffEditorProps
-  extends ComponentProps<typeof DiffEditor> {
+interface ManagedGitDiffEditorProps extends ComponentProps<typeof DiffEditor> {
   onRelease(editor: Monaco.editor.IStandaloneDiffEditor): void;
 }
 
-function ManagedGitDiffEditor({
-  onMount,
-  onRelease,
-  ...props
-}: ManagedGitDiffEditorProps) {
+function ManagedGitDiffEditor({ onMount, onRelease, ...props }: ManagedGitDiffEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneDiffEditor | null>(null);
   const onReleaseRef = useRef(onRelease);
   onReleaseRef.current = onRelease;
@@ -566,9 +520,7 @@ function ManagedGitDiffEditor({
   );
 }
 
-function resetAndDisposeGitDiffModels(
-  editor: Monaco.editor.IStandaloneDiffEditor,
-): void {
+function resetAndDisposeGitDiffModels(editor: Monaco.editor.IStandaloneDiffEditor): void {
   const models = editor.getModel();
   editor.setModel(null);
   if (!models) {
@@ -649,16 +601,8 @@ function createGitDiffHunkWidgets(
   disabled: boolean,
   canRevert: boolean,
   selectionIdentity: string,
-  onToggleHunk: (
-    hunkIndex: number,
-    hunkIdentity: string,
-    selectionIdentity: string,
-  ) => void,
-  onRevertHunk: (
-    hunkIndex: number,
-    hunkIdentity: string,
-    selectionIdentity: string,
-  ) => void,
+  onToggleHunk: (hunkIndex: number, hunkIdentity: string, selectionIdentity: string) => void,
+  onRevertHunk: (hunkIndex: number, hunkIdentity: string, selectionIdentity: string) => void,
 ): GitDiffHunkWidgetRegistration[] {
   const registrations: GitDiffHunkWidgetRegistration[] = [];
   const actionVerb = staged ? "Unstage" : "Stage";
@@ -675,12 +619,8 @@ function createGitDiffHunkWidgets(
         canRevert={canRevert}
         disabled={disabled}
         hunk={hunk}
-        onRevert={() =>
-          onRevertHunk(hunk.index, hunk.identity, selectionIdentity)
-        }
-        onToggle={() =>
-          onToggleHunk(hunk.index, hunk.identity, selectionIdentity)
-        }
+        onRevert={() => onRevertHunk(hunk.index, hunk.identity, selectionIdentity)}
+        onToggle={() => onToggleHunk(hunk.index, hunk.identity, selectionIdentity)}
         staged={staged}
       />,
     );
@@ -804,12 +744,7 @@ function gitDiffHunkSelectionIdentity(
     return null;
   }
 
-  return JSON.stringify([
-    previewIdentity ?? "",
-    change.path,
-    change.relativePath,
-    change.isStaged,
-  ]);
+  return JSON.stringify([previewIdentity ?? "", change.path, change.relativePath, change.isStaged]);
 }
 
 function diffFallbackReason(

@@ -1,5 +1,7 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { NavigationRequest } from "../application/navigationRequest";
+import type { NeonCrossFileRepository } from "../application/neonCrossFileSymbolSweep";
+import type { NeonSemanticDiagnostic } from "../domain/neonSemanticDiagnostics";
 import type { PhpCodeActionContext } from "../application/phpCodeActionTypes";
 import type {
   BladeCompletion,
@@ -8,9 +10,7 @@ import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./languageServerMonacoProviders";
-import type {
-  TemplateLanguageProviderRegistry,
-} from "./templateLanguageMonacoTypes";
+import type { TemplateLanguageProviderRegistry } from "./templateLanguageMonacoTypes";
 
 export interface EditorSurfaceFrameworkIntelligenceProviders {
   provideBladeCodeActions?(
@@ -18,19 +18,13 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
     range: PhpCodeActionRange,
     context?: PhpCodeActionContext,
   ): Promise<PhpCodeActionDescriptor[]>;
-  provideBladeCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<BladeCompletion[]>;
+  provideBladeCompletions?(source: string, position: EditorPosition): Promise<BladeCompletion[]>;
   provideBladeDefinition?(
     source: string,
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  provideLatteCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<LatteCompletion[]>;
+  provideLatteCompletions?(source: string, position: EditorPosition): Promise<LatteCompletion[]>;
   provideLatteCodeActions?(
     source: string,
     range: PhpCodeActionRange,
@@ -41,15 +35,15 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  provideNeonCompletions?(
-    source: string,
-    position: EditorPosition,
-  ): Promise<NeonCompletion[]>;
+  provideNeonCompletions?(source: string, position: EditorPosition): Promise<NeonCompletion[]>;
   provideNeonDefinition?(
     source: string,
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
+  provideNeonSemanticDiagnostics?(
+    repository: NeonCrossFileRepository,
+  ): Promise<readonly NeonSemanticDiagnostic[] | null>;
   providePhpPresenterLinkDefinition?(
     source: string,
     offset: number,
@@ -60,10 +54,7 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
     offset: number,
   ): Promise<LatteCompletion[] | null>;
   isPhpPresenterLinkCompletionContext?(source: string, offset: number): boolean;
-  isPhpFrameworkStringCompletionContext?(
-    source: string,
-    position: EditorPosition,
-  ): boolean;
+  isPhpFrameworkStringCompletionContext?(source: string, position: EditorPosition): boolean;
 }
 
 export interface EditorSurfaceFrameworkDefinitionProviders {
@@ -86,10 +77,7 @@ export interface ResolvedEditorSurfaceFrameworkProviders {
     offset: number,
   ): Promise<LatteCompletion[] | null>;
   isPhpPresenterLinkCompletionContext(source: string, offset: number): boolean;
-  isPhpFrameworkStringCompletionContext(
-    source: string,
-    position: EditorPosition,
-  ): boolean;
+  isPhpFrameworkStringCompletionContext(source: string, position: EditorPosition): boolean;
   providePhpFrameworkDefinition(
     source: string,
     offset: number,
@@ -104,11 +92,8 @@ export function resolveEditorSurfaceFrameworkProviders({
   frameworkIntelligenceProviders?: EditorSurfaceFrameworkIntelligenceProviders;
 } & EditorSurfaceFrameworkDefinitionProviders): ResolvedEditorSurfaceFrameworkProviders {
   return {
-    providePhpFrameworkDefinition:
-      providePhpFrameworkDefinition ?? noopPhpFrameworkDefinition,
-    templateLanguageProviders: resolveTemplateLanguageProviders(
-      frameworkIntelligenceProviders,
-    ),
+    providePhpFrameworkDefinition: providePhpFrameworkDefinition ?? noopPhpFrameworkDefinition,
+    templateLanguageProviders: resolveTemplateLanguageProviders(frameworkIntelligenceProviders),
     providePhpPresenterLinkDefinition:
       frameworkIntelligenceProviders?.providePhpPresenterLinkDefinition ??
       noopPhpFrameworkDefinition,
@@ -130,31 +115,23 @@ type TemplateLanguageProviderResolvers = {
   ) => TemplateLanguageProviderRegistry[Language];
 };
 
-const TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS: TemplateLanguageProviderResolvers =
-  {
-    blade: (providers) => ({
-      provideCodeActions:
-        providers?.provideBladeCodeActions ?? noopPhpCodeActions,
-      provideCompletions:
-        providers?.provideBladeCompletions ?? noopBladeCompletions,
-      provideDefinition:
-        providers?.provideBladeDefinition ?? noopPhpFrameworkDefinition,
-    }),
-    latte: (providers) => ({
-      provideCodeActions:
-        providers?.provideLatteCodeActions ?? noopPhpCodeActions,
-      provideCompletions:
-        providers?.provideLatteCompletions ?? noopLatteCompletions,
-      provideDefinition:
-        providers?.provideLatteDefinition ?? noopPhpFrameworkDefinition,
-    }),
-    neon: (providers) => ({
-      provideCompletions:
-        providers?.provideNeonCompletions ?? noopNeonCompletions,
-      provideDefinition:
-        providers?.provideNeonDefinition ?? noopPhpFrameworkDefinition,
-    }),
-  };
+const TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS: TemplateLanguageProviderResolvers = {
+  blade: (providers) => ({
+    provideCodeActions: providers?.provideBladeCodeActions ?? noopPhpCodeActions,
+    provideCompletions: providers?.provideBladeCompletions ?? noopBladeCompletions,
+    provideDefinition: providers?.provideBladeDefinition ?? noopPhpFrameworkDefinition,
+  }),
+  latte: (providers) => ({
+    provideCodeActions: providers?.provideLatteCodeActions ?? noopPhpCodeActions,
+    provideCompletions: providers?.provideLatteCompletions ?? noopLatteCompletions,
+    provideDefinition: providers?.provideLatteDefinition ?? noopPhpFrameworkDefinition,
+  }),
+  neon: (providers) => ({
+    provideCompletions: providers?.provideNeonCompletions ?? noopNeonCompletions,
+    provideDefinition: providers?.provideNeonDefinition ?? noopPhpFrameworkDefinition,
+    provideSemanticDiagnostics: providers?.provideNeonSemanticDiagnostics,
+  }),
+};
 
 const TEMPLATE_LANGUAGE_IDS = Object.keys(
   TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS,
@@ -171,16 +148,12 @@ function resolveTemplateLanguageProviders(
   return registry;
 }
 
-function assignTemplateLanguageProviders<
-  Language extends keyof TemplateLanguageProviderRegistry,
->(
+function assignTemplateLanguageProviders<Language extends keyof TemplateLanguageProviderRegistry>(
   registry: TemplateLanguageProviderRegistry,
   language: Language,
   providers: EditorSurfaceFrameworkIntelligenceProviders | undefined,
 ): void {
-  registry[language] = TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS[language](
-    providers,
-  );
+  registry[language] = TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS[language](providers);
 }
 
 const noopPhpFrameworkDefinition = async () => false;
@@ -190,6 +163,4 @@ const noopPhpCodeActions = async (): Promise<PhpCodeActionDescriptor[]> => [];
 const noopBladeCompletions = async (): Promise<BladeCompletion[]> => [];
 const noopLatteCompletions = async (): Promise<LatteCompletion[]> => [];
 const noopNeonCompletions = async (): Promise<NeonCompletion[]> => [];
-const noopPhpPresenterLinkCompletions = async (): Promise<
-  LatteCompletion[] | null
-> => null;
+const noopPhpPresenterLinkCompletions = async (): Promise<LatteCompletion[] | null> => null;

@@ -25,10 +25,14 @@ import type { EditorChangeHunk } from "../domain/editorChangeMarkers";
 import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import type { JsTestExplorerCurrentFileIdentity } from "../domain/jsTestExplorerFilter";
+import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import type { EditorDocument } from "../domain/workspace";
+import { createWorkspaceRoot, parseWorkspacePath } from "../domain/workspacePath";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import { EditorRuntimeHost } from "./EditorRuntimeHost";
-import { EditorSurface, gitBlameShaAtLine } from "./EditorSurface";
+import { gitBlameShaAtLine } from "../domain/git";
+import { EditorSurface } from "./EditorSurface";
 import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import {
   type EditorQaDefinitionRequest,
@@ -43,7 +47,9 @@ interface FakeModel {
   updateOptions?: ReturnType<typeof vi.fn>;
   getLineContent?: ReturnType<typeof vi.fn>;
   getLineCount?: ReturnType<typeof vi.fn>;
+  getLineLength?: ReturnType<typeof vi.fn>;
   getLineMaxColumn?: ReturnType<typeof vi.fn>;
+  getLanguageId?: ReturnType<typeof vi.fn>;
   getOptions?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
   getValueLength?: ReturnType<typeof vi.fn>;
@@ -53,6 +59,7 @@ interface FakeModel {
   getVersionId?: ReturnType<typeof vi.fn>;
   setValue?: ReturnType<typeof vi.fn>;
   isDisposed?: ReturnType<typeof vi.fn>;
+  onWillDispose?: ReturnType<typeof vi.fn>;
   tokenization?: {
     forceTokenization: ReturnType<typeof vi.fn>;
   };
@@ -86,24 +93,20 @@ interface FakeEditor {
   getSelection: ReturnType<typeof vi.fn>;
   getScrollTop: ReturnType<typeof vi.fn>;
   getTopForLineNumber: ReturnType<typeof vi.fn>;
-  cursorPositionHandler:
-    | ((event: { position: EditorPosition }) => void)
-    | null;
+  cursorPositionHandler: ((event: { position: EditorPosition }) => void) | null;
   focusEditorWidgetHandler: (() => void) | null;
   keyDownHandler: ((event: FakeKeyDownEvent) => void) | null;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   mouseMoveHandler: ((event: FakeMouseDownEvent) => void) | null;
   modelContentChangeHandler:
-    | ((
-        event: {
-          changes: Array<{
-            range?: {
-              startLineNumber: number;
-            };
-            text: string;
-          }>;
-        },
-      ) => void)
+    | ((event: {
+        changes: Array<{
+          range?: {
+            startLineNumber: number;
+          };
+          text: string;
+        }>;
+      }) => void)
     | null;
   modelContentChangeHandlers: Array<
     (event: {
@@ -170,6 +173,8 @@ interface FakeMouseDownEvent {
     metaKey?: boolean;
     leftButton?: boolean;
     middleButton?: boolean;
+    posx?: number;
+    posy?: number;
     rightButton?: boolean;
     preventDefault: ReturnType<typeof vi.fn>;
     stopPropagation: ReturnType<typeof vi.fn>;
@@ -207,18 +212,15 @@ const editorSurfaceMocks = vi.hoisted(() => ({
         provideDefinition(source: string, offset: number): unknown;
       };
     };
-    providePhpCodeActions?: (
-      source: string,
-      range: { end: number; start: number },
-    ) => unknown;
+    providePhpCodeActions?: (source: string, range: { end: number; start: number }) => unknown;
     providePhpFrameworkDefinition?: (source: string, offset: number) => unknown;
   } | null,
 }));
 
 vi.mock("./languageServerMonacoProviders", async () => {
-  const actual = await vi.importActual<
-    typeof import("./languageServerMonacoProviders")
-  >("./languageServerMonacoProviders");
+  const actual = await vi.importActual<typeof import("./languageServerMonacoProviders")>(
+    "./languageServerMonacoProviders",
+  );
 
   return {
     ...actual,
@@ -236,20 +238,13 @@ vi.mock("./languageServerMonacoProviders", async () => {
           };
         };
         providePhpCodeActions?: (source: string) => unknown;
-        providePhpFrameworkDefinition?: (
-          source: string,
-          offset: number,
-        ) => unknown;
+        providePhpFrameworkDefinition?: (source: string, offset: number) => unknown;
       },
     ) => {
       editorSurfaceMocks.registeredContext = context;
       return actual.registerLanguageServerMonacoProviders(
-        monaco as Parameters<
-          typeof actual.registerLanguageServerMonacoProviders
-        >[0],
-        context as Parameters<
-          typeof actual.registerLanguageServerMonacoProviders
-        >[1],
+        monaco as Parameters<typeof actual.registerLanguageServerMonacoProviders>[0],
+        context as Parameters<typeof actual.registerLanguageServerMonacoProviders>[1],
       );
     },
   };
@@ -266,8 +261,7 @@ vi.mock("@monaco-editor/react", async () => {
       const editorRef = React.useRef<FakeEditor | null>(null);
       editorSurfaceMocks.renderCount += 1;
       if (!editorRef.current) {
-        editorRef.current =
-          editorSurfaceMocks.editors.shift() ?? editorSurfaceMocks.editor;
+        editorRef.current = editorSurfaceMocks.editors.shift() ?? editorSurfaceMocks.editor;
       }
 
       React.useEffect(() => {
@@ -503,10 +497,12 @@ describe("EditorSurface", () => {
       await Promise.resolve();
     });
 
-    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
-      activeDocument.path,
-      { column: 1, foldedLines: [2], line: 1, scrollTop: 10 },
-    );
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(activeDocument.path, {
+      column: 1,
+      foldedLines: [2],
+      line: 1,
+      scrollTop: 10,
+    });
 
     foldingModel.setRegions([
       { collapsed: false, start: 2 },
@@ -514,10 +510,12 @@ describe("EditorSurface", () => {
     ]);
     await act(async () => foldingModel.emitChange());
 
-    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
-      activeDocument.path,
-      { column: 1, foldedLines: [4], line: 1, scrollTop: 10 },
-    );
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(activeDocument.path, {
+      column: 1,
+      foldedLines: [4],
+      line: 1,
+      scrollTop: 10,
+    });
   });
 
   it("rebinds folding capture when Monaco replaces a same-path model", async () => {
@@ -538,17 +536,11 @@ describe("EditorSurface", () => {
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(originalModel);
-    const originalFoldingModel = createFoldingModel([
-      { collapsed: true, start: 2 },
-    ]);
-    const replacementFoldingModel = createFoldingModel([
-      { collapsed: true, start: 4 },
-    ]);
+    const originalFoldingModel = createFoldingModel([{ collapsed: true, start: 2 }]);
+    const replacementFoldingModel = createFoldingModel([{ collapsed: true, start: 4 }]);
     let replacementActive = false;
     const getFoldingModel = vi.fn(async () =>
-      replacementActive
-        ? replacementFoldingModel
-        : originalFoldingModel,
+      replacementActive ? replacementFoldingModel : originalFoldingModel,
     );
     const onEditorViewStateChange = vi.fn();
     editor.getContribution.mockImplementation((id?: string) => {
@@ -596,10 +588,12 @@ describe("EditorSurface", () => {
 
     expect(getFoldingModel).toHaveBeenCalledTimes(2);
     expect(replacementFoldingModel.onDidChange).toHaveBeenCalledTimes(1);
-    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
-      activeDocument.path,
-      { column: 1, foldedLines: [4], line: 1, scrollTop: 10 },
-    );
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(activeDocument.path, {
+      column: 1,
+      foldedLines: [4],
+      line: 1,
+      scrollTop: 10,
+    });
 
     onEditorViewStateChange.mockClear();
     await act(async () => originalFoldingModel.emitChange());
@@ -607,10 +601,12 @@ describe("EditorSurface", () => {
 
     replacementFoldingModel.setRegions([{ collapsed: true, start: 3 }]);
     await act(async () => replacementFoldingModel.emitChange());
-    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
-      activeDocument.path,
-      { column: 1, foldedLines: [3], line: 1, scrollTop: 10 },
-    );
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(activeDocument.path, {
+      column: 1,
+      foldedLines: [3],
+      line: 1,
+      scrollTop: 10,
+    });
   });
 
   it("restores valid folds after the folding model is ready and applies them once", async () => {
@@ -700,12 +696,8 @@ describe("EditorSurface", () => {
       getValue: vi.fn(() => "changed\ntwo\nthree\n"),
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
-    const originalFoldingModel = createFoldingModel([
-      { collapsed: false, start: 2 },
-    ]);
-    const replacementFoldingModel = createFoldingModel([
-      { collapsed: false, start: 2 },
-    ]);
+    const originalFoldingModel = createFoldingModel([{ collapsed: false, start: 2 }]);
+    const replacementFoldingModel = createFoldingModel([{ collapsed: false, start: 2 }]);
     const originalFoldingDeferred = deferred<FakeFoldingModel>();
     const replacementFoldingDeferred = deferred<FakeFoldingModel>();
     const getFoldingModel = vi
@@ -807,9 +799,7 @@ describe("EditorSurface", () => {
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
-    const foldingModel = createFoldingModel([
-      { collapsed: false, start: 1 },
-    ]);
+    const foldingModel = createFoldingModel([{ collapsed: false, start: 1 }]);
     editor.getContribution.mockImplementation((id?: string) => {
       if (id === "editor.contrib.folding") {
         return { getFoldingModel: vi.fn(async () => foldingModel) };
@@ -861,9 +851,7 @@ describe("EditorSurface", () => {
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
-    const foldingModel = createFoldingModel([
-      { collapsed: false, start: 2 },
-    ]);
+    const foldingModel = createFoldingModel([{ collapsed: false, start: 2 }]);
     editor.getContribution.mockImplementation((id?: string) => {
       if (id === "editor.contrib.folding") {
         return { getFoldingModel: vi.fn(async () => foldingModel) };
@@ -941,9 +929,7 @@ describe("EditorSurface", () => {
       uri: { fsPath: secondDocument.path, path: secondDocument.path },
     };
     const editor = createEditor(firstModel);
-    const foldingModel = createFoldingModel([
-      { collapsed: false, start: 1 },
-    ]);
+    const foldingModel = createFoldingModel([{ collapsed: false, start: 1 }]);
     let resolveFoldingModel: ((model: FakeFoldingModel) => void) | null = null;
     const foldingModelPromise = new Promise<FakeFoldingModel>((resolve) => {
       resolveFoldingModel = resolve;
@@ -1204,6 +1190,7 @@ describe("EditorSurface", () => {
       savedContent: "const shared = true;\n",
     };
     const model: FakeModel = {
+      dispose: vi.fn(),
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
@@ -1284,8 +1271,7 @@ describe("EditorSurface", () => {
 
   it("registers language-agnostic conflict actions and refreshes conflict decorations on edits", async () => {
     const activeDocument: EditorDocument = {
-      content:
-        "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
+      content: "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
       language: "plaintext",
       name: "notes.txt",
       path: "/workspace/notes.txt",
@@ -1319,11 +1305,10 @@ describe("EditorSurface", () => {
     expect(monaco.editor.addCommand).toHaveBeenCalledWith(
       expect.objectContaining({ id: "mockor.acceptConflictMarker" }),
     );
-    const decorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some((decoration: any) =>
-          decoration.options?.className?.includes("conflict-marker-line"),
-        ),
+    const decorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some((decoration: any) =>
+        decoration.options?.className?.includes("conflict-marker-line"),
+      ),
     );
 
     expect(decorationCall?.[1]).toEqual(
@@ -1373,11 +1358,7 @@ describe("EditorSurface", () => {
       path: "/workspace/templates/template.latte",
       savedContent: "",
     };
-    const lines = [
-      "{varType App\\Model\\Group $group}",
-      "",
-      "{$group->i}",
-    ];
+    const lines = ["{varType App\\Model\\Group $group}", "", "{$group->i}"];
     const model: FakeModel = {
       getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
       uri: {
@@ -1441,11 +1422,7 @@ describe("EditorSurface", () => {
       await Promise.resolve();
     });
 
-    expect(editor.trigger).not.toHaveBeenCalledWith(
-      "floating-surface",
-      "hideSuggestWidget",
-      {},
-    );
+    expect(editor.trigger).not.toHaveBeenCalledWith("floating-surface", "hideSuggestWidget", {});
 
     editor.trigger.mockClear();
 
@@ -1459,21 +1436,9 @@ describe("EditorSurface", () => {
       await Promise.resolve();
     });
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "floating-surface",
-      "editor.action.hideHover",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "floating-surface",
-      "closeFindWidget",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "floating-surface",
-      "hideSuggestWidget",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("floating-surface", "editor.action.hideHover", {});
+    expect(editor.trigger).toHaveBeenCalledWith("floating-surface", "closeFindWidget", {});
+    expect(editor.trigger).toHaveBeenCalledWith("floating-surface", "hideSuggestWidget", {});
   });
 
   it("dismisses transient Monaco widgets when an already-open floating surface is activated again", async () => {
@@ -1516,16 +1481,8 @@ describe("EditorSurface", () => {
       await Promise.resolve();
     });
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "floating-surface",
-      "closeFindWidget",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "floating-surface",
-      "editor.action.hideHover",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("floating-surface", "closeFindWidget", {});
+    expect(editor.trigger).toHaveBeenCalledWith("floating-surface", "editor.action.hideHover", {});
   });
 
   it("forwards providePhpCodeActions into the language server provider context", async () => {
@@ -1593,10 +1550,10 @@ describe("EditorSurface", () => {
       start: 7,
     });
 
-    expect(providePhpCodeActions).toHaveBeenCalledWith(
-      "<?php\nclass Example {}\n",
-      { end: 7, start: 7 },
-    );
+    expect(providePhpCodeActions).toHaveBeenCalledWith("<?php\nclass Example {}\n", {
+      end: 7,
+      start: 7,
+    });
   });
 
   it("forwards providePhpFrameworkDefinition into the language server provider context", async () => {
@@ -1659,10 +1616,7 @@ describe("EditorSurface", () => {
 
     expect(context?.providePhpFrameworkDefinition).toEqual(expect.any(Function));
 
-    await context?.providePhpFrameworkDefinition?.(
-      "<?php\n$value = config('app.name');\n",
-      24,
-    );
+    await context?.providePhpFrameworkDefinition?.("<?php\n$value = config('app.name');\n", 24);
 
     expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(
       "<?php\n$value = config('app.name');\n",
@@ -1741,12 +1695,8 @@ describe("EditorSurface", () => {
 
     const templateLanguageProviders = context?.getTemplateLanguageProviders?.();
 
-    expect(templateLanguageProviders?.blade.provideDefinition).toEqual(
-      expect.any(Function),
-    );
-    expect(templateLanguageProviders?.blade.provideCompletions).toEqual(
-      expect.any(Function),
-    );
+    expect(templateLanguageProviders?.blade.provideDefinition).toEqual(expect.any(Function));
+    expect(templateLanguageProviders?.blade.provideCompletions).toEqual(expect.any(Function));
 
     await templateLanguageProviders?.blade.provideDefinition(bladeSource, 12);
     await templateLanguageProviders?.blade.provideCompletions(bladeSource, {
@@ -1822,12 +1772,9 @@ describe("EditorSurface", () => {
     const localStorage = memoryLocalStorage();
     localStorage.setItem("codevo.qaBridge", "1");
 
-    expect(
-      editorQaBridgeEnabled(
-        { DEV: false, VITE_CODEVO_QA_BRIDGE: "1" },
-        localStorage,
-      ),
-    ).toBe(false);
+    expect(editorQaBridgeEnabled({ DEV: false, VITE_CODEVO_QA_BRIDGE: "1" }, localStorage)).toBe(
+      false,
+    );
     expect(editorQaBridgeEnabled({ DEV: true }, localStorage)).toBe(true);
   });
 
@@ -1952,10 +1899,10 @@ describe("EditorSurface", () => {
     ]);
     await expect(bridge?.triggerDefinition()).resolves.toBe(true);
 
-    expect(providePhpMethodCompletions).toHaveBeenCalledWith(
-      activeDocument.content,
-      { column: 11, lineNumber: 2 },
-    );
+    expect(providePhpMethodCompletions).toHaveBeenCalledWith(activeDocument.content, {
+      column: 11,
+      lineNumber: 2,
+    });
     expect(providePhpPresenterLinkDefinition).toHaveBeenCalledWith(
       activeDocument.content,
       16,
@@ -2108,10 +2055,7 @@ describe("EditorSurface", () => {
       });
     };
     const onOpenWorkspaceFile = vi.fn(
-      async (
-        _path: string,
-        request: EditorQaOpenWorkspaceFileRequest,
-      ): Promise<boolean> => {
+      async (_path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean> => {
         if (!request.canOpen()) {
           return false;
         }
@@ -2123,9 +2067,9 @@ describe("EditorSurface", () => {
 
     await renderWith(initialDocument, onOpenWorkspaceFile);
 
-    await expect(
-      window.__codevoQa?.openWorkspaceFile("/workspace/app/Target.php"),
-    ).resolves.toBe(true);
+    await expect(window.__codevoQa?.openWorkspaceFile("/workspace/app/Target.php")).resolves.toBe(
+      true,
+    );
 
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
       targetDocument.path,
@@ -2209,17 +2153,11 @@ describe("EditorSurface", () => {
 
     await renderWith("/workspace", onOpenWorkspaceRoot);
 
-    await expect(window.__codevoQa?.openWorkspaceRoot("   ")).resolves.toBe(
-      false,
-    );
-    await expect(
-      window.__codevoQa?.openWorkspaceRoot("/invalid\0workspace"),
-    ).resolves.toBe(false);
+    await expect(window.__codevoQa?.openWorkspaceRoot("   ")).resolves.toBe(false);
+    await expect(window.__codevoQa?.openWorkspaceRoot("/invalid\0workspace")).resolves.toBe(false);
     expect(onOpenWorkspaceRoot).not.toHaveBeenCalled();
 
-    await expect(
-      window.__codevoQa?.openWorkspaceRoot("/next-workspace/"),
-    ).resolves.toBe(true);
+    await expect(window.__codevoQa?.openWorkspaceRoot("/next-workspace/")).resolves.toBe(true);
 
     expect(onOpenWorkspaceRoot).toHaveBeenCalledWith("/next-workspace");
     expect(window.__codevoQa?.getWorkspaceRoot()).toBe("/next-workspace");
@@ -2377,9 +2315,9 @@ describe("EditorSurface", () => {
     await expect(
       window.__codevoQa?.openWorkspaceFile("/workspace-other/app/Target.php"),
     ).resolves.toBe(false);
-    await expect(
-      window.__codevoQa?.openWorkspaceFile("/workspace/../etc/passwd"),
-    ).resolves.toBe(false);
+    await expect(window.__codevoQa?.openWorkspaceFile("/workspace/../etc/passwd")).resolves.toBe(
+      false,
+    );
 
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
     expect(window.__codevoQa?.getActiveFile()).toBe(activeDocument.path);
@@ -2475,10 +2413,7 @@ describe("EditorSurface", () => {
       });
     };
     const onOpenWorkspaceFile = vi.fn(
-      async (
-        _path: string,
-        request: EditorQaOpenWorkspaceFileRequest,
-      ): Promise<boolean> => {
+      async (_path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean> => {
         await openGate.promise;
 
         if (!request.canOpen()) {
@@ -2591,10 +2526,7 @@ describe("EditorSurface", () => {
       });
     };
     const onOpenWorkspaceFile = vi.fn(
-      async (
-        _path: string,
-        request: EditorQaOpenWorkspaceFileRequest,
-      ): Promise<boolean> => {
+      async (_path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean> => {
         await openGate.promise;
         expect(request.canOpen()).toBe(false);
 
@@ -2788,11 +2720,7 @@ describe("EditorSurface", () => {
       const navigateToDefinition = vi.fn();
       const providePhpFrameworkDefinition = vi.fn(async () => true);
       const providePhpPresenterLinkDefinition = vi.fn(
-        async (
-          _source: string,
-          _offset: number,
-          request: EditorQaDefinitionRequest,
-        ) => {
+        async (_source: string, _offset: number, request: EditorQaDefinitionRequest) => {
           await presenterDefinition.promise;
 
           if (!request.canNavigate()) {
@@ -2843,11 +2771,10 @@ describe("EditorSurface", () => {
               onRevertChangeHunk={vi.fn()}
               phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
               frameworkIntelligenceProviders={{
-                providePhpPresenterLinkDefinition:
-                  providePhpPresenterLinkDefinition as unknown as (
-                    source: string,
-                    offset: number,
-                  ) => Promise<boolean>,
+                providePhpPresenterLinkDefinition: providePhpPresenterLinkDefinition as unknown as (
+                  source: string,
+                  offset: number,
+                ) => Promise<boolean>,
               }}
               providePhpFrameworkDefinition={providePhpFrameworkDefinition}
               providePhpMethodCompletions={vi.fn(async () => [])}
@@ -2910,11 +2837,7 @@ describe("EditorSurface", () => {
     const definitionRequests: EditorQaDefinitionRequest[] = [];
     const providePhpFrameworkDefinition = vi.fn(async () => true);
     const providePhpPresenterLinkDefinition = vi.fn(
-      async (
-        _source: string,
-        _offset: number,
-        request: EditorQaDefinitionRequest,
-      ) => {
+      async (_source: string, _offset: number, request: EditorQaDefinitionRequest) => {
         definitionRequests.push(request);
         await presenterDefinition.promise;
         return true;
@@ -2954,11 +2877,10 @@ describe("EditorSurface", () => {
             onRevertChangeHunk={vi.fn()}
             phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
             frameworkIntelligenceProviders={{
-              providePhpPresenterLinkDefinition:
-                providePhpPresenterLinkDefinition as unknown as (
-                  source: string,
-                  offset: number,
-                ) => Promise<boolean>,
+              providePhpPresenterLinkDefinition: providePhpPresenterLinkDefinition as unknown as (
+                source: string,
+                offset: number,
+              ) => Promise<boolean>,
             }}
             providePhpFrameworkDefinition={providePhpFrameworkDefinition}
             providePhpMethodCompletions={vi.fn(async () => [])}
@@ -3123,18 +3045,8 @@ describe("EditorSurface", () => {
     });
 
     expect(editor?.focus).toHaveBeenCalledTimes(6);
-    expect(editor?.trigger).toHaveBeenNthCalledWith(
-      1,
-      "mockor.windowChrome",
-      "undo",
-      null,
-    );
-    expect(editor?.trigger).toHaveBeenNthCalledWith(
-      2,
-      "mockor.windowChrome",
-      "redo",
-      null,
-    );
+    expect(editor?.trigger).toHaveBeenNthCalledWith(1, "mockor.windowChrome", "undo", null);
+    expect(editor?.trigger).toHaveBeenNthCalledWith(2, "mockor.windowChrome", "redo", null);
     expect(editor?.trigger).toHaveBeenNthCalledWith(
       3,
       "mockor.windowChrome",
@@ -3230,11 +3142,17 @@ describe("EditorSurface", () => {
     });
 
     expect(editor?.focus).toHaveBeenCalledTimes(1);
-    expect(editor?.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.rename",
-      {},
-    );
+    expect(editor?.trigger).toHaveBeenCalledWith("keyboard", "editor.action.rename", {});
+
+    act(() => {
+      runner("editor.action.refactor");
+    });
+
+    expect(editor?.focus).toHaveBeenCalledTimes(2);
+    expect(editor?.trigger).toHaveBeenCalledWith("keyboard", "editor.action.refactor", {});
+    expect(
+      editor?.trigger.mock.calls.filter(([, action]) => action === "editor.action.refactor"),
+    ).toHaveLength(1);
 
     editor?.focus.mockClear();
     editor?.trigger.mockClear();
@@ -3262,6 +3180,7 @@ describe("EditorSurface", () => {
       savedContent: "",
     };
     const model: FakeModel = {
+      getLineCount: vi.fn(() => 4),
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editorSurfaceCommandRunnerChange = vi.fn();
@@ -3272,8 +3191,7 @@ describe("EditorSurface", () => {
       root.render(
         createElement(EditorSurface, {
           ...memoGuardProps(activeDocument),
-          onEditorSurfaceCommandRunnerChange:
-            editorSurfaceCommandRunnerChange,
+          onEditorSurfaceCommandRunnerChange: editorSurfaceCommandRunnerChange,
           workspaceIdentityDescriptor: {},
           workspaceRoot: "/workspace",
         }),
@@ -3318,8 +3236,7 @@ describe("EditorSurface", () => {
       root.render(
         createElement(EditorSurface, {
           ...memoGuardProps(activeDocument),
-          onEditorSurfaceCommandRunnerChange:
-            editorSurfaceCommandRunnerChange,
+          onEditorSurfaceCommandRunnerChange: editorSurfaceCommandRunnerChange,
           workspaceRoot: "/workspace",
         }),
       );
@@ -3346,6 +3263,178 @@ describe("EditorSurface", () => {
       expect.objectContaining({ modelIdentity: replacementModel }),
     );
     expect(replacementRunner.isScopeCurrent(originalScope)).toBe(false);
+  });
+
+  it("dispatches import commands only for the exact live TypeScript model and scope", async () => {
+    const activeDocument: EditorDocument = {
+      content: "import { b, a } from './values';\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const originalModel: FakeModel = {
+      getLanguageId: vi.fn(() => "typescript"),
+      getValue: vi.fn(() => activeDocument.content),
+      getVersionId: vi.fn(() => 7),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const replacementModel: FakeModel = {
+      getLanguageId: vi.fn(() => "typescript"),
+      getValue: vi.fn(() => activeDocument.content),
+      getVersionId: vi.fn(() => 8),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    let javaScriptTypeScriptSyncVersion = 7;
+    const actions = deferred<ReturnType<typeof importSortAction>[]>();
+    const featuresGateway = languageServerFeaturesGateway();
+    featuresGateway.codeActions.mockReturnValueOnce(actions.promise as Promise<never[]>);
+    const flushPendingDocument = vi.fn(async () => undefined);
+    const editor = createEditor(originalModel);
+    const runnerChange = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(originalModel);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          flushPendingJavaScriptTypeScriptLanguageServerDocument: flushPendingDocument,
+          getJavaScriptTypeScriptDocumentSyncVersion: () => javaScriptTypeScriptSyncVersion,
+          javaScriptTypeScriptLanguageServerFeaturesGateway: featuresGateway,
+          javaScriptTypeScriptLanguageServerRuntimeStatus: {
+            capabilities: {
+              ...emptyLanguageServerCapabilities(),
+              codeAction: true,
+            },
+            kind: "running",
+            rootPath: "/workspace",
+            sessionId: 41,
+          },
+          onEditorSurfaceCommandRunnerChange: runnerChange,
+          workspaceRoot: "/workspace",
+          workspaceTrusted: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const runner = runnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+    const scope = runner.captureScope();
+    expect(runner.isEnabled("typescript.sortImports", scope)).toBe(true);
+    expect(runner.isEnabled("javascript.sortImports", scope)).toBe(false);
+
+    await act(async () => {
+      runner("typescript.sortImports", scope);
+      runner("typescript.sortImports", scope);
+      await Promise.resolve();
+    });
+    expect(flushPendingDocument).toHaveBeenCalledWith(activeDocument.path);
+    expect(flushPendingDocument).toHaveBeenCalledTimes(1);
+    expect(featuresGateway.codeActions).toHaveBeenCalledWith(
+      "/workspace",
+      activeDocument.path,
+      expect.any(Object),
+      { diagnostics: [], only: ["source.sortImports.ts"] },
+    );
+
+    editor.getModel.mockReturnValue(replacementModel);
+    javaScriptTypeScriptSyncVersion = 8;
+    act(() => editor.modelChangeHandler?.());
+    await act(async () => {
+      actions.resolve([importSortAction(activeDocument.path, 7)]);
+      await actions.promise;
+      await Promise.resolve();
+    });
+    expect(editor.executeEdits).not.toHaveBeenCalled();
+
+    const publishedRunners = runnerChange.mock.calls
+      .map(([candidate]) => candidate)
+      .filter((candidate) => typeof candidate === "function");
+    const replacementRunner = publishedRunners[publishedRunners.length - 1];
+    const replacementScope = replacementRunner.captureScope();
+    featuresGateway.codeActions.mockResolvedValueOnce([
+      importSortAction(activeDocument.path, 8),
+    ] as never[]);
+    editor.executeEdits.mockReturnValueOnce(true);
+    await act(async () => {
+      replacementRunner("typescript.sortImports", replacementScope);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "editor.importActions",
+      expect.arrayContaining([expect.objectContaining({ text: "a, b" })]),
+    );
+  });
+
+  it("denies import actions in untrusted workspaces and read-only documents", async () => {
+    const activeDocument: EditorDocument = {
+      content: "import { b, a } from './values';\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLanguageId: vi.fn(() => "typescript"),
+      getValue: vi.fn(() => activeDocument.content),
+      getVersionId: vi.fn(() => 7),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const runnerChange = vi.fn();
+    const featuresGateway = languageServerFeaturesGateway();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: { ...emptyLanguageServerCapabilities(), codeAction: true },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 41,
+    };
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          javaScriptTypeScriptLanguageServerFeaturesGateway: featuresGateway,
+          javaScriptTypeScriptLanguageServerRuntimeStatus: runtimeStatus,
+          onEditorSurfaceCommandRunnerChange: runnerChange,
+          workspaceRoot: "/workspace",
+          workspaceTrusted: false,
+        }),
+      );
+      await Promise.resolve();
+    });
+    let publishedRunners = runnerChange.mock.calls
+      .map(([candidate]) => candidate)
+      .filter((candidate) => typeof candidate === "function");
+    let runner = publishedRunners[publishedRunners.length - 1];
+    expect(runner.isEnabled("typescript.sortImports", runner.captureScope())).toBe(false);
+
+    const readOnlyDocument = { ...activeDocument, readOnly: true };
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(readOnlyDocument),
+          javaScriptTypeScriptLanguageServerFeaturesGateway: featuresGateway,
+          javaScriptTypeScriptLanguageServerRuntimeStatus: runtimeStatus,
+          onEditorSurfaceCommandRunnerChange: runnerChange,
+          workspaceRoot: "/workspace",
+          workspaceTrusted: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+    publishedRunners = runnerChange.mock.calls
+      .map(([candidate]) => candidate)
+      .filter((candidate) => typeof candidate === "function");
+    runner = publishedRunners[publishedRunners.length - 1];
+    expect(runner.isEnabled("typescript.sortImports", runner.captureScope())).toBe(false);
+    expect(featuresGateway.codeActions).not.toHaveBeenCalled();
   });
 
   it("keeps the command runner and model subscriber stable across a same-path content edit", async () => {
@@ -3495,21 +3584,18 @@ describe("EditorSurface", () => {
 
     expect(runner(content, fixes)).toBe(2);
     expect(editor.executeEdits).toHaveBeenCalledOnce();
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "eslint.fixAllInActiveFile",
-      [
-        expect.objectContaining({
-          forceMoveMarkers: true,
-          range: expect.objectContaining({ startColumn: 13, endColumn: 16 }),
-          text: '"x"',
-        }),
-        expect.objectContaining({
-          forceMoveMarkers: true,
-          range: expect.objectContaining({ startColumn: 16, endColumn: 16 }),
-          text: ";",
-        }),
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("eslint.fixAllInActiveFile", [
+      expect.objectContaining({
+        forceMoveMarkers: true,
+        range: expect.objectContaining({ startColumn: 13, endColumn: 16 }),
+        text: '"x"',
+      }),
+      expect.objectContaining({
+        forceMoveMarkers: true,
+        range: expect.objectContaining({ startColumn: 16, endColumn: 16 }),
+        text: ";",
+      }),
+    ]);
   });
 
   it("publishes a guarded PHPStan runner that inserts one indented combined ignore edit", async () => {
@@ -3562,21 +3648,18 @@ describe("EditorSurface", () => {
 
     expect(runner(content, 2, ["argument.type", "return.type"])).toBe(2);
     expect(editor.executeEdits).toHaveBeenCalledOnce();
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "phpstan.ignoreIssueAtCursor",
-      [
-        expect.objectContaining({
-          forceMoveMarkers: true,
-          range: expect.objectContaining({
-            startLineNumber: 2,
-            startColumn: 1,
-            endLineNumber: 2,
-            endColumn: 1,
-          }),
-          text: "    // @phpstan-ignore argument.type, return.type\n",
+    expect(editor.executeEdits).toHaveBeenCalledWith("phpstan.ignoreIssueAtCursor", [
+      expect.objectContaining({
+        forceMoveMarkers: true,
+        range: expect.objectContaining({
+          startLineNumber: 2,
+          startColumn: 1,
+          endLineNumber: 2,
+          endColumn: 1,
         }),
-      ],
-    );
+        text: "    // @phpstan-ignore argument.type, return.type\n",
+      }),
+    ]);
   });
 
   it("publishes a guarded ESLint runner that inserts one indented combined disable edit at line one", async () => {
@@ -3626,21 +3709,18 @@ describe("EditorSurface", () => {
 
     expect(runner(content, 1, ["rule-a", "rule-b"])).toBe(2);
     expect(editor.executeEdits).toHaveBeenCalledOnce();
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "eslint.disableRuleAtCursor",
-      [
-        expect.objectContaining({
-          forceMoveMarkers: true,
-          range: expect.objectContaining({
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: 1,
-            endColumn: 1,
-          }),
-          text: "    // eslint-disable-next-line rule-a, rule-b\n",
+    expect(editor.executeEdits).toHaveBeenCalledWith("eslint.disableRuleAtCursor", [
+      expect.objectContaining({
+        forceMoveMarkers: true,
+        range: expect.objectContaining({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 1,
         }),
-      ],
-    );
+        text: "    // eslint-disable-next-line rule-a, rule-b\n",
+      }),
+    ]);
   });
 
   it("clears the window chrome edit menu runner when no document is targetable", async () => {
@@ -3700,9 +3780,7 @@ describe("EditorSurface", () => {
       await Promise.resolve();
     });
 
-    expect(editorMenuCommandRunnerChange).toHaveBeenCalledWith(
-      expect.any(Function),
-    );
+    expect(editorMenuCommandRunnerChange).toHaveBeenCalledWith(expect.any(Function));
 
     await act(async () => {
       root.render(renderSurface(null));
@@ -4303,14 +4381,10 @@ interface ParserFactory
       const editor = createEditor(model);
       const onGoToImplementationAt = vi.fn();
       let positionAtCommand: EditorPosition | null = null;
-      const runCommand = vi.fn(
-        (_commandId: string): CommandExecutionOutcome => {
-          positionAtCommand = (
-            editor.getPosition as () => EditorPosition | null
-          )();
-          return outcome;
-        },
-      );
+      const runCommand = vi.fn((_commandId: string): CommandExecutionOutcome => {
+        positionAtCommand = (editor.getPosition as () => EditorPosition | null)();
+        return outcome;
+      });
       editorSurfaceMocks.editor = editor;
       editorSurfaceMocks.monaco = monaco;
 
@@ -4488,12 +4562,10 @@ class InvoiceServiceTest extends TestCase
 
     await flushGutterDebounce();
 
-    const testDecorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
-        ),
+    const testDecorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) => decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
+      ),
     );
     expect(testDecorationCall?.[1]).toEqual(
       expect.arrayContaining([
@@ -4601,12 +4673,10 @@ class InvoiceServiceTest extends TestCase
 
     await flushGutterDebounce();
 
-    const testDecorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
-        ),
+    const testDecorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) => decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
+      ),
     );
     expect(testDecorationCall?.[1]).toEqual(
       expect.arrayContaining([
@@ -4711,12 +4781,10 @@ class InvoiceServiceTest extends TestCase
 
     await flushGutterDebounce();
 
-    const testDecorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
-        ),
+    const testDecorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) => decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
+      ),
     );
     expect(testDecorationCall).toBeUndefined();
   });
@@ -4778,13 +4846,11 @@ class InvoiceServiceTest extends TestCase
       await Promise.resolve();
     });
 
-    const bookmarkDecorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.linesDecorationsClassName ===
-            "bookmark-gutter-glyph",
-        ),
+    const bookmarkDecorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) =>
+          decoration.options?.linesDecorationsClassName === "bookmark-gutter-glyph",
+      ),
     );
     expect(bookmarkDecorationCall?.[1]).toEqual(
       expect.arrayContaining([
@@ -4819,6 +4885,397 @@ class InvoiceServiceTest extends TestCase
 
     expect(preventDefault).toHaveBeenCalled();
     expect(onToggleBookmarkAtLine).toHaveBeenCalledWith(3);
+  });
+
+  it("renders current JS coverage and clears it while dirty or after report clear", async () => {
+    const cleanDocument: EditorDocument = {
+      content: "const covered = 1;\nconst missed = 2;\n",
+      language: "typescript",
+      name: "coverage.ts",
+      path: "/workspace/src/coverage.ts",
+      savedContent: "const covered = 1;\nconst missed = 2;\n",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 2),
+      uri: { fsPath: cleanDocument.path, path: cleanDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const report = {
+      files: [
+        {
+          firstUncoveredLine: 2,
+          lines: [
+            { hits: 2, lineNumber: 1 },
+            { hits: 0, lineNumber: 2 },
+            { hits: 0, lineNumber: 99 },
+          ],
+          path: "src/coverage.ts",
+          summary: { covered: 1, percentage: 100 / 3, total: 3 },
+        },
+      ],
+      summary: { covered: 1, percentage: 100 / 3, total: 3 },
+    };
+    const renderCoverage = async (
+      activeDocument: EditorDocument,
+      jsTestCoverageReport: typeof report | null,
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            jsTestCoverageReport={jsTestCoverageReport}
+            phpCoverageActiveOwner={{ ownerKey: "php-owner", revision: 1 }}
+            phpCoveragePublication={{
+              documentPath: cleanDocument.path,
+              lines: [{ hits: 1, lineNumber: 1, status: "covered" }],
+              ownerKey: "php-owner",
+              revision: 1,
+            }}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onGoToSuperMethod={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceIdentityDescriptor={{ workspaceId: "workspace" }}
+            workspaceRoot="/workspace"
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderCoverage(cleanDocument, report);
+    expect(
+      editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+        decorations.some((decoration: any) =>
+          decoration.options?.linesDecorationsClassName?.includes("js-test-coverage-gutter"),
+        ),
+      )?.[1],
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            hoverMessage: { value: "Test coverage: uncovered (0 hits)." },
+            linesDecorationsClassName: "js-test-coverage-gutter js-test-coverage-uncovered-gutter",
+          }),
+        }),
+      ]),
+    );
+    const coverageDecorations = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some((decoration: any) =>
+        decoration.options?.linesDecorationsClassName?.includes("js-test-coverage-gutter"),
+      ),
+    )?.[1];
+    expect(coverageDecorations).toHaveLength(2);
+    expect(
+      coverageDecorations?.some((decoration: any) => decoration.range.startLineNumber === 99),
+    ).toBe(false);
+
+    editor.deltaDecorations.mockClear();
+    await renderCoverage(
+      { ...cleanDocument, content: `${cleanDocument.content}// dirty\n` },
+      report,
+    );
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+
+    editor.deltaDecorations.mockClear();
+    await renderCoverage(cleanDocument, report);
+    expect(
+      editor.deltaDecorations.mock.calls.some(([, decorations]) =>
+        decorations.some((decoration: any) =>
+          decoration.options?.className?.includes("js-test-coverage-covered-line"),
+        ),
+      ),
+    ).toBe(true);
+
+    editor.deltaDecorations.mockClear();
+    await renderCoverage(cleanDocument, null);
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+  });
+
+  it("renders exact JS test failures and clears or replaces them across document and snapshot lifecycle", async () => {
+    const cleanDocument: EditorDocument = {
+      content: "const first = true;\nconst second = false;\n",
+      language: "typescript",
+      name: "example.test.ts",
+      path: "/workspace/src/example.test.ts",
+      savedContent: "const first = true;\nconst second = false;\n",
+    };
+    let modelValue = cleanDocument.content;
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 2),
+      getLineLength: vi.fn((lineNumber: number) => (lineNumber === 1 ? 19 : 21)),
+      getValue: vi.fn(() => modelValue),
+      isDisposed: vi.fn(() => false),
+      onWillDispose: vi.fn(() => ({ dispose: vi.fn() })),
+      setValue: vi.fn((value: string) => {
+        modelValue = value;
+      }),
+      uri: { fsPath: cleanDocument.path, path: cleanDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const identity = jsTestProblemIdentity("/workspace", "src/example.test.ts");
+    const initial = jsTestProblemSnapshot("workspace-id", "/workspace", [
+      jsTestProblemEntry(2, "initial failure"),
+    ]);
+    const renderProblems = async (
+      activeDocument: EditorDocument,
+      snapshot: JsTestProblemsSnapshot | null,
+    ) => {
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(activeDocument),
+            jsTestProblemCurrentFileIdentity: identity,
+            jsTestProblemSnapshot: snapshot,
+            workspaceIdentityDescriptor: { workspaceId: "workspace-id" },
+            workspaceRoot: "/workspace",
+          }),
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderProblems(cleanDocument, initial);
+    expect(latestJsTestProblemDecorations(editor)).toEqual([
+      expect.objectContaining({
+        options: expect.objectContaining({
+          after: expect.objectContaining({ content: "initial failure: initial failure" }),
+          className: "js-test-problem-line",
+        }),
+        range: expect.objectContaining({ startLineNumber: 2 }),
+      }),
+    ]);
+
+    editor.deltaDecorations.mockClear();
+    await renderProblems(
+      { ...cleanDocument, content: `${cleanDocument.content}// dirty\n` },
+      initial,
+    );
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+    expect(jsTestProblemDecorationCalls(editor)).toHaveLength(0);
+
+    editor.deltaDecorations.mockClear();
+    const replacement = {
+      ...jsTestProblemSnapshot("workspace-id", "/workspace", [
+        jsTestProblemEntry(1, "replacement failure"),
+      ]),
+      generation: initial.generation + 1,
+    };
+    modelValue = cleanDocument.content;
+    await renderProblems(cleanDocument, replacement);
+    expect(latestJsTestProblemDecorations(editor)?.[0]?.options.after?.content).toBe(
+      "replacement failure: replacement failure",
+    );
+    expect(latestJsTestProblemDecorations(editor)?.[0]?.range.startLineNumber).toBe(1);
+
+    editor.deltaDecorations.mockClear();
+    await renderProblems(cleanDocument, null);
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+    expect(jsTestProblemDecorationCalls(editor)).toHaveLength(0);
+  });
+
+  it("fails JS test failures closed for foreign authority, invalid lines, model switches, and split peers", async () => {
+    const firstDocument: EditorDocument = {
+      content: "first();\nsecond();\n",
+      language: "javascript",
+      name: "first.test.js",
+      path: "/workspace/src/first.test.js",
+      savedContent: "first();\nsecond();\n",
+    };
+    const secondDocument: EditorDocument = {
+      ...firstDocument,
+      name: "second.test.js",
+      path: "/workspace/src/second.test.js",
+    };
+    const firstModel = jsTestProblemModel(firstDocument);
+    const secondModel = jsTestProblemModel(secondDocument);
+    const firstEditor = createEditor(firstModel);
+    const secondEditor = createEditor(secondModel);
+    editorSurfaceMocks.editors = [firstEditor, secondEditor];
+    editorSurfaceMocks.editor = firstEditor;
+    editorSurfaceMocks.monaco = createMonaco(firstModel);
+    const firstIdentity = jsTestProblemIdentity("/workspace", "src/first.test.js");
+    const secondIdentity = jsTestProblemIdentity("/workspace", "src/second.test.js");
+    const firstSnapshot = jsTestProblemSnapshot("workspace-id", "/workspace", [
+      jsTestProblemEntry(1, "first failure", "src/first.test.js"),
+    ]);
+
+    await act(async () => {
+      root.render(
+        <>
+          {createElement(EditorSurface, {
+            ...memoGuardProps(firstDocument),
+            jsTestProblemCurrentFileIdentity: firstIdentity,
+            jsTestProblemSnapshot: firstSnapshot,
+            key: "first",
+            workspaceIdentityDescriptor: { workspaceId: "workspace-id" },
+            workspaceRoot: "/workspace",
+          })}
+          {createElement(EditorSurface, {
+            ...memoGuardProps(secondDocument),
+            jsTestProblemCurrentFileIdentity: secondIdentity,
+            jsTestProblemSnapshot: firstSnapshot,
+            key: "second",
+            workspaceIdentityDescriptor: { workspaceId: "workspace-id" },
+            workspaceRoot: "/workspace",
+          })}
+        </>,
+      );
+      await Promise.resolve();
+    });
+
+    expect(latestJsTestProblemDecorations(firstEditor)).toHaveLength(1);
+    expect(jsTestProblemDecorationCalls(secondEditor)).toHaveLength(0);
+
+    firstEditor.deltaDecorations.mockClear();
+    firstEditor.getModel.mockReturnValue(secondModel);
+    act(() => firstEditor.modelChangeHandler?.());
+    expect(firstEditor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+
+    firstEditor.deltaDecorations.mockClear();
+    firstEditor.getModel.mockReturnValue(firstModel);
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(firstDocument),
+          jsTestProblemCurrentFileIdentity: firstIdentity,
+          jsTestProblemSnapshot: {
+            ...firstSnapshot,
+            entries: [jsTestProblemEntry(99, "outside model", "src/first.test.js")],
+          },
+          workspaceIdentityDescriptor: { workspaceId: "workspace-id" },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(jsTestProblemDecorationCalls(firstEditor)).toHaveLength(0);
+
+    firstEditor.deltaDecorations.mockClear();
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(firstDocument),
+          jsTestProblemCurrentFileIdentity: firstIdentity,
+          jsTestProblemSnapshot: {
+            ...firstSnapshot,
+            owner: { rootKey: "/workspace", workspaceId: "foreign-owner" },
+          },
+          workspaceIdentityDescriptor: { workspaceId: "workspace-id" },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(jsTestProblemDecorationCalls(firstEditor)).toHaveLength(0);
+  });
+
+  it("renders exact PHP coverage and clears it for dirty buffers or model-version drift", async () => {
+    const cleanDocument: EditorDocument = {
+      content: "<?php\nreturn 1;\n",
+      language: "php",
+      name: "coverage.php",
+      path: "/workspace/src/coverage.php",
+      savedContent: "<?php\nreturn 1;\n",
+    };
+    let modelVersion = 7;
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 2),
+      getVersionId: vi.fn(() => modelVersion),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: cleanDocument.path, path: cleanDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const activeOwner = { ownerKey: "php-owner", revision: 3 };
+    const publication = {
+      ...activeOwner,
+      documentPath: cleanDocument.path,
+      lines: [
+        { hits: 2, lineNumber: 1, status: "covered" as const },
+        { hits: 0, lineNumber: 2, status: "uncovered" as const },
+      ],
+    };
+    const renderCoverage = async (activeDocument: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(activeDocument),
+            phpCoverageActiveOwner: activeOwner,
+            phpCoveragePublication: publication,
+            workspaceRoot: "/workspace",
+          }),
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderCoverage(cleanDocument);
+    const coverageDecorations = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some((decoration: any) =>
+        decoration.options?.linesDecorationsClassName?.includes("coverage-gutter"),
+      ),
+    )?.[1];
+    expect(coverageDecorations).toHaveLength(2);
+    expect(coverageDecorations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            linesDecorationsClassName: "coverage-gutter coverage-uncovered-gutter",
+          }),
+        }),
+      ]),
+    );
+
+    editor.deltaDecorations.mockClear();
+    modelVersion += 1;
+    act(() => {
+      editor.modelContentChangeHandler?.({ changes: [{ text: "// changed" }] });
+    });
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+
+    editor.deltaDecorations.mockClear();
+    await renderCoverage({
+      ...cleanDocument,
+      content: `${cleanDocument.content}// dirty\n`,
+    });
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+    expect(
+      editor.deltaDecorations.mock.calls.some(([, decorations]) =>
+        decorations.some((decoration: any) =>
+          decoration.options?.linesDecorationsClassName?.includes("coverage-gutter"),
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("renders no breakpoint or stopped-line decorations without debugger props", async () => {
@@ -4869,6 +5326,7 @@ class InvoiceServiceTest extends TestCase
       savedContent: "",
     };
     const model: FakeModel = {
+      getLineCount: vi.fn(() => 4),
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const monaco = createMonaco(model);
@@ -4915,13 +5373,10 @@ class InvoiceServiceTest extends TestCase
       await Promise.resolve();
     });
 
-    const decorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some((decoration: any) =>
-          decoration.options?.glyphMarginClassName?.includes(
-            "breakpoint-glyph",
-          ),
-        ),
+    const decorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some((decoration: any) =>
+        decoration.options?.glyphMarginClassName?.includes("breakpoint-glyph"),
+      ),
     );
     expect(decorationCall?.[1]).toHaveLength(3);
     expect(decorationCall?.[1]).toEqual(
@@ -4938,8 +5393,7 @@ class InvoiceServiceTest extends TestCase
         }),
         expect.objectContaining({
           options: expect.objectContaining({
-            glyphMarginClassName:
-              "breakpoint-glyph breakpoint-glyph-unverified",
+            glyphMarginClassName: "breakpoint-glyph breakpoint-glyph-unverified",
           }),
           range: expect.objectContaining({ startLineNumber: 3 }),
         }),
@@ -4981,7 +5435,7 @@ class InvoiceServiceTest extends TestCase
     });
 
     act(() => {
-      editor.mouseDownHandler?.({
+      const event = {
         event: {
           leftButton: true,
           preventDefault: vi.fn(),
@@ -4991,13 +5445,11 @@ class InvoiceServiceTest extends TestCase
           position: { column: 1, lineNumber: 3 },
           type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
         },
-      });
+      };
+      for (const [handler] of editor.onMouseDown.mock.calls) handler(event);
     });
 
-    expect(onToggleBreakpoint).toHaveBeenCalledWith(
-      "/workspace/src/main.ts",
-      3,
-    );
+    expect(onToggleBreakpoint).toHaveBeenCalledWith("/workspace/src/main.ts", 3);
 
     onToggleBreakpoint.mockClear();
     act(() => {
@@ -5018,6 +5470,96 @@ class InvoiceServiceTest extends TestCase
     expect(onToggleBreakpoint).not.toHaveBeenCalled();
   });
 
+  it("opens conditional breakpoint actions at the right-clicked gutter location", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const model: FakeModel = {
+      dispose: vi.fn(),
+      getLineCount: vi.fn(() => 3),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          breakpoints: [
+            {
+              condition: "ready",
+              enabled: true,
+              filePath: activeDocument.path,
+              id: "logpoint",
+              lineNumber: 3,
+              logMessage: "value={value}",
+            },
+          ],
+          breakpointActions: {
+            setBreakpointCondition: vi.fn(),
+            setBreakpointLogMessage: vi.fn(),
+            toggleBreakpoint: vi.fn(),
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    act(() => {
+      const event = {
+        event: {
+          posx: 42,
+          posy: 64,
+          preventDefault,
+          rightButton: true,
+          stopPropagation,
+        },
+        target: {
+          position: { column: 1, lineNumber: 3 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+        },
+      };
+      for (const [handler] of editor.onMouseDown.mock.calls) handler(event);
+    });
+    const menu = host.querySelector<HTMLElement>('[role="menu"]');
+    expect(menu?.getAttribute("aria-label")).toContain("line 3");
+    expect(menu?.style.left).toBe("42px");
+    expect(menu?.style.top).toBe("64px");
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    const editLogpoint = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ).find((button) => button.textContent === "Edit Logpoint");
+    await act(async () => editLogpoint?.click());
+    expect(host.querySelector<HTMLInputElement>('input[placeholder^="Log message"]')?.value).toBe(
+      "value={value}",
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps({ ...activeDocument, path: "/workspace/src/other.ts" }),
+          breakpointActions: {
+            setBreakpointCondition: vi.fn(),
+            toggleBreakpoint: vi.fn(),
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[role="menu"]')).toBeNull();
+  });
+
   it("clears breakpoint glyphs when the active document switches", async () => {
     const documentA: EditorDocument = {
       content: "const one = 1;\nconst two = 2;\n",
@@ -5034,6 +5576,7 @@ class InvoiceServiceTest extends TestCase
       savedContent: "",
     };
     const model: FakeModel = {
+      getLineCount: vi.fn(() => 2),
       uri: { fsPath: documentA.path, path: documentA.path },
     };
     const monaco = createMonaco(model);
@@ -5070,10 +5613,7 @@ class InvoiceServiceTest extends TestCase
     await renderWith(documentB);
 
     expect(breakpointDecorationCalls(editor)).toHaveLength(0);
-    expect(editor.deltaDecorations).toHaveBeenCalledWith(
-      expect.any(Array),
-      [],
-    );
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
 
   it("highlights and reveals the debugger stopped line for the active document", async () => {
@@ -5111,12 +5651,8 @@ class InvoiceServiceTest extends TestCase
 
     await renderWith({ filePath: activeDocument.path, lineNumber: 3 });
 
-    const stoppedCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.className === "debug-stopped-line",
-        ),
+    const stoppedCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some((decoration: any) => decoration.options?.className === "debug-stopped-line"),
     );
     expect(stoppedCall?.[1]).toEqual([
       expect.objectContaining({
@@ -5138,10 +5674,7 @@ class InvoiceServiceTest extends TestCase
     await renderWith(null);
 
     expect(stoppedLineDecorationCalls(editor)).toHaveLength(0);
-    expect(editor.deltaDecorations).toHaveBeenCalledWith(
-      expect.any(Array),
-      [],
-    );
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
 
   it("ignores a debugger stopped location for a different file", async () => {
@@ -5298,9 +5831,7 @@ class InvoiceServiceTest extends TestCase
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const onGoToDefinition = vi.fn();
-    const runCommand = vi.fn(
-      (_commandId: string): CommandExecutionOutcome => "executed",
-    );
+    const runCommand = vi.fn((_commandId: string): CommandExecutionOutcome => "executed");
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = monaco;
 
@@ -5411,9 +5942,7 @@ class InvoiceServiceTest extends TestCase
       const receivedContexts: CommandContext[] = [];
 
       function TwoGroupHarness() {
-        const [activeGroup, setActiveGroup] = useState<"empty" | "populated">(
-          "empty",
-        );
+        const [activeGroup, setActiveGroup] = useState<"empty" | "populated">("empty");
         const runCommand: CommandExecutionRunner = (_commandId, context) => {
           const resolvedContext = context ?? {
             activeDocumentDirty: false,
@@ -5587,8 +6116,7 @@ class InvoiceServiceTest extends TestCase
     // listener - intact; navigation must only come from the surface's explicit
     // Cmd+click handler and the Cmd+B keybinding.
     const activeDocument: EditorDocument = {
-      content:
-        "<?php\n\nuse App\\Http\\Controllers\\Page\\LinkDomainVerificationController;\n",
+      content: "<?php\n\nuse App\\Http\\Controllers\\Page\\LinkDomainVerificationController;\n",
       language: "php",
       name: "Routes.php",
       path: "/workspace/app/Routes.php",
@@ -5640,9 +6168,7 @@ class InvoiceServiceTest extends TestCase
       await Promise.resolve();
     });
 
-    expect(editor.getContribution).toHaveBeenCalledWith(
-      "editor.contrib.gotodefinitionatposition",
-    );
+    expect(editor.getContribution).toHaveBeenCalledWith("editor.contrib.gotodefinitionatposition");
 
     // The contribution must NOT be disposed - disposing it is what crashed
     // Monaco's event delivery. It stays alive and registered.
@@ -5651,10 +6177,7 @@ class InvoiceServiceTest extends TestCase
     // ...but its navigation is neutralized: invoking the (now patched)
     // gotoDefinition - exactly what the gesture's onExecute does on a Cmd-hover -
     // must NOT run the original navigation.
-    await editor.gotoDefinitionContribution.gotoDefinition(
-      { lineNumber: 3, column: 5 },
-      false,
-    );
+    await editor.gotoDefinitionContribution.gotoDefinition({ lineNumber: 3, column: 5 }, false);
     expect(editor.gotoDefinitionContributionNavigate).not.toHaveBeenCalled();
   });
 
@@ -6344,9 +6867,7 @@ class InvoiceServiceTest extends TestCase
       },
     ]);
 
-    const render = (
-      providePhpMethodCompletions: typeof emptyProvider | typeof readyProvider,
-    ) =>
+    const render = (providePhpMethodCompletions: typeof emptyProvider | typeof readyProvider) =>
       root.render(
         <EditorSurface
           activeDocument={activeDocument}
@@ -6479,44 +7000,38 @@ class InvoiceServiceTest extends TestCase
       await Promise.resolve();
     });
 
-    expect(monaco.editor.setModelMarkers).toHaveBeenCalledWith(
-      model,
-      "php-language-server",
-      [
-        expect.objectContaining({
-          code: {
-            target: { uri: "https://typescript.tv/errors/6133" },
-            value: "6133",
+    expect(monaco.editor.setModelMarkers).toHaveBeenCalledWith(model, "php-language-server", [
+      expect.objectContaining({
+        code: {
+          target: { uri: "https://typescript.tv/errors/6133" },
+          value: "6133",
+        },
+        data: { fixId: "disableUnusedCheck" },
+        endColumn: 18,
+        endLineNumber: 2,
+        message: "'unused' is declared but its value is never read.",
+        severity: monaco.MarkerSeverity.Hint,
+        startColumn: 7,
+        startLineNumber: 1,
+        relatedInformation: [
+          {
+            endColumn: 21,
+            endLineNumber: 5,
+            message: "The expected type comes from this property.",
+            resource: { uri: "file:///workspace/src/types.ts" },
+            startColumn: 10,
+            startLineNumber: 5,
           },
-          data: { fixId: "disableUnusedCheck" },
-          endColumn: 18,
-          endLineNumber: 2,
-          message: "'unused' is declared but its value is never read.",
-          severity: monaco.MarkerSeverity.Hint,
-          startColumn: 7,
-          startLineNumber: 1,
-          relatedInformation: [
-            {
-              endColumn: 21,
-              endLineNumber: 5,
-              message: "The expected type comes from this property.",
-              resource: { uri: "file:///workspace/src/types.ts" },
-              startColumn: 10,
-              startLineNumber: 5,
-            },
-          ],
-          tags: [monaco.MarkerTag.Unnecessary, monaco.MarkerTag.Deprecated],
-        }),
-      ],
-    );
+        ],
+        tags: [monaco.MarkerTag.Unnecessary, monaco.MarkerTag.Deprecated],
+      }),
+    ]);
 
-    const diagnosticDecorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.overviewRuler?.position ===
-            monaco.editor.OverviewRulerLane.Right,
-        ),
+    const diagnosticDecorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) =>
+          decoration.options?.overviewRuler?.position === monaco.editor.OverviewRulerLane.Right,
+      ),
     );
     expect(diagnosticDecorationCall?.[1]).toEqual([
       expect.objectContaining({
@@ -6631,9 +7146,7 @@ class InvoiceServiceTest extends TestCase
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = monaco;
 
-    const diagnosticsWith = (
-      messages: string[],
-    ): Record<string, LanguageServerDiagnostic[]> => ({
+    const diagnosticsWith = (messages: string[]): Record<string, LanguageServerDiagnostic[]> => ({
       [activeDocument.path]: messages.map((message, index) => ({
         character: 6,
         endCharacter: 11,
@@ -6645,9 +7158,7 @@ class InvoiceServiceTest extends TestCase
       })),
     });
 
-    const renderWith = async (
-      diagnostics: Record<string, LanguageServerDiagnostic[]>,
-    ) => {
+    const renderWith = async (diagnostics: Record<string, LanguageServerDiagnostic[]>) => {
       await act(async () => {
         root.render(
           <EditorSurface
@@ -6689,9 +7200,7 @@ class InvoiceServiceTest extends TestCase
     await renderWith(diagnosticsWith(["unused variable"]));
 
     const hideHoverCalls = () =>
-      editor.trigger.mock.calls.filter(
-        ([, actionId]) => actionId === "editor.action.hideHover",
-      );
+      editor.trigger.mock.calls.filter(([, actionId]) => actionId === "editor.action.hideHover");
 
     editor.trigger.mockClear();
 
@@ -6858,9 +7367,7 @@ class InvoiceServiceTest extends TestCase
     await renderWith(activeDocument);
 
     const triggerSuggestCalls = () =>
-      editor.trigger.mock.calls.filter(
-        ([, action]) => action === "editor.action.triggerSuggest",
-      );
+      editor.trigger.mock.calls.filter(([, action]) => action === "editor.action.triggerSuggest");
 
     // The auto-suggest fired once when readiness was already at version 1 on
     // mount. A keystroke must not re-fire it.
@@ -6943,8 +7450,7 @@ interface PaymentGateway
         editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
           (decorations as any[]).some(
             (decoration) =>
-              decoration.options?.glyphMarginClassName ===
-              "implementation-gutter-glyph",
+              decoration.options?.glyphMarginClassName === "implementation-gutter-glyph",
           ),
         );
 
@@ -7058,15 +7564,11 @@ class InvoiceServiceTest
       const testGlyphCalls = () =>
         editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
           (decorations as any[]).some(
-            (decoration) =>
-              decoration.options?.glyphMarginClassName ===
-              "test-run-gutter-glyph",
+            (decoration) => decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
           ),
         );
       const syntaxMarkerCalls = () =>
-        monaco.editor.setModelMarkers.mock.calls.filter(
-          ([, owner]) => owner === "php-syntax",
-        );
+        monaco.editor.setModelMarkers.mock.calls.filter(([, owner]) => owner === "php-syntax");
 
       // Initial mount + flush so all three consumers have rendered once.
       await renderWith(activeDocument);
@@ -7214,16 +7716,12 @@ class Foo
     );
     const lastCall = syntaxMarkerCalls[syntaxMarkerCalls.length - 1];
     const markers = lastCall?.[2] as any[] | undefined;
-    const inspectionMarker = markers?.find(
-      (marker) => marker.source === "PHP Inspection",
-    );
+    const inspectionMarker = markers?.find((marker) => marker.source === "PHP Inspection");
 
     expect(inspectionMarker).toBeDefined();
     expect(inspectionMarker.severity).toBe(monaco.MarkerSeverity.Warning);
     expect(inspectionMarker.tags).toEqual([monaco.MarkerTag.Unnecessary]);
-    expect(inspectionMarker.message).toBe(
-      "Unused import App\\Services\\UnusedService.",
-    );
+    expect(inspectionMarker.message).toBe("Unused import App\\Services\\UnusedService.");
     // The marker sits on line 6 (1-based), the unused `use` statement line.
     expect(inspectionMarker.startLineNumber).toBe(6);
   });
@@ -7299,27 +7797,22 @@ class Foo
     const syntaxMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
       ([, owner]) => owner === "php-syntax",
     );
-    const markers = syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as
-      | any[]
-      | undefined;
+    const markers = syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as any[] | undefined;
 
     expect(markers?.[0]).toMatchObject({
       message: "syntax error, unexpected end of file",
       severity: monaco.MarkerSeverity.Error,
       source: "PHP Syntax",
     });
-    expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(
-      activeDocument.path,
-      [
-        expect.objectContaining({
-          character: 9,
-          line: 2,
-          message: "syntax error, unexpected end of file",
-          severity: "error",
-          source: "PHP Syntax",
-        }),
-      ],
-    );
+    expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(activeDocument.path, [
+      expect.objectContaining({
+        character: 9,
+        line: 2,
+        message: "syntax error, unexpected end of file",
+        severity: "error",
+        source: "PHP Syntax",
+      }),
+    ]);
   });
 
   it("moves in-flight local PHP validation to a same-path replacement model", async () => {
@@ -7402,18 +7895,13 @@ class Foo
     );
     expect(validate).toHaveBeenCalledTimes(1);
     expect(resolvedMarkerCalls).not.toEqual([]);
-    expect(resolvedMarkerCalls.every(([model]) => model === replacementModel)).toBe(
-      true,
-    );
-    expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(
-      activeDocument.path,
-      [
-        expect.objectContaining({
-          message: "syntax error, unexpected end of file",
-          severity: "error",
-        }),
-      ],
-    );
+    expect(resolvedMarkerCalls.every(([model]) => model === replacementModel)).toBe(true);
+    expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(activeDocument.path, [
+      expect.objectContaining({
+        message: "syntax error, unexpected end of file",
+        severity: "error",
+      }),
+    ]);
   });
 
   it("skips open-time local PHP syntax diagnostics for large PHP documents", async () => {
@@ -7436,8 +7924,7 @@ class Foo
     const onLocalPhpDiagnosticsChange = vi.fn();
     const gateway = languageServerFeaturesGateway();
     const documentSymbols = vi.fn(async () => []);
-    gateway.documentSymbols =
-      documentSymbols as unknown as typeof gateway.documentSymbols;
+    gateway.documentSymbols = documentSymbols as unknown as typeof gateway.documentSymbols;
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = monaco;
 
@@ -7486,14 +7973,9 @@ class Foo
 
     expect(validate).not.toHaveBeenCalled();
     expect(documentSymbols).not.toHaveBeenCalled();
-    expect(onLocalPhpDiagnosticsChange).toHaveBeenCalledWith(
-      activeDocument.path,
-      [],
-    );
+    expect(onLocalPhpDiagnosticsChange).toHaveBeenCalledWith(activeDocument.path, []);
     expect(
-      monaco.editor.setModelMarkers.mock.calls.filter(
-        ([, owner]) => owner === "php-syntax",
-      ),
+      monaco.editor.setModelMarkers.mock.calls.filter(([, owner]) => owner === "php-syntax"),
     ).toEqual([[model, "php-syntax", []]]);
 
     model.getValue?.mockClear();
@@ -7580,16 +8062,13 @@ class Foo
       });
 
       expect(validate).toHaveBeenCalledTimes(2);
-      expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(
-        activeDocument.path,
-        [
-          expect.objectContaining({
-            message: "syntax error, unexpected end of file",
-            severity: "error",
-            source: "PHP Syntax",
-          }),
-        ],
-      );
+      expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(activeDocument.path, [
+        expect.objectContaining({
+          message: "syntax error, unexpected end of file",
+          severity: "error",
+          source: "PHP Syntax",
+        }),
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -7670,8 +8149,7 @@ class Foo
     const markers = lastCall?.[2] as any[] | undefined;
     const inspectionMarker = markers?.find(
       (marker) =>
-        marker.source === "PHP Inspection" &&
-        marker.message === 'Unused variable "$unused".',
+        marker.source === "PHP Inspection" && marker.message === 'Unused variable "$unused".',
     );
 
     expect(inspectionMarker).toBeDefined();
@@ -7767,26 +8245,20 @@ class Foo
       });
     };
     const hideHoverCalls = () =>
-      editor.trigger.mock.calls.filter(
-        ([, actionId]) => actionId === "editor.action.hideHover",
-      );
+      editor.trigger.mock.calls.filter(([, actionId]) => actionId === "editor.action.hideHover");
     const latestPhpSyntaxMarkers = () => {
       const syntaxMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
         ([, owner]) => owner === "php-syntax",
       );
 
-      return syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as
-        | any[]
-        | undefined;
+      return syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as any[] | undefined;
     };
 
     await renderWith(activeDocument);
     await flushPhpValidation();
 
     expect(
-      latestPhpSyntaxMarkers()?.filter(
-        (marker) => marker.source === "PHP Inspection",
-      ),
+      latestPhpSyntaxMarkers()?.filter((marker) => marker.source === "PHP Inspection"),
     ).toHaveLength(2);
 
     editor.trigger.mockClear();
@@ -7799,9 +8271,7 @@ class Foo
     await flushPhpValidation();
 
     expect(
-      latestPhpSyntaxMarkers()?.filter(
-        (marker) => marker.source === "PHP Inspection",
-      ),
+      latestPhpSyntaxMarkers()?.filter((marker) => marker.source === "PHP Inspection"),
     ).toHaveLength(0);
     expect(hideHoverCalls().length).toBeGreaterThan(0);
   });
@@ -7879,8 +8349,7 @@ class Foo
       editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
         (decorations as any[]).some(
           (decoration) =>
-            decoration.options?.overviewRuler?.position ===
-            monaco.editor.OverviewRulerLane.Right,
+            decoration.options?.overviewRuler?.position === monaco.editor.OverviewRulerLane.Right,
         ),
       );
 
@@ -7957,9 +8426,7 @@ class Foo
     const bookmarkDecorationCalls = () =>
       editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
         (decorations as any[]).some(
-          (decoration) =>
-            decoration.options?.linesDecorationsClassName ===
-            "bookmark-gutter-glyph",
+          (decoration) => decoration.options?.linesDecorationsClassName === "bookmark-gutter-glyph",
         ),
       );
 
@@ -7970,7 +8437,10 @@ class Foo
 
     // Simulate a keystroke: new activeDocument object, same path + same
     // bookmarked-line identity. Bookmark gutter decorations must NOT re-map.
-    await renderWith({ ...activeDocument, content: "const one = 12;\nconst two = 2;\nconst three = 3;\n" });
+    await renderWith({
+      ...activeDocument,
+      content: "const one = 12;\nconst two = 2;\nconst three = 3;\n",
+    });
 
     expect(bookmarkDecorationCalls()).toHaveLength(0);
   });
@@ -8039,9 +8509,7 @@ class Foo
     const changeDecorationCalls = () =>
       editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
         (decorations as any[]).some((decoration) =>
-          decoration.options?.glyphMarginClassName?.startsWith(
-            "editor-change-glyph",
-          ),
+          decoration.options?.glyphMarginClassName?.startsWith("editor-change-glyph"),
         ),
       );
 
@@ -8114,9 +8582,7 @@ class Foo
     const bookmarkDecorationCalls = () =>
       editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
         (decorations as any[]).some(
-          (decoration) =>
-            decoration.options?.linesDecorationsClassName ===
-            "bookmark-gutter-glyph",
+          (decoration) => decoration.options?.linesDecorationsClassName === "bookmark-gutter-glyph",
         ),
       );
 
@@ -8203,8 +8669,7 @@ class Foo
       editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
         (decorations as any[]).some(
           (decoration) =>
-            decoration.options?.overviewRuler?.position ===
-            monaco.editor.OverviewRulerLane.Right,
+            decoration.options?.overviewRuler?.position === monaco.editor.OverviewRulerLane.Right,
         ),
       );
 
@@ -8243,9 +8708,7 @@ class Foo
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = monaco;
 
-    const renderWith = async (
-      diagnostics: Record<string, unknown[]>,
-    ) => {
+    const renderWith = async (diagnostics: Record<string, unknown[]>) => {
       await act(async () => {
         root.render(
           <EditorSurface
@@ -8300,10 +8763,9 @@ class Foo
       ],
     });
 
-    const languageServerMarkerCall =
-      monaco.editor.setModelMarkers.mock.calls.find(
-        ([, owner]) => owner === "php-language-server",
-      );
+    const languageServerMarkerCall = monaco.editor.setModelMarkers.mock.calls.find(
+      ([, owner]) => owner === "php-language-server",
+    );
     expect(languageServerMarkerCall?.[2]).toHaveLength(1);
   });
 
@@ -8396,11 +8858,9 @@ class Foo
     openModels = [firstModel, secondModel];
     await renderWith(secondDocument);
 
-    const secondModelMarkerCall =
-      monaco.editor.setModelMarkers.mock.calls.find(
-        ([target, owner]) =>
-          target === secondModel && owner === "php-language-server",
-      );
+    const secondModelMarkerCall = monaco.editor.setModelMarkers.mock.calls.find(
+      ([target, owner]) => target === secondModel && owner === "php-language-server",
+    );
     expect(secondModelMarkerCall?.[2]).toHaveLength(1);
   });
 
@@ -8453,9 +8913,7 @@ class Foo
       [secondDocument.path]: unchangedSecondDiagnostics,
     });
 
-    const renderWith = async (
-      diagnostics: Record<string, unknown[]>,
-    ) => {
+    const renderWith = async (diagnostics: Record<string, unknown[]>) => {
       await act(async () => {
         root.render(
           <EditorSurface
@@ -8515,12 +8973,8 @@ class Foo
     const markerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
       ([, owner]) => owner === "php-language-server",
     );
-    expect(
-      markerCalls.some(([target]) => target === firstModel),
-    ).toBe(true);
-    expect(
-      markerCalls.some(([target]) => target === secondModel),
-    ).toBe(false);
+    expect(markerCalls.some(([target]) => target === firstModel)).toBe(true);
+    expect(markerCalls.some(([target]) => target === secondModel)).toBe(false);
   });
 
   it("re-applies markers to a model recreated for a reopened path with unchanged diagnostics", async () => {
@@ -8632,8 +9086,7 @@ class Foo
     await renderWith(document);
 
     const reopenedMarkerCall = monaco.editor.setModelMarkers.mock.calls.find(
-      ([target, owner]) =>
-        target === reopenedModel && owner === "php-language-server",
+      ([target, owner]) => target === reopenedModel && owner === "php-language-server",
     );
     expect(reopenedMarkerCall?.[2]).toHaveLength(1);
   });
@@ -8686,8 +9139,7 @@ class Foo
     const documentSymbolsMock = vi.fn(async (_root: string, path: string) =>
       path === closingDocument.path ? closingSymbols : [],
     );
-    gateway.documentSymbols =
-      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+    gateway.documentSymbols = documentSymbolsMock as unknown as typeof gateway.documentSymbols;
 
     const renderWith = async (document: EditorDocument) => {
       await act(async () => {
@@ -8734,9 +9186,9 @@ class Foo
     });
 
     // The breadcrumb cache is populated for the closing document.
-    const initialLabels = Array.from(
-      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
-    ).map((segment) => segment.textContent);
+    const initialLabels = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+      (segment) => segment.textContent,
+    );
     expect(initialLabels).toContain("Closing");
 
     // Close Closing.tsx: it leaves the live model set; Remaining.ts is active.
@@ -8796,16 +9248,13 @@ class Foo
       uri: { fsPath: remainingDocument.path, path: remainingDocument.path },
     };
 
-    let openModels: FakeModel[] = [closingModel, remainingModel];
+    const openModels: FakeModel[] = [closingModel, remainingModel];
     const monaco = createMonaco(closingModel);
     monaco.editor.getModels = vi.fn(() => openModels);
     editorSurfaceMocks.editor = createEditor(remainingModel);
     editorSurfaceMocks.monaco = monaco;
 
-    const renderWith = async (
-      document: EditorDocument,
-      openDocumentPaths: string[],
-    ) => {
+    const renderWith = async (document: EditorDocument, openDocumentPaths: string[]) => {
       await act(async () => {
         root.render(
           <EditorSurface
@@ -8844,10 +9293,7 @@ class Foo
       });
     };
 
-    await renderWith(remainingDocument, [
-      closingDocument.path,
-      remainingDocument.path,
-    ]);
+    await renderWith(remainingDocument, [closingDocument.path, remainingDocument.path]);
     expect(closingModel.dispose).not.toHaveBeenCalled();
 
     // Close closing.ts: it leaves the live open document set.
@@ -9196,11 +9642,7 @@ class Foo
     };
 
     const monaco = createMonaco(activeModel);
-    monaco.editor.getModels = vi.fn(() => [
-      activeModel,
-      closedModel,
-      historyModel,
-    ]);
+    monaco.editor.getModels = vi.fn(() => [activeModel, closedModel, historyModel]);
     editorSurfaceMocks.editor = createEditor(activeModel);
     editorSurfaceMocks.monaco = monaco;
 
@@ -9317,11 +9759,7 @@ class Foo
 
     quickFixAction.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.quickFix",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.quickFix", {});
   });
 
   it("registers Cmd+L go to line that opens Monaco's gotoLine quick access", async () => {
@@ -9391,11 +9829,7 @@ class Foo
 
     gotoLineAction.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.gotoLine",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.gotoLine", {});
   });
 
   it("registers F2 rename that triggers Monaco's cross-file rename action", async () => {
@@ -9465,11 +9899,7 @@ class Foo
 
     renameAction.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.rename",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.rename", {});
 
     editor.trigger.mockClear();
     editor.getModel.mockReturnValueOnce(null);
@@ -9534,9 +9964,7 @@ class Foo
     });
 
     const actionById = (id: string) =>
-      editor.addAction.mock.calls
-        .map(([action]) => action)
-        .find((action) => action.id === id);
+      editor.addAction.mock.calls.map(([action]) => action).find((action) => action.id === id);
 
     const foldAll = actionById("mockor.foldAll");
     const unfoldAll = actionById("mockor.unfoldAll");
@@ -9545,17 +9973,13 @@ class Foo
 
     expect(foldAll).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Minus,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Minus],
         label: "Fold All",
       }),
     );
     expect(unfoldAll).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Equal,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Equal],
         label: "Unfold All",
       }),
     );
@@ -9578,27 +10002,15 @@ class Foo
 
     editor.trigger.mockClear();
     unfoldAll.run();
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.unfoldAll",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.unfoldAll", {});
 
     editor.trigger.mockClear();
     foldRecursively.run();
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.foldRecursively",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.foldRecursively", {});
 
     editor.trigger.mockClear();
     unfoldRecursively.run();
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.unfoldRecursively",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.unfoldRecursively", {});
 
     editor.trigger.mockClear();
     editor.getModel.mockReturnValueOnce(null);
@@ -9608,15 +10020,7 @@ class Foo
 
   it("registers next/previous change actions that jump between gutter change hunks", async () => {
     // Two separated change hunks: an edit on line 2 and an edit on line 6.
-    const baseline = [
-      "line1",
-      "line2",
-      "line3",
-      "line4",
-      "line5",
-      "line6",
-      "line7",
-    ].join("\n");
+    const baseline = ["line1", "line2", "line3", "line4", "line5", "line6", "line7"].join("\n");
     const current = [
       "line1",
       "line2-edited",
@@ -9689,9 +10093,7 @@ class Foo
     });
 
     const actionById = (id: string) =>
-      editor.addAction.mock.calls
-        .map(([action]) => action)
-        .find((action) => action.id === id);
+      editor.addAction.mock.calls.map(([action]) => action).find((action) => action.id === id);
 
     const nextChange = actionById("mockor.nextChange");
     const previousChange = actionById("mockor.previousChange");
@@ -9710,9 +10112,7 @@ class Foo
     );
     expect(previousChange).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.F5,
-        ],
+        keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.F5],
         label: "Go to Previous Change",
       }),
     );
@@ -9811,24 +10211,18 @@ class Foo
         getOffsetAt: ReturnType<typeof vi.fn>;
         getPositionAt: ReturnType<typeof vi.fn>;
       };
-      extendedModel.getOffsetAt = vi.fn(
-        (position: { column: number; lineNumber: number }) => {
-          const lines = modelValue.split("\n");
-          let offset = 0;
-          for (let index = 0; index < position.lineNumber - 1; index += 1) {
-            offset += lines[index].length + 1;
-          }
-          return offset + position.column - 1;
-        },
-      );
-      extendedModel.getPositionAt = vi.fn((offset: number) =>
-        offsetToPosition(modelValue, offset),
-      );
+      extendedModel.getOffsetAt = vi.fn((position: { column: number; lineNumber: number }) => {
+        const lines = modelValue.split("\n");
+        let offset = 0;
+        for (let index = 0; index < position.lineNumber - 1; index += 1) {
+          offset += lines[index].length + 1;
+        }
+        return offset + position.column - 1;
+      });
+      extendedModel.getPositionAt = vi.fn((offset: number) => offsetToPosition(modelValue, offset));
       const editor = createEditor(model);
       const monaco = createMonaco(model);
-      editor.getPosition.mockImplementation(() =>
-        offsetToPosition(modelValue, cursorOffset),
-      );
+      editor.getPosition.mockImplementation(() => offsetToPosition(modelValue, cursorOffset));
       editorSurfaceMocks.editor = editor;
       editorSurfaceMocks.monaco = monaco;
 
@@ -9912,20 +10306,17 @@ class Foo
       harness.run();
 
       // Replaces just the "calc" prefix with the remaining "ulateTotal".
-      expect(harness.editor.executeEdits).toHaveBeenCalledWith(
-        "mockor.cyclicExpandWord",
-        [
-          expect.objectContaining({
-            text: "calculateTotal",
-            range: expect.objectContaining({
-              startLineNumber: 2,
-              startColumn: 1,
-              endLineNumber: 2,
-              endColumn: 5,
-            }),
+      expect(harness.editor.executeEdits).toHaveBeenCalledWith("mockor.cyclicExpandWord", [
+        expect.objectContaining({
+          text: "calculateTotal",
+          range: expect.objectContaining({
+            startLineNumber: 2,
+            startColumn: 1,
+            endLineNumber: 2,
+            endColumn: 5,
           }),
-        ],
-      );
+        }),
+      ]);
     });
 
     it("does nothing when no buffer word matches the prefix", async () => {
@@ -9943,30 +10334,24 @@ class Foo
 
       // First Alt+/ -> nearest backward candidate "fooTwo".
       harness.run();
-      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
-        1,
-        "mockor.cyclicExpandWord",
-        [expect.objectContaining({ text: "fooTwo" })],
-      );
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(1, "mockor.cyclicExpandWord", [
+        expect.objectContaining({ text: "fooTwo" }),
+      ]);
 
       // Reflect the inserted edit + caret at the end of the inserted word, then
       // press Alt+/ again immediately: it must cycle to "fooOne".
       harness.setBuffer("fooOne\nfooTwo\nfooTwo", "fooOne\nfooTwo\nfooTwo".length);
       harness.run();
-      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
-        2,
-        "mockor.cyclicExpandWord",
-        [expect.objectContaining({ text: "fooOne" })],
-      );
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(2, "mockor.cyclicExpandWord", [
+        expect.objectContaining({ text: "fooOne" }),
+      ]);
 
       // After the last candidate it wraps back to the originally typed prefix.
       harness.setBuffer("fooOne\nfooTwo\nfooOne", "fooOne\nfooTwo\nfooOne".length);
       harness.run();
-      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
-        3,
-        "mockor.cyclicExpandWord",
-        [expect.objectContaining({ text: "foo" })],
-      );
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(3, "mockor.cyclicExpandWord", [
+        expect.objectContaining({ text: "foo" }),
+      ]);
     });
 
     it("drops the active session when the document changes (no cross-file cycle)", async () => {
@@ -9974,11 +10359,9 @@ class Foo
       const harness = await renderHippie(value, value.length);
 
       harness.run();
-      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
-        1,
-        "mockor.cyclicExpandWord",
-        [expect.objectContaining({ text: "fooTwo" })],
-      );
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(1, "mockor.cyclicExpandWord", [
+        expect.objectContaining({ text: "fooTwo" }),
+      ]);
 
       // A document switch hands EditorSurface a new activeDocument object. The
       // hippie session anchor/candidates belong to the previous file, so the
@@ -9999,11 +10382,9 @@ class Foo
       harness.setBuffer("alphaBeta\nalp", "alphaBeta\nalp".length);
       harness.run();
 
-      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
-        2,
-        "mockor.cyclicExpandWord",
-        [expect.objectContaining({ text: "alphaBeta" })],
-      );
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(2, "mockor.cyclicExpandWord", [
+        expect.objectContaining({ text: "alphaBeta" }),
+      ]);
     });
 
     it("starts a fresh expansion (not a cycle) when the caret moves between presses", async () => {
@@ -10011,11 +10392,9 @@ class Foo
       const harness = await renderHippie(value, value.length);
 
       harness.run();
-      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
-        1,
-        "mockor.cyclicExpandWord",
-        [expect.objectContaining({ text: "fooTwo" })],
-      );
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(1, "mockor.cyclicExpandWord", [
+        expect.objectContaining({ text: "fooTwo" }),
+      ]);
 
       // The buffer now shows the expansion, but the caret is somewhere else
       // entirely (user clicked away). The next press must NOT cycle "fooTwo" ->
@@ -10025,17 +10404,14 @@ class Foo
       harness.run();
 
       // Fresh expansion from prefix "fo": nearest backward word is "fooTwo".
-      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
-        2,
-        "mockor.cyclicExpandWord",
-        [expect.objectContaining({ text: "fooTwo" })],
-      );
+      expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(2, "mockor.cyclicExpandWord", [
+        expect.objectContaining({ text: "fooTwo" }),
+      ]);
     });
   });
 
   it("extends selection from identifier to full member call with Option+Up", async () => {
-    const line =
-      "$comment = $this->commentRepository->findOrFail($request->getCommentId());";
+    const line = "$comment = $this->commentRepository->findOrFail($request->getCommentId());";
     const activeDocument: EditorDocument = {
       content: `<?php\n${line}\n`,
       language: "php",
@@ -10224,9 +10600,7 @@ class Foo
       getEOL: vi.fn(() => "\n"),
       getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
       getLineCount: vi.fn(() => lines.length),
-      getLineMaxColumn: vi.fn(
-        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
-      ),
+      getLineMaxColumn: vi.fn((lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1),
       getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
       getValueInRange: vi.fn(() => "doStuff();"),
       uri: {
@@ -10302,13 +10676,10 @@ class Foo
       await Promise.resolve();
     });
 
-    const picker = queryRequired<HTMLElement>(
-      document.body,
-      "[aria-label='Surround with']",
+    const picker = queryRequired<HTMLElement>(document.body, "[aria-label='Surround with']");
+    const ifButton = Array.from(picker.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("if"),
     );
-    const ifButton = Array.from(
-      picker.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("if"));
 
     expect(ifButton).toBeTruthy();
 
@@ -10329,9 +10700,7 @@ class Foo
       ["if (${1:condition}) {", "    doStuff();$0", "}"].join("\n"),
     );
 
-    expect(
-      document.body.querySelector("[aria-label='Surround with']"),
-    ).toBeNull();
+    expect(document.body.querySelector("[aria-label='Surround with']")).toBeNull();
   });
 
   it("falls back to the current line when surround-with runs without a selection", async () => {
@@ -10347,9 +10716,7 @@ class Foo
       getEOL: vi.fn(() => "\n"),
       getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
       getLineCount: vi.fn(() => lines.length),
-      getLineMaxColumn: vi.fn(
-        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
-      ),
+      getLineMaxColumn: vi.fn((lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1),
       getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
       getValueInRange: vi.fn(() => "  doStuff();"),
       uri: {
@@ -10419,13 +10786,10 @@ class Foo
       await Promise.resolve();
     });
 
-    const picker = queryRequired<HTMLElement>(
-      document.body,
-      "[aria-label='Surround with']",
+    const picker = queryRequired<HTMLElement>(document.body, "[aria-label='Surround with']");
+    const foreachButton = Array.from(picker.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("foreach"),
     );
-    const foreachButton = Array.from(
-      picker.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("foreach"));
 
     await act(async () => {
       foreachButton?.click();
@@ -10441,11 +10805,7 @@ class Foo
       }),
     );
     expect(snippetController.insert).toHaveBeenCalledWith(
-      [
-        "  foreach (${1:\\$items} as ${2:\\$item}) {",
-        "      doStuff();$0",
-        "  }",
-      ].join("\n"),
+      ["  foreach (${1:\\$items} as ${2:\\$item}) {", "      doStuff();$0", "  }"].join("\n"),
     );
   });
 
@@ -10462,9 +10822,7 @@ class Foo
       getEOL: vi.fn(() => "\n"),
       getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
       getLineCount: vi.fn(() => lines.length),
-      getLineMaxColumn: vi.fn(
-        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
-      ),
+      getLineMaxColumn: vi.fn((lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1),
       getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
       getValueInRange: vi.fn(() => "doStuff();"),
       uri: {
@@ -10540,13 +10898,10 @@ class Foo
       uri: { fsPath: "/workspace/Other.php", path: "/workspace/Other.php" },
     });
 
-    const picker = queryRequired<HTMLElement>(
-      document.body,
-      "[aria-label='Surround with']",
+    const picker = queryRequired<HTMLElement>(document.body, "[aria-label='Surround with']");
+    const ifButton = Array.from(picker.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("if"),
     );
-    const ifButton = Array.from(
-      picker.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("if"));
 
     await act(async () => {
       ifButton?.click();
@@ -10554,13 +10909,11 @@ class Foo
     });
 
     expect(snippetController.insert).not.toHaveBeenCalled();
-    expect(
-      document.body.querySelector("[aria-label='Surround with']"),
-    ).toBeNull();
+    expect(document.body.querySelector("[aria-label='Surround with']")).toBeNull();
   });
 
   it("inserts unescaped wrapped text when the snippet controller is unavailable", async () => {
-    const lines = ['$total = $price * $qty;'];
+    const lines = ["$total = $price * $qty;"];
     const activeDocument: EditorDocument = {
       content: `${lines.join("\n")}\n`,
       language: "php",
@@ -10572,11 +10925,9 @@ class Foo
       getEOL: vi.fn(() => "\n"),
       getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
       getLineCount: vi.fn(() => lines.length),
-      getLineMaxColumn: vi.fn(
-        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
-      ),
+      getLineMaxColumn: vi.fn((lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1),
       getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
-      getValueInRange: vi.fn(() => '$total = $price * $qty;'),
+      getValueInRange: vi.fn(() => "$total = $price * $qty;"),
       uri: {
         fsPath: activeDocument.path,
         path: activeDocument.path,
@@ -10588,7 +10939,7 @@ class Foo
     // and insert plain, UN-escaped text (no leftover snippet escaping).
     editor.getContribution.mockReturnValue(null);
     editor.getSelection.mockReturnValue({
-      endColumn: '$total = $price * $qty;'.length + 1,
+      endColumn: "$total = $price * $qty;".length + 1,
       endLineNumber: 1,
       startColumn: 1,
       startLineNumber: 1,
@@ -10640,31 +10991,21 @@ class Foo
       await Promise.resolve();
     });
 
-    const picker = queryRequired<HTMLElement>(
-      document.body,
-      "[aria-label='Surround with']",
+    const picker = queryRequired<HTMLElement>(document.body, "[aria-label='Surround with']");
+    const ifButton = Array.from(picker.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("if"),
     );
-    const ifButton = Array.from(
-      picker.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("if"));
 
     await act(async () => {
       ifButton?.click();
       await Promise.resolve();
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.surroundWith",
-      [
-        expect.objectContaining({
-          text: [
-            "if (condition) {",
-            "    $total = $price * $qty;",
-            "}",
-          ].join("\n"),
-        }),
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.surroundWith", [
+      expect.objectContaining({
+        text: ["if (condition) {", "    $total = $price * $qty;", "}"].join("\n"),
+      }),
+    ]);
   });
 
   it("preserves literal snippet markers in the fallback wrapped text", async () => {
@@ -10684,9 +11025,7 @@ class Foo
       getEOL: vi.fn(() => "\n"),
       getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
       getLineCount: vi.fn(() => lines.length),
-      getLineMaxColumn: vi.fn(
-        (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
-      ),
+      getLineMaxColumn: vi.fn((lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1),
       getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
       getValueInRange: vi.fn(() => selected),
       uri: {
@@ -10750,31 +11089,21 @@ class Foo
       await Promise.resolve();
     });
 
-    const picker = queryRequired<HTMLElement>(
-      document.body,
-      "[aria-label='Surround with']",
+    const picker = queryRequired<HTMLElement>(document.body, "[aria-label='Surround with']");
+    const ifButton = Array.from(picker.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("if"),
     );
-    const ifButton = Array.from(
-      picker.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("if"));
 
     await act(async () => {
       ifButton?.click();
       await Promise.resolve();
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.surroundWith",
-      [
-        expect.objectContaining({
-          text: [
-            "if (condition) {",
-            `    ${selected}`,
-            "}",
-          ].join("\n"),
-        }),
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.surroundWith", [
+      expect.objectContaining({
+        text: ["if (condition) {", `    ${selected}`, "}"].join("\n"),
+      }),
+    ]);
   });
 
   it("appends a semicolon and moves the caret on Complete Current Statement", async () => {
@@ -10848,9 +11177,7 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(snippetController.insert).toHaveBeenCalledWith(
-      "if (\\$ready) {\n    $0\n}",
-    );
+    expect(snippetController.insert).toHaveBeenCalledWith("if (\\$ready) {\n    $0\n}");
     expect(editor.executeEdits).not.toHaveBeenCalled();
   });
 
@@ -10933,12 +11260,7 @@ class Foo
           startLineNumber: 1,
           endLineNumber: 4,
         }),
-        text: [
-          "if ($ready) {",
-          "    doStuff();",
-          "}",
-          "$before = 1;",
-        ].join("\n"),
+        text: ["if ($ready) {", "    doStuff();", "}", "$before = 1;"].join("\n"),
       }),
     ]);
     expect(editor.setPosition).toHaveBeenCalledWith({
@@ -10986,20 +11308,12 @@ class Foo
     });
 
     expect(editor.executeEdits).not.toHaveBeenCalled();
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.moveLinesUpAction",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.moveLinesUpAction", {});
   });
 
   it("falls back to Monaco Move Line for a non-PHP document", async () => {
     const lines = ["const a = 1;", "const b = 2;", "const c = 3;"];
-    const { editor } = await mountCompleteStatementSurface(
-      root,
-      lines,
-      "typescript",
-    );
+    const { editor } = await mountCompleteStatementSurface(root, lines, "typescript");
 
     editor.getPosition.mockReturnValue({ column: 1, lineNumber: 2 });
 
@@ -11077,9 +11391,8 @@ class Foo
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const goToDefinitionAction = actions.find(
-      (action) => action.id === "mockor.goToDefinition",
-    );
+    const f12Action = actions.find((action) => action.id === "mockor.dispatchF12");
+    const goToDefinitionAction = actions.find((action) => action.id === "mockor.goToDefinition");
     const goToImplementationAction = actions.find(
       (action) => action.id === "mockor.goToImplementation",
     );
@@ -11091,16 +11404,15 @@ class Foo
     );
     expect(goToImplementationAction).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyB],
       }),
     );
 
+    f12Action?.run();
     goToDefinitionAction?.run();
     goToImplementationAction?.run();
 
-    expect(onGoToDefinition).toHaveBeenCalledTimes(1);
+    expect(onGoToDefinition).toHaveBeenCalledTimes(2);
     expect(onGoToImplementationAt).toHaveBeenCalledWith({
       column: 1,
       lineNumber: 1,
@@ -11117,72 +11429,77 @@ class Foo
     );
   });
 
-  it("routes editor-focused F12 rebindings through the registry", async () => {
-    stubNavigatorPlatform("MacIntel");
+  it.each([
+    ["executed", "executed", ["workbench.openSettings"]],
+    ["disabled", "executed", ["workbench.openSettings", "editor.save"]],
+    ["missing", "executed", ["workbench.openSettings", "editor.save"]],
+    ["disabled", "disabled", ["workbench.openSettings", "editor.save"]],
+  ] as const)(
+    "routes editor-focused F12 collisions through the registry (%s, %s)",
+    async (laterOutcome, earlierOutcome, expectedCommandIds) => {
+      stubNavigatorPlatform("MacIntel");
 
-    const activeDocument: EditorDocument = {
-      content: "const value = 1;\n",
-      language: "typescript",
-      name: "example.ts",
-      path: "/workspace/src/example.ts",
-      savedContent: "",
-    };
-    const model: FakeModel = {
-      uri: { fsPath: activeDocument.path, path: activeDocument.path },
-    };
-    const monaco = createMonaco(model);
-    const editor = createEditor(model);
-    const runCommand = vi.fn(() => "executed" as const);
-    const onGoToDefinition = vi.fn();
-    const keymap = {
-      ...defaultKeymapSettings("mac"),
-      "workbench.openSettings": "F12",
-    };
-    editorSurfaceMocks.editor = editor;
-    editorSurfaceMocks.monaco = monaco;
-
-    await act(async () => {
-      root.render(
-        createElement(EditorSurface, {
-          ...memoGuardProps(activeDocument),
-          keymap,
-          onGoToDefinition,
-          runCommand,
-        }),
+      const activeDocument: EditorDocument = {
+        content: "const value = 1;\n",
+        language: "typescript",
+        name: "example.ts",
+        path: "/workspace/src/example.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: { fsPath: activeDocument.path, path: activeDocument.path },
+      };
+      const monaco = createMonaco(model);
+      const editor = createEditor(model);
+      const runCommand = vi.fn<CommandExecutionRunner>((commandId): CommandExecutionOutcome =>
+        commandId === "workbench.openSettings" ? laterOutcome : earlierOutcome,
       );
-      await Promise.resolve();
-    });
+      const onGoToDefinition = vi.fn();
+      const keymap = {
+        ...defaultKeymapSettings("mac"),
+        "editor.save": "F12",
+        "workbench.openSettings": "F12",
+      };
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = monaco;
 
-    const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const f12Action = actions.find(
-      (action) => action.id === "mockor.dispatchF12",
-    );
-    const definitionAction = actions.find(
-      (action) => action.id === "mockor.goToDefinition",
-    );
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(activeDocument),
+            keymap,
+            onGoToDefinition,
+            runCommand,
+          }),
+        );
+        await Promise.resolve();
+      });
 
-    expect(f12Action).toEqual(
-      expect.objectContaining({ keybindings: [monaco.KeyCode.F12] }),
-    );
-    expect(definitionAction?.keybindings).not.toContain(monaco.KeyCode.F12);
+      const actions = editor.addAction.mock.calls.map(([action]) => action);
+      const f12Action = actions.find((action) => action.id === "mockor.dispatchF12");
+      const definitionAction = actions.find((action) => action.id === "mockor.goToDefinition");
 
-    f12Action?.run();
+      expect(f12Action).toEqual(expect.objectContaining({ keybindings: [monaco.KeyCode.F12] }));
+      expect(definitionAction?.keybindings).not.toContain(monaco.KeyCode.F12);
 
-    expect(runCommand).toHaveBeenCalledWith(
-      "workbench.openSettings",
-      expect.objectContaining({
-        editorSurfaceScope: expect.objectContaining({
-          modelIdentity: model,
-        }),
-      }),
-    );
-    expect(onGoToDefinition).not.toHaveBeenCalled();
-    expect(editor.trigger).not.toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.revealDefinition",
-      {},
-    );
-  });
+      f12Action?.run();
+
+      expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual(expectedCommandIds);
+      for (const [, context] of runCommand.mock.calls) {
+        expect(context).toEqual(
+          expect.objectContaining({
+            editorSurfaceScope: expect.objectContaining({ modelIdentity: model }),
+          }),
+        );
+      }
+      expect(onGoToDefinition).not.toHaveBeenCalled();
+      expect(editor.trigger).not.toHaveBeenCalledWith(
+        "keyboard",
+        "editor.action.revealDefinition",
+        {},
+      );
+    },
+  );
 
   it("registers reference shortcuts and preserves Monaco fallbacks without a command runner", async () => {
     stubNavigatorPlatform("MacIntel");
@@ -11213,25 +11530,20 @@ class Foo
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const findReferencesAction = actions.find(
-      (action) => action.id === "mockor.findReferences",
-    );
+    const findReferencesAction = actions.find((action) => action.id === "mockor.findReferences");
     const findFileReferencesAction = actions.find(
       (action) => action.id === "mockor.findFileReferences",
     );
 
     expect(findReferencesAction).toEqual(
       expect.objectContaining({
-        keybindingContext:
-          "!referenceSearchVisible && !inReferenceSearchEditor",
+        keybindingContext: "!referenceSearchVisible && !inReferenceSearchEditor",
         keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F12],
       }),
     );
     expect(findFileReferencesAction).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.F12,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.F12],
       }),
     );
 
@@ -11266,9 +11578,7 @@ class Foo
         uri: { fsPath: activeDocument.path, path: activeDocument.path },
       };
       const editor = createEditor(model);
-      const runCommand = vi.fn(
-        (_commandId: string): CommandExecutionOutcome => outcome,
-      );
+      const runCommand = vi.fn((_commandId: string): CommandExecutionOutcome => outcome);
       editorSurfaceMocks.editor = editor;
       editorSurfaceMocks.monaco = createMonaco(model);
 
@@ -11283,12 +11593,8 @@ class Foo
       });
 
       const actions = editor.addAction.mock.calls.map(([action]) => action);
-      actions
-        .find((action) => action.id === "mockor.findReferences")
-        ?.run();
-      actions
-        .find((action) => action.id === "mockor.findFileReferences")
-        ?.run();
+      actions.find((action) => action.id === "mockor.findReferences")?.run();
+      actions.find((action) => action.id === "mockor.findFileReferences")?.run();
 
       expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
         "editor.findReferences",
@@ -11310,9 +11616,7 @@ class Foo
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
-    const runCommand = vi.fn(
-      (_commandId: string): CommandExecutionOutcome => "missing",
-    );
+    const runCommand = vi.fn((_commandId: string): CommandExecutionOutcome => "missing");
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = createMonaco(model);
 
@@ -11328,9 +11632,7 @@ class Foo
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
     actions.find((action) => action.id === "mockor.findReferences")?.run();
-    actions
-      .find((action) => action.id === "mockor.findFileReferences")
-      ?.run();
+    actions.find((action) => action.id === "mockor.findFileReferences")?.run();
 
     expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
       "editor.findReferences",
@@ -11367,9 +11669,8 @@ class Foo
     const editor = createEditor(model);
     const onCloseActiveTab = vi.fn();
     const onGoBack = vi.fn();
-    const runCommand = vi.fn(
-      (commandId: string): CommandExecutionOutcome =>
-        commandId === "editor.closeTab" ? "disabled" : "missing",
+    const runCommand = vi.fn((commandId: string): CommandExecutionOutcome =>
+      commandId === "editor.closeTab" ? "disabled" : "missing",
     );
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = monaco;
@@ -11388,12 +11689,8 @@ class Foo
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const closeTabAction = actions.find(
-      (action) => action.id === "mockor.closeTab",
-    );
-    const goBackAction = actions.find(
-      (action) => action.id === "mockor.goBack",
-    );
+    const closeTabAction = actions.find((action) => action.id === "mockor.closeTab");
+    const goBackAction = actions.find((action) => action.id === "mockor.goBack");
 
     expect(closeTabAction).toEqual(
       expect.objectContaining({
@@ -11414,16 +11711,8 @@ class Foo
       hasActiveDocument: true,
       hasWorkspace: false,
     });
-    expect(runCommand).toHaveBeenNthCalledWith(
-      1,
-      "editor.closeTab",
-      expectedCommandContext,
-    );
-    expect(runCommand).toHaveBeenNthCalledWith(
-      2,
-      "navigation.back",
-      expectedCommandContext,
-    );
+    expect(runCommand).toHaveBeenNthCalledWith(1, "editor.closeTab", expectedCommandContext);
+    expect(runCommand).toHaveBeenNthCalledWith(2, "navigation.back", expectedCommandContext);
     expect(onCloseActiveTab).not.toHaveBeenCalled();
     expect(onGoBack).toHaveBeenCalledOnce();
   });
@@ -11443,9 +11732,7 @@ class Foo
       };
       const editor = createEditor(model);
       const props = memoGuardProps(activeDocument);
-      const runCommand = vi.fn(
-        (_commandId: string): CommandExecutionOutcome => outcome,
-      );
+      const runCommand = vi.fn((_commandId: string): CommandExecutionOutcome => outcome);
       editorSurfaceMocks.editor = editor;
       editorSurfaceMocks.monaco = createMonaco(model);
 
@@ -11512,9 +11799,7 @@ class Foo
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
-    const runCommand = vi.fn(
-      (_commandId: string): CommandExecutionOutcome => "missing",
-    );
+    const runCommand = vi.fn((_commandId: string): CommandExecutionOutcome => "missing");
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = createMonaco(model);
 
@@ -11529,8 +11814,7 @@ class Foo
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const actionById = (id: string) =>
-      actions.find((action) => action.id === id);
+    const actionById = (id: string) => actions.find((action) => action.id === id);
 
     actionById("mockor.quickDefinition")?.run();
     actionById("mockor.nextChange")?.run();
@@ -11712,20 +11996,14 @@ class Foo
 
     expect(formatDocumentAction).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
-        ],
+        keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF],
         label: "Format Document",
       }),
     );
 
     formatDocumentAction.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.formatDocument",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.formatDocument", {});
 
     editor.trigger.mockClear();
     editor.getModel.mockReturnValueOnce(null);
@@ -11795,20 +12073,14 @@ class Foo
 
     expect(formatSelectionAction).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyL,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyL],
         label: "Format Selection",
       }),
     );
 
     formatSelectionAction.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.formatSelection",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.formatSelection", {});
 
     editor.trigger.mockClear();
     editor.getModel.mockReturnValueOnce(null);
@@ -11873,23 +12145,18 @@ class Foo
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const actionById = (id: string) =>
-      actions.find((action) => action.id === id);
+    const actionById = (id: string) => actions.find((action) => action.id === id);
 
     const moveLineUp = actionById("mockor.moveLineUp");
     const moveLineDown = actionById("mockor.moveLineDown");
     const duplicateLine = actionById("mockor.duplicateLine");
-    const addSelectionToNextMatch = actionById(
-      "mockor.addSelectionToNextMatch",
-    );
+    const addSelectionToNextMatch = actionById("mockor.addSelectionToNextMatch");
     const deleteLine = actionById("mockor.deleteLine");
     const quickDefinition = actionById("mockor.quickDefinition");
 
     expect(quickDefinition).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyI],
       }),
     );
 
@@ -11898,39 +12165,27 @@ class Foo
 
     expect(moveStatementUp).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.UpArrow,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.UpArrow],
       }),
     );
     expect(moveStatementDown).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd |
-            monaco.KeyMod.Shift |
-            monaco.KeyCode.DownArrow,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.DownArrow],
       }),
     );
     expect(moveLineUp).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
-        ],
+        keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow],
       }),
     );
     expect(moveLineDown).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
-        ],
+        keybindings: [monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow],
       }),
     );
     expect(duplicateLine).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyD],
       }),
     );
     expect(addSelectionToNextMatch).toEqual(
@@ -11940,9 +12195,7 @@ class Foo
     );
     expect(deleteLine).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyK,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyK],
       }),
     );
 
@@ -11954,15 +12207,9 @@ class Foo
     const triggerCountBeforeQuickDefinition = editor.trigger.mock.calls.length;
     quickDefinition?.run();
 
-    expect(editor.trigger).toHaveBeenCalledTimes(
-      triggerCountBeforeQuickDefinition,
-    );
+    expect(editor.trigger).toHaveBeenCalledTimes(triggerCountBeforeQuickDefinition);
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.moveLinesUpAction",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.moveLinesUpAction", {});
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
       "editor.action.moveLinesDownAction",
@@ -11978,11 +12225,7 @@ class Foo
       "editor.action.addSelectionToNextFindMatch",
       {},
     );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.deleteLines",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.deleteLines", {});
   });
 
   it("wires the line/case utility actions to their Monaco commands and keybindings", async () => {
@@ -12040,8 +12283,7 @@ class Foo
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const actionById = (id: string) =>
-      actions.find((action) => action.id === id);
+    const actionById = (id: string) => actions.find((action) => action.id === id);
 
     const joinLines = actionById("mockor.joinLines");
     const sortLinesAscending = actionById("mockor.sortLinesAscending");
@@ -12051,17 +12293,13 @@ class Foo
 
     expect(joinLines).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyJ],
         label: "Join Lines",
       }),
     );
     expect(toggleCase).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyU,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyU],
         label: "Toggle Case",
       }),
     );
@@ -12090,16 +12328,8 @@ class Foo
     toggleCase?.run();
     transformToLowercase?.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.joinLines",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.sortLinesAscending",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.joinLines", {});
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.sortLinesAscending", {});
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
       "editor.action.sortLinesDescending",
@@ -12172,8 +12402,7 @@ class Foo
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    const actionById = (id: string) =>
-      actions.find((action) => action.id === id);
+    const actionById = (id: string) => actions.find((action) => action.id === id);
 
     const insertCursorAbove = actionById("mockor.insertCursorAbove");
     const insertCursorBelow = actionById("mockor.insertCursorBelow");
@@ -12182,23 +12411,17 @@ class Foo
 
     expect(insertCursorAbove).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow],
       }),
     );
     expect(insertCursorBelow).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow],
       }),
     );
     expect(selectAllOccurrences).toEqual(
       expect.objectContaining({
-        keybindings: [
-          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL,
-        ],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL],
       }),
     );
     expect(shrinkSelection).toEqual(
@@ -12212,26 +12435,10 @@ class Foo
     selectAllOccurrences?.run();
     shrinkSelection?.run();
 
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.insertCursorAbove",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.insertCursorBelow",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.selectHighlights",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.smartSelect.shrink",
-      {},
-    );
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.insertCursorAbove", {});
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.insertCursorBelow", {});
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.selectHighlights", {});
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.smartSelect.shrink", {});
   });
 
   it("toggles column selection mode on and off via updateOptions", async () => {
@@ -12363,9 +12570,9 @@ class Foo
     });
 
     act(() => {
-      host.querySelector<HTMLElement>(".editor-panel")?.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true }),
-      );
+      host
+        .querySelector<HTMLElement>(".editor-panel")
+        ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     });
 
     expect(onEditorFocused).toHaveBeenCalled();
@@ -12449,21 +12656,18 @@ class Foo
       });
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.smartBlankLineIndent",
-      [
-        {
-          forceMoveMarkers: true,
-          range: expect.objectContaining({
-            endColumn: 1,
-            endLineNumber: 7,
-            startColumn: 1,
-            startLineNumber: 7,
-          }),
-          text: "        ",
-        },
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.smartBlankLineIndent", [
+      {
+        forceMoveMarkers: true,
+        range: expect.objectContaining({
+          endColumn: 1,
+          endLineNumber: 7,
+          startColumn: 1,
+          startLineNumber: 7,
+        }),
+        text: "        ",
+      },
+    ]);
     expect(editor.setPosition).toHaveBeenCalledWith({
       column: 9,
       lineNumber: 7,
@@ -12548,21 +12752,18 @@ class Foo
       });
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.smartBlankLineIndent",
-      [
-        {
-          forceMoveMarkers: true,
-          range: expect.objectContaining({
-            endColumn: 2,
-            endLineNumber: 7,
-            startColumn: 1,
-            startLineNumber: 7,
-          }),
-          text: "        ",
-        },
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.smartBlankLineIndent", [
+      {
+        forceMoveMarkers: true,
+        range: expect.objectContaining({
+          endColumn: 2,
+          endLineNumber: 7,
+          startColumn: 1,
+          startLineNumber: 7,
+        }),
+        text: "        ",
+      },
+    ]);
     expect(editor.setPosition).toHaveBeenCalledWith({
       column: 9,
       lineNumber: 7,
@@ -12655,21 +12856,18 @@ class Foo
       });
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.smartBlankLineIndent",
-      [
-        {
-          forceMoveMarkers: true,
-          range: expect.objectContaining({
-            endColumn: 1,
-            endLineNumber: 8,
-            startColumn: 1,
-            startLineNumber: 8,
-          }),
-          text: "        ",
-        },
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.smartBlankLineIndent", [
+      {
+        forceMoveMarkers: true,
+        range: expect.objectContaining({
+          endColumn: 1,
+          endLineNumber: 8,
+          startColumn: 1,
+          startLineNumber: 8,
+        }),
+        text: "        ",
+      },
+    ]);
     expect(editor.setPosition).toHaveBeenCalledWith({
       column: 9,
       lineNumber: 8,
@@ -12756,21 +12954,18 @@ class Foo
       });
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.smartBlankLineIndent",
-      [
-        {
-          forceMoveMarkers: true,
-          range: expect.objectContaining({
-            endColumn: 2,
-            endLineNumber: 9,
-            startColumn: 1,
-            startLineNumber: 9,
-          }),
-          text: "        ",
-        },
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.smartBlankLineIndent", [
+      {
+        forceMoveMarkers: true,
+        range: expect.objectContaining({
+          endColumn: 2,
+          endLineNumber: 9,
+          startColumn: 1,
+          startLineNumber: 9,
+        }),
+        text: "        ",
+      },
+    ]);
     expect(editor.setPosition).toHaveBeenCalledWith({
       column: 9,
       lineNumber: 9,
@@ -12785,10 +12980,7 @@ class Foo
       path: "/workspace/src/CommentController.php",
       savedContent: "<?php\n$comment = 'old';\n",
     };
-    const changeHunks = editorChangeHunks(
-      activeDocument.savedContent,
-      activeDocument.content,
-    );
+    const changeHunks = editorChangeHunks(activeDocument.savedContent, activeDocument.content);
     const model: FakeModel = {
       uri: {
         fsPath: activeDocument.path,
@@ -12836,13 +13028,12 @@ class Foo
       await Promise.resolve();
     });
 
-    const changeDecorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options.glyphMarginClassName ===
-            "editor-change-glyph editor-change-glyph-modified",
-        ),
+    const changeDecorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) =>
+          decoration.options.glyphMarginClassName ===
+          "editor-change-glyph editor-change-glyph-modified",
+      ),
     );
     expect(changeDecorationCall?.[1]).toEqual([
       expect.objectContaining({
@@ -12850,10 +13041,8 @@ class Foo
           glyphMargin: {
             position: monaco.editor.GlyphMarginLane.Left,
           },
-          glyphMarginClassName:
-            "editor-change-glyph editor-change-glyph-modified",
-          linesDecorationsClassName:
-            "editor-change-line editor-change-line-modified",
+          glyphMarginClassName: "editor-change-glyph editor-change-glyph-modified",
+          linesDecorationsClassName: "editor-change-line editor-change-line-modified",
         }),
         range: expect.objectContaining({
           endLineNumber: 2,
@@ -12889,19 +13078,14 @@ class Foo
     expect(host.textContent).toContain("Current content");
     expect(host.textContent).toContain("$comment = 'new';");
     const popover = queryRequired<HTMLElement>(host, ".editor-change-popover");
-    expect(popover.classList.contains("editor-change-popover-modified")).toBe(
-      true,
-    );
+    expect(popover.classList.contains("editor-change-popover-modified")).toBe(true);
     expect(popover.querySelector(".editor-change-popover-code-removed")).not.toBeNull();
     expect(popover.querySelector(".editor-change-popover-code-added")).not.toBeNull();
     expect(popover.style.left).toBe("92px");
     expect(popover.style.top).toBe("56px");
 
     act(() => {
-      queryRequired<HTMLButtonElement>(
-        host,
-        ".editor-change-popover-action",
-      ).click();
+      queryRequired<HTMLButtonElement>(host, ".editor-change-popover-action").click();
     });
 
     expect(onRevertChangeHunk).toHaveBeenCalledWith(changeHunks[0]);
@@ -12915,10 +13099,7 @@ class Foo
       path: "/workspace/src/Multi.php",
       savedContent: "<?php\n$a = 'old';\n$keep = 1;\n$b = 'old';\n",
     };
-    const changeHunks = editorChangeHunks(
-      activeDocument.savedContent,
-      activeDocument.content,
-    );
+    const changeHunks = editorChangeHunks(activeDocument.savedContent, activeDocument.content);
     expect(changeHunks.length).toBeGreaterThanOrEqual(2);
     const model: FakeModel = {
       uri: {
@@ -12986,10 +13167,7 @@ class Foo
       });
     });
 
-    const nextButton = queryRequired<HTMLButtonElement>(
-      host,
-      ".editor-change-popover-action-next",
-    );
+    const nextButton = queryRequired<HTMLButtonElement>(host, ".editor-change-popover-action-next");
     const previousButton = queryRequired<HTMLButtonElement>(
       host,
       ".editor-change-popover-action-previous",
@@ -13118,10 +13296,8 @@ class Foo
             glyphMargin: {
               position: monaco.editor.GlyphMarginLane.Left,
             },
-            glyphMarginClassName:
-              "editor-change-glyph editor-change-glyph-added",
-            linesDecorationsClassName:
-              "editor-change-line editor-change-line-added",
+            glyphMarginClassName: "editor-change-glyph editor-change-glyph-added",
+            linesDecorationsClassName: "editor-change-line editor-change-line-added",
           }),
           range: expect.objectContaining({
             endLineNumber: 2,
@@ -13133,10 +13309,8 @@ class Foo
             glyphMargin: {
               position: monaco.editor.GlyphMarginLane.Left,
             },
-            glyphMarginClassName:
-              "editor-change-glyph editor-change-glyph-deleted",
-            linesDecorationsClassName:
-              "editor-change-line editor-change-line-deleted",
+            glyphMarginClassName: "editor-change-glyph editor-change-glyph-deleted",
+            linesDecorationsClassName: "editor-change-line editor-change-line-deleted",
           }),
           range: expect.objectContaining({
             endLineNumber: 4,
@@ -13173,10 +13347,7 @@ class Foo
     expect(host.textContent).toContain("Current content");
     expect(host.textContent).toContain("inserted");
     act(() => {
-      queryRequired<HTMLButtonElement>(
-        host,
-        ".editor-change-popover-action",
-      ).click();
+      queryRequired<HTMLButtonElement>(host, ".editor-change-popover-action").click();
     });
     expect(onRevertChangeHunk).toHaveBeenCalledWith(addedHunk);
 
@@ -13202,10 +13373,7 @@ class Foo
     expect(host.textContent).toContain("Deleted lines");
     expect(host.textContent).toContain("removed");
     act(() => {
-      queryRequired<HTMLButtonElement>(
-        host,
-        ".editor-change-popover-action",
-      ).click();
+      queryRequired<HTMLButtonElement>(host, ".editor-change-popover-action").click();
     });
     expect(onRevertChangeHunk).toHaveBeenCalledWith(deletedHunk);
   });
@@ -13218,10 +13386,7 @@ class Foo
       path: "/workspace/src/CommentController.php",
       savedContent: "<?php\n$first = 'old';\n$second = 'old';\n",
     };
-    const changeHunks = editorChangeHunks(
-      activeDocument.savedContent,
-      activeDocument.content,
-    );
+    const changeHunks = editorChangeHunks(activeDocument.savedContent, activeDocument.content);
     const model: FakeModel = {
       uri: {
         fsPath: activeDocument.path,
@@ -13349,8 +13514,7 @@ class Foo
       },
     ];
     const documentSymbolsMock = vi.fn(async () => documentSymbols);
-    gateway.documentSymbols =
-      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+    gateway.documentSymbols = documentSymbolsMock as unknown as typeof gateway.documentSymbols;
 
     await act(async () => {
       root.render(
@@ -13393,29 +13557,20 @@ class Foo
       await new Promise((resolve) => setTimeout(resolve, 200));
     });
 
-    expect(documentSymbolsMock).toHaveBeenCalledWith(
-      "/workspace",
-      activeDocument.path,
-    );
+    expect(documentSymbolsMock).toHaveBeenCalledWith("/workspace", activeDocument.path);
 
-    const labels = Array.from(
-      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
-    ).map((segment) => segment.textContent);
+    const labels = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+      (segment) => segment.textContent,
+    );
     expect(labels).toEqual(["App.tsx", "MyComponent"]);
 
-    const symbolSegment = queryRequired<HTMLButtonElement>(
-      host,
-      ".breadcrumb-symbol",
-    );
+    const symbolSegment = queryRequired<HTMLButtonElement>(host, ".breadcrumb-symbol");
 
     act(() => {
       symbolSegment.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    const menuItem = queryRequired<HTMLButtonElement>(
-      document.body,
-      ".breadcrumb-menu-item",
-    );
+    const menuItem = queryRequired<HTMLButtonElement>(document.body, ".breadcrumb-menu-item");
 
     act(() => {
       menuItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -13425,9 +13580,7 @@ class Foo
       lineNumber: 1,
       column: 14,
     });
-    expect(
-      editorSurfaceMocks.editor?.revealPositionInCenter,
-    ).toHaveBeenCalled();
+    expect(editorSurfaceMocks.editor?.revealPositionInCenter).toHaveBeenCalled();
 
     const largeDocument = {
       ...activeDocument,
@@ -13496,8 +13649,7 @@ class Foo
 
     const gateway = languageServerFeaturesGateway();
     const documentSymbolsMock = vi.fn(async () => []);
-    gateway.documentSymbols =
-      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+    gateway.documentSymbols = documentSymbolsMock as unknown as typeof gateway.documentSymbols;
 
     await act(async () => {
       root.render(
@@ -13560,8 +13712,7 @@ class Foo
 
     const gateway = languageServerFeaturesGateway();
     const documentSymbolsMock = vi.fn(async () => []);
-    gateway.documentSymbols =
-      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+    gateway.documentSymbols = documentSymbolsMock as unknown as typeof gateway.documentSymbols;
 
     let synced = false;
     const isLanguageServerDocumentSynced = vi.fn(() => synced);
@@ -13615,10 +13766,7 @@ class Foo
       await new Promise((resolve) => setTimeout(resolve, 600));
     });
 
-    expect(documentSymbolsMock).toHaveBeenCalledWith(
-      "/workspace",
-      activeDocument.path,
-    );
+    expect(documentSymbolsMock).toHaveBeenCalledWith("/workspace", activeDocument.path);
 
     // The poll must stop once the document is synced and the fetch ran, so the
     // breadcrumb fetch is not re-issued on every subsequent tick.
@@ -13647,24 +13795,23 @@ class Foo
     editorSurfaceMocks.monaco = createMonaco(model);
 
     const gateway = languageServerFeaturesGateway();
-    let resolveSymbols: (
-      symbols: LanguageServerDocumentSymbol[],
-    ) => void = () => undefined;
+    let resolveSymbols: (symbols: LanguageServerDocumentSymbol[]) => void = () => undefined;
     const documentSymbolsMock = vi.fn(
       async () =>
         new Promise<LanguageServerDocumentSymbol[]>((resolve) => {
           resolveSymbols = resolve;
         }),
     );
-    gateway.documentSymbols =
-      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
-    let resolveLease: ((lease: {
-      lifecycleIdentity: number;
-      path: string;
-      rootPath: string;
-      sessionId: number;
-      syncGeneration: number;
-    }) => void) | null = null;
+    gateway.documentSymbols = documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+    let resolveLease:
+      | ((lease: {
+          lifecycleIdentity: number;
+          path: string;
+          rootPath: string;
+          sessionId: number;
+          syncGeneration: number;
+        }) => void)
+      | null = null;
     const requestLanguageServerDocumentLease = vi.fn(
       async () =>
         new Promise<{
@@ -13686,9 +13833,7 @@ class Foo
           changeHunks={[]}
           editorRevealTarget={null}
           flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
-          isLanguageServerDocumentRequestLeaseCurrent={vi.fn(
-            () => leaseIsCurrent,
-          )}
+          isLanguageServerDocumentRequestLeaseCurrent={vi.fn(() => leaseIsCurrent)}
           languageServerDiagnosticsByPath={{}}
           languageServerFeaturesGateway={gateway}
           languageServerRuntimeStatus={{
@@ -13717,9 +13862,7 @@ class Foo
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
-          requestLanguageServerDocumentLease={
-            requestLanguageServerDocumentLease
-          }
+          requestLanguageServerDocumentLease={requestLanguageServerDocumentLease}
           workspaceRoot="/workspace"
         />,
       );
@@ -13748,10 +13891,7 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(documentSymbolsMock).toHaveBeenCalledWith(
-      "/workspace",
-      activeDocument.path,
-    );
+    expect(documentSymbolsMock).toHaveBeenCalledWith("/workspace", activeDocument.path);
 
     leaseIsCurrent = false;
     await act(async () => {
@@ -13819,9 +13959,7 @@ class Foo
           changeHunks={[]}
           editorRevealTarget={null}
           flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
-          isLanguageServerDocumentRequestLeaseCurrent={vi.fn(
-            () => leaseIsCurrent,
-          )}
+          isLanguageServerDocumentRequestLeaseCurrent={vi.fn(() => leaseIsCurrent)}
           languageServerDiagnosticsByPath={{}}
           languageServerFeaturesGateway={gateway}
           languageServerRuntimeStatus={{
@@ -13857,9 +13995,7 @@ class Foo
       await Promise.resolve();
     });
 
-    await vi.waitFor(() =>
-      expect(gateway.documentSymbols).toHaveBeenCalledTimes(1),
-    );
+    await vi.waitFor(() => expect(gateway.documentSymbols).toHaveBeenCalledTimes(1));
     leaseIsCurrent = false;
 
     await act(async () => {
@@ -13928,12 +14064,8 @@ class Foo
 
     expect(context?.isDocumentSynced).toEqual(expect.any(Function));
 
-    expect(context?.isDocumentSynced?.("/workspace", activeDocument.path)).toBe(
-      true,
-    );
-    expect(isLanguageServerDocumentSynced).toHaveBeenCalledWith(
-      activeDocument.path,
-    );
+    expect(context?.isDocumentSynced?.("/workspace", activeDocument.path)).toBe(true);
+    expect(isLanguageServerDocumentSynced).toHaveBeenCalledWith(activeDocument.path);
   });
 
   it("keeps the Monaco editor mounted and overlays an opening state while a file is being opened", async () => {
@@ -14093,9 +14225,8 @@ class Foo
       await Promise.resolve();
     });
 
-    const beforeMount = (
-      editorSurfaceMocks.props as { beforeMount?: (m: unknown) => void } | null
-    )?.beforeMount;
+    const beforeMount = (editorSurfaceMocks.props as { beforeMount?: (m: unknown) => void } | null)
+      ?.beforeMount;
     expect(beforeMount).toBeTypeOf("function");
   });
 
@@ -14151,9 +14282,7 @@ class Foo
       await Promise.resolve();
     });
 
-    const loading = (
-      editorSurfaceMocks.props as { loading?: unknown } | null
-    )?.loading;
+    const loading = (editorSurfaceMocks.props as { loading?: unknown } | null)?.loading;
     expect(loading).not.toBeNull();
     expect(loading).toBeDefined();
   });
@@ -14255,8 +14384,7 @@ class Foo
               key: `pane-${paneIndex}`,
               keymap,
               onGoBack: () => goBack(revision, paneIndex),
-              onGoToDefinition: () =>
-                goToDefinition(revision, paneIndex),
+              onGoToDefinition: () => goToDefinition(revision, paneIndex),
             }),
           ),
         );
@@ -14282,9 +14410,7 @@ class Foo
       });
       for (const [paneIndex, editor] of editors.entries()) {
         const actions = editor.addAction.mock.calls.map(([action]) => action);
-        const goBackAction = actions.find(
-          (action) => action.id === "mockor.goBack",
-        );
+        const goBackAction = actions.find((action) => action.id === "mockor.goBack");
         const goToDefinitionAction = actions.find(
           (action) => action.id === "mockor.goToDefinition",
         );
@@ -14345,9 +14471,7 @@ class Foo
     const props = memoGuardProps(activeDocument);
 
     await act(async () => {
-      root.render(
-        createElement(EditorSurface, { ...props, keymap: firstKeymap }),
-      );
+      root.render(createElement(EditorSurface, { ...props, keymap: firstKeymap }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -14355,9 +14479,7 @@ class Foo
     expect(editor.addAction).toHaveBeenCalledTimes(49);
 
     await act(async () => {
-      root.render(
-        createElement(EditorSurface, { ...props, keymap: secondKeymap }),
-      );
+      root.render(createElement(EditorSurface, { ...props, keymap: secondKeymap }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -14482,26 +14604,25 @@ class Foo
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = createMonaco(model);
 
-    const renderSurface = (document: EditorDocument) =>
-      root.render(memoGuardSurface(document));
+    const renderSurface = (document: EditorDocument) => root.render(memoGuardSurface(document));
 
     await act(async () => {
       renderSurface(initialDocument);
       await Promise.resolve();
     });
 
-    expect(
-      (editorSurfaceMocks.props as { value?: string } | null)?.value,
-    ).toBe(initialDocument.content);
+    expect((editorSurfaceMocks.props as { value?: string } | null)?.value).toBe(
+      initialDocument.content,
+    );
 
     await act(async () => {
       renderSurface(updatedDocument);
       await Promise.resolve();
     });
 
-    expect(
-      (editorSurfaceMocks.props as { value?: string } | null)?.value,
-    ).toBe(updatedDocument.content);
+    expect((editorSurfaceMocks.props as { value?: string } | null)?.value).toBe(
+      updatedDocument.content,
+    );
   });
 
   it("invokes the focus handler the parent supplies for the active file reveal signal", async () => {
@@ -14683,12 +14804,8 @@ class Foo
     let reopenDocument = () => {};
 
     function RevealLifecycleHarness() {
-      const [document, setDocument] = useState<EditorDocument | null>(
-        activeDocument,
-      );
-      const [target, setTarget] = useState<EditorRevealTarget | null>(
-        revealTarget,
-      );
+      const [document, setDocument] = useState<EditorDocument | null>(activeDocument);
+      const [target, setTarget] = useState<EditorRevealTarget | null>(revealTarget);
       closeDocument = () => setDocument(null);
       reopenDocument = () => setDocument(activeDocument);
 
@@ -14697,9 +14814,7 @@ class Foo
         activeDocument: document,
         editorRevealTarget: target,
         onRevealTargetHandled: (handledTarget) => {
-          setTarget((current) =>
-            current === handledTarget ? null : current,
-          );
+          setTarget((current) => (current === handledTarget ? null : current));
         },
         workspaceRoot: "/workspace",
       });
@@ -14765,10 +14880,7 @@ class Foo
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = createMonaco(secondModel);
 
-    const renderNavigation = async (
-      document: EditorDocument,
-      target: EditorRevealTarget,
-    ) => {
+    const renderNavigation = async (document: EditorDocument, target: EditorRevealTarget) => {
       await act(async () => {
         root.render(
           createElement(EditorSurface, {
@@ -14881,12 +14993,8 @@ class Foo
       });
 
       expect(phpValue).toBe(phpDocument.content);
-      expect(
-        (editorSurfaceMocks.props as { value?: string } | null)?.value,
-      ).toBeUndefined();
-      expect(onRevealTargetHandled).toHaveBeenCalledTimes(
-        handledBeforePending,
-      );
+      expect((editorSurfaceMocks.props as { value?: string } | null)?.value).toBeUndefined();
+      expect(onRevealTargetHandled).toHaveBeenCalledTimes(handledBeforePending);
 
       await renderDocument(phpDocument, forwardTarget, {
         contentReady: true,
@@ -15097,15 +15205,12 @@ class Foo
 
     expect(
       editor.trigger.mock.calls.some(
-        (call) =>
-          call[0] === "document-switch" &&
-          call[1] === "editor.action.hideHover",
+        (call) => call[0] === "document-switch" && call[1] === "editor.action.hideHover",
       ),
     ).toBe(true);
     expect(
       editor.trigger.mock.calls.some(
-        (call) =>
-          call[0] === "document-switch" && call[1] === "closeFindWidget",
+        (call) => call[0] === "document-switch" && call[1] === "closeFindWidget",
       ),
     ).toBe(true);
   });
@@ -15151,8 +15256,7 @@ class Foo
         await Promise.resolve();
       });
 
-      ariaContainer.textContent =
-        "No results found for 'partials/@showHeader.latte'";
+      ariaContainer.textContent = "No results found for 'partials/@showHeader.latte'";
 
       await act(async () => {
         vi.advanceTimersByTime(0);
@@ -15160,9 +15264,7 @@ class Foo
 
       expect(ariaContainer.textContent).toBe("");
     } finally {
-      document
-        .querySelectorAll(".monaco-aria-container")
-        .forEach((element) => element.remove());
+      document.querySelectorAll(".monaco-aria-container").forEach((element) => element.remove());
       vi.useRealTimers();
     }
   });
@@ -15208,9 +15310,7 @@ class Foo
     expect(editorSurfaceMocks.props?.onChange).toBe(onChangeBefore);
     expect(editorSurfaceMocks.props?.beforeMount).toBe(beforeMountBefore);
     expect(editorSurfaceMocks.props?.loading).toBe(loadingBefore);
-    expect(editor.updateOptions.mock.calls.length).toBe(
-      updateOptionsCallsBefore,
-    );
+    expect(editor.updateOptions.mock.calls.length).toBe(updateOptionsCallsBefore);
   });
 
   it("recomputes the Monaco options when an editor setting changes so it is applied", async () => {
@@ -15238,9 +15338,7 @@ class Foo
     });
 
     const optionsBefore = editorSurfaceMocks.props?.options;
-    expect(optionsBefore).toEqual(
-      expect.objectContaining({ fontSize: 14 }),
-    );
+    expect(optionsBefore).toEqual(expect.objectContaining({ fontSize: 14 }));
 
     await act(async () => {
       root.render(
@@ -15253,9 +15351,7 @@ class Foo
     });
 
     expect(editorSurfaceMocks.props?.options).not.toBe(optionsBefore);
-    expect(editorSurfaceMocks.props?.options).toEqual(
-      expect.objectContaining({ fontSize: 20 }),
-    );
+    expect(editorSurfaceMocks.props?.options).toEqual(expect.objectContaining({ fontSize: 20 }));
   });
 
   it("lets Monaco derive line height from a restored large editor font size", async () => {
@@ -15331,9 +15427,7 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(host.querySelector('[data-testid="monaco-editor"]')).toBe(
-      editorElement,
-    );
+    expect(host.querySelector('[data-testid="monaco-editor"]')).toBe(editorElement);
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({ minimap: { enabled: true } }),
     );
@@ -15368,9 +15462,7 @@ class Foo
     });
 
     const editorElement = host.querySelector('[data-testid="monaco-editor"]');
-    expect(editorSurfaceMocks.props?.options).toEqual(
-      expect.objectContaining({ wordWrap: "off" }),
-    );
+    expect(editorSurfaceMocks.props?.options).toEqual(expect.objectContaining({ wordWrap: "off" }));
     editor.updateOptions.mockClear();
 
     await act(async () => {
@@ -15383,15 +15475,9 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(host.querySelector('[data-testid="monaco-editor"]')).toBe(
-      editorElement,
-    );
-    expect(editorSurfaceMocks.props?.options).toEqual(
-      expect.objectContaining({ wordWrap: "on" }),
-    );
-    expect(editor.updateOptions).toHaveBeenCalledWith(
-      expect.objectContaining({ wordWrap: "on" }),
-    );
+    expect(host.querySelector('[data-testid="monaco-editor"]')).toBe(editorElement);
+    expect(editorSurfaceMocks.props?.options).toEqual(expect.objectContaining({ wordWrap: "on" }));
+    expect(editor.updateOptions).toHaveBeenCalledWith(expect.objectContaining({ wordWrap: "on" }));
   });
 
   it("recomputes the Monaco options when the read-only state changes", async () => {
@@ -15413,20 +15499,14 @@ class Foo
     editorSurfaceMocks.monaco = createMonaco(model);
 
     await act(async () => {
-      root.render(
-        createElement(EditorSurface, memoGuardProps(editableDocument)),
-      );
+      root.render(createElement(EditorSurface, memoGuardProps(editableDocument)));
       await Promise.resolve();
     });
 
-    expect(editorSurfaceMocks.props?.options).toEqual(
-      expect.objectContaining({ readOnly: false }),
-    );
+    expect(editorSurfaceMocks.props?.options).toEqual(expect.objectContaining({ readOnly: false }));
 
     await act(async () => {
-      root.render(
-        createElement(EditorSurface, memoGuardProps(readOnlyDocument)),
-      );
+      root.render(createElement(EditorSurface, memoGuardProps(readOnlyDocument)));
       await Promise.resolve();
     });
 
@@ -15534,9 +15614,9 @@ class Foo
       await new Promise((resolve) => setTimeout(resolve, 200));
     });
 
-    const labelsBefore = Array.from(
-      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
-    ).map((segment) => segment.textContent);
+    const labelsBefore = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+      (segment) => segment.textContent,
+    );
     expect(labelsBefore).toEqual(["App.tsx", "MyComponent"]);
 
     const optionsBefore = editorSurfaceMocks.props?.options;
@@ -15555,9 +15635,9 @@ class Foo
     expect(editorSurfaceMocks.renderCount).toBe(renderCountBefore);
     expect(editorSurfaceMocks.props?.options).toBe(optionsBefore);
 
-    const labelsAfter = Array.from(
-      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
-    ).map((segment) => segment.textContent);
+    const labelsAfter = Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+      (segment) => segment.textContent,
+    );
     expect(labelsAfter).toEqual(["App.tsx", "MyComponent"]);
   });
 
@@ -15680,9 +15760,7 @@ class Foo
     });
 
     expect(
-      editor.deltaDecorations.mock.calls.filter(
-        ([, decorations]) => decorations.length === 0,
-      ),
+      editor.deltaDecorations.mock.calls.filter(([, decorations]) => decorations.length === 0),
     ).toEqual([]);
   });
 
@@ -15708,8 +15786,7 @@ class Foo
     await act(async () => {
       idle.runNext();
     });
-    const callsBeforeUnmount =
-      model.tokenization?.forceTokenization.mock.calls.length ?? 0;
+    const callsBeforeUnmount = model.tokenization?.forceTokenization.mock.calls.length ?? 0;
     expect(callsBeforeUnmount).toBeGreaterThan(0);
 
     await act(async () => {
@@ -15722,9 +15799,7 @@ class Foo
     await act(async () => {
       idle.runAll();
     });
-    expect(model.tokenization?.forceTokenization.mock.calls.length).toBe(
-      callsBeforeUnmount,
-    );
+    expect(model.tokenization?.forceTokenization.mock.calls.length).toBe(callsBeforeUnmount);
   });
 
   it("never warms a disposed model's tokens", async () => {
@@ -15821,12 +15896,10 @@ class Foo
     });
 
     expect(provideGitBlame).toHaveBeenCalledWith(activeDocument.path);
-    const blameCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.before?.inlineClassName === "git-blame-annotation",
-        ),
+    const blameCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) => decoration.options?.before?.inlineClassName === "git-blame-annotation",
+      ),
     );
     expect(blameCall?.[1]).toEqual(
       expect.arrayContaining([
@@ -15903,12 +15976,10 @@ class Foo
     });
 
     expect(provideGitBlame).not.toHaveBeenCalled();
-    const blameCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some(
-          (decoration: any) =>
-            decoration.options?.before?.inlineClassName === "git-blame-annotation",
-        ),
+    const blameCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some(
+        (decoration: any) => decoration.options?.before?.inlineClassName === "git-blame-annotation",
+      ),
     );
     expect(blameCall).toBeUndefined();
   });
@@ -16011,10 +16082,7 @@ class Foo
 
     expect(preventDefault).toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
-    expect(onRevealGitBlameCommit).toHaveBeenCalledWith(
-      activeDocument.path,
-      "abc1234",
-    );
+    expect(onRevealGitBlameCommit).toHaveBeenCalledWith(activeDocument.path, "abc1234");
   });
 
   it("drops stale git blame results after the active document switches", async () => {
@@ -16093,11 +16161,8 @@ class Foo
       await Promise.resolve();
     });
 
-    const staleCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) =>
-        decorations.some((decoration: any) =>
-          decoration.options?.before?.content?.includes("Stale"),
-        ),
+    const staleCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+      decorations.some((decoration: any) => decoration.options?.before?.content?.includes("Stale")),
     );
     expect(staleCall).toBeUndefined();
   });
@@ -16240,9 +16305,7 @@ describe("EditorSurface .editorconfig application", () => {
 
     await renderSurface(phpDocument, { endOfLine: "crlf" });
 
-    expect(model.setEOL).toHaveBeenCalledWith(
-      monaco.editor.EndOfLineSequence.CRLF,
-    );
+    expect(model.setEOL).toHaveBeenCalledWith(monaco.editor.EndOfLineSequence.CRLF);
   });
 
   it("does not override indentation or EOL when editorConfig is empty", async () => {
@@ -16308,11 +16371,77 @@ describe("EditorSurface .editorconfig application", () => {
     await act(async () => {
       idle.runAll();
     });
-    expect(
-      replacementModel.tokenization?.forceTokenization,
-    ).toHaveBeenCalled();
+    expect(replacementModel.tokenization?.forceTokenization).toHaveBeenCalled();
   });
 });
+
+function jsTestProblemDecorationCalls(editor: FakeEditor) {
+  return editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+    decorations.some((decoration: any) => decoration.options?.className === "js-test-problem-line"),
+  );
+}
+
+function latestJsTestProblemDecorations(editor: FakeEditor): any[] | undefined {
+  const calls = jsTestProblemDecorationCalls(editor);
+  return calls[calls.length - 1]?.[1];
+}
+
+function jsTestProblemIdentity(
+  rootPath: string,
+  relativeFilePath: string,
+  workspaceId = "workspace-id",
+): JsTestExplorerCurrentFileIdentity {
+  const root = createWorkspaceRoot(workspaceId, rootPath);
+  if (!root.ok) throw new Error(root.error.message);
+  const file = parseWorkspacePath(root.value, `${rootPath}/${relativeFilePath}`);
+  if (!file.ok || !file.value.relativePath) throw new Error("Expected owned test file.");
+  return Object.freeze({
+    pathKey: file.value.key,
+    relativeFilePath: file.value.relativePath,
+    root: root.value,
+  });
+}
+
+function jsTestProblemSnapshot(
+  workspaceId: string,
+  rootKey: string,
+  entries: JsTestProblemsSnapshot["entries"],
+): JsTestProblemsSnapshot {
+  return {
+    entries,
+    generation: 1,
+    owner: { rootKey, workspaceId },
+    total: entries.length,
+    truncated: false,
+  };
+}
+
+function jsTestProblemEntry(
+  lineNumber: number,
+  message: string,
+  filePath = "src/example.test.ts",
+): JsTestProblemsSnapshot["entries"][number] {
+  return {
+    filePath,
+    lineNumber,
+    message,
+    name: message,
+    status: "failed",
+  };
+}
+
+function jsTestProblemModel(document: EditorDocument): FakeModel {
+  return {
+    dispose: vi.fn(),
+    getLineCount: vi.fn(() => 2),
+    getLineLength: vi.fn(() => 8),
+    getValue: vi.fn(() => document.content),
+    isDisposed: vi.fn(() => false),
+    onWillDispose: vi.fn(() => ({ dispose: vi.fn() })),
+    setValue: vi.fn(),
+    uri: { fsPath: document.path, path: document.path },
+  };
+}
 
 function breakpointDecorationCalls(editor: FakeEditor) {
   return editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
@@ -16324,18 +16453,12 @@ function breakpointDecorationCalls(editor: FakeEditor) {
 
 function stoppedLineDecorationCalls(editor: FakeEditor) {
   return editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
-    decorations.some(
-      (decoration: any) =>
-        decoration.options?.className === "debug-stopped-line",
-    ),
+    decorations.some((decoration: any) => decoration.options?.className === "debug-stopped-line"),
   );
 }
 
 function debugDecorationCalls(editor: FakeEditor) {
-  return [
-    ...breakpointDecorationCalls(editor),
-    ...stoppedLineDecorationCalls(editor),
-  ];
+  return [...breakpointDecorationCalls(editor), ...stoppedLineDecorationCalls(editor)];
 }
 
 function memoGuardProps(
@@ -16403,8 +16526,7 @@ async function mountCompleteStatementSurface(
   lines: string[],
   language: "php" | "typescript" = "php",
 ): Promise<{ editor: FakeEditor; model: FakeModel }> {
-  const path =
-    language === "php" ? "/workspace/Service.php" : "/workspace/service.ts";
+  const path = language === "php" ? "/workspace/Service.php" : "/workspace/service.ts";
   const activeDocument: EditorDocument = {
     content: `${lines.join("\n")}\n`,
     language,
@@ -16416,9 +16538,7 @@ async function mountCompleteStatementSurface(
     getEOL: vi.fn(() => "\n"),
     getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
     getLineCount: vi.fn(() => lines.length),
-    getLineMaxColumn: vi.fn(
-      (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
-    ),
+    getLineMaxColumn: vi.fn((lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1),
     getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
     getValue: vi.fn(() => `${lines.join("\n")}\n`),
     getValueInRange: vi.fn(() => ""),
@@ -16479,12 +16599,8 @@ function completeStatementAction(editor: FakeEditor): { run: () => void } {
   return action;
 }
 
-function moveStatementAction(
-  editor: FakeEditor,
-  direction: "down" | "up",
-): { run: () => void } {
-  const id =
-    direction === "up" ? "mockor.moveStatementUp" : "mockor.moveStatementDown";
+function moveStatementAction(editor: FakeEditor, direction: "down" | "up"): { run: () => void } {
+  const id = direction === "up" ? "mockor.moveStatementUp" : "mockor.moveStatementDown";
   const action = editor.addAction.mock.calls
     .map(([entry]) => entry)
     .find((entry) => entry.id === id);
@@ -16529,9 +16645,7 @@ function captureIdleCallbacks() {
   return {
     pending: () => queue.size,
     runNext: () => {
-      const entry = queue.entries().next().value as
-        | [number, () => void]
-        | undefined;
+      const entry = queue.entries().next().value as [number, () => void] | undefined;
       if (!entry) {
         return;
       }
@@ -16588,8 +16702,7 @@ function createFoldingModel(
     },
     toggleCollapseState: vi.fn((regions: FakeFoldingRegion[]) => {
       for (const region of regions) {
-        source[region.regionIndex].collapsed =
-          !source[region.regionIndex].collapsed;
+        source[region.regionIndex].collapsed = !source[region.regionIndex].collapsed;
       }
     }),
   };
@@ -16611,24 +16724,29 @@ function createEditor(model: FakeModel): FakeEditor {
         buffer = next;
       });
   }
+  const readModelValue = (): string => String((model.getValue as unknown as () => unknown)());
+  model.getLineCount ??= vi.fn(() => Math.max(1, readModelValue().split("\n").length));
+  model.getLineLength ??= vi.fn(
+    (lineNumber: number) => readModelValue().split("\n")[lineNumber - 1]?.length ?? 0,
+  );
+  model.isDisposed ??= vi.fn(() => false);
+  model.onWillDispose ??= vi.fn(() => ({ dispose: vi.fn() }));
   const modelContentHandlers: Array<() => void> = [];
   const contentObservableModel = model as FakeModel & {
     onDidChangeContent?: (handler: () => void) => { dispose(): void };
   };
   if (!contentObservableModel.onDidChangeContent) {
-    contentObservableModel.onDidChangeContent = vi.fn(
-      (handler: () => void) => {
-        modelContentHandlers.push(handler);
-        return {
-          dispose: vi.fn(() => {
-            const index = modelContentHandlers.indexOf(handler);
-            if (index >= 0) {
-              modelContentHandlers.splice(index, 1);
-            }
-          }),
-        };
-      },
-    );
+    contentObservableModel.onDidChangeContent = vi.fn((handler: () => void) => {
+      modelContentHandlers.push(handler);
+      return {
+        dispose: vi.fn(() => {
+          const index = modelContentHandlers.indexOf(handler);
+          if (index >= 0) {
+            modelContentHandlers.splice(index, 1);
+          }
+        }),
+      };
+    });
   }
 
   let selection: {
@@ -16650,16 +16768,13 @@ function createEditor(model: FakeModel): FakeEditor {
   // navigation via `gotoDefinitionContributionNavigate`. After the surface
   // patches it, invoking the method must NOT record a navigation.
   const gotoDefinitionContributionDispose = vi.fn();
-  const gotoDefinitionContributionNavigate = vi.fn(
-    (..._args: unknown[]) => Promise.resolve(),
-  );
+  const gotoDefinitionContributionNavigate = vi.fn((..._args: unknown[]) => Promise.resolve());
   const gotoDefinitionContribution: {
     dispose: typeof gotoDefinitionContributionDispose;
     gotoDefinition: (...args: unknown[]) => Promise<void>;
   } = {
     dispose: gotoDefinitionContributionDispose,
-    gotoDefinition: (...args: unknown[]) =>
-      gotoDefinitionContributionNavigate(...args),
+    gotoDefinition: (...args: unknown[]) => gotoDefinitionContributionNavigate(...args),
   };
   const domNode = document.createElement("div");
   const editor: FakeEditor = {
@@ -16699,13 +16814,11 @@ function createEditor(model: FakeModel): FakeEditor {
     modelContentChangeHandlers: [],
     modelChangeHandler: null,
     modelChangeHandlers: [],
-    onDidChangeCursorPosition: vi.fn(
-      (handler: (event: { position: EditorPosition }) => void) => {
-        editor.cursorPositionHandler = handler;
+    onDidChangeCursorPosition: vi.fn((handler: (event: { position: EditorPosition }) => void) => {
+      editor.cursorPositionHandler = handler;
 
-        return { dispose: vi.fn() };
-      },
-    ),
+      return { dispose: vi.fn() };
+    }),
     onDidFocusEditorWidget: vi.fn((handler: () => void) => {
       editor.focusEditorWidgetHandler = handler;
       return {
@@ -16719,9 +16832,7 @@ function createEditor(model: FakeModel): FakeEditor {
     onDidChangeModel: vi.fn((handler: () => void) => {
       editor.modelChangeHandlers.push(handler);
       editor.modelChangeHandler = () => {
-        editor.modelChangeHandlers.forEach((registeredHandler) =>
-          registeredHandler(),
-        );
+        editor.modelChangeHandlers.forEach((registeredHandler) => registeredHandler());
       };
 
       return {
@@ -16745,9 +16856,7 @@ function createEditor(model: FakeModel): FakeEditor {
       ) => {
         editor.modelContentChangeHandlers.push(handler);
         editor.modelContentChangeHandler = (event) => {
-          modelContentHandlers.forEach((registeredHandler) =>
-            registeredHandler(),
-          );
+          modelContentHandlers.forEach((registeredHandler) => registeredHandler());
           editor.modelContentChangeHandlers.forEach((registeredHandler) =>
             registeredHandler(event),
           );
@@ -16755,10 +16864,9 @@ function createEditor(model: FakeModel): FakeEditor {
 
         return {
           dispose: vi.fn(() => {
-            editor.modelContentChangeHandlers =
-              editor.modelContentChangeHandlers.filter(
-                (registeredHandler) => registeredHandler !== handler,
-              );
+            editor.modelContentChangeHandlers = editor.modelContentChangeHandlers.filter(
+              (registeredHandler) => registeredHandler !== handler,
+            );
           }),
         };
       },
@@ -16804,10 +16912,7 @@ async function flushGutterDebounce(): Promise<void> {
   });
 }
 
-function queryRequired<T extends Element>(
-  container: ParentNode,
-  selector: string,
-): T {
+function queryRequired<T extends Element>(container: ParentNode, selector: string): T {
   const element = container.querySelector<T>(selector);
 
   if (!element) {
@@ -16990,20 +17095,39 @@ function deferred<T>(): {
   return { promise, reject, resolve };
 }
 
+function importSortAction(path: string, version: number) {
+  const uri = `file://${path}`;
+  return {
+    command: null,
+    data: null,
+    edit: {
+      changes: {
+        [uri]: [
+          {
+            newText: "a, b",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+      documentVersions: { [uri]: version },
+    },
+    isPreferred: false,
+    kind: "source.sortImports.ts",
+    title: "Sort imports",
+  };
+}
+
 function latestTypeScriptModeConfiguration(monaco: ReturnType<typeof createMonaco>) {
-  const calls =
-    monaco.languages.typescript.typescriptDefaults.setModeConfiguration.mock
-      .calls;
+  const calls = monaco.languages.typescript.typescriptDefaults.setModeConfiguration.mock.calls;
 
   return calls[calls.length - 1]?.[0];
 }
 
-function latestTypeScriptDiagnosticsOptions(
-  monaco: ReturnType<typeof createMonaco>,
-) {
-  const calls =
-    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions.mock
-      .calls;
+function latestTypeScriptDiagnosticsOptions(monaco: ReturnType<typeof createMonaco>) {
+  const calls = monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions.mock.calls;
 
   return calls[calls.length - 1]?.[0];
 }

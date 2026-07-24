@@ -3,9 +3,7 @@ import { TauriLanguageServerRuntimeGateway } from "./tauriLanguageServerRuntimeG
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS } from "./tauriLanguageServerRuntimeGateway";
 
-type RuntimeGatewayConstructor = ConstructorParameters<
-  typeof TauriLanguageServerRuntimeGateway
->;
+type RuntimeGatewayConstructor = ConstructorParameters<typeof TauriLanguageServerRuntimeGateway>;
 type InvokeCommand = NonNullable<RuntimeGatewayConstructor[0]>;
 type ListenToEvent = NonNullable<RuntimeGatewayConstructor[1]>;
 
@@ -57,15 +55,9 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       return () => undefined;
     });
     const listener = vi.fn();
-    const gateway = new TauriLanguageServerRuntimeGateway(
-      invokeCommand,
-      listenToEvent,
-      () => true,
-    );
+    const gateway = new TauriLanguageServerRuntimeGateway(invokeCommand, listenToEvent, () => true);
 
-    await expect(gateway.getStatus("/workspace")).resolves.toEqual(
-      rootedRunning,
-    );
+    await expect(gateway.getStatus("/workspace")).resolves.toEqual(rootedRunning);
     await expect(gateway.start("/workspace")).resolves.toEqual(rootedRunning);
     await expect(gateway.stop("/workspace")).resolves.toEqual(rootedRunning);
     await gateway.subscribeStatus(listener);
@@ -79,10 +71,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith("stop_php_language_server", {
       rootPath: "/workspace",
     });
-    expect(listenToEvent).toHaveBeenCalledWith(
-      "language-server://status",
-      expect.any(Function),
-    );
+    expect(listenToEvent).toHaveBeenCalledWith("language-server://status", expect.any(Function));
     expect(listener).toHaveBeenCalledWith(running);
   });
 
@@ -125,6 +114,23 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       kind: "stopped",
       rootPath: "/workspace",
     });
+  });
+
+  it("rejects malformed runtime responses before they enter workspace state", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>().mockResolvedValue({
+      kind: "running",
+      session_id: 5,
+      capabilities: runtimeCapabilities(),
+    });
+    const gateway = new TauriLanguageServerRuntimeGateway(
+      invokeCommand,
+      vi.fn<ListenToEvent>(),
+      () => true,
+    );
+
+    await expect(gateway.getStatus("/workspace")).rejects.toThrow(
+      "Invalid language-server runtime IPC status: running.sessionId must be a non-negative safe integer.",
+    );
   });
 
   it("passes PHP language server settings to the start command", async () => {
@@ -194,27 +200,24 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       }),
     ).resolves.toEqual(rootedRunning);
 
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "start_javascript_typescript_language_server",
-      {
-        autoImportsEnabled: false,
-        automaticTypeAcquisitionEnabled: true,
-        codeLensEnabled: true,
-        importModuleSpecifierEnding: "minimal",
-        importModuleSpecifierPreference: "project-relative",
-        inlayHintsEnabled: false,
-        preferTypeOnlyAutoImports: true,
-        quotePreference: "single",
-        rootPath: "/workspace",
-        typeScriptVersionPreference: "workspace",
-        validationEnabled: false,
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("start_javascript_typescript_language_server", {
+      autoImportsEnabled: false,
+      automaticTypeAcquisitionEnabled: true,
+      codeLensEnabled: true,
+      importModuleSpecifierEnding: "minimal",
+      importModuleSpecifierPreference: "project-relative",
+      inlayHintsEnabled: false,
+      preferTypeOnlyAutoImports: true,
+      quotePreference: "single",
+      rootPath: "/workspace",
+      typeScriptVersionPreference: "workspace",
+      validationEnabled: false,
+    });
   });
 
   it("opens JavaScript and TypeScript runtime log through its configured command", async () => {
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
-      if (command === "open_javascript_typescript_language_server_log") {
+      if (command === "open_language_runtime_log") {
         return "/tmp/js-ts.log";
       }
 
@@ -229,12 +232,10 @@ describe("TauriLanguageServerRuntimeGateway", () => {
 
     await expect(gateway.openLog("/workspace")).resolves.toBe("/tmp/js-ts.log");
 
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "open_javascript_typescript_language_server_log",
-      {
-        rootPath: "/workspace",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("open_language_runtime_log", {
+      kind: "tsserver",
+      rootPath: "/workspace",
+    });
   });
 });
 
@@ -253,9 +254,9 @@ function runtimeCapabilities(): Extract<
     documentHighlight: true,
     documentLink: true,
     documentSymbol: true,
-      didCreateFiles: true,
-      didDeleteFiles: true,
-      didRenameFiles: true,
+    didCreateFiles: true,
+    didDeleteFiles: true,
+    didRenameFiles: true,
     foldingRange: true,
     formatting: true,
     hover: true,
@@ -273,9 +274,9 @@ function runtimeCapabilities(): Extract<
     sourceDefinition: true,
     typeDefinition: true,
     typeHierarchy: true,
-      willCreateFiles: true,
-      willDeleteFiles: true,
-      willRenameFiles: true,
+    willCreateFiles: true,
+    willDeleteFiles: true,
+    willRenameFiles: true,
     workspaceSymbol: true,
   };
 }
