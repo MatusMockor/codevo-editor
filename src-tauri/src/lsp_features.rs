@@ -2034,9 +2034,7 @@ fn parse_workspace_symbol(value: &Value) -> Option<LanguageServerWorkspaceSymbol
 }
 
 fn parse_workspace_symbol_location(value: &Value) -> Option<LanguageServerLocation> {
-    if value.get("range").is_none() {
-        return None;
-    }
+    value.get("range")?;
 
     serde_json::from_value(value.clone()).ok()
 }

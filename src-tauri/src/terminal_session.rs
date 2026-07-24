@@ -1,10 +1,15 @@
-use crate::terminal::{
-    TerminalEventSink, TerminalOutputEvent, TerminalProfile, TerminalRuntimeStatus, TerminalSize,
+#[cfg(test)]
+use crate::terminal_process_tree::ProcessGroupSignalSender;
+use crate::terminal_process_tree::ProcessTreeTerminator;
+use crate::terminal_session_events::{spawn_terminal_reader, TerminalStartGate};
+#[path = "terminal_unpublished_child.rs"]
+mod unpublished_child;
+use crate::terminal_task_process::{terminate_task_process_groups, TerminalTaskOwnership};
+use crate::{
+    debug_session_registry::DebugWorkspaceAuthority,
+    terminal::{TerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize},
 };
-use portable_pty::{
-    native_pty_system, Child as PtyChild, ChildKiller as PtyChildKiller, CommandBuilder, MasterPty,
-    PtySize,
-};
+use portable_pty::{CommandBuilder, PtySize};
 use std::{
     collections::HashMap,
     env, fs,
@@ -13,15 +18,24 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{sync_channel, SyncSender},
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+use unpublished_child::UnpublishedTerminalChild;
+#[path = "terminal_portable_pty.rs"]
+mod portable_pty_spawner;
+#[cfg(test)]
+use portable_pty_spawner::finish_portable_spawn;
+pub use portable_pty_spawner::PortablePtySpawner;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct TerminalLaunchRequest {
     pub cwd: PathBuf,
+    #[cfg(unix)]
+    cwd_directory: Option<Arc<fs::File>>,
     pub profile: TerminalProfile,
     pub shell_integration_base_dir: Option<PathBuf>,
     pub size: TerminalSize,
@@ -34,6 +48,24 @@ pub struct SpawnedTerminal {
     pub writer: Box<dyn Write + Send>,
 }
 
+pub(crate) struct TerminalStartOptions {
+    #[cfg(test)]
+    pub(crate) fault: Option<TerminalStartFault>,
+    pub(crate) profile: TerminalProfile,
+    pub(crate) shell_integration_base_dir: Option<PathBuf>,
+    pub(crate) size: TerminalSize,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TerminalStartFault {
+    ReaderSpawn,
+    AfterReaderSpawn,
+    WaiterSpawn,
+    BeforeCommit,
+    AfterWaiterAcceptance,
+}
+
 pub trait TerminalPtySpawner {
     fn spawn(&self, request: &TerminalLaunchRequest) -> Result<SpawnedTerminal, String>;
 }
@@ -43,6 +75,7 @@ pub trait TerminalChild: Send {
     fn process_id(&self) -> Option<u32> {
         None
     }
+    fn try_wait(&mut self) -> io::Result<Option<TerminalExitStatus>>;
     fn wait(&mut self) -> io::Result<TerminalExitStatus>;
 }
 
@@ -58,8 +91,6 @@ pub trait TerminalResizer: Send {
 pub struct TerminalExitStatus {
     pub exit_code: Option<u32>,
 }
-
-pub struct PortablePtySpawner;
 
 pub trait TerminalProfileProvider {
     fn profiles(&self) -> Vec<TerminalProfile>;
@@ -89,282 +120,66 @@ impl TerminalProfileProvider for LocalTerminalProfileProvider {
 
 const DEFAULT_TERMINAL_PROFILE_ID: &str = "default";
 
-impl TerminalPtySpawner for PortablePtySpawner {
-    fn spawn(&self, request: &TerminalLaunchRequest) -> Result<SpawnedTerminal, String> {
-        let size = request.size.normalized();
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(pty_size(size))
-            .map_err(|error| format!("Failed to open terminal PTY: {error}"))?;
-        let mut command = command_builder(
-            &request.profile,
-            request.shell_integration_base_dir.as_deref(),
-        );
-        command.cwd(request.cwd.as_os_str());
-        command.env("TERM", "xterm-256color");
-
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| format!("Failed to start terminal shell: {error}"))?;
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| format!("Failed to read terminal output: {error}"))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| format!("Failed to open terminal input: {error}"))?;
-
-        Ok(SpawnedTerminal {
-            child: Box::new(PortableTerminalChild { child }),
-            reader,
-            resizer: Box::new(PortableTerminalResizer {
-                master: pair.master,
-            }),
-            writer,
-        })
-    }
-}
-
-struct PortableTerminalResizer {
-    master: Box<dyn MasterPty + Send>,
-}
-
-impl TerminalResizer for PortableTerminalResizer {
-    fn resize(&self, size: TerminalSize) -> Result<(), String> {
-        self.master
-            .resize(pty_size(size.normalized()))
-            .map_err(|error| format!("Failed to resize terminal PTY: {error}"))
-    }
-}
-
-struct PortableTerminalChild {
-    child: Box<dyn PtyChild + Send + Sync>,
-}
-
-impl TerminalChild for PortableTerminalChild {
-    fn clone_killer(&self) -> Box<dyn TerminalKiller> {
-        Box::new(PortableTerminalKiller {
-            killer: self.child.clone_killer(),
-        })
-    }
-
-    fn process_id(&self) -> Option<u32> {
-        self.child.process_id()
-    }
-
-    fn wait(&mut self) -> io::Result<TerminalExitStatus> {
-        self.child.wait().map(|status| TerminalExitStatus {
-            exit_code: Some(status.exit_code()),
-        })
-    }
-}
-
-struct PortableTerminalKiller {
-    killer: Box<dyn PtyChildKiller + Send + Sync>,
-}
-
-impl TerminalKiller for PortableTerminalKiller {
-    fn kill(&mut self) -> io::Result<()> {
-        self.killer.kill()
-    }
-}
-
 struct RunningTerminalSession {
     cwd: PathBuf,
+    start_gate: Arc<TerminalStartGate>,
     process_tree_terminator: ProcessTreeTerminator,
     reader: Option<JoinHandle<()>>,
     resizer: Box<dyn TerminalResizer>,
     sink: Arc<dyn TerminalEventSink>,
     stop_requested: Arc<AtomicBool>,
+    task_process_groups: HashMap<u64, TerminalTaskOwnership>,
     waiter: Option<JoinHandle<()>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    workspace_authority: Option<DebugWorkspaceAuthority>,
 }
 
-const TERMINAL_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
-const TERMINAL_FORCE_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum TerminalOwnedProcessGroupSource {
+    Shell,
+    Task,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct TerminalOwnedProcessGroup {
+    pub(crate) process_group_id: i32,
+    pub(crate) session_id: u64,
+    pub(crate) source: TerminalOwnedProcessGroupSource,
+    pub(crate) workspace_authority: Option<DebugWorkspaceAuthority>,
+}
+
 const TERMINAL_THREAD_JOIN_TIMEOUT: Duration = Duration::from_millis(250);
-
-struct ProcessTreeTerminator {
-    fallback_killer: Box<dyn TerminalKiller>,
-    force_timeout: Duration,
-    graceful_timeout: Duration,
-    process_group_id: Option<i32>,
-    signal_sender: Box<dyn ProcessGroupSignalSender>,
-}
-
-trait ProcessGroupSignalSender: Send {
-    fn send(&self, process_group_id: i32, signal: i32) -> io::Result<()>;
-}
-
-struct SystemProcessGroupSignalSender;
-
-impl ProcessGroupSignalSender for SystemProcessGroupSignalSender {
-    #[cfg(unix)]
-    fn send(&self, process_group_id: i32, signal: i32) -> io::Result<()> {
-        let result = unsafe { libc::kill(-process_group_id, signal) };
-
-        if result == 0 {
-            return Ok(());
-        }
-
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(());
-        }
-
-        Err(error)
-    }
-
-    #[cfg(not(unix))]
-    fn send(&self, _process_group_id: i32, _signal: i32) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Process-group signals are unavailable on this platform.",
-        ))
-    }
-}
-
-impl ProcessTreeTerminator {
-    fn new(process_id: Option<u32>, fallback_killer: Box<dyn TerminalKiller>) -> Self {
-        Self {
-            fallback_killer,
-            force_timeout: TERMINAL_FORCE_SHUTDOWN_TIMEOUT,
-            graceful_timeout: TERMINAL_GRACEFUL_SHUTDOWN_TIMEOUT,
-            process_group_id: process_id.and_then(|process_id| i32::try_from(process_id).ok()),
-            signal_sender: Box::new(SystemProcessGroupSignalSender),
-        }
-    }
-
-    #[cfg(test)]
-    fn with_dependencies(
-        process_group_id: i32,
-        fallback_killer: Box<dyn TerminalKiller>,
-        signal_sender: Box<dyn ProcessGroupSignalSender>,
-        graceful_timeout: Duration,
-        force_timeout: Duration,
-    ) -> Self {
-        Self {
-            fallback_killer,
-            force_timeout,
-            graceful_timeout,
-            process_group_id: Some(process_group_id),
-            signal_sender,
-        }
-    }
-
-    fn terminate(&mut self, waiter: Option<&JoinHandle<()>>) {
-        if self.process_group_id.is_none() {
-            let _ = self.fallback_killer.kill();
-            wait_for_thread(waiter, self.force_timeout);
-            return;
-        }
-
-        if self.signal_process_group(libc::SIGTERM).is_err() {
-            let _ = self.fallback_killer.kill();
-        }
-        if wait_for_thread(waiter, self.graceful_timeout) {
-            return;
-        }
-
-        if self.signal_process_group(libc::SIGKILL).is_err() {
-            let _ = self.fallback_killer.kill();
-        }
-        wait_for_thread(waiter, self.force_timeout);
-    }
-
-    fn signal_process_group(&self, signal: i32) -> io::Result<()> {
-        let Some(process_group_id) = self.process_group_id else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Terminal process group is unavailable.",
-            ));
-        };
-        self.signal_sender.send(process_group_id, signal)
-    }
-}
 
 pub struct TerminalSupervisor {
     next_session_id: AtomicU64,
+    next_task_id: AtomicU64,
     sessions: Arc<Mutex<HashMap<u64, RunningTerminalSession>>>,
 }
+
+#[path = "terminal_session/start.rs"]
+mod start;
 
 impl TerminalSupervisor {
     pub fn new() -> Self {
         Self {
             next_session_id: AtomicU64::new(1),
+            next_task_id: AtomicU64::new(1),
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn start(
-        &self,
-        cwd: PathBuf,
-        size: TerminalSize,
-        profile: TerminalProfile,
-        shell_integration_base_dir: Option<PathBuf>,
-        spawner: &dyn TerminalPtySpawner,
-        sink: Arc<dyn TerminalEventSink>,
-    ) -> Result<TerminalRuntimeStatus, String> {
-        let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
-        let request = TerminalLaunchRequest {
-            cwd: cwd.clone(),
-            profile,
-            shell_integration_base_dir,
-            size: size.normalized(),
+    pub fn acknowledge_start(&self, session_id: u64) -> Result<(), String> {
+        let start_gate = {
+            let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| "The target terminal session is no longer running.".to_string())?;
+            Arc::clone(&session.start_gate)
         };
-        sink.emit_status(TerminalRuntimeStatus::Starting { session_id });
-
-        let spawned = match spawner.spawn(&request) {
-            Ok(spawned) => spawned,
-            Err(message) => {
-                sink.emit_status(TerminalRuntimeStatus::Crashed {
-                    message: message.clone(),
-                    session_id,
-                });
-                return Err(message);
-            }
-        };
-        let stop_requested = Arc::new(AtomicBool::new(false));
-        let writer = Arc::new(Mutex::new(spawned.writer));
-        let child = spawned.child;
-        let process_id = child.process_id();
-        let killer = child.clone_killer();
-        let reader = spawn_reader(
-            spawned.reader,
-            Arc::clone(&sink),
-            Arc::clone(&stop_requested),
-            session_id,
-        )?;
-        let waiter = spawn_waiter(
-            child,
-            Arc::clone(&sink),
-            Arc::clone(&stop_requested),
-            session_id,
-        )?;
-        let status = TerminalRuntimeStatus::Running {
-            cols: request.size.cols,
-            cwd: cwd.to_string_lossy().to_string(),
-            rows: request.size.rows,
-            session_id,
-        };
-
-        self.insert_session(
-            session_id,
-            RunningTerminalSession {
-                cwd,
-                process_tree_terminator: ProcessTreeTerminator::new(process_id, killer),
-                reader: Some(reader),
-                resizer: spawned.resizer,
-                sink: Arc::clone(&sink),
-                stop_requested,
-                waiter: Some(waiter),
-                writer,
-            },
-        )?;
-        sink.emit_status(status.clone());
-        Ok(status)
+        start_gate.release();
+        Ok(())
     }
 
     pub fn stop_root(&self, root: &Path) -> Result<(), String> {
@@ -412,6 +227,102 @@ impl TerminalSupervisor {
             .map_err(|error| format!("Failed to write terminal input: {error}"))
     }
 
+    /// Returns the event sink for a typed task only when the target terminal still belongs to
+    /// the expected workspace root. The caller must use this immediately before spawning the
+    /// task; raw terminal input remains a separate, deliberately less privileged API.
+    pub(crate) fn task_sink(
+        &self,
+        session_id: u64,
+        expected_workspace_root: &Path,
+    ) -> Result<Arc<dyn TerminalEventSink>, String> {
+        let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
+        let session = sessions
+            .get(&session_id)
+            .ok_or_else(|| "The target terminal session is no longer running.".to_string())?;
+        if session.cwd != expected_workspace_root {
+            return Err("The target terminal does not belong to this workspace.".to_string());
+        }
+        Ok(Arc::clone(&session.sink))
+    }
+
+    pub(crate) fn register_task_process_group(
+        &self,
+        session_id: u64,
+        expected_workspace_root: &Path,
+        process_group_id: i32,
+    ) -> Result<TerminalTaskOwnership, String> {
+        if process_group_id <= 0 {
+            return Err("Package task process group is invalid.".to_string());
+        }
+        let mut sessions = self.sessions.lock().map_err(|error| error.to_string())?;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| "The target terminal session is no longer running.".to_string())?;
+        if session.cwd != expected_workspace_root {
+            return Err("The target terminal does not belong to this workspace.".to_string());
+        }
+        let task_id = self.next_task_id.fetch_add(1, Ordering::SeqCst);
+        let ownership = TerminalTaskOwnership::new(session_id, task_id, process_group_id);
+        session
+            .task_process_groups
+            .insert(task_id, ownership.clone());
+        Ok(ownership)
+    }
+
+    pub(crate) fn unregister_task(&self, ownership: &TerminalTaskOwnership) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            if let Some(session) = sessions.get_mut(&ownership.session_id()) {
+                session.task_process_groups.remove(&ownership.task_id());
+            }
+        }
+    }
+
+    /// Copies process-group ownership for live terminals whose already-canonical
+    /// workspace root exactly matches `expected_workspace_root`.
+    ///
+    /// This method intentionally performs no filesystem or process I/O. Callers
+    /// must release this snapshot from the registry before validating the live
+    /// process identities with platform APIs.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn owned_process_groups(
+        &self,
+        expected_workspace_root: &Path,
+    ) -> Result<Vec<TerminalOwnedProcessGroup>, String> {
+        let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
+        let mut groups = Vec::new();
+        for (session_id, session) in sessions.iter() {
+            if session.cwd != expected_workspace_root {
+                continue;
+            }
+            if let Some(process_group_id) =
+                positive_process_group_id(session.process_tree_terminator.process_group_id())
+            {
+                groups.push(TerminalOwnedProcessGroup {
+                    process_group_id,
+                    session_id: *session_id,
+                    source: TerminalOwnedProcessGroupSource::Shell,
+                    workspace_authority: session.workspace_authority.clone(),
+                });
+            }
+            groups.extend(
+                session
+                    .task_process_groups
+                    .values()
+                    .filter_map(|ownership| {
+                        positive_process_group_id(ownership.active_process_group_id()).map(
+                            |process_group_id| TerminalOwnedProcessGroup {
+                                process_group_id,
+                                session_id: *session_id,
+                                source: TerminalOwnedProcessGroupSource::Task,
+                                workspace_authority: session.workspace_authority.clone(),
+                            },
+                        )
+                    }),
+            );
+        }
+        Ok(groups)
+    }
+
     pub fn resize(&self, session_id: u64, size: TerminalSize) -> Result<(), String> {
         let size = size.normalized();
         let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
@@ -451,6 +362,7 @@ impl TerminalSupervisor {
         }
     }
 
+    #[cfg(test)]
     fn insert_session(
         &self,
         session_id: u64,
@@ -474,6 +386,11 @@ impl TerminalSupervisor {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+fn positive_process_group_id(process_group_id: Option<i32>) -> Option<i32> {
+    process_group_id.filter(|process_group_id| *process_group_id > 0)
+}
+
 impl Default for TerminalSupervisor {
     fn default() -> Self {
         Self::new()
@@ -486,60 +403,48 @@ impl Drop for TerminalSupervisor {
     }
 }
 
-fn spawn_reader(
-    mut reader: Box<dyn Read + Send>,
-    sink: Arc<dyn TerminalEventSink>,
-    stop_requested: Arc<AtomicBool>,
-    session_id: u64,
-) -> Result<JoinHandle<()>, String> {
-    thread::Builder::new()
-        .name("terminal-reader".to_string())
-        .spawn(move || {
-            let mut buffer = [0_u8; 8192];
-
-            loop {
-                if stop_requested.load(Ordering::SeqCst) {
-                    return;
-                }
-
-                match reader.read(&mut buffer) {
-                    Ok(0) => return,
-                    Ok(count) => {
-                        sink.emit_output(TerminalOutputEvent {
-                            data: String::from_utf8_lossy(&buffer[..count]).to_string(),
-                            session_id,
-                        });
-                    }
-                    Err(error) => {
-                        if stop_requested.load(Ordering::SeqCst) {
-                            return;
-                        }
-
-                        sink.emit_status(TerminalRuntimeStatus::Crashed {
-                            message: format!("Terminal output stream failed: {error}"),
-                            session_id,
-                        });
-                        return;
-                    }
-                }
-            }
-        })
-        .map_err(|error| format!("Failed to start terminal reader: {error}"))
+struct TerminalWaiterLaunch {
+    child_sender: SyncSender<Box<dyn TerminalChild>>,
+    handle: JoinHandle<()>,
 }
 
 fn spawn_waiter(
-    mut child: Box<dyn TerminalChild>,
     sink: Arc<dyn TerminalEventSink>,
+    start_gate: Arc<TerminalStartGate>,
     stop_requested: Arc<AtomicBool>,
     session_id: u64,
-) -> Result<JoinHandle<()>, String> {
-    thread::Builder::new()
+    sessions: Arc<Mutex<HashMap<u64, RunningTerminalSession>>>,
+) -> Result<TerminalWaiterLaunch, String> {
+    let (child_tx, child_rx) = sync_channel::<Box<dyn TerminalChild>>(1);
+    let waiter = thread::Builder::new()
         .name("terminal-waiter".to_string())
         .spawn(move || {
+            let Ok(mut child) = child_rx.recv() else {
+                return;
+            };
             let status = child.wait();
 
             if stop_requested.load(Ordering::SeqCst) {
                 return;
+            }
+
+            if !start_gate.wait(&stop_requested) {
+                return;
+            }
+
+            if stop_requested.load(Ordering::SeqCst) {
+                return;
+            }
+
+            let exited_session = sessions
+                .lock()
+                .ok()
+                .and_then(|mut sessions| sessions.remove(&session_id));
+            if let Some(exited_session) = exited_session {
+                // Typed package tasks are separate process groups owned by the terminal. Take the
+                // session out of the registry first, then terminate its children without holding
+                // the sessions lock so task completion can unregister concurrently.
+                terminate_task_process_groups(&exited_session.task_process_groups);
             }
 
             match status {
@@ -553,11 +458,17 @@ fn spawn_waiter(
                 }),
             }
         })
-        .map_err(|error| format!("Failed to start terminal waiter: {error}"))
+        .map_err(|error| format!("Failed to start terminal waiter: {error}"))?;
+    Ok(TerminalWaiterLaunch {
+        child_sender: child_tx,
+        handle: waiter,
+    })
 }
 
 fn terminate_session(mut session: RunningTerminalSession) {
     session.stop_requested.store(true, Ordering::SeqCst);
+    session.start_gate.release();
+    terminate_task_process_groups(&session.task_process_groups);
     session
         .process_tree_terminator
         .terminate(session.waiter.as_ref());
@@ -848,16 +759,21 @@ fn shell_label(shell: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[path = "terminal_session_ownership_tests.rs"]
+    mod ownership_tests;
+
     use super::{
-        command_builder, prepare_shell_integration, LocalTerminalProfileProvider,
-        PortablePtySpawner, ProcessGroupSignalSender, ProcessTreeTerminator, SpawnedTerminal,
-        TerminalChild, TerminalExitStatus, TerminalKiller, TerminalLaunchRequest,
+        command_builder, finish_portable_spawn, prepare_shell_integration,
+        LocalTerminalProfileProvider, PortablePtySpawner, ProcessGroupSignalSender,
+        ProcessTreeTerminator, SpawnedTerminal, TerminalChild, TerminalExitStatus, TerminalKiller,
+        TerminalLaunchRequest, TerminalOwnedProcessGroup, TerminalOwnedProcessGroupSource,
         TerminalProfileProvider, TerminalPtySpawner, TerminalResizer, TerminalSupervisor,
     };
     use crate::terminal::{
         TerminalEventSink, TerminalOutputEvent, TerminalProfile, TerminalRuntimeStatus,
         TerminalSize,
     };
+    use portable_pty::{MasterPty, PtySize};
     use std::{
         io::{self, Cursor, Read, Write},
         path::{Path, PathBuf},
@@ -865,6 +781,84 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    struct FailingPortableMaster {
+        fail_reader: bool,
+        fail_writer: bool,
+    }
+
+    impl MasterPty for FailingPortableMaster {
+        fn resize(&self, _size: PtySize) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn get_size(&self) -> anyhow::Result<PtySize> {
+            Ok(PtySize::default())
+        }
+
+        fn try_clone_reader(&self) -> anyhow::Result<Box<dyn Read + Send>> {
+            if self.fail_reader {
+                anyhow::bail!("injected reader failure");
+            }
+            Ok(Box::new(Cursor::new(Vec::<u8>::new())))
+        }
+
+        fn take_writer(&self) -> anyhow::Result<Box<dyn Write + Send>> {
+            if self.fail_writer {
+                anyhow::bail!("injected writer failure");
+            }
+            Ok(Box::new(Cursor::new(Vec::<u8>::new())))
+        }
+
+        #[cfg(unix)]
+        fn process_group_leader(&self) -> Option<libc::pid_t> {
+            None
+        }
+
+        #[cfg(unix)]
+        fn as_raw_fd(&self) -> Option<portable_pty::unix::RawFd> {
+            None
+        }
+
+        #[cfg(unix)]
+        fn tty_name(&self) -> Option<PathBuf> {
+            None
+        }
+    }
+
+    #[test]
+    fn portable_reader_clone_failure_terminates_unpublished_child() {
+        let child = RecordingTerminalChild::blocking();
+        let killed = child.killed();
+
+        let result = finish_portable_spawn(
+            Box::new(child),
+            Box::new(FailingPortableMaster {
+                fail_reader: true,
+                fail_writer: false,
+            }),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(*killed.lock().expect("killed"), 1);
+    }
+
+    #[test]
+    fn portable_writer_take_failure_terminates_unpublished_child() {
+        let child = RecordingTerminalChild::blocking();
+        let killed = child.killed();
+
+        let result = finish_portable_spawn(
+            Box::new(child),
+            Box::new(FailingPortableMaster {
+                fail_reader: false,
+                fail_writer: true,
+            }),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(*killed.lock().expect("killed"), 1);
+    }
 
     #[test]
     fn start_emits_statuses_and_terminal_output() {
@@ -886,8 +880,6 @@ mod tests {
             )
             .expect("start terminal");
 
-        wait_for(|| !sink.outputs().is_empty());
-
         assert_eq!(
             status,
             TerminalRuntimeStatus::Running {
@@ -897,17 +889,22 @@ mod tests {
                 session_id: 1,
             }
         );
-        assert_eq!(sink.outputs()[0].data, "ready\r\n");
         assert!(sink
             .statuses()
             .contains(&TerminalRuntimeStatus::Starting { session_id: 1 }));
+        assert!(sink.outputs().is_empty());
+        supervisor
+            .acknowledge_start(1)
+            .expect("acknowledge terminal start");
+        wait_for(|| !sink.outputs().is_empty());
+        assert_eq!(sink.outputs()[0].data, "ready\r\n");
     }
 
     #[test]
     fn write_input_sends_bytes_to_target_session() {
         let supervisor = TerminalSupervisor::new();
         let sink = Arc::new(RecordingTerminalSink::default());
-        let reader = BlockingReader::default();
+        let reader = BlockingReader;
         let writer = SharedWriter::default();
         let written = writer.bytes();
         let spawner = FakeTerminalSpawner::new(Box::new(reader), Box::new(writer));
@@ -936,7 +933,7 @@ mod tests {
         let resizer = RecordingTerminalResizer::default();
         let resized = resizer.sizes();
         let spawner = FakeTerminalSpawner::with_resizer(
-            Box::new(BlockingReader::default()),
+            Box::new(BlockingReader),
             Box::new(SharedWriter::default()),
             Box::new(resizer),
         );
@@ -977,7 +974,7 @@ mod tests {
         let process = RecordingTerminalChild::blocking();
         let killed = process.killed();
         let spawner = FakeTerminalSpawner::with_child(
-            Box::new(BlockingReader::default()),
+            Box::new(BlockingReader),
             Box::new(SharedWriter::default()),
             Box::new(process),
         );
@@ -1012,12 +1009,12 @@ mod tests {
         let workspace_b_process = RecordingTerminalChild::blocking();
         let workspace_b_killed = workspace_b_process.killed();
         let workspace_a_spawner = FakeTerminalSpawner::with_child(
-            Box::new(BlockingReader::default()),
+            Box::new(BlockingReader),
             Box::new(SharedWriter::default()),
             Box::new(workspace_a_process),
         );
         let workspace_b_spawner = FakeTerminalSpawner::with_child(
-            Box::new(BlockingReader::default()),
+            Box::new(BlockingReader),
             Box::new(SharedWriter::default()),
             Box::new(workspace_b_process),
         );
@@ -1147,7 +1144,7 @@ mod tests {
             Box::new(process),
         );
 
-        supervisor
+        let started = supervisor
             .start(
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
@@ -1157,12 +1154,64 @@ mod tests {
                 sink.clone(),
             )
             .expect("start terminal");
+        assert_eq!(
+            started,
+            TerminalRuntimeStatus::Running {
+                cols: 80,
+                cwd: "/workspace".to_string(),
+                rows: 24,
+                session_id: 1,
+            }
+        );
+        assert!(!sink.statuses().iter().any(|status| matches!(
+            status,
+            TerminalRuntimeStatus::Exited { session_id: 1, .. }
+                | TerminalRuntimeStatus::Crashed { session_id: 1, .. }
+        )));
+        supervisor
+            .acknowledge_start(1)
+            .expect("acknowledge terminal start");
         wait_for(|| {
             sink.statuses().contains(&TerminalRuntimeStatus::Exited {
                 exit_code: Some(7),
                 session_id: 1,
             })
         });
+        assert!(supervisor.task_sink(1, Path::new("/workspace")).is_err());
+    }
+
+    #[test]
+    fn process_exit_stops_owned_task_process_groups_after_start_acknowledgement() {
+        let supervisor = TerminalSupervisor::new();
+        let sink = Arc::new(RecordingTerminalSink::default());
+        let process = RecordingTerminalChild::exited(0);
+        let spawner = FakeTerminalSpawner::with_child(
+            Box::new(Cursor::new(Vec::new())),
+            Box::new(SharedWriter::default()),
+            Box::new(process),
+        );
+
+        supervisor
+            .start(
+                PathBuf::from("/workspace"),
+                TerminalSize::default(),
+                default_test_profile(),
+                None,
+                &spawner,
+                sink,
+            )
+            .expect("start terminal");
+        let ownership = supervisor
+            .register_task_process_group(1, Path::new("/workspace"), i32::MAX)
+            .expect("register task process group");
+
+        supervisor
+            .acknowledge_start(1)
+            .expect("acknowledge terminal start");
+
+        wait_for(|| ownership.was_stop_requested());
+        assert!(ownership.was_stop_requested());
+        assert!(supervisor.task_sink(1, Path::new("/workspace")).is_err());
     }
 
     #[test]
@@ -1438,6 +1487,13 @@ mod tests {
                 killed: Arc::clone(&self.killed),
                 signal: Arc::clone(&self.signal),
             })
+        }
+
+        fn try_wait(&mut self) -> io::Result<Option<TerminalExitStatus>> {
+            let completed = *self.signal.0.lock().expect("completed");
+            Ok(completed.then_some(TerminalExitStatus {
+                exit_code: self.exit_code,
+            }))
         }
 
         fn wait(&mut self) -> io::Result<TerminalExitStatus> {

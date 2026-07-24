@@ -1,20 +1,46 @@
+#[path = "application_commands.rs"]
+mod application_commands;
+mod application_menu;
 mod artisan;
+mod blocking_command;
 pub mod composer;
 mod debug_adapter;
+mod debug_breakpoint_policy;
 mod debug_cdp;
+mod debug_cdp_breakpoints;
+mod debug_commands;
 mod debug_dbgp;
+mod debug_hit_condition;
+mod debug_inspector_attach;
+mod debug_inspector_discovery;
+mod debug_inspector_startup;
+mod debug_logpoint;
+mod debug_node_attach_list_command;
+mod debug_node_attach_start_command;
+mod debug_node_launch;
+mod debug_node_process;
+mod debug_node_watch_start_command;
+mod debug_session_registry;
+mod debug_source_map;
 mod debug_support;
 mod eslint;
 mod file_fuzzy_matcher;
+mod file_uri_path;
 pub mod file_watcher;
 pub mod git;
+mod git_commands;
 pub mod ignore_matcher;
 pub mod index;
 pub mod index_reindex;
 pub mod index_scan;
 pub mod index_update;
+#[cfg(test)]
+mod javascript_typescript_real_integration_tests;
 pub mod job_scheduler;
+mod js_test_commands;
+mod js_test_coverage_commands;
 mod js_test_run;
+mod js_test_tasks;
 pub mod js_ts_file_watcher;
 pub mod js_ts_symbols;
 pub mod local_history;
@@ -24,8 +50,16 @@ mod lsp_document;
 mod lsp_features;
 mod lsp_session;
 mod lsp_transport;
+mod lsp_workspace_edit_guard;
+mod managed_install_commands;
 mod managed_javascript_typescript;
 mod managed_phpactor;
+mod node_package_problem_matcher;
+mod node_package_scripts;
+mod node_package_tasks;
+mod node_run_tasks;
+mod package_commands;
+mod package_tool_context;
 pub mod php_file_outline;
 pub mod php_parser;
 pub mod php_symbols;
@@ -34,34 +68,87 @@ pub mod php_tree;
 mod phpstan;
 mod pint;
 mod prettier;
+#[cfg_attr(test, allow(dead_code))]
+mod process_task_plan;
+mod process_task_resolver;
+#[cfg_attr(test, allow(dead_code))]
+mod process_task_runtime;
 mod project;
+mod project_commands;
+mod quality_commands;
+mod runtime_commands;
 mod runtime_observability;
+mod runtime_task_lifecycle;
 mod search;
+mod settings_fonts;
 mod smart_mode;
+mod symfony_commands;
 mod terminal;
+mod terminal_commands;
+mod terminal_process_tree;
 mod terminal_session;
+mod terminal_session_events;
+mod terminal_task_admission;
+mod terminal_task_process;
 mod test_run_support;
 mod tools;
 mod trust;
+#[cfg_attr(test, allow(dead_code))]
+mod vscode_process_task_commands;
+#[cfg_attr(test, allow(dead_code))]
+mod vscode_process_task_events;
+#[cfg_attr(test, allow(dead_code))]
+mod vscode_process_task_registry;
+mod vscode_process_task_tauri;
+mod vscode_process_tasks;
+mod vscode_tasks_discovery;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod vscode_tasks_discovery_command;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[path = "vscode_tasks_discovery_unsupported.rs"]
+mod vscode_tasks_discovery_command;
 mod workspace;
+mod workspace_commands;
+mod workspace_directory_commands;
+mod workspace_edit_commands;
 mod workspace_file_commands;
 pub mod workspace_file_watcher;
 mod workspace_registry;
 mod workspace_runtime;
+mod workspace_source_discovery;
+mod workspace_test_discovery;
+mod workspace_trust_commands;
 
-use debug_adapter::{
-    DebugAdapter, DebugBreakpoint, DebugEvent, DebugEventSink, DebugLaunchTarget, DebugScopeInfo,
-    DebugSessionRegistry, DebugStackFrame, DebugStartResponse, DebugStartupPermit,
-    DebugVariableInfo, StepKind,
+#[cfg(target_os = "macos")]
+use application_menu::application_menu;
+pub(crate) use blocking_command::run_blocking_command;
+use debug_commands::*;
+use debug_node_attach_list_command::debug_list_node_attach_candidates;
+use debug_node_attach_start_command::debug_start_node_attach_candidate;
+use debug_node_watch_start_command::{
+    debug_confirm_native_node_watch, debug_start_native_node_watch,
 };
-use debug_cdp::create_node_cdp_adapter;
-use debug_dbgp::create_php_dbgp_adapter;
+use runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
+use settings_fonts::cached_monospace_font_families;
+
+#[cfg(test)]
+use self::application_commands::enumerate_monospace_font_families;
+use self::application_commands::{
+    confirm_native_shutdown, list_monospace_font_families, quit_application,
+    set_native_close_listener_ready, NativeCloseListenerState,
+};
+
+use debug_adapter::DebugSessionRegistry;
+use file_uri_path::path_from_file_uri;
 use git::{
-    load_commit_details, load_commit_diff, load_commit_files, load_commit_log, load_git_branches,
-    safe_stash_index, CommandGitRepositoryGateway, CommitDiffPayload, CommitFileChange,
-    CommitGraphNode, GitBlameLine, GitBranch, GitBranches, GitChangedFile, GitCommit,
-    GitCommitDetails, GitCommitFilters, GitDiffHunk, GitFileDiff, GitFileHistoryEntry,
-    GitRepoStatus, GitRepositoryGateway, GitStashEntry, GitStatus,
+    safe_stash_index, CommandGitRepositoryGateway, GitBranch, GitChangedFile, GitCommit,
+    GitDiffHunk, GitFileDiff, GitRepositoryGateway, GitStashEntry, GitStatus,
+};
+use git_commands::{
+    cherry_pick_git_commit, detect_git_repositories, get_git_blame, get_git_branches,
+    get_git_commit_details, get_git_commit_diff, get_git_commit_files, get_git_commit_graph_page,
+    get_git_commit_log, get_git_diff, get_git_file_history, get_git_repo_status, get_git_status,
+    revert_git_commit,
 };
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
@@ -77,6 +164,7 @@ use index_scan::{
     METADATA_SCAN_COMPLETED_EVENT,
 };
 use job_scheduler::WorkspaceIndexLifecycle;
+use js_test_commands::{run_js_tests_json, run_js_tests_scoped_json};
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use local_history::{LocalHistoryStore, LocalHistoryVersion};
 use lsp::{
@@ -109,7 +197,6 @@ use lsp_features::{
     LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
     LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerSignatureHelpContext,
     LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
-    LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
     LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
     TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
     TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
@@ -123,56 +210,55 @@ use lsp_session::{
     LanguageServerRuntimeStatus, PhpLanguageServerRegistry, RefreshSink, RestartController,
     StatusSink, WorkspaceEditSink,
 };
+use lsp_workspace_edit_guard::{
+    ensure_lsp_workspace_edit_paths_in_workspace, workspace_file_operation_uris,
+};
 use php_file_outline::{
-    build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineParameter,
-    PhpFileOutlineSymbolRecord, PhpSymbolVisibility as OutlineSymbolVisibility,
+    build_php_file_outline, php_symbol_outline_record, PhpFileOutline, PhpFileOutlineSymbolRecord,
 };
 use php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
-use php_symbols::{
-    PhpParameter, PhpSymbolExtractor, PhpSymbolKind, PhpSymbolVisibility,
-    TreeSitterPhpSymbolExtractor,
-};
+use php_symbols::{PhpSymbolExtractor, TreeSitterPhpSymbolExtractor};
 use php_tree::PhpTree;
-use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
+use project::{ComposerWorkspaceDetector, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchOptions, TextSearchResult, TextSearcher};
 use serde::Serialize;
 use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    ffi::OsString,
-    fs,
-    io::{self, Write},
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    io,
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
 };
-#[cfg(target_os = "macos")]
-use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
-use terminal_session::{
-    LocalTerminalProfileProvider, PortablePtySpawner, TerminalProfileProvider, TerminalSupervisor,
-};
+use terminal_session::TerminalSupervisor;
 use tools::{
     JavaScriptTypeScriptToolDetector, JavaScriptTypeScriptToolPreference,
-    LocalJavaScriptTypeScriptToolDetector, LocalPhpToolDetector, PhpToolAvailability,
-    PhpToolDetector,
+    LocalJavaScriptTypeScriptToolDetector, LocalPhpToolDetector, PhpToolDetector,
 };
-use trust::{WorkspaceTrustService, WorkspaceTrustState};
+use trust::WorkspaceTrustService;
 use workspace::{
-    apply_text_edits_to_content, apply_text_edits_to_files, FileEntry, FileSearchResult,
-    LocalWorkspaceFileRepository, WorkspaceFileRepository, WorkspaceTextEdit,
-    WorkspaceTextPosition, WorkspaceTextRange,
+    FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
 };
-use workspace_file_commands::{
-    read_image_from_root, DescriptorFileEntry, DescriptorFileSearchResult,
-    DescriptorTextSearchResult, FileCommandResult, FileRevision, MutationResult,
-    WorkspaceEditResult, WorkspaceFileRepository as DescriptorFileRepository, WorkspaceImageFile,
-    WorkspaceImageReadError, WorkspaceReplaceResult, WorkspaceTextFile,
+#[cfg(test)]
+use workspace_edit_commands::{
+    abort_transaction_current_path, apply_descriptor_workspace_edit,
+    apply_transactional_descriptor_workspace_edit,
+    apply_trusted_transactional_descriptor_workspace_edit,
+    apply_trusted_transactional_descriptor_workspace_edit_with_hooks, descriptor_file_identity,
+    descriptor_transaction_file_snapshot, guarded_descriptor_cleanup,
+    guarded_descriptor_cleanup_with_terminal_hook,
+    with_test_parent_transaction_recovery_byte_limit, with_test_parent_transaction_recovery_limit,
+    workspace_text_edits_from_language_server, CommittedTransactionPath, DescriptorTransactionPath,
+    StagedTransactionFile, TransactionalWorkspaceEditRequest, MAX_TRANSACTION_AFFECTED_PATHS,
+    MAX_TRANSACTION_FILE_OPERATIONS,
+};
+use workspace_edit_commands::{
+    apply_workspace_edit, workspace_apply_workspace_edit,
+    workspace_apply_workspace_edit_transaction,
 };
 use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
@@ -217,159 +303,8 @@ struct WorkspaceIndexClearResult {
     status: &'static str,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ManagedPhpactorInstallCompletionEvent {
-    root: String,
-    error: Option<String>,
-}
-
-struct AppHandleManagedPhpactorInstallEventSink {
-    app: AppHandle,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ManagedTypeScriptInstallCompletionEvent {
-    root: String,
-    error: Option<String>,
-}
-
-struct AppHandleManagedTypeScriptInstallEventSink {
-    app: AppHandle,
-}
-
-impl managed_javascript_typescript::ManagedTypeScriptInstallEventSink
-    for AppHandleManagedTypeScriptInstallEventSink
-{
-    fn emit_completion(&self, root: String, error: Option<String>) {
-        let _ = self.app.emit(
-            managed_javascript_typescript::MANAGED_TYPESCRIPT_LANGUAGE_SERVER_INSTALL_COMPLETED_EVENT,
-            ManagedTypeScriptInstallCompletionEvent { root, error },
-        );
-    }
-}
-
-impl managed_phpactor::ManagedPhpactorInstallEventSink
-    for AppHandleManagedPhpactorInstallEventSink
-{
-    fn emit_completion(&self, root: String, error: Option<String>) {
-        let _ = self.app.emit(
-            managed_phpactor::MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT,
-            ManagedPhpactorInstallCompletionEvent { root, error },
-        );
-    }
-}
-
-#[tauri::command]
-fn install_managed_phpactor(app: AppHandle, root: String) {
-    managed_phpactor::spawn_managed_phpactor_install(
-        root,
-        AppHandleManagedPhpactorInstallEventSink { app },
-    );
-}
-
-#[tauri::command]
-fn install_managed_typescript_language_server(app: AppHandle, root: String) {
-    managed_javascript_typescript::spawn_managed_typescript_language_server_install(
-        root,
-        AppHandleManagedTypeScriptInstallEventSink { app },
-    );
-}
-
-#[tauri::command]
-fn quit_application(app: AppHandle) {
-    shutdown_runtime_processes(&app);
-    app.exit(0);
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum NativeCloseKind {
-    Close,
-    Quit,
-}
-
-#[derive(Default)]
-struct NativeCloseListenerState {
-    ready: AtomicBool,
-}
-
-#[tauri::command]
-fn set_native_close_listener_ready(state: State<'_, NativeCloseListenerState>, ready: bool) {
-    state.ready.store(ready, Ordering::Release);
-}
-
-#[tauri::command]
-fn confirm_native_shutdown(app: AppHandle, kind: NativeCloseKind) {
-    shutdown_runtime_processes(&app);
-    match kind {
-        NativeCloseKind::Quit => app.exit(0),
-        NativeCloseKind::Close => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.destroy();
-            }
-        }
-    }
-}
-
-/// Process-wide cache of monospace font families. System fonts do not change
-/// for the lifetime of the session, so the expensive `fontdb` system scan is
-/// performed at most once and reused by every later `Settings` dialog open.
-static MONOSPACE_FONT_FAMILIES_CACHE: OnceLock<Vec<String>> = OnceLock::new();
-
-/// Lists the monospace font families exposed to the `Settings` font picker.
-///
-/// The `fontdb` system scan walks every installed font (100ms-1s+ on macOS), so
-/// it must never run on the WebView main thread. The work is handed to Tokio's
-/// blocking pool (same off-main-thread discipline as the index/git commands) and
-/// the result is cached after the first enumeration.
-#[tauri::command]
-async fn list_monospace_font_families() -> Vec<String> {
-    run_blocking_command(|| {
-        Ok(cached_monospace_font_families(
-            &MONOSPACE_FONT_FAMILIES_CACHE,
-            enumerate_monospace_font_families,
-        )
-        .clone())
-    })
-    .await
-    .unwrap_or_default()
-}
-
-/// Returns the cached monospace font families, running `scan` exactly once and
-/// reusing its result on every later call for the given `cache` cell. Both the
-/// cache cell and `scan` are injected so the cache-once behaviour is verifiable
-/// without performing a real system font scan or touching global state.
-fn cached_monospace_font_families<F>(cache: &OnceLock<Vec<String>>, scan: F) -> &Vec<String>
-where
-    F: FnOnce() -> Vec<String>,
-{
-    cache.get_or_init(scan)
-}
-
-/// Performs the raw `fontdb` system scan, collecting de-duplicated, sorted
-/// monospace font family names. This is the expensive, blocking work.
-fn enumerate_monospace_font_families() -> Vec<String> {
-    let mut database = fontdb::Database::new();
-    database.load_system_fonts();
-
-    let mut families = BTreeSet::new();
-
-    for face in database.faces().filter(|face| face.monospaced) {
-        for (family, _) in &face.families {
-            let trimmed = family.trim();
-
-            if !trimmed.is_empty() {
-                families.insert(trimmed.to_string());
-            }
-        }
-    }
-
-    families.into_iter().collect()
-}
-
-fn shutdown_runtime_processes(app: &AppHandle) {
+fn shutdown_runtime_processes(app: &'_ AppHandle) {
+    app.request_stop_all_tasks();
     if let Some(authorizer) = app.try_state::<LegacyLocalHistoryWorkspaceAuthorizer>() {
         authorizer.clear();
     }
@@ -432,7 +367,7 @@ impl LegacyLocalHistoryWorkspaceAuthorizer {
     ) -> std::sync::MutexGuard<'_, HashMap<WorkspaceId, ManagedWorkspaceDescriptor>> {
         self.descriptors
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     fn admit(&self, descriptor: &ManagedWorkspaceDescriptor) {
@@ -454,7 +389,7 @@ impl LegacyLocalHistoryWorkspaceAuthorizer {
             .descriptors()
             .iter()
             .find_map(|(workspace_id, descriptor)| {
-                (descriptor.canonical_root_path == requested_root).then(|| workspace_id.clone())
+                (descriptor.canonical_root_path == requested_root).then_some(workspace_id.clone())
             })
             .ok_or_else(|| "Local history workspace is not open.".to_string())?;
         let live_descriptor = registry
@@ -504,7 +439,7 @@ fn register_workspace_path_in_registry(
     registry: &WorkspaceRegistry,
     root_path: &str,
 ) -> Result<ManagedWorkspaceDescriptor, String> {
-    if !Path::new(root_path).is_absolute() {
+    if Path::new(root_path).is_relative() {
         return Err("Workspace root path must be absolute".to_string());
     }
 
@@ -530,233 +465,120 @@ fn register_workspace_path(
 
 #[tauri::command]
 fn unregister_workspace(
+    app: AppHandle,
     registry: State<'_, WorkspaceRegistry>,
     local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
+    terminal_sessions: State<'_, TerminalSupervisor>,
+    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
+    node_attach_candidates: State<'_, Arc<debug_cdp::NodeAttachCandidatePublicationRegistry>>,
     workspace_id: WorkspaceId,
 ) -> Result<(), String> {
-    registry
-        .unregister(&workspace_id)
-        .map_err(|error| error.to_string())?;
+    node_attach_candidates
+        .invalidate_listings()
+        .map_err(|_| "Node attach candidate invalidation failed.".to_string())?;
+    let mut debug_deactivation = None;
+    let unregister = registry.unregister_after(&workspace_id, |descriptor| {
+        debug_deactivation = Some(
+            debug_sessions
+                .begin_root_deactivation(&descriptor.canonical_root_path.to_string_lossy()),
+        );
+        app.request_stop_workspace_tasks(&workspace_id);
+        terminal_sessions
+            .stop_root(&descriptor.canonical_root_path)
+            .map_err(io::Error::other)
+    });
+    if let Some(deactivation) = debug_deactivation {
+        DebugSessionRegistry::complete_root_deactivation(deactivation);
+    }
+    unregister.map_err(|error| error.to_string())?;
     local_history_authorizer.revoke(&workspace_id);
     Ok(())
 }
 
-#[tauri::command]
-fn get_workspace_descriptor(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-) -> Result<ManagedWorkspaceDescriptor, String> {
-    registry
-        .descriptor(&workspace_id)
-        .map_err(|error| error.to_string())
+struct DisposeWorkspaceState<'a> {
+    index_lifecycle: State<'a, WorkspaceIndexLifecycle>,
+    javascript_typescript_language_servers: State<'a, JavaScriptTypeScriptLanguageServerRegistry>,
+    javascript_typescript_watch_registry: State<'a, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    workspace_file_change_watch_registry: State<'a, WorkspaceFileChangeWatchRegistry>,
+    php_language_servers: State<'a, PhpLanguageServerRegistry>,
+    debug_sessions: State<'a, Arc<DebugSessionRegistry>>,
+    node_attach_candidates: State<'a, Arc<debug_cdp::NodeAttachCandidatePublicationRegistry>>,
+    smart_mode_service: State<'a, Mutex<SmartModeService>>,
+    terminal_sessions: State<'a, TerminalSupervisor>,
+    eslint_processes: State<'a, Arc<eslint::EslintProcessRegistry>>,
+    workspace_registry: State<'a, WorkspaceRegistry>,
 }
 
-#[tauri::command]
-fn workspace_read_text_file(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-) -> Result<WorkspaceTextFile, String> {
-    DescriptorFileRepository::new(&registry)
-        .read_text(&workspace_id, Path::new(&relative_path))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn workspace_read_image_file(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-) -> Result<WorkspaceImageFile, WorkspaceImageReadError> {
-    let root = registry
-        .clone_root(&workspace_id)
-        .map_err(WorkspaceImageReadError::from)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        read_image_from_root(&root, Path::new(&relative_path))
+fn state_from_command<'r, 'de: 'r, T, R>(
+    command: &tauri::ipc::CommandItem<'de, R>,
+) -> Result<State<'r, T>, tauri::ipc::InvokeError>
+where
+    T: Send + Sync + 'static,
+    R: tauri::Runtime,
+{
+    <State<'r, T> as tauri::ipc::CommandArg<'de, R>>::from_command(tauri::ipc::CommandItem {
+        plugin: command.plugin,
+        name: command.name,
+        key: command.key,
+        message: command.message,
+        acl: command.acl,
     })
-    .await
-    .map_err(|error| WorkspaceImageReadError::Io {
-        message: format!("Command task failed: {error}"),
-    })?
 }
 
-#[tauri::command]
-fn workspace_read_directory(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-) -> Result<Vec<DescriptorFileEntry>, String> {
-    DescriptorFileRepository::new(&registry)
-        .read_directory(&workspace_id, Path::new(&relative_path))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn workspace_search_files(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-    query: String,
-    limit: usize,
-) -> Result<Vec<DescriptorFileSearchResult>, String> {
-    DescriptorFileRepository::new(&registry)
-        .search_files(&workspace_id, Path::new(&relative_path), &query, limit)
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn workspace_search_text(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-    query: String,
-    limit: usize,
-    options: Option<TextSearchOptions>,
-) -> Result<Vec<DescriptorTextSearchResult>, String> {
-    DescriptorFileRepository::new(&registry)
-        .search_text(
-            &workspace_id,
-            Path::new(&relative_path),
-            &query,
-            limit,
-            &options.unwrap_or_default(),
-        )
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn workspace_replace_in_path(
-    app: AppHandle,
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-    query: String,
-    replacement: String,
-    options: Option<TextSearchOptions>,
-) -> WorkspaceReplaceResult {
-    let repository = DescriptorFileRepository::new(&registry);
-    let options = options.unwrap_or_default();
-    let store = match local_history_store(&app) {
-        Ok(store) => store,
-        Err(error) => {
-            eprintln!("Local History snapshot failed: {error}");
-            return repository.replace_in_path(
-                &workspace_id,
-                Path::new(&relative_path),
-                &query,
-                &replacement,
-                &options,
-            );
-        }
-    };
-    repository.replace_in_path_with_snapshot_sink(
-        &workspace_id,
-        Path::new(&relative_path),
-        &query,
-        &replacement,
-        &options,
-        &store,
-    )
-}
-
-#[tauri::command]
-fn workspace_save_text_file(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-    content: String,
-    expected_revision: FileRevision,
-) -> FileCommandResult {
-    DescriptorFileRepository::new(&registry).save_text(
-        &workspace_id,
-        Path::new(&relative_path),
-        &content,
-        &expected_revision,
-    )
-}
-
-#[tauri::command]
-fn workspace_create_text_file(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-) -> MutationResult {
-    DescriptorFileRepository::new(&registry).create_file(&workspace_id, Path::new(&relative_path))
-}
-
-#[tauri::command]
-fn workspace_create_directory(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-) -> MutationResult {
-    DescriptorFileRepository::new(&registry)
-        .create_directory(&workspace_id, Path::new(&relative_path))
-}
-
-#[tauri::command]
-fn workspace_delete_path(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    relative_path: String,
-) -> MutationResult {
-    DescriptorFileRepository::new(&registry).delete(&workspace_id, Path::new(&relative_path))
-}
-
-#[tauri::command]
-fn workspace_rename_path(
-    registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-    from_relative_path: String,
-    to_relative_path: String,
-    overwrite: bool,
-) -> MutationResult {
-    DescriptorFileRepository::new(&registry).rename(
-        &workspace_id,
-        Path::new(&from_relative_path),
-        Path::new(&to_relative_path),
-        overwrite,
-    )
-}
-
-#[tauri::command]
-fn detect_workspace(path: String) -> Result<WorkspaceDescriptor, String> {
-    let detector = ComposerWorkspaceDetector::default();
-    detector
-        .detect(&PathBuf::from(path))
-        .map_err(|error| error.to_string())
+impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for DisposeWorkspaceState<'r> {
+    fn from_command(
+        command: tauri::ipc::CommandItem<'de, R>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        Ok(Self {
+            index_lifecycle: state_from_command(&command)?,
+            javascript_typescript_language_servers: state_from_command(&command)?,
+            javascript_typescript_watch_registry: state_from_command(&command)?,
+            workspace_file_change_watch_registry: state_from_command(&command)?,
+            php_language_servers: state_from_command(&command)?,
+            debug_sessions: state_from_command(&command)?,
+            node_attach_candidates: state_from_command(&command)?,
+            smart_mode_service: state_from_command(&command)?,
+            terminal_sessions: state_from_command(&command)?,
+            eslint_processes: state_from_command(&command)?,
+            workspace_registry: state_from_command(&command)?,
+        })
+    }
 }
 
 #[tauri::command]
 fn dispose_workspace_root(
     root_path: String,
-    index_lifecycle: State<'_, WorkspaceIndexLifecycle>,
-    javascript_typescript_language_servers: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-    javascript_typescript_watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
-    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
-    php_language_servers: State<'_, PhpLanguageServerRegistry>,
-    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
-    smart_mode_service: State<'_, Mutex<SmartModeService>>,
-    terminal_sessions: State<'_, TerminalSupervisor>,
-    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
+    app: AppHandle,
+    state: DisposeWorkspaceState<'_>,
 ) -> Result<(), String> {
-    let root = workspace_root_for_disposal(&root_path);
+    state
+        .node_attach_candidates
+        .invalidate_listings()
+        .map_err(|_| "Node attach candidate invalidation failed.".to_string())?;
+    let root = registered_runtime_root(&state.workspace_registry, &root_path);
+    if let Ok(descriptor) = state
+        .workspace_registry
+        .descriptor_for_registered_path(&root)
+    {
+        app.request_stop_workspace_tasks(&descriptor.workspace_id);
+    }
     let root_key = root.to_string_lossy().into_owned();
-    debug_sessions.deactivate_root(&root_key);
+    state.debug_sessions.deactivate_root(&root_key);
     let disposal_result = dispose_workspace_runtime_root(
         &root,
         WorkspaceRuntimeDisposal {
-            index_lifecycle: &*index_lifecycle,
-            javascript_typescript_language_servers: &*javascript_typescript_language_servers,
-            javascript_typescript_watch_registry: &*javascript_typescript_watch_registry,
-            workspace_file_change_watch_registry: &*workspace_file_change_watch_registry,
-            php_language_servers: &*php_language_servers,
-            debug_sessions: &**debug_sessions,
-            eslint_processes: &**eslint_processes,
-            terminal_sessions: &*terminal_sessions,
+            index_lifecycle: &*state.index_lifecycle,
+            javascript_typescript_language_servers: &*state.javascript_typescript_language_servers,
+            javascript_typescript_watch_registry: &*state.javascript_typescript_watch_registry,
+            workspace_file_change_watch_registry: &*state.workspace_file_change_watch_registry,
+            php_language_servers: &*state.php_language_servers,
+            debug_sessions: &**state.debug_sessions,
+            eslint_processes: &**state.eslint_processes,
+            terminal_sessions: &*state.terminal_sessions,
         },
     );
-    smart_mode_service
+    state
+        .smart_mode_service
         .lock()
         .map_err(|error| error.to_string())?
         .remove_workspace(&root_key);
@@ -764,558 +586,8 @@ fn dispose_workspace_root(
 }
 
 #[tauri::command]
-fn detect_php_tools(workspace_root: Option<String>) -> Result<PhpToolAvailability, String> {
-    let detector = LocalPhpToolDetector;
-    let workspace_root = workspace_root.map(PathBuf::from);
-    detector
-        .detect(workspace_root.as_deref())
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn get_smart_mode_state(
-    root_path: String,
-    service: State<'_, Mutex<SmartModeService>>,
-) -> Result<SmartModeState, String> {
-    let root = workspace_root_for_disposal(&root_path);
-    let root_key = root.to_string_lossy();
-    let service = service.lock().map_err(|error| error.to_string())?;
-    Ok(service.state(&root_key))
-}
-
-#[tauri::command]
-fn get_workspace_trust(
-    root_path: String,
-    service: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<WorkspaceTrustState, String> {
-    let service = service.lock().map_err(|error| error.to_string())?;
-    Ok(service.get(&root_path))
-}
-
-#[tauri::command]
-async fn run_eslint_analysis(
-    root_path: String,
-    binary_path: Option<String>,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-    processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
-) -> Result<eslint::EslintAnalysisResponse, String> {
-    run_eslint_analysis_with_trust(root_path, binary_path, &trust, processes.inner().clone()).await
-}
-
-#[tauri::command]
-async fn run_eslint_document_analysis(
-    root_path: String,
-    file_path: String,
-    content: String,
-    binary_path: Option<String>,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-    processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
-) -> Result<eslint::EslintAnalysisResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(eslint::EslintAnalysisResponse::Unavailable {
-            message: Some("Trust this workspace to run ESLint.".to_string()),
-        });
-    }
-
-    eslint::run_eslint_document_analysis(
-        root_path,
-        file_path,
-        content,
-        binary_path,
-        processes.inner().clone(),
-    )
-    .await
-}
-
-async fn run_eslint_analysis_with_trust(
-    root_path: String,
-    binary_path: Option<String>,
-    trust: &Mutex<WorkspaceTrustService>,
-    processes: Arc<eslint::EslintProcessRegistry>,
-) -> Result<eslint::EslintAnalysisResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(eslint::EslintAnalysisResponse::Unavailable {
-            message: Some("Trust this workspace to run ESLint.".to_string()),
-        });
-    }
-
-    eslint::run_eslint_analysis(root_path, binary_path, processes).await
-}
-
-#[tauri::command]
-async fn run_phpstan_analysis(
-    root_path: String,
-    binary_path: Option<String>,
-    config_path: Option<String>,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<phpstan::PhpStanAnalysisResponse, String> {
-    run_phpstan_analysis_with_trust(root_path, binary_path, config_path, &trust).await
-}
-
-async fn run_phpstan_analysis_with_trust(
-    root_path: String,
-    binary_path: Option<String>,
-    config_path: Option<String>,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<phpstan::PhpStanAnalysisResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(phpstan::PhpStanAnalysisResponse::Unavailable {
-            message: Some("Trust this workspace to run PHPStan.".to_string()),
-        });
-    }
-
-    phpstan::run_phpstan_analysis(root_path, binary_path, config_path).await
-}
-
-#[tauri::command]
-async fn run_pint_format(
-    root_path: String,
-    relative_path: Option<String>,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<pint::PintFormatResponse, String> {
-    run_pint_format_with_trust(root_path, relative_path, &trust).await
-}
-
-async fn run_pint_format_with_trust(
-    root_path: String,
-    relative_path: Option<String>,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<pint::PintFormatResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(pint::PintFormatResponse::Unavailable {
-            message: Some("Trust this workspace to run Pint.".to_string()),
-        });
-    }
-
-    pint::run_pint_format(root_path, relative_path).await
-}
-
-#[tauri::command]
-async fn run_prettier_format(
-    root_path: String,
-    relative_path: String,
-    content: String,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<prettier::PrettierFormatResponse, String> {
-    run_prettier_format_with_trust(root_path, relative_path, content, &trust).await
-}
-
-async fn run_prettier_format_with_trust(
-    root_path: String,
-    relative_path: String,
-    content: String,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<prettier::PrettierFormatResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(prettier::PrettierFormatResponse::Unavailable {
-            message: Some("Trust this workspace to run Prettier.".to_string()),
-        });
-    }
-
-    prettier::run_prettier_format(root_path, relative_path, content).await
-}
-
-#[tauri::command]
-async fn run_artisan_route_list(
-    root_path: String,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<artisan::ArtisanRoutesResponse, String> {
-    run_artisan_route_list_with_trust(root_path, &trust).await
-}
-
-async fn run_artisan_route_list_with_trust(
-    root_path: String,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<artisan::ArtisanRoutesResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(artisan::ArtisanRoutesResponse::Unavailable {
-            message: "Trust this workspace to inspect Artisan routes.".to_string(),
-        });
-    }
-
-    artisan::run_artisan_route_list(root_path).await
-}
-
-#[tauri::command]
-async fn run_php_tests_junit(
-    root_path: String,
-    filter: Option<String>,
-    app: AppHandle,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<php_test_run::PhpTestRunResponse, String> {
-    let app_data_base = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
-    run_php_tests_junit_with_trust(root_path, app_data_base, filter, &trust).await
-}
-
-async fn run_php_tests_junit_with_trust(
-    root_path: String,
-    app_data_base: PathBuf,
-    filter: Option<String>,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<php_test_run::PhpTestRunResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(php_test_run::PhpTestRunResponse::Unavailable {
-            message: "Trust this workspace to run PHP tests.".to_string(),
-        });
-    }
-
-    php_test_run::run_php_tests(root_path, app_data_base, filter).await
-}
-
-#[tauri::command]
-async fn run_js_tests_json(
-    root_path: String,
-    filter: Option<String>,
-    app: AppHandle,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<php_test_run::PhpTestRunResponse, String> {
-    let app_data_base = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
-    run_js_tests_json_with_trust(root_path, app_data_base, filter, &trust).await
-}
-
-async fn run_js_tests_json_with_trust(
-    root_path: String,
-    app_data_base: PathBuf,
-    filter: Option<String>,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<php_test_run::PhpTestRunResponse, String> {
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_path)
-        .trusted;
-
-    if !trusted {
-        return Ok(php_test_run::PhpTestRunResponse::Unavailable {
-            message: "Trust this workspace to run JavaScript tests.".to_string(),
-        });
-    }
-
-    js_test_run::run_js_tests(root_path, app_data_base, filter).await
-}
-
-const DEBUG_EVENT: &str = "debug://event";
-
-struct AppHandleDebugEventSink {
-    app: AppHandle,
-}
-
-/// Satisfies the non-blocking `DebugEventSink` contract: Tauri `emit` serializes
-/// the payload and queues delivery to webviews without waiting on the frontend.
-impl DebugEventSink for AppHandleDebugEventSink {
-    fn emit(&self, event: DebugEvent) {
-        let _ = self.app.emit(DEBUG_EVENT, event);
-    }
-}
-
-#[tauri::command]
-async fn debug_start(
-    root_path: String,
-    launch: DebugLaunchTarget,
-    breakpoints: Vec<DebugBreakpoint>,
-    app: AppHandle,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<DebugStartResponse, String> {
-    debug_start_with_trust(
-        root_path,
-        launch,
-        breakpoints,
-        Arc::new(AppHandleDebugEventSink { app }),
-        Arc::clone(registry.inner()),
-        &trust,
-    )
-    .await
-}
-
-async fn debug_start_with_trust(
-    root_path: String,
-    launch: DebugLaunchTarget,
-    breakpoints: Vec<DebugBreakpoint>,
-    sink: Arc<dyn DebugEventSink>,
-    registry: Arc<DebugSessionRegistry>,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<DebugStartResponse, String> {
-    let root = match canonicalize_workspace_root(&root_path) {
-        Ok(root) => root,
-        Err(message) => return Ok(DebugStartResponse::Error { message }),
-    };
-    let root_key = root.to_string_lossy().into_owned();
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_key)
-        .trusted;
-
-    if !trusted {
-        return Ok(DebugStartResponse::Unavailable {
-            message: "Trust this workspace to run the debugger.".to_string(),
-        });
-    }
-
-    let permit = match registry.begin_start(&root_key) {
-        Ok(permit) => permit,
-        Err(message) => return Ok(DebugStartResponse::Error { message }),
-    };
-
-    run_blocking_command(move || {
-        Ok(start_debug_session_blocking(
-            &root,
-            permit,
-            &launch,
-            &breakpoints,
-            sink,
-            &registry,
-        ))
-    })
-    .await
-}
-
-fn start_debug_session_blocking(
-    root: &Path,
-    permit: DebugStartupPermit,
-    launch: &DebugLaunchTarget,
-    breakpoints: &[DebugBreakpoint],
-    sink: Arc<dyn DebugEventSink>,
-    registry: &Arc<DebugSessionRegistry>,
-) -> DebugStartResponse {
-    let finish_registry = Arc::clone(registry);
-    let started = registry.start_session_with_permit(permit, sink, move |emitter| {
-        let session_id = emitter.session_id();
-        let finish = Box::new(move |exit_code| {
-            finish_registry.finish_session(session_id, exit_code);
-        });
-        match launch {
-            DebugLaunchTarget::NodeScript { .. } | DebugLaunchTarget::JsTestFile { .. } => {
-                create_node_cdp_adapter(root, launch, breakpoints, emitter, finish)
-            }
-            DebugLaunchTarget::PhpScript { .. }
-            | DebugLaunchTarget::PhpTestFile { .. }
-            | DebugLaunchTarget::PhpListen { .. } => {
-                create_php_dbgp_adapter(root, launch, breakpoints, emitter, finish)
-            }
-        }
-    });
-
-    match started {
-        Ok(session_id) => DebugStartResponse::Ok { session_id },
-        Err(message) => DebugStartResponse::Error { message },
-    }
-}
-
-#[tauri::command]
-async fn debug_stop(
-    session_id: u64,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<(), String> {
-    let registry = Arc::clone(registry.inner());
-    run_blocking_command(move || stop_debug_session_blocking(&registry, session_id)).await
-}
-
-fn stop_debug_session_blocking(
-    registry: &DebugSessionRegistry,
-    session_id: u64,
-) -> Result<(), String> {
-    if !registry.stop_by_id(session_id) {
-        return Err(format!("No debug session with id {session_id}."));
-    }
-
-    Ok(())
-}
-
-fn with_debug_session<R>(
-    registry: &DebugSessionRegistry,
-    session_id: u64,
-    operation: impl FnOnce(&mut dyn DebugAdapter) -> Result<R, String>,
-) -> Result<R, String> {
-    registry.with_session_by_id(session_id, operation)?
-}
-
-#[tauri::command]
-async fn debug_set_breakpoints(
-    session_id: u64,
-    file_path: String,
-    breakpoints: Vec<DebugBreakpoint>,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<Vec<DebugBreakpoint>, String> {
-    let registry = Arc::clone(registry.inner());
-    run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| {
-            adapter.set_breakpoints(&file_path, &breakpoints)
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-async fn debug_step(
-    session_id: u64,
-    kind: StepKind,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<(), String> {
-    let registry = Arc::clone(registry.inner());
-    run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| adapter.step(kind))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn debug_pause(
-    session_id: u64,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<(), String> {
-    let registry = Arc::clone(registry.inner());
-    run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| adapter.pause())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn debug_stack_trace(
-    session_id: u64,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<Vec<DebugStackFrame>, String> {
-    let registry = Arc::clone(registry.inner());
-    run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| adapter.stack_trace())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn debug_scopes(
-    session_id: u64,
-    frame_id: u64,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<Vec<DebugScopeInfo>, String> {
-    let registry = Arc::clone(registry.inner());
-    run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| adapter.scopes(frame_id))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn debug_variables(
-    session_id: u64,
-    variables_reference: u64,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<Vec<DebugVariableInfo>, String> {
-    let registry = Arc::clone(registry.inner());
-    run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| {
-            adapter.variables(variables_reference)
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-async fn debug_evaluate(
-    root_path: String,
-    session_id: u64,
-    frame_id: u64,
-    expression: String,
-    registry: State<'_, Arc<DebugSessionRegistry>>,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<DebugVariableInfo, String> {
-    debug_evaluate_with_trust(
-        root_path,
-        session_id,
-        frame_id,
-        expression,
-        Arc::clone(registry.inner()),
-        &trust,
-    )
-    .await
-}
-
-async fn debug_evaluate_with_trust(
-    root_path: String,
-    session_id: u64,
-    frame_id: u64,
-    expression: String,
-    registry: Arc<DebugSessionRegistry>,
-    trust: &Mutex<WorkspaceTrustService>,
-) -> Result<DebugVariableInfo, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    let root_key = root.to_string_lossy().to_string();
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_key)
-        .trusted;
-
-    if !trusted {
-        return Err("Trust this workspace to evaluate debug expressions.".to_string());
-    }
-
-    if registry.session_id_for_root(&root_key) != Some(session_id) {
-        return Err("The debug session no longer belongs to this workspace.".to_string());
-    }
-
-    run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| {
-            adapter.evaluate(frame_id, &expression)
-        })
-    })
-    .await
-}
-
-#[tauri::command]
 async fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
-    // tree-sitter parsing is CPU-bound; run it on the blocking pool so the Tauri
-    // WebView main thread stays responsive while a project is opening.
+    // Parse off the WebView main thread.
     run_blocking_command(move || parse_php_syntax_blocking(&source)).await
 }
 
@@ -1340,25 +612,7 @@ fn parse_php_file_outline_blocking(path: &str, source: &str) -> Result<PhpFileOu
     let relative_path = path_file_label(path);
     let records: Vec<PhpFileOutlineSymbolRecord> = symbols
         .into_iter()
-        .map(|symbol| PhpFileOutlineSymbolRecord {
-            column: symbol.range.start_column as i64,
-            container_kind: None,
-            container_name: symbol.container_name,
-            fully_qualified_name: symbol.fully_qualified_name,
-            is_static: symbol.is_static,
-            kind: php_file_outline_node_kind_from_symbol(symbol.kind),
-            line_number: symbol.range.start_line as i64,
-            name: symbol.name,
-            parameters: symbol
-                .parameters
-                .into_iter()
-                .map(outline_parameter_from_symbol)
-                .collect(),
-            path: path.to_string(),
-            relative_path: relative_path.clone(),
-            return_type: symbol.return_type,
-            visibility: symbol.visibility.map(outline_visibility_from_symbol),
-        })
+        .map(|symbol| php_symbol_outline_record(symbol, path, &relative_path))
         .collect();
 
     Ok(build_php_file_outline(&records))
@@ -1506,24 +760,6 @@ impl MetadataScanEventSink for AppHandleMetadataScanEventSink {
     }
 }
 
-/// Runs a blocking command body on Tokio's dedicated blocking pool so the Tauri
-/// WebView main thread is never stalled by file-system, tree-sitter, or SQLite
-/// work — the same off-main-thread discipline used by the LSP feature commands
-/// (`LanguageServerRegistry::send_request_async`).
-///
-/// The closure must own everything it touches (`'static`); callers capture and
-/// clone their arguments before handing the work off, so nothing borrows across
-/// the `await` and per-workspace isolation is decided by the captured values.
-async fn run_blocking_command<T, F>(work: F) -> Result<T, String>
-where
-    F: FnOnce() -> Result<T, String> + Send + 'static,
-    T: Send + 'static,
-{
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| format!("Command task failed: {error}"))?
-}
-
 fn open_workspace_index(app: &AppHandle, root_path: &Path) -> Result<SqliteWorkspaceIndex, String> {
     let database_path = workspace_index_database_path(app, root_path)?;
     SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())
@@ -1547,7 +783,7 @@ fn local_history_store(app: &AppHandle) -> Result<LocalHistoryStore, String> {
     Ok(LocalHistoryStore::new(config_dir))
 }
 
-fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
     PathBuf::from(root_path)
         .canonicalize()
         .map_err(|error| format!("Failed to resolve workspace root: {error}"))
@@ -1630,45 +866,6 @@ fn ensure_lsp_uri_in_workspace(root_path: &str, uri: &str) -> Result<(), String>
     };
 
     ensure_lsp_path_in_workspace(root_path, &path)
-}
-
-fn ensure_lsp_workspace_edit_paths_in_workspace(
-    root_path: &str,
-    edit: &LanguageServerWorkspaceEdit,
-) -> Result<(), String> {
-    for uri in edit.changes.keys() {
-        ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
-    }
-
-    for uri in edit.document_versions.keys() {
-        ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
-    }
-
-    for operation in &edit.file_operations {
-        for uri in workspace_file_operation_uris(operation) {
-            ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn ensure_lsp_workspace_edit_uri_in_workspace(root_path: &str, uri: &str) -> Result<(), String> {
-    if !uri.starts_with("file://") {
-        return Err("Workspace edit URI must be a file URI.".to_string());
-    }
-
-    ensure_lsp_uri_in_workspace(root_path, uri)
-}
-
-fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperation) -> Vec<&str> {
-    match operation {
-        LanguageServerWorkspaceFileOperation::Create { uri, .. }
-        | LanguageServerWorkspaceFileOperation::Delete { uri, .. } => vec![uri.as_str()],
-        LanguageServerWorkspaceFileOperation::Rename {
-            old_uri, new_uri, ..
-        } => vec![old_uri.as_str(), new_uri.as_str()],
-    }
 }
 
 fn filter_lsp_locations_to_workspace(
@@ -2191,93 +1388,12 @@ fn has_non_file_uri_scheme(value: &str) -> bool {
     false
 }
 
-fn php_file_outline_node_kind_from_symbol(kind: PhpSymbolKind) -> PhpFileOutlineNodeKind {
-    match kind {
-        PhpSymbolKind::Class => PhpFileOutlineNodeKind::Class,
-        PhpSymbolKind::Constant => PhpFileOutlineNodeKind::Constant,
-        PhpSymbolKind::Enum => PhpFileOutlineNodeKind::Enum,
-        PhpSymbolKind::Function => PhpFileOutlineNodeKind::Function,
-        PhpSymbolKind::Interface => PhpFileOutlineNodeKind::Interface,
-        PhpSymbolKind::Method => PhpFileOutlineNodeKind::Method,
-        PhpSymbolKind::Property => PhpFileOutlineNodeKind::Property,
-        PhpSymbolKind::Trait => PhpFileOutlineNodeKind::Trait,
-    }
-}
-
-fn outline_visibility_from_symbol(visibility: PhpSymbolVisibility) -> OutlineSymbolVisibility {
-    match visibility {
-        PhpSymbolVisibility::Public => OutlineSymbolVisibility::Public,
-        PhpSymbolVisibility::Protected => OutlineSymbolVisibility::Protected,
-        PhpSymbolVisibility::Private => OutlineSymbolVisibility::Private,
-    }
-}
-
-fn outline_parameter_from_symbol(parameter: PhpParameter) -> PhpFileOutlineParameter {
-    PhpFileOutlineParameter {
-        name: parameter.name,
-        type_name: parameter.type_name,
-    }
-}
-
 fn path_file_label(path: &str) -> String {
     Path::new(path)
         .file_name()
         .and_then(|file_name| file_name.to_str())
         .map(ToString::to_string)
         .unwrap_or_else(|| path.to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let close_tab = MenuItemBuilder::with_id(CLOSE_ACTIVE_TAB_MENU_ID, "Close Tab")
-        .accelerator("CmdOrCtrl+W")
-        .build(app)?;
-    let quit = MenuItemBuilder::with_id(QUIT_APPLICATION_MENU_ID, "Quit Codevo Editor")
-        .accelerator("CmdOrCtrl+Q")
-        .build(app)?;
-    let file = SubmenuBuilder::new(app, "File")
-        .item(&close_tab)
-        .separator()
-        .item(&quit)
-        .build()?;
-    let edit = SubmenuBuilder::new(app, "Edit")
-        .undo()
-        .redo()
-        .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
-        .build()?;
-    let increase_font = MenuItemBuilder::with_id(FONT_ZOOM_IN_MENU_ID, "Increase Editor Font Size")
-        .accelerator("CmdOrCtrl+=")
-        .build(app)?;
-    let decrease_font =
-        MenuItemBuilder::with_id(FONT_ZOOM_OUT_MENU_ID, "Decrease Editor Font Size")
-            .accelerator("CmdOrCtrl+-")
-            .build(app)?;
-    let reset_font = MenuItemBuilder::with_id(FONT_ZOOM_RESET_MENU_ID, "Reset Editor Font Size")
-        .accelerator("CmdOrCtrl+0")
-        .build(app)?;
-    let toggle_ligatures = MenuItemBuilder::with_id(
-        TOGGLE_FONT_LIGATURES_MENU_ID,
-        "Toggle Editor Font Ligatures",
-    )
-    .build(app)?;
-    let appearance_settings =
-        MenuItemBuilder::with_id(OPEN_APPEARANCE_SETTINGS_MENU_ID, "Open Appearance Settings")
-            .build(app)?;
-    let view = SubmenuBuilder::new(app, "View")
-        .item(&increase_font)
-        .item(&decrease_font)
-        .item(&reset_font)
-        .separator()
-        .item(&toggle_ligatures)
-        .separator()
-        .item(&appearance_settings)
-        .build()?;
-
-    Menu::with_items(app, &[&file, &edit, &view])
 }
 
 fn resolve_workspace_path(root_path: &Path, path: &str) -> Result<PathBuf, String> {
@@ -2303,7 +1419,7 @@ fn resolve_existing_or_parent_path(path: &Path) -> Result<PathBuf, String> {
     }
 
     let mut cursor = path.to_path_buf();
-    let mut missing_components: Vec<OsString> = Vec::new();
+    let mut missing_components = Vec::new();
 
     while !cursor.exists() {
         match cursor.file_name() {
@@ -2355,10 +1471,11 @@ fn build_php_language_server_plan(
     intelephense_path: Option<&str>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
-    let trusted = {
-        let service = trust.lock().map_err(|error| error.to_string())?;
-        service.get(root_path).trusted
-    };
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(root_path)
+        .trusted;
     let descriptor = ComposerWorkspaceDetector::default()
         .detect(&root)
         .map_err(|error| error.to_string())?;
@@ -2371,43 +1488,78 @@ fn build_php_language_server_plan(
     Ok(PhpactorLanguageServerPlanner::new().plan(&root, trusted, &descriptor, &tools, &settings))
 }
 
-fn build_javascript_typescript_language_server_plan(
-    root_path: &str,
-    trust: &Mutex<WorkspaceTrustService>,
-    type_script_version_preference: Option<&str>,
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JavaScriptTypeScriptLanguageServerOptions {
+    root_path: String,
+    type_script_version_preference: Option<String>,
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
     complete_function_calls: Option<bool>,
-    import_module_specifier_ending: Option<&str>,
-    import_module_specifier_preference: Option<&str>,
+    import_module_specifier_ending: Option<String>,
+    import_module_specifier_preference: Option<String>,
     inlay_hints_enabled: Option<bool>,
     prefer_type_only_auto_imports: Option<bool>,
-    quote_preference: Option<&str>,
+    quote_preference: Option<String>,
     validation_enabled: Option<bool>,
+}
+
+struct JavaScriptTypeScriptLanguageServerRequest(JavaScriptTypeScriptLanguageServerOptions);
+
+impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R>
+    for JavaScriptTypeScriptLanguageServerRequest
+{
+    fn from_command(
+        command: tauri::ipc::CommandItem<'de, R>,
+    ) -> Result<Self, tauri::ipc::InvokeError> {
+        let tauri::ipc::InvokeBody::Json(payload) = command.message.payload() else {
+            return Err(tauri::Error::InvalidArgs(
+                command.name,
+                command.key,
+                serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "language server options require a JSON payload",
+                )),
+            )
+            .into());
+        };
+        serde_json::from_value(payload.clone())
+            .map(Self)
+            .map_err(|error| tauri::Error::InvalidArgs(command.name, command.key, error).into())
+    }
+}
+
+fn build_javascript_typescript_language_server_plan(
+    trust: &Mutex<WorkspaceTrustService>,
+    options: &JavaScriptTypeScriptLanguageServerOptions,
 ) -> Result<LanguageServerPlan, String> {
+    let root_path = &options.root_path;
     let root = PathBuf::from(root_path);
     let trusted = {
         let service = trust.lock().map_err(|error| error.to_string())?;
         service.get(root_path).trusted
     };
-    let preference =
-        javascript_typescript_tool_preference_from_setting(type_script_version_preference);
+    let preference = javascript_typescript_tool_preference_from_setting(
+        options.type_script_version_preference.as_deref(),
+    );
     let settings = TypeScriptLanguageServerSettings {
-        auto_imports: auto_imports_enabled.unwrap_or(true),
-        automatic_type_acquisition: automatic_type_acquisition_enabled.unwrap_or(false),
-        code_lens: code_lens_enabled.unwrap_or(false),
-        complete_function_calls: complete_function_calls.unwrap_or(false),
+        auto_imports: options.auto_imports_enabled.unwrap_or(true),
+        automatic_type_acquisition: options.automatic_type_acquisition_enabled.unwrap_or(false),
+        code_lens: options.code_lens_enabled.unwrap_or(false),
+        complete_function_calls: options.complete_function_calls.unwrap_or(false),
         import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding::from_setting(
-            import_module_specifier_ending,
+            options.import_module_specifier_ending.as_deref(),
         ),
         import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference::from_setting(
-            import_module_specifier_preference,
+            options.import_module_specifier_preference.as_deref(),
         ),
-        inlay_hints: inlay_hints_enabled.unwrap_or(true),
-        prefer_type_only_auto_imports: prefer_type_only_auto_imports.unwrap_or(false),
-        quote_preference: TypeScriptQuotePreference::from_setting(quote_preference),
-        validation: validation_enabled.unwrap_or(true),
+        inlay_hints: options.inlay_hints_enabled.unwrap_or(true),
+        prefer_type_only_auto_imports: options.prefer_type_only_auto_imports.unwrap_or(false),
+        quote_preference: TypeScriptQuotePreference::from_setting(
+            options.quote_preference.as_deref(),
+        ),
+        validation: options.validation_enabled.unwrap_or(true),
     };
     let tools = LocalJavaScriptTypeScriptToolDetector
         .detect(Some(&root), preference)
@@ -2444,35 +1596,10 @@ fn plan_php_language_server(
 
 #[tauri::command]
 fn plan_javascript_typescript_language_server(
-    root_path: String,
-    type_script_version_preference: Option<String>,
-    auto_imports_enabled: Option<bool>,
-    automatic_type_acquisition_enabled: Option<bool>,
-    code_lens_enabled: Option<bool>,
-    complete_function_calls: Option<bool>,
-    import_module_specifier_ending: Option<String>,
-    import_module_specifier_preference: Option<String>,
-    inlay_hints_enabled: Option<bool>,
-    prefer_type_only_auto_imports: Option<bool>,
-    quote_preference: Option<String>,
-    validation_enabled: Option<bool>,
+    request: JavaScriptTypeScriptLanguageServerRequest,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<LanguageServerPlan, String> {
-    build_javascript_typescript_language_server_plan(
-        &root_path,
-        &trust,
-        type_script_version_preference.as_deref(),
-        auto_imports_enabled,
-        automatic_type_acquisition_enabled,
-        code_lens_enabled,
-        complete_function_calls,
-        import_module_specifier_ending.as_deref(),
-        import_module_specifier_preference.as_deref(),
-        inlay_hints_enabled,
-        prefer_type_only_auto_imports,
-        quote_preference.as_deref(),
-        validation_enabled,
-    )
+    build_javascript_typescript_language_server_plan(&trust, &request.0)
 }
 
 #[tauri::command]
@@ -2608,282 +1735,6 @@ fn trusted_for(trust: &GitTrustState<'_>, root_path: &str) -> Result<bool, Strin
 #[cfg(test)]
 fn trusted_for(trust: &GitTrustState<'_>, _root_path: &str) -> Result<bool, String> {
     Ok(*trust)
-}
-
-#[tauri::command]
-async fn get_git_status(root_path: String, trust: GitTrustState<'_>) -> Result<GitStatus, String> {
-    // `git status` shells out to a subprocess and, on large Laravel repos, can
-    // take hundreds of milliseconds; it fires on every save and tab switch.
-    // Resolve the requested root and run it off the main thread so the WebView
-    // never stalls. The captured `root_path` keeps the request bound to its own
-    // repository (no cross-root leakage).
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .status(&root)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_repo_status(
-    root_path: String,
-    trust: GitTrustState<'_>,
-) -> Result<GitRepoStatus, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = match canonicalize_workspace_root(&root_path) {
-            Ok(root) => root,
-            Err(_) => {
-                return Ok(GitRepoStatus {
-                    git_available: git::git_available(),
-                    is_repository: false,
-                });
-            }
-        };
-        let is_repository = CommandGitRepositoryGateway::new(trusted)
-            .status(&root)
-            .map(|status| status.is_repository)
-            .unwrap_or(false);
-
-        Ok(GitRepoStatus {
-            git_available: git::git_available(),
-            is_repository,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-async fn detect_git_repositories(
-    root_path: String,
-    max_depth: Option<usize>,
-) -> Result<Vec<String>, String> {
-    // Discovery walks the whole workspace tree (bounded by `max_depth`)
-    // looking for nested `.git` markers, which on a large multi-repo
-    // workspace means a lot of `read_dir`/`symlink_metadata` syscalls; run it
-    // off the main thread like every other filesystem-heavy command.
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        let depth = max_depth.unwrap_or(git::DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH);
-
-        git::detect_git_repositories(&root, depth).map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_branches(
-    root_path: String,
-    trust: GitTrustState<'_>,
-) -> Result<GitBranches, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        load_git_branches(&root, trusted).map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_commit_log(
-    root_path: String,
-    filters: GitCommitFilters,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<GitCommit>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        load_commit_log(&root, filters, trusted).map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_commit_graph_page(
-    root_path: String,
-    cursor: Option<String>,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<CommitGraphNode>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        let commits = load_commit_log(
-            &root,
-            GitCommitFilters {
-                author: None,
-                branch: None,
-                cursor,
-                limit: Some(200),
-                path: None,
-                query: None,
-            },
-            trusted,
-        )
-        .map_err(|error| error.to_string())?;
-
-        Ok(commits
-            .into_iter()
-            .map(|commit| CommitGraphNode {
-                children: Vec::new(),
-                commit: commit.clone(),
-                depth: 0,
-                hash: commit.hash,
-                is_merge: commit.parents.len() > 1,
-            })
-            .collect())
-    })
-    .await
-}
-#[tauri::command]
-async fn get_git_commit_details(
-    root_path: String,
-    commit_hash: String,
-    trust: GitTrustState<'_>,
-) -> Result<GitCommitDetails, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        load_commit_details(&root, &commit_hash, trusted).map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn revert_git_commit(
-    root_path: String,
-    commit_hash: String,
-    trust: GitTrustState<'_>,
-) -> Result<GitCommit, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .revert_commit(&root, &commit_hash)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn cherry_pick_git_commit(
-    root_path: String,
-    commit_hash: String,
-    trust: GitTrustState<'_>,
-) -> Result<GitCommit, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .cherry_pick_commit(&root, &commit_hash)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_commit_files(
-    root_path: String,
-    commit_hash: String,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<CommitFileChange>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        load_commit_files(&root, &commit_hash, trusted).map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_commit_diff(
-    root_path: String,
-    commit_hash: String,
-    path: String,
-    old_path: Option<String>,
-    files: Option<Vec<CommitFileChange>>,
-    trust: GitTrustState<'_>,
-) -> Result<CommitDiffPayload, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        let files = match files {
-            Some(files) => files,
-            None => load_commit_files(&root, &commit_hash, trusted)
-                .map_err(|error| error.to_string())?,
-        };
-        load_commit_diff(
-            &root,
-            &commit_hash,
-            &path,
-            old_path.as_deref(),
-            &files,
-            trusted,
-        )
-        .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_diff(
-    root_path: String,
-    change: GitChangedFile,
-    trust: GitTrustState<'_>,
-) -> Result<GitFileDiff, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    // Diffing shells out to `git` and reads file contents; it fires alongside
-    // status on save/switch, so keep it off the main thread, scoped to the
-    // requested repository root.
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .diff(&root, &change)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_blame(
-    root_path: String,
-    relative_path: String,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<GitBlameLine>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    // `git blame` shells out to a subprocess that can take a while on large
-    // files; keep it off the main thread so the WebView never stalls. The
-    // captured `root_path` + `relative_path` bind the request to its own
-    // repository and file (no cross-root or cross-file leakage).
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .blame(&root, &relative_path)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_git_file_history(
-    root_path: String,
-    relative_path: String,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<GitFileHistoryEntry>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    // `git log --follow` shells out to a subprocess that can take a while on a
-    // file with deep history; keep it off the main thread so the WebView never
-    // stalls. The captured `root_path` + `relative_path` bind the request to its
-    // own repository and file (no cross-root or cross-file leakage).
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .file_history(&root, &relative_path)
-            .map_err(|error| error.to_string())
-    })
-    .await
 }
 
 // Rejects a local-history relative path that is absolute or escapes the
@@ -3521,37 +2372,11 @@ fn set_smart_mode(
     Ok(service.set_mode(&root_key, mode))
 }
 
-#[tauri::command]
-fn set_workspace_trust(
-    root_path: String,
-    trusted: bool,
-    service: State<'_, Mutex<WorkspaceTrustService>>,
-    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
-    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
-) -> Result<WorkspaceTrustState, String> {
-    let mut service = service.lock().map_err(|error| error.to_string())?;
-    let state = service
-        .set(&root_path, trusted)
-        .map_err(|error| error.to_string())?;
-    drop(service);
-    if trusted {
-        let root = workspace_root_for_disposal(&root_path);
-        eslint_processes.activate_root(&root);
-        debug_sessions.activate_root(&root.to_string_lossy());
-        return Ok(state);
-    }
-    revoke_workspace_runtime_trust(&root_path, &eslint_processes, &debug_sessions);
-    Ok(state)
-}
-
-fn revoke_workspace_runtime_trust(
-    root_path: &str,
-    eslint_processes: &eslint::EslintProcessRegistry,
-    debug_sessions: &DebugSessionRegistry,
-) {
-    let root = workspace_root_for_disposal(root_path);
-    eslint_processes.stop_root(&root);
-    debug_sessions.deactivate_root(&root.to_string_lossy());
+fn registered_runtime_root(registry: &WorkspaceRegistry, root_path: &str) -> PathBuf {
+    registry
+        .descriptor_for_registered_path(Path::new(root_path))
+        .map(|descriptor| descriptor.canonical_root_path)
+        .unwrap_or_else(|_| workspace_root_for_disposal(root_path))
 }
 
 #[tauri::command]
@@ -3574,80 +2399,6 @@ fn get_javascript_typescript_language_server_status(
         &root_path,
         registry.status(&root_path),
     ))
-}
-
-struct RegistryRuntimeStateSource {
-    kind: runtime_observability::LanguageRuntimeKind,
-    label: &'static str,
-    status: LanguageServerRuntimeStatus,
-    pid: Option<u32>,
-    recent_requests: Vec<lsp_session::RecentLspRequest>,
-    stderr_tail: Vec<String>,
-}
-
-impl runtime_observability::RuntimeStateSource for RegistryRuntimeStateSource {
-    fn kind(&self) -> runtime_observability::LanguageRuntimeKind {
-        self.kind
-    }
-
-    fn label(&self) -> String {
-        self.label.to_string()
-    }
-
-    fn status(&self) -> LanguageServerRuntimeStatus {
-        self.status.clone()
-    }
-
-    fn pid(&self) -> Option<u32> {
-        self.pid
-    }
-
-    fn recent_requests(&self) -> Vec<lsp_session::RecentLspRequest> {
-        self.recent_requests.clone()
-    }
-
-    fn stderr_tail(&self) -> Vec<String> {
-        self.stderr_tail.clone()
-    }
-}
-
-/// Per-workspace runtime observability for the managed language servers. The
-/// requested root is read once and every runtime is sampled against that same
-/// root, so the report never mixes state from another open project tab.
-#[tauri::command]
-fn get_runtime_observability(
-    root_path: String,
-    php_registry: State<'_, PhpLanguageServerRegistry>,
-    javascript_typescript_registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Value, String> {
-    let php_source = RegistryRuntimeStateSource {
-        kind: runtime_observability::LanguageRuntimeKind::Phpactor,
-        label: "PHPactor",
-        status: php_registry.status(&root_path),
-        pid: php_registry.pid(&root_path),
-        recent_requests: php_registry.recent_requests(&root_path),
-        stderr_tail: php_registry.stderr_tail(&root_path),
-    };
-    let typescript_source = RegistryRuntimeStateSource {
-        kind: runtime_observability::LanguageRuntimeKind::Tsserver,
-        label: "TypeScript language server",
-        status: javascript_typescript_registry.status(&root_path),
-        pid: javascript_typescript_registry.pid(&root_path),
-        recent_requests: javascript_typescript_registry.recent_requests(&root_path),
-        stderr_tail: javascript_typescript_registry.stderr_tail(&root_path),
-    };
-
-    let report = runtime_observability::build_runtime_observability_report(
-        &root_path,
-        &[
-            &php_source as &dyn runtime_observability::RuntimeStateSource,
-            &typescript_source,
-        ],
-        &runtime_observability::PsProcessStatsProbe,
-    );
-
-    serde_json::to_value(report)
-        .map_err(|error| format!("Failed to serialize runtime observability: {error}"))
 }
 
 /// Stop a single managed runtime for the active workspace root. Isolation: only
@@ -3773,81 +2524,12 @@ async fn restart_typescript_runtime_off_thread(
 }
 
 #[tauri::command]
-fn open_language_runtime_log(
-    root_path: String,
-    kind: String,
-    app: AppHandle,
-    php_registry: State<'_, PhpLanguageServerRegistry>,
-    javascript_typescript_registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<String, String> {
-    let runtime_kind = runtime_observability::LanguageRuntimeKind::from_str(&kind)
-        .ok_or_else(|| format!("Unknown language runtime kind: {kind}"))?;
-    let (runtime_label, log_file_prefix, mut log) = match runtime_kind {
-        runtime_observability::LanguageRuntimeKind::Phpactor => (
-            "PHP language server",
-            "php-language-server",
-            php_registry.log(&root_path),
-        ),
-        runtime_observability::LanguageRuntimeKind::Tsserver => (
-            "JavaScript/TypeScript language server",
-            "javascript-typescript-language-server",
-            javascript_typescript_registry.log(&root_path),
-        ),
-    };
-
-    if log.trim().is_empty() {
-        log = format!("No {runtime_label} log has been captured for this workspace yet.\n");
-    }
-
-    let log_dir = app
-        .path()
-        .app_log_dir()
-        .map_err(|error| format!("Failed to resolve app log directory: {error}"))?;
-    fs::create_dir_all(&log_dir)
-        .map_err(|error| format!("Failed to create app log directory: {error}"))?;
-    let log_path = log_dir.join(format!(
-        "{}-{}.log",
-        log_file_prefix,
-        sanitized_log_file_stem(&root_path)
-    ));
-
-    fs::write(&log_path, log)
-        .map_err(|error| format!("Failed to write {runtime_label} log: {error}"))?;
-    app.opener()
-        .open_path(log_path.to_string_lossy().to_string(), None::<String>)
-        .map_err(|error| format!("Failed to open {runtime_label} log: {error}"))?;
-
-    Ok(log_path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
 fn reveal_item_in_dir(root_path: String, path: String, app: AppHandle) -> Result<(), String> {
     let target = reveal_path_in_workspace(&root_path, &path)?;
 
     app.opener()
         .reveal_item_in_dir(target)
         .map_err(|error| format!("Failed to reveal item: {error}"))
-}
-
-fn sanitized_log_file_stem(value: &str) -> String {
-    let stem = value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string();
-
-    if stem.is_empty() {
-        return "workspace".to_string();
-    }
-
-    stem
 }
 
 #[tauri::command]
@@ -3913,38 +2595,15 @@ fn start_php_language_server(
 
 #[tauri::command]
 fn start_javascript_typescript_language_server(
-    root_path: String,
-    type_script_version_preference: Option<String>,
-    auto_imports_enabled: Option<bool>,
-    automatic_type_acquisition_enabled: Option<bool>,
-    code_lens_enabled: Option<bool>,
-    complete_function_calls: Option<bool>,
-    import_module_specifier_ending: Option<String>,
-    import_module_specifier_preference: Option<String>,
-    inlay_hints_enabled: Option<bool>,
-    prefer_type_only_auto_imports: Option<bool>,
-    quote_preference: Option<String>,
-    validation_enabled: Option<bool>,
+    request: JavaScriptTypeScriptLanguageServerRequest,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
 ) -> Result<Value, String> {
-    let plan = build_javascript_typescript_language_server_plan(
-        &root_path,
-        &trust,
-        type_script_version_preference.as_deref(),
-        auto_imports_enabled,
-        automatic_type_acquisition_enabled,
-        code_lens_enabled,
-        complete_function_calls,
-        import_module_specifier_ending.as_deref(),
-        import_module_specifier_preference.as_deref(),
-        inlay_hints_enabled,
-        prefer_type_only_auto_imports,
-        quote_preference.as_deref(),
-        validation_enabled,
-    )?;
+    let options = request.0;
+    let root_path = options.root_path.clone();
+    let plan = build_javascript_typescript_language_server_plan(&trust, &options)?;
 
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
         return Err(plan.message);
@@ -3974,6 +2633,7 @@ fn start_javascript_typescript_language_server(
         app,
         root_path.clone(),
     ));
+
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
     let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
     let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
@@ -4036,92 +2696,6 @@ fn stop_all_javascript_typescript_language_servers(
 ) -> Result<LanguageServerRuntimeStatus, String> {
     watch_registry.stop_all();
     Ok(registry.stop_all())
-}
-
-#[tauri::command]
-fn start_terminal_session(
-    root_path: String,
-    profile_id: Option<String>,
-    terminal_shell_integration_enabled: bool,
-    size: TerminalSize,
-    app: AppHandle,
-    trust: State<'_, Mutex<WorkspaceTrustService>>,
-    supervisor: State<'_, TerminalSupervisor>,
-) -> Result<TerminalRuntimeStatus, String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    let root_label = root.to_string_lossy().to_string();
-    let trusted = trust
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&root_label)
-        .trusted;
-
-    if !trusted {
-        return Err("Workspace must be trusted to start a terminal.".to_string());
-    }
-
-    let shell_integration_base_dir = terminal_shell_integration_enabled
-        .then(|| app.path().app_local_data_dir())
-        .transpose()
-        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
-    let sink = Arc::new(AppHandleTerminalEventSink::new(app));
-    let profile_provider = LocalTerminalProfileProvider;
-    let profile = profile_provider.resolve_profile(profile_id.as_deref())?;
-    supervisor.start(
-        root,
-        size,
-        profile,
-        shell_integration_base_dir,
-        &PortablePtySpawner,
-        sink,
-    )
-}
-
-#[tauri::command]
-fn list_terminal_profiles() -> Result<Vec<TerminalProfile>, String> {
-    let profile_provider = LocalTerminalProfileProvider;
-    Ok(profile_provider.profiles())
-}
-
-#[tauri::command]
-fn write_terminal_input(
-    session_id: u64,
-    data: String,
-    supervisor: State<'_, TerminalSupervisor>,
-) -> Result<(), String> {
-    supervisor.write_input(session_id, &data)
-}
-
-#[tauri::command]
-fn resize_terminal_session(
-    session_id: u64,
-    size: TerminalSize,
-    supervisor: State<'_, TerminalSupervisor>,
-) -> Result<(), String> {
-    supervisor.resize(session_id, size)
-}
-
-#[tauri::command]
-fn stop_terminal_session(
-    session_id: u64,
-    supervisor: State<'_, TerminalSupervisor>,
-) -> Result<TerminalRuntimeStatus, String> {
-    supervisor.stop(session_id)
-}
-
-#[tauri::command]
-fn stop_terminal_sessions_for_root(
-    root_path: String,
-    supervisor: State<'_, TerminalSupervisor>,
-) -> Result<(), String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    supervisor.stop_root(&root)
-}
-
-#[tauri::command]
-fn stop_all_terminal_sessions(supervisor: State<'_, TerminalSupervisor>) -> Result<(), String> {
-    supervisor.stop_all();
-    Ok(())
 }
 
 #[tauri::command]
@@ -5529,6 +4103,48 @@ fn workspace_did_delete_files(
 }
 
 #[tauri::command]
+fn workspace_did_change_watched_files(
+    root_path: String,
+    changes: Vec<WorkspaceFileChange>,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<(), String> {
+    for change in &changes {
+        ensure_lsp_path_in_workspace(&root_path, &change.path)?;
+    }
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_change_watched_files(&changes);
+
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: request.method,
+            params: request.params,
+        },
+    )
+}
+
+#[tauri::command]
+fn workspace_did_change_configuration(
+    root_path: String,
+    settings: Value,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_change_configuration(settings);
+
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: request.method,
+            params: request.params,
+        },
+    )
+}
+
+#[tauri::command]
 fn javascript_typescript_workspace_did_change_watched_files(
     root_path: String,
     changes: Vec<WorkspaceFileChange>,
@@ -6293,1354 +4909,415 @@ async fn javascript_typescript_text_document_signature_help(
     parse_signature_help_result(&result)
 }
 
-#[tauri::command]
-async fn apply_workspace_edit(
-    root_path: String,
-    edit: LanguageServerWorkspaceEdit,
-    skipped_paths: Vec<String>,
-) -> Result<usize, String> {
-    // A cross-file rename/refactor writes an unbounded number of files in a
-    // loop; run the whole apply off the main thread, scoped to the requested
-    // workspace root (path guard rejects anything outside it).
-    run_blocking_command(move || {
-        let repository = LocalWorkspaceFileRepository;
-        ensure_lsp_workspace_edit_paths_in_workspace(&root_path, &edit)?;
-        let file_operation_count =
-            apply_workspace_file_operations(&repository, &edit.file_operations)?;
-        let edits = workspace_text_edits_from_language_server(edit)?;
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let terminal_task_admission =
+        Arc::new(terminal_task_admission::TerminalTaskAdmissionRegistry::new());
+    #[cfg(not(test))]
+    let vscode_process_task_registry = Arc::new(
+        vscode_process_task_registry::VscodeProcessTaskRegistry::with_admission(Arc::clone(
+            &terminal_task_admission,
+        )),
+    );
+    #[cfg(not(test))]
+    let vscode_process_task_registry_for_setup = Arc::clone(&vscode_process_task_registry);
+    let builder = tauri::Builder::default().enable_macos_default_menu(false);
+    #[cfg(target_os = "macos")]
+    let builder =
+        builder
+            .menu(application_menu)
+            .on_menu_event(|app, event| match event.id().as_ref() {
+                CLOSE_ACTIVE_TAB_MENU_ID => {
+                    let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
+                }
+                FONT_ZOOM_IN_MENU_ID => {
+                    let _ = app.emit(FONT_ZOOM_IN_EVENT, ());
+                }
+                FONT_ZOOM_OUT_MENU_ID => {
+                    let _ = app.emit(FONT_ZOOM_OUT_EVENT, ());
+                }
+                FONT_ZOOM_RESET_MENU_ID => {
+                    let _ = app.emit(FONT_ZOOM_RESET_EVENT, ());
+                }
+                OPEN_APPEARANCE_SETTINGS_MENU_ID => {
+                    let _ = app.emit(OPEN_APPEARANCE_SETTINGS_EVENT, ());
+                }
+                QUIT_APPLICATION_MENU_ID => {
+                    let listener_ready = app
+                        .try_state::<NativeCloseListenerState>()
+                        .is_some_and(|state| state.ready.load(Ordering::Acquire));
+                    if listener_ready && app.emit(NATIVE_CLOSE_REQUEST_EVENT, "quit").is_ok() {
+                        return;
+                    }
 
-        let text_edit_count = apply_text_edits_to_files(&repository, &edits, &skipped_paths)
-            .map_err(|error| error.to_string())?;
+                    shutdown_runtime_processes(app);
+                    app.exit(0);
+                }
+                TOGGLE_FONT_LIGATURES_MENU_ID => {
+                    let _ = app.emit(TOGGLE_FONT_LIGATURES_EVENT, ());
+                }
+                _ => {}
+            });
 
-        Ok(file_operation_count + text_edit_count)
-    })
-    .await
-}
+    builder
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let listener_ready = window
+                    .app_handle()
+                    .try_state::<NativeCloseListenerState>()
+                    .is_some_and(|state| state.ready.load(Ordering::Acquire));
+                if listener_ready {
+                    api.prevent_close();
+                    if window.emit(NATIVE_CLOSE_REQUEST_EVENT, "close").is_err() {
+                        let _ = window.destroy();
+                    }
+                }
+                return;
+            }
 
-#[tauri::command]
-async fn workspace_apply_workspace_edit(
-    app: AppHandle,
-    workspace_id: WorkspaceId,
-    edit: LanguageServerWorkspaceEdit,
-    skipped_paths: Vec<String>,
-) -> Result<WorkspaceEditResult, String> {
-    run_blocking_command(move || {
-        let registry = app.state::<WorkspaceRegistry>();
-        Ok(apply_descriptor_workspace_edit(
-            &registry,
-            &workspace_id,
-            edit,
-            &skipped_paths,
-            |_, _| {},
+            if matches!(event, WindowEvent::Destroyed) {
+                shutdown_runtime_processes(window.app_handle());
+            }
+        })
+        .manage(Mutex::new(SmartModeService::new()))
+        .manage(NativeCloseListenerState::default())
+        .manage(PhpLanguageServerRegistry::new())
+        .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
+        .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
+        .manage(WorkspaceFileChangeWatchRegistry::new())
+        .manage(WorkspaceIndexLifecycle::new())
+        .manage(Arc::new(DebugSessionRegistry::new()))
+        .manage(Arc::new(
+            debug_cdp::NodeAttachCandidatePublicationRegistry::new(),
         ))
-    })
-    .await
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TransactionalWorkspaceEditResult {
-    applied_count: usize,
-    rollback_edit: LanguageServerWorkspaceEdit,
-    rollback_expected_states: BTreeMap<String, Option<String>>,
-    rollback_file_modes: BTreeMap<String, u32>,
-}
-
-#[derive(Clone)]
-struct TransactionFileSnapshot {
-    content: Option<Vec<u8>>,
-    mode: Option<u32>,
-    fingerprint: Option<TransactionFileFingerprint>,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct TransactionFileFingerprint {
-    device: u64,
-    inode: u64,
-    modified_nanoseconds: i128,
-    size: u64,
-}
-
-struct StagedTransactionFile {
-    path: PathBuf,
-    temporary_path: PathBuf,
-}
-
-struct CommittedTransactionPath {
-    backup_path: Option<PathBuf>,
-    backup_snapshot: Option<TransactionFileSnapshot>,
-    committed_snapshot: TransactionFileSnapshot,
-    path: PathBuf,
-}
-
-#[tauri::command]
-async fn workspace_apply_workspace_edit_transaction(
-    app: AppHandle,
-    workspace_id: WorkspaceId,
-    edit: LanguageServerWorkspaceEdit,
-    skipped_paths: Vec<String>,
-    expected_states: BTreeMap<String, Option<String>>,
-    file_modes: BTreeMap<String, u32>,
-) -> Result<TransactionalWorkspaceEditResult, String> {
-    run_blocking_command(move || {
-        let registry = app.state::<WorkspaceRegistry>();
-        let descriptor = registry
-            .descriptor(&workspace_id)
-            .map_err(|error| error.to_string())?;
-        let trust = app.state::<Mutex<WorkspaceTrustService>>();
-        let trust_guard = trust.lock().map_err(|error| error.to_string())?;
-        let root_key = descriptor.canonical_root_path.to_string_lossy();
-        if !trust_guard.get(&root_key).trusted {
-            return Err("Trust this workspace before applying a workspace edit.".into());
-        }
-        let result = apply_transactional_descriptor_workspace_edit(
-            &registry,
-            &workspace_id,
-            edit,
-            &skipped_paths,
-            &expected_states,
-            &file_modes,
-            |_, _| {},
-        );
-        drop(trust_guard);
-        result
-    })
-    .await
-}
-
-fn apply_transactional_descriptor_workspace_edit(
-    registry: &WorkspaceRegistry,
-    workspace_id: &WorkspaceId,
-    edit: LanguageServerWorkspaceEdit,
-    skipped_paths: &[String],
-    expected_states: &BTreeMap<String, Option<String>>,
-    file_modes: &BTreeMap<String, u32>,
-    mut before_commit: impl FnMut(&Path, usize),
-) -> Result<TransactionalWorkspaceEditResult, String> {
-    let _operation = registry
-        .lock_operations()
-        .map_err(|error| error.to_string())?;
-    let descriptor = registry
-        .descriptor(workspace_id)
-        .map_err(|error| error.to_string())?;
-    let root = descriptor.canonical_root_path;
-    let skipped = skipped_paths.iter().cloned().collect::<BTreeSet<_>>();
-    let affected_paths = transaction_affected_paths(&edit, &skipped)?;
-    let mut original = BTreeMap::new();
-
-    for relative_path in &affected_paths {
-        let path = validate_transaction_path(&root, relative_path)?;
-        original.insert(relative_path.clone(), transaction_file_snapshot(&path)?);
-    }
-    validate_transaction_expected_states(&original, expected_states)?;
-
-    let mut final_state = original
-        .iter()
-        .map(|(path, snapshot)| (path.clone(), snapshot.content.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut final_modes = original
-        .iter()
-        .map(|(path, snapshot)| (path.clone(), snapshot.mode))
-        .collect::<BTreeMap<_, _>>();
-    apply_transaction_file_operations(&mut final_state, &mut final_modes, &edit.file_operations)?;
-    apply_transaction_text_changes(&mut final_state, &edit, &skipped)?;
-
-    let changed_paths = final_state
-        .iter()
-        .filter_map(|(path, content)| {
-            (original
-                .get(path)
-                .and_then(|snapshot| snapshot.content.as_ref())
-                != content.as_ref())
-            .then_some(path.clone())
-        })
-        .collect::<Vec<_>>();
-    let rollback_edit = rollback_workspace_edit(&original, &final_state, &changed_paths)?;
-    let rollback_file_modes = changed_paths
-        .iter()
-        .filter_map(|path| original[path].mode.map(|mode| (path.clone(), mode)))
-        .collect();
-    let rollback_expected_states = changed_paths
-        .iter()
-        .map(|path| {
-            (
-                path.clone(),
-                final_state
-                    .get(path)
-                    .and_then(Option::as_ref)
-                    .map(|content| transaction_content_hash(content)),
-            )
-        })
-        .collect();
-    let mut staged = stage_transaction_files(
-        &root,
-        &final_state,
-        &final_modes,
-        file_modes,
-        &changed_paths,
-    )?;
-    let mut committed = Vec::new();
-
-    for (index, relative_path) in changed_paths.iter().enumerate() {
-        before_commit(Path::new(relative_path), index);
-        let path = match validate_transaction_path(&root, relative_path) {
-            Ok(path) => path,
-            Err(error) => {
-                cleanup_staged_transaction_files(&staged);
-                rollback_committed_transaction_paths(&committed)?;
-                return Err(error);
-            }
-        };
-        if let Err(error) = revalidate_transaction_snapshot(&path, &original[relative_path]) {
-            cleanup_staged_transaction_files(&staged);
-            rollback_committed_transaction_paths(&committed)?;
-            return Err(error);
-        }
-        let desired = final_state.get(relative_path).cloned().flatten();
-        let stage_index = staged.iter().position(|entry| entry.path == path);
-        let staged_snapshot = match stage_index {
-            Some(stage_index) => Some(transaction_file_snapshot(
-                &staged[stage_index].temporary_path,
-            )?),
-            None => None,
-        };
-        let backup_path = match transaction_backup_path(&path, index) {
-            Ok(backup_path) => backup_path,
-            Err(error) => {
-                return Err(abort_transaction_commit(&staged, &committed, error));
-            }
-        };
-        let had_original = original[relative_path].content.is_some();
-
-        if had_original {
-            fs::rename(&path, &backup_path).map_err(|error| {
-                cleanup_staged_transaction_files(&staged);
-                let _ = rollback_committed_transaction_paths(&committed);
-                format!("{}: {error}", relative_path)
-            })?;
-        }
-
-        let mut committed_snapshot = TransactionFileSnapshot {
-            content: None,
-            mode: None,
-            fingerprint: None,
-        };
-        if desired.is_some() {
-            let stage_index = match stage_index {
-                Some(stage_index) => stage_index,
-                None => {
-                    rollback_committed_transaction_paths(&committed)?;
-                    if had_original {
-                        let _ = fs::rename(&backup_path, &path);
-                    }
-                    cleanup_staged_transaction_files(&staged);
-                    return Err(format!("{relative_path}: staged content is unavailable"));
-                }
-            };
-            let staged_file = staged.swap_remove(stage_index);
-            committed_snapshot = match staged_snapshot {
-                Some(snapshot) => snapshot,
-                None => {
-                    rollback_committed_transaction_paths(&committed)?;
-                    if had_original {
-                        let _ = fs::rename(&backup_path, &path);
-                    }
-                    cleanup_staged_transaction_files(&staged);
-                    return Err(format!("{relative_path}: staged snapshot is unavailable"));
-                }
-            };
-            if let Err(error) = fs::rename(&staged_file.temporary_path, &path) {
-                if had_original {
-                    let _ = fs::rename(&backup_path, &path);
-                }
-                rollback_committed_transaction_paths(&committed)?;
-                cleanup_staged_transaction_files(&staged);
-                return Err(format!("{relative_path}: {error}"));
-            }
-        }
-
-        committed.push(CommittedTransactionPath {
-            backup_path: had_original.then_some(backup_path),
-            backup_snapshot: had_original.then(|| original[relative_path].clone()),
-            committed_snapshot,
-            path,
-        });
-    }
-
-    cleanup_staged_transaction_files(&staged);
-    for entry in &committed {
-        if let Some(backup_path) = &entry.backup_path {
-            if let Err(error) = fs::remove_file(backup_path) {
-                eprintln!("Workspace edit backup cleanup failed: {error}");
-            }
-        }
-    }
-
-    Ok(TransactionalWorkspaceEditResult {
-        applied_count: changed_paths.len(),
-        rollback_edit,
-        rollback_expected_states,
-        rollback_file_modes,
-    })
-}
-
-fn validate_transaction_expected_states(
-    actual: &BTreeMap<String, TransactionFileSnapshot>,
-    expected: &BTreeMap<String, Option<String>>,
-) -> Result<(), String> {
-    for (path, expected_hash) in expected {
-        let Some(snapshot) = actual.get(path) else {
-            return Err(format!(
-                "{path}: rollback precondition path was not validated"
-            ));
-        };
-        let actual_hash = snapshot
-            .content
-            .as_ref()
-            .map(|content| transaction_content_hash(content));
-        if &actual_hash != expected_hash {
-            return Err(format!("{path}: file changed after workspace edit commit"));
-        }
-    }
-    Ok(())
-}
-
-fn transaction_content_hash(content: &[u8]) -> String {
-    let hash = content.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    });
-    hash.to_string()
-}
-
-fn transaction_affected_paths(
-    edit: &LanguageServerWorkspaceEdit,
-    skipped: &BTreeSet<String>,
-) -> Result<BTreeSet<String>, String> {
-    let mut paths = edit
-        .changes
-        .keys()
-        .filter(|path| !skipped.contains(*path))
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    for operation in &edit.file_operations {
-        match operation {
-            LanguageServerWorkspaceFileOperation::Create { uri, .. }
-            | LanguageServerWorkspaceFileOperation::Delete { uri, .. } => {
-                paths.insert(uri.clone());
-            }
-            LanguageServerWorkspaceFileOperation::Rename {
-                old_uri, new_uri, ..
-            } => {
-                paths.insert(old_uri.clone());
-                paths.insert(new_uri.clone());
-            }
-        }
-    }
-    for path in &paths {
-        validate_transaction_relative_path(path)?;
-    }
-    Ok(paths)
-}
-
-fn validate_transaction_relative_path(path: &str) -> Result<(), String> {
-    let path = Path::new(path);
-    if path.as_os_str().is_empty() || path.is_absolute() {
-        return Err(format!(
-            "{}: workspace edit path must be relative",
-            path.display()
-        ));
-    }
-    if path
-        .components()
-        .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err(format!("{}: workspace edit path is unsafe", path.display()));
-    }
-    Ok(())
-}
-
-fn validate_transaction_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
-    validate_transaction_relative_path(relative_path)?;
-    let mut current = root.to_path_buf();
-    let components = Path::new(relative_path).components().collect::<Vec<_>>();
-    for (index, component) in components.iter().enumerate() {
-        let Component::Normal(name) = component else {
-            return Err(format!("{relative_path}: workspace edit path is unsafe"));
-        };
-        current.push(name);
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() {
-                    return Err(format!("{relative_path}: symbolic links are not allowed"));
-                }
-                if index + 1 < components.len() && !metadata.is_dir() {
-                    return Err(format!("{relative_path}: parent path is not a directory"));
-                }
-                if index + 1 == components.len() && metadata.is_dir() {
-                    return Err(format!(
-                        "{relative_path}: directory edits are not transactional"
-                    ));
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                if index + 1 < components.len() {
-                    return Err(format!("{relative_path}: parent directory does not exist"));
-                }
-            }
-            Err(error) => return Err(format!("{relative_path}: {error}")),
-        }
-    }
-    Ok(current)
-}
-
-fn transaction_file_snapshot(path: &Path) -> Result<TransactionFileSnapshot, String> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if !metadata.is_file() || metadata.file_type().is_symlink() {
-                return Err(format!(
-                    "{}: only regular files are supported",
-                    path.display()
-                ));
-            }
-            let content = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-            Ok(TransactionFileSnapshot {
-                content: Some(content),
-                mode: Some(metadata.permissions().mode()),
-                fingerprint: Some(transaction_fingerprint(&metadata)),
-            })
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(TransactionFileSnapshot {
-            content: None,
-            mode: None,
-            fingerprint: None,
-        }),
-        Err(error) => Err(format!("{}: {error}", path.display())),
-    }
-}
-
-fn transaction_fingerprint(metadata: &fs::Metadata) -> TransactionFileFingerprint {
-    TransactionFileFingerprint {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-        modified_nanoseconds: i128::from(metadata.mtime()) * 1_000_000_000
-            + i128::from(metadata.mtime_nsec()),
-        size: metadata.len(),
-    }
-}
-
-fn revalidate_transaction_snapshot(
-    path: &Path,
-    snapshot: &TransactionFileSnapshot,
-) -> Result<(), String> {
-    let current = transaction_file_snapshot(path)?;
-    if current.fingerprint != snapshot.fingerprint || current.content != snapshot.content {
-        return Err(format!(
-            "{}: file changed before transaction commit",
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
-fn apply_transaction_file_operations(
-    state: &mut BTreeMap<String, Option<Vec<u8>>>,
-    modes: &mut BTreeMap<String, Option<u32>>,
-    operations: &[LanguageServerWorkspaceFileOperation],
-) -> Result<(), String> {
-    for operation in operations {
-        match operation {
-            LanguageServerWorkspaceFileOperation::Create { uri, options } => {
-                if state.get(uri).and_then(Option::as_ref).is_some() {
-                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_exists) {
-                        continue;
-                    }
-                    if !workspace_file_option(options.as_ref(), |value| value.overwrite) {
-                        return Err(format!("{uri}: target already exists"));
-                    }
-                }
-                state.insert(uri.clone(), Some(Vec::new()));
-                modes.entry(uri.clone()).or_insert(None);
-            }
-            LanguageServerWorkspaceFileOperation::Rename {
-                old_uri,
-                new_uri,
-                options,
-            } => {
-                if old_uri == new_uri {
-                    continue;
-                }
-                let source = state.get(old_uri).cloned().flatten();
-                let Some(source) = source else {
-                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists) {
-                        continue;
-                    }
-                    return Err(format!("{old_uri}: rename source does not exist"));
-                };
-                let source_mode = modes.get(old_uri).copied().flatten();
-                if state.get(new_uri).and_then(Option::as_ref).is_some() {
-                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_exists) {
-                        continue;
-                    }
-                    if !workspace_file_option(options.as_ref(), |value| value.overwrite) {
-                        return Err(format!("{new_uri}: rename target already exists"));
-                    }
-                }
-                state.insert(old_uri.clone(), None);
-                state.insert(new_uri.clone(), Some(source));
-                modes.insert(old_uri.clone(), None);
-                modes.insert(new_uri.clone(), source_mode);
-            }
-            LanguageServerWorkspaceFileOperation::Delete { uri, options } => {
-                if state.get(uri).and_then(Option::as_ref).is_none() {
-                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists) {
-                        continue;
-                    }
-                    return Err(format!("{uri}: delete target does not exist"));
-                }
-                state.insert(uri.clone(), None);
-                modes.insert(uri.clone(), None);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn apply_transaction_text_changes(
-    state: &mut BTreeMap<String, Option<Vec<u8>>>,
-    edit: &LanguageServerWorkspaceEdit,
-    skipped: &BTreeSet<String>,
-) -> Result<(), String> {
-    for (path, edits) in &edit.changes {
-        if skipped.contains(path) {
-            continue;
-        }
-        let Some(Some(bytes)) = state.get(path) else {
-            return Err(format!("{path}: text edit target does not exist"));
-        };
-        let content = String::from_utf8(bytes.clone())
-            .map_err(|_| format!("{path}: text edit target is not UTF-8"))?;
-        let workspace_edits = edits
-            .iter()
-            .map(|text_edit| WorkspaceTextEdit {
-                path: path.clone(),
-                range: WorkspaceTextRange {
-                    start: WorkspaceTextPosition {
-                        line: text_edit.range.start.line,
-                        character: text_edit.range.start.character,
-                    },
-                    end: WorkspaceTextPosition {
-                        line: text_edit.range.end.line,
-                        character: text_edit.range.end.character,
-                    },
-                },
-                new_text: text_edit.new_text.clone(),
-            })
-            .collect::<Vec<_>>();
-        let updated = apply_text_edits_to_content(&content, &workspace_edits)
-            .map_err(|error| format!("{path}: {error}"))?;
-        state.insert(path.clone(), Some(updated.into_bytes()));
-    }
-    Ok(())
-}
-
-fn stage_transaction_files(
-    root: &Path,
-    final_state: &BTreeMap<String, Option<Vec<u8>>>,
-    final_modes: &BTreeMap<String, Option<u32>>,
-    file_modes: &BTreeMap<String, u32>,
-    changed_paths: &[String],
-) -> Result<Vec<StagedTransactionFile>, String> {
-    let mut staged = Vec::new();
-    for (index, relative_path) in changed_paths.iter().enumerate() {
-        let Some(Some(content)) = final_state.get(relative_path) else {
-            continue;
-        };
-        let path = validate_transaction_path(root, relative_path)?;
-        let temporary_path = transaction_temporary_path(&path, "stage", index)?;
-        let write_result = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary_path)
-            .and_then(|mut file| {
-                file.write_all(content)?;
-                file.sync_all()
-            });
-        if let Err(error) = write_result {
-            cleanup_staged_transaction_files(&staged);
-            return Err(format!("{relative_path}: {error}"));
-        }
-        if let Some(mode) = file_modes
-            .get(relative_path)
-            .copied()
-            .or(final_modes.get(relative_path).copied().flatten())
-        {
-            if let Err(error) =
-                fs::set_permissions(&temporary_path, fs::Permissions::from_mode(mode))
-            {
-                let _ = fs::remove_file(&temporary_path);
-                cleanup_staged_transaction_files(&staged);
-                return Err(format!("{relative_path}: {error}"));
-            }
-        }
-        staged.push(StagedTransactionFile {
-            path,
-            temporary_path,
-        });
-    }
-    Ok(staged)
-}
-
-fn transaction_temporary_path(path: &Path, label: &str, index: usize) -> Result<PathBuf, String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("{}: missing parent", path.display()))?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| format!("{}: missing file name", path.display()))?;
-    for attempt in 0..1000 {
-        let candidate = parent.join(format!(
-            ".{}.codevo-{label}-{}-{index}-{attempt}",
-            name.to_string_lossy(),
-            std::process::id(),
-        ));
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    Err(format!(
-        "{}: could not reserve transaction path",
-        path.display()
-    ))
-}
-
-fn transaction_backup_path(path: &Path, index: usize) -> Result<PathBuf, String> {
-    transaction_temporary_path(path, "backup", index)
-}
-
-fn cleanup_staged_transaction_files(staged: &[StagedTransactionFile]) {
-    for entry in staged {
-        let _ = fs::remove_file(&entry.temporary_path);
-    }
-}
-
-fn abort_transaction_commit(
-    staged: &[StagedTransactionFile],
-    committed: &[CommittedTransactionPath],
-    error: String,
-) -> String {
-    cleanup_staged_transaction_files(staged);
-    match rollback_committed_transaction_paths(committed) {
-        Ok(()) => error,
-        Err(rollback_error) => {
-            format!("{error}; {rollback_error}")
-        }
-    }
-}
-
-fn rollback_committed_transaction_paths(
-    committed: &[CommittedTransactionPath],
-) -> Result<(), String> {
-    let mut failures = Vec::new();
-    for (index, entry) in committed.iter().rev().enumerate() {
-        if let Err(error) = rollback_committed_transaction_path(entry, index) {
-            failures.push(error);
-        }
-    }
-    if failures.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "workspace edit rollback failed: {}",
-        failures.join("; ")
-    ))
-}
-
-fn rollback_committed_transaction_path(
-    entry: &CommittedTransactionPath,
-    index: usize,
-) -> Result<(), String> {
-    if entry.committed_snapshot.content.is_none() {
-        return rollback_committed_deletion(entry);
-    }
-
-    let rollback_path = transaction_temporary_path(&entry.path, "rollback", index)?;
-    fs::rename(&entry.path, &rollback_path).map_err(|error| {
-        format!(
-            "{}: transaction output changed before rollback; preserved newer data: {error}",
-            entry.path.display()
-        )
-    })?;
-    let current = match transaction_file_snapshot(&rollback_path) {
-        Ok(current) => current,
-        Err(error) => {
-            let recovery = restore_conflicting_transaction_file(
-                &rollback_path,
-                &entry.path,
-                "transaction output could not be validated during rollback",
-            );
-            return Err(format!("{error}; {recovery}"));
-        }
-    };
-    if current.fingerprint != entry.committed_snapshot.fingerprint
-        || current.content != entry.committed_snapshot.content
-    {
-        return Err(restore_conflicting_transaction_file(
-            &rollback_path,
-            &entry.path,
-            "transaction output changed before rollback",
-        ));
-    }
-
-    if entry.backup_path.is_some() {
-        if let Err(error) = restore_transaction_backup(entry) {
-            let recovery = restore_conflicting_transaction_file(
-                &rollback_path,
-                &entry.path,
-                "rollback target changed while restoring the original file",
-            );
-            return Err(format!(
-                "{}: original backup was not restored; {error}; {recovery}",
-                entry.path.display(),
-            ));
-        }
-    }
-
-    fs::remove_file(&rollback_path).map_err(|error| {
-        format!(
-            "{}: rollback cleanup failed: {error}",
-            rollback_path.display()
-        )
-    })
-}
-
-fn rollback_committed_deletion(entry: &CommittedTransactionPath) -> Result<(), String> {
-    let current = transaction_file_snapshot(&entry.path)?;
-    if current.content.is_some() {
-        let recovery = entry
-            .backup_path
-            .as_ref()
-            .map(|path| format!("; original retained at {}", path.display()))
-            .unwrap_or_default();
-        return Err(format!(
-            "{}: transaction output changed before rollback; preserved newer data{recovery}",
-            entry.path.display()
-        ));
-    }
-    match &entry.backup_path {
-        Some(_) => restore_transaction_backup(entry),
-        None => return Ok(()),
-    }
-}
-
-fn restore_transaction_backup(entry: &CommittedTransactionPath) -> Result<(), String> {
-    let backup_path = entry
-        .backup_path
-        .as_ref()
-        .ok_or_else(|| format!("{}: backup path is unavailable", entry.path.display()))?;
-    let expected = entry.backup_snapshot.as_ref().ok_or_else(|| {
-        format!(
-            "{}: backup fingerprint is unavailable",
-            entry.path.display()
-        )
-    })?;
-    let current = transaction_file_snapshot(backup_path)?;
-    if current.fingerprint != expected.fingerprint || current.content != expected.content {
-        return Err(format!(
-            "{}: backup changed before rollback; retained at {}",
-            entry.path.display(),
-            backup_path.display()
-        ));
-    }
-    restore_transaction_file_without_overwrite(backup_path, &entry.path).map_err(|error| {
-        format!(
-            "{}: original retained at {}; {error}",
-            entry.path.display(),
-            backup_path.display()
-        )
-    })
-}
-
-fn restore_transaction_file_without_overwrite(source: &Path, target: &Path) -> io::Result<()> {
-    fs::hard_link(source, target)?;
-    fs::remove_file(source)
-}
-
-fn restore_conflicting_transaction_file(source: &Path, target: &Path, reason: &str) -> String {
-    match restore_transaction_file_without_overwrite(source, target) {
-        Ok(()) => format!("{}: {reason}; preserved newer data", target.display()),
-        Err(error) => format!(
-            "{}: {reason}; newer data retained at {}: {error}",
-            target.display(),
-            source.display()
-        ),
-    }
-}
-
-fn rollback_workspace_edit(
-    original: &BTreeMap<String, TransactionFileSnapshot>,
-    final_state: &BTreeMap<String, Option<Vec<u8>>>,
-    changed_paths: &[String],
-) -> Result<LanguageServerWorkspaceEdit, String> {
-    let mut changes = BTreeMap::new();
-    let mut file_operations = Vec::new();
-    for path in changed_paths {
-        let before = original[path].content.as_ref();
-        let after = final_state.get(path).and_then(Option::as_ref);
-        match (before, after) {
-            (None, Some(_)) => file_operations.push(LanguageServerWorkspaceFileOperation::Delete {
-                uri: path.clone(),
-                options: None,
-            }),
-            (Some(content), None) => {
-                file_operations.push(LanguageServerWorkspaceFileOperation::Create {
-                    uri: path.clone(),
-                    options: None,
-                });
-                changes.insert(path.clone(), vec![full_file_text_edit(&[], content)?]);
-            }
-            (Some(content), Some(current)) => {
-                changes.insert(path.clone(), vec![full_file_text_edit(current, content)?]);
-            }
-            (None, None) => {}
-        }
-    }
-    Ok(LanguageServerWorkspaceEdit {
-        changes,
-        document_versions: BTreeMap::new(),
-        file_operations,
-    })
-}
-
-fn full_file_text_edit(
-    current: &[u8],
-    replacement: &[u8],
-) -> Result<LanguageServerTextEdit, String> {
-    let current = std::str::from_utf8(current).map_err(|_| "transaction content is not UTF-8")?;
-    let replacement =
-        std::str::from_utf8(replacement).map_err(|_| "transaction content is not UTF-8")?;
-    let (line, character) = current
-        .chars()
-        .fold((0_u32, 0_u32), |(line, character), value| {
-            if value == '\n' {
-                return (line + 1, 0);
-            }
-            (line, character + value.len_utf16() as u32)
-        });
-    Ok(LanguageServerTextEdit {
-        range: LanguageServerRange {
-            start: LanguageServerPosition {
-                line: 0,
-                character: 0,
-            },
-            end: LanguageServerPosition { line, character },
-        },
-        new_text: replacement.to_string(),
-    })
-}
-
-fn apply_descriptor_workspace_edit(
-    registry: &WorkspaceRegistry,
-    workspace_id: &WorkspaceId,
-    edit: LanguageServerWorkspaceEdit,
-    skipped_paths: &[String],
-    mut after_read: impl FnMut(&Path, usize),
-) -> WorkspaceEditResult {
-    let repository = DescriptorFileRepository::new(registry);
-    if let Err(error) = registry.descriptor(workspace_id) {
-        return WorkspaceEditResult::NotFound {
-            applied_file_operations: 0,
-            applied_text_files: 0,
-            applied_count: 0,
-            failed_path: "<workspace>".into(),
-            message: error.to_string(),
-        };
-    }
-    let mut applied_file_operations = 0;
-    for operation in &edit.file_operations {
-        match apply_descriptor_file_operation(&repository, workspace_id, operation) {
-            Ok(changed) => applied_file_operations += changed,
-            Err((path, message, partial)) => {
-                return workspace_edit_failure(
-                    applied_file_operations,
-                    0,
-                    &path,
-                    message,
-                    partial || applied_file_operations > 0,
-                );
-            }
-        }
-    }
-
-    let skipped = skipped_paths.iter().cloned().collect::<BTreeSet<_>>();
-    let mut edits_by_path = BTreeMap::<String, Vec<WorkspaceTextEdit>>::new();
-    for (path, edits) in edit.changes {
-        if skipped.contains(&path) {
-            continue;
-        }
-        for text_edit in edits {
-            edits_by_path
-                .entry(path.clone())
-                .or_default()
-                .push(WorkspaceTextEdit {
-                    path: path.clone(),
-                    range: WorkspaceTextRange {
-                        start: WorkspaceTextPosition {
-                            line: text_edit.range.start.line,
-                            character: text_edit.range.start.character,
-                        },
-                        end: WorkspaceTextPosition {
-                            line: text_edit.range.end.line,
-                            character: text_edit.range.end.character,
-                        },
-                    },
-                    new_text: text_edit.new_text,
-                });
-        }
-    }
-
-    let mut applied_text_files = 0;
-    for (path, edits) in edits_by_path {
-        let snapshot = match repository.read_text(workspace_id, Path::new(&path)) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                return workspace_edit_failure(
-                    applied_file_operations,
-                    applied_text_files,
-                    &path,
-                    error.to_string(),
-                    applied_file_operations + applied_text_files > 0,
-                );
-            }
-        };
-        let content = match apply_text_edits_to_content(&snapshot.content, &edits) {
-            Ok(content) => content,
-            Err(error) => {
-                return workspace_edit_failure(
-                    applied_file_operations,
-                    applied_text_files,
-                    &path,
-                    error.to_string(),
-                    applied_file_operations + applied_text_files > 0,
-                );
-            }
-        };
-        after_read(Path::new(&path), applied_text_files);
-        if content == snapshot.content {
-            continue;
-        }
-        match repository.save_text(workspace_id, Path::new(&path), &content, &snapshot.revision) {
-            FileCommandResult::Success { .. } => applied_text_files += 1,
-            FileCommandResult::Conflict { message } => {
-                if applied_file_operations + applied_text_files == 0 {
-                    return WorkspaceEditResult::Conflict {
-                        applied_file_operations,
-                        applied_text_files,
-                        applied_count: 0,
-                        failed_path: path,
-                        message,
-                    };
-                }
-                return workspace_edit_failure(
-                    applied_file_operations,
-                    applied_text_files,
-                    &path,
-                    message,
-                    true,
-                );
-            }
-            FileCommandResult::Partial { message, .. } => {
-                return workspace_edit_failure(
-                    applied_file_operations,
-                    applied_text_files,
-                    &path,
-                    message,
-                    true,
-                );
-            }
-            FileCommandResult::Error { message } => {
-                return workspace_edit_failure(
-                    applied_file_operations,
-                    applied_text_files,
-                    &path,
-                    message,
-                    applied_file_operations + applied_text_files > 0,
-                );
-            }
-        }
-    }
-
-    WorkspaceEditResult::Success {
-        applied_file_operations,
-        applied_text_files,
-        applied_count: applied_file_operations + applied_text_files,
-    }
-}
-
-fn workspace_edit_failure(
-    applied_file_operations: usize,
-    applied_text_files: usize,
-    failed_path: &str,
-    message: String,
-    partial: bool,
-) -> WorkspaceEditResult {
-    let applied_count = applied_file_operations + applied_text_files;
-    let failed_path = failed_path.to_string();
-    if partial {
-        return WorkspaceEditResult::Partial {
-            applied_file_operations,
-            applied_text_files,
-            applied_count,
-            failed_path,
-            message,
-        };
-    }
-    WorkspaceEditResult::Error {
-        applied_file_operations,
-        applied_text_files,
-        applied_count,
-        failed_path,
-        message,
-    }
-}
-
-fn apply_descriptor_file_operation(
-    repository: &DescriptorFileRepository<'_>,
-    workspace_id: &WorkspaceId,
-    operation: &LanguageServerWorkspaceFileOperation,
-) -> Result<usize, (String, String, bool)> {
-    match operation {
-        LanguageServerWorkspaceFileOperation::Create { uri, options } => {
-            let path = Path::new(uri);
-            if descriptor_path_exists(repository, workspace_id, path) {
-                if workspace_file_option(options.as_ref(), |value| value.ignore_if_exists) {
-                    return Ok(0);
-                }
-                if workspace_file_option(options.as_ref(), |value| value.overwrite) {
-                    let snapshot = repository
-                        .read_text(workspace_id, path)
-                        .map_err(|error| (uri.clone(), error.to_string(), false))?;
-                    return mutation_from_save(
-                        uri,
-                        repository.save_text(workspace_id, path, "", &snapshot.revision),
-                    );
-                }
-                return Err((
-                    uri.clone(),
-                    "Cannot create file because target already exists.".into(),
-                    false,
-                ));
-            }
-            mutation_from_result(uri, repository.create_file(workspace_id, path))
-        }
-        LanguageServerWorkspaceFileOperation::Rename {
-            old_uri,
-            new_uri,
-            options,
-        } => {
-            if old_uri == new_uri {
-                return Ok(0);
-            }
-            if !descriptor_path_exists(repository, workspace_id, Path::new(old_uri))
-                && workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists)
-            {
-                return Ok(0);
-            }
-            if descriptor_path_exists(repository, workspace_id, Path::new(new_uri))
-                && workspace_file_option(options.as_ref(), |value| value.ignore_if_exists)
-            {
-                return Ok(0);
-            }
-            let overwrite = workspace_file_option(options.as_ref(), |value| value.overwrite);
-            mutation_from_result(
-                old_uri,
-                repository.rename(
-                    workspace_id,
-                    Path::new(old_uri),
-                    Path::new(new_uri),
-                    overwrite,
+        .manage(Arc::new(eslint::EslintProcessRegistry::default()))
+        .manage(TerminalSupervisor::new())
+        .manage(node_package_tasks::NodePackageTaskRegistry::with_admission(
+            Arc::clone(&terminal_task_admission),
+        ))
+        .manage(node_run_tasks::NodeRunTaskRegistry::new(Arc::clone(
+            &terminal_task_admission,
+        )))
+        .manage(js_test_tasks::JsTestTaskRegistry::new())
+        .manage(terminal_task_admission)
+        .manage(WorkspaceRegistry::new())
+        .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .setup(move |app| {
+            let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
+            let trust_service = WorkspaceTrustService::load(trust_path)?;
+            app.manage(Mutex::new(trust_service));
+            #[cfg(not(test))]
+            app.manage(
+                vscode_process_task_commands::VscodeProcessTaskCommandService::new(
+                    Arc::clone(&vscode_process_task_registry_for_setup),
+                    Arc::new(vscode_process_task_commands::AppProcessTaskRuntime(
+                        app.handle().clone(),
+                    )),
+                    Arc::new(vscode_process_task_events::AppVscodeProcessTaskEventSink(
+                        app.handle().clone(),
+                    )),
                 ),
-            )
-        }
-        LanguageServerWorkspaceFileOperation::Delete { uri, options } => {
-            if !descriptor_path_exists(repository, workspace_id, Path::new(uri))
-                && workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists)
-            {
-                return Ok(0);
+            );
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            amend_git_commit,
+            reword_git_commit,
+            clear_workspace_index,
+            apply_workspace_edit,
+            commit_git_changes,
+            managed_install_commands::install_managed_phpactor,
+            managed_install_commands::install_managed_typescript_language_server,
+            open_workspace_from_picker,
+            package_commands::preview_workspace_package_operation,
+            node_package_scripts::workspace_discover_node_package_scripts,
+            node_package_tasks::workspace_start_node_package_task,
+            node_package_tasks::workspace_acknowledge_node_package_task_start,
+            node_package_tasks::workspace_stop_node_package_task,
+            node_run_tasks::workspace_start_node_run_task,
+            node_run_tasks::workspace_acknowledge_node_run_task_start,
+            node_run_tasks::workspace_stop_node_run_task,
+            vscode_tasks_discovery_command::workspace_discover_vscode_process_tasks,
+            vscode_process_task_tauri::workspace_start_vscode_process_task,
+            vscode_process_task_tauri::workspace_acknowledge_vscode_process_task_start,
+            vscode_process_task_tauri::workspace_stop_vscode_process_task,
+            register_workspace_path,
+            unregister_workspace,
+            project_commands::get_workspace_descriptor,
+            workspace_commands::workspace_read_text_file,
+            workspace_commands::workspace_read_image_file,
+            workspace_commands::workspace_read_directory,
+            workspace_directory_commands::workspace_read_directory_bounded,
+            workspace_commands::workspace_search_files,
+            workspace_source_discovery::workspace_enumerate_js_source_files,
+            workspace_source_discovery::workspace_read_source_text_bounded,
+            symfony_commands::list_symfony_console_commands,
+            symfony_commands::list_symfony_routes,
+            symfony_commands::list_symfony_services,
+            workspace_test_discovery::workspace_enumerate_js_test_files,
+            workspace_test_discovery::workspace_read_text_file_bounded,
+            workspace_commands::workspace_search_text,
+            workspace_commands::workspace_replace_in_path,
+            workspace_apply_workspace_edit,
+            workspace_apply_workspace_edit_transaction,
+            workspace_commands::workspace_save_text_file,
+            workspace_commands::workspace_create_text_file,
+            workspace_commands::workspace_create_text_file_with_content,
+            workspace_commands::workspace_create_directory,
+            workspace_commands::workspace_delete_path,
+            workspace_commands::workspace_rename_path,
+            debug_evaluate,
+            debug_list_node_attach_candidates,
+            debug_start_node_attach_candidate,
+            debug_completions,
+            debug_disconnect,
+            debug_pause,
+            debug_restart_frame,
+            debug_run_to_location,
+            debug_scopes,
+            debug_set_breakpoints,
+            debug_set_breakpoints_active,
+            debug_set_exception_pause,
+            debug_set_variable,
+            debug_set_expression,
+            debug_stack_trace,
+            debug_start,
+            debug_start_native_node_watch,
+            debug_confirm_native_node_watch,
+            debug_start_compound,
+            debug_step,
+            debug_stop,
+            debug_variables,
+            detect_git_repositories,
+            project_commands::detect_php_tools,
+            project_commands::detect_workspace,
+            dispose_workspace_root,
+            get_php_file_outline,
+            get_git_blame,
+            get_git_commit_graph_page,
+            get_git_commit_log,
+            get_git_commit_diff,
+            get_git_commit_details,
+            revert_git_commit,
+            cherry_pick_git_commit,
+            get_git_commit_files,
+            get_git_branches,
+            get_git_repo_status,
+            get_git_diff,
+            get_git_file_commit_diff,
+            get_git_file_history,
+            get_git_file_hunks,
+            get_git_status,
+            fetch_git_changes,
+            record_local_history_snapshot,
+            get_local_history_versions,
+            get_local_history_version_content,
+            get_javascript_typescript_language_server_status,
+            get_php_language_server_status,
+            runtime_commands::get_runtime_observability,
+            restart_language_runtime,
+            stop_language_runtime,
+            get_php_tree,
+            project_commands::get_smart_mode_state,
+            project_commands::get_workspace_trust,
+            initialize_workspace_index,
+            list_monospace_font_families,
+            start_workspace_file_watch,
+            terminal_commands::list_terminal_profiles,
+            runtime_commands::open_language_runtime_log,
+            reveal_item_in_dir,
+            parse_php_file_outline,
+            parse_php_syntax,
+            plan_javascript_typescript_language_server,
+            plan_php_language_server,
+            push_git_changes,
+            package_commands::run_workspace_package_operation,
+            pull_git_changes,
+            save_git_stash,
+            get_git_stash_list,
+            get_git_stash_diff,
+            stash_apply_git,
+            stash_pop_git,
+            stash_drop_git,
+            list_git_branches,
+            list_git_remote_branches,
+            get_git_current_branch,
+            checkout_git_remote_branch,
+            create_git_branch,
+            delete_git_branch,
+            rename_git_branch,
+            switch_git_branch,
+            quit_application,
+            set_native_close_listener_ready,
+            confirm_native_shutdown,
+            read_directory,
+            read_text_file,
+            remove_workspace_index_file,
+            terminal_commands::resize_terminal_session,
+            revert_git_files,
+            quality_commands::run_eslint_analysis,
+            quality_commands::run_eslint_document_analysis,
+            quality_commands::run_phpstan_analysis,
+            quality_commands::run_pint_format,
+            quality_commands::run_prettier_format,
+            quality_commands::run_artisan_route_list,
+            run_js_tests_json,
+            run_js_tests_scoped_json,
+            js_test_tasks::commands::run_js_test_task_json,
+            js_test_tasks::commands::stop_js_test_task,
+            js_test_coverage_commands::run_js_test_coverage_json,
+            quality_commands::run_php_tests_junit,
+            quality_commands::run_php_test_coverage_clover,
+            search_files,
+            search_project_symbols,
+            search_text,
+            set_smart_mode,
+            workspace_trust_commands::set_workspace_trust,
+            stage_git_files,
+            stage_git_hunk,
+            unstage_git_hunk,
+            revert_git_hunk,
+            start_initial_metadata_scan,
+            start_javascript_typescript_language_server,
+            start_workspace_reindex,
+            start_php_language_server,
+            terminal_commands::acknowledge_terminal_session_start,
+            terminal_commands::start_terminal_session,
+            stop_all_javascript_typescript_language_servers,
+            stop_all_php_language_servers,
+            terminal_commands::stop_all_terminal_sessions,
+            stop_javascript_typescript_language_server,
+            stop_php_language_server,
+            terminal_commands::stop_terminal_session,
+            terminal_commands::stop_terminal_sessions_for_root,
+            unstage_git_files,
+            javascript_typescript_document_did_change,
+            javascript_typescript_document_did_close,
+            javascript_typescript_document_did_open,
+            javascript_typescript_document_did_save,
+            javascript_typescript_language_server_execute_command,
+            javascript_typescript_language_server_execute_command_locations,
+            javascript_typescript_workspace_did_change_configuration,
+            javascript_typescript_workspace_did_change_watched_files,
+            javascript_typescript_workspace_did_create_files,
+            javascript_typescript_workspace_did_delete_files,
+            javascript_typescript_workspace_did_rename_files,
+            javascript_typescript_workspace_will_create_files,
+            javascript_typescript_workspace_will_delete_files,
+            javascript_typescript_workspace_will_rename_files,
+            javascript_typescript_text_document_code_action_resolve,
+            javascript_typescript_text_document_code_actions,
+            javascript_typescript_text_document_code_lens_resolve,
+            javascript_typescript_text_document_code_lenses,
+            javascript_typescript_text_document_completion,
+            javascript_typescript_text_document_completion_resolve,
+            javascript_typescript_text_document_declaration,
+            javascript_typescript_text_document_definition,
+            javascript_typescript_text_document_document_highlights,
+            javascript_typescript_text_document_document_link_resolve,
+            javascript_typescript_text_document_document_links,
+            javascript_typescript_text_document_document_symbols,
+            javascript_typescript_text_document_folding_ranges,
+            javascript_typescript_text_document_formatting,
+            javascript_typescript_text_document_hover,
+            javascript_typescript_text_document_incoming_calls,
+            javascript_typescript_text_document_implementation,
+            javascript_typescript_text_document_inlay_hint_resolve,
+            javascript_typescript_text_document_inlay_hints,
+            javascript_typescript_text_document_linked_editing_ranges,
+            javascript_typescript_text_document_on_type_formatting,
+            javascript_typescript_text_document_outgoing_calls,
+            javascript_typescript_text_document_prepare_call_hierarchy,
+            javascript_typescript_text_document_prepare_rename,
+            javascript_typescript_text_document_prepare_type_hierarchy,
+            javascript_typescript_text_document_range_formatting,
+            javascript_typescript_text_document_range_semantic_tokens,
+            javascript_typescript_text_document_references,
+            javascript_typescript_text_document_rename,
+            javascript_typescript_text_document_selection_ranges,
+            javascript_typescript_text_document_semantic_tokens,
+            javascript_typescript_text_document_signature_help,
+            javascript_typescript_text_document_source_definition,
+            javascript_typescript_text_document_type_hierarchy_subtypes,
+            javascript_typescript_text_document_type_hierarchy_supertypes,
+            javascript_typescript_text_document_type_definition,
+            javascript_typescript_workspace_symbols,
+            language_server_execute_command,
+            language_server_execute_command_locations,
+            text_document_code_action_resolve,
+            text_document_code_actions,
+            text_document_code_lens_resolve,
+            text_document_code_lenses,
+            text_document_completion,
+            text_document_completion_resolve,
+            text_document_declaration,
+            text_document_definition,
+            text_document_document_highlights,
+            text_document_document_link_resolve,
+            text_document_document_links,
+            text_document_document_symbols,
+            text_document_folding_ranges,
+            text_document_did_change,
+            text_document_did_close,
+            text_document_did_open,
+            text_document_did_save,
+            text_document_formatting,
+            text_document_hover,
+            text_document_incoming_calls,
+            text_document_implementation,
+            text_document_inlay_hint_resolve,
+            text_document_inlay_hints,
+            text_document_linked_editing_ranges,
+            text_document_on_type_formatting,
+            text_document_outgoing_calls,
+            text_document_prepare_call_hierarchy,
+            text_document_prepare_rename,
+            text_document_prepare_type_hierarchy,
+            text_document_range_formatting,
+            text_document_range_semantic_tokens,
+            text_document_references,
+            text_document_rename,
+            text_document_selection_ranges,
+            text_document_semantic_tokens,
+            text_document_signature_help,
+            text_document_type_hierarchy_subtypes,
+            text_document_type_hierarchy_supertypes,
+            text_document_type_definition,
+            text_document_will_create_files,
+            text_document_will_delete_files,
+            text_document_will_rename_files,
+            workspace_did_create_files,
+            workspace_did_change_configuration,
+            workspace_did_change_watched_files,
+            workspace_did_delete_files,
+            workspace_did_rename_files,
+            upsert_workspace_index_file,
+            workspace_symbols,
+            terminal_commands::write_terminal_input
+        ])
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))
+        .run(|app, event| {
+            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+                shutdown_runtime_processes(app);
             }
-            if !workspace_file_option(options.as_ref(), |value| value.recursive)
-                && repository
-                    .read_directory(workspace_id, Path::new(uri))
-                    .is_ok()
-            {
-                return Err((
-                    uri.clone(),
-                    "Cannot delete directory without the recursive option.".into(),
-                    false,
-                ));
-            }
-            mutation_from_result(uri, repository.delete(workspace_id, Path::new(uri)))
-        }
-    }
-}
-
-fn descriptor_path_exists(
-    repository: &DescriptorFileRepository<'_>,
-    workspace_id: &WorkspaceId,
-    path: &Path,
-) -> bool {
-    repository.read_text(workspace_id, path).is_ok()
-        || repository.read_directory(workspace_id, path).is_ok()
-}
-
-fn mutation_from_result(
-    path: &str,
-    result: MutationResult,
-) -> Result<usize, (String, String, bool)> {
-    match result {
-        MutationResult::Success => Ok(1),
-        MutationResult::Partial { message } => Err((path.into(), message, true)),
-        MutationResult::Error { message } => Err((path.into(), message, false)),
-    }
-}
-
-fn mutation_from_save(
-    path: &str,
-    result: FileCommandResult,
-) -> Result<usize, (String, String, bool)> {
-    match result {
-        FileCommandResult::Success { .. } => Ok(1),
-        FileCommandResult::Partial { message, .. } => Err((path.into(), message, true)),
-        FileCommandResult::Conflict { message } | FileCommandResult::Error { message } => {
-            Err((path.into(), message, false))
-        }
-    }
-}
-
-fn apply_workspace_file_operations(
-    repository: &dyn WorkspaceFileRepository,
-    operations: &[LanguageServerWorkspaceFileOperation],
-) -> Result<usize, String> {
-    let mut changed_paths = 0;
-
-    for operation in operations {
-        changed_paths += apply_workspace_file_operation(repository, operation)?;
-    }
-
-    Ok(changed_paths)
-}
-
-fn apply_workspace_file_operation(
-    repository: &dyn WorkspaceFileRepository,
-    operation: &LanguageServerWorkspaceFileOperation,
-) -> Result<usize, String> {
-    match operation {
-        LanguageServerWorkspaceFileOperation::Create { uri, options } => {
-            apply_create_file_operation(repository, uri, options.as_ref())
-        }
-        LanguageServerWorkspaceFileOperation::Rename {
-            old_uri,
-            new_uri,
-            options,
-        } => apply_rename_file_operation(repository, old_uri, new_uri, options.as_ref()),
-        LanguageServerWorkspaceFileOperation::Delete { uri, options } => {
-            apply_delete_file_operation(repository, uri, options.as_ref())
-        }
-    }
-}
-
-fn apply_create_file_operation(
-    repository: &dyn WorkspaceFileRepository,
-    uri: &str,
-    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
-) -> Result<usize, String> {
-    let Some(path) = path_from_file_uri(uri).map(PathBuf::from) else {
-        return Ok(0);
-    };
-
-    if path.exists() {
-        if workspace_file_option(options, |options| options.ignore_if_exists) {
-            return Ok(0);
-        }
-
-        if workspace_file_option(options, |options| options.overwrite) {
-            repository
-                .write_text_file(&path, "")
-                .map_err(|error| error.to_string())?;
-            return Ok(1);
-        }
-
-        return Err("Cannot create file because target already exists.".to_string());
-    }
-
-    repository
-        .create_text_file(&path)
-        .map_err(|error| error.to_string())?;
-
-    Ok(1)
-}
-
-fn apply_rename_file_operation(
-    repository: &dyn WorkspaceFileRepository,
-    old_uri: &str,
-    new_uri: &str,
-    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
-) -> Result<usize, String> {
-    let Some(old_path) = path_from_file_uri(old_uri).map(PathBuf::from) else {
-        return Ok(0);
-    };
-    let Some(new_path) = path_from_file_uri(new_uri).map(PathBuf::from) else {
-        return Ok(0);
-    };
-
-    if old_path == new_path {
-        return Ok(0);
-    }
-
-    if !old_path.exists() {
-        if workspace_file_option(options, |options| options.ignore_if_not_exists) {
-            return Ok(0);
-        }
-
-        return Err("Cannot rename file because source does not exist.".to_string());
-    }
-
-    if new_path.exists() {
-        if workspace_file_option(options, |options| options.ignore_if_exists) {
-            return Ok(0);
-        }
-
-        if workspace_file_option(options, |options| options.overwrite) {
-            repository
-                .delete_path(&new_path)
-                .map_err(|error| error.to_string())?;
-        } else {
-            return Err("Cannot rename file because target already exists.".to_string());
-        }
-    }
-
-    repository
-        .rename_path(&old_path, &new_path)
-        .map_err(|error| error.to_string())?;
-
-    Ok(1)
-}
-
-fn apply_delete_file_operation(
-    repository: &dyn WorkspaceFileRepository,
-    uri: &str,
-    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
-) -> Result<usize, String> {
-    let Some(path) = path_from_file_uri(uri).map(PathBuf::from) else {
-        return Ok(0);
-    };
-
-    if !path.exists() {
-        if workspace_file_option(options, |options| options.ignore_if_not_exists) {
-            return Ok(0);
-        }
-
-        return Err("Cannot delete file because path does not exist.".to_string());
-    }
-
-    if path.is_dir() && !workspace_file_option(options, |options| options.recursive) {
-        return Err("Cannot delete directory without the recursive option.".to_string());
-    }
-
-    repository
-        .delete_path(&path)
-        .map_err(|error| error.to_string())?;
-
-    Ok(1)
-}
-
-fn workspace_file_option(
-    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
-    pick: impl FnOnce(&LanguageServerWorkspaceFileOperationOptions) -> Option<bool>,
-) -> bool {
-    options.and_then(pick).unwrap_or(false)
-}
-
-fn workspace_text_edits_from_language_server(
-    edit: LanguageServerWorkspaceEdit,
-) -> Result<Vec<WorkspaceTextEdit>, String> {
-    let mut edits = Vec::new();
-
-    for (uri, uri_edits) in edit.changes {
-        let Some(path) = path_from_file_uri(&uri) else {
-            continue;
-        };
-
-        for text_edit in uri_edits {
-            edits.push(WorkspaceTextEdit {
-                path: path.clone(),
-                range: WorkspaceTextRange {
-                    start: WorkspaceTextPosition {
-                        line: text_edit.range.start.line,
-                        character: text_edit.range.start.character,
-                    },
-                    end: WorkspaceTextPosition {
-                        line: text_edit.range.end.line,
-                        character: text_edit.range.end.character,
-                    },
-                },
-                new_text: text_edit.new_text,
-            });
-        }
-    }
-
-    Ok(edits)
-}
-
-fn path_from_file_uri(uri: &str) -> Option<String> {
-    let path = uri.strip_prefix("file://")?;
-    let path = path.strip_prefix("localhost").unwrap_or(path);
-    let path = percent_decode(path)?;
-
-    if path.is_empty() || !path.starts_with('/') {
-        return None;
-    }
-
-    Some(path)
-}
-
-fn percent_decode(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] != b'%' {
-            decoded.push(bytes[index]);
-            index += 1;
-            continue;
-        }
-
-        let high = *bytes.get(index + 1)?;
-        let low = *bytes.get(index + 2)?;
-        decoded.push(hex_value(high)? * 16 + hex_value(low)?);
-        index += 3;
-    }
-
-    String::from_utf8(decoded).ok()
-}
-
-fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        amend_git_commit, apply_descriptor_workspace_edit,
-        apply_transactional_descriptor_workspace_edit, apply_workspace_edit,
+        abort_transaction_current_path, amend_git_commit, apply_descriptor_workspace_edit,
+        apply_transactional_descriptor_workspace_edit,
+        apply_trusted_transactional_descriptor_workspace_edit,
+        apply_trusted_transactional_descriptor_workspace_edit_with_hooks, apply_workspace_edit,
         build_javascript_typescript_language_server_plan, cached_monospace_font_families,
-        create_git_branch, debug_evaluate_with_trust, debug_start_with_trust, delete_git_branch,
-        ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
+        create_git_branch, delete_git_branch, descriptor_file_identity,
+        descriptor_transaction_file_snapshot, ensure_local_history_relative_path,
+        ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
@@ -7657,25 +5334,30 @@ mod tests {
         filter_lsp_workspace_edit_to_workspace, filter_lsp_workspace_symbols_to_workspace,
         get_git_blame, get_git_current_branch, get_git_file_commit_diff, get_git_file_history,
         get_git_file_hunks, get_git_stash_diff, get_git_stash_list, get_git_status,
+        guarded_descriptor_cleanup, guarded_descriptor_cleanup_with_terminal_hook,
         javascript_typescript_did_change_configuration_settings, list_git_branches,
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
         register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
-        revert_git_hunk, revoke_workspace_runtime_trust, reword_git_commit,
-        run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
-        run_js_tests_json_with_trust, run_php_tests_junit_with_trust,
-        run_phpstan_analysis_with_trust, run_pint_format_with_trust,
-        run_prettier_format_with_trust, save_git_stash, search_files, stage_git_files,
-        stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
-        stop_debug_session_blocking, switch_git_branch, unstage_git_hunk, with_debug_session,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
-        LegacyLocalHistoryWorkspaceAuthorizer,
+        revert_git_hunk, reword_git_commit, save_git_stash, search_files, stage_git_files,
+        stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch,
+        unstage_git_hunk, with_test_parent_transaction_recovery_byte_limit,
+        with_test_parent_transaction_recovery_limit, workspace_root_for_disposal,
+        workspace_text_edits_from_language_server, CommittedTransactionPath,
+        DescriptorTransactionPath, JavaScriptTypeScriptLanguageServerOptions,
+        LegacyLocalHistoryWorkspaceAuthorizer, StagedTransactionFile,
+        TransactionalWorkspaceEditRequest, MAX_TRANSACTION_AFFECTED_PATHS,
+        MAX_TRANSACTION_FILE_OPERATIONS,
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::debug_adapter::{
         DebugEvent, DebugEventSink, DebugLaunchTarget, DebugSessionRegistry, DebugStartResponse,
         StepKind,
+    };
+    use crate::debug_commands::{
+        debug_evaluate_with_trust, debug_start_with_trust, stop_debug_session_blocking,
+        with_debug_session,
     };
     use crate::eslint::{EslintAnalysisResponse, EslintProcessRegistry};
     use crate::local_history::LocalHistoryStore;
@@ -7697,18 +5379,27 @@ mod tests {
     use crate::phpstan::PhpStanAnalysisResponse;
     use crate::pint::PintFormatResponse;
     use crate::prettier::PrettierFormatResponse;
+    use crate::quality_commands::{
+        run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
+        run_php_tests_junit_with_trust, run_phpstan_analysis_with_trust,
+        run_pint_format_with_trust, run_prettier_format_with_trust,
+    };
     use crate::trust::WorkspaceTrustService;
     use crate::workspace::FileEntryKind;
     use crate::workspace_file_commands::WorkspaceEditResult;
     use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
+    use std::ffi::{CString, OsStr};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{mpsc, Arc, Barrier, Mutex, OnceLock};
     use std::{
-        fs,
+        fs::{self, File},
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -8910,6 +6601,169 @@ mod tests {
     }
 
     #[test]
+    fn trusted_transaction_waits_for_operations_before_locking_trust() {
+        let root = temp_workspace("transactional-workspace-edit-lock-order");
+        fs::write(root.join("value.ts"), "value").unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let descriptor = registry.register(&root).unwrap();
+        let workspace_id = descriptor.workspace_id;
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Arc::new(Mutex::new(service));
+        let (operations_locked_tx, operations_locked_rx) = mpsc::channel();
+        let (attempt_trust_tx, attempt_trust_rx) = mpsc::channel();
+        let (trust_acquired_tx, trust_acquired_rx) = mpsc::channel();
+        let competing_registry = Arc::clone(&registry);
+        let competing_trust = Arc::clone(&trust);
+        let competing = thread::spawn(move || {
+            let _operation = competing_registry
+                .lock_operations()
+                .expect("lock competing workspace operation");
+            operations_locked_tx.send(()).unwrap();
+            attempt_trust_rx.recv().unwrap();
+            let _trust = competing_trust.lock().expect("lock trust after operations");
+            trust_acquired_tx.send(()).unwrap();
+        });
+        operations_locked_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("competing operation must hold the registry lock");
+
+        let transaction_registry = Arc::clone(&registry);
+        let transaction_trust = Arc::clone(&trust);
+        let (operation_lock_acquired_tx, operation_lock_acquired_rx) = mpsc::channel();
+        let (continue_to_trust_tx, continue_to_trust_rx) = mpsc::channel();
+        let transaction = thread::spawn(move || {
+            apply_trusted_transactional_descriptor_workspace_edit_with_hooks(
+                &transaction_registry,
+                &transaction_trust,
+                &workspace_id,
+                TransactionalWorkspaceEditRequest {
+                    edit: relative_workspace_edit("value.ts", "changed-", vec![]),
+                    expected_states: &BTreeMap::new(),
+                    file_modes: &BTreeMap::new(),
+                    skipped_paths: &[],
+                },
+                || {
+                    operation_lock_acquired_tx.send(()).unwrap();
+                    continue_to_trust_rx.recv().unwrap();
+                },
+                |_, _| {},
+            )
+        });
+        attempt_trust_tx.send(()).unwrap();
+        trust_acquired_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("operations-first contender must acquire trust without a lock cycle");
+        competing.join().unwrap();
+        operation_lock_acquired_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("transaction must acquire operations before reaching the trust boundary");
+        let trust_before_transaction_attempt = trust
+            .try_lock()
+            .expect("transaction must not lock trust before the operation-lock hook");
+        continue_to_trust_tx.send(()).unwrap();
+        drop(trust_before_transaction_attempt);
+        transaction
+            .join()
+            .unwrap()
+            .expect("transaction must finish after the competing operation");
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "changed-value"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn trust_revocation_waits_for_started_transaction_and_blocks_the_next_one() {
+        let root = temp_workspace("transactional-workspace-edit-trust-revoke");
+        fs::write(root.join("value.ts"), "value").unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let descriptor = registry.register(&root).unwrap();
+        let workspace_id = descriptor.workspace_id;
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Arc::new(Mutex::new(service));
+        let commit_gate = Arc::new(Barrier::new(2));
+        let (release_commit_tx, release_commit_rx) = mpsc::channel();
+        let transaction_registry = Arc::clone(&registry);
+        let transaction_trust = Arc::clone(&trust);
+        let transaction_gate = Arc::clone(&commit_gate);
+        let transaction_workspace_id = workspace_id.clone();
+        let transaction = thread::spawn(move || {
+            apply_trusted_transactional_descriptor_workspace_edit_with_hooks(
+                &transaction_registry,
+                &transaction_trust,
+                &transaction_workspace_id,
+                TransactionalWorkspaceEditRequest {
+                    edit: relative_workspace_edit("value.ts", "changed-", vec![]),
+                    expected_states: &BTreeMap::new(),
+                    file_modes: &BTreeMap::new(),
+                    skipped_paths: &[],
+                },
+                || {},
+                |_, _| {
+                    transaction_gate.wait();
+                    release_commit_rx.recv().unwrap();
+                },
+            )
+        });
+        commit_gate.wait();
+
+        let revoke_trust = Arc::clone(&trust);
+        let revoke_root = path_string(&root);
+        let (revoked_tx, revoked_rx) = mpsc::channel();
+        let revocation = thread::spawn(move || {
+            revoke_trust
+                .lock()
+                .expect("lock trust for revoke")
+                .set(&revoke_root, false)
+                .expect("revoke trust");
+            revoked_tx.send(()).unwrap();
+        });
+        assert!(
+            revoked_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "revocation must wait while the authorized transaction is committing"
+        );
+        release_commit_tx.send(()).unwrap();
+        transaction
+            .join()
+            .unwrap()
+            .expect("started transaction must finish");
+        revoked_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("revocation must finish after the transaction");
+        revocation.join().unwrap();
+
+        let rejected = apply_trusted_transactional_descriptor_workspace_edit(
+            &registry,
+            &trust,
+            &workspace_id,
+            TransactionalWorkspaceEditRequest {
+                edit: relative_workspace_edit("value.ts", "again-", vec![]),
+                expected_states: &BTreeMap::new(),
+                file_modes: &BTreeMap::new(),
+                skipped_paths: &[],
+            },
+        );
+        assert_eq!(
+            rejected.expect_err("revoked workspace must reject the next transaction"),
+            "Trust this workspace before applying a workspace edit."
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "changed-value"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn transactional_workspace_edit_rolls_back_first_file_when_second_file_changes() {
         let root = temp_workspace("transactional-workspace-edit-conflict");
         fs::write(root.join("a.ts"), "a").unwrap();
@@ -8939,11 +6793,11 @@ mod tests {
             .contains("changed before transaction commit"));
         assert_eq!(fs::read_to_string(root.join("a.ts")).unwrap(), "a");
         assert_eq!(fs::read_to_string(root.join("b.ts")).unwrap(), "external");
-        assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .contains("codevo-")));
+        assert!(fs::read_dir(&root).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            !name.contains("codevo-") || name.contains("codevo-recovery")
+        }));
     }
 
     #[test]
@@ -9265,6 +7119,145 @@ mod tests {
     }
 
     #[test]
+    fn transactional_overwrite_preserves_a_preexisting_hardlink_alias_and_rolls_back() {
+        let root = temp_workspace("transactional-workspace-edit-hardlink-alias");
+        let target = root.join("value.ts");
+        let alias = root.join("legitimate-alias.ts");
+        fs::write(&target, "before").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o751)).unwrap();
+        fs::hard_link(&target, &alias).unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        let applied = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("value.ts", "after-", vec![]),
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_eq!(applied.applied_count, 1);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "after-before");
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "before");
+        assert_eq!(
+            fs::metadata(&alias).unwrap().permissions().mode() & 0o777,
+            0o751
+        );
+        assert!(fs::read_dir(&root).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains("codevo-recovery")
+                && fs::read_to_string(entry.path()).is_ok_and(|content| content == "before")
+                && entry
+                    .metadata()
+                    .is_ok_and(|metadata| metadata.permissions().mode() & 0o777 == 0o751)
+        }));
+
+        let rolled_back = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            applied.rollback_edit,
+            &[],
+            &applied.rollback_expected_states,
+            &applied.rollback_file_modes,
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_eq!(rolled_back.applied_count, 1);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "before");
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "before");
+        assert_eq!(
+            fs::metadata(&alias).unwrap().permissions().mode() & 0o777,
+            0o751
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transactional_same_content_overwrite_counts_and_rolls_back_mode_changes() {
+        let root = temp_workspace("transactional-workspace-edit-mode-only-overwrite");
+        fs::write(root.join("source.sh"), "same").unwrap();
+        fs::write(root.join("target.sh"), "same").unwrap();
+        fs::set_permissions(root.join("source.sh"), fs::Permissions::from_mode(0o644)).unwrap();
+        fs::set_permissions(root.join("target.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let edit = LanguageServerWorkspaceEdit {
+            changes: BTreeMap::new(),
+            document_versions: BTreeMap::new(),
+            file_operations: vec![LanguageServerWorkspaceFileOperation::Rename {
+                old_uri: "source.sh".into(),
+                new_uri: "target.sh".into(),
+                options: Some(LanguageServerWorkspaceFileOperationOptions {
+                    overwrite: Some(true),
+                    ..Default::default()
+                }),
+            }],
+        };
+
+        let applied = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_eq!(applied.applied_count, 2);
+        assert!(!root.join("source.sh").exists());
+        assert_eq!(fs::read_to_string(root.join("target.sh")).unwrap(), "same");
+        assert_eq!(
+            fs::metadata(root.join("target.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+
+        let rolled_back = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            applied.rollback_edit,
+            &[],
+            &applied.rollback_expected_states,
+            &applied.rollback_file_modes,
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(rolled_back.applied_count, 2);
+        assert_eq!(fs::read_to_string(root.join("source.sh")).unwrap(), "same");
+        assert_eq!(fs::read_to_string(root.join("target.sh")).unwrap(), "same");
+        assert_eq!(
+            fs::metadata(root.join("source.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+        assert_eq!(
+            fs::metadata(root.join("target.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn transactional_workspace_edit_rejects_symlink_escape_before_mutation() {
         use std::os::unix::fs::symlink;
 
@@ -9297,6 +7290,452 @@ mod tests {
             fs::read_to_string(outside.join("value.ts")).unwrap(),
             "outside"
         );
+    }
+
+    #[test]
+    fn transactional_workspace_edit_keeps_the_retained_root_after_path_replacement() {
+        let root = temp_workspace("transactional-workspace-edit-retained-root");
+        let moved_root = root.with_extension("retained");
+        fs::write(root.join("value.ts"), "original").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("value.ts", "changed-", vec![]),
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |path, index| {
+                if index == 0 && path == Path::new("value.ts") {
+                    fs::rename(&root, &moved_root).unwrap();
+                    fs::create_dir(&root).unwrap();
+                    fs::write(root.join("value.ts"), "replacement").unwrap();
+                }
+            },
+        )
+        .expect("the retained root descriptor must remain authoritative");
+
+        assert_eq!(
+            fs::read_to_string(moved_root.join("value.ts")).unwrap(),
+            "changed-original"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "replacement"
+        );
+        assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("codevo-")));
+        assert!(fs::read_dir(&moved_root).unwrap().all(|entry| {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            !name.contains("codevo-") || name.contains("codevo-recovery")
+        }));
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(moved_root).unwrap();
+    }
+
+    #[test]
+    fn transactional_workspace_edit_keeps_preflight_parent_after_directory_swap() {
+        let root = temp_workspace("transactional-workspace-edit-retained-parent");
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join("src/value.ts"), "original").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("src/value.ts", "changed-", vec![]),
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |path, index| {
+                if index == 0 && path == Path::new("src/value.ts") {
+                    fs::rename(root.join("src"), root.join("retained-src")).unwrap();
+                    fs::create_dir(root.join("src")).unwrap();
+                    fs::write(root.join("src/value.ts"), "replacement").unwrap();
+                }
+            },
+        )
+        .expect("the preflight parent descriptor must remain authoritative");
+
+        assert_eq!(
+            fs::read_to_string(root.join("retained-src/value.ts")).unwrap(),
+            "changed-original"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/value.ts")).unwrap(),
+            "replacement"
+        );
+        for directory in [root.join("src"), root.join("retained-src")] {
+            assert!(fs::read_dir(directory).unwrap().all(|entry| {
+                let name = entry.unwrap().file_name();
+                let name = name.to_string_lossy();
+                !name.contains("codevo-") || name.contains("codevo-recovery")
+            }));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transactional_workspace_edit_validates_auxiliary_paths_before_mutation() {
+        let root = temp_workspace("transactional-workspace-edit-auxiliary-paths");
+        fs::write(root.join("value.ts"), "original").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let edit = relative_workspace_edit("value.ts", "changed-", vec![]);
+
+        let unsafe_skipped = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit.clone(),
+            &["../outside.ts".into()],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_, _| {},
+        );
+        assert!(unsafe_skipped
+            .expect_err("unsafe skipped paths must be rejected")
+            .contains("unsafe"));
+
+        let unrelated_mode = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::from([("unrelated.ts".into(), 0o600)]),
+            |_, _| {},
+        );
+        assert!(unrelated_mode
+            .expect_err("unrelated file modes must be rejected")
+            .contains("outside the transaction"));
+
+        let mut excessive_operations = relative_workspace_edit("value.ts", "changed-", vec![]);
+        excessive_operations.file_operations = (0..=MAX_TRANSACTION_FILE_OPERATIONS)
+            .map(|_| LanguageServerWorkspaceFileOperation::Create {
+                uri: "value.ts".into(),
+                options: None,
+            })
+            .collect();
+        let excessive_operations = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            excessive_operations,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_, _| {},
+        );
+        assert!(excessive_operations
+            .expect_err("excessive repeated operations must be rejected")
+            .contains("file-operation limit"));
+
+        let excessive_skipped = vec!["value.ts".to_string(); MAX_TRANSACTION_AFFECTED_PATHS + 1];
+        let excessive_skipped = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            relative_workspace_edit("value.ts", "changed-", vec![]),
+            &excessive_skipped,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_, _| {},
+        );
+        assert!(excessive_skipped
+            .expect_err("skipped inputs must be capped before collection")
+            .contains("path-entry limit"));
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "original"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transaction_cleanup_preserves_a_foreign_name_replacement() {
+        let root = temp_workspace("transaction-cleanup-foreign-replacement");
+        let parent = File::open(&root).unwrap();
+        let name = CString::new(".value.codevo-stage-test").unwrap();
+        fs::write(root.join(".value.codevo-stage-test"), "owned").unwrap();
+        let owned = File::open(root.join(".value.codevo-stage-test")).unwrap();
+        let expected = descriptor_file_identity(&owned).unwrap();
+        fs::rename(
+            root.join(".value.codevo-stage-test"),
+            root.join("owned-retained"),
+        )
+        .unwrap();
+        fs::write(root.join(".value.codevo-stage-test"), "foreign").unwrap();
+
+        let error = guarded_descriptor_cleanup(&parent, &name, expected, "value.ts", 0)
+            .expect_err("foreign replacement must not be unlinked");
+
+        assert!(error.contains("foreign cleanup replacement"));
+        assert_eq!(
+            fs::read_to_string(root.join(".value.codevo-stage-test")).unwrap(),
+            "foreign"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("owned-retained")).unwrap(),
+            "owned"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repeated_success_retains_bounded_full_content_recovery_entries() {
+        let root = temp_workspace("transaction-repeated-success-footprint");
+        fs::write(root.join("value.ts"), "value").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        for _ in 0..32 {
+            apply_transactional_descriptor_workspace_edit(
+                &registry,
+                &id,
+                relative_workspace_edit("value.ts", "x", vec![]),
+                &[],
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                |_, _| {},
+            )
+            .unwrap();
+        }
+
+        let recovery = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("codevo-recovery")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(recovery.len(), 32);
+        assert!(recovery
+            .iter()
+            .all(|entry| entry.metadata().unwrap().len() >= 5));
+        assert_eq!(fs::metadata(root.join("value.ts")).unwrap().len(), 37);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preexisting_recovery_markers_reject_after_new_registry_admission() {
+        const TEST_RECOVERY_LIMIT: usize = 16;
+        let root = temp_workspace("transaction-persistent-recovery-admission");
+        fs::write(root.join("value.ts"), "value").unwrap();
+        for index in 0..TEST_RECOVERY_LIMIT {
+            fs::write(
+                root.join(format!(".foreign.codevo-recovery-1-{index}-0")),
+                "",
+            )
+            .unwrap();
+        }
+        let restarted_registry = WorkspaceRegistry::new();
+        let id = restarted_registry.register(&root).unwrap().workspace_id;
+
+        let rejected = with_test_parent_transaction_recovery_limit(TEST_RECOVERY_LIMIT, || {
+            apply_transactional_descriptor_workspace_edit(
+                &restarted_registry,
+                &id,
+                relative_workspace_edit("value.ts", "changed-", vec![]),
+                &[],
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                |_, _| {},
+            )
+        });
+
+        assert!(rejected
+            .expect_err("persistent recovery capacity must survive registry restart")
+            .contains("manually inspect"));
+        assert_eq!(fs::read_to_string(root.join("value.ts")).unwrap(), "value");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preexisting_recovery_bytes_reject_after_new_registry_admission() {
+        const TEST_RECOVERY_BYTE_LIMIT: u64 = 32;
+        let root = temp_workspace("transaction-persistent-recovery-byte-admission");
+        fs::write(root.join("value.ts"), "value").unwrap();
+        fs::write(
+            root.join(".codevo-recovery-suspicious"),
+            vec![b'x'; TEST_RECOVERY_BYTE_LIMIT as usize],
+        )
+        .unwrap();
+        let restarted_registry = WorkspaceRegistry::new();
+        let id = restarted_registry.register(&root).unwrap().workspace_id;
+
+        let rejected =
+            with_test_parent_transaction_recovery_byte_limit(TEST_RECOVERY_BYTE_LIMIT, || {
+                apply_transactional_descriptor_workspace_edit(
+                    &restarted_registry,
+                    &id,
+                    relative_workspace_edit("value.ts", "changed-", vec![]),
+                    &[],
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                    |_, _| {},
+                )
+            });
+
+        assert!(rejected
+            .expect_err("persistent recovery byte capacity must survive registry restart")
+            .contains("byte capacity"));
+        assert_eq!(fs::read_to_string(root.join("value.ts")).unwrap(), "value");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transaction_terminal_cleanup_never_mutates_a_late_hardlink_alias() {
+        let root = temp_workspace("transaction-cleanup-terminal-hardlink");
+        let parent = File::open(&root).unwrap();
+        let name = CString::new(".value.codevo-stage-test").unwrap();
+        fs::write(root.join(".value.codevo-stage-test"), "owned").unwrap();
+        fs::set_permissions(
+            root.join(".value.codevo-stage-test"),
+            fs::Permissions::from_mode(0o751),
+        )
+        .unwrap();
+        let owned = File::open(root.join(".value.codevo-stage-test")).unwrap();
+        let expected = descriptor_file_identity(&owned).unwrap();
+        let hook_root = root.clone();
+
+        guarded_descriptor_cleanup_with_terminal_hook(
+            &parent,
+            &name,
+            expected,
+            "value.ts",
+            0,
+            move |_, recovery_name| {
+                let recovery_path = hook_root.join(OsStr::from_bytes(recovery_name.to_bytes()));
+                fs::hard_link(recovery_path, hook_root.join("late-alias")).unwrap();
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("late-alias")).unwrap(),
+            "owned"
+        );
+        assert_eq!(
+            fs::metadata(root.join("late-alias"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o751
+        );
+        assert!(fs::read_dir(&root).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains("codevo-recovery")
+                && fs::read_to_string(entry.path()).is_ok_and(|content| content == "owned")
+                && entry
+                    .metadata()
+                    .is_ok_and(|metadata| metadata.permissions().mode() & 0o777 == 0o751)
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transaction_terminal_cleanup_swap_never_unlinks_the_foreign_entry() {
+        let root = temp_workspace("transaction-cleanup-terminal-swap");
+        let parent = File::open(&root).unwrap();
+        let name = CString::new(".value.codevo-stage-test").unwrap();
+        fs::write(root.join(".value.codevo-stage-test"), "owned").unwrap();
+        let owned = File::open(root.join(".value.codevo-stage-test")).unwrap();
+        let expected = descriptor_file_identity(&owned).unwrap();
+        let hook_root = root.clone();
+
+        guarded_descriptor_cleanup_with_terminal_hook(
+            &parent,
+            &name,
+            expected,
+            "value.ts",
+            0,
+            move |_, recovery_name| {
+                let recovery_path = hook_root.join(OsStr::from_bytes(recovery_name.to_bytes()));
+                fs::rename(&recovery_path, hook_root.join("owned-retained")).unwrap();
+                fs::write(recovery_path, "foreign-after-check").unwrap();
+            },
+        )
+        .expect("terminal cleanup deliberately retains the recovery name");
+
+        assert_eq!(
+            fs::read_to_string(root.join("owned-retained")).unwrap(),
+            "owned"
+        );
+        assert!(fs::read_dir(&root).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains("codevo-recovery")
+                && fs::read_to_string(entry.path()).unwrap() == "foreign-after-check"
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transaction_publish_abort_always_cleans_stage_and_retains_blocked_backup() {
+        let root = temp_workspace("transaction-publish-abort-cleanup");
+        let parent = File::open(&root).unwrap();
+        let leaf_name = CString::new("value.ts").unwrap();
+        let backup_name = CString::new(".value.ts.codevo-backup-test").unwrap();
+        let stage_name = CString::new(".value.ts.codevo-stage-test").unwrap();
+        fs::write(root.join("value.ts"), "foreign").unwrap();
+        fs::write(root.join(".value.ts.codevo-backup-test"), "original").unwrap();
+        fs::write(root.join(".value.ts.codevo-stage-test"), "staged").unwrap();
+        let stage_path = DescriptorTransactionPath {
+            leaf_name: stage_name.clone(),
+            parent: parent.try_clone().unwrap(),
+            relative_path: "value.ts".into(),
+        };
+        let stage_snapshot = descriptor_transaction_file_snapshot(&stage_path).unwrap();
+        let staged = vec![StagedTransactionFile {
+            parent: parent.try_clone().unwrap(),
+            relative_path: "value.ts".into(),
+            snapshot: stage_snapshot,
+            temporary_name: stage_name,
+        }];
+        let path = DescriptorTransactionPath {
+            leaf_name,
+            parent,
+            relative_path: "value.ts".into(),
+        };
+
+        let error = abort_transaction_current_path(
+            &staged,
+            &Vec::<CommittedTransactionPath>::new(),
+            &path,
+            Some(&backup_name),
+            "publish failed".into(),
+        );
+
+        assert!(error.contains("original retained"));
+        assert_eq!(
+            fs::read_to_string(root.join("value.ts")).unwrap(),
+            "foreign"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(".value.ts.codevo-backup-test")).unwrap(),
+            "original"
+        );
+        assert!(!root.join(".value.ts.codevo-stage-test").exists());
+        assert!(fs::read_dir(&root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("codevo-recovery")));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -10990,19 +9429,12 @@ mod tests {
         );
 
         let plan = build_javascript_typescript_language_server_plan(
-            &path_string(&root),
             &trust,
-            Some("workspace"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &JavaScriptTypeScriptLanguageServerOptions {
+                root_path: path_string(&root),
+                type_script_version_preference: Some("workspace".to_string()),
+                ..Default::default()
+            },
         )
         .expect("language server plan");
 
@@ -11061,19 +9493,12 @@ mod tests {
         let trust = Mutex::new(service);
 
         let plan = build_javascript_typescript_language_server_plan(
-            &path_string(&root),
             &trust,
-            Some("workspace"),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            &JavaScriptTypeScriptLanguageServerOptions {
+                root_path: path_string(&root),
+                type_script_version_preference: Some("workspace".to_string()),
+                ..Default::default()
+            },
         )
         .expect("language server plan");
 
@@ -11278,49 +9703,6 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn js_test_untrusted_workspace_blocks_dispatch() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let root = temp_workspace("js-test-untrusted");
-        let marker = root.join("js-tests-ran");
-        fs::write(root.join("vitest.config.ts"), "export default {}").expect("write vitest config");
-        let binary = root.join("node_modules/.bin/vitest");
-        fs::create_dir_all(binary.parent().expect("binary parent"))
-            .expect("create binary directory");
-        fs::write(
-            &binary,
-            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
-        )
-        .expect("write vitest sentinel");
-        let mut permissions = fs::metadata(&binary)
-            .expect("vitest metadata")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&binary, permissions).expect("make vitest executable");
-        let trust = Mutex::new(
-            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
-        );
-
-        let response = tauri::async_runtime::block_on(run_js_tests_json_with_trust(
-            path_string(&root),
-            root.join("app-data"),
-            None,
-            &trust,
-        ))
-        .expect("js test response");
-
-        assert_eq!(
-            response,
-            PhpTestRunResponse::Unavailable {
-                message: "Trust this workspace to run JavaScript tests.".to_string(),
-            }
-        );
-        assert!(!marker.exists());
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
     #[derive(Default)]
     struct CollectingDebugSink {
         events: Mutex<Vec<DebugEvent>>,
@@ -11355,6 +9737,7 @@ mod tests {
                 script_path: path_string(&script),
             },
             Vec::new(),
+            crate::debug_adapter::DebugExceptionPauseMode::None,
             Arc::clone(&sink) as Arc<dyn DebugEventSink>,
             Arc::clone(&registry),
             &trust,
@@ -11391,6 +9774,7 @@ mod tests {
                 script_path: "index.js".to_string(),
             },
             Vec::new(),
+            crate::debug_adapter::DebugExceptionPauseMode::None,
             Arc::clone(&sink) as Arc<dyn DebugEventSink>,
             Arc::clone(&registry),
             &trust,
@@ -11419,6 +9803,7 @@ mod tests {
                 script_path: path_string(&script),
             },
             Vec::new(),
+            crate::debug_adapter::DebugExceptionPauseMode::None,
             Arc::clone(&sink) as Arc<dyn DebugEventSink>,
             Arc::clone(&registry),
             &trust,
@@ -11453,6 +9838,7 @@ mod tests {
             path_string(&missing),
             DebugLaunchTarget::PhpListen { port: Some(0) },
             Vec::new(),
+            crate::debug_adapter::DebugExceptionPauseMode::None,
             Arc::clone(&sink) as Arc<dyn DebugEventSink>,
             Arc::clone(&registry),
             &trust,
@@ -11481,6 +9867,7 @@ mod tests {
             path_string(&root),
             DebugLaunchTarget::PhpListen { port: Some(0) },
             Vec::new(),
+            crate::debug_adapter::DebugExceptionPauseMode::None,
             Arc::clone(&sink) as Arc<dyn DebugEventSink>,
             Arc::clone(&registry),
             &trust,
@@ -11508,6 +9895,40 @@ mod tests {
     }
 
     #[test]
+    fn debug_start_rejects_node_exception_pause_mode_for_php_sessions() {
+        let root = temp_workspace("debug-php-exception-pause");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingDebugSink::default());
+
+        let response = tauri::async_runtime::block_on(debug_start_with_trust(
+            path_string(&root),
+            DebugLaunchTarget::PhpListen { port: Some(0) },
+            Vec::new(),
+            crate::debug_adapter::DebugExceptionPauseMode::Uncaught,
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            Arc::clone(&registry),
+            &trust,
+        ))
+        .expect("debug start response");
+
+        assert_eq!(
+            response,
+            DebugStartResponse::Error {
+                message: "Exception pause modes are only available for Node.js debug sessions."
+                    .to_string(),
+            }
+        );
+        assert_eq!(registry.session_id_for_root(&path_string(&root)), None);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn revoking_workspace_trust_stops_its_debug_session() {
         let root = temp_workspace("debug-trust-revoked");
         let mut service =
@@ -11523,6 +9944,7 @@ mod tests {
             path_string(&root),
             DebugLaunchTarget::PhpListen { port: Some(0) },
             Vec::new(),
+            crate::debug_adapter::DebugExceptionPauseMode::None,
             Arc::clone(&sink) as Arc<dyn DebugEventSink>,
             Arc::clone(&registry),
             &trust,
@@ -11532,10 +9954,11 @@ mod tests {
         assert!(matches!(response, DebugStartResponse::Ok { .. }));
         assert!(registry.session_id_for_root(&path_string(&root)).is_some());
 
-        revoke_workspace_runtime_trust(
-            &path_string(&root),
+        crate::workspace_trust_commands::revoke_workspace_runtime_trust(
+            &root,
             &EslintProcessRegistry::default(),
             &registry,
+            &crate::terminal_session::TerminalSupervisor::new(),
         );
 
         assert_eq!(registry.session_id_for_root(&path_string(&root)), None);
@@ -11773,328 +10196,4 @@ mod tests {
             "expected Controller.php in results, got {results:?}"
         );
     }
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let builder = tauri::Builder::default().enable_macos_default_menu(false);
-    #[cfg(target_os = "macos")]
-    let builder =
-        builder
-            .menu(application_menu)
-            .on_menu_event(|app, event| match event.id().as_ref() {
-                CLOSE_ACTIVE_TAB_MENU_ID => {
-                    let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
-                }
-                FONT_ZOOM_IN_MENU_ID => {
-                    let _ = app.emit(FONT_ZOOM_IN_EVENT, ());
-                }
-                FONT_ZOOM_OUT_MENU_ID => {
-                    let _ = app.emit(FONT_ZOOM_OUT_EVENT, ());
-                }
-                FONT_ZOOM_RESET_MENU_ID => {
-                    let _ = app.emit(FONT_ZOOM_RESET_EVENT, ());
-                }
-                OPEN_APPEARANCE_SETTINGS_MENU_ID => {
-                    let _ = app.emit(OPEN_APPEARANCE_SETTINGS_EVENT, ());
-                }
-                QUIT_APPLICATION_MENU_ID => {
-                    let listener_ready = app
-                        .try_state::<NativeCloseListenerState>()
-                        .is_some_and(|state| state.ready.load(Ordering::Acquire));
-                    if listener_ready {
-                        if app.emit(NATIVE_CLOSE_REQUEST_EVENT, "quit").is_ok() {
-                            return;
-                        }
-                    }
-
-                    shutdown_runtime_processes(app);
-                    app.exit(0);
-                }
-                TOGGLE_FONT_LIGATURES_MENU_ID => {
-                    let _ = app.emit(TOGGLE_FONT_LIGATURES_EVENT, ());
-                }
-                _ => {}
-            });
-
-    builder
-        .on_window_event(|window, event| {
-            #[cfg(target_os = "macos")]
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                let listener_ready = window
-                    .app_handle()
-                    .try_state::<NativeCloseListenerState>()
-                    .is_some_and(|state| state.ready.load(Ordering::Acquire));
-                if listener_ready {
-                    api.prevent_close();
-                    if window.emit(NATIVE_CLOSE_REQUEST_EVENT, "close").is_err() {
-                        let _ = window.destroy();
-                    }
-                }
-                return;
-            }
-
-            if matches!(event, WindowEvent::Destroyed) {
-                shutdown_runtime_processes(window.app_handle());
-            }
-        })
-        .manage(Mutex::new(SmartModeService::new()))
-        .manage(NativeCloseListenerState::default())
-        .manage(PhpLanguageServerRegistry::new())
-        .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
-        .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
-        .manage(WorkspaceFileChangeWatchRegistry::new())
-        .manage(WorkspaceIndexLifecycle::new())
-        .manage(Arc::new(DebugSessionRegistry::new()))
-        .manage(Arc::new(eslint::EslintProcessRegistry::default()))
-        .manage(TerminalSupervisor::new())
-        .manage(WorkspaceRegistry::new())
-        .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
-            let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
-            let trust_service = WorkspaceTrustService::load(trust_path)?;
-            app.manage(Mutex::new(trust_service));
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            amend_git_commit,
-            reword_git_commit,
-            clear_workspace_index,
-            apply_workspace_edit,
-            commit_git_changes,
-            install_managed_phpactor,
-            install_managed_typescript_language_server,
-            open_workspace_from_picker,
-            register_workspace_path,
-            unregister_workspace,
-            get_workspace_descriptor,
-            workspace_read_text_file,
-            workspace_read_image_file,
-            workspace_read_directory,
-            workspace_search_files,
-            workspace_search_text,
-            workspace_replace_in_path,
-            workspace_apply_workspace_edit,
-            workspace_apply_workspace_edit_transaction,
-            workspace_save_text_file,
-            workspace_create_text_file,
-            workspace_create_directory,
-            workspace_delete_path,
-            workspace_rename_path,
-            debug_evaluate,
-            debug_pause,
-            debug_scopes,
-            debug_set_breakpoints,
-            debug_stack_trace,
-            debug_start,
-            debug_step,
-            debug_stop,
-            debug_variables,
-            detect_git_repositories,
-            detect_php_tools,
-            detect_workspace,
-            dispose_workspace_root,
-            get_php_file_outline,
-            get_git_blame,
-            get_git_commit_graph_page,
-            get_git_commit_log,
-            get_git_commit_diff,
-            get_git_commit_details,
-            revert_git_commit,
-            cherry_pick_git_commit,
-            get_git_commit_files,
-            get_git_branches,
-            get_git_repo_status,
-            get_git_diff,
-            get_git_file_commit_diff,
-            get_git_file_history,
-            get_git_file_hunks,
-            get_git_status,
-            fetch_git_changes,
-            record_local_history_snapshot,
-            get_local_history_versions,
-            get_local_history_version_content,
-            get_javascript_typescript_language_server_status,
-            get_php_language_server_status,
-            get_runtime_observability,
-            restart_language_runtime,
-            stop_language_runtime,
-            get_php_tree,
-            get_smart_mode_state,
-            get_workspace_trust,
-            initialize_workspace_index,
-            list_monospace_font_families,
-            start_workspace_file_watch,
-            list_terminal_profiles,
-            open_language_runtime_log,
-            reveal_item_in_dir,
-            parse_php_file_outline,
-            parse_php_syntax,
-            plan_javascript_typescript_language_server,
-            plan_php_language_server,
-            push_git_changes,
-            pull_git_changes,
-            save_git_stash,
-            get_git_stash_list,
-            get_git_stash_diff,
-            stash_apply_git,
-            stash_pop_git,
-            stash_drop_git,
-            list_git_branches,
-            list_git_remote_branches,
-            get_git_current_branch,
-            checkout_git_remote_branch,
-            create_git_branch,
-            delete_git_branch,
-            rename_git_branch,
-            switch_git_branch,
-            quit_application,
-            set_native_close_listener_ready,
-            confirm_native_shutdown,
-            read_directory,
-            read_text_file,
-            remove_workspace_index_file,
-            resize_terminal_session,
-            revert_git_files,
-            run_eslint_analysis,
-            run_eslint_document_analysis,
-            run_phpstan_analysis,
-            run_pint_format,
-            run_prettier_format,
-            run_artisan_route_list,
-            run_js_tests_json,
-            run_php_tests_junit,
-            search_files,
-            search_project_symbols,
-            search_text,
-            set_smart_mode,
-            set_workspace_trust,
-            stage_git_files,
-            stage_git_hunk,
-            unstage_git_hunk,
-            revert_git_hunk,
-            start_initial_metadata_scan,
-            start_javascript_typescript_language_server,
-            start_workspace_reindex,
-            start_php_language_server,
-            start_terminal_session,
-            stop_all_javascript_typescript_language_servers,
-            stop_all_php_language_servers,
-            stop_all_terminal_sessions,
-            stop_javascript_typescript_language_server,
-            stop_php_language_server,
-            stop_terminal_session,
-            stop_terminal_sessions_for_root,
-            unstage_git_files,
-            javascript_typescript_document_did_change,
-            javascript_typescript_document_did_close,
-            javascript_typescript_document_did_open,
-            javascript_typescript_document_did_save,
-            javascript_typescript_language_server_execute_command,
-            javascript_typescript_language_server_execute_command_locations,
-            javascript_typescript_workspace_did_change_configuration,
-            javascript_typescript_workspace_did_change_watched_files,
-            javascript_typescript_workspace_did_create_files,
-            javascript_typescript_workspace_did_delete_files,
-            javascript_typescript_workspace_did_rename_files,
-            javascript_typescript_workspace_will_create_files,
-            javascript_typescript_workspace_will_delete_files,
-            javascript_typescript_workspace_will_rename_files,
-            javascript_typescript_text_document_code_action_resolve,
-            javascript_typescript_text_document_code_actions,
-            javascript_typescript_text_document_code_lens_resolve,
-            javascript_typescript_text_document_code_lenses,
-            javascript_typescript_text_document_completion,
-            javascript_typescript_text_document_completion_resolve,
-            javascript_typescript_text_document_declaration,
-            javascript_typescript_text_document_definition,
-            javascript_typescript_text_document_document_highlights,
-            javascript_typescript_text_document_document_link_resolve,
-            javascript_typescript_text_document_document_links,
-            javascript_typescript_text_document_document_symbols,
-            javascript_typescript_text_document_folding_ranges,
-            javascript_typescript_text_document_formatting,
-            javascript_typescript_text_document_hover,
-            javascript_typescript_text_document_incoming_calls,
-            javascript_typescript_text_document_implementation,
-            javascript_typescript_text_document_inlay_hint_resolve,
-            javascript_typescript_text_document_inlay_hints,
-            javascript_typescript_text_document_linked_editing_ranges,
-            javascript_typescript_text_document_on_type_formatting,
-            javascript_typescript_text_document_outgoing_calls,
-            javascript_typescript_text_document_prepare_call_hierarchy,
-            javascript_typescript_text_document_prepare_rename,
-            javascript_typescript_text_document_prepare_type_hierarchy,
-            javascript_typescript_text_document_range_formatting,
-            javascript_typescript_text_document_range_semantic_tokens,
-            javascript_typescript_text_document_references,
-            javascript_typescript_text_document_rename,
-            javascript_typescript_text_document_selection_ranges,
-            javascript_typescript_text_document_semantic_tokens,
-            javascript_typescript_text_document_signature_help,
-            javascript_typescript_text_document_source_definition,
-            javascript_typescript_text_document_type_hierarchy_subtypes,
-            javascript_typescript_text_document_type_hierarchy_supertypes,
-            javascript_typescript_text_document_type_definition,
-            javascript_typescript_workspace_symbols,
-            language_server_execute_command,
-            language_server_execute_command_locations,
-            text_document_code_action_resolve,
-            text_document_code_actions,
-            text_document_code_lens_resolve,
-            text_document_code_lenses,
-            text_document_completion,
-            text_document_completion_resolve,
-            text_document_declaration,
-            text_document_definition,
-            text_document_document_highlights,
-            text_document_document_link_resolve,
-            text_document_document_links,
-            text_document_document_symbols,
-            text_document_folding_ranges,
-            text_document_did_change,
-            text_document_did_close,
-            text_document_did_open,
-            text_document_did_save,
-            text_document_formatting,
-            text_document_hover,
-            text_document_incoming_calls,
-            text_document_implementation,
-            text_document_inlay_hint_resolve,
-            text_document_inlay_hints,
-            text_document_linked_editing_ranges,
-            text_document_on_type_formatting,
-            text_document_outgoing_calls,
-            text_document_prepare_call_hierarchy,
-            text_document_prepare_rename,
-            text_document_prepare_type_hierarchy,
-            text_document_range_formatting,
-            text_document_range_semantic_tokens,
-            text_document_references,
-            text_document_rename,
-            text_document_selection_ranges,
-            text_document_semantic_tokens,
-            text_document_signature_help,
-            text_document_type_hierarchy_subtypes,
-            text_document_type_hierarchy_supertypes,
-            text_document_type_definition,
-            text_document_will_create_files,
-            text_document_will_delete_files,
-            text_document_will_rename_files,
-            workspace_did_create_files,
-            workspace_did_delete_files,
-            workspace_did_rename_files,
-            upsert_workspace_index_file,
-            workspace_symbols,
-            write_terminal_input
-        ])
-        .build(tauri::generate_context!())
-        .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))
-        .run(|app, event| {
-            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                shutdown_runtime_processes(app);
-            }
-        });
 }

@@ -461,8 +461,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_string(),
             ));
         }
@@ -566,8 +565,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_string(),
             ));
         }
@@ -654,8 +652,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !status.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&status.stderr).trim().to_string(),
             ));
         }
@@ -704,14 +701,12 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
 
         if reverting {
             run_git(&root, ["revert", "--abort"], self.trusted)?;
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "The commit could not be reverted because it conflicts with the current branch. The revert was aborted and the working tree was restored.",
             ));
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ))
     }
@@ -726,8 +721,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !status.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&status.stderr).trim().to_string(),
             ));
         }
@@ -798,22 +792,19 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
                 run_git(&root, ["cherry-pick", "--abort"], self.trusted)?;
             }
 
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "The commit is already applied to the current branch. The cherry-pick was aborted and the working tree was restored.",
             ));
         }
 
         if cherry_picking {
             run_git(&root, ["cherry-pick", "--abort"], self.trusted)?;
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "The commit could not be cherry-picked because it conflicts with the current branch. The cherry-pick was aborted and the working tree was restored.",
             ));
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ))
     }
@@ -925,8 +916,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).to_string(),
             ));
         }
@@ -1031,8 +1021,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_string(),
             ));
         }
@@ -1061,8 +1050,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_string(),
             ));
         }
@@ -1098,8 +1086,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_string(),
             ));
         }
@@ -1130,8 +1117,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_string(),
             ));
         }
@@ -1150,8 +1136,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .output()?;
 
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 String::from_utf8_lossy(&output.stderr).trim().to_string(),
             ));
         }
@@ -1538,8 +1523,7 @@ pub fn load_commit_details(
     let output = git_output_vec(root, vec!["show", "-s", &command, &commit_hash], trusted)?;
     let commit = output
         .split('\0')
-        .filter(|entry| !entry.trim().is_empty())
-        .next()
+        .find(|entry| !entry.trim().is_empty())
         .map(|entry| {
             let fields: Vec<&str> = entry.split('\x1f').collect();
             parse_git_commit_from_fields(&fields)
@@ -2369,8 +2353,7 @@ fn run_git_remote<const N: usize>(root: &Path, args: [&str; N], trusted: bool) -
         return Ok(());
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
+    Err(io::Error::other(
         String::from_utf8_lossy(&output.stderr).trim().to_string(),
     ))
 }
@@ -2386,8 +2369,7 @@ fn run_git_vec(root: &Path, args: Vec<&str>, trusted: bool) -> io::Result<()> {
         return Ok(());
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
+    Err(io::Error::other(
         String::from_utf8_lossy(&output.stderr).trim().to_string(),
     ))
 }
@@ -2420,8 +2402,7 @@ fn git_output_vec_with_env<S: AsRef<str>>(
         return Ok(String::from_utf8_lossy(&output.stdout).to_string());
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
+    Err(io::Error::other(
         String::from_utf8_lossy(&output.stderr).trim().to_string(),
     ))
 }
@@ -2847,8 +2828,7 @@ fn rewrite_commit(
         .output()?;
 
     if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
@@ -3233,8 +3213,7 @@ fn load_diff_snapshot(
     let modified_size = diff_content_size(root, &modified_source, trusted)?;
     let combined_size = original_size
         .unwrap_or_default()
-        .checked_add(modified_size.unwrap_or_default())
-        .unwrap_or(u64::MAX);
+        .saturating_add(modified_size.unwrap_or_default());
 
     if combined_size > MAX_DIFF_SNAPSHOT_BYTES {
         return Ok(unavailable_diff_snapshot(
@@ -5604,7 +5583,7 @@ mod tests {
         let change = conflicted_change(&gateway, &repo, "conflict.txt");
 
         let error = gateway
-            .stage(repo.path(), &[change.clone()])
+            .stage(repo.path(), std::slice::from_ref(&change))
             .expect_err("diff3 conflict markers must block staging");
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);

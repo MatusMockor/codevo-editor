@@ -468,6 +468,13 @@ mod tests {
     }
 
     impl DebugAdapter for InertDebugAdapter {
+        fn set_exception_pause(
+            &mut self,
+            _mode: crate::debug_adapter::DebugExceptionPauseMode,
+        ) -> Result<(), String> {
+            Err("Exception pause modes are unavailable for this debug session.".to_string())
+        }
+
         fn set_breakpoints(
             &mut self,
             _file_path: &str,

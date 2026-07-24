@@ -14,14 +14,33 @@ use std::os::{
     unix::ffi::OsStrExt,
 };
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-use std::{collections::HashMap, fs::File, path::Component, sync::Mutex};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fs::File,
+    path::Component,
+    sync::Mutex,
+};
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const MAX_REGISTERED_PATHS_PER_WORKSPACE: usize = 128;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const MAX_REGISTERED_PATHS_GLOBAL: usize = 4096;
 
 #[cfg(target_os = "macos")]
 const O_RESOLVE_BENEATH: libc::c_int = 0x0000_1000;
+#[cfg(target_os = "macos")]
+pub(crate) const MACOS_OPEN_BENEATH_NOFOLLOW_FLAGS: libc::c_int =
+    O_RESOLVE_BENEATH | libc::O_NOFOLLOW_ANY;
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct WorkspaceId(String);
+
+impl WorkspaceId {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,6 +103,7 @@ pub struct ManagedWorkspaceDescriptor {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 struct ManagedWorkspace {
     descriptor: ManagedWorkspaceDescriptor,
+    registered_paths: BTreeSet<PathBuf>,
     root: File,
     #[cfg(test)]
     drop_hook: Option<Box<dyn FnOnce() + Send>>,
@@ -102,6 +122,8 @@ impl Drop for ManagedWorkspace {
 pub struct WorkspaceRegistry {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     workspaces: Mutex<HashMap<WorkspaceId, ManagedWorkspace>>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    path_owners: Mutex<HashMap<PathBuf, WorkspaceId>>,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     operations: Mutex<()>,
 }
@@ -135,17 +157,71 @@ impl WorkspaceRegistry {
     where
         F: FnOnce() -> io::Result<()>,
     {
+        let _operation = self.lock_operations()?;
         // Following the selected root is allowed only here. Every later access starts at this FD.
         let root = open_selected_root(selected_root)?;
         post_open()?;
         let canonical_root_path = opened_root_path(&root)?;
+        let selected_path = normalize_registered_path(selected_root)?;
+        let canonical_path = normalize_registered_path(&canonical_root_path)?;
         let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
-        if let Some(existing) = workspaces
-            .values()
-            .find(|workspace| workspace.descriptor.canonical_root_path == canonical_root_path)
-        {
+        let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
+        let existing_id = workspaces.iter().find_map(|(workspace_id, workspace)| {
+            (workspace.descriptor.canonical_root_path == canonical_root_path)
+                .then(|| workspace_id.clone())
+        });
+        let workspace_id = match existing_id {
+            Some(workspace_id) => workspace_id,
+            None => random_workspace_id()?,
+        };
+        let mut assigned_paths = BTreeSet::from([selected_path, canonical_path]);
+        if let Some(existing) = workspaces.get(&workspace_id) {
+            assigned_paths.extend(existing.registered_paths.iter().cloned());
+        }
+        if assigned_paths.len() > MAX_REGISTERED_PATHS_PER_WORKSPACE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "workspace registered-path limit exceeded",
+            ));
+        }
+        let new_global_paths = assigned_paths
+            .iter()
+            .filter(|path| !path_owners.contains_key(*path))
+            .count();
+        if path_owners.len().saturating_add(new_global_paths) > MAX_REGISTERED_PATHS_GLOBAL {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "global workspace registered-path limit exceeded",
+            ));
+        }
+        for path in &assigned_paths {
+            let Some(previous_id) = path_owners.get(path) else {
+                continue;
+            };
+            if previous_id == &workspace_id {
+                continue;
+            }
+            let previous = workspaces.get(previous_id).ok_or_else(unknown_workspace)?;
+            if normalize_registered_path(&previous.descriptor.canonical_root_path)? == *path {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "canonical workspace path is already owned by another retained identity",
+                ));
+            }
+        }
+        for path in &assigned_paths {
+            if let Some(previous_id) = path_owners.insert(path.clone(), workspace_id.clone()) {
+                if previous_id != workspace_id {
+                    if let Some(previous) = workspaces.get_mut(&previous_id) {
+                        previous.registered_paths.remove(path);
+                    }
+                }
+            }
+        }
+        if let Some(existing) = workspaces.get_mut(&workspace_id) {
+            existing.registered_paths = assigned_paths;
             return Ok(ManagedWorkspaceDescriptor {
-                workspace_id: existing.descriptor.workspace_id.clone(),
+                workspace_id,
                 selected_root_path: selected_root.to_path_buf(),
                 canonical_root_path,
                 case_sensitive: existing.descriptor.case_sensitive,
@@ -156,7 +232,7 @@ impl WorkspaceRegistry {
             });
         }
         let descriptor = ManagedWorkspaceDescriptor {
-            workspace_id: random_workspace_id()?,
+            workspace_id,
             selected_root_path: selected_root.to_path_buf(),
             canonical_root_path,
             case_sensitive: detect_case_sensitivity(&root),
@@ -166,6 +242,7 @@ impl WorkspaceRegistry {
             descriptor.workspace_id.clone(),
             ManagedWorkspace {
                 descriptor: descriptor.clone(),
+                registered_paths: assigned_paths,
                 root,
                 #[cfg(test)]
                 drop_hook: None,
@@ -175,6 +252,17 @@ impl WorkspaceRegistry {
     }
 
     pub fn unregister(&self, workspace_id: &WorkspaceId) -> io::Result<()> {
+        self.unregister_after(workspace_id, |_| Ok(()))
+    }
+
+    pub(crate) fn unregister_after<F>(
+        &self,
+        workspace_id: &WorkspaceId,
+        before_remove: F,
+    ) -> io::Result<()>
+    where
+        F: FnOnce(&ManagedWorkspaceDescriptor) -> io::Result<()>,
+    {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = workspace_id;
@@ -185,15 +273,45 @@ impl WorkspaceRegistry {
         // by an in-flight open intentionally retain their normal OS-handle lifetime.
         {
             let _operation = self.lock_operations()?;
-            let removed = self
-                .workspaces
-                .lock()
-                .map_err(lock_error)?
+            let descriptor = self.descriptor(workspace_id)?;
+            before_remove(&descriptor)?;
+            let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
+            let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
+            let removed = workspaces
                 .remove(workspace_id)
                 .ok_or_else(unknown_workspace)?;
+            for path in &removed.registered_paths {
+                if path_owners.get(path) == Some(workspace_id) {
+                    path_owners.remove(path);
+                }
+            }
+            drop(path_owners);
+            drop(workspaces);
             drop(removed);
             Ok(())
         }
+    }
+
+    pub(crate) fn descriptor_for_registered_path(
+        &self,
+        path: &Path,
+    ) -> io::Result<ManagedWorkspaceDescriptor> {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = path;
+            return Err(unsupported_platform());
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let registered_path = normalize_registered_path(path)?;
+        let workspaces = self.workspaces.lock().map_err(lock_error)?;
+        let path_owners = self.path_owners.lock().map_err(lock_error)?;
+        let workspace_id = path_owners
+            .get(&registered_path)
+            .ok_or_else(unknown_workspace)?;
+        workspaces
+            .get(workspace_id)
+            .map(|workspace| workspace.descriptor.clone())
+            .ok_or_else(unknown_workspace)
     }
 
     pub fn descriptor(&self, workspace_id: &WorkspaceId) -> io::Result<ManagedWorkspaceDescriptor> {
@@ -220,6 +338,9 @@ impl WorkspaceRegistry {
             } else {
                 Vec::new()
             };
+            if let Ok(mut path_owners) = self.path_owners.lock() {
+                path_owners.clear();
+            }
             drop(drained);
         }
     }
@@ -241,6 +362,22 @@ impl WorkspaceRegistry {
             .ok_or_else(unknown_workspace)?
             .root
             .try_clone()
+    }
+
+    /// Resolves a legacy raw-root command to an already admitted workspace without reopening
+    /// that path. The returned directory FD remains bound to the registered filesystem object
+    /// even if its selected or canonical path is subsequently replaced.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) fn clone_root_for_path(&self, root_path: &Path) -> io::Result<File> {
+        let workspaces = self.workspaces.lock().map_err(lock_error)?;
+        let workspace = workspaces
+            .values()
+            .find(|workspace| {
+                workspace.descriptor.selected_root_path == root_path
+                    || workspace.descriptor.canonical_root_path == root_path
+            })
+            .ok_or_else(unknown_workspace)?;
+        workspace.root.try_clone()
     }
 
     pub(crate) fn lock_operations(&self) -> io::Result<std::sync::MutexGuard<'_, ()>> {
@@ -266,6 +403,29 @@ impl WorkspaceRegistry {
         post_clone()?;
         open_relative_to(&root, relative_path)
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn normalize_registered_path(path: &Path) -> io::Result<PathBuf> {
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "registered workspace path must be absolute",
+        ));
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    Ok(normalized)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -338,7 +498,7 @@ fn open_selected_root(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(target_os = "macos")]
-fn opened_root_path(root: &File) -> io::Result<PathBuf> {
+pub(crate) fn opened_root_path(root: &File) -> io::Result<PathBuf> {
     let mut opened_stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     if unsafe { libc::fstat(root.as_raw_fd(), opened_stat.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
@@ -370,7 +530,7 @@ fn opened_root_path(root: &File) -> io::Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-fn opened_root_path(root: &File) -> io::Result<PathBuf> {
+pub(crate) fn opened_root_path(root: &File) -> io::Result<PathBuf> {
     let path = std::fs::read_link(format!("/proc/self/fd/{}", root.as_raw_fd()))?;
     let metadata = std::fs::metadata(&path)?;
     if !metadata.is_dir() {
@@ -383,6 +543,48 @@ fn opened_root_path(root: &File) -> io::Result<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) fn opened_regular_file_path(file: &File) -> io::Result<PathBuf> {
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "opened descriptor is not a regular file",
+        ));
+    }
+    let mut opened_path = vec![0_u8; libc::PATH_MAX as usize];
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, opened_path.as_mut_ptr()) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let end = opened_path
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "opened path is not terminated")
+        })?;
+    Ok(PathBuf::from(std::ffi::OsString::from_vec(
+        opened_path[..end].to_vec(),
+    )))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn opened_regular_file_path(file: &File) -> io::Result<PathBuf> {
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "opened descriptor is not a regular file",
+        ));
+    }
+    std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn opened_regular_file_path(_file: &File) -> io::Result<PathBuf> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Opened descriptor paths are unsupported on this platform.",
+    ))
+}
+
+#[cfg(target_os = "macos")]
 fn open_relative_to(root: &File, path: &Path) -> io::Result<File> {
     open_relative_to_with_hook(root, path, || Ok(()))
 }
@@ -390,6 +592,19 @@ fn open_relative_to(root: &File, path: &Path) -> io::Result<File> {
 #[cfg(target_os = "linux")]
 fn open_relative_to(root: &File, path: &Path) -> io::Result<File> {
     open_relative_to_with_hook(root, path, || Ok(()))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn open_file_relative_to(root: &File, path: &Path) -> io::Result<File> {
+    open_relative_to(root, path)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn open_file_relative_to(_root: &File, _path: &Path) -> io::Result<File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Descriptor-relative workspace reads are unsupported on this platform.",
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -404,11 +619,7 @@ where
         libc::openat(
             root.as_raw_fd(),
             path.as_ptr(),
-            libc::O_RDONLY
-                | libc::O_NONBLOCK
-                | libc::O_CLOEXEC
-                | libc::O_NOFOLLOW_ANY
-                | O_RESOLVE_BENEATH,
+            libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC | MACOS_OPEN_BENEATH_NOFOLLOW_FLAGS,
         )
     };
     if fd < 0 {
@@ -529,6 +740,20 @@ mod tests {
     };
 
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_descriptor_open_flags_require_beneath_and_no_symlinks() {
+        assert_eq!(
+            MACOS_OPEN_BENEATH_NOFOLLOW_FLAGS & O_RESOLVE_BENEATH,
+            O_RESOLVE_BENEATH
+        );
+        assert_eq!(
+            MACOS_OPEN_BENEATH_NOFOLLOW_FLAGS & libc::O_NOFOLLOW_ANY,
+            libc::O_NOFOLLOW_ANY
+        );
+        assert_ne!(O_RESOLVE_BENEATH, libc::O_NOFOLLOW_ANY);
+    }
 
     fn temp_root(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -940,5 +1165,126 @@ mod tests {
                 .kind(),
             io::ErrorKind::NotFound
         );
+    }
+
+    #[test]
+    fn unregister_after_runs_lifecycle_before_removal_and_fails_closed() {
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry.register(temp_root("lifecycle")).unwrap();
+        let callback_root = descriptor.canonical_root_path.clone();
+        let error = registry
+            .unregister_after(&descriptor.workspace_id, |registered| {
+                assert_eq!(registered.canonical_root_path, callback_root);
+                Err(io::Error::other("terminal stop failed"))
+            })
+            .expect_err("lifecycle failure must preserve registration");
+        assert_eq!(error.to_string(), "terminal stop failed");
+        assert!(registry.descriptor(&descriptor.workspace_id).is_ok());
+
+        registry
+            .unregister_after(&descriptor.workspace_id, |registered| {
+                assert_eq!(registered.canonical_root_path, callback_root);
+                Ok(())
+            })
+            .expect("successful lifecycle removes registration");
+        assert!(registry.descriptor(&descriptor.workspace_id).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_aliases_are_bounded_deduplicated_and_removed_with_workspace() {
+        let registry = WorkspaceRegistry::new();
+        let root = temp_root("alias-target").canonicalize().unwrap();
+        let aliases = temp_root("alias-container");
+        let descriptor = registry.register(&root).unwrap();
+        let mut first_alias = None;
+        for index in 0..(MAX_REGISTERED_PATHS_PER_WORKSPACE - 1) {
+            let alias = aliases.join(format!("alias-{index}"));
+            symlink(&root, &alias).unwrap();
+            let reused = registry.register(&alias).unwrap();
+            assert_eq!(reused.workspace_id, descriptor.workspace_id);
+            first_alias.get_or_insert(alias);
+        }
+        let first_alias = first_alias.unwrap();
+        assert_eq!(
+            registry.register(&first_alias).unwrap().workspace_id,
+            descriptor.workspace_id,
+            "re-registering the same lexical alias must be deduplicated"
+        );
+        let overflow = aliases.join("overflow");
+        symlink(&root, &overflow).unwrap();
+        assert_eq!(
+            registry.register(&overflow).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            registry
+                .descriptor_for_registered_path(&first_alias)
+                .unwrap()
+                .workspace_id,
+            descriptor.workspace_id
+        );
+
+        registry.unregister(&descriptor.workspace_id).unwrap();
+        assert!(registry
+            .descriptor_for_registered_path(&first_alias)
+            .is_err());
+        fs::remove_dir_all(aliases).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicitly_reregistered_retargeted_alias_transfers_deterministic_ownership() {
+        let registry = WorkspaceRegistry::new();
+        let root_a = temp_root("transfer-a").canonicalize().unwrap();
+        let root_b = temp_root("transfer-b").canonicalize().unwrap();
+        let alias = root_a.with_extension("transfer-alias");
+        symlink(&root_a, &alias).unwrap();
+        let a = registry.register(&root_a).unwrap();
+        assert_eq!(
+            registry.register(&alias).unwrap().workspace_id,
+            a.workspace_id
+        );
+
+        fs::remove_file(&alias).unwrap();
+        symlink(&root_b, &alias).unwrap();
+        let b = registry.register(&alias).unwrap();
+        assert_ne!(a.workspace_id, b.workspace_id);
+        assert_eq!(
+            registry
+                .descriptor_for_registered_path(&alias)
+                .unwrap()
+                .workspace_id,
+            b.workspace_id
+        );
+        assert_eq!(
+            crate::registered_runtime_root(&registry, alias.to_str().unwrap()),
+            b.canonical_root_path,
+            "trust revoke and dispose share this deterministic retained-root lookup"
+        );
+        assert_eq!(
+            registry
+                .descriptor_for_registered_path(&root_a)
+                .unwrap()
+                .workspace_id,
+            a.workspace_id,
+            "A must remain reachable through its canonical direct identity"
+        );
+        assert!(!registry
+            .workspaces
+            .lock()
+            .unwrap()
+            .get(&a.workspace_id)
+            .unwrap()
+            .registered_paths
+            .contains(&normalize_registered_path(&alias).unwrap()));
+
+        registry.unregister(&b.workspace_id).unwrap();
+        assert!(registry.descriptor_for_registered_path(&alias).is_err());
+        assert!(registry.descriptor_for_registered_path(&root_a).is_ok());
+        fs::remove_file(alias).unwrap();
+        fs::remove_dir_all(root_a).unwrap();
+        fs::remove_dir_all(root_b).unwrap();
     }
 }

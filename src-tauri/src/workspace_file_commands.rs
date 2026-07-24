@@ -17,6 +17,8 @@ use std::{
     sync::Arc,
 };
 
+mod atomic_create;
+
 #[cfg(target_os = "macos")]
 const O_RESOLVE_BENEATH: libc::c_int = 0x0000_1000;
 #[cfg(target_os = "macos")]
@@ -1290,31 +1292,6 @@ impl<'a> WorkspaceFileRepository<'a> {
         Ok(revision(&saved, content.as_bytes()))
     }
 
-    pub fn create_file(&self, id: &WorkspaceId, path: &Path) -> MutationResult {
-        mutation_result(self.create_file_inner(id, path))
-    }
-
-    fn create_file_inner(&self, id: &WorkspaceId, path: &Path) -> Result<(), MutationFailure> {
-        let _operation = self.registry.lock_operations()?;
-        let root = self.registry.clone_root(id)?;
-        let (parent_path, name) = split_path(path)?;
-        let parent = open_parent(root.as_raw_fd(), parent_path)?;
-        let fd = unsafe {
-            libc::openat(
-                parent.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-                0o666,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-        let file = unsafe { File::from_raw_fd(fd) };
-        file.sync_all()?;
-        sync_after_commit(&parent, "file was created")
-    }
-
     pub fn create_directory(&self, id: &WorkspaceId, path: &Path) -> MutationResult {
         mutation_result(self.create_directory_inner(id, path))
     }
@@ -2184,18 +2161,21 @@ fn unique_quarantine_name(parent: RawFd, target: &CStr) -> io::Result<CString> {
 fn run_test_hook(_event: &str, _parent: RawFd, _first: &CStr, _second: &CStr) {}
 
 #[cfg(test)]
+type TestHookCallback = Box<dyn FnOnce(&str, RawFd, &CStr, &CStr)>;
+
+#[cfg(test)]
 thread_local! {
-    static TEST_HOOK: std::cell::RefCell<Option<(&'static str, Box<dyn FnOnce(&str, RawFd, &CStr, &CStr)>)>> =
+    static TEST_HOOK: std::cell::RefCell<Option<(&'static str, TestHookCallback)>> =
         std::cell::RefCell::new(None);
 }
 
 #[cfg(test)]
 fn run_test_hook(event: &str, parent: RawFd, first: &CStr, second: &CStr) {
     TEST_HOOK.with(|hook| {
-        if !hook
+        if hook
             .borrow()
             .as_ref()
-            .is_some_and(|(expected, _)| *expected == event)
+            .is_none_or(|(expected, _)| *expected != event)
         {
             return;
         }

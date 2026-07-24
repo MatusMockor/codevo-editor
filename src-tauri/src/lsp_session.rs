@@ -1,3 +1,4 @@
+use crate::file_uri_path::path_from_file_uri;
 use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
 use crate::lsp_diagnostics::{parse_publish_diagnostics, LanguageServerDiagnosticEvent};
 use crate::lsp_features::{
@@ -10,7 +11,7 @@ use crate::managed_javascript_typescript;
 use crate::managed_phpactor;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -19,7 +20,20 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+
+mod capabilities;
+mod runtime_telemetry;
+
+use capabilities::parse_capabilities;
+pub use runtime_telemetry::RecentLspRequest;
+#[cfg(test)]
+use runtime_telemetry::STDERR_TAIL_CAPACITY;
+use runtime_telemetry::{
+    append_runtime_log, record_recent_request, reset_request_telemetry, reset_runtime_log,
+    snapshot_recent_requests, snapshot_stderr_tail, spawn_stderr_reader, RecentRequests,
+    RuntimeLog, StderrTail, StderrTailBuffer,
+};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -41,7 +55,7 @@ pub const JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT: &str =
 type PendingRequestResult = Result<Value, LanguageServerRequestError>;
 type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
 type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
-type RuntimeLog = Arc<Mutex<String>>;
+type SessionRequestParts = (Arc<Mutex<Box<dyn Write + Send>>>, PendingRequests);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -70,158 +84,6 @@ impl From<&str> for LanguageServerRequestError {
     fn from(message: &str) -> Self {
         Self::Message(message.to_string())
     }
-}
-
-const RUNTIME_LOG_MAX_BYTES: usize = 128 * 1024;
-
-/// Number of most-recent LSP requests retained per runtime for the diagnostic
-/// cockpit. Bounded so the ring buffer can never leak memory under a long-lived
-/// session that issues thousands of completion/hover requests.
-const RECENT_REQUESTS_CAPACITY: usize = 20;
-
-/// Number of trailing stderr lines retained per runtime. Bounded independently
-/// from the full runtime log so the panel can show a crash/stderr tail inline
-/// without copying the whole (128 KiB) log on every refresh.
-const STDERR_TAIL_CAPACITY: usize = 30;
-
-/// Hard cap on a single stderr line. A runtime that emits a huge line without a
-/// newline (or never terminates the line) must not grow the pending buffer
-/// without bound: once a line crosses this it is truncated. Keeps the tail
-/// buffer's worst-case memory at `STDERR_TAIL_CAPACITY * STDERR_LINE_MAX_BYTES`.
-const STDERR_LINE_MAX_BYTES: usize = 4 * 1024;
-
-/// One recorded LSP request with its measured round-trip latency and outcome,
-/// surfaced in the diagnostic cockpit's "recent requests" table. Newest first
-/// is the panel's concern; the ring buffer stores oldest-to-newest.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecentLspRequest {
-    /// LSP method, e.g. `textDocument/completion`, `textDocument/hover`.
-    pub method: String,
-    /// Measured round-trip latency in milliseconds (send -> response/timeout).
-    pub latency_ms: u64,
-    /// Whether the server returned a result (`true`) or an error/timeout (`false`).
-    pub success: bool,
-}
-
-/// Bounded, newest-evicting-oldest ring buffer of recent LSP requests. One per
-/// supervisor (per workspace root), so request telemetry never leaks between
-/// open project tabs. `VecDeque` with a hard cap keeps memory bounded.
-type RecentRequests = Arc<Mutex<VecDeque<RecentLspRequest>>>;
-
-/// Bounded ring buffer of the most recent stderr lines for a runtime. Shared
-/// with the stderr reader thread; capped at `STDERR_TAIL_CAPACITY` complete
-/// lines. A line split across two reads is coalesced via `pending`.
-type StderrTail = Arc<Mutex<StderrTailBuffer>>;
-
-/// Holds the trailing complete stderr lines plus the in-progress partial line.
-/// Bounded: `completed` never exceeds `STDERR_TAIL_CAPACITY`, so a chatty runtime
-/// can never grow this without limit.
-#[derive(Default)]
-struct StderrTailBuffer {
-    completed: VecDeque<String>,
-    pending: String,
-}
-
-impl StderrTailBuffer {
-    fn clear(&mut self) {
-        self.completed.clear();
-        self.pending.clear();
-    }
-}
-
-/// Push a request record into the bounded ring buffer, evicting the oldest entry
-/// once the capacity is exceeded. Lock poisoning is swallowed (best-effort
-/// telemetry must never break a live request path).
-fn record_recent_request(buffer: &RecentRequests, record: RecentLspRequest) {
-    let Ok(mut requests) = buffer.lock() else {
-        return;
-    };
-
-    requests.push_back(record);
-
-    while requests.len() > RECENT_REQUESTS_CAPACITY {
-        requests.pop_front();
-    }
-}
-
-/// Snapshot the recent requests newest-first for the panel.
-fn snapshot_recent_requests(buffer: &RecentRequests) -> Vec<RecentLspRequest> {
-    let Ok(requests) = buffer.lock() else {
-        return Vec::new();
-    };
-
-    requests.iter().rev().cloned().collect()
-}
-
-/// Append a chunk of stderr text to the bounded tail buffer. Newlines split the
-/// chunk into complete lines; any trailing fragment without a newline is kept in
-/// `pending` and coalesced with the next read so a line split across reads stays
-/// whole. Complete lines past the cap evict the oldest.
-fn append_stderr_tail(tail: &StderrTail, chunk: &str) {
-    let Ok(mut buffer) = tail.lock() else {
-        return;
-    };
-
-    let mut segments = chunk.split('\n').peekable();
-
-    while let Some(segment) = segments.next() {
-        push_bounded_pending(&mut buffer.pending, segment);
-
-        // The last segment has no trailing newline in this chunk; keep it pending.
-        if segments.peek().is_none() {
-            break;
-        }
-
-        let line = std::mem::take(&mut buffer.pending);
-        buffer.completed.push_back(line);
-
-        while buffer.completed.len() > STDERR_TAIL_CAPACITY {
-            buffer.completed.pop_front();
-        }
-    }
-}
-
-/// Append a segment to the in-progress line, capping the line length so a
-/// runtime that never emits a newline cannot grow `pending` without bound. Once
-/// the cap is reached the line stops growing (further bytes for this line are
-/// dropped) until the next newline starts a fresh line.
-fn push_bounded_pending(pending: &mut String, segment: &str) {
-    if pending.len() >= STDERR_LINE_MAX_BYTES {
-        return;
-    }
-
-    let remaining = STDERR_LINE_MAX_BYTES - pending.len();
-
-    if segment.len() <= remaining {
-        pending.push_str(segment);
-        return;
-    }
-
-    let mut take_to = remaining;
-
-    while take_to > 0 && !segment.is_char_boundary(take_to) {
-        take_to -= 1;
-    }
-
-    pending.push_str(&segment[..take_to]);
-}
-
-/// Snapshot the stderr tail (oldest-to-newest): the completed lines plus any
-/// non-empty pending fragment, dropping blank lines so the panel shows real
-/// content only.
-fn snapshot_stderr_tail(tail: &StderrTail) -> Vec<String> {
-    let Ok(buffer) = tail.lock() else {
-        return Vec::new();
-    };
-
-    buffer
-        .completed
-        .iter()
-        .cloned()
-        .chain(std::iter::once(buffer.pending.clone()))
-        .filter(|line| !line.is_empty())
-        .collect()
 }
 
 struct ServerWindowMessage {
@@ -482,6 +344,30 @@ pub trait WorkspaceEditSink: Send + Sync {
     fn emit_workspace_edit(&self, event: LanguageServerWorkspaceEditEvent) -> bool;
 }
 
+#[derive(Clone)]
+pub(crate) struct LanguageServerEventSinks {
+    status: Arc<dyn StatusSink>,
+    diagnostics: Arc<dyn DiagnosticsSink>,
+    workspace_edit: Arc<dyn WorkspaceEditSink>,
+    refresh: Arc<dyn RefreshSink>,
+}
+
+impl LanguageServerEventSinks {
+    pub(crate) fn new(
+        status: Arc<dyn StatusSink>,
+        diagnostics: Arc<dyn DiagnosticsSink>,
+        workspace_edit: Arc<dyn WorkspaceEditSink>,
+        refresh: Arc<dyn RefreshSink>,
+    ) -> Self {
+        Self {
+            status,
+            diagnostics,
+            workspace_edit,
+            refresh,
+        }
+    }
+}
+
 #[cfg(test)]
 struct NoopWorkspaceEditSink;
 
@@ -558,11 +444,11 @@ impl ServerProcessSpawner for ChildServerProcessSpawner {
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing child stdin"))?;
+            .ok_or_else(|| io::Error::other("missing child stdin"))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing child stdout"))?;
+            .ok_or_else(|| io::Error::other("missing child stdout"))?;
         let stderr = child
             .stderr
             .take()
@@ -832,10 +718,12 @@ impl PhpLanguageServerRegistry {
             command,
             initialize_request,
             spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
+            LanguageServerEventSinks::new(
+                status_sink,
+                diagnostics_sink,
+                workspace_edit_sink,
+                refresh_sink,
+            ),
             restart_controller,
         )?;
         self.store_launch_context_if_active(root_path, command, initialize_request, &status);
@@ -1065,10 +953,12 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
             command,
             initialize_request,
             spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
+            LanguageServerEventSinks::new(
+                status_sink,
+                diagnostics_sink,
+                workspace_edit_sink,
+                refresh_sink,
+            ),
             restart_controller,
         )?;
         self.store_launch_context_if_active(root_path, command, initialize_request, &status);
@@ -1289,9 +1179,12 @@ impl LanguageServerRegistry {
             command,
             initialize_request,
             spawner,
-            status_sink,
-            diagnostics_sink,
-            Arc::new(NoopWorkspaceEditSink),
+            LanguageServerEventSinks::new(
+                status_sink,
+                diagnostics_sink,
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+            ),
         )
     }
 
@@ -1302,20 +1195,9 @@ impl LanguageServerRegistry {
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: &dyn ServerProcessSpawner,
-        status_sink: Arc<dyn StatusSink>,
-        diagnostics_sink: Arc<dyn DiagnosticsSink>,
-        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        event_sinks: LanguageServerEventSinks,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        self.start_with_event_sinks(
-            root_path,
-            command,
-            initialize_request,
-            spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            Arc::new(NoopRefreshSink),
-        )
+        self.start_with_event_sinks(root_path, command, initialize_request, spawner, event_sinks)
     }
 
     #[cfg(test)]
@@ -1325,19 +1207,13 @@ impl LanguageServerRegistry {
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: &dyn ServerProcessSpawner,
-        status_sink: Arc<dyn StatusSink>,
-        diagnostics_sink: Arc<dyn DiagnosticsSink>,
-        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
-        refresh_sink: Arc<dyn RefreshSink>,
+        event_sinks: LanguageServerEventSinks,
     ) -> Result<LanguageServerRuntimeStatus, String> {
         self.supervisor_for(root_path)?.start_with_event_sinks(
             command,
             initialize_request,
             spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
+            event_sinks,
         )
     }
 
@@ -1345,27 +1221,20 @@ impl LanguageServerRegistry {
     /// enabled. The `restart_controller` is owned per workspace, so a crash in
     /// one workspace's server can only re-spawn that same workspace — restart
     /// budgets never leak across open project tabs.
-    #[allow(clippy::too_many_arguments)]
     pub fn start_with_auto_restart(
         &self,
         root_path: &str,
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
-        status_sink: Arc<dyn StatusSink>,
-        diagnostics_sink: Arc<dyn DiagnosticsSink>,
-        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
-        refresh_sink: Arc<dyn RefreshSink>,
+        event_sinks: LanguageServerEventSinks,
         restart_controller: Arc<RestartController>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
         self.supervisor_for(root_path)?.start_with_auto_restart(
             command,
             initialize_request,
             spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
+            event_sinks,
             restart_controller,
         )
     }
@@ -1498,14 +1367,14 @@ impl LanguageServerRegistry {
 
         let mut roots = supervisors
             .iter()
-            .filter_map(|(root_path, supervisor)| {
+            .filter(|&(_root_path, supervisor)| {
                 matches!(
                     supervisor.status(),
                     LanguageServerRuntimeStatus::Starting { .. }
                         | LanguageServerRuntimeStatus::Running { .. }
                 )
-                .then(|| root_path.clone())
             })
+            .map(|(root_path, _supervisor)| root_path.clone())
             .collect::<Vec<_>>();
         roots.sort();
         roots
@@ -1580,7 +1449,7 @@ impl LanguageServerSupervisor {
     pub fn new_with_label(server_label: &'static str) -> Self {
         Self {
             log: Arc::new(Mutex::new(String::new())),
-            recent_requests: Arc::new(Mutex::new(VecDeque::new())),
+            recent_requests: Arc::new(Mutex::new(Default::default())),
             stderr_tail: Arc::new(Mutex::new(StderrTailBuffer::default())),
             next_request_id: AtomicU64::new(2),
             next_session_id: AtomicU64::new(1),
@@ -1637,9 +1506,12 @@ impl LanguageServerSupervisor {
             command,
             initialize_request,
             spawner,
-            status_sink,
-            diagnostics_sink,
-            Arc::new(NoopWorkspaceEditSink),
+            LanguageServerEventSinks::new(
+                status_sink,
+                diagnostics_sink,
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+            ),
         )
     }
 
@@ -1649,19 +1521,9 @@ impl LanguageServerSupervisor {
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: &dyn ServerProcessSpawner,
-        status_sink: Arc<dyn StatusSink>,
-        diagnostics_sink: Arc<dyn DiagnosticsSink>,
-        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        event_sinks: LanguageServerEventSinks,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        self.start_with_event_sinks(
-            command,
-            initialize_request,
-            spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            Arc::new(NoopRefreshSink),
-        )
+        self.start_with_event_sinks(command, initialize_request, spawner, event_sinks)
     }
 
     #[cfg(test)]
@@ -1670,19 +1532,22 @@ impl LanguageServerSupervisor {
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: &dyn ServerProcessSpawner,
-        status_sink: Arc<dyn StatusSink>,
-        diagnostics_sink: Arc<dyn DiagnosticsSink>,
-        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
-        refresh_sink: Arc<dyn RefreshSink>,
+        event_sinks: LanguageServerEventSinks,
     ) -> Result<LanguageServerRuntimeStatus, String> {
+        let LanguageServerEventSinks {
+            status,
+            diagnostics,
+            workspace_edit,
+            refresh,
+        } = event_sinks;
         self.start_core(
             command,
             initialize_request,
             spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
+            status,
+            diagnostics,
+            workspace_edit,
+            refresh,
             None,
             StartKind::Fresh,
         )
@@ -1706,21 +1571,24 @@ impl LanguageServerSupervisor {
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
-        status_sink: Arc<dyn StatusSink>,
-        diagnostics_sink: Arc<dyn DiagnosticsSink>,
-        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
-        refresh_sink: Arc<dyn RefreshSink>,
+        event_sinks: LanguageServerEventSinks,
         restart_controller: Arc<RestartController>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
+        let LanguageServerEventSinks {
+            status,
+            diagnostics,
+            workspace_edit,
+            refresh,
+        } = event_sinks;
         let restart_context = RestartContext {
             supervisor: Arc::downgrade(self),
             command: clone_command(command),
             initialize_request: clone_initialize_request(initialize_request),
             spawner: Arc::clone(&spawner),
-            status_sink: Arc::clone(&status_sink),
-            diagnostics_sink: Arc::clone(&diagnostics_sink),
-            workspace_edit_sink: Arc::clone(&workspace_edit_sink),
-            refresh_sink: Arc::clone(&refresh_sink),
+            status_sink: Arc::clone(&status),
+            diagnostics_sink: Arc::clone(&diagnostics),
+            workspace_edit_sink: Arc::clone(&workspace_edit),
+            refresh_sink: Arc::clone(&refresh),
             controller: restart_controller,
         };
 
@@ -1728,10 +1596,10 @@ impl LanguageServerSupervisor {
             command,
             initialize_request,
             spawner.as_ref(),
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
+            status,
+            diagnostics,
+            workspace_edit,
+            refresh,
             Some(Arc::new(restart_context)),
             StartKind::Fresh,
         )
@@ -2179,9 +2047,7 @@ impl LanguageServerSupervisor {
         let Ok(mut current) = self.session.lock() else {
             return None;
         };
-        let Some(session) = current.as_ref() else {
-            return None;
-        };
+        let session = current.as_ref()?;
 
         if !Arc::ptr_eq(&session.stop_requested, stop_requested) {
             return None;
@@ -2224,9 +2090,7 @@ impl LanguageServerSupervisor {
         Some(Arc::clone(&session.stdin))
     }
 
-    fn session_request_parts(
-        &self,
-    ) -> Option<(Arc<Mutex<Box<dyn Write + Send>>>, PendingRequests)> {
+    fn session_request_parts(&self) -> Option<SessionRequestParts> {
         self.session.lock().ok()?.as_ref().map(|session| {
             (
                 Arc::clone(&session.stdin),
@@ -2315,96 +2179,6 @@ fn terminate_session(mut session: RunningSession) {
     if let Some(stderr_reader) = session.stderr_reader.take() {
         let _ = stderr_reader.join();
     }
-}
-
-fn reset_runtime_log(
-    log: &RuntimeLog,
-    server_label: &str,
-    session_id: u64,
-    command: &LanguageServerCommand,
-) {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-    let command_line = std::iter::once(command.executable.clone())
-        .chain(command.args.iter().cloned())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let env_lines = command
-        .env
-        .iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let env_block = if env_lines.is_empty() {
-        "env: (none)".to_string()
-    } else {
-        format!("env:\n{env_lines}")
-    };
-    let header = format!(
-        "{server_label} session {session_id} started at {timestamp}\nworking directory: {}\ncommand: {command_line}\n{env_block}\n\n",
-        command.working_directory,
-    );
-
-    if let Ok(mut current) = log.lock() {
-        *current = header;
-    }
-}
-
-fn spawn_stderr_reader(
-    stderr: Box<dyn Read + Send>,
-    log: RuntimeLog,
-    stderr_tail: StderrTail,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(stderr);
-        let mut buffer = [0_u8; 4096];
-
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) | Err(_) => return,
-                Ok(count) => {
-                    let chunk = String::from_utf8_lossy(&buffer[..count]);
-                    append_runtime_log(&log, &chunk);
-                    append_stderr_tail(&stderr_tail, &chunk);
-                }
-            }
-        }
-    })
-}
-
-/// Clear the per-runtime request telemetry (recent requests + stderr tail) when
-/// a new session starts, mirroring `reset_runtime_log`. Keeps a restart from
-/// showing the previous session's latencies/stderr.
-fn reset_request_telemetry(recent_requests: &RecentRequests, stderr_tail: &StderrTail) {
-    if let Ok(mut requests) = recent_requests.lock() {
-        requests.clear();
-    }
-
-    if let Ok(mut tail) = stderr_tail.lock() {
-        tail.clear();
-    }
-}
-
-fn append_runtime_log(log: &RuntimeLog, chunk: &str) {
-    let Ok(mut current) = log.lock() else {
-        return;
-    };
-
-    current.push_str(chunk);
-
-    if current.len() <= RUNTIME_LOG_MAX_BYTES {
-        return;
-    }
-
-    let mut trim_to = current.len() - RUNTIME_LOG_MAX_BYTES;
-
-    while trim_to < current.len() && !current.is_char_boundary(trim_to) {
-        trim_to += 1;
-    }
-
-    current.drain(..trim_to);
 }
 
 fn remove_pending_request(pending_requests: &PendingRequests, id: u64) {
@@ -3476,229 +3250,20 @@ fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "Workspace root could not be resolved.".to_string())
 }
 
-fn path_from_file_uri(uri: &str) -> Option<String> {
-    let path = uri.strip_prefix("file://")?;
-    let path = path.strip_prefix("localhost").unwrap_or(path);
-    let path = percent_decode(path)?;
-
-    if path.is_empty() || !path.starts_with('/') {
-        return None;
-    }
-
-    Some(path)
-}
-
-fn percent_decode(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] != b'%' {
-            decoded.push(bytes[index]);
-            index += 1;
-            continue;
-        }
-
-        let high = *bytes.get(index + 1)?;
-        let low = *bytes.get(index + 2)?;
-        decoded.push(hex_value(high)? * 16 + hex_value(low)?);
-        index += 3;
-    }
-
-    String::from_utf8(decoded).ok()
-}
-
-fn hex_value(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, String> {
-    let Some(capabilities) = value
-        .get("result")
-        .and_then(|result| result.get("capabilities"))
-    else {
-        return Err("missing server capabilities".to_string());
-    };
-
-    if !capabilities.is_object() {
-        return Err("server capabilities must be an object".to_string());
-    }
-
-    Ok(LanguageServerCapabilities {
-        call_hierarchy: is_capability_enabled(capabilities.get("callHierarchyProvider")),
-        code_action: is_capability_enabled(capabilities.get("codeActionProvider")),
-        code_action_resolve: capabilities
-            .get("codeActionProvider")
-            .and_then(|provider| provider.get("resolveProvider"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        code_lens: is_capability_enabled(capabilities.get("codeLensProvider")),
-        declaration: is_capability_enabled(capabilities.get("declarationProvider")),
-        hover: is_capability_enabled(capabilities.get("hoverProvider")),
-        completion: is_capability_enabled(capabilities.get("completionProvider")),
-        definition: is_capability_enabled(capabilities.get("definitionProvider")),
-        document_highlight: is_capability_enabled(capabilities.get("documentHighlightProvider")),
-        document_link: is_capability_enabled(capabilities.get("documentLinkProvider")),
-        document_symbol: is_capability_enabled(capabilities.get("documentSymbolProvider")),
-        did_create_files: capabilities
-            .get("workspace")
-            .and_then(|workspace| workspace.get("fileOperations"))
-            .and_then(|file_operations| file_operations.get("didCreate"))
-            .is_some(),
-        did_delete_files: capabilities
-            .get("workspace")
-            .and_then(|workspace| workspace.get("fileOperations"))
-            .and_then(|file_operations| file_operations.get("didDelete"))
-            .is_some(),
-        did_rename_files: capabilities
-            .get("workspace")
-            .and_then(|workspace| workspace.get("fileOperations"))
-            .and_then(|file_operations| file_operations.get("didRename"))
-            .is_some(),
-        folding_range: is_capability_enabled(capabilities.get("foldingRangeProvider")),
-        formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
-        implementation: is_capability_enabled(capabilities.get("implementationProvider")),
-        inlay_hint: is_capability_enabled(capabilities.get("inlayHintProvider")),
-        linked_editing_range: is_capability_enabled(capabilities.get("linkedEditingRangeProvider")),
-        on_type_formatting: is_capability_enabled(
-            capabilities.get("documentOnTypeFormattingProvider"),
-        ),
-        on_type_formatting_trigger_characters: parse_on_type_formatting_trigger_characters(
-            capabilities.get("documentOnTypeFormattingProvider"),
-        ),
-        prepare_rename: capabilities
-            .get("renameProvider")
-            .and_then(|provider| provider.get("prepareProvider"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        range_formatting: is_capability_enabled(
-            capabilities.get("documentRangeFormattingProvider"),
-        ),
-        references: is_capability_enabled(capabilities.get("referencesProvider")),
-        rename: is_capability_enabled(capabilities.get("renameProvider")),
-        selection_range: is_capability_enabled(capabilities.get("selectionRangeProvider")),
-        semantic_tokens: is_capability_enabled(capabilities.get("semanticTokensProvider")),
-        semantic_tokens_legend: parse_semantic_tokens_legend(
-            capabilities.get("semanticTokensProvider"),
-        ),
-        signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
-        source_definition: execute_command_provider_contains(
-            capabilities,
-            "_typescript.goToSourceDefinition",
-        ),
-        type_definition: is_capability_enabled(capabilities.get("typeDefinitionProvider")),
-        type_hierarchy: is_capability_enabled(capabilities.get("typeHierarchyProvider")),
-        will_create_files: capabilities
-            .get("workspace")
-            .and_then(|workspace| workspace.get("fileOperations"))
-            .and_then(|file_operations| file_operations.get("willCreate"))
-            .is_some(),
-        will_delete_files: capabilities
-            .get("workspace")
-            .and_then(|workspace| workspace.get("fileOperations"))
-            .and_then(|file_operations| file_operations.get("willDelete"))
-            .is_some(),
-        will_rename_files: capabilities
-            .get("workspace")
-            .and_then(|workspace| workspace.get("fileOperations"))
-            .and_then(|file_operations| file_operations.get("willRename"))
-            .is_some(),
-        workspace_symbol: is_capability_enabled(capabilities.get("workspaceSymbolProvider")),
-    })
-}
-
-fn parse_semantic_tokens_legend(provider: Option<&Value>) -> Option<SemanticTokensLegend> {
-    let legend = provider?.get("legend")?;
-    let token_types = parse_string_array(legend.get("tokenTypes")?)?;
-    let token_modifiers = parse_string_array(legend.get("tokenModifiers")?)?;
-
-    if token_types.is_empty() {
-        return None;
-    }
-
-    Some(SemanticTokensLegend {
-        token_types,
-        token_modifiers,
-    })
-}
-
-fn parse_on_type_formatting_trigger_characters(provider: Option<&Value>) -> Option<Vec<String>> {
-    let provider = provider?.as_object()?;
-    let mut trigger_characters = Vec::new();
-
-    if let Some(first_trigger_character) = provider
-        .get("firstTriggerCharacter")
-        .and_then(Value::as_str)
-    {
-        trigger_characters.push(first_trigger_character.to_string());
-    }
-
-    if let Some(more_trigger_characters) = provider
-        .get("moreTriggerCharacter")
-        .and_then(Value::as_array)
-    {
-        trigger_characters.extend(
-            more_trigger_characters
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string),
-        );
-    }
-
-    (!trigger_characters.is_empty()).then_some(trigger_characters)
-}
-
-fn execute_command_provider_contains(capabilities: &Value, command: &str) -> bool {
-    capabilities
-        .get("executeCommandProvider")
-        .and_then(|provider| provider.get("commands"))
-        .and_then(Value::as_array)
-        .is_some_and(|commands| {
-            commands
-                .iter()
-                .any(|candidate| candidate.as_str() == Some(command))
-        })
-}
-
-fn parse_string_array(value: &Value) -> Option<Vec<String>> {
-    value
-        .as_array()?
-        .iter()
-        .map(|item| item.as_str().map(str::to_string))
-        .collect()
-}
-
-fn is_capability_enabled(value: Option<&Value>) -> bool {
-    let Some(value) = value else {
-        return false;
-    };
-
-    if let Some(enabled) = value.as_bool() {
-        return enabled;
-    }
-
-    value.is_object()
-}
-
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
     use super::ChildKiller;
     use super::{
-        cancellable_backoff, parse_capabilities, parse_response_result, workspace_runtime_id,
+        cancellable_backoff, parse_response_result, workspace_runtime_id,
         ChildServerProcessSpawner, DiagnosticsSink, JavaScriptTypeScriptLanguageServerRegistry,
-        LanguageServerCapabilities, LanguageServerRefreshEvent, LanguageServerRefreshFeature,
-        LanguageServerRegistry, LanguageServerRequestError, LanguageServerRuntimeStatus,
-        LanguageServerSupervisor, LanguageServerWorkspaceEditEvent, NoopRefreshSink,
-        NoopWorkspaceEditSink, PhpLanguageServerRegistry, ProcessKiller, RefreshSink,
-        RestartController, RestartDecision, RestartOutcome, RestartPolicy, SemanticTokensLegend,
-        ServerProcessSpawner, SpawnedServer, StartKind, StatusSink, WorkspaceEditSink,
+        LanguageServerCapabilities, LanguageServerEventSinks, LanguageServerRefreshEvent,
+        LanguageServerRefreshFeature, LanguageServerRegistry, LanguageServerRequestError,
+        LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
+        NoopRefreshSink, NoopWorkspaceEditSink, PhpLanguageServerRegistry, ProcessKiller,
+        RefreshSink, RestartController, RestartDecision, RestartOutcome, RestartPolicy,
+        SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StartKind, StatusSink,
+        WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -3991,106 +3556,6 @@ mod tests {
     }
 
     #[test]
-    fn recent_requests_are_newest_first_and_bounded() {
-        let buffer: super::RecentRequests = Arc::new(Mutex::new(std::collections::VecDeque::new()));
-        for index in 0..(super::RECENT_REQUESTS_CAPACITY + 5) {
-            super::record_recent_request(
-                &buffer,
-                super::RecentLspRequest {
-                    method: format!("method/{index}"),
-                    latency_ms: index as u64,
-                    success: true,
-                },
-            );
-        }
-
-        let recent = super::snapshot_recent_requests(&buffer);
-
-        assert_eq!(recent.len(), super::RECENT_REQUESTS_CAPACITY);
-        assert_eq!(
-            recent[0].method,
-            format!("method/{}", super::RECENT_REQUESTS_CAPACITY + 4)
-        );
-        assert_eq!(
-            recent[0].latency_ms,
-            (super::RECENT_REQUESTS_CAPACITY + 4) as u64
-        );
-    }
-
-    #[test]
-    fn stderr_tail_coalesces_line_split_across_reads() {
-        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
-
-        // A single logical line arriving in two read() chunks must stay one line.
-        super::append_stderr_tail(&tail, "PHP Fatal err");
-        super::append_stderr_tail(&tail, "or: boom\n");
-
-        assert_eq!(
-            super::snapshot_stderr_tail(&tail),
-            vec!["PHP Fatal error: boom".to_string()]
-        );
-    }
-
-    #[test]
-    fn stderr_tail_trailing_newline_does_not_add_phantom_line() {
-        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
-
-        super::append_stderr_tail(&tail, "one\ntwo\n");
-
-        assert_eq!(
-            super::snapshot_stderr_tail(&tail),
-            vec!["one".to_string(), "two".to_string()]
-        );
-    }
-
-    #[test]
-    fn stderr_tail_caps_unterminated_line_to_bound() {
-        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
-
-        // A runtime that never emits a newline must not grow pending without
-        // bound: the line is truncated at STDERR_LINE_MAX_BYTES.
-        let huge = "x".repeat(super::STDERR_LINE_MAX_BYTES * 4);
-        super::append_stderr_tail(&tail, &huge);
-
-        let snapshot = super::snapshot_stderr_tail(&tail);
-        assert_eq!(snapshot.len(), 1);
-        assert_eq!(snapshot[0].len(), super::STDERR_LINE_MAX_BYTES);
-    }
-
-    #[test]
-    fn stderr_tail_surfaces_pending_partial_line() {
-        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
-
-        // A crash banner without a trailing newline must still be visible.
-        super::append_stderr_tail(&tail, "Segmentation fault");
-
-        assert_eq!(
-            super::snapshot_stderr_tail(&tail),
-            vec!["Segmentation fault".to_string()]
-        );
-    }
-
-    #[test]
-    fn restart_clears_request_telemetry_per_root() {
-        let recent: super::RecentRequests = Arc::new(Mutex::new(std::collections::VecDeque::new()));
-        let tail: super::StderrTail = Arc::new(Mutex::new(super::StderrTailBuffer::default()));
-        super::record_recent_request(
-            &recent,
-            super::RecentLspRequest {
-                method: "textDocument/hover".to_string(),
-                latency_ms: 5,
-                success: true,
-            },
-        );
-        super::append_stderr_tail(&tail, "stale warning\n");
-
-        super::reset_request_telemetry(&recent, &tail);
-
-        assert!(super::snapshot_recent_requests(&recent).is_empty());
-        assert!(super::snapshot_stderr_tail(&tail).is_empty());
-    }
-
-    #[test]
     fn captures_language_server_launch_env_in_runtime_log() {
         let spawner = FakeSpawner::new(ready_script(), true);
         let (sink, _rx) = ChannelSink::new();
@@ -4268,10 +3733,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                sink,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                Arc::new(NoopRefreshSink),
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
                 test_restart_controller(),
             )
             .expect("start");
@@ -4838,10 +4305,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                sink,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                Arc::new(NoopRefreshSink),
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
                 test_restart_controller(),
             )
             .expect("start with auto restart");
@@ -4880,10 +4349,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 Arc::clone(&spawner_a) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                sink_a,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                Arc::new(NoopRefreshSink),
+                LanguageServerEventSinks::new(
+                    sink_a,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
                 test_restart_controller(),
             )
             .expect("start workspace a");
@@ -4893,10 +4364,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 Arc::clone(&spawner_b) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                sink_b,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                Arc::new(NoopRefreshSink),
+                LanguageServerEventSinks::new(
+                    sink_b,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
                 test_restart_controller(),
             )
             .expect("start workspace b");
@@ -5641,257 +5114,6 @@ mod tests {
             }),
         );
     }
-
-    #[test]
-    fn capability_values_are_normalized() {
-        let capabilities = parse_capabilities(&json!({
-            "result": {
-                "capabilities": {
-                    "hoverProvider": false,
-                    "completionProvider": null,
-                    "declarationProvider": true,
-                    "definitionProvider": {},
-                    "documentHighlightProvider": true,
-                    "documentLinkProvider": { "resolveProvider": true },
-                    "documentSymbolProvider": true,
-                    "foldingRangeProvider": true,
-                    "callHierarchyProvider": true,
-                    "implementationProvider": true,
-                    "inlayHintProvider": true,
-                    "linkedEditingRangeProvider": true,
-                    "documentOnTypeFormattingProvider": {
-                        "firstTriggerCharacter": "}",
-                        "moreTriggerCharacter": [";", "\n"]
-                    },
-                    "referencesProvider": true,
-                    "renameProvider": { "prepareProvider": true },
-                    "selectionRangeProvider": true,
-                    "semanticTokensProvider": {
-                        "full": true,
-                        "legend": {
-                            "tokenModifiers": ["readonly"],
-                            "tokenTypes": ["class"]
-                        }
-                    },
-                    "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
-                    "executeCommandProvider": {
-                        "commands": [
-                            "_typescript.organizeImports",
-                            "_typescript.goToSourceDefinition"
-                        ]
-                    },
-                    "typeDefinitionProvider": true,
-                    "typeHierarchyProvider": true,
-                    "codeLensProvider": {},
-                    "workspaceSymbolProvider": true,
-                    "codeActionProvider": {
-                        "codeActionKinds": ["quickfix"],
-                        "resolveProvider": true
-                    },
-                    "documentFormattingProvider": true,
-                    "documentRangeFormattingProvider": true,
-                    "workspace": {
-                        "fileOperations": {
-                            "didCreate": { "filters": [] },
-                            "didDelete": { "filters": [] },
-                            "didRename": { "filters": [] },
-                            "willCreate": { "filters": [] },
-                            "willDelete": { "filters": [] },
-                            "willRename": { "filters": [] }
-                        }
-                    },
-                }
-            }
-        }))
-        .expect("capabilities");
-
-        assert_eq!(
-            capabilities,
-            LanguageServerCapabilities {
-                call_hierarchy: true,
-                code_action: true,
-                code_action_resolve: true,
-                code_lens: true,
-                declaration: true,
-                hover: false,
-                completion: false,
-                definition: true,
-                document_highlight: true,
-                document_link: true,
-                document_symbol: true,
-                did_create_files: true,
-                did_delete_files: true,
-                did_rename_files: true,
-                folding_range: true,
-                formatting: true,
-                implementation: true,
-                inlay_hint: true,
-                linked_editing_range: true,
-                on_type_formatting: true,
-                on_type_formatting_trigger_characters: Some(vec![
-                    "}".to_string(),
-                    ";".to_string(),
-                    "\n".to_string(),
-                ]),
-                prepare_rename: true,
-                range_formatting: true,
-                references: true,
-                rename: true,
-                selection_range: true,
-                semantic_tokens: true,
-                semantic_tokens_legend: Some(SemanticTokensLegend {
-                    token_types: vec!["class".to_string()],
-                    token_modifiers: vec!["readonly".to_string()],
-                }),
-                signature_help: true,
-                source_definition: true,
-                type_definition: true,
-                type_hierarchy: true,
-                will_create_files: true,
-                will_delete_files: true,
-                will_rename_files: true,
-                workspace_symbol: true,
-            }
-        );
-    }
-
-    #[test]
-    fn code_action_resolve_capability_reflects_resolve_provider_flag() {
-        let resolve_true = parse_capabilities(&json!({
-            "result": {
-                "capabilities": {
-                    "codeActionProvider": { "resolveProvider": true }
-                }
-            }
-        }))
-        .expect("capabilities");
-        assert!(resolve_true.code_action);
-        assert!(resolve_true.code_action_resolve);
-
-        let resolve_false = parse_capabilities(&json!({
-            "result": {
-                "capabilities": {
-                    "codeActionProvider": { "resolveProvider": false }
-                }
-            }
-        }))
-        .expect("capabilities");
-        assert!(resolve_false.code_action);
-        assert!(!resolve_false.code_action_resolve);
-
-        let resolve_absent = parse_capabilities(&json!({
-            "result": {
-                "capabilities": {
-                    "codeActionProvider": { "codeActionKinds": ["quickfix"] }
-                }
-            }
-        }))
-        .expect("capabilities");
-        assert!(resolve_absent.code_action);
-        assert!(!resolve_absent.code_action_resolve);
-
-        let code_action_bool = parse_capabilities(&json!({
-            "result": {
-                "capabilities": {
-                    "codeActionProvider": true
-                }
-            }
-        }))
-        .expect("capabilities");
-        assert!(code_action_bool.code_action);
-        assert!(!code_action_bool.code_action_resolve);
-    }
-
-    #[test]
-    fn on_type_formatting_trigger_characters_are_preserved_when_well_formed() {
-        let capabilities = parse_capabilities(&json!({
-            "result": {
-                "capabilities": {
-                    "documentOnTypeFormattingProvider": {
-                        "firstTriggerCharacter": "}",
-                        "moreTriggerCharacter": [false, ";", 12, "\n", ","]
-                    }
-                }
-            }
-        }))
-        .expect("capabilities");
-
-        assert!(capabilities.on_type_formatting);
-        assert_eq!(
-            capabilities.on_type_formatting_trigger_characters,
-            Some(vec![
-                "}".to_string(),
-                ";".to_string(),
-                "\n".to_string(),
-                ",".to_string(),
-            ])
-        );
-        assert_eq!(
-            serde_json::to_value(capabilities).expect("serialize capabilities")
-                ["onTypeFormattingTriggerCharacters"],
-            json!(["}", ";", "\n", ","])
-        );
-    }
-
-    #[test]
-    fn on_type_formatting_trigger_characters_are_omitted_when_malformed() {
-        for provider in [
-            json!(true),
-            json!({}),
-            json!({
-                "firstTriggerCharacter": false,
-                "moreTriggerCharacter": [false, null, 12]
-            }),
-            json!({
-                "firstTriggerCharacter": false,
-                "moreTriggerCharacter": false
-            }),
-        ] {
-            let capabilities = parse_capabilities(&json!({
-                "result": {
-                    "capabilities": {
-                        "documentOnTypeFormattingProvider": provider
-                    }
-                }
-            }))
-            .expect("capabilities");
-
-            assert!(capabilities.on_type_formatting);
-            assert_eq!(capabilities.on_type_formatting_trigger_characters, None);
-            assert!(serde_json::to_value(capabilities)
-                .expect("serialize capabilities")
-                .get("onTypeFormattingTriggerCharacters")
-                .is_none());
-        }
-    }
-
-    #[test]
-    fn semantic_token_legend_is_preserved_from_initialize_capabilities() {
-        let capabilities = parse_capabilities(&json!({
-            "result": {
-                "capabilities": {
-                    "semanticTokensProvider": {
-                        "full": true,
-                        "legend": {
-                            "tokenTypes": ["component", "hook"],
-                            "tokenModifiers": ["exported", "reactive"]
-                        }
-                    }
-                }
-            }
-        }))
-        .expect("capabilities");
-
-        assert!(capabilities.semantic_tokens);
-        assert_eq!(
-            capabilities.semantic_tokens_legend,
-            Some(SemanticTokensLegend {
-                token_types: vec!["component".to_string(), "hook".to_string()],
-                token_modifiers: vec!["exported".to_string(), "reactive".to_string()],
-            })
-        );
-    }
-
     #[test]
     fn malformed_initialize_result_reports_crashed_and_errors() {
         let spawner = FakeSpawner::new(malformed_initialize_result_script(), true);
@@ -6252,7 +5474,7 @@ mod tests {
         let held = Arc::clone(&spawner.held_writer);
         let capture = Arc::clone(&spawner.stdin_capture);
         let (sink, status_rx) = ChannelSink::new();
-        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::new();
+        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::channel();
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
@@ -6260,9 +5482,12 @@ mod tests {
                 &command_for_root(path_string(&root).as_str()),
                 &initialize_request(),
                 &spawner,
-                sink,
-                noop_diagnostics_sink(),
-                workspace_edit_sink,
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    workspace_edit_sink,
+                    Arc::new(NoopRefreshSink),
+                ),
             )
             .expect("start");
         wait_for(&status_rx, &running_status());
@@ -6313,7 +5538,7 @@ mod tests {
         let held = Arc::clone(&spawner.held_writer);
         let capture = Arc::clone(&spawner.stdin_capture);
         let (sink, status_rx) = ChannelSink::new();
-        let (refresh_sink, refresh_rx) = ChannelRefreshSink::new();
+        let (refresh_sink, refresh_rx) = ChannelRefreshSink::channel();
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
@@ -6321,10 +5546,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 &spawner,
-                sink,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                refresh_sink,
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    refresh_sink,
+                ),
             )
             .expect("start");
         wait_for(&status_rx, &running_status());
@@ -6407,7 +5634,7 @@ mod tests {
         let held = Arc::clone(&spawner.held_writer);
         let capture = Arc::clone(&spawner.stdin_capture);
         let (sink, status_rx) = ChannelSink::new();
-        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::new();
+        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::channel();
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
@@ -6415,9 +5642,12 @@ mod tests {
                 &command_for_root(path_string(&root).as_str()),
                 &initialize_request(),
                 &spawner,
-                sink,
-                noop_diagnostics_sink(),
-                workspace_edit_sink,
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    workspace_edit_sink,
+                    Arc::new(NoopRefreshSink),
+                ),
             )
             .expect("start");
         wait_for(&status_rx, &running_status());
@@ -6520,7 +5750,7 @@ mod tests {
         })));
         let capture = Arc::clone(&spawner.stdin_capture);
         let (sink, status_rx) = ChannelSink::new();
-        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::new();
+        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::channel();
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
@@ -6528,9 +5758,12 @@ mod tests {
                 &command_for_root(path_string(&root).as_str()),
                 &initialize_request(),
                 &spawner,
-                sink,
-                noop_diagnostics_sink(),
-                workspace_edit_sink,
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    workspace_edit_sink,
+                    Arc::new(NoopRefreshSink),
+                ),
             )
             .expect("start");
         wait_for(&status_rx, &running_status());
@@ -6958,10 +6191,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                sink,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                Arc::new(NoopRefreshSink),
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
                 test_restart_controller(),
             )
             .expect("start");
@@ -7037,10 +6272,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                sink,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                Arc::new(NoopRefreshSink),
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
                 // Budget of exactly one restart.
                 Arc::new(RestartController::new(RestartPolicy::new(
                     1,
@@ -7082,10 +6319,12 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                sink,
-                noop_diagnostics_sink(),
-                Arc::new(NoopWorkspaceEditSink),
-                Arc::new(NoopRefreshSink),
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
                 test_restart_controller(),
             )
             .expect("start");
@@ -7871,7 +7110,7 @@ mod tests {
             Receiver<LanguageServerDiagnosticEvent>,
         ) {
             let (tx, rx) = mpsc::channel();
-            let (diagnostics_sink, diagnostics_rx) = ChannelDiagnosticsSink::new();
+            let (diagnostics_sink, diagnostics_rx) = ChannelDiagnosticsSink::channel();
             (
                 Arc::new(Self { tx: Mutex::new(tx) }),
                 rx,
@@ -7892,7 +7131,7 @@ mod tests {
     }
 
     impl ChannelDiagnosticsSink {
-        fn new() -> (
+        fn channel() -> (
             Arc<dyn DiagnosticsSink>,
             Receiver<LanguageServerDiagnosticEvent>,
         ) {
@@ -7912,7 +7151,7 @@ mod tests {
     }
 
     impl ChannelWorkspaceEditSink {
-        fn new() -> (
+        fn channel() -> (
             Arc<dyn WorkspaceEditSink>,
             Receiver<LanguageServerWorkspaceEditEvent>,
         ) {
@@ -7936,7 +7175,7 @@ mod tests {
     }
 
     impl ChannelRefreshSink {
-        fn new() -> (Arc<dyn RefreshSink>, Receiver<LanguageServerRefreshEvent>) {
+        fn channel() -> (Arc<dyn RefreshSink>, Receiver<LanguageServerRefreshEvent>) {
             let (tx, rx) = mpsc::channel();
             (Arc::new(Self { tx: Mutex::new(tx) }), rx)
         }

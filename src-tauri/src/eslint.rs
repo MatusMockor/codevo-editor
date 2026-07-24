@@ -1,3 +1,4 @@
+use crate::package_tool_context::PackageToolContext;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap},
@@ -284,36 +285,30 @@ fn run_eslint_document_analysis_blocking(
         };
     }
 
-    let root = match fs::canonicalize(root_path) {
-        Ok(root) => root,
-        Err(error) => {
-            return EslintAnalysisResponse::Error {
-                message: format!("Failed to resolve workspace root: {error}"),
-            };
-        }
-    };
-    let file = match resolve_workspace_file(&root, file_path) {
-        Ok(file) => file,
+    let context = match PackageToolContext::resolve(root_path, file_path) {
+        Ok(context) => context,
         Err(message) => return EslintAnalysisResponse::Error { message },
     };
-    let binary = match resolve_binary(&root, binary_path) {
+    let root = context.workspace_root();
+    let file = context.target();
+    let binary = match resolve_document_binary(&context, binary_path) {
         Ok(Some(binary)) => binary,
         Ok(None) => return EslintAnalysisResponse::Unavailable { message: None },
         Err(message) => return EslintAnalysisResponse::Error { message },
     };
     let mut command = Command::new(binary);
     command
-        .args(eslint_document_args(&file))
+        .args(eslint_document_args(file))
         .env("LC_ALL", "C")
-        .current_dir(&root)
+        .current_dir(context.nearest_package_root())
         .stdin(Stdio::piped());
     configure_process_group(&mut command);
-    let output = match run_managed_eslint(command, &root, Some(content), registry, timeout) {
+    let output = match run_managed_eslint(command, root, Some(content), registry, timeout) {
         Ok(output) => output,
         Err(message) => return EslintAnalysisResponse::Error { message },
     };
     if matches!(output.status.code(), Some(0 | 1)) {
-        return match parse_eslint_output(&root, &output.stdout) {
+        return match parse_eslint_output(root, &output.stdout) {
             Ok(response) => response,
             Err(_) => EslintAnalysisResponse::Error {
                 message: stderr_tail(&output.stderr),
@@ -635,36 +630,6 @@ fn eslint_document_args(file: &Path) -> Vec<String> {
     ]
 }
 
-fn resolve_workspace_file(root: &Path, file_path: &str) -> Result<PathBuf, String> {
-    let requested = PathBuf::from(file_path);
-    let candidate = if requested.is_absolute() {
-        requested
-    } else {
-        root.join(requested)
-    };
-    let resolved = if candidate.exists() {
-        candidate
-            .canonicalize()
-            .map_err(|error| format!("Failed to resolve ESLint document: {error}"))?
-    } else {
-        let parent = candidate
-            .parent()
-            .ok_or_else(|| "ESLint document has no parent directory.".to_string())?
-            .canonicalize()
-            .map_err(|error| format!("Failed to resolve ESLint document parent: {error}"))?;
-        let name = candidate
-            .file_name()
-            .ok_or_else(|| "ESLint document has no file name.".to_string())?;
-        parent.join(name)
-    };
-
-    if resolved.strip_prefix(root).is_err() {
-        return Err("ESLint document must stay inside the workspace root.".to_string());
-    }
-
-    Ok(resolved)
-}
-
 fn workspace_cache_dir(cache_base: &Path, root: &Path) -> PathBuf {
     let normalized_root = root.to_string_lossy().replace('\\', "/");
     cache_base.join(format!("{:016x}", stable_hash(&normalized_root)))
@@ -713,6 +678,17 @@ fn resolve_binary(root: &Path, binary_path: Option<&str>) -> Result<Option<PathB
         .map_err(|error| format!("Failed to resolve ESLint binary: {error}"))
 }
 
+fn resolve_document_binary(
+    context: &PackageToolContext,
+    binary_path: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    if binary_path.is_none() {
+        return context.nearest_executable("eslint");
+    }
+
+    resolve_binary(context.workspace_root(), binary_path)
+}
+
 #[cfg(unix)]
 fn is_executable_file(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -751,7 +727,10 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
     #[cfg(unix)]
-    use std::{io::Write, os::unix::fs::PermissionsExt};
+    use std::{
+        io::Write,
+        os::unix::{fs::PermissionsExt, process::CommandExt, process::ExitStatusExt},
+    };
 
     #[test]
     fn parses_messages_with_ranges_severities_and_uncapped_totals() {
@@ -1050,6 +1029,40 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn document_analysis_uses_the_nearest_package_eslint() {
+        let root = temp_workspace("eslint-package");
+        let package = root.join("packages/accounting");
+        let source = package.join("src/current.ts");
+        fs::create_dir_all(source.parent().expect("source parent")).expect("source directory");
+        fs::write(&source, "const value = 1").expect("source fixture");
+        fs::write(package.join("package.json"), "{}").expect("manifest");
+        fs::create_dir_all(package.join("node_modules/.bin")).expect("binary directory");
+        let file_json =
+            serde_json::to_string(source.to_str().expect("source path")).expect("json path");
+        executable_script(
+            &package,
+            "node_modules/.bin/eslint",
+            &format!(
+                "#!/bin/sh\nexpected=$(cd \"$(dirname \"$0\")/../..\" && pwd)\n[ \"$PWD\" = \"$expected\" ] || exit 9\ncat >/dev/null\nprintf '[{{\"filePath\":{},\"messages\":[],\"errorCount\":0,\"warningCount\":0}}]'\n",
+                file_json
+            ),
+        );
+
+        let response = run_eslint_document_analysis_blocking(
+            root.to_str().expect("root"),
+            source.to_str().expect("source"),
+            "const value = 2",
+            None,
+            &test_registry(),
+            Duration::from_secs(2),
+        );
+
+        assert!(matches!(response, EslintAnalysisResponse::Ok { .. }));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn document_timeout_kills_and_unregisters_the_process() {
         let root = temp_workspace("eslint-timeout");
         let source = root.join("current.ts");
@@ -1125,34 +1138,34 @@ mod tests {
         let root = temp_workspace("eslint-close-startup");
         let registry = test_registry();
         let permit = registry.begin_run(&root).expect("startup permit");
-        let descendant_file = root.join("descendant.pid");
-        let script = executable_script(
-            &root,
-            "late-eslint",
-            &format!(
-                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\nwait\n",
-                descendant_file.display()
-            ),
-        );
+        let script = executable_script(&root, "late-eslint", "#!/bin/sh\nexec sleep 5\n");
         let mut command = Command::new(script);
         configure_process_group(&mut command);
         let mut child = command.spawn().expect("spawn late ESLint");
-        wait_until(Duration::from_secs(2), || descendant_file.exists());
-        let descendant_pid: i32 = fs::read_to_string(&descendant_file)
-            .expect("descendant pid")
-            .trim()
-            .parse()
-            .expect("numeric descendant pid");
+        let process_group: i32 = child.id().try_into().expect("process group id");
+        let mut descendant_command = Command::new("sleep");
+        descendant_command.arg("5").process_group(process_group);
+        let mut descendant = descendant_command
+            .spawn()
+            .expect("spawn owned ESLint process-group member");
+        assert_eq!(
+            unsafe { libc::getpgid(descendant.id().try_into().expect("descendant pid")) },
+            process_group,
+            "fixture process must join the ESLint process group before workspace close",
+        );
+        let descendant_pid: i32 = descendant.id().try_into().expect("descendant pid");
 
         registry.stop_root(&root);
         let result = register_spawned_process(&registry, &permit, &mut child);
+        let descendant_status = descendant.wait().expect("reap killed process-group member");
 
         assert!(matches!(result, Err(message) if message.contains("workspace closed")));
         assert!(child.try_wait().expect("child status").is_some());
         assert_eq!(registry.active_count(), 0);
+        assert_eq!(descendant_status.signal(), Some(libc::SIGKILL));
         assert!(
             unsafe { libc::kill(descendant_pid, 0) } != 0,
-            "late ESLint descendant {descendant_pid} survived workspace close",
+            "reaped ESLint process-group member {descendant_pid} remained visible",
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

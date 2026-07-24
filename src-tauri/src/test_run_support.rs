@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -50,6 +51,21 @@ pub fn ensure_private_directory(path: &Path, label: &str) -> Result<(), String> 
     }
     set_private_permissions(path, label)?;
     Ok(())
+}
+
+pub fn bounded_output_tail(mut reader: impl Read, limit: usize) -> Vec<u8> {
+    let mut tail = Vec::with_capacity(limit);
+    let mut chunk = [0u8; 4096];
+    while let Ok(read) = reader.read(&mut chunk) {
+        if read == 0 {
+            break;
+        }
+        tail.extend_from_slice(&chunk[..read]);
+        if tail.len() > limit {
+            tail.drain(..tail.len() - limit);
+        }
+    }
+    tail
 }
 
 #[cfg(unix)]

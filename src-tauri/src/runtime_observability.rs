@@ -225,7 +225,7 @@ impl ProcessStatsProbe for PsProcessStatsProbe {
             }
 
             let text = String::from_utf8_lossy(&output.stdout);
-            return parse_ps_rss_pcpu(&text);
+            parse_ps_rss_pcpu(&text)
         }
 
         #[cfg(not(unix))]

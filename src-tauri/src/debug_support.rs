@@ -103,10 +103,16 @@ impl DebugProcessHandle {
             return;
         };
         signal_process_group(process_group_id, libc::SIGTERM);
-        thread::spawn(move || {
-            thread::sleep(PROCESS_KILL_ESCALATION_DELAY);
+        if thread::Builder::new()
+            .name("debug-process-kill-escalation".to_string())
+            .spawn(move || {
+                thread::sleep(PROCESS_KILL_ESCALATION_DELAY);
+                signal_process_group(process_group_id, libc::SIGKILL);
+            })
+            .is_err()
+        {
             signal_process_group(process_group_id, libc::SIGKILL);
-        });
+        }
     }
 }
 

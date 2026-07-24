@@ -1,8 +1,9 @@
+use crate::package_tool_context::{safe_workspace_relative_target, PackageToolContext};
 use serde::Serialize;
 use std::{
     fs,
     io::{Read, Write},
-    path::{Component, Path, PathBuf},
+    path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     time::{Duration, Instant},
 };
@@ -88,16 +89,25 @@ fn run_prettier_format_blocking(
             ),
         };
     }
-    let root = match fs::canonicalize(root_path) {
-        Ok(root) => root,
-        Err(error) => {
+    let relative_path = match prettier_stdin_filepath(relative_path) {
+        Ok(relative_path) => relative_path,
+        Err(message) => {
             return PrettierFormatResponse::Error {
                 kind: PrettierErrorKind::Failed,
-                message: format!("Failed to resolve workspace root: {error}"),
+                message,
             };
         }
     };
-    let binary = match resolve_binary(&root) {
+    let context = match PackageToolContext::resolve(root_path, &relative_path) {
+        Ok(context) => context,
+        Err(message) => {
+            return PrettierFormatResponse::Error {
+                kind: PrettierErrorKind::Failed,
+                message,
+            };
+        }
+    };
+    let binary = match context.nearest_executable("prettier") {
         Ok(Some(binary)) => binary,
         Ok(None) => return PrettierFormatResponse::Unavailable { message: None },
         Err(message) => {
@@ -108,14 +118,15 @@ fn run_prettier_format_blocking(
         }
     };
 
-    if !has_prettier_config(&root) {
+    let config_root =
+        context.nearest_config_root(PRETTIER_CONFIG_FILE_NAMES, package_json_declares_prettier);
+    let Some(config_root) = config_root else {
         return PrettierFormatResponse::Unavailable {
             message: Some("No Prettier configuration found in the workspace.".to_string()),
         };
-    }
-
-    let stdin_filepath = match prettier_stdin_filepath(relative_path) {
-        Ok(stdin_filepath) => stdin_filepath,
+    };
+    let stdin_filepath = match context.target_relative_to(config_root) {
+        Ok(path) => path.to_string_lossy().replace('\\', "/"),
         Err(message) => {
             return PrettierFormatResponse::Error {
                 kind: PrettierErrorKind::Failed,
@@ -124,15 +135,17 @@ fn run_prettier_format_blocking(
         }
     };
 
-    let child = Command::new(binary)
+    let mut command = Command::new(binary);
+    command
         .arg("--stdin-filepath")
         .arg(&stdin_filepath)
         .env("LC_ALL", "C")
-        .current_dir(&root)
+        .current_dir(config_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    configure_process_group(&mut command);
+    let child = command.spawn();
     let child = match child {
         Ok(child) => child,
         Err(error) => {
@@ -197,6 +210,7 @@ fn wait_with_timeout(
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if Instant::now() >= deadline {
+                    terminate_process_group(child.id());
                     let _ = child.kill();
                     let _ = child.wait();
                     join_pipe_threads(writer, stdout_reader, stderr_reader);
@@ -208,6 +222,7 @@ fn wait_with_timeout(
                 std::thread::sleep(WAIT_POLL_INTERVAL);
             }
             Err(error) => {
+                terminate_process_group(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
                 join_pipe_threads(writer, stdout_reader, stderr_reader);
@@ -224,6 +239,32 @@ fn wait_with_timeout(
     let stderr = stderr_reader.join().unwrap_or_default();
     Ok((status, stdout, stderr))
 }
+
+#[cfg(unix)]
+fn configure_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_process_group(process_id: u32) {
+    let Ok(process_group_id) = i32::try_from(process_id) else {
+        return;
+    };
+
+    // SAFETY: `process_group_id` is the ID of the isolated group created for
+    // this child. A negative PID targets that group without affecting Codex.
+    unsafe {
+        libc::kill(-process_group_id, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_process_group(_process_id: u32) {}
 
 fn spawn_pipe_reader<R>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>>
 where
@@ -254,17 +295,14 @@ fn prettier_stdin_filepath(relative_path: &str) -> Result<String, String> {
         return Err("Prettier target must be a workspace-relative file path.".to_string());
     }
 
-    let only_normal_components = Path::new(relative_path)
-        .components()
-        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
-
-    if !only_normal_components {
+    if !safe_workspace_relative_target(relative_path) {
         return Err("Prettier target must stay inside the workspace.".to_string());
     }
 
     Ok(relative_path.replace('\\', "/"))
 }
 
+#[cfg(test)]
 fn has_prettier_config(root: &Path) -> bool {
     if PRETTIER_CONFIG_FILE_NAMES
         .iter()
@@ -288,33 +326,6 @@ fn package_json_declares_prettier(manifest_path: &Path) -> bool {
     };
 
     object.contains_key("prettier")
-}
-
-fn resolve_binary(root: &Path) -> Result<Option<PathBuf>, String> {
-    let candidate = root.join("node_modules").join(".bin").join("prettier");
-
-    if !is_executable_file(&candidate) {
-        return Ok(None);
-    }
-
-    candidate
-        .canonicalize()
-        .map(Some)
-        .map_err(|error| format!("Failed to resolve Prettier binary: {error}"))
-}
-
-#[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    path.metadata()
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
 }
 
 fn stderr_tail(stderr: &[u8]) -> String {
@@ -425,6 +436,35 @@ mod tests {
             response,
             PrettierFormatResponse::Ok {
                 formatted: "const value=1\n".to_string(),
+            }
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_package_uses_its_prettier_context() {
+        let root = temp_workspace("prettier-package");
+        let package = root.join("packages/accounting");
+        fs::create_dir_all(package.join("src")).expect("package source");
+        fs::write(package.join("src/app.ts"), "const value=1").expect("source");
+        write_config(&package);
+        write_prettier(
+            &package,
+            "#!/bin/sh\nexpected=$(cd \"$(dirname \"$0\")/../..\" && pwd)\n[ \"$PWD\" = \"$expected\" ] || exit 9\n[ \"$2\" = \"src/app.ts\" ] || exit 8\ncat\n",
+        );
+
+        let response = run_prettier_format_blocking(
+            root.to_str().expect("root"),
+            "packages/accounting/src/app.ts",
+            "const value=1",
+            PRETTIER_TIMEOUT,
+        );
+
+        assert_eq!(
+            response,
+            PrettierFormatResponse::Ok {
+                formatted: "const value=1".to_string(),
             }
         );
         fs::remove_dir_all(root).expect("cleanup");

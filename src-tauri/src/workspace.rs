@@ -236,16 +236,16 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
         let mut visited = 0usize;
 
         let matcher = GitignoreWorkspaceIgnoreMatcher::load(root)?;
-        collect_ranked_file_results(
+        RankedFileSearch {
             root,
-            root,
-            &normalized_query,
-            capped_limit,
-            WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
-            &matcher,
-            &mut visited,
-            &mut results,
-        )?;
+            query: &normalized_query,
+            limit: capped_limit,
+            visited_limit: WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
+            matcher: &matcher,
+            visited: &mut visited,
+            results: &mut results,
+        }
+        .collect(root)?;
 
         Ok(results.into_iter().map(|(result, _)| result).collect())
     }
@@ -276,83 +276,77 @@ fn file_entry_kind(metadata: &fs::Metadata) -> FileEntryKind {
     FileEntryKind::File
 }
 
-fn collect_ranked_file_results(
-    root: &Path,
-    current: &Path,
-    query: &str,
+struct RankedFileSearch<'a> {
+    root: &'a Path,
+    query: &'a str,
     limit: usize,
     visited_limit: usize,
-    matcher: &dyn WorkspaceIgnoreMatcher,
-    visited: &mut usize,
-    results: &mut Vec<(FileSearchResult, FileMatchRank)>,
-) -> io::Result<()> {
-    if *visited >= visited_limit {
-        return Ok(());
-    }
+    matcher: &'a dyn WorkspaceIgnoreMatcher,
+    visited: &'a mut usize,
+    results: &'a mut Vec<(FileSearchResult, FileMatchRank)>,
+}
 
-    for entry in fs::read_dir(current)? {
-        if *visited >= visited_limit {
+impl RankedFileSearch<'_> {
+    fn collect(&mut self, current: &Path) -> io::Result<()> {
+        if *self.visited >= self.visited_limit {
             return Ok(());
         }
 
-        let entry = entry?;
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy().to_string();
+        for entry in fs::read_dir(current)? {
+            if *self.visited >= self.visited_limit {
+                return Ok(());
+            }
 
-        let path = entry.path();
-        let file_type = entry.file_type()?;
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy().to_string();
 
-        if file_type.is_symlink() {
-            continue;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_symlink() {
+                continue;
+            }
+
+            if self.matcher.is_ignored(&path, file_type.is_dir()) {
+                continue;
+            }
+
+            *self.visited += 1;
+
+            if file_type.is_dir() {
+                self.collect(&path)?;
+                continue;
+            }
+
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let relative_path = path
+                .strip_prefix(self.root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            let Some(rank) = score_result(&relative_path, self.query) else {
+                continue;
+            };
+
+            insert_ranked_result(
+                self.results,
+                FileSearchResult {
+                    name,
+                    path: path.to_string_lossy().to_string(),
+                    relative_path,
+                },
+                rank,
+                self.limit,
+            );
         }
 
-        if matcher.is_ignored(&path, file_type.is_dir()) {
-            continue;
-        }
-
-        *visited += 1;
-
-        if file_type.is_dir() {
-            collect_ranked_file_results(
-                root,
-                &path,
-                query,
-                limit,
-                visited_limit,
-                matcher,
-                visited,
-                results,
-            )?;
-            continue;
-        }
-
-        if !file_type.is_file() {
-            continue;
-        }
-
-        let relative_path = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-
-        let Some(rank) = score_result(&relative_path, query) else {
-            continue;
-        };
-
-        insert_ranked_result(
-            results,
-            FileSearchResult {
-                name,
-                path: path.to_string_lossy().to_string(),
-                relative_path,
-            },
-            rank,
-            limit,
-        );
+        Ok(())
     }
-
-    Ok(())
 }
 
 fn insert_ranked_result(

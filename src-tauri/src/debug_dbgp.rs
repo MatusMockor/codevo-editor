@@ -1,9 +1,14 @@
 #![allow(dead_code)] // PHP Xdebug DBGp adapter awaiting the tauri debugger command wiring slice.
 
+#[path = "debug_dbgp_evaluate_policy.rs"]
+mod evaluate_policy;
+#[path = "debug_dbgp_variables.rs"]
+mod variables;
+
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEventEmitter, DebugEventPayload, DebugLaunchTarget,
     DebugOutputStream, DebugScopeInfo, DebugStackFrame, DebugStopReason, DebugVariableInfo,
-    StepKind,
+    DebugVariablePage, DebugVariablePageRequest, StepKind,
 };
 use crate::debug_support::{
     file_url_from_path, group_breakpoints_by_file, path_from_file_url, validate_workspace_file,
@@ -354,10 +359,14 @@ enum DbgpStatus {
 #[derive(Clone)]
 enum VariableSlot {
     Context {
+        pause_generation: u64,
+        frame_id: u64,
         depth: u32,
         context_id: u32,
     },
     Property {
+        pause_generation: u64,
+        frame_id: u64,
         depth: u32,
         context_id: u32,
         fullname: String,
@@ -366,6 +375,7 @@ enum VariableSlot {
 
 #[derive(Default)]
 struct PauseInventory {
+    generation: u64,
     frame_depths: HashMap<u64, u32>,
     frames: Vec<DebugStackFrame>,
     scopes: HashMap<u64, Vec<DebugScopeInfo>>,
@@ -386,6 +396,7 @@ struct DbgpShared {
     pending_resolutions: HashMap<String, u32>,
     pause: Option<PauseInventory>,
     next_reference: u64,
+    next_pause_generation: u64,
 }
 
 impl DbgpShared {
@@ -439,6 +450,7 @@ fn new_adapter_inner(
             pending_resolutions: HashMap::new(),
             pause: None,
             next_reference: 1,
+            next_pause_generation: 1,
         }),
     })
 }
@@ -789,11 +801,22 @@ fn handle_break(
     let Ok(context_response) = connection.request("context_names", "", None) else {
         return;
     };
-    let frames = {
+    let (frames, pause_generation) = {
         let Ok(mut shared) = inner.shared.lock() else {
             return;
         };
-        let mut inventory = PauseInventory::default();
+        let pause_generation = shared.next_pause_generation;
+        let Some(next_pause_generation) = pause_generation.checked_add(1) else {
+            return;
+        };
+        if pause_generation == 0 || pause_generation > 9_007_199_254_740_991 {
+            return;
+        }
+        shared.next_pause_generation = next_pause_generation;
+        let mut inventory = PauseInventory {
+            generation: pause_generation,
+            ..PauseInventory::default()
+        };
         for entry in &stack_response.stack {
             let frame_id = shared.allocate_reference();
             inventory.frame_depths.insert(frame_id, entry.level);
@@ -811,6 +834,8 @@ fn handle_break(
                 inventory.slots.insert(
                     reference,
                     VariableSlot::Context {
+                        pause_generation,
+                        frame_id,
                         depth: entry.level,
                         context_id: context.id,
                     },
@@ -825,11 +850,13 @@ fn handle_break(
         }
         let frames = inventory.frames.clone();
         shared.pause = Some(inventory);
-        frames
+        (frames, pause_generation)
     };
-    inner
-        .emitter
-        .emit(DebugEventPayload::Stopped { reason, frames });
+    inner.emitter.emit(DebugEventPayload::Stopped {
+        reason,
+        frames,
+        pause_generation,
+    });
 }
 
 fn handle_notify(inner: &Arc<DbgpAdapterInner>, notify: &DbgpNotify) {
@@ -1007,98 +1034,6 @@ impl PhpDbgpAdapter {
             shared.pause = None;
         }
     }
-
-    fn build_variables(
-        &self,
-        properties: &[DbgpProperty],
-        depth: u32,
-        context_id: u32,
-        expected_total: Option<u32>,
-    ) -> Result<Vec<DebugVariableInfo>, String> {
-        let mut shared = self
-            .inner
-            .shared
-            .lock()
-            .map_err(|error| error.to_string())?;
-        if shared.pause.is_none() {
-            return Err(NOT_PAUSED_ERROR.to_string());
-        }
-        let mut variables = Vec::with_capacity(properties.len());
-        for property in properties {
-            variables.push(variable_from_property(
-                &mut shared,
-                property,
-                depth,
-                context_id,
-            ));
-        }
-        if let Some(total) = expected_total {
-            if (total as usize) > properties.len() {
-                variables.push(DebugVariableInfo {
-                    name: "...".to_string(),
-                    value: format!("({} more)", total as usize - properties.len()),
-                    value_type: None,
-                    variables_reference: 0,
-                });
-            }
-        }
-        Ok(variables)
-    }
-}
-
-fn variable_from_property(
-    shared: &mut DbgpShared,
-    property: &DbgpProperty,
-    depth: u32,
-    context_id: u32,
-) -> DebugVariableInfo {
-    let variables_reference = match (&property.fullname, property.has_children) {
-        (Some(fullname), true) => {
-            let reference = shared.allocate_reference();
-            if let Some(pause) = shared.pause.as_mut() {
-                pause.slots.insert(
-                    reference,
-                    VariableSlot::Property {
-                        depth,
-                        context_id,
-                        fullname: fullname.clone(),
-                    },
-                );
-                reference
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
-    DebugVariableInfo {
-        name: property.name.clone(),
-        value: property_display_value(property),
-        value_type: property
-            .classname
-            .clone()
-            .or_else(|| property.property_type.clone()),
-        variables_reference,
-    }
-}
-
-fn property_display_value(property: &DbgpProperty) -> String {
-    match property.property_type.as_deref() {
-        Some("object") => property
-            .classname
-            .clone()
-            .unwrap_or_else(|| "object".to_string()),
-        Some("array") => format!("array({})", property.numchildren),
-        Some("null") => "null".to_string(),
-        Some("uninitialized") => "uninitialized".to_string(),
-        _ => {
-            let mut value = property.value.clone();
-            if property.size.is_some_and(|size| size > value.len()) {
-                value.push_str("...");
-            }
-            value
-        }
-    }
 }
 
 fn dbgp_error_message(error: &DbgpError, command: &str) -> String {
@@ -1122,6 +1057,22 @@ impl DebugAdapter for PhpDbgpAdapter {
         file_path: &str,
         breakpoints: &[DebugBreakpoint],
     ) -> Result<Vec<DebugBreakpoint>, String> {
+        if breakpoints
+            .iter()
+            .any(|breakpoint| breakpoint.column_number.is_some())
+        {
+            return Err(
+                crate::debug_breakpoint_policy::PHP_INLINE_BREAKPOINT_UNSUPPORTED_ERROR.to_string(),
+            );
+        }
+        if breakpoints
+            .iter()
+            .any(|breakpoint| breakpoint.hit_condition.is_some())
+        {
+            return Err(
+                crate::debug_hit_condition::PHP_HIT_CONDITION_UNSUPPORTED_ERROR.to_string(),
+            );
+        }
         let connection = self
             .inner
             .connection
@@ -1194,6 +1145,10 @@ impl DebugAdapter for PhpDbgpAdapter {
         Err("Xdebug cannot pause a running script.".to_string())
     }
 
+    fn restart_frame(&mut self, _pause_generation: u64, _frame_id: u64) -> Result<(), String> {
+        Err("Restart frame is not supported by PHP/Xdebug sessions.".to_string())
+    }
+
     fn stack_trace(&mut self) -> Result<Vec<DebugStackFrame>, String> {
         let shared = self
             .inner
@@ -1225,95 +1180,31 @@ impl DebugAdapter for PhpDbgpAdapter {
     }
 
     fn variables(&mut self, reference: u64) -> Result<Vec<DebugVariableInfo>, String> {
-        let connection = self.inner.active_connection()?;
-        let slot = {
-            let shared = self
-                .inner
-                .shared
-                .lock()
-                .map_err(|error| error.to_string())?;
-            let pause = shared
-                .pause
-                .as_ref()
-                .ok_or_else(|| NOT_PAUSED_ERROR.to_string())?;
-            pause
-                .slots
-                .get(&reference)
-                .cloned()
-                .ok_or_else(|| format!("Unknown variables reference {reference}."))?
-        };
-        match slot {
-            VariableSlot::Context { depth, context_id } => {
-                let response = connection.request(
-                    "context_get",
-                    &format!(" -d {depth} -c {context_id}"),
-                    None,
-                )?;
-                if let Some(error) = &response.error {
-                    return Err(dbgp_error_message(error, "context_get"));
-                }
-                self.build_variables(&response.properties, depth, context_id, None)
-            }
-            VariableSlot::Property {
-                depth,
-                context_id,
-                fullname,
-            } => {
-                let arguments = format!(
-                    " -d {depth} -c {context_id} -n {} -p 0",
-                    quote_argument(&fullname)
-                );
-                let response = connection.request("property_get", &arguments, None)?;
-                if let Some(error) = &response.error {
-                    return Err(dbgp_error_message(error, "property_get"));
-                }
-                let property = response
-                    .properties
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| "Xdebug returned no property data.".to_string())?;
-                let total = property.numchildren;
-                self.build_variables(&property.children, depth, context_id, Some(total))
-            }
-        }
+        variables::variables(self, reference)
+    }
+
+    fn current_pause_generation(&self) -> Option<u64> {
+        variables::current_pause_generation(self)
+    }
+
+    fn variables_page(
+        &mut self,
+        request: DebugVariablePageRequest,
+    ) -> Result<DebugVariablePage, String> {
+        variables::variables_page(self, request)
     }
 
     fn evaluate(&mut self, frame_id: u64, expression: &str) -> Result<DebugVariableInfo, String> {
-        let connection = self.inner.active_connection()?;
-        let depth = {
-            let shared = self
-                .inner
-                .shared
-                .lock()
-                .map_err(|error| error.to_string())?;
-            let pause = shared
-                .pause
-                .as_ref()
-                .ok_or_else(|| NOT_PAUSED_ERROR.to_string())?;
-            *pause
-                .frame_depths
-                .get(&frame_id)
-                .ok_or_else(|| format!("Unknown debug frame {frame_id}."))?
-        };
-        let response = connection.request("eval", &format!(" -d {depth}"), Some(expression))?;
-        if let Some(error) = &response.error {
-            return Err(dbgp_error_message(error, "eval"));
-        }
-        let property = response
-            .properties
-            .first()
-            .ok_or_else(|| "Evaluation returned no result.".to_string())?;
-        let mut shared = self
-            .inner
-            .shared
-            .lock()
-            .map_err(|error| error.to_string())?;
-        if shared.pause.is_none() {
-            return Err(NOT_PAUSED_ERROR.to_string());
-        }
-        let mut variable = variable_from_property(&mut shared, property, 0, 0);
-        variable.name = expression.to_string();
-        Ok(variable)
+        evaluate_policy::evaluate_repl(self, frame_id, expression)
+    }
+
+    fn evaluate_with_policy(
+        &mut self,
+        frame_id: u64,
+        expression: &str,
+        policy: crate::debug_adapter::DebugEvaluatePolicy,
+    ) -> Result<DebugVariableInfo, crate::debug_adapter::DebugEvaluateFailure> {
+        evaluate_policy::evaluate(self, frame_id, expression, policy)
     }
 
     fn terminate(&mut self) {
@@ -1372,6 +1263,8 @@ struct DbgpProperty {
     classname: Option<String>,
     has_children: bool,
     numchildren: u32,
+    page: Option<u32>,
+    page_size: Option<u32>,
     size: Option<usize>,
     encoding: Option<String>,
     raw_text: String,
@@ -1590,6 +1483,9 @@ fn property_from_attributes(reader: &XmlReader<&[u8]>, element: &BytesStart<'_>)
         numchildren: attribute_value(reader, element, b"numchildren")
             .and_then(|value| value.parse().ok())
             .unwrap_or(0),
+        page: attribute_value(reader, element, b"page").and_then(|value| value.parse().ok()),
+        page_size: attribute_value(reader, element, b"pagesize")
+            .and_then(|value| value.parse().ok()),
         size: attribute_value(reader, element, b"size").and_then(|value| value.parse().ok()),
         encoding: attribute_value(reader, element, b"encoding"),
         raw_text: String::new(),
@@ -1627,6 +1523,15 @@ mod tests {
     const CLOSE_MARKER: &str = "<<close-connection>>";
     const XMLNS: &str =
         "xmlns=\"urn:debugger_protocol_v1\" xmlns:xdebug=\"https://xdebug.org/dbgp/xdebug\"";
+
+    #[path = "debug_dbgp_breakpoint_tests.rs"]
+    mod breakpoint_tests;
+    #[path = "debug_dbgp_launch_argument_tests.rs"]
+    mod launch_argument_tests;
+    #[path = "debug_dbgp_restart_frame_tests.rs"]
+    mod restart_frame_tests;
+    #[path = "debug_dbgp_watch_evaluate_tests.rs"]
+    mod watch_evaluate_tests;
 
     #[derive(Default)]
     struct CollectingSink {
@@ -1947,7 +1852,7 @@ mod tests {
     }
 
     fn default_responder() -> MockXdebugResponder {
-        Box::new(|command| default_replies(command))
+        Box::new(default_replies)
     }
 
     fn scripted_responder(
@@ -2047,7 +1952,7 @@ mod tests {
                 sink.payloads()
                     .into_iter()
                     .filter_map(|payload| match payload {
-                        DebugEventPayload::Stopped { reason, frames } => Some((reason, frames)),
+                        DebugEventPayload::Stopped { reason, frames, .. } => Some((reason, frames)),
                         _ => None,
                     })
                     .nth(index)
@@ -2081,7 +1986,10 @@ mod tests {
             id: id.to_string(),
             file_path: file_path.to_string(),
             line_number,
+            column_number: None,
             condition: condition.map(str::to_string),
+            hit_condition: None,
+            log_message: None,
             enabled,
             verified: false,
         }
@@ -2304,14 +2212,15 @@ mod tests {
             property_get.arguments.get("c").map(String::as_str),
             Some("0")
         );
-        assert_eq!(children.len(), 3);
+        assert_eq!(
+            property_get.arguments.get("p").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(children.len(), 2);
         assert_eq!(children[0].name, "id");
         assert_eq!(children[0].value, "1");
         assert_eq!(children[1].name, "name");
         assert_eq!(children[1].value, "Ana");
-        assert_eq!(children[2].name, "...");
-        assert_eq!(children[2].value, "(148 more)");
-        assert_eq!(children[2].variables_reference, 0);
     }
 
     #[test]
@@ -2582,22 +2491,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_php_script_launch_arguments_with_xdebug_flags() {
-        let arguments = build_php_launch_arguments(9007, "/workspace/php/bin/run.php");
-
-        assert_eq!(
-            arguments,
-            vec![
-                "-dxdebug.mode=debug".to_string(),
-                "-dxdebug.start_with_request=yes".to_string(),
-                "-dxdebug.client_host=127.0.0.1".to_string(),
-                "-dxdebug.client_port=9007".to_string(),
-                "/workspace/php/bin/run.php".to_string(),
-            ]
-        );
-    }
-
-    #[test]
     fn builds_php_test_launch_arguments_without_a_shell() {
         let arguments = build_php_test_launch_arguments(
             9007,
@@ -2726,45 +2619,5 @@ mod tests {
             .expect_err("evaluate must fail");
 
         assert_eq!(error, "Cannot evaluate");
-    }
-
-    #[test]
-    fn notify_breakpoint_resolved_marks_breakpoints_verified() {
-        let file = breakpoint_fixture_file("notify-resolved");
-        let file_path = file.to_string_lossy().to_string();
-        let session = start_listen_session(
-            file.parent().expect("fixture parent"),
-            vec![breakpoint(&file_path, "bp-1", 12, None, true)],
-        );
-        let client = MockXdebugClient::connect(
-            session.port,
-            scripted_responder(|command| {
-                (command.name == "breakpoint_set").then(|| {
-                    vec![breakpoint_set_response(
-                        command.transaction_id,
-                        "dbgp-77",
-                        false,
-                    )]
-                })
-            }),
-        );
-        wait_for_command(&client, "run");
-        let initial = wait_for(
-            || verified_events(&session.sink).into_iter().next(),
-            EVENT_WAIT_TIMEOUT,
-            "initial breakpoints verified event",
-        );
-        assert!(!initial.1[0].verified);
-
-        client.inject(&notify_resolved_xml("dbgp-77", 14));
-
-        let resolved = wait_for(
-            || verified_events(&session.sink).into_iter().nth(1),
-            EVENT_WAIT_TIMEOUT,
-            "resolved breakpoints verified event",
-        );
-        assert_eq!(resolved.0, file_path);
-        assert!(resolved.1[0].verified);
-        assert_eq!(resolved.1[0].line_number, 14);
     }
 }

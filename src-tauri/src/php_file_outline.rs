@@ -1,3 +1,4 @@
+use crate::php_symbols::{PhpSymbol, PhpSymbolKind, PhpSymbolVisibility as ParsedVisibility};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,6 +84,48 @@ pub struct PhpFileOutlineSymbolRecord {
     pub relative_path: String,
     pub return_type: Option<String>,
     pub visibility: Option<PhpSymbolVisibility>,
+}
+
+pub(crate) fn php_symbol_outline_record(
+    symbol: PhpSymbol,
+    path: &str,
+    relative_path: &str,
+) -> PhpFileOutlineSymbolRecord {
+    PhpFileOutlineSymbolRecord {
+        column: symbol.range.start_column as i64,
+        container_kind: None,
+        container_name: symbol.container_name,
+        fully_qualified_name: symbol.fully_qualified_name,
+        is_static: symbol.is_static,
+        kind: match symbol.kind {
+            PhpSymbolKind::Class => PhpFileOutlineNodeKind::Class,
+            PhpSymbolKind::Constant => PhpFileOutlineNodeKind::Constant,
+            PhpSymbolKind::Enum => PhpFileOutlineNodeKind::Enum,
+            PhpSymbolKind::Function => PhpFileOutlineNodeKind::Function,
+            PhpSymbolKind::Interface => PhpFileOutlineNodeKind::Interface,
+            PhpSymbolKind::Method => PhpFileOutlineNodeKind::Method,
+            PhpSymbolKind::Property => PhpFileOutlineNodeKind::Property,
+            PhpSymbolKind::Trait => PhpFileOutlineNodeKind::Trait,
+        },
+        line_number: symbol.range.start_line as i64,
+        name: symbol.name,
+        parameters: symbol
+            .parameters
+            .into_iter()
+            .map(|parameter| PhpFileOutlineParameter {
+                name: parameter.name,
+                type_name: parameter.type_name,
+            })
+            .collect(),
+        path: path.to_string(),
+        relative_path: relative_path.to_string(),
+        return_type: symbol.return_type,
+        visibility: symbol.visibility.map(|visibility| match visibility {
+            ParsedVisibility::Public => PhpSymbolVisibility::Public,
+            ParsedVisibility::Protected => PhpSymbolVisibility::Protected,
+            ParsedVisibility::Private => PhpSymbolVisibility::Private,
+        }),
+    }
 }
 
 pub fn build_php_file_outline(symbols: &[PhpFileOutlineSymbolRecord]) -> PhpFileOutline {

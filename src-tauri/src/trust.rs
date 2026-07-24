@@ -19,14 +19,23 @@ struct PersistedWorkspaceTrust {
 }
 
 pub struct WorkspaceTrustService {
+    generation: u64,
     storage_path: PathBuf,
     trusted_roots: HashSet<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorkspaceTrustSnapshot {
+    pub(crate) generation: u64,
+    pub(crate) root_path: String,
+    pub(crate) trusted: bool,
 }
 
 impl WorkspaceTrustService {
     pub fn load(storage_path: PathBuf) -> io::Result<Self> {
         if !storage_path.is_file() {
             return Ok(Self {
+                generation: 0,
                 storage_path,
                 trusted_roots: HashSet::new(),
             });
@@ -36,6 +45,7 @@ impl WorkspaceTrustService {
         let persisted: PersistedWorkspaceTrust = serde_json::from_str(&content).unwrap_or_default();
 
         Ok(Self {
+            generation: 0,
             storage_path,
             trusted_roots: persisted.trusted_roots.into_iter().collect(),
         })
@@ -50,8 +60,20 @@ impl WorkspaceTrustService {
         }
     }
 
+    pub(crate) fn snapshot(&self, root_path: &str) -> WorkspaceTrustSnapshot {
+        let state = self.get(root_path);
+        WorkspaceTrustSnapshot {
+            generation: self.generation,
+            root_path: state.root_path,
+            trusted: state.trusted,
+        }
+    }
+
     pub fn set(&mut self, root_path: &str, trusted: bool) -> io::Result<WorkspaceTrustState> {
         let normalized_path = normalize_root_path(root_path);
+        let next_generation = self.generation.checked_add(1).ok_or_else(|| {
+            io::Error::other("workspace trust generation capacity has been exhausted")
+        })?;
 
         if trusted {
             let inserted = self.trusted_roots.insert(normalized_path.clone());
@@ -63,6 +85,7 @@ impl WorkspaceTrustService {
 
                 return Err(error);
             }
+            self.generation = next_generation;
 
             return Ok(self.get(&normalized_path));
         }
@@ -76,6 +99,7 @@ impl WorkspaceTrustService {
 
             return Err(error);
         }
+        self.generation = next_generation;
 
         Ok(self.get(&normalized_path))
     }
@@ -149,6 +173,28 @@ mod tests {
     }
 
     #[test]
+    fn trust_generation_rejects_revoke_regrant_aba_and_advances_on_each_commit() {
+        let root = create_temp_dir("trust-generation");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage).expect("load trust service");
+
+        service.set("/project", true).expect("grant");
+        let granted = service.snapshot("/project");
+        service.set("/project", false).expect("revoke");
+        let revoked = service.snapshot("/project");
+        service.set("/project", true).expect("regrant");
+        let regranted = service.snapshot("/project");
+
+        assert!(granted.trusted);
+        assert!(!revoked.trusted);
+        assert!(regranted.trusted);
+        assert!(granted.generation < revoked.generation);
+        assert!(revoked.generation < regranted.generation);
+        assert_ne!(granted, regranted);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn failed_save_rolls_back_in_memory_trust_state() {
         let root = create_temp_dir("trust-rollback");
         let blocker = root.join("blocked-parent");
@@ -156,16 +202,23 @@ mod tests {
         let storage = blocker.join("trust.json");
         let mut service = WorkspaceTrustService::load(storage).expect("load trust service");
 
+        let initial_generation = service.snapshot("/project").generation;
         assert!(service.set("/project", true).is_err());
         assert!(!service.get("/project").trusted);
+        assert_eq!(service.snapshot("/project").generation, initial_generation);
 
         let writable_storage = root.join("trust.json");
         service.storage_path = writable_storage;
         service.set("/project", true).expect("trust project");
+        let committed_generation = service.snapshot("/project").generation;
         service.storage_path = blocker.join("trust.json");
 
         assert!(service.set("/project", false).is_err());
         assert!(service.get("/project").trusted);
+        assert_eq!(
+            service.snapshot("/project").generation,
+            committed_generation
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

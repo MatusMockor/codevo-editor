@@ -723,7 +723,7 @@ fn watch_path(path: &Path) -> String {
 }
 
 fn to_io_error(error: notify::Error) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, error.to_string())
+    io::Error::other(error.to_string())
 }
 
 #[cfg(test)]
@@ -771,9 +771,11 @@ mod tests {
     /// Manual flush scheduler: captures the pending flush so a test can run it
     /// deterministically (no timer sleep). A single pending flush is kept,
     /// mirroring the "only one window armed at a time" production contract.
+    type PendingFlush = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
+
     #[derive(Clone, Default)]
     struct ManualFlushScheduler {
-        pending: Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>,
+        pending: PendingFlush,
         scheduled_count: Arc<Mutex<usize>>,
     }
 

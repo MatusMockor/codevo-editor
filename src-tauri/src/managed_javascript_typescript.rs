@@ -113,9 +113,7 @@ pub(crate) fn managed_typescript_language_server_root() -> Result<PathBuf, Strin
     })?;
     #[cfg(target_os = "macos")]
     {
-        return Ok(
-            home.join("Library/Application Support/Codevo Editor/tools/typescript-language-server")
-        );
+        Ok(home.join("Library/Application Support/Codevo Editor/tools/typescript-language-server"))
     }
     #[cfg(not(target_os = "macos"))]
     Ok(home.join(".codevo-editor/tools/typescript-language-server"))
@@ -400,14 +398,14 @@ fn is_workspace_typescript_server_path(path: &str, root_path: &str) -> bool {
 #[cfg(unix)]
 fn node_modules_root_from_bin_tool_path(path: &Path) -> Option<PathBuf> {
     let bin_dir = path.parent()?;
-    if !bin_dir.file_name().is_some_and(|name| name == ".bin") {
+    if bin_dir.file_name().is_none_or(|name| name != ".bin") {
         return None;
     }
 
     let node_modules = bin_dir.parent()?;
-    if !node_modules
+    if node_modules
         .file_name()
-        .is_some_and(|name| name == "node_modules")
+        .is_none_or(|name| name != "node_modules")
     {
         return None;
     }

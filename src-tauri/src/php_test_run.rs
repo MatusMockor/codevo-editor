@@ -1,15 +1,34 @@
 use crate::test_run_support::{is_executable_file, prepare_result_path, ResultFileGuard};
+#[path = "php_test_coverage.rs"]
+pub(crate) mod coverage;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const MAX_CASES: usize = 5_000;
 const ERROR_TAIL_BYTES: usize = 4_000;
 const RESULT_SUBDIRECTORY: &str = "php-test-results";
 const RESULT_LABEL: &str = "PHP test result";
+static PHP_TEST_RUN_ADMISSION: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct PhpTestRunPermit {
+    _guard: MutexGuard<'static, ()>,
+}
+
+fn try_acquire_php_test_run() -> Result<PhpTestRunPermit, ()> {
+    PHP_TEST_RUN_ADMISSION
+        .get_or_init(|| Mutex::new(()))
+        .try_lock()
+        .map(|guard| PhpTestRunPermit { _guard: guard })
+        .map_err(|_| ())
+}
+
+#[cfg(test)]
+static PHP_TEST_RUN_TEST_SERIAL: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,7 +128,30 @@ fn run_php_tests_blocking(
     app_data_base: &Path,
     filter: Option<&str>,
 ) -> PhpTestRunResponse {
-    run_php_tests_blocking_with(root_path, app_data_base, filter, execute_runner)
+    run_php_tests_blocking_admitted_with(root_path, app_data_base, filter, execute_runner)
+}
+
+fn run_php_tests_blocking_admitted_with<F>(
+    root_path: &str,
+    app_data_base: &Path,
+    filter: Option<&str>,
+    execute: F,
+) -> PhpTestRunResponse
+where
+    F: FnOnce(&TestRunner, &Path, &Path, Option<&str>) -> Result<Vec<u8>, String>,
+{
+    if let Some(response) = invalid_filter_response(filter) {
+        return response;
+    }
+    let _permit = match try_acquire_php_test_run() {
+        Ok(permit) => permit,
+        Err(()) => {
+            return PhpTestRunResponse::Unavailable {
+                message: "Another PHP test run is already active.".to_string(),
+            };
+        }
+    };
+    run_php_tests_blocking_with(root_path, app_data_base, filter, execute)
 }
 
 fn run_php_tests_blocking_with<F>(
@@ -121,10 +163,8 @@ fn run_php_tests_blocking_with<F>(
 where
     F: FnOnce(&TestRunner, &Path, &Path, Option<&str>) -> Result<Vec<u8>, String>,
 {
-    if filter.is_some_and(|value| !is_valid_filter(value)) {
-        return PhpTestRunResponse::Error {
-            message: "Invalid PHP test filter.".to_string(),
-        };
+    if let Some(response) = invalid_filter_response(filter) {
+        return response;
     }
 
     let root = match fs::canonicalize(root_path) {
@@ -172,6 +212,14 @@ where
     };
     drop(guard);
     response
+}
+
+fn invalid_filter_response(filter: Option<&str>) -> Option<PhpTestRunResponse> {
+    filter
+        .is_some_and(|value| !is_valid_filter(value))
+        .then(|| PhpTestRunResponse::Error {
+            message: "Invalid PHP test filter.".to_string(),
+        })
 }
 
 fn execute_runner(

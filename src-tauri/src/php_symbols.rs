@@ -597,7 +597,7 @@ mod tests {
         let store = find_symbol(&symbols, "App\\Http\\Controller::store");
 
         assert_eq!(store.visibility, Some(PhpSymbolVisibility::Protected));
-        assert_eq!(store.is_static, false);
+        assert!(!store.is_static);
         assert_eq!(store.return_type.as_deref(), Some("?User"));
         assert_eq!(
             store.parameters,
@@ -630,7 +630,7 @@ mod tests {
         let make = find_symbol(&symbols, "App\\Http\\Controller::make");
 
         assert_eq!(make.visibility, Some(PhpSymbolVisibility::Private));
-        assert_eq!(make.is_static, true);
+        assert!(make.is_static);
         assert_eq!(make.return_type.as_deref(), Some("self"));
     }
 

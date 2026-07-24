@@ -412,11 +412,8 @@ fn detect_frameworks(dependencies: &BTreeSet<String>) -> Vec<String> {
         ("preact", "Preact"),
     ]
     .into_iter()
-    .filter_map(|(package_name, label)| {
-        dependencies
-            .contains(package_name)
-            .then(|| label.to_string())
-    })
+    .filter(|&(package_name, _label)| dependencies.contains(package_name))
+    .map(|(_package_name, label)| label.to_string())
     .collect()
 }
 

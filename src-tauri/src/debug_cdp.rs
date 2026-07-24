@@ -1,232 +1,85 @@
 #![allow(dead_code)] // Node CDP debug adapter awaiting the tauri debugger command wiring slice.
 
 use crate::debug_adapter::{
-    DebugAdapter, DebugBreakpoint, DebugEventEmitter, DebugEventPayload, DebugLaunchTarget,
+    DebugAdapter, DebugBreakpoint, DebugCompletionRequest, DebugCompletionResult,
+    DebugEventEmitter, DebugEventPayload, DebugExceptionPauseMode, DebugLaunchTarget,
     DebugOutputStream, DebugScopeInfo, DebugStackFrame, DebugStopReason, DebugVariableInfo,
     StepKind,
 };
-use crate::debug_support::{
-    file_url_from_path, group_breakpoints_by_file, path_from_file_url, validate_workspace_file,
-    DebugProcessHandle,
+use crate::debug_cdp_breakpoints::{BreakpointPauseDecision, CdpBreakpointHitRegistry};
+use crate::debug_inspector_discovery::redact_inspector_url;
+use crate::debug_inspector_startup::{
+    arm_startup_entry_probe, StartupEntryProbe, StartupEntryValidation,
 };
-use crate::managed_javascript_typescript::node_executable_path;
-use regex::Regex;
+use crate::debug_logpoint::{
+    append_bounded_log_output, render_remote_object, DebugLogSegment, DebugLogTemplate,
+};
+#[cfg(test)]
+use crate::debug_node_launch::{build_launch_arguments, INSPECT_FLAG};
+use crate::debug_node_launch::{build_launch_plan, source_map_registry};
+use crate::debug_node_process::spawn_node_inspector;
+use crate::debug_source_map::SourceMapRegistry;
+use crate::debug_support::{
+    file_url_from_path, group_breakpoints_by_file, path_from_file_url, DebugProcessHandle,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read};
-use std::net::TcpStream;
+use std::io::{self, Read, Write};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
-use tungstenite::stream::MaybeTlsStream;
+use std::time::{Duration, Instant};
+use tungstenite::protocol::WebSocketConfig;
 use tungstenite::{Error as WsError, Message, WebSocket};
 
-const WS_URL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+#[path = "debug_cdp_completions.rs"]
+mod completions;
+#[path = "debug_cdp_disconnect.rs"]
+mod disconnect;
+#[path = "debug_cdp/event_sink.rs"]
+pub(crate) mod event_sink;
+pub mod lifecycle;
+#[path = "debug_node_attach_orchestrator.rs"]
+mod node_attach_orchestrator;
+pub(crate) use node_attach_orchestrator::{
+    NodeAttachCandidateList, NodeAttachCandidateListClosed, NodeAttachCandidatePickerItem,
+    NodeAttachCandidatePublicationRegistry,
+};
+#[path = "debug_cdp_restart_frame.rs"]
+mod restart_frame;
+#[path = "debug_cdp_run_to_location.rs"]
+mod run_to_location;
+#[path = "debug_cdp_scope.rs"]
+mod scope;
+#[path = "debug_cdp_startup_policy.rs"]
+mod startup_policy;
+#[path = "debug_cdp_transport.rs"]
+pub(crate) mod transport;
+#[path = "debug_cdp_variables.rs"]
+mod variables;
+
+#[cfg(test)]
+use self::transport::{
+    apply_breakpoint_resolution, build_pause_inventory, mark_explicit_pause_requested,
+    original_breakpoint_line, BreakpointResolutionTarget, CdpShared, GeneratedPosition,
+    MAX_PENDING_BREAKPOINT_RESOLUTIONS,
+};
+use self::transport::{CdpStartupPolicy, DebuggeeOwnership, NodeCdpAdapter, NodeCdpConnectOptions};
+use lifecycle::DebugSessionFinish;
+pub(crate) use startup_policy::ensure_startup_current;
+use startup_policy::loopback_web_socket_port;
+
 const CDP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(25);
-const INSPECT_FLAG: &str = "--inspect-brk=127.0.0.1:0";
-const VITEST_ENTRY: &[&str] = &["node_modules", "vitest", "vitest.mjs"];
-const JEST_ENTRY: &[&str] = &["node_modules", "jest", "bin", "jest.js"];
+const MAX_CDP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_CDP_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_CDP_HANDSHAKE_BYTES: usize = 64 * 1024;
 
-/// Runs on the process waiter thread with the debuggee's exit code once the
-/// child exits. Wire it to `DebugSessionRegistry::finish_session(session_id,
-/// exit_code)`; the adapter never emits `Terminated` itself. Invoked only
-/// after `create_node_cdp_adapter` returns `Ok`; factory failures never call
-/// it.
-pub(crate) type DebugSessionFinish = Box<dyn FnOnce(Option<i32>) + Send>;
-
-/// Node binary resolution reuses `managed_javascript_typescript`: the
-/// `CODEVO_EDITOR_NODE_PATH` override first, then the first `node` on `PATH`.
-pub(crate) fn create_node_cdp_adapter(
-    root: &Path,
-    launch_target: &DebugLaunchTarget,
-    initial_breakpoints: &[DebugBreakpoint],
-    emitter: DebugEventEmitter,
-    finish: DebugSessionFinish,
-) -> Result<Box<dyn DebugAdapter>, String> {
-    let node = node_executable_path().ok_or_else(|| {
-        "Node.js runtime was not found. Install Node.js or set CODEVO_EDITOR_NODE_PATH.".to_string()
-    })?;
-    let arguments = build_launch_arguments(root, launch_target)?;
-    let mut command = Command::new(&node);
-    command
-        .args(&arguments)
-        .current_dir(root)
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Unable to launch the Node.js debug process: {error}"))?;
-    let process_handle = DebugProcessHandle::from_process_id(child.id());
-    let Some(stdout) = child.stdout.take() else {
-        process_handle.terminate();
-        let _ = child.wait();
-        return Err("The Node.js debug process has no stdout pipe.".to_string());
-    };
-    let Some(stderr) = child.stderr.take() else {
-        process_handle.terminate();
-        let _ = child.wait();
-        return Err("The Node.js debug process has no stderr pipe.".to_string());
-    };
-    spawn_output_pump(stdout, DebugOutputStream::Stdout, emitter.clone(), None);
-    let (url_tx, url_rx) = mpsc::channel();
-    spawn_output_pump(
-        stderr,
-        DebugOutputStream::Stderr,
-        emitter.clone(),
-        Some(url_tx),
-    );
-    let ws_url = match url_rx.recv_timeout(WS_URL_DISCOVERY_TIMEOUT) {
-        Ok(url) => url,
-        Err(RecvTimeoutError::Timeout) => {
-            process_handle.terminate();
-            let _ = child.wait();
-            return Err("Timed out waiting for the Node.js inspector to start.".to_string());
-        }
-        Err(RecvTimeoutError::Disconnected) => {
-            process_handle.terminate();
-            let _ = child.wait();
-            return Err(
-                "The Node.js debug process exited before the inspector became available."
-                    .to_string(),
-            );
-        }
-    };
-    let adapter = match NodeCdpAdapter::connect(
-        &ws_url,
-        emitter,
-        initial_breakpoints,
-        CDP_REQUEST_TIMEOUT,
-        Some(process_handle),
-    ) {
-        Ok(adapter) => adapter,
-        Err(error) => {
-            process_handle.terminate();
-            let _ = child.wait();
-            return Err(error);
-        }
-    };
-    thread::spawn(move || {
-        let exit_code = child.wait().ok().and_then(|status| status.code());
-        finish(exit_code);
-    });
-    Ok(Box::new(adapter))
-}
-
-fn build_launch_arguments(
-    root: &Path,
-    launch_target: &DebugLaunchTarget,
-) -> Result<Vec<String>, String> {
-    match launch_target {
-        DebugLaunchTarget::NodeScript { script_path } => {
-            let script = validate_workspace_file(root, script_path)?;
-            Ok(vec![INSPECT_FLAG.to_string(), script])
-        }
-        DebugLaunchTarget::JsTestFile { runner, file_path } => {
-            let file = validate_workspace_file(root, file_path)?;
-            let entry = test_runner_entry(root, runner)?;
-            if runner == "vitest" {
-                return Ok(vec![
-                    INSPECT_FLAG.to_string(),
-                    entry,
-                    "run".to_string(),
-                    "--no-file-parallelism".to_string(),
-                    file,
-                ]);
-            }
-            Ok(vec![
-                INSPECT_FLAG.to_string(),
-                entry,
-                "--runInBand".to_string(),
-                file,
-            ])
-        }
-        _ => Err("Unsupported launch target for the Node.js debugger.".to_string()),
-    }
-}
-
-fn test_runner_entry(root: &Path, runner: &str) -> Result<String, String> {
-    let segments = match runner {
-        "vitest" => VITEST_ENTRY,
-        "jest" => JEST_ENTRY,
-        other => return Err(format!("Unsupported JavaScript test runner `{other}`.")),
-    };
-    let entry = segments
-        .iter()
-        .fold(root.to_path_buf(), |path, segment| path.join(segment));
-    let is_file = fs::metadata(&entry)
-        .map(|metadata| metadata.is_file())
-        .unwrap_or(false);
-    if !is_file {
-        return Err(format!(
-            "The {runner} runtime is not installed in node_modules for this workspace."
-        ));
-    }
-    Ok(entry.to_string_lossy().to_string())
-}
-
-fn spawn_output_pump<R: Read + Send + 'static>(
-    reader: R,
-    stream: DebugOutputStream,
-    emitter: DebugEventEmitter,
-    mut ws_url_sender: Option<mpsc::Sender<String>>,
-) {
-    thread::spawn(move || {
-        let reader = BufReader::new(reader);
-        for line in reader.lines() {
-            let Ok(line) = line else {
-                break;
-            };
-            if ws_url_sender.is_some() {
-                if let Some(url) = parse_debugger_ws_url(&line) {
-                    if let Some(sender) = ws_url_sender.take() {
-                        let _ = sender.send(url);
-                    }
-                }
-            }
-            let text = mask_ws_url(&line);
-            if text.is_empty() {
-                continue;
-            }
-            emitter.emit(DebugEventPayload::Output { stream, text });
-        }
-    });
-}
-
-fn debugger_ws_url_regex() -> &'static Regex {
-    static DEBUGGER_WS_URL: OnceLock<Regex> = OnceLock::new();
-    DEBUGGER_WS_URL
-        .get_or_init(|| Regex::new(r"Debugger listening on (ws://\S+)").expect("ws url regex"))
-}
-
-fn parse_debugger_ws_url(line: &str) -> Option<String> {
-    debugger_ws_url_regex()
-        .captures(line)
-        .map(|captures| captures[1].to_string())
-}
-
-fn ws_url_token_regex() -> &'static Regex {
-    static WS_URL_TOKEN: OnceLock<Regex> = OnceLock::new();
-    WS_URL_TOKEN.get_or_init(|| Regex::new(r"(ws://[^/\s]+)/\S+").expect("ws token regex"))
-}
-
-fn mask_ws_url(text: &str) -> String {
-    ws_url_token_regex()
-        .replace_all(text, "${1}/<redacted>")
-        .to_string()
-}
+include!("debug_cdp_factory.rs");
 
 fn map_stop_reason(reason: &str) -> DebugStopReason {
     match reason {
@@ -236,729 +89,12 @@ fn map_stop_reason(reason: &str) -> DebugStopReason {
     }
 }
 
-fn scope_display_name(scope_type: &str) -> String {
-    let mut characters = scope_type.chars();
-    match characters.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
-        None => "Scope".to_string(),
-    }
-}
-
-#[derive(Default)]
-struct PauseInventory {
-    call_frame_ids: HashMap<u64, String>,
-    frames: Vec<DebugStackFrame>,
-    object_ids: HashMap<u64, String>,
-    scopes: HashMap<u64, Vec<DebugScopeInfo>>,
-}
-
-struct BreakpointResolutionTarget {
-    breakpoint_id: String,
-    file_path: String,
-}
-
-struct CdpShared {
-    breakpoints_by_file: HashMap<String, Vec<DebugBreakpoint>>,
-    cdp_ids_by_file: HashMap<String, Vec<String>>,
-    first_pause_seen: bool,
-    next_id: u64,
-    pause: Option<PauseInventory>,
-    pending_resolutions: HashMap<String, u32>,
-    resolution_index: HashMap<String, BreakpointResolutionTarget>,
-    suppress_next_resumed: bool,
-}
-
-impl CdpShared {
-    fn new() -> Self {
-        Self {
-            breakpoints_by_file: HashMap::new(),
-            cdp_ids_by_file: HashMap::new(),
-            first_pause_seen: false,
-            next_id: 1,
-            pause: None,
-            pending_resolutions: HashMap::new(),
-            resolution_index: HashMap::new(),
-            suppress_next_resumed: false,
-        }
-    }
-
-    fn allocate_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
-    }
-}
-
-type PendingCdpRequests = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
-
-struct CdpClient {
-    io_thread: Option<JoinHandle<()>>,
-    next_request_id: Arc<AtomicU64>,
-    outgoing: mpsc::Sender<String>,
-    pending: PendingCdpRequests,
-    request_timeout: Duration,
-    shutdown_requested: Arc<AtomicBool>,
-}
-
-impl CdpClient {
-    fn start(
-        socket: WebSocket<MaybeTlsStream<TcpStream>>,
-        shared: Arc<Mutex<CdpShared>>,
-        emitter: DebugEventEmitter,
-        request_timeout: Duration,
-    ) -> Self {
-        let pending: PendingCdpRequests = Arc::new(Mutex::new(HashMap::new()));
-        let (outgoing_tx, outgoing_rx) = mpsc::channel();
-        let shutdown_requested = Arc::new(AtomicBool::new(false));
-        let next_request_id = Arc::new(AtomicU64::new(1));
-        let context = SocketLoopContext {
-            emitter,
-            next_request_id: Arc::clone(&next_request_id),
-            outgoing: outgoing_rx,
-            pending: Arc::clone(&pending),
-            shared,
-            shutdown: Arc::clone(&shutdown_requested),
-        };
-        let io_thread = thread::spawn(move || run_socket_loop(socket, context));
-        Self {
-            io_thread: Some(io_thread),
-            next_request_id,
-            outgoing: outgoing_tx,
-            pending,
-            request_timeout,
-            shutdown_requested,
-        }
-    }
-
-    fn request(&self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
-        let (tx, rx) = mpsc::channel();
-        {
-            let mut pending = self.pending.lock().map_err(|error| error.to_string())?;
-            pending.insert(id, tx);
-        }
-        let payload = json!({"id": id, "method": method, "params": params}).to_string();
-        if self.outgoing.send(payload).is_err() {
-            remove_pending_cdp_request(&self.pending, id);
-            return Err(format!(
-                "Debugger connection is closed; unable to send `{method}`."
-            ));
-        }
-        match rx.recv_timeout(self.request_timeout) {
-            Ok(outcome) => outcome,
-            Err(RecvTimeoutError::Timeout) => {
-                remove_pending_cdp_request(&self.pending, id);
-                Err(format!("Debugger request `{method}` timed out."))
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                Err(format!("Debugger connection closed during `{method}`."))
-            }
-        }
-    }
-
-    fn shutdown(&mut self) {
-        self.shutdown_requested.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.io_thread.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-impl Drop for CdpClient {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
-
-fn remove_pending_cdp_request(pending: &PendingCdpRequests, id: u64) {
-    if let Ok(mut pending) = pending.lock() {
-        pending.remove(&id);
-    }
-}
-
-fn reject_pending_cdp_requests(pending: &PendingCdpRequests) {
-    if let Ok(mut pending) = pending.lock() {
-        pending.clear();
-    }
-}
-
-struct SocketLoopContext {
-    emitter: DebugEventEmitter,
-    next_request_id: Arc<AtomicU64>,
-    outgoing: mpsc::Receiver<String>,
-    pending: PendingCdpRequests,
-    shared: Arc<Mutex<CdpShared>>,
-    shutdown: Arc<AtomicBool>,
-}
-
-fn run_socket_loop(mut socket: WebSocket<MaybeTlsStream<TcpStream>>, context: SocketLoopContext) {
-    loop {
-        if context.shutdown.load(Ordering::SeqCst) {
-            let _ = socket.close(None);
-            break;
-        }
-        let mut write_failed = false;
-        while let Ok(payload) = context.outgoing.try_recv() {
-            if socket.send(Message::text(payload)).is_err() {
-                write_failed = true;
-                break;
-            }
-        }
-        if write_failed {
-            break;
-        }
-        let text = match socket.read() {
-            Ok(Message::Text(text)) => text,
-            Ok(Message::Close(_)) => break,
-            Ok(_) => continue,
-            Err(WsError::Io(error))
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                continue;
-            }
-            Err(_) => break,
-        };
-        if let Some(reply) = handle_incoming_message(text.as_str(), &context) {
-            if socket.send(Message::text(reply)).is_err() {
-                break;
-            }
-        }
-    }
-    reject_pending_cdp_requests(&context.pending);
-}
-
-fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<String> {
-    let message: Value = serde_json::from_str(text).ok()?;
-    if let Some(id) = message.get("id").and_then(Value::as_u64) {
-        dispatch_response(id, &message, &context.pending);
-        return None;
-    }
-    match message.get("method").and_then(Value::as_str) {
-        Some("Debugger.paused") => {
-            handle_paused(message.get("params").unwrap_or(&Value::Null), context)
-        }
-        Some("Debugger.resumed") => {
-            handle_resumed(context);
-            None
-        }
-        Some("Debugger.breakpointResolved") => {
-            handle_breakpoint_resolved(message.get("params").unwrap_or(&Value::Null), context);
-            None
-        }
-        _ => None,
-    }
-}
-
-fn dispatch_response(id: u64, message: &Value, pending: &PendingCdpRequests) {
-    let sender = pending
-        .lock()
-        .ok()
-        .and_then(|mut pending| pending.remove(&id));
-    let Some(sender) = sender else {
-        return;
-    };
-    let outcome = match message.get("error") {
-        Some(error) => Err(error
-            .get("message")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| error.to_string())),
-        None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
-    };
-    let _ = sender.send(outcome);
-}
-
-fn handle_paused(params: &Value, context: &SocketLoopContext) -> Option<String> {
-    let reason_text = params
-        .get("reason")
-        .and_then(Value::as_str)
-        .unwrap_or("other");
-    let hit_user_breakpoint = params
-        .get("hitBreakpoints")
-        .and_then(Value::as_array)
-        .is_some_and(|hits| !hits.is_empty());
-    {
-        let Ok(mut shared) = context.shared.lock() else {
-            return None;
-        };
-        if !shared.first_pause_seen {
-            shared.first_pause_seen = true;
-            let is_entry_pause =
-                !hit_user_breakpoint && matches!(reason_text, "other" | "Break on start");
-            if is_entry_pause {
-                shared.suppress_next_resumed = true;
-                let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-                return Some(
-                    json!({"id": id, "method": "Debugger.resume", "params": {}}).to_string(),
-                );
-            }
-        }
-    }
-    let reason = map_stop_reason(reason_text);
-    let frames = {
-        let Ok(mut shared) = context.shared.lock() else {
-            return None;
-        };
-        let inventory = build_pause_inventory(params, &mut shared);
-        let frames = inventory.frames.clone();
-        shared.pause = Some(inventory);
-        frames
-    };
-    context
-        .emitter
-        .emit(DebugEventPayload::Stopped { reason, frames });
-    None
-}
-
-fn handle_resumed(context: &SocketLoopContext) {
-    let should_emit = {
-        let Ok(mut shared) = context.shared.lock() else {
-            return;
-        };
-        shared.pause = None;
-        if shared.suppress_next_resumed {
-            shared.suppress_next_resumed = false;
-            false
-        } else {
-            true
-        }
-    };
-    if should_emit {
-        context.emitter.emit(DebugEventPayload::Resumed);
-    }
-}
-
-fn handle_breakpoint_resolved(params: &Value, context: &SocketLoopContext) {
-    let Some(cdp_breakpoint_id) = params.get("breakpointId").and_then(Value::as_str) else {
-        return;
-    };
-    let Some(resolved_line) = params
-        .pointer("/location/lineNumber")
-        .and_then(Value::as_u64)
-        .map(|line| line as u32 + 1)
-    else {
-        return;
-    };
-    let resolved = {
-        let Ok(mut shared) = context.shared.lock() else {
-            return;
-        };
-        apply_breakpoint_resolution(&mut shared, cdp_breakpoint_id, resolved_line)
-    };
-    let Some((file_path, breakpoints)) = resolved else {
-        return;
-    };
-    context
-        .emitter
-        .emit(DebugEventPayload::BreakpointsVerified {
-            file_path,
-            breakpoints,
-        });
-}
-
-/// A resolution for a not-yet-registered CDP breakpoint id is buffered in
-/// `pending_resolutions` so `set_breakpoints` can consume it after the
-/// `setBreakpointByUrl` response lands.
-fn apply_breakpoint_resolution(
-    state: &mut CdpShared,
-    cdp_breakpoint_id: &str,
-    resolved_line: u32,
-) -> Option<(String, Vec<DebugBreakpoint>)> {
-    let Some(target) = state.resolution_index.remove(cdp_breakpoint_id) else {
-        state
-            .pending_resolutions
-            .insert(cdp_breakpoint_id.to_string(), resolved_line);
-        return None;
-    };
-    let breakpoints = state.breakpoints_by_file.get_mut(&target.file_path)?;
-    let entry = breakpoints
-        .iter_mut()
-        .find(|breakpoint| breakpoint.id == target.breakpoint_id)?;
-    entry.verified = true;
-    entry.line_number = resolved_line;
-    Some((target.file_path, breakpoints.clone()))
-}
-
-fn build_pause_inventory(params: &Value, state: &mut CdpShared) -> PauseInventory {
-    let mut inventory = PauseInventory::default();
-    let empty = Vec::new();
-    let call_frames = params
-        .get("callFrames")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
-    for call_frame in call_frames {
-        let frame_id = state.allocate_id();
-        let name = call_frame
-            .get("functionName")
-            .and_then(Value::as_str)
-            .filter(|name| !name.is_empty())
-            .unwrap_or("(anonymous)")
-            .to_string();
-        let file_path = call_frame
-            .get("url")
-            .and_then(Value::as_str)
-            .and_then(path_from_file_url);
-        let line_number = call_frame
-            .pointer("/location/lineNumber")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32
-            + 1;
-        let column = call_frame
-            .pointer("/location/columnNumber")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32
-            + 1;
-        inventory.frames.push(DebugStackFrame {
-            frame_id,
-            name,
-            file_path,
-            line_number,
-            column,
-        });
-        if let Some(call_frame_id) = call_frame.get("callFrameId").and_then(Value::as_str) {
-            inventory
-                .call_frame_ids
-                .insert(frame_id, call_frame_id.to_string());
-        }
-        let mut scopes = Vec::new();
-        for scope in call_frame
-            .get("scopeChain")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty)
-        {
-            let Some(object_id) = scope.pointer("/object/objectId").and_then(Value::as_str) else {
-                continue;
-            };
-            let scope_type = scope.get("type").and_then(Value::as_str).unwrap_or("scope");
-            let reference = state.allocate_id();
-            inventory
-                .object_ids
-                .insert(reference, object_id.to_string());
-            scopes.push(DebugScopeInfo {
-                name: scope_display_name(scope_type),
-                variables_reference: reference,
-                expensive: scope_type == "global",
-            });
-        }
-        inventory.scopes.insert(frame_id, scopes);
-    }
-    inventory
-}
-
-fn variable_from_remote_object(
-    name: &str,
-    remote: &Value,
-    shared: &Arc<Mutex<CdpShared>>,
-) -> DebugVariableInfo {
-    let type_name = remote.get("type").and_then(Value::as_str);
-    let value_type = match type_name {
-        Some("object") => remote
-            .get("className")
-            .and_then(Value::as_str)
-            .or_else(|| remote.get("subtype").and_then(Value::as_str))
-            .or(type_name),
-        other => other,
-    }
-    .map(str::to_string);
-    let value = remote
-        .get("description")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| remote.get("value").map(render_primitive_value))
-        .unwrap_or_else(|| "undefined".to_string());
-    let variables_reference = remote
-        .get("objectId")
-        .and_then(Value::as_str)
-        .and_then(|object_id| register_object_reference(shared, object_id))
-        .unwrap_or(0);
-    DebugVariableInfo {
-        name: name.to_string(),
-        value,
-        value_type,
-        variables_reference,
-    }
-}
-
-fn render_primitive_value(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
-}
-
-fn register_object_reference(shared: &Arc<Mutex<CdpShared>>, object_id: &str) -> Option<u64> {
-    let mut state = shared.lock().ok()?;
-    let reference = state.allocate_id();
-    let pause = state.pause.as_mut()?;
-    pause.object_ids.insert(reference, object_id.to_string());
-    Some(reference)
-}
-
-struct NodeCdpAdapter {
-    client: CdpClient,
-    process: Option<DebugProcessHandle>,
-    shared: Arc<Mutex<CdpShared>>,
-}
-
-impl NodeCdpAdapter {
-    fn connect(
-        ws_url: &str,
-        emitter: DebugEventEmitter,
-        initial_breakpoints: &[DebugBreakpoint],
-        request_timeout: Duration,
-        process: Option<DebugProcessHandle>,
-    ) -> Result<Self, String> {
-        let (socket, _response) = tungstenite::connect(ws_url).map_err(|error| {
-            mask_ws_url(&format!(
-                "Unable to connect to the Node.js inspector: {error}"
-            ))
-        })?;
-        if let MaybeTlsStream::Plain(stream) = socket.get_ref() {
-            stream
-                .set_read_timeout(Some(SOCKET_POLL_INTERVAL))
-                .map_err(|error| format!("Unable to configure the inspector socket: {error}"))?;
-        }
-        let shared = Arc::new(Mutex::new(CdpShared::new()));
-        let client = CdpClient::start(
-            socket,
-            Arc::clone(&shared),
-            emitter.clone(),
-            request_timeout,
-        );
-        let mut adapter = Self {
-            client,
-            process,
-            shared,
-        };
-        adapter.client.request("Runtime.enable", json!({}))?;
-        adapter.client.request("Debugger.enable", json!({}))?;
-        for (file_path, breakpoints) in group_breakpoints_by_file(initial_breakpoints) {
-            let verified = adapter.set_breakpoints(&file_path, &breakpoints)?;
-            emitter.emit(DebugEventPayload::BreakpointsVerified {
-                file_path,
-                breakpoints: verified,
-            });
-        }
-        adapter
-            .client
-            .request("Runtime.runIfWaitingForDebugger", json!({}))?;
-        Ok(adapter)
-    }
-}
-
-impl DebugAdapter for NodeCdpAdapter {
-    fn set_breakpoints(
-        &mut self,
-        file_path: &str,
-        breakpoints: &[DebugBreakpoint],
-    ) -> Result<Vec<DebugBreakpoint>, String> {
-        let previous_ids = {
-            let mut shared = self.shared.lock().map_err(|error| error.to_string())?;
-            let ids = shared.cdp_ids_by_file.remove(file_path).unwrap_or_default();
-            for id in &ids {
-                shared.resolution_index.remove(id);
-            }
-            ids
-        };
-        for breakpoint_id in previous_ids {
-            let _ = self.client.request(
-                "Debugger.removeBreakpoint",
-                json!({"breakpointId": breakpoint_id}),
-            );
-        }
-        let file_url = fs::canonicalize(file_path)
-            .ok()
-            .map(|canonical| file_url_from_path(&canonical.to_string_lossy()));
-        let mut registered_ids = Vec::new();
-        let mut applied = Vec::with_capacity(breakpoints.len());
-        for breakpoint in breakpoints {
-            let mut updated = breakpoint.clone();
-            updated.verified = false;
-            let Some(file_url) = file_url.as_ref() else {
-                applied.push(updated);
-                continue;
-            };
-            if !breakpoint.enabled {
-                applied.push(updated);
-                continue;
-            }
-            let mut params = json!({
-                "url": file_url.as_str(),
-                "lineNumber": breakpoint.line_number.saturating_sub(1),
-            });
-            if let Some(condition) = &breakpoint.condition {
-                params["condition"] = json!(condition);
-            }
-            if let Ok(result) = self.client.request("Debugger.setBreakpointByUrl", params) {
-                if let Some(breakpoint_id) = result.get("breakpointId").and_then(Value::as_str) {
-                    registered_ids.push(breakpoint_id.to_string());
-                    let resolved_line = result
-                        .pointer("/locations/0/lineNumber")
-                        .and_then(Value::as_u64)
-                        .map(|line| line as u32 + 1);
-                    match resolved_line {
-                        Some(line) => {
-                            updated.verified = true;
-                            updated.line_number = line;
-                        }
-                        None => {
-                            let mut shared =
-                                self.shared.lock().map_err(|error| error.to_string())?;
-                            match shared.pending_resolutions.remove(breakpoint_id) {
-                                Some(line) => {
-                                    updated.verified = true;
-                                    updated.line_number = line;
-                                }
-                                None => {
-                                    shared.resolution_index.insert(
-                                        breakpoint_id.to_string(),
-                                        BreakpointResolutionTarget {
-                                            breakpoint_id: breakpoint.id.clone(),
-                                            file_path: file_path.to_string(),
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            applied.push(updated);
-        }
-        {
-            let mut shared = self.shared.lock().map_err(|error| error.to_string())?;
-            shared
-                .cdp_ids_by_file
-                .insert(file_path.to_string(), registered_ids);
-            shared
-                .breakpoints_by_file
-                .insert(file_path.to_string(), applied.clone());
-        }
-        Ok(applied)
-    }
-
-    fn step(&mut self, kind: StepKind) -> Result<(), String> {
-        let method = match kind {
-            StepKind::Continue => "Debugger.resume",
-            StepKind::StepOver => "Debugger.stepOver",
-            StepKind::StepInto => "Debugger.stepInto",
-            StepKind::StepOut => "Debugger.stepOut",
-        };
-        self.client.request(method, json!({}))?;
-        Ok(())
-    }
-
-    fn pause(&mut self) -> Result<(), String> {
-        self.client.request("Debugger.pause", json!({}))?;
-        Ok(())
-    }
-
-    fn stack_trace(&mut self) -> Result<Vec<DebugStackFrame>, String> {
-        let shared = self.shared.lock().map_err(|error| error.to_string())?;
-        let pause = shared
-            .pause
-            .as_ref()
-            .ok_or_else(|| "The debugger is not paused.".to_string())?;
-        Ok(pause.frames.clone())
-    }
-
-    fn scopes(&mut self, frame_id: u64) -> Result<Vec<DebugScopeInfo>, String> {
-        let shared = self.shared.lock().map_err(|error| error.to_string())?;
-        let pause = shared
-            .pause
-            .as_ref()
-            .ok_or_else(|| "The debugger is not paused.".to_string())?;
-        pause
-            .scopes
-            .get(&frame_id)
-            .cloned()
-            .ok_or_else(|| format!("Unknown debug frame {frame_id}."))
-    }
-
-    fn variables(&mut self, reference: u64) -> Result<Vec<DebugVariableInfo>, String> {
-        let object_id = {
-            let shared = self.shared.lock().map_err(|error| error.to_string())?;
-            let pause = shared
-                .pause
-                .as_ref()
-                .ok_or_else(|| "The debugger is not paused.".to_string())?;
-            pause
-                .object_ids
-                .get(&reference)
-                .cloned()
-                .ok_or_else(|| format!("Unknown variables reference {reference}."))?
-        };
-        let result = self.client.request(
-            "Runtime.getProperties",
-            json!({"objectId": object_id, "ownProperties": true}),
-        )?;
-        let empty = Vec::new();
-        let properties = result
-            .get("result")
-            .and_then(Value::as_array)
-            .unwrap_or(&empty);
-        let mut variables = Vec::new();
-        for property in properties {
-            let Some(remote) = property.get("value") else {
-                continue;
-            };
-            let name = property.get("name").and_then(Value::as_str).unwrap_or("");
-            variables.push(variable_from_remote_object(name, remote, &self.shared));
-        }
-        Ok(variables)
-    }
-
-    fn evaluate(&mut self, frame_id: u64, expression: &str) -> Result<DebugVariableInfo, String> {
-        let call_frame_id = {
-            let shared = self.shared.lock().map_err(|error| error.to_string())?;
-            let pause = shared
-                .pause
-                .as_ref()
-                .ok_or_else(|| "The debugger is not paused.".to_string())?;
-            pause
-                .call_frame_ids
-                .get(&frame_id)
-                .cloned()
-                .ok_or_else(|| format!("Unknown debug frame {frame_id}."))?
-        };
-        let result = self.client.request(
-            "Debugger.evaluateOnCallFrame",
-            json!({
-                "callFrameId": call_frame_id,
-                "expression": expression,
-                "throwOnSideEffect": false,
-            }),
-        )?;
-        if let Some(details) = result.get("exceptionDetails") {
-            let message = details
-                .pointer("/exception/description")
-                .and_then(Value::as_str)
-                .or_else(|| details.get("text").and_then(Value::as_str))
-                .unwrap_or("Evaluation failed.");
-            return Err(message.to_string());
-        }
-        Ok(variable_from_remote_object(
-            expression,
-            result.get("result").unwrap_or(&Value::Null),
-            &self.shared,
-        ))
-    }
-
-    fn terminate(&mut self) {
-        self.client.shutdown();
-        if let Some(process) = self.process.take() {
-            process.terminate();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::debug_adapter::{DebugEvent, DebugEventSink, DebugSessionRegistry};
+    use crate::debug_adapter::{
+        DebugEvent, DebugEventSink, DebugHitCondition, DebugSessionRegistry,
+    };
     use std::net::TcpListener;
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU32;
@@ -969,6 +105,26 @@ mod tests {
     const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
     const WORKSPACE_KEY: &str = "/workspace/debug";
     const CLOSE_MARKER: &str = "<<close-connection>>";
+
+    #[path = "../../debug_cdp_completion_tests.rs"]
+    mod completion_tests;
+    #[cfg(target_os = "macos")]
+    #[path = "debug_cdp_held_external_attach_tests.rs"]
+    mod held_external_attach_tests;
+    #[path = "debug_cdp_hit_condition_tests.rs"]
+    mod hit_condition_tests;
+    #[path = "debug_cdp_inline_breakpoint_tests.rs"]
+    mod inline_breakpoint_tests;
+    #[path = "debug_cdp_internal_step_filter_tests.rs"]
+    mod internal_step_filter_tests;
+    #[path = "debug_cdp_logpoint_tests.rs"]
+    mod logpoint_tests;
+    #[path = "debug_cdp_restart_frame_tests.rs"]
+    mod restart_frame_tests;
+    #[path = "debug_cdp_run_to_location_tests.rs"]
+    mod run_to_location_tests;
+    #[path = "debug_cdp_variables_tests.rs"]
+    mod variables_tests;
 
     #[derive(Default)]
     struct CollectingSink {
@@ -1006,7 +162,7 @@ mod tests {
         fn start(mut responder: MockResponder) -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
             let port = listener.local_addr().expect("mock server addr").port();
-            let requests: Arc<Mutex<Vec<(String, Value)>>> = Arc::new(Mutex::new(Vec::new()));
+            let requests = Arc::new(Mutex::new(Vec::new()));
             let recorded = Arc::clone(&requests);
             let handle = thread::spawn(move || {
                 let Ok((stream, _)) = listener.accept() else {
@@ -1191,13 +347,34 @@ mod tests {
         initial_breakpoints: Vec<DebugBreakpoint>,
         request_timeout: Duration,
     ) -> (DebugSessionRegistry, Arc<CollectingSink>) {
+        start_session_with_mock_and_mode(
+            server_url,
+            initial_breakpoints,
+            DebugExceptionPauseMode::None,
+            request_timeout,
+        )
+    }
+
+    fn start_session_with_mock_and_mode(
+        server_url: &str,
+        initial_breakpoints: Vec<DebugBreakpoint>,
+        exception_pause_mode: DebugExceptionPauseMode,
+        request_timeout: Duration,
+    ) -> (DebugSessionRegistry, Arc<CollectingSink>) {
         let registry = DebugSessionRegistry::new();
         let sink = Arc::new(CollectingSink::default());
         let url = server_url.to_string();
         registry
             .start_session(WORKSPACE_KEY, sink.clone(), move |emitter| {
-                NodeCdpAdapter::connect(&url, emitter, &initial_breakpoints, request_timeout, None)
-                    .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+                NodeCdpAdapter::connect(
+                    &url,
+                    emitter,
+                    &initial_breakpoints,
+                    exception_pause_mode,
+                    request_timeout,
+                    None,
+                )
+                .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
             })
             .expect("start mock session");
         (registry, sink)
@@ -1226,7 +403,7 @@ mod tests {
                 sink.payloads()
                     .into_iter()
                     .filter_map(|payload| match payload {
-                        DebugEventPayload::Stopped { reason, frames } => Some((reason, frames)),
+                        DebugEventPayload::Stopped { reason, frames, .. } => Some((reason, frames)),
                         _ => None,
                     })
                     .nth(index)
@@ -1247,7 +424,10 @@ mod tests {
             id: id.to_string(),
             file_path: file_path.to_string(),
             line_number,
+            column_number: None,
             condition: condition.map(str::to_string),
+            hit_condition: None,
+            log_message: None,
             enabled,
             verified: false,
         }
@@ -1276,47 +456,6 @@ mod tests {
             fs::create_dir_all(parent).expect("create parent directory");
         }
         fs::write(path, content).expect("write fixture file");
-    }
-
-    #[test]
-    fn parses_debugger_ws_url_from_stderr_fixture_lines() {
-        let fixture = [
-            "Debugger listening on ws://127.0.0.1:53219/9f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8",
-            "For help, see: https://nodejs.org/en/docs/inspector",
-            "plain program output",
-        ];
-
-        let parsed: Vec<Option<String>> = fixture
-            .iter()
-            .map(|line| parse_debugger_ws_url(line))
-            .collect();
-
-        assert_eq!(
-            parsed[0],
-            Some("ws://127.0.0.1:53219/9f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8".to_string())
-        );
-        assert_eq!(parsed[1], None);
-        assert_eq!(parsed[2], None);
-    }
-
-    #[test]
-    fn masks_ws_url_token_in_output_lines_and_error_strings() {
-        let masked_line = mask_ws_url(
-            "Debugger listening on ws://127.0.0.1:53219/9f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8",
-        );
-        let masked_error = mask_ws_url(
-            "Unable to connect to the Node.js inspector: ws://127.0.0.1:53219/9f1a2b3c failed",
-        );
-
-        assert_eq!(
-            masked_line,
-            "Debugger listening on ws://127.0.0.1:53219/<redacted>"
-        );
-        assert_eq!(
-            masked_error,
-            "Unable to connect to the Node.js inspector: ws://127.0.0.1:53219/<redacted> failed"
-        );
-        assert_eq!(mask_ws_url("plain output"), "plain output");
     }
 
     #[test]
@@ -1355,6 +494,126 @@ mod tests {
     }
 
     #[test]
+    fn builds_typescript_launch_from_emitted_source_mapped_output() {
+        let root = temp_root("typescript-script");
+        let source = root.join("src/index.ts");
+        let emitted = root.join("dist/index.js");
+        write_file(&source, "console.log('ts');");
+        write_file(&emitted, "console.log('ts');");
+        write_file(
+            &root.join("dist/index.js.map"),
+            r#"{"version":3,"file":"index.js","sources":["../src/index.ts"],"names":[],"mappings":"AAAA"}"#,
+        );
+        write_file(
+            &root.join("tsconfig.json"),
+            r#"{"compilerOptions":{"rootDir":"src","outDir":"dist","sourceMap":true}}"#,
+        );
+
+        let arguments = build_launch_arguments(
+            &root,
+            &DebugLaunchTarget::NodeScript {
+                script_path: source.to_string_lossy().to_string(),
+            },
+        )
+        .expect("typescript arguments");
+
+        assert_eq!(
+            arguments,
+            vec![
+                INSPECT_FLAG.to_string(),
+                "--enable-source-maps".to_string(),
+                emitted.to_string_lossy().to_string(),
+            ]
+        );
+        source_map_registry(
+            &root,
+            &DebugLaunchTarget::NodeScript {
+                script_path: source.to_string_lossy().to_string(),
+            },
+        )
+        .expect("preloaded source map");
+    }
+
+    #[test]
+    fn pause_inventory_reports_original_typescript_location() {
+        let root = temp_root("typescript-stack");
+        let source = root.join("src/index.ts");
+        let emitted = root.join("dist/index.js");
+        let map = root.join("dist/index.js.map");
+        write_file(&source, "const first = 1;\nconst second = 2;\n");
+        write_file(&emitted, "const first = 1;\nconst second = 2;\n");
+        write_file(
+            &map,
+            r#"{"version":3,"file":"index.js","sources":["../src/index.ts"],"names":[],"mappings":"AAAA;AACA"}"#,
+        );
+        let generated_url = file_url_from_path(&emitted.to_string_lossy());
+        let mut source_maps = SourceMapRegistry::new(&root).expect("registry");
+        source_maps
+            .register_script(&generated_url, &file_url_from_path(&map.to_string_lossy()))
+            .expect("register source map");
+        let mut state = CdpShared::new(Some(source_maps));
+        let params = json!({
+            "callFrames": [{
+                "callFrameId": "frame-1",
+                "functionName": "run",
+                "url": generated_url,
+                "location": {"lineNumber": 1, "columnNumber": 0},
+                "scopeChain": []
+            }]
+        });
+
+        let inventory = build_pause_inventory(&params, &mut state).expect("pause inventory");
+
+        assert_eq!(
+            inventory.frames[0].file_path.as_deref(),
+            Some(source.to_string_lossy().as_ref())
+        );
+        assert_eq!(inventory.frames[0].line_number, 2);
+        assert_eq!(inventory.frames[0].column, 1);
+    }
+
+    #[test]
+    fn immediate_and_async_breakpoint_resolutions_report_typescript_line() {
+        let root = temp_root("typescript-breakpoint-resolution");
+        let source = root.join("src/index.ts");
+        let emitted = root.join("dist/index.js");
+        let map = root.join("dist/index.js.map");
+        write_file(&source, "const first = 1;\nconst second = 2;\n");
+        write_file(&emitted, "const first = 1;\nconst second = 2;\n");
+        write_file(
+            &map,
+            r#"{"version":3,"file":"index.js","sources":["../src/index.ts"],"names":[],"mappings":"AAAA;AACA"}"#,
+        );
+        let source_path = source.to_string_lossy().to_string();
+        let generated_url = file_url_from_path(&emitted.to_string_lossy());
+        let mut source_maps = SourceMapRegistry::new(&root).expect("registry");
+        source_maps
+            .register_script(&generated_url, &file_url_from_path(&map.to_string_lossy()))
+            .expect("source map");
+        let mut state = CdpShared::new(Some(source_maps));
+        let target = BreakpointResolutionTarget {
+            breakpoint_id: "source-bp".to_string(),
+            column_number: None,
+            file_path: source_path.clone(),
+            generated_url: generated_url.clone(),
+            source_path: source_path.clone(),
+        };
+        let generated = GeneratedPosition { line: 1, column: 0 };
+
+        assert_eq!(original_breakpoint_line(&state, &target, generated), 2);
+
+        state.breakpoints_by_file.insert(
+            source_path.clone(),
+            vec![breakpoint(&source_path, "source-bp", 2, None, true)],
+        );
+        state.resolution_index.insert("cdp-bp".to_string(), target);
+        let (_, resolved) =
+            apply_breakpoint_resolution(&mut state, "cdp-bp", generated).expect("async resolution");
+        assert!(resolved[0].verified);
+        assert_eq!(resolved[0].line_number, 2);
+    }
+
+    #[test]
     fn builds_vitest_and_jest_launch_arguments() {
         let root = temp_root("test-runners");
         let vitest_entry = root.join("node_modules/vitest/vitest.mjs");
@@ -1369,6 +628,7 @@ mod tests {
             &DebugLaunchTarget::JsTestFile {
                 runner: "vitest".to_string(),
                 file_path: test_file.to_string_lossy().to_string(),
+                package_root_path: root.to_string_lossy().to_string(),
             },
         )
         .expect("vitest arguments");
@@ -1377,6 +637,7 @@ mod tests {
             &DebugLaunchTarget::JsTestFile {
                 runner: "jest".to_string(),
                 file_path: test_file.to_string_lossy().to_string(),
+                package_root_path: root.to_string_lossy().to_string(),
             },
         )
         .expect("jest arguments");
@@ -1400,6 +661,71 @@ mod tests {
                 test_file.to_string_lossy().to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn nested_package_debug_uses_captured_cwd_and_local_or_hoisted_runner_only() {
+        let root = temp_root("nested-test-runner");
+        let package_a = root.join("packages/a");
+        let package_b = root.join("packages/b");
+        let test_file = package_a.join("src/app.test.ts");
+        let local_entry = package_a.join("node_modules/vitest/vitest.mjs");
+        write_file(&root.join("package.json"), "{}");
+        write_file(&package_a.join("package.json"), "{}");
+        write_file(&package_b.join("package.json"), "{}");
+        write_file(&test_file, "test('a', () => {});");
+        write_file(&local_entry, "export {};");
+        write_file(
+            &package_b.join("node_modules/vitest/vitest.mjs"),
+            "export {};",
+        );
+
+        let plan = build_launch_plan(
+            &root,
+            &DebugLaunchTarget::JsTestFile {
+                runner: "vitest".to_string(),
+                file_path: test_file.to_string_lossy().to_string(),
+                package_root_path: package_a.to_string_lossy().to_string(),
+            },
+        )
+        .expect("nested package launch plan");
+
+        assert_eq!(
+            plan.working_directory,
+            package_a.canonicalize().expect("canonical package")
+        );
+        assert_eq!(
+            plan.arguments[1],
+            local_entry
+                .canonicalize()
+                .expect("canonical runner")
+                .to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn captured_package_root_cannot_cross_workspace_or_target_context() {
+        let root = temp_root("package-context-root");
+        let outside = temp_root("package-context-outside");
+        let package_a = root.join("packages/a");
+        let package_b = root.join("packages/b");
+        let test_file = package_a.join("src/app.test.ts");
+        write_file(&test_file, "test('a', () => {});");
+        write_file(&package_b.join("package.json"), "{}");
+        write_file(&outside.join("package.json"), "{}");
+
+        for captured_root in [&package_b, &outside] {
+            let error = build_launch_plan(
+                &root,
+                &DebugLaunchTarget::JsTestFile {
+                    runner: "vitest".to_string(),
+                    file_path: test_file.to_string_lossy().to_string(),
+                    package_root_path: captured_root.to_string_lossy().to_string(),
+                },
+            )
+            .expect_err("foreign package context must fail");
+            assert!(error.contains("Package tool root must be an ancestor"));
+        }
     }
 
     #[test]
@@ -1437,6 +763,7 @@ mod tests {
             &DebugLaunchTarget::JsTestFile {
                 runner: "vitest".to_string(),
                 file_path: test_file.to_string_lossy().to_string(),
+                package_root_path: root.to_string_lossy().to_string(),
             },
         )
         .expect_err("missing runner must fail");
@@ -1445,6 +772,7 @@ mod tests {
             &DebugLaunchTarget::JsTestFile {
                 runner: "mocha".to_string(),
                 file_path: test_file.to_string_lossy().to_string(),
+                package_root_path: root.to_string_lossy().to_string(),
             },
         )
         .expect_err("unsupported runner must fail");
@@ -1455,19 +783,305 @@ mod tests {
     }
 
     #[test]
-    fn handshake_sends_enable_sequence_before_run_if_waiting() {
-        let server = MockCdpServer::start(simple_responder());
+    fn rejects_jsx_and_typescript_declaration_launches() {
+        let root = temp_root("unsupported-source-launch");
+        let jsx = root.join("view.jsx");
+        let declaration = root.join("types.d.ts");
+        write_file(&jsx, "export const view = <div />;");
+        write_file(&declaration, "export declare const value: string;");
 
-        let (_registry, _sink) =
-            start_session_with_mock(&server.url, Vec::new(), MOCK_REQUEST_TIMEOUT);
+        let jsx_error = build_launch_arguments(
+            &root,
+            &DebugLaunchTarget::NodeScript {
+                script_path: jsx.to_string_lossy().to_string(),
+            },
+        )
+        .expect_err("jsx needs a transpilation flow");
+        let declaration_error = build_launch_arguments(
+            &root,
+            &DebugLaunchTarget::NodeScript {
+                script_path: declaration.to_string_lossy().to_string(),
+            },
+        )
+        .expect_err("declaration cannot run");
+
+        assert!(jsx_error.contains("JavaScript and TypeScript source files only"));
+        assert!(declaration_error.contains("declaration files cannot be launched"));
+    }
+
+    #[test]
+    fn attached_handshake_never_runs_or_auto_resumes_the_external_target() {
+        let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
+            "Debugger.setPauseOnExceptions" => vec![
+                ok(id),
+                event(
+                    "Debugger.paused",
+                    json!({"reason":"other", "callFrames":[]}),
+                ),
+            ],
+            _ => vec![ok(id)],
+        }));
+        let registry = DebugSessionRegistry::new();
+        let sink = Arc::new(CollectingSink::default());
+        let url = server.url.clone();
+        registry
+            .start_session(WORKSPACE_KEY, sink.clone(), move |emitter| {
+                NodeCdpAdapter::connect_with_source_maps(
+                    &url,
+                    emitter,
+                    &[],
+                    NodeCdpConnectOptions {
+                        exception_pause_mode: DebugExceptionPauseMode::None,
+                        request_timeout: MOCK_REQUEST_TIMEOUT,
+                        ownership: DebuggeeOwnership::External,
+                        source_maps: None,
+                        startup: CdpStartupPolicy::Attached,
+                        disconnected: None,
+                        startup_is_current: Arc::new(|| true),
+                        internal_step_filter: None,
+                    },
+                )
+                .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+            })
+            .expect("attach session");
+
+        wait_for(
+            || {
+                sink.payloads()
+                    .iter()
+                    .any(|payload| {
+                        matches!(
+                            payload,
+                            DebugEventPayload::Stopped {
+                                reason: DebugStopReason::Breakpoint,
+                                ..
+                            }
+                        )
+                    })
+                    .then_some(())
+            },
+            EVENT_WAIT_TIMEOUT,
+            "attached pause event",
+        );
+        registry
+            .with_session(WORKSPACE_KEY, |adapter| adapter.disconnect())
+            .expect("disconnect attached adapter");
+        assert_eq!(
+            server.methods(),
+            vec![
+                "Runtime.enable",
+                "Debugger.enable",
+                "Debugger.setPauseOnExceptions",
+                "Runtime.runIfWaitingForDebugger",
+                "Debugger.resume",
+            ]
+        );
+    }
+
+    #[test]
+    fn stale_attach_startup_stops_before_any_later_cdp_mutation_or_registration() {
+        let current = Arc::new(AtomicBool::new(true));
+        let responder_current = Arc::clone(&current);
+        let server = MockCdpServer::start(Box::new(move |id, method, _params| {
+            if method == "Runtime.enable" {
+                responder_current.store(false, Ordering::SeqCst);
+            }
+            vec![ok(id)]
+        }));
+        let registry = DebugSessionRegistry::new();
+        let sink = Arc::new(CollectingSink::default());
+        let url = server.url.clone();
+        let guard = Arc::clone(&current);
+        let error = registry
+            .start_session(WORKSPACE_KEY, sink, move |emitter| {
+                NodeCdpAdapter::connect_with_source_maps(
+                    &url,
+                    emitter,
+                    &[],
+                    NodeCdpConnectOptions {
+                        exception_pause_mode: DebugExceptionPauseMode::All,
+                        request_timeout: MOCK_REQUEST_TIMEOUT,
+                        ownership: DebuggeeOwnership::External,
+                        source_maps: None,
+                        startup: CdpStartupPolicy::Attached,
+                        disconnected: None,
+                        startup_is_current: Arc::new(move || guard.load(Ordering::SeqCst)),
+                        internal_step_filter: None,
+                    },
+                )
+                .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+            })
+            .expect_err("stale startup must fail closed");
+
+        assert!(error.contains("lifecycle changed"));
+        assert_eq!(server.methods(), vec!["Runtime.enable".to_string()]);
+        assert_eq!(registry.session_id_for_root(WORKSPACE_KEY), None);
+    }
+
+    #[test]
+    fn attached_socket_close_notifies_a_separate_lifecycle_waiter() {
+        let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
+            "Debugger.setPauseOnExceptions" => vec![ok(id), CLOSE_MARKER.to_string()],
+            _ => vec![ok(id)],
+        }));
+        let registry = DebugSessionRegistry::new();
+        let sink = Arc::new(CollectingSink::default());
+        let (disconnected_tx, disconnected_rx) = mpsc::channel();
+        let url = server.url.clone();
+        registry
+            .start_session(WORKSPACE_KEY, sink, move |emitter| {
+                NodeCdpAdapter::connect_with_source_maps(
+                    &url,
+                    emitter,
+                    &[],
+                    NodeCdpConnectOptions {
+                        exception_pause_mode: DebugExceptionPauseMode::None,
+                        request_timeout: MOCK_REQUEST_TIMEOUT,
+                        ownership: DebuggeeOwnership::External,
+                        source_maps: None,
+                        startup: CdpStartupPolicy::Attached,
+                        disconnected: Some(disconnected_tx),
+                        startup_is_current: Arc::new(|| true),
+                        internal_step_filter: None,
+                    },
+                )
+                .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+            })
+            .expect("attach session");
+
+        disconnected_rx
+            .recv_timeout(EVENT_WAIT_TIMEOUT)
+            .expect("disconnect notification");
+        assert_eq!(registry.session_id_for_root(WORKSPACE_KEY), Some(1));
+        assert!(registry.stop_by_id(1));
+    }
+
+    #[test]
+    fn websocket_handshake_is_bounded() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind oversized handshake");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            let oversized = vec![b'a'; MAX_CDP_HANDSHAKE_BYTES + 1];
+            let _ = stream.write_all(b"HTTP/1.1 101 Switching Protocols\r\nX-Oversized: ");
+            let _ = stream.write_all(&oversized);
+            let _ = stream.write_all(b"\r\n\r\n");
+        });
+        let registry = DebugSessionRegistry::new();
+        let sink = Arc::new(CollectingSink::default());
+        let url = format!("ws://127.0.0.1:{port}/bounded");
+        let error = registry
+            .start_session(WORKSPACE_KEY, sink, move |emitter| {
+                NodeCdpAdapter::connect(
+                    &url,
+                    emitter,
+                    &[],
+                    DebugExceptionPauseMode::None,
+                    MOCK_REQUEST_TIMEOUT,
+                    None,
+                )
+                .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+            })
+            .expect_err("oversized handshake must fail");
+        assert!(error.contains("handshake") || error.contains("protocol"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn exception_pause_mode_is_applied_before_initial_breakpoints_and_run() {
+        let file = breakpoint_fixture_file("exception-pause-order");
+        let file_path = file.to_string_lossy().to_string();
+        let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
+            "Debugger.setBreakpointByUrl" => vec![result(
+                id,
+                json!({"breakpointId": "exception-order", "locations": []}),
+            )],
+            _ => vec![ok(id)],
+        }));
+
+        let (_registry, _sink) = start_session_with_mock_and_mode(
+            &server.url,
+            vec![breakpoint(&file_path, "bp-1", 1, None, true)],
+            DebugExceptionPauseMode::Uncaught,
+            MOCK_REQUEST_TIMEOUT,
+        );
 
         assert_eq!(
             server.methods(),
             vec![
                 "Runtime.enable".to_string(),
                 "Debugger.enable".to_string(),
+                "Debugger.setPauseOnExceptions".to_string(),
+                "Debugger.setBreakpointByUrl".to_string(),
                 "Runtime.runIfWaitingForDebugger".to_string(),
             ]
+        );
+        assert_eq!(
+            server.params_for("Debugger.setPauseOnExceptions"),
+            vec![json!({ "state": "uncaught" })]
+        );
+    }
+
+    #[test]
+    fn exception_pause_startup_failure_aborts_before_breakpoints_and_run() {
+        let server = MockCdpServer::start(Box::new(|id, method, _params| {
+            if method == "Debugger.setPauseOnExceptions" {
+                vec![error_reply(id, "pause policy rejected")]
+            } else {
+                vec![ok(id)]
+            }
+        }));
+        let registry = DebugSessionRegistry::new();
+        let sink = Arc::new(CollectingSink::default());
+        let url = server.url.clone();
+
+        let error = registry
+            .start_session(WORKSPACE_KEY, sink, move |emitter| {
+                NodeCdpAdapter::connect(
+                    &url,
+                    emitter,
+                    &[],
+                    DebugExceptionPauseMode::All,
+                    MOCK_REQUEST_TIMEOUT,
+                    None,
+                )
+                .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+            })
+            .expect_err("startup must fail closed");
+
+        assert!(error.contains("pause policy rejected"));
+        assert_eq!(
+            server.methods(),
+            vec![
+                "Runtime.enable".to_string(),
+                "Debugger.enable".to_string(),
+                "Debugger.setPauseOnExceptions".to_string(),
+            ]
+        );
+        assert_eq!(registry.session_id_for_root(WORKSPACE_KEY), None);
+    }
+
+    #[test]
+    fn live_exception_pause_toggle_uses_the_typed_cdp_state() {
+        let server = MockCdpServer::start(simple_responder());
+        let (registry, _sink) =
+            start_session_with_mock(&server.url, Vec::new(), MOCK_REQUEST_TIMEOUT);
+        let session_id = registry
+            .session_id_for_root(WORKSPACE_KEY)
+            .expect("debug session id");
+
+        registry
+            .with_session_by_id(session_id, |adapter| {
+                adapter.set_exception_pause(DebugExceptionPauseMode::All)
+            })
+            .expect("known session")
+            .expect("live exception pause");
+
+        assert_eq!(
+            server.params_for("Debugger.setPauseOnExceptions"),
+            vec![json!({ "state": "none" }), json!({ "state": "all" })]
         );
     }
 
@@ -1500,6 +1114,7 @@ mod tests {
             vec![
                 "Runtime.enable".to_string(),
                 "Debugger.enable".to_string(),
+                "Debugger.setPauseOnExceptions".to_string(),
                 "Debugger.setBreakpointByUrl".to_string(),
                 "Runtime.runIfWaitingForDebugger".to_string(),
             ]
@@ -1633,89 +1248,6 @@ mod tests {
     }
 
     #[test]
-    fn breakpoints_with_empty_locations_stay_pending_until_breakpoint_resolved() {
-        let file = breakpoint_fixture_file("pending-bps");
-        let file_path = file.to_string_lossy().to_string();
-        let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
-            "Debugger.setBreakpointByUrl" => vec![result(
-                id,
-                json!({"breakpointId": "cdp-bp-pending", "locations": []}),
-            )],
-            "Runtime.runIfWaitingForDebugger" => vec![
-                ok(id),
-                event(
-                    "Debugger.breakpointResolved",
-                    json!({
-                        "breakpointId": "cdp-bp-pending",
-                        "location": {"scriptId": "9", "lineNumber": 14, "columnNumber": 0}
-                    }),
-                ),
-            ],
-            _ => vec![ok(id)],
-        }));
-
-        let (_registry, sink) = start_session_with_mock(
-            &server.url,
-            vec![breakpoint(&file_path, "bp-1", 12, None, true)],
-            MOCK_REQUEST_TIMEOUT,
-        );
-        let verified_events = wait_for(
-            || {
-                let events: Vec<(String, Vec<DebugBreakpoint>)> = sink
-                    .payloads()
-                    .into_iter()
-                    .filter_map(|payload| match payload {
-                        DebugEventPayload::BreakpointsVerified {
-                            file_path,
-                            breakpoints,
-                        } => Some((file_path, breakpoints)),
-                        _ => None,
-                    })
-                    .collect();
-                (events.len() >= 2).then_some(events)
-            },
-            EVENT_WAIT_TIMEOUT,
-            "breakpoint resolution events",
-        );
-
-        assert_eq!(verified_events[0].0, file_path);
-        assert!(!verified_events[0].1[0].verified);
-        assert_eq!(verified_events[0].1[0].line_number, 12);
-        assert_eq!(verified_events[1].0, file_path);
-        assert!(verified_events[1].1[0].verified);
-        assert_eq!(verified_events[1].1[0].line_number, 15);
-    }
-
-    #[test]
-    fn breakpoint_resolutions_for_unknown_ids_are_buffered_until_registration() {
-        let mut state = CdpShared::new();
-        let file_path = "/workspace/debug/src/app.js".to_string();
-
-        let buffered = apply_breakpoint_resolution(&mut state, "cdp-early", 15);
-
-        assert!(buffered.is_none());
-        assert_eq!(state.pending_resolutions.get("cdp-early"), Some(&15));
-
-        state.resolution_index.insert(
-            "cdp-known".to_string(),
-            BreakpointResolutionTarget {
-                breakpoint_id: "bp-9".to_string(),
-                file_path: file_path.clone(),
-            },
-        );
-        state.breakpoints_by_file.insert(
-            file_path.clone(),
-            vec![breakpoint(&file_path, "bp-9", 10, None, true)],
-        );
-        let resolved =
-            apply_breakpoint_resolution(&mut state, "cdp-known", 22).expect("resolved breakpoint");
-
-        assert_eq!(resolved.0, file_path);
-        assert!(resolved.1[0].verified);
-        assert_eq!(resolved.1[0].line_number, 22);
-    }
-
-    #[test]
     fn set_breakpoints_for_unresolvable_paths_returns_unverified_without_cdp_calls() {
         let server = MockCdpServer::start(simple_responder());
         let (registry, _sink) =
@@ -1781,26 +1313,6 @@ mod tests {
     }
 
     #[test]
-    fn first_pause_hitting_a_user_breakpoint_stops_instead_of_auto_resuming() {
-        let mut paused_params = breakpoint_paused_params();
-        paused_params["hitBreakpoints"] = json!(["cdp-bp-1"]);
-        let server = MockCdpServer::start(Box::new(move |id, method, _params| match method {
-            "Runtime.runIfWaitingForDebugger" => {
-                vec![ok(id), event("Debugger.paused", paused_params.clone())]
-            }
-            _ => vec![ok(id)],
-        }));
-
-        let (_registry, sink) =
-            start_session_with_mock(&server.url, Vec::new(), MOCK_REQUEST_TIMEOUT);
-        let (reason, frames) = wait_for_stopped(&sink, 0);
-
-        assert_eq!(reason, DebugStopReason::Breakpoint);
-        assert_eq!(frames.len(), 3);
-        assert!(!server.methods().contains(&"Debugger.resume".to_string()));
-    }
-
-    #[test]
     fn malformed_inbound_messages_are_ignored() {
         let server = MockCdpServer::start(Box::new(|id, method, _params| {
             if method == "Debugger.pause" {
@@ -1839,58 +1351,6 @@ mod tests {
             .expect_err("request must fail on close");
 
         assert!(error.contains("connection closed"));
-    }
-
-    #[test]
-    fn scopes_and_variables_are_served_from_the_pause_cache_and_get_properties() {
-        let server = MockCdpServer::start(flow_responder());
-        let (registry, sink) =
-            start_session_with_mock(&server.url, Vec::new(), MOCK_REQUEST_TIMEOUT);
-        let (_, frames) = wait_for_stopped(&sink, 0);
-
-        let stack = registry
-            .with_session(WORKSPACE_KEY, |adapter| adapter.stack_trace())
-            .expect("session")
-            .expect("stack trace");
-        let scopes = registry
-            .with_session(WORKSPACE_KEY, |adapter| adapter.scopes(frames[0].frame_id))
-            .expect("session")
-            .expect("scopes");
-        let variables = registry
-            .with_session(WORKSPACE_KEY, |adapter| {
-                adapter.variables(scopes[0].variables_reference)
-            })
-            .expect("session")
-            .expect("variables");
-
-        assert_eq!(stack, frames);
-        assert_eq!(scopes.len(), 2);
-        assert_eq!(scopes[0].name, "Local");
-        assert!(!scopes[0].expensive);
-        assert_eq!(scopes[1].name, "Global");
-        assert!(scopes[1].expensive);
-        assert_eq!(
-            server.params_for("Runtime.getProperties"),
-            vec![json!({"objectId": "scope-local-1", "ownProperties": true})]
-        );
-        assert_eq!(variables.len(), 3);
-        assert_eq!(variables[0].name, "count");
-        assert_eq!(variables[0].value, "7");
-        assert_eq!(variables[0].value_type, Some("number".to_string()));
-        assert_eq!(variables[0].variables_reference, 0);
-        assert_eq!(variables[1].name, "label");
-        assert_eq!(variables[1].value, "ready");
-        assert_eq!(variables[2].name, "user");
-        assert_eq!(variables[2].value, "User");
-        assert_eq!(variables[2].value_type, Some("User".to_string()));
-        assert!(variables[2].variables_reference > 0);
-        let nested = registry
-            .with_session(WORKSPACE_KEY, |adapter| {
-                adapter.variables(variables[2].variables_reference)
-            })
-            .expect("session")
-            .expect("nested variables");
-        assert_eq!(nested.len(), 3);
     }
 
     #[test]
@@ -2029,42 +1489,5 @@ mod tests {
             .expect("session");
 
         assert!(stale_scopes.is_err());
-    }
-
-    #[test]
-    fn pause_sends_debugger_pause_and_stack_trace_requires_a_pause() {
-        let server = MockCdpServer::start(simple_responder());
-        let (registry, _sink) =
-            start_session_with_mock(&server.url, Vec::new(), MOCK_REQUEST_TIMEOUT);
-
-        let paused = registry
-            .with_session(WORKSPACE_KEY, |adapter| adapter.pause())
-            .expect("session");
-        let stack = registry
-            .with_session(WORKSPACE_KEY, |adapter| adapter.stack_trace())
-            .expect("session");
-
-        assert_eq!(paused, Ok(()));
-        assert!(server.methods().contains(&"Debugger.pause".to_string()));
-        assert_eq!(stack, Err("The debugger is not paused.".to_string()));
-    }
-
-    #[test]
-    fn unanswered_requests_time_out_instead_of_hanging() {
-        let server = MockCdpServer::start(Box::new(|id, method, _params| {
-            if method == "Debugger.pause" {
-                return Vec::new();
-            }
-            vec![ok(id)]
-        }));
-        let (registry, _sink) =
-            start_session_with_mock(&server.url, Vec::new(), SHORT_REQUEST_TIMEOUT);
-
-        let error = registry
-            .with_session(WORKSPACE_KEY, |adapter| adapter.pause())
-            .expect("session")
-            .expect_err("request must time out");
-
-        assert!(error.contains("timed out"));
     }
 }

@@ -143,7 +143,7 @@ impl LocalWorkspaceMetadataScanner {
             return Ok(());
         }
 
-        if matcher.is_ignored(&path, file_type.is_dir()) {
+        if matcher.is_ignored(path, file_type.is_dir()) {
             collection.report.record_skip(
                 scan_detail_path(root_path, path),
                 "Ignored by workspace rules.",
@@ -702,10 +702,7 @@ fn system_time_unix(time: SystemTime) -> i64 {
 }
 
 fn size_bytes(metadata: &fs::Metadata) -> i64 {
-    match i64::try_from(metadata.len()) {
-        Ok(size) => size,
-        Err(_) => i64::MAX,
-    }
+    i64::try_from(metadata.len()).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
