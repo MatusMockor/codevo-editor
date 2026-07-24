@@ -5367,11 +5367,9 @@ mod tests {
     use crate::artisan::ArtisanRoutesResponse;
     use crate::debug_adapter::{
         DebugEvent, DebugEventSink, DebugLaunchTarget, DebugSessionRegistry, DebugStartResponse,
-        StepKind,
     };
     use crate::debug_commands::{
         debug_evaluate_with_trust, debug_start_with_trust, stop_debug_session_blocking,
-        with_debug_session,
     };
     use crate::eslint::{EslintAnalysisResponse, EslintProcessRegistry};
     use crate::local_history::LocalHistoryStore;
@@ -10015,21 +10013,6 @@ mod tests {
             crate::debug_adapter::DebugEventPayload::Terminated { .. }
         )));
         fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn debug_commands_with_unknown_session_id_return_err() {
-        let registry = DebugSessionRegistry::new();
-
-        let stop = stop_debug_session_blocking(&registry, 41);
-        let step = with_debug_session(&registry, 42, |adapter| adapter.step(StepKind::Continue));
-        let frames = with_debug_session(&registry, 43, |adapter| adapter.stack_trace());
-        let evaluated = with_debug_session(&registry, 44, |adapter| adapter.evaluate(1, "user"));
-
-        assert_eq!(stop, Err("No debug session with id 41.".to_string()));
-        assert_eq!(step, Err("No debug session with id 42.".to_string()));
-        assert_eq!(frames, Err("No debug session with id 43.".to_string()));
-        assert_eq!(evaluated, Err("No debug session with id 44.".to_string()));
     }
 
     #[test]

@@ -211,3 +211,18 @@ fn retained_disconnect_authority_survives_path_loss_but_rejects_alias_reownershi
     std::fs::remove_file(alias).expect("remove retargeted alias");
     std::fs::remove_dir_all(fixture).expect("remove authority fixture");
 }
+
+#[test]
+fn debug_commands_with_unknown_session_id_return_err() {
+    let registry = DebugSessionRegistry::new();
+
+    let stop = stop_debug_session_blocking(&registry, 41);
+    let step = with_debug_session(&registry, 42, |adapter| adapter.step(StepKind::Continue));
+    let frames = with_debug_session(&registry, 43, |adapter| adapter.stack_trace());
+    let evaluated = with_debug_session(&registry, 44, |adapter| adapter.evaluate(1, "user"));
+
+    assert_eq!(stop, Err("No debug session with id 41.".to_string()));
+    assert_eq!(step, Err("No debug session with id 42.".to_string()));
+    assert_eq!(frames, Err("No debug session with id 43.".to_string()));
+    assert_eq!(evaluated, Err("No debug session with id 44.".to_string()));
+}

@@ -96,6 +96,7 @@ pub(crate) async fn debug_start(
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     source_maps_enabled: bool,
+    stop_on_entry: bool,
     app: AppHandle,
     registry: State<'_, Arc<DebugSessionRegistry>>,
     workspace_registry: State<'_, WorkspaceRegistry>,
@@ -109,6 +110,7 @@ pub(crate) async fn debug_start(
         exception_pause_mode,
         exception_type_filter,
         source_maps_enabled,
+        stop_on_entry,
         DebugStartBackend {
             sink: app_debug_event_sink(app),
             registry: Arc::clone(registry.inner()),
@@ -137,6 +139,7 @@ pub(crate) async fn debug_start_with_trust(
         exception_pause_mode,
         Vec::new(),
         true,
+        false,
         DebugStartBackend {
             sink,
             registry,
@@ -156,6 +159,7 @@ struct DebugStartBackend<'a> {
     retained_root: Option<RetainedDebugWorkspaceRoot>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn debug_start_with_trust_and_authority(
     root_path: String,
     launch: DebugLaunchTarget,
@@ -163,6 +167,7 @@ async fn debug_start_with_trust_and_authority(
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     source_maps_enabled: bool,
+    stop_on_entry: bool,
     backend: DebugStartBackend<'_>,
 ) -> Result<DebugStartResponse, String> {
     let DebugStartBackend {
@@ -241,6 +246,7 @@ async fn debug_start_with_trust_and_authority(
                 sink,
                 registry: &registry,
                 retained_root,
+                stop_on_entry,
             },
             source_maps_enabled,
         ))
@@ -258,6 +264,7 @@ struct DebugSessionStartup<'a> {
     sink: Arc<dyn DebugEventSink>,
     registry: &'a Arc<DebugSessionRegistry>,
     retained_root: Option<RetainedDebugWorkspaceRoot>,
+    stop_on_entry: bool,
 }
 
 fn start_debug_session_blocking(
@@ -274,6 +281,7 @@ fn start_debug_session_blocking(
         sink,
         registry,
         retained_root,
+        stop_on_entry,
     } = startup;
     let breakpoint_kind = DebugBreakpointAdapterKind::from_launch(launch);
     let factory_retained_root = retained_root.as_ref();
@@ -302,6 +310,7 @@ fn start_debug_session_blocking(
                 exception_pause_mode,
                 &exception_type_filter,
                 source_maps_enabled,
+                stop_on_entry,
                 emitter,
                 finish,
                 startup_is_current,
