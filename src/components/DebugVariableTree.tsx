@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { DebugVariable } from "../domain/debug";
+import type { LatencyClock, LatencyTracker } from "../domain/latencyTracker";
 import type { DebugCopyValueCandidate } from "../application/debugCopyValue";
 import type {
   DebugVariableMutationRows,
@@ -53,6 +54,8 @@ import { useWindowedRows, type WindowedRow } from "./useWindowedRows";
 
 export const MAX_DEBUG_VARIABLE_TREE_ROWS = 500;
 export const DEBUG_VARIABLE_TREE_ROW_HEIGHT = 22;
+const EMPTY_VARIABLES_BY_REFERENCE: Readonly<Record<number, readonly DebugVariable[]>> =
+  Object.freeze({});
 
 export interface DebugVariableTreeRoot {
   readonly id: string;
@@ -73,6 +76,8 @@ export interface DebugVariableTreeProps {
   readonly variablesByReference?: Readonly<Record<number, readonly DebugVariable[]>>;
   readonly variableMutationRows?: DebugVariableMutationRows;
   readonly maxRows?: number;
+  readonly latencyClock?: LatencyClock;
+  readonly latencyTracker?: LatencyTracker;
   readonly addToWatchSurface?: DebugAddToWatchVariableSurface;
   readonly copyValueSurface?: DebugCopyValueSurface;
   readonly setVariableSurface?: DebugSetVariableSurface;
@@ -116,6 +121,8 @@ export function DebugVariableTree({
   addToWatchSurface,
   ariaLabel,
   copyValueSurface,
+  latencyClock = readLatencyClock,
+  latencyTracker,
   maxRows = MAX_DEBUG_VARIABLE_TREE_ROWS,
   onLoadPage,
   onLoadVariables,
@@ -123,7 +130,7 @@ export function DebugVariableTree({
   setVariableSurface,
   variablePages,
   variableMutationRows,
-  variablesByReference = {},
+  variablesByReference = EMPTY_VARIABLES_BY_REFERENCE,
   virtualizeRows = false,
 }: DebugVariableTreeProps) {
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -164,6 +171,16 @@ export function DebugVariableTree({
   const addToWatchPublicationCleanupRef = useRef<() => void>(() => undefined);
   const addToWatchSurfaceRef = useRef(addToWatchSurface);
   addToWatchSurfaceRef.current = addToWatchSurface;
+  const latencyInstrumentationRef = useRef({
+    clock: latencyClock,
+    tracker: latencyTracker,
+  });
+  useEffect(() => {
+    latencyInstrumentationRef.current = {
+      clock: latencyClock,
+      tracker: latencyTracker,
+    };
+  }, [latencyClock, latencyTracker]);
   const mutationCacheRef = useRef<{
     readonly provider: DebugVariableMutationRows | undefined;
     readonly rows: WeakMap<object, DebugVariableRowMutation>;
@@ -172,6 +189,8 @@ export function DebugVariableTree({
     mutationCacheRef.current = { provider: variableMutationRows, rows: new WeakMap() };
   }
   const rows = useMemo(() => {
+    const { clock, tracker } = latencyInstrumentationRef.current;
+    const renderModelStart = tracker ? clock() : null;
     const built = buildRows({
       expandedIds,
       roots,
@@ -181,7 +200,11 @@ export function DebugVariableTree({
       paged: Boolean(variablePages),
       maxRows: Math.max(0, Math.min(MAX_DEBUG_VARIABLE_TREE_ROWS, Math.floor(maxRows))),
     });
-    return stabilizeRowMutations(built, mutationCacheRef.current.rows);
+    const stabilized = stabilizeRowMutations(built, mutationCacheRef.current.rows);
+    if (tracker && renderModelStart !== null) {
+      tracker.record("debug-variables-render", clock() - renderModelStart);
+    }
+    return stabilized;
   }, [expandedIds, maxRows, roots, variableMutationRows, variablePages, variablesByReference]);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
@@ -719,6 +742,14 @@ export function DebugVariableTree({
       ) : null}
     </div>
   );
+}
+
+function readLatencyClock(): number {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+
+  return Date.now();
 }
 
 function sameEditAttempt(

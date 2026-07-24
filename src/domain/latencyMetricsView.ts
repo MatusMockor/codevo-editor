@@ -25,6 +25,8 @@ const LATENCY_BUDGETS: Record<LatencyOperationKind, LatencyBudget> = {
   definition: { warn: 100, error: 200 },
   completion: { warn: 100, error: 200 },
   folderExpand: { warn: 200, error: 400 },
+  "debug-variables-render": { warn: 50, error: 100 },
+  "debug-console-append": { warn: 50, error: 100 },
 };
 
 export interface LatencyMetricRow {
@@ -53,10 +55,7 @@ export function formatLatencyMs(value: number): string {
   return `${Math.round(value)} ms`;
 }
 
-export function latencyMetricTone(
-  kind: LatencyOperationKind,
-  medianMs: number,
-): LatencyMetricTone {
+export function latencyMetricTone(kind: LatencyOperationKind, medianMs: number): LatencyMetricTone {
   const budget = LATENCY_BUDGETS[kind];
 
   if (medianMs >= budget.error) {
@@ -70,9 +69,7 @@ export function latencyMetricTone(
   return "ok";
 }
 
-export function latencyMetricRows(
-  snapshot: readonly LatencySnapshotEntry[],
-): LatencyMetricRow[] {
+export function latencyMetricRows(snapshot: readonly LatencySnapshotEntry[]): LatencyMetricRow[] {
   return snapshot.map((entry) => ({
     kind: entry.kind,
     label: latencyOperationLabel(entry.kind),

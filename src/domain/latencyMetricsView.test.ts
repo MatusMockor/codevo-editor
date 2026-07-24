@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createLatencyTracker } from "./latencyTracker";
-import {
-  formatLatencyMs,
-  latencyMetricRows,
-  latencyMetricTone,
-} from "./latencyMetricsView";
+import { formatLatencyMs, latencyMetricRows, latencyMetricTone } from "./latencyMetricsView";
 
 describe("formatLatencyMs", () => {
   it("renders sub-millisecond values with two decimals", () => {
@@ -40,6 +36,13 @@ describe("latencyMetricTone", () => {
     expect(latencyMetricTone("quickOpen", 120)).toBe("error");
     expect(latencyMetricTone("quickOpen", 70)).toBe("warn");
   });
+
+  it("uses interactive budgets for debug panel render-model work", () => {
+    expect(latencyMetricTone("debug-variables-render", 49)).toBe("ok");
+    expect(latencyMetricTone("debug-variables-render", 50)).toBe("warn");
+    expect(latencyMetricTone("debug-variables-render", 100)).toBe("error");
+    expect(latencyMetricTone("debug-console-append", 50)).toBe("warn");
+  });
 });
 
 describe("latencyMetricRows", () => {
@@ -73,5 +76,20 @@ describe("latencyMetricRows", () => {
     const rows = latencyMetricRows(tracker.snapshot());
 
     expect(rows[0].tone).toBe("error");
+  });
+
+  it("labels debug variables latency and omits an unmeasured debug console kind", () => {
+    const tracker = createLatencyTracker();
+    tracker.record("debug-variables-render", 12);
+
+    const rows = latencyMetricRows(tracker.snapshot());
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        kind: "debug-variables-render",
+        label: "Debug Variables Render",
+      }),
+    ]);
+    expect(rows.some((row) => row.kind === "debug-console-append")).toBe(false);
   });
 });

@@ -163,6 +163,18 @@ describe("measureLatency", () => {
 });
 
 describe("latencyOperationLabel", () => {
+  it("keeps the closed operation-kind contract exhaustive", () => {
+    expect(LATENCY_OPERATION_KINDS).toEqual([
+      "quickOpen",
+      "searchEverywhere",
+      "definition",
+      "completion",
+      "folderExpand",
+      "debug-variables-render",
+      "debug-console-append",
+    ]);
+  });
+
   it("provides a human label for every operation kind", () => {
     for (const kind of LATENCY_OPERATION_KINDS) {
       const label = latencyOperationLabel(kind as LatencyOperationKind);

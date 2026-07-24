@@ -16,6 +16,8 @@ export const LATENCY_OPERATION_KINDS = [
   "definition",
   "completion",
   "folderExpand",
+  "debug-variables-render",
+  "debug-console-append",
 ] as const;
 
 export type LatencyOperationKind = (typeof LATENCY_OPERATION_KINDS)[number];
@@ -60,6 +62,8 @@ const OPERATION_LABELS: Record<LatencyOperationKind, string> = {
   definition: "Go to Definition",
   completion: "Completion",
   folderExpand: "Folder Expand",
+  "debug-variables-render": "Debug Variables Render",
+  "debug-console-append": "Debug Console Append",
 };
 
 export function latencyOperationLabel(kind: LatencyOperationKind): string {
@@ -107,9 +111,7 @@ function statsFromSamples(samples: number[]): LatencyStats {
   };
 }
 
-export function createLatencyTracker(
-  options: LatencyTrackerOptions = {},
-): LatencyTracker {
+export function createLatencyTracker(options: LatencyTrackerOptions = {}): LatencyTracker {
   const capacity = Math.max(1, options.capacity ?? DEFAULT_CAPACITY);
   const windows = new Map<LatencyOperationKind, number[]>();
 
@@ -153,8 +155,7 @@ export function createLatencyTracker(
       });
 
       entries.sort(
-        (left, right) =>
-          (KIND_ORDER.get(left.kind) ?? 0) - (KIND_ORDER.get(right.kind) ?? 0),
+        (left, right) => (KIND_ORDER.get(left.kind) ?? 0) - (KIND_ORDER.get(right.kind) ?? 0),
       );
 
       return entries;

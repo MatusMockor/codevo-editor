@@ -22,6 +22,7 @@ import type {
 } from "./debugSetVariableSurface";
 import type { DebugAddToWatchFocusedCandidate } from "../application/useDebugAddToWatchComposition";
 import type { DebugAddToWatchVariableSurface } from "./debugAddToWatchSurface";
+import { createLatencyTracker } from "../domain/latencyTracker";
 
 const owner: DebugInspectionOwner = {
   rootKey: "/workspace",
@@ -155,6 +156,46 @@ describe("DebugVariableTree", () => {
     expect(scope.getAttribute("aria-expanded")).toBe("false");
     press(scope, " ");
     expect(scope.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("records latency only when the render model recomputes", () => {
+    const tracker = createLatencyTracker();
+    let now = 0;
+    const latencyClock = () => {
+      now += 4;
+      return now;
+    };
+
+    render({ latencyClock, latencyTracker: tracker });
+    const initialCount = tracker.statsFor("debug-variables-render")?.count ?? 0;
+    expect(initialCount).toBeGreaterThan(0);
+    expect(tracker.statsFor("debug-variables-render")?.last).toBe(4);
+
+    const replacementTracker = createLatencyTracker();
+    render({ latencyTracker: replacementTracker });
+    expect(tracker.statsFor("debug-variables-render")?.count).toBe(initialCount);
+    expect(replacementTracker.statsFor("debug-variables-render")).toBeNull();
+
+    render({
+      variablePages: pages([
+        { name: "user", value: "Object", variablesReference: 11 },
+        { name: "count", value: "4", type: "number", variablesReference: 0 },
+      ]),
+    });
+
+    expect(tracker.statsFor("debug-variables-render")?.count).toBe(initialCount);
+    expect(replacementTracker.statsFor("debug-variables-render")).toMatchObject({
+      count: 1,
+      last: 4,
+    });
+  });
+
+  it("renders without latency instrumentation by default", () => {
+    const latencyClock = vi.fn(() => 0);
+
+    expect(() => render({ latencyClock })).not.toThrow();
+    expect(host.querySelector('[role="tree"]')).not.toBeNull();
+    expect(latencyClock).not.toHaveBeenCalled();
   });
 
   it("loads and retries exact owner-bound pages without duplicate UI requests", () => {
