@@ -78,11 +78,14 @@ function defaultProps(): DebugPanelProps {
     onPause: vi.fn(),
     onRemoveBreakpoint: vi.fn(),
     onRemoveAllBreakpoints: vi.fn(),
+    onAddFunctionBreakpoint: vi.fn(),
+    onRemoveFunctionBreakpoint: vi.fn(),
     onSelectFrame: vi.fn(),
     onSetBreakpointCondition: vi.fn(),
     onSetBreakpointHitCondition: vi.fn(),
     onSetBreakpointLogMessage: vi.fn(),
     onSetBreakpointEnabled: vi.fn(),
+    onSetFunctionBreakpointEnabled: vi.fn(),
     onSetExceptionPauseMode: vi.fn(),
     onStep: vi.fn(),
     onStop: vi.fn(),
@@ -1243,6 +1246,25 @@ describe("DebugPanel", () => {
 
     act(() => button("Remove breakpoint").click());
     expect(props.onRemoveBreakpoint).toHaveBeenCalledWith("bp-1");
+  });
+
+  it("shows function breakpoints for Node workspaces and hides them for PHP", () => {
+    const props = render({
+      debugAdapterKind: "node",
+      functionBreakpoints: [{ id: "fn-1", functionName: "app.render", enabled: true }],
+    });
+    expect(host.querySelector('section[aria-label="Function Breakpoints"]')).not.toBeNull();
+    act(() =>
+      host
+        .querySelector<HTMLInputElement>(
+          'input[aria-label="Enable function breakpoint app.render"]',
+        )
+        ?.click(),
+    );
+    expect(props.onSetFunctionBreakpointEnabled).toHaveBeenCalledWith("fn-1", false);
+
+    render({ debugAdapterKind: "php" });
+    expect(host.querySelector('section[aria-label="Function Breakpoints"]')).toBeNull();
   });
 
   it("renders an inline breakpoint with its exact accessible column label", () => {

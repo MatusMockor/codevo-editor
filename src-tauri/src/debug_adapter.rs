@@ -35,6 +35,21 @@ pub struct DebugBreakpoint {
     pub verified: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugFunctionBreakpoint {
+    pub id: String,
+    pub function_name: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugFunctionBreakpointVerification {
+    pub id: String,
+    pub verified: bool,
+}
+
 fn deserialize_optional_positive_u32<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
 where
     D: Deserializer<'de>,
@@ -483,6 +498,12 @@ pub trait DebugAdapter: Send {
     }
     fn set_breakpoints_active(&mut self, _active: bool) -> Result<(), String> {
         Err("Breakpoint activation is only available for Node.js debug sessions.".to_string())
+    }
+    fn set_function_breakpoints(
+        &mut self,
+        _breakpoints: &[DebugFunctionBreakpoint],
+    ) -> Result<Vec<DebugFunctionBreakpointVerification>, String> {
+        Err("Function breakpoints are only available for Node.js debug sessions.".to_string())
     }
     fn set_exception_pause(&mut self, _mode: DebugExceptionPauseMode) -> Result<(), String> {
         Err("Exception pause modes are only available for Node.js debug sessions.".to_string())

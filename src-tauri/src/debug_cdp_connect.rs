@@ -118,6 +118,7 @@ fn open_cdp_transport_with_authorization(
     Ok((
         NodeCdpAdapter {
             client,
+            function_breakpoints: Default::default(),
             ownership: options.ownership,
             shared,
             mutation_is_allowed: options.startup_is_current,

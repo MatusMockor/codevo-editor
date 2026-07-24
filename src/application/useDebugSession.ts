@@ -30,6 +30,7 @@ import type {
 import { useDebugExceptionPause } from "./useDebugExceptionPause";
 import { useDebugEvaluation } from "./useDebugEvaluation";
 import { useDebugBreakpointManagement } from "./useDebugBreakpointManagement";
+import { useDebugFunctionBreakpointManagement } from "./useDebugFunctionBreakpointManagement";
 import { createDebugBreakpointSynchronization } from "./debugBreakpointSynchronization";
 import { useDebugRestartFrameSessionLifecycle } from "./useDebugRestartFrameLifecycle";
 import { useDebugSessionEventProjection } from "./useDebugSessionEventProjection";
@@ -183,6 +184,14 @@ export function useWorkbenchDebugSession({
   const failClosedCompoundPolicyRef = useRef<
     (rootPath: string, selectedSessionId: number) => Promise<void>
   >(async () => undefined);
+  const syncFunctionBreakpointsForSessionRef = useRef(
+    async (
+      _rootPath: string,
+      _workspaceId: string | null,
+      _sessionId: number,
+      _adapterKind: "node" | "php",
+    ) => false,
+  );
 
   useEffect(() => {
     if (!workspaceRoot) return;
@@ -629,6 +638,19 @@ export function useWorkbenchDebugSession({
           targetKind: descriptor.targetKind,
           workspaceId: requestedWorkspaceId,
         });
+        await syncFunctionBreakpointsForSessionRef.current(
+          requestedRoot,
+          requestedWorkspaceId,
+          status.sessionId,
+          descriptor.adapterKind,
+        );
+        if (
+          !mountedRef.current ||
+          !isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) ||
+          sessionOwnersRef.current.get(key)?.sessionId !== status.sessionId
+        ) {
+          return;
+        }
         adoptBreakpointsActivation(key, status.sessionId);
         if (
           descriptor.restartLaunch !== null &&
@@ -1256,6 +1278,38 @@ export function useWorkbenchDebugSession({
     setBreakpointBulkPendingByRoot,
   });
 
+  const activeFunctionBreakpointSession = useCallback(() => {
+    const root = currentRootRef.current;
+    if (!root) return null;
+    const sessionId = activeControlSessionId();
+    if (sessionId === null) return null;
+    const owner = sessionOwnersRef.current.get(normalizedWorkspaceRootKey(root));
+    const adapterKind = adapterKindForSession(root, sessionId);
+    if (!owner || !adapterKind || owner.sessionId !== sessionId) return null;
+    return {
+      adapterKind,
+      rootPath: root,
+      sessionId,
+      workspaceId: owner.workspaceId,
+    };
+  }, [activeControlSessionId, adapterKindForSession]);
+  const {
+    add: addFunctionBreakpoint,
+    functionBreakpoints,
+    remove: removeFunctionBreakpoint,
+    setEnabled: setFunctionBreakpointEnabled,
+    synchronizeSession: synchronizeFunctionBreakpointsForSession,
+  } = useDebugFunctionBreakpointManagement({
+    gateway,
+    getActiveSession: activeFunctionBreakpointSession,
+    isWorkspaceCurrent: (rootPath, requestedWorkspaceId) =>
+      isExactWorkspaceOwnerCurrent(rootPath, requestedWorkspaceId),
+    isWorkspaceTrusted,
+    rootPath: workspaceRoot,
+    workspaceId,
+  });
+  syncFunctionBreakpointsForSessionRef.current = synchronizeFunctionBreakpointsForSession;
+
   const selectFrame = useCallback(
     (frameId: number) =>
       selectDebugFrame(
@@ -1631,6 +1685,7 @@ export function useWorkbenchDebugSession({
       debugStartPending: startPendingByRoot[activeKey] ?? false,
       snapshot,
       breakpoints: activeBreakpoints,
+      functionBreakpoints,
       breakpointCounts: countBreakpoints(activeBreakpoints),
       breakpointsActivated,
       breakpointBulkMutationPending: breakpointBulkPendingByRoot[activeKey] ?? false,
@@ -1684,6 +1739,9 @@ export function useWorkbenchDebugSession({
       disableAllBreakpoints,
       removeAllBreakpoints,
       restoreBreakpoints,
+      addFunctionBreakpoint,
+      removeFunctionBreakpoint,
+      setFunctionBreakpointEnabled,
       selectFrame,
       loadVariables,
       loadVariablePage,

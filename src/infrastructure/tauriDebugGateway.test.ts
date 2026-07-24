@@ -182,6 +182,24 @@ describe("TauriDebugGateway", () => {
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_set_variable", { request });
   });
 
+  it("sets the exact function breakpoint replacement for an owned session", async () => {
+    const invokeCommand = vi
+      .fn<InvokeCommand>()
+      .mockResolvedValue([{ id: "fn-1", verified: true }]);
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+    const request = {
+      rootPath: "/workspace",
+      sessionId: 7,
+      breakpoints: [{ id: "fn-1", functionName: "app.render", enabled: true }],
+    } as const;
+    await expect(gateway.setFunctionBreakpoints(request)).resolves.toEqual([
+      { id: "fn-1", verified: true },
+    ]);
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_set_function_breakpoints", {
+      request,
+    });
+  });
+
   it("invokes the exact Set Expression command and validates its echoed authority", async () => {
     const request = {
       rootPath: "/workspace",

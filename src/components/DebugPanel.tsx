@@ -30,6 +30,7 @@ import type {
   DebugVariable,
   StackFrame,
   StepKind,
+  FunctionBreakpoint,
 } from "../domain/debug";
 import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import type { ActiveDebugAdapterKind } from "../application/useDebugSession";
@@ -74,6 +75,7 @@ import type {
 } from "./debugCopyValueSurface";
 import type { DebugSetVariableSurface } from "./debugSetVariableSurface";
 import type { DebugAddToWatchVariableSurface } from "./debugAddToWatchSurface";
+import { FunctionBreakpoints } from "./FunctionBreakpoints";
 
 type NodeLaunchConfigurationsProps = Omit<
   NodeDebugLaunchSelectorProps,
@@ -112,6 +114,7 @@ export interface DebugPanelProps {
     readonly enabled: number;
   };
   breakpoints: Breakpoint[];
+  functionBreakpoints?: readonly FunctionBreakpoint[];
   canRestartDebug?: boolean;
   canClearConsole?: boolean;
   console: UseDebugConsoleResult;
@@ -157,11 +160,14 @@ export interface DebugPanelProps {
   onRestart?(): void;
   onRemoveBreakpoint(id: string): void;
   onRemoveAllBreakpoints?(): void;
+  onAddFunctionBreakpoint?(functionName: string): void;
+  onRemoveFunctionBreakpoint?(id: string): void;
   onSelectFrame(frameId: number): void;
   onSetBreakpointCondition(id: string, condition: string | null): void;
   onSetBreakpointHitCondition(id: string, hitCondition: BreakpointHitCondition | null): void;
   onSetBreakpointLogMessage(id: string, logMessage: string | null): void;
   onSetBreakpointEnabled(id: string, enabled: boolean): void;
+  onSetFunctionBreakpointEnabled?(id: string, enabled: boolean): void;
   onSetExceptionPauseMode(mode: DebugExceptionPauseMode): void;
   onStep(kind: StepKind): void;
   onStop(): void;
@@ -306,6 +312,7 @@ export function DebugPanel({
   breakpointsActivated = true,
   breakpointCounts = { disabled: 0, enabled: 0 },
   breakpoints,
+  functionBreakpoints = [],
   canRestartDebug = false,
   canToggleBreakpointsActivated = false,
   canClearConsole = false,
@@ -350,11 +357,14 @@ export function DebugPanel({
   onRestart,
   onRemoveBreakpoint,
   onRemoveAllBreakpoints,
+  onAddFunctionBreakpoint,
+  onRemoveFunctionBreakpoint,
   onSelectFrame,
   onSetBreakpointCondition,
   onSetBreakpointHitCondition,
   onSetBreakpointLogMessage,
   onSetBreakpointEnabled,
+  onSetFunctionBreakpointEnabled,
   onSetExceptionPauseMode,
   onStep,
   onStop,
@@ -664,6 +674,18 @@ export function DebugPanel({
             supportsLogpoints={debugAdapterKind !== "php" && hasJavaScriptTypeScriptWorkspace}
             rootPath={rootPath}
           />
+          {debugAdapterKind !== "php" &&
+          hasJavaScriptTypeScriptWorkspace &&
+          onAddFunctionBreakpoint &&
+          onRemoveFunctionBreakpoint &&
+          onSetFunctionBreakpointEnabled ? (
+            <FunctionBreakpoints
+              breakpoints={functionBreakpoints}
+              onAdd={onAddFunctionBreakpoint}
+              onRemove={onRemoveFunctionBreakpoint}
+              onSetEnabled={onSetFunctionBreakpointEnabled}
+            />
+          ) : null}
         </section>
         <div style={{ ...styles.column, borderRight: 0 }}>
           <DebugWatchesPanel
@@ -703,8 +725,10 @@ export function DebugPanel({
           onDismiss={onConsoleCompletionDismiss}
           onFocusRequestHandled={onConsoleFocusRequestHandled}
           onInputChanged={onConsoleCompletionInputChanged}
+          onLoadVariablePage={onLoadVariablePage}
           onRequest={onConsoleCompletionRequest}
           inspectionOwner={inspectionOwner}
+          variablePages={variablePages}
           workspaceOwnerKey={consoleWorkspaceOwnerKey}
         />
       </section>

@@ -23,6 +23,23 @@ export interface Breakpoint {
   verified?: boolean;
 }
 
+export interface FunctionBreakpoint {
+  readonly id: string;
+  readonly functionName: string;
+  readonly enabled: boolean;
+}
+
+export interface FunctionBreakpointVerification {
+  readonly id: string;
+  readonly verified: boolean;
+}
+
+export interface DebugSetFunctionBreakpointsRequest {
+  readonly rootPath: string;
+  readonly sessionId: number;
+  readonly breakpoints: readonly FunctionBreakpoint[];
+}
+
 export interface BreakpointCreationOwnership {
   readonly breakpointId: string;
   readonly filePath: string;
@@ -290,6 +307,9 @@ export interface DebugGateway {
     breakpoints: readonly Breakpoint[],
   ): Promise<Breakpoint[]>;
   setBreakpointsActive?(request: DebugSetBreakpointsActiveRequest): Promise<void>;
+  setFunctionBreakpoints?(
+    request: DebugSetFunctionBreakpointsRequest,
+  ): Promise<readonly FunctionBreakpointVerification[]>;
   step(sessionId: number, kind: StepKind): Promise<void>;
   pause(sessionId: number): Promise<void>;
   restartFrame(request: DebugRestartFrameRequest): Promise<void>;

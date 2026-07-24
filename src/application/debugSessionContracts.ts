@@ -8,6 +8,7 @@ import type {
   DebugRuntimeStatus,
   DebugScope,
   DebugVariable,
+  FunctionBreakpoint,
   StepKind,
 } from "../domain/debug";
 import type {
@@ -127,6 +128,7 @@ export interface NodeDebugAttachCandidateStartPort {
 export interface UseDebugSessionResult {
   snapshot: DebuggerSessionSnapshot;
   breakpoints: Breakpoint[];
+  functionBreakpoints: readonly FunctionBreakpoint[];
   breakpointCounts: BreakpointCounts;
   breakpointsActivated: boolean;
   breakpointBulkMutationPending: boolean;
@@ -193,6 +195,9 @@ export interface UseDebugSessionResult {
   disableAllBreakpoints(): Promise<void>;
   removeAllBreakpoints(): Promise<void>;
   restoreBreakpoints(list: Breakpoint[]): Promise<void>;
+  addFunctionBreakpoint(functionName: string): Promise<boolean>;
+  removeFunctionBreakpoint(id: string): Promise<boolean>;
+  setFunctionBreakpointEnabled(id: string, enabled: boolean): Promise<boolean>;
   selectFrame(frameId: number): Promise<void>;
   loadVariables(variablesReference: number): Promise<void>;
   loadVariablePage(

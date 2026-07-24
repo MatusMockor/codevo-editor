@@ -38,6 +38,7 @@ pub(crate) mod set_expression_command;
 pub(crate) use set_expression_command::debug_set_expression;
 #[path = "debug_set_breakpoints_active_command.rs"]
 mod set_breakpoints_active_command;
+pub(crate) use crate::debug_cdp_function_breakpoints::debug_set_function_breakpoints;
 pub(crate) use set_breakpoints_active_command::debug_set_breakpoints_active;
 #[path = "debug_set_expression_wire.rs"]
 mod set_expression_wire;
@@ -111,8 +112,7 @@ pub(crate) fn create_debug_adapter(
     }
 }
 
-#[tauri::command]
-#[allow(clippy::too_many_arguments)] // Tauri wire parameters stay backward compatible.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn debug_start(
     root_path: String,
     launch: DebugLaunchTarget,

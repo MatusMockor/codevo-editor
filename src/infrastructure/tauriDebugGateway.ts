@@ -12,6 +12,7 @@ import type {
   DebugRuntimeStatus,
   DebugRestartFrameRequest,
   DebugSetBreakpointsActiveRequest,
+  DebugSetFunctionBreakpointsRequest,
   DebugSetExpressionRequest,
   DebugSetExpressionResult,
   DebugSetVariableRequest,
@@ -21,6 +22,7 @@ import type {
   DebugVariable,
   DebugVariablePage,
   DebugVariablePageRequest,
+  FunctionBreakpointVerification,
   StackFrame,
   StepKind,
 } from "../domain/debug";
@@ -188,6 +190,17 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
     }
 
     return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setBreakpointsActive, {
+      request,
+    });
+  }
+
+  setFunctionBreakpoints(
+    request: DebugSetFunctionBreakpointsRequest,
+  ): Promise<readonly FunctionBreakpointVerification[]> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve([]);
+    }
+    return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setFunctionBreakpoints, {
       request,
     });
   }

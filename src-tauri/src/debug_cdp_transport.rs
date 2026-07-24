@@ -1215,6 +1215,7 @@ pub(super) fn build_pause_inventory(
 
 pub(crate) struct NodeCdpAdapter {
     client: CdpClient,
+    function_breakpoints: crate::debug_cdp_function_breakpoints::FunctionBreakpointRegistrations,
     ownership: DebuggeeOwnership,
     shared: Arc<Mutex<CdpShared>>,
     mutation_is_allowed: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -1335,6 +1336,19 @@ impl DebugAdapter for NodeCdpAdapter {
             &self.client,
             self.mutation_is_allowed.as_ref(),
             mode,
+        )
+    }
+
+    fn set_function_breakpoints(
+        &mut self,
+        breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+    ) -> Result<Vec<crate::debug_adapter::DebugFunctionBreakpointVerification>, String> {
+        let authority = Arc::clone(&self.mutation_is_allowed);
+        crate::debug_cdp_function_breakpoints::replace_function_breakpoints(
+            &mut self.client,
+            &mut self.function_breakpoints,
+            breakpoints,
+            move || authority(),
         )
     }
 
