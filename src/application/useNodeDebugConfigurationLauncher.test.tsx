@@ -508,6 +508,44 @@ describe("useNodeDebugConfigurationLauncher", () => {
     ui.unmount();
   });
 
+  it("retains a VS Code script envFile without reading it in the frontend", async () => {
+    const source = JSON.stringify({
+      version: "0.2.0",
+      configurations: [
+        {
+          type: "node",
+          request: "launch",
+          name: "API",
+          program: "src/api.ts",
+          envFile: "${workspaceFolder}/config/dev.env",
+          env: { PORT: "4100" },
+        },
+      ],
+    });
+    const startDebug = vi.fn(async () => true);
+    const workspaceReads = vscodeReadsFor(source);
+    const ui = renderLauncher({ startDebug, workspaceReads });
+
+    await act(async () => ui.hook().load());
+    await act(async () => expect(await ui.hook().startNamed("API")).toBe(true));
+
+    expect(startDebug).toHaveBeenCalledWith({
+      envFile: "config/dev.env",
+      launch: {
+        args: [],
+        cwd: undefined,
+        env: { PORT: "4100" },
+        envFile: "config/dev.env",
+        justMyCode: "nodeInternals",
+        kind: "node-configured-script",
+        scriptPath: `${ROOT_A}/src/api.ts`,
+      },
+      preLaunchTask: null,
+    });
+    expect(workspaceReads.readFile).toHaveBeenCalledOnce();
+    ui.unmount();
+  });
+
   it("starts an exact private named configuration without changing selection", async () => {
     const startDebug = vi.fn(async () => true);
     const ui = renderLauncher({

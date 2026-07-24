@@ -19,23 +19,53 @@ export function clonePreparedNodeDebugLaunch(
   const nativeWatch = prepared.nativeWatch
     ? cloneNativeNodeWatchLaunchIntent(prepared.nativeWatch)
     : null;
+  const envFile = cloneEnvFile(prepared.envFile);
+  const rawLaunchEnvFile = (
+    prepared.launch as PreparedNodeDebugLaunch["launch"] & { readonly envFile?: unknown }
+  ).envFile;
+  const launchEnvFile = cloneEnvFile(rawLaunchEnvFile);
   if (
     !launch ||
     preTask.kind === "invalid" ||
     postTask.kind === "invalid" ||
     (postTask.kind !== "valid" && !serverReadyAction) ||
     (prepared.serverReadyAction !== undefined && !serverReadyAction) ||
-    (prepared.nativeWatch !== undefined && nativeWatch?.kind !== "ok")
+    (prepared.nativeWatch !== undefined && nativeWatch?.kind !== "ok") ||
+    (prepared.envFile !== undefined && !envFile) ||
+    (rawLaunchEnvFile !== undefined && !launchEnvFile) ||
+    (launchEnvFile !== envFile && (launchEnvFile !== null || envFile !== null)) ||
+    (envFile !== null && launch.kind !== "node-configured-script")
   ) {
     return null;
   }
+  const launchWithEnvFile =
+    envFile && launch.kind === "node-configured-script"
+      ? Object.freeze({ ...launch, envFile })
+      : launch;
   return Object.freeze({
-    launch,
+    ...(envFile ? { envFile } : {}),
+    launch: launchWithEnvFile,
     ...(nativeWatch?.kind === "ok" ? { nativeWatch: nativeWatch.intent } : {}),
     preLaunchTask: preTask.kind === "valid" ? preTask.task : null,
     ...(postTask.kind === "valid" ? { postDebugTask: postTask.task } : {}),
     ...(serverReadyAction ? { serverReadyAction } : {}),
   });
+}
+
+function cloneEnvFile(value: unknown): string | null {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    new TextEncoder().encode(value).length > 4 * 1024 ||
+    value.includes("\\") ||
+    value.includes("${") ||
+    value.startsWith("/") ||
+    /^[A-Za-z]:\//u.test(value) ||
+    value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  return value;
 }
 
 function cloneServerReadyAction(

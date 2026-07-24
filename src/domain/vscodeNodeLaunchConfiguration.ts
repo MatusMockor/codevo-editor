@@ -39,7 +39,8 @@ const BLOCKED_NPM_ENVIRONMENT_NAMES = new Set([
 ]);
 
 export interface VscodeNodeLaunchConfiguration {
-  readonly configuration: NodeLaunchConfiguration;
+  readonly configuration: NodeLaunchConfiguration & { readonly envFile?: string };
+  readonly envFile?: string;
   /** Private semantic import metadata; raw runtime arguments are never retained. */
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly justMyCode?: NodeDebugJustMyCodePolicy;
@@ -367,6 +368,7 @@ function parseConfiguration(
     "args",
     "cwd",
     "env",
+    "envFile",
     "port",
     "preLaunchTask",
     "postDebugTask",
@@ -390,6 +392,9 @@ function parseConfiguration(
   );
   if (serverReadyAction.kind === "error") return serverReadyAction;
   if (value.request === "attach") {
+    if (value.envFile !== undefined) {
+      return rejected(`${path}.envFile is supported only for a script launch`);
+    }
     if (serverReadyAction.value !== undefined) {
       return rejected(`${path}.serverReadyAction is supported only for launch`);
     }
@@ -462,6 +467,11 @@ function parseConfiguration(
   if (args.kind === "error") return args;
   const env = environment(value.env, `${path}.env`);
   if (env.kind === "error") return env;
+  const envFile = workspaceRelative(value.envFile, `${path}.envFile`, true);
+  if (envFile.kind === "error") return envFile;
+  if (value.envFile !== undefined && !envFile.value) {
+    return rejected(`${path}.envFile must be a non-empty workspace path`);
+  }
   return {
     kind: "ok",
     value: {
@@ -470,9 +480,11 @@ function parseConfiguration(
         ...(cwd.value ? { cwd: cwd.value } : {}),
         default: false,
         env: env.value,
+        ...(envFile.value ? { envFile: envFile.value } : {}),
         name: value.name,
         target: { kind: "script", path: program.value },
       },
+      ...(envFile.value ? { envFile: envFile.value } : {}),
       ...(justMyCode.value ? { justMyCode: justMyCode.value } : {}),
       ...(preLaunchTask.value ? { preLaunchTask: preLaunchTask.value } : {}),
       ...(postDebugTask.value ? { postDebugTask: postDebugTask.value } : {}),
@@ -491,6 +503,9 @@ function parseNativeNodeWatchConfiguration(
 ):
   | { readonly kind: "ok"; readonly value: VscodeNodeLaunchConfiguration }
   | { readonly kind: "error"; readonly message: string } {
+  if (value.envFile !== undefined) {
+    return rejected(`${path}.envFile is unsupported for a native Node watch launch`);
+  }
   const preserveOutput =
     Array.isArray(value.runtimeArgs) &&
     value.runtimeArgs.length === 2 &&
@@ -566,6 +581,9 @@ function parseNpmLaunchConfiguration(
 ):
   | { readonly kind: "ok"; readonly value: VscodeNodeLaunchConfiguration }
   | { readonly kind: "error"; readonly message: string } {
+  if (value.envFile !== undefined) {
+    return rejected(`${path}.envFile is unsupported for an npm launch`);
+  }
   if (value.runtimeExecutable !== "npm" && value.runtimeExecutable !== "npm.cmd") {
     return rejected(`${path}.runtimeExecutable must be exactly "npm" or "npm.cmd"`);
   }

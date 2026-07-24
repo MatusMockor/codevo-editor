@@ -1059,6 +1059,91 @@ describe("VS Code Node launch configuration import", () => {
     expect(parsed.diagnostics).toHaveLength(4);
   });
 
+  it.each(["config/dev.env", "${workspaceFolder}/config/dev.env"])(
+    "accepts a workspace-contained script envFile path %s",
+    (envFile) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "API",
+              program: "server.js",
+              envFile,
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [
+          {
+            configuration: { envFile: "config/dev.env" },
+            envFile: "config/dev.env",
+          },
+        ],
+        diagnostics: [],
+      });
+    },
+  );
+
+  it.each([
+    ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
+    ["attach", { request: "attach", port: 9229 }],
+    ["native watch", { runtimeArgs: ["--watch"], program: "server.js" }],
+  ])("rejects envFile for %s configurations with a clear diagnostic", (_case, fields) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Unsupported",
+            program: "server.js",
+            envFile: ".env",
+            ...fields,
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("envFile") }],
+    });
+  });
+
+  it.each(["../outside.env", "/tmp/outside.env", "${fileDirname}/.env", "env/${input:name}"])(
+    "rejects an escaping or dynamic envFile path %s",
+    (envFile) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "API",
+              program: "server.js",
+              envFile,
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [{ message: expect.stringContaining("envFile") }],
+      });
+    },
+  );
+
   it("retains prototype-shaped environment names as exact own data properties", () => {
     const parsed = parseVscodeNodeLaunchConfigurations(
       `{

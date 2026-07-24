@@ -5,9 +5,11 @@ import type { PreparedNodeDebugLaunch } from "./useNodeDebugConfigurationLaunche
 describe("clonePreparedNodeDebugLaunch", () => {
   it("retains a bounded immutable private recipe without caller aliases", () => {
     const prepared: PreparedNodeDebugLaunch = {
+      envFile: "config/dev.env",
       launch: {
         args: ["--mode", "safe"],
         env: { TOKEN: "accepted" },
+        envFile: "config/dev.env",
         kind: "node-configured-script",
         scriptPath: "/workspace/api.js",
       },
@@ -27,9 +29,11 @@ describe("clonePreparedNodeDebugLaunch", () => {
       prepared.launch.env.TOKEN = "mutated";
     }
     expect(clone).toEqual({
+      envFile: "config/dev.env",
       launch: {
         args: ["--mode", "safe"],
         env: { TOKEN: "accepted" },
+        envFile: "config/dev.env",
         kind: "node-configured-script",
         scriptPath: "/workspace/api.js",
       },
@@ -64,6 +68,22 @@ describe("clonePreparedNodeDebugLaunch", () => {
           match: { kind: "port", prefix: "port ", suffix: "0" },
           uri: { scheme: "https", host: "localhost", path: "/%2e%2e/private" },
         },
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects envFile metadata that is missing from the configured-script wire recipe", () => {
+    expect(
+      clonePreparedNodeDebugLaunch({
+        envFile: "config/dev.env",
+        launch: {
+          args: [],
+          env: {},
+          kind: "node-configured-script",
+          scriptPath: "/workspace/api.js",
+        },
+        postDebugTask: { label: "stop api" },
+        preLaunchTask: null,
       }),
     ).toBeNull();
   });

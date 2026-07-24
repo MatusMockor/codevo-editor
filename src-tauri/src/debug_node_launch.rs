@@ -654,7 +654,7 @@ fn validate_configured_arguments(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_environment(environment: &HashMap<String, String>) -> Result<(), String> {
+pub(crate) fn validate_environment(environment: &HashMap<String, String>) -> Result<(), String> {
     if environment.len() > MAX_ENVIRONMENT_ENTRIES
         || environment.iter().any(|(key, value)| {
             let normalized_key = key.to_ascii_uppercase();

@@ -68,7 +68,8 @@ export interface UseNodeDebugConfigurationLauncherOptions {
 }
 
 export interface PreparedNodeDebugLaunch {
-  readonly launch: DebugLaunchTarget;
+  readonly envFile?: string;
+  readonly launch: DebugLaunchTarget & { readonly envFile?: string };
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly preLaunchTask: NodeDebugPreLaunchTask | null;
   readonly postDebugTask?: NodeDebugPostTask | null;
@@ -121,13 +122,26 @@ export function prepareNodeDebugLaunch(
   ) {
     return { kind: "unsupported", reason: "dirtyDocument" };
   }
+  const envFile = importedEnvFile(configuration, entry);
+  if (envFile.kind === "invalid") {
+    return { kind: "unsupported", reason: "invalidOptions" };
+  }
+  const launch = debugLaunchWithJustMyCode(
+    nodeLaunchTargetFromConfiguration(configuration, rootPath),
+    entry,
+  );
+  if (envFile.value && launch.kind !== "node-configured-script") {
+    return { kind: "unsupported", reason: "invalidOptions" };
+  }
+  const launchWithEnvFile =
+    envFile.value && launch.kind === "node-configured-script"
+      ? Object.freeze({ ...launch, envFile: envFile.value })
+      : launch;
   return {
     kind: "supported",
     value: Object.freeze({
-      launch: debugLaunchWithJustMyCode(
-        nodeLaunchTargetFromConfiguration(configuration, rootPath),
-        entry,
-      ),
+      ...(envFile.value ? { envFile: envFile.value } : {}),
+      launch: launchWithEnvFile,
       ...(nativeWatch?.kind === "ok" ? { nativeWatch: nativeWatch.intent } : {}),
       preLaunchTask: task.kind === "valid" ? task.task : null,
       ...(postTask.kind === "valid" ? { postDebugTask: postTask.task } : {}),
@@ -144,6 +158,14 @@ export function prepareNodeDebugCompoundLaunch(
 ): PreparedNodeLaunchConfiguration<PreparedNodeDebugSelection> {
   const task = validateNodeDebugPreLaunchTask(entry.compound.preLaunchTask);
   if (task.kind === "invalid") return { kind: "unsupported", reason: "invalidOptions" };
+  if (
+    entry.compound.members.some((member) => {
+      const envFile = importedEnvFile(member.configuration, { source: "vscode", ...member });
+      return envFile.kind === "invalid" || envFile.value !== undefined;
+    })
+  ) {
+    return { kind: "unsupported", reason: "invalidOptions" };
+  }
   const recipes = cloneNodeDebugCompoundMembers(
     entry.compound.members.map((member) => ({
       launch: debugLaunchWithJustMyCode(
@@ -178,6 +200,34 @@ function debugLaunchWithJustMyCode(
     ? Object.freeze({ ...launch, justMyCode: entry.justMyCode })
     : launch;
 }
+
+function importedEnvFile(
+  configuration: Parameters<typeof nodeLaunchTargetFromConfiguration>[0],
+  entry: NodeLaunchConfigurationEntry,
+): { readonly kind: "valid"; readonly value?: string } | { readonly kind: "invalid" } {
+  if (entry.source !== "vscode") return { kind: "valid" };
+  const value = (configuration as NodeLaunchConfigurationWithEnvFile).envFile;
+  if (value === undefined) return { kind: "valid" };
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    new TextEncoder().encode(value).length > 4 * 1024 ||
+    value.includes("\\") ||
+    value.includes("${") ||
+    value.startsWith("/") ||
+    /^[A-Za-z]:\//u.test(value) ||
+    value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    return { kind: "invalid" };
+  }
+  return { kind: "valid", value };
+}
+
+type NodeLaunchConfigurationWithEnvFile = Parameters<
+  typeof nodeLaunchTargetFromConfiguration
+>[0] & {
+  readonly envFile?: unknown;
+};
 
 export interface NodeDebugConfigurationLauncher {
   readonly busy: boolean;
