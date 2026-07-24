@@ -583,6 +583,15 @@ export function useWorkbenchDebugSession({
 
           return next;
         });
+        setEvaluationHistoryBySession((current) => {
+          const next = { ...current };
+
+          for (const sessionId of previousSessions) {
+            delete next[`${key}\0${sessionId}`];
+          }
+
+          return next;
+        });
         setFrameSelectionByRoot((current) => ({ ...current, [key]: null }));
         const currentSnapshot = snapshotsRef.current[key] ?? inactiveSnapshot;
         const currentSessionId = debuggerSessionId(currentSnapshot.state);

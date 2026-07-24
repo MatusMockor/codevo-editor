@@ -4190,6 +4190,61 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("prunes superseded evaluation history for one root without affecting another", async () => {
+    const harness = createGateway();
+    harness.start
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 4 })
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 8 })
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 5 })
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 4 });
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+    await act(async () => void (await ui.hook().evaluate("rootAFirst")));
+
+    ui.set({ workspaceRoot: "/workspace/one-extra" });
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one-extra",
+        sessionId: 8,
+        seq: 1,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+    await act(async () => void (await ui.hook().evaluate("rootB")));
+
+    ui.set({ workspaceRoot: "/workspace/one" });
+    await act(async () => ui.hook().startDebug(launch));
+    expect(ui.hook().evaluationHistory).toEqual([]);
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 5,
+        seq: 1,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+    await act(async () => void (await ui.hook().evaluate("rootASecond")));
+    expect(ui.hook().evaluationHistory).toEqual(["rootASecond"]);
+
+    ui.set({ workspaceRoot: "/workspace/one-extra" });
+    expect(ui.hook().evaluationHistory).toEqual(["rootB"]);
+
+    ui.set({ workspaceRoot: "/workspace/one" });
+    await act(async () => ui.hook().startDebug(launch));
+    expect(ui.hook().evaluationHistory).toEqual([]);
+    ui.unmount();
+  });
+
   it("drops scopes that resolve after workspace trust is revoked", async () => {
     const harness = createGateway();
     const pendingScopes = deferred<DebugScope[]>();
