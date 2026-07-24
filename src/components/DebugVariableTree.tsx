@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,9 +16,7 @@ import type {
   DebugVariableRowMutation,
 } from "../application/debugSessionContracts";
 import {
-  selectDebugVariableExpansion,
   type DebugInspectionOwner,
-  type DebugVariableExpansionState,
   type DebugVariablePagesState,
 } from "../domain/debugVariablePages";
 import { ContextMenu } from "./ContextMenu";
@@ -43,8 +42,17 @@ import {
   runDebugAddToWatch,
   type DebugAddToWatchVariableSurface,
 } from "./debugAddToWatchSurface";
+import {
+  buildRows,
+  resolveActiveRow,
+  rowAriaLabel,
+  stabilizeRowMutations,
+  type TreeRow,
+} from "./debugVariableTreeRows";
+import { useWindowedRows, type WindowedRow } from "./useWindowedRows";
 
 export const MAX_DEBUG_VARIABLE_TREE_ROWS = 500;
+export const DEBUG_VARIABLE_TREE_ROW_HEIGHT = 22;
 
 export interface DebugVariableTreeRoot {
   readonly id: string;
@@ -68,31 +76,9 @@ export interface DebugVariableTreeProps {
   readonly addToWatchSurface?: DebugAddToWatchVariableSurface;
   readonly copyValueSurface?: DebugCopyValueSurface;
   readonly setVariableSurface?: DebugSetVariableSurface;
+  readonly virtualizeRows?: boolean;
   onLoadPage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
   onLoadVariables?(variablesReference: number): void;
-}
-
-interface TreeRow {
-  readonly id: string;
-  readonly parentId: string | null;
-  readonly depth: number;
-  readonly kind: "node" | "action" | "status";
-  readonly label: string;
-  readonly value?: string;
-  readonly type?: string | null;
-  readonly evaluateName?: string;
-  readonly adapterEvaluateName?: string;
-  readonly testId?: string;
-  readonly owner: DebugInspectionOwner | null;
-  readonly variablesReference: number;
-  readonly nextStart?: number;
-  readonly loadOnExpand?: boolean;
-  readonly expandable: boolean;
-  readonly expanded: boolean;
-  readonly busy?: boolean;
-  readonly terminal?: string;
-  readonly mutation?: DebugVariableRowMutation;
-  readonly rowIdentity?: object;
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -138,6 +124,7 @@ export function DebugVariableTree({
   variablePages,
   variableMutationRows,
   variablesByReference = {},
+  virtualizeRows = false,
 }: DebugVariableTreeProps) {
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -166,6 +153,7 @@ export function DebugVariableTree({
   const editorRef = useRef<HTMLInputElement | null>(null);
   const treeFocusedRef = useRef(false);
   const focusedRowIdRef = useRef<string | null>(null);
+  const pendingFocusRowIdRef = useRef<string | null>(null);
   const lastPublishedCandidateRef = useRef<DebugCopyValueCandidate | null>(null);
   const suppressNextFocusPublishRef = useRef(false);
   const surfaceRef = useRef(copyValueSurface);
@@ -199,6 +187,41 @@ export function DebugVariableTree({
   rowsRef.current = rows;
   const previousRowsRef = useRef<readonly TreeRow[]>([]);
   const resolvedActiveId = resolveActiveRow(activeId, rows, previousRowsRef.current);
+  const pinnedIndices = useMemo(() => {
+    const pinnedRowIds = new Set<string>();
+    if (resolvedActiveId) pinnedRowIds.add(resolvedActiveId);
+    if (editing) pinnedRowIds.add(editing.rowId);
+    if (contextMenu) pinnedRowIds.add(contextMenu.rowId);
+    return [...pinnedRowIds]
+      .map((rowId) => rows.findIndex((row) => row.id === rowId))
+      .filter((index) => index >= 0);
+  }, [contextMenu, editing, resolvedActiveId, rows]);
+  const estimateRowHeight = useCallback(() => DEBUG_VARIABLE_TREE_ROW_HEIGHT, []);
+  const keyForRowIndex = useCallback((index: number) => rows[index]?.id ?? String(index), [rows]);
+  const windowed = useWindowedRows({
+    enabled: virtualizeRows,
+    estimateHeight: estimateRowHeight,
+    itemCount: rows.length,
+    keyForIndex: keyForRowIndex,
+    pinnedIndices,
+  });
+  const focusRow = useCallback(
+    (id: string | null) => {
+      if (!id) return;
+      const index = rows.findIndex((row) => row.id === id);
+      if (index < 0) return;
+      windowed.scrollToIndex(index, "nearest");
+      setActiveId(id);
+      const element = rowRefs.current.get(id);
+      if (element) {
+        pendingFocusRowIdRef.current = null;
+        element.focus();
+        return;
+      }
+      pendingFocusRowIdRef.current = id;
+    },
+    [rows, windowed],
+  );
   const beginEdit = useCallback((row: TreeRow) => {
     if (!row.mutation || !row.rowIdentity || row.value === undefined) return;
     setEditing({
@@ -287,11 +310,23 @@ export function DebugVariableTree({
     );
   }, []);
 
+  useLayoutEffect(() => {
+    const pendingRowId = pendingFocusRowIdRef.current;
+    if (!pendingRowId) return;
+    const element = rowRefs.current.get(pendingRowId);
+    if (!element) return;
+    pendingFocusRowIdRef.current = null;
+    element.focus();
+  }, [windowed.rows]);
+
   useEffect(() => {
     if (activeId === resolvedActiveId) return;
+    if (treeFocusedRef.current) {
+      focusRow(resolvedActiveId);
+      return;
+    }
     setActiveId(resolvedActiveId);
-    if (treeFocusedRef.current && resolvedActiveId) rowRefs.current.get(resolvedActiveId)?.focus();
-  }, [activeId, resolvedActiveId]);
+  }, [activeId, focusRow, resolvedActiveId]);
 
   useEffect(() => {
     previousRowsRef.current = rows;
@@ -362,11 +397,6 @@ export function DebugVariableTree({
     [],
   );
 
-  const focusRow = (id: string | null) => {
-    if (!id) return;
-    setActiveId(id);
-    rowRefs.current.get(id)?.focus();
-  };
   const setExpanded = (row: TreeRow, expanded: boolean) => {
     setExpandedIds((current) => {
       const next = new Set(current);
@@ -448,6 +478,7 @@ export function DebugVariableTree({
     <div
       aria-busy={rows.some((row) => row.busy) || undefined}
       aria-label={ariaLabel}
+      onScroll={windowed.onScroll}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
           treeFocusedRef.current = false;
@@ -463,133 +494,170 @@ export function DebugVariableTree({
       onFocusCapture={() => {
         treeFocusedRef.current = true;
       }}
+      ref={windowed.containerRef}
       role="tree"
+      style={virtualizeRows ? { flex: 1, overflow: "auto" } : undefined}
     >
-      <div role="group">
-        {rows.map((row, index) => (
-          <div
-            aria-busy={row.busy || undefined}
-            aria-expanded={row.expandable ? row.expanded : undefined}
-            aria-label={rowAriaLabel(row)}
-            aria-level={row.depth + 1}
-            data-testid={
-              row.testId ?? (row.kind === "node" && row.depth > 0 ? "debug-variable" : undefined)
-            }
-            key={row.id}
-            onClick={(event) => {
-              if ((event.target as Element).closest("[data-debug-variable-value]")) return;
-              activate(row);
-            }}
-            onDoubleClick={(event) => {
-              if (
-                !row.mutation ||
-                !(event.target as Element).closest("[data-debug-variable-value]")
-              )
-                return;
-              event.preventDefault();
-              beginEdit(row);
-            }}
-            onContextMenu={(event) => {
-              const candidate = copyCandidate(row, copyValueSurface);
-              focusedRowIdRef.current = row.id;
-              setActiveId(row.id);
-              publishAddToWatchRow(row);
-              const canAddToWatch = canDebugAddToWatch(addToWatchSurface);
-              if (!candidate && !row.mutation && !canAddToWatch) return;
-              event.preventDefault();
-              publishDebugCopyValueCandidate(copyValueSurface, candidate);
-              lastPublishedCandidateRef.current = candidate;
-              setContextMenu({
-                addToWatchAdapterEvaluateName: canAddToWatch
-                  ? (row.adapterEvaluateName ?? null)
-                  : null,
-                addToWatchIdentity: canAddToWatch ? (row.rowIdentity ?? null) : null,
-                addToWatchOwner: canAddToWatch ? row.owner : null,
-                candidate,
-                invoker: event.currentTarget,
-                mutation: row.mutation ?? null,
-                mutationCurrentValue: row.mutation?.currentValue ?? null,
-                rowIdentity: row.rowIdentity ?? null,
-                rowId: row.id,
-                position: { x: event.clientX, y: event.clientY },
-              });
-            }}
-            onFocus={() => {
-              setActiveId(row.id);
-              focusedRowIdRef.current = row.id;
-              const candidate = copyCandidate(row, copyValueSurface);
-              lastPublishedCandidateRef.current = candidate;
-              if (suppressNextFocusPublishRef.current) {
-                suppressNextFocusPublishRef.current = false;
-              } else {
-                publishDebugCopyValueCandidate(copyValueSurface, candidate);
-              }
-              publishSetVariableRow(row);
-              publishAddToWatchRow(row);
-            }}
-            onKeyDown={(event) => onKeyDown(event, row, index)}
-            ref={(element) => {
-              if (element) rowRefs.current.set(row.id, element);
-              else rowRefs.current.delete(row.id);
-            }}
-            role="treeitem"
-            style={{ ...styles.row, paddingLeft: 8 + row.depth * 12 }}
-            tabIndex={row.id === resolvedActiveId ? 0 : -1}
-          >
-            <span aria-hidden="true">{row.expandable ? (row.expanded ? "▾" : "▸") : ""}</span>
-            <span style={row.kind === "status" ? styles.muted : undefined}>{row.label}</span>
-            {editing?.rowId === row.id ? (
-              <span style={{ display: "inline-flex", flex: 1, flexDirection: "column" }}>
-                <input
-                  aria-busy={editing.pending || undefined}
-                  aria-disabled={editing.pending || undefined}
-                  aria-label={`Set value for ${row.label}`}
-                  onBlur={cancelEditOnBlur}
-                  onChange={(event) =>
-                    setEditing((current) =>
-                      current?.rowId === row.id && !current.pending
-                        ? { ...current, draft: event.target.value, error: null }
-                        : current,
-                    )
+      <div
+        role="group"
+        style={virtualizeRows ? { height: windowed.totalHeight, position: "relative" } : undefined}
+      >
+        <div
+          style={
+            virtualizeRows ? { transform: `translateY(${windowed.windowOffsetTop}px)` } : undefined
+          }
+        >
+          {windowed.rows.map((windowedRow: WindowedRow) => {
+            const row = rows[windowedRow.index];
+            if (!row) return null;
+            const editingRow = editing?.rowId === row.id;
+            return (
+              <div
+                aria-busy={row.busy || undefined}
+                aria-expanded={row.expandable ? row.expanded : undefined}
+                aria-label={rowAriaLabel(row)}
+                aria-level={row.depth + 1}
+                data-testid={
+                  row.testId ??
+                  (row.kind === "node" && row.depth > 0 ? "debug-variable" : undefined)
+                }
+                key={row.id}
+                onClick={(event) => {
+                  if ((event.target as Element).closest("[data-debug-variable-value]")) return;
+                  activate(row);
+                }}
+                onDoubleClick={(event) => {
+                  if (
+                    !row.mutation ||
+                    !(event.target as Element).closest("[data-debug-variable-value]")
+                  )
+                    return;
+                  event.preventDefault();
+                  beginEdit(row);
+                }}
+                onContextMenu={(event) => {
+                  const candidate = copyCandidate(row, copyValueSurface);
+                  focusedRowIdRef.current = row.id;
+                  setActiveId(row.id);
+                  publishAddToWatchRow(row);
+                  const canAddToWatch = canDebugAddToWatch(addToWatchSurface);
+                  if (!candidate && !row.mutation && !canAddToWatch) return;
+                  event.preventDefault();
+                  publishDebugCopyValueCandidate(copyValueSurface, candidate);
+                  lastPublishedCandidateRef.current = candidate;
+                  setContextMenu({
+                    addToWatchAdapterEvaluateName: canAddToWatch
+                      ? (row.adapterEvaluateName ?? null)
+                      : null,
+                    addToWatchIdentity: canAddToWatch ? (row.rowIdentity ?? null) : null,
+                    addToWatchOwner: canAddToWatch ? row.owner : null,
+                    candidate,
+                    invoker: event.currentTarget,
+                    mutation: row.mutation ?? null,
+                    mutationCurrentValue: row.mutation?.currentValue ?? null,
+                    rowIdentity: row.rowIdentity ?? null,
+                    rowId: row.id,
+                    position: { x: event.clientX, y: event.clientY },
+                  });
+                }}
+                onFocus={() => {
+                  setActiveId(row.id);
+                  focusedRowIdRef.current = row.id;
+                  const candidate = copyCandidate(row, copyValueSurface);
+                  lastPublishedCandidateRef.current = candidate;
+                  if (suppressNextFocusPublishRef.current) {
+                    suppressNextFocusPublishRef.current = false;
+                  } else {
+                    publishDebugCopyValueCandidate(copyValueSurface, candidate);
                   }
-                  onClick={(event) => event.stopPropagation()}
-                  onDoubleClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => {
-                    event.stopPropagation();
-                    if (editing.pending && (event.key === "Enter" || event.key === "Escape")) {
-                      event.preventDefault();
-                      return;
-                    }
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void commitEdit();
-                    } else if (event.key === "Escape") {
-                      event.preventDefault();
-                      setEditing(null);
-                      queueMicrotask(() => rowRefs.current.get(row.id)?.focus());
-                    }
-                  }}
-                  ref={editorRef}
-                  readOnly={editing.pending}
-                  style={styles.editor}
-                  value={editing.draft}
-                />
-                {editing.error ? (
-                  <span role="alert" style={styles.error}>
-                    {editing.error}
+                  publishSetVariableRow(row);
+                  publishAddToWatchRow(row);
+                }}
+                onKeyDown={(event) => onKeyDown(event, row, windowedRow.index)}
+                ref={(element) => {
+                  if (element) rowRefs.current.set(row.id, element);
+                  else rowRefs.current.delete(row.id);
+                  windowed.measureRow(row.id, element);
+                }}
+                role="treeitem"
+                style={{
+                  ...styles.row,
+                  ...(virtualizeRows
+                    ? {
+                        alignItems: "center",
+                        boxSizing: "border-box",
+                        height: editingRow ? "auto" : DEBUG_VARIABLE_TREE_ROW_HEIGHT,
+                        minHeight: DEBUG_VARIABLE_TREE_ROW_HEIGHT,
+                      }
+                    : {}),
+                  ...(windowedRow.pinned
+                    ? {
+                        left: 0,
+                        position: "absolute",
+                        top: windowedRow.offsetTop,
+                        transform: `translateY(-${windowed.windowOffsetTop}px)`,
+                      }
+                    : {}),
+                  paddingLeft: 8 + row.depth * 12,
+                }}
+                tabIndex={row.id === resolvedActiveId ? 0 : -1}
+              >
+                <span aria-hidden="true">{row.expandable ? (row.expanded ? "▾" : "▸") : ""}</span>
+                <span style={row.kind === "status" ? styles.muted : undefined}>{row.label}</span>
+                {editing?.rowId === row.id ? (
+                  <span style={{ display: "inline-flex", flex: 1, flexDirection: "column" }}>
+                    <input
+                      aria-busy={editing.pending || undefined}
+                      aria-disabled={editing.pending || undefined}
+                      aria-label={`Set value for ${row.label}`}
+                      onBlur={cancelEditOnBlur}
+                      onChange={(event) =>
+                        setEditing((current) =>
+                          current?.rowId === row.id && !current.pending
+                            ? { ...current, draft: event.target.value, error: null }
+                            : current,
+                        )
+                      }
+                      onClick={(event) => event.stopPropagation()}
+                      onDoubleClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (editing.pending && (event.key === "Enter" || event.key === "Escape")) {
+                          event.preventDefault();
+                          return;
+                        }
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void commitEdit();
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          setEditing(null);
+                          queueMicrotask(() => rowRefs.current.get(row.id)?.focus());
+                        }
+                      }}
+                      ref={editorRef}
+                      readOnly={editing.pending}
+                      style={styles.editor}
+                      value={editing.draft}
+                    />
+                    {editing.error ? (
+                      <span role="alert" style={styles.error}>
+                        {editing.error}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : row.value !== undefined ? (
+                  <span data-debug-variable-value="true" style={styles.muted}>
+                    {" = "}
+                    {row.value}
+                    {row.type ? ` (${row.type})` : ""}
                   </span>
                 ) : null}
-              </span>
-            ) : row.value !== undefined ? (
-              <span data-debug-variable-value="true" style={styles.muted}>
-                {" = "}
-                {row.value}
-                {row.type ? ` (${row.type})` : ""}
-              </span>
-            ) : null}
-            {row.terminal ? <span style={styles.muted}> — {row.terminal}</span> : null}
-          </div>
-        ))}
+                {row.terminal ? <span style={styles.muted}> — {row.terminal}</span> : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
       {contextMenu ? (
         <ContextMenu
@@ -653,19 +721,6 @@ export function DebugVariableTree({
   );
 }
 
-function stabilizeRowMutations(
-  rows: readonly TreeRow[],
-  cache: WeakMap<object, DebugVariableRowMutation>,
-): TreeRow[] {
-  return rows.map((row) => {
-    if (!row.rowIdentity || !row.mutation) return row;
-    const cached = cache.get(row.rowIdentity);
-    if (cached?.currentValue === row.mutation.currentValue) return { ...row, mutation: cached };
-    cache.set(row.rowIdentity, row.mutation);
-    return row;
-  });
-}
-
 function sameEditAttempt(
   latest: {
     readonly rowId: string;
@@ -683,193 +738,6 @@ function sameEditAttempt(
     latest.mutation === settled.mutation &&
     latest.rowIdentity === settled.rowIdentity
   );
-}
-
-function buildRows({
-  expandedIds,
-  maxRows,
-  paged,
-  roots,
-  variablePages,
-  variableMutationRows,
-  variablesByReference,
-}: {
-  expandedIds: ReadonlySet<string>;
-  maxRows: number;
-  paged: boolean;
-  roots: readonly DebugVariableTreeRoot[];
-  variablePages: DebugVariablePagesState | undefined;
-  variableMutationRows: DebugVariableMutationRows | undefined;
-  variablesByReference: Readonly<Record<number, readonly DebugVariable[]>>;
-}): TreeRow[] {
-  const rows: TreeRow[] = [];
-  if (maxRows === 0) return rows;
-  let overflowed = false;
-  const append = (row: TreeRow) => {
-    if (rows.length < maxRows) rows.push(row);
-    else overflowed = true;
-  };
-  const visit = (
-    id: string,
-    parentId: string | null,
-    depth: number,
-    label: string,
-    value: string | undefined,
-    type: string | null | undefined,
-    evaluateName: string | undefined,
-    adapterEvaluateName: string | undefined,
-    variablesReference: number,
-    owner: DebugInspectionOwner | null,
-    ancestors: readonly number[],
-    testId?: string,
-    mutation?: DebugVariableRowMutation,
-    rowIdentity?: object,
-  ) => {
-    if (rows.length >= maxRows) {
-      overflowed = true;
-      return;
-    }
-    const expansion = expansionFor(
-      paged,
-      variablePages,
-      variablesByReference,
-      owner,
-      variablesReference,
-      ancestors,
-      depth,
-    );
-    const terminalExpansion =
-      expansion.kind === "circular" || expansion.kind === "limit" || expansion.kind === "stale";
-    const terminal = terminalExpansion ? terminalExpansionLabel(expansion) : undefined;
-    const expandable = variablesReference > 0 && expansion.kind !== "leaf" && !terminalExpansion;
-    const expanded = expandable && expandedIds.has(id);
-    append({
-      id,
-      parentId,
-      depth,
-      kind: "node",
-      label,
-      value,
-      type,
-      evaluateName,
-      adapterEvaluateName,
-      testId,
-      owner,
-      variablesReference,
-      expandable,
-      expanded,
-      busy: expanded && expansion.kind === "loading",
-      terminal,
-      mutation,
-      rowIdentity,
-      loadOnExpand: expansion.kind === "idle",
-    });
-    if (terminalExpansion) return;
-    if (!expanded) return;
-    const variables = "variables" in expansion ? expansion.variables : [];
-    variables.forEach((variable, index) => {
-      const location = variablePages
-        ? findPagedVariableLocation(variablePages, variablesReference, variable)
-        : null;
-      const mutation =
-        owner && location
-          ? (variableMutationRows?.forRow(
-              owner,
-              variablesReference,
-              location.pageStart,
-              location.index,
-            ) ?? undefined)
-          : undefined;
-      visit(
-        `${id}/${index}:${variable.name}`,
-        id,
-        depth + 1,
-        variable.name,
-        variable.value,
-        variable.type,
-        variable.evaluateName,
-        variable.evaluateName,
-        variable.variablesReference,
-        owner,
-        [...ancestors, variablesReference],
-        undefined,
-        mutation,
-        variable,
-      );
-    });
-    if (expansion.kind === "idle" || expansion.kind === "loading") {
-      append(statusRow(id, depth + 1, "Loading…"));
-    } else if (expansion.kind === "error") {
-      append(
-        actionRow(
-          id,
-          depth + 1,
-          `Retry: ${expansion.message}`,
-          owner,
-          variablesReference,
-          expansion.nextStart,
-        ),
-      );
-    } else if (expansion.kind === "ready" && expansion.nextStart !== null) {
-      append(actionRow(id, depth + 1, "Load more", owner, variablesReference, expansion.nextStart));
-    }
-  };
-  roots.forEach((root) =>
-    visit(
-      `root:${root.id}`,
-      null,
-      0,
-      root.label,
-      root.value,
-      root.type,
-      root.evaluateName,
-      root.adapterEvaluateName,
-      root.variablesReference,
-      root.owner,
-      [],
-      root.testId,
-      undefined,
-      undefined,
-    ),
-  );
-  if (overflowed) {
-    rows[maxRows - 1] = statusRow(null, 0, "Display limit reached");
-  }
-  return rows;
-}
-
-function findPagedVariableLocation(
-  state: DebugVariablePagesState,
-  parentVariablesReference: number,
-  variable: DebugVariable,
-): { readonly pageStart: number; readonly index: number } | null {
-  const pages = state.references[parentVariablesReference]?.pages;
-  if (!pages) return null;
-  for (const [pageStart, page] of Object.entries(pages)) {
-    const index = page.variables.indexOf(variable);
-    if (index >= 0) return { pageStart: Number(pageStart), index };
-  }
-  return null;
-}
-
-function expansionFor(
-  paged: boolean,
-  variablePages: DebugVariablePagesState | undefined,
-  variablesByReference: Readonly<Record<number, readonly DebugVariable[]>>,
-  owner: DebugInspectionOwner | null,
-  variablesReference: number,
-  ancestors: readonly number[],
-  depth: number,
-): DebugVariableExpansionState {
-  if (variablesReference <= 0) return { kind: "leaf" };
-  if (paged) {
-    if (!variablePages || !owner) return { kind: "stale" };
-    return selectDebugVariableExpansion(variablePages, owner, variablesReference, ancestors, depth);
-  }
-  if (ancestors.includes(variablesReference)) return { kind: "circular" };
-  if (depth >= 10) return { kind: "limit", reason: "depth" };
-  const variables = variablesByReference[variablesReference];
-  return variables ? { kind: "ready", variables, nextStart: null } : { kind: "idle", nextStart: 0 };
 }
 
 function copyCandidate(
@@ -899,81 +767,4 @@ function requestVariables(
   } else if (!variablesByReference[row.variablesReference]) {
     onLoadVariables?.(row.variablesReference);
   }
-}
-
-function statusRow(parentId: string | null, depth: number, label: string): TreeRow {
-  return {
-    id: `${parentId ?? "tree"}/status:${label}`,
-    parentId,
-    depth,
-    kind: "status",
-    label,
-    owner: null,
-    variablesReference: 0,
-    expandable: false,
-    expanded: false,
-  };
-}
-
-function actionRow(
-  parentId: string,
-  depth: number,
-  label: string,
-  owner: DebugInspectionOwner | null,
-  variablesReference: number,
-  nextStart: number,
-): TreeRow {
-  return {
-    id: `${parentId}/action:${nextStart}`,
-    parentId,
-    depth,
-    kind: "action",
-    label,
-    owner,
-    variablesReference,
-    nextStart,
-    expandable: false,
-    expanded: false,
-  };
-}
-
-function rowAriaLabel(row: TreeRow): string {
-  if (row.kind !== "node") return row.label;
-  if (row.expandable) return `${row.expanded ? "Collapse" : "Expand"} ${row.label}`;
-  const value = row.value === undefined ? "" : `, ${row.value}`;
-  const type = row.type ? `, ${row.type}` : "";
-  const terminal = row.terminal ? `, ${row.terminal}` : "";
-  return `${row.label}${value}${type}${terminal}`;
-}
-
-function terminalExpansionLabel(
-  expansion: Extract<DebugVariableExpansionState, { kind: "circular" | "limit" | "stale" }>,
-): string {
-  if (expansion.kind === "circular") return "Circular reference";
-  if (expansion.kind === "limit") return `Limit reached: ${expansion.reason}`;
-  return "No longer available";
-}
-
-function resolveActiveRow(
-  activeId: string | null,
-  rows: readonly TreeRow[],
-  previousRows: readonly TreeRow[],
-): string | null {
-  if (activeId && rows.some((row) => row.id === activeId)) return activeId;
-  if (!activeId) return rows[0]?.id ?? null;
-  const previousActive = previousRows.find((row) => row.id === activeId);
-  if (!previousActive) return rows[0]?.id ?? null;
-  const previousIds = new Set(previousRows.map((row) => row.id));
-  const newSibling = rows.find(
-    (row) => row.parentId === previousActive.parentId && !previousIds.has(row.id),
-  );
-  if (newSibling) return newSibling.id;
-  const replacementState = rows.find(
-    (row) => row.parentId === previousActive.parentId && row.kind !== "node",
-  );
-  if (replacementState) return replacementState.id;
-  if (previousActive.parentId && rows.some((row) => row.id === previousActive.parentId)) {
-    return previousActive.parentId;
-  }
-  return rows[0]?.id ?? null;
 }

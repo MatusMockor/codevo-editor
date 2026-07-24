@@ -1098,6 +1098,7 @@ function Variables({
       variablePages={variablePages}
       variableMutationRows={variableMutationRows}
       variablesByReference={variablesByReference}
+      virtualizeRows
     />
   );
 }
