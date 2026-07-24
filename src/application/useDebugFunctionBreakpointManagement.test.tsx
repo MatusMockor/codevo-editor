@@ -189,6 +189,160 @@ describe("useDebugFunctionBreakpointManagement", () => {
     await act(async () => settleSecond());
     await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
   });
+
+  it("applies function verification events only for the exact active session owner", async () => {
+    let emit!: (event: import("../domain/debug").DebugEvent) => void;
+    const gateway = {
+      setFunctionBreakpoints: vi.fn(
+        async (request: import("../domain/debug").DebugSetFunctionBreakpointsRequest) =>
+          request.breakpoints.map(({ id }) => ({ id, verified: false })),
+      ),
+      subscribe: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+    } as unknown as DebugGateway;
+    const storage = {
+      getItem: () => null,
+      removeItem: () => undefined,
+      setItem: () => undefined,
+    };
+    let management!: DebugFunctionBreakpointManagement;
+    act(() => {
+      root.render(
+        <Harness
+          gateway={gateway}
+          getActiveSession={() => ({
+            adapterKind: "node",
+            rootPath: "/workspace",
+            sessionId: 7,
+            workspaceId: "workspace",
+          })}
+          isWorkspaceCurrent={() => true}
+          onValue={(value) => {
+            management = value;
+          }}
+          rootPath="/workspace"
+          storage={storage}
+          workspaceId="workspace"
+        />,
+      );
+    });
+    await act(async () => {
+      await management.add("app.render");
+    });
+    expect(management.functionBreakpoints[0]).toEqual(expect.objectContaining({ verified: false }));
+    const id = management.functionBreakpoints[0]?.id ?? "";
+
+    act(() => {
+      emit({
+        rootPath: "/workspace",
+        sessionId: 8,
+        seq: 1,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          breakpoints: [{ id, verified: true }],
+        },
+      });
+    });
+    expect(management.functionBreakpoints[0]).toEqual(expect.objectContaining({ verified: false }));
+
+    act(() => {
+      emit({
+        rootPath: "/workspace",
+        sessionId: 7,
+        seq: 2,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          breakpoints: [{ id, verified: true }],
+        },
+      });
+    });
+    expect(management.functionBreakpoints[0]).toEqual(expect.objectContaining({ verified: true }));
+
+    act(() => {
+      emit({
+        rootPath: "/workspace",
+        sessionId: 7,
+        seq: 1,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          breakpoints: [{ id, verified: false }],
+        },
+      });
+    });
+    expect(management.functionBreakpoints[0]).toEqual(expect.objectContaining({ verified: true }));
+
+    act(() => {
+      emit({
+        rootPath: "/workspace",
+        sessionId: 7,
+        seq: 3,
+        payload: { kind: "terminated", exitCode: 0 },
+      });
+    });
+    expect(management.functionBreakpoints[0]).toEqual(expect.objectContaining({ verified: false }));
+  });
+
+  it("does not resurrect a removed breakpoint from a late verification event", async () => {
+    let emit!: (event: import("../domain/debug").DebugEvent) => void;
+    const gateway = {
+      setFunctionBreakpoints: vi.fn(
+        async (request: import("../domain/debug").DebugSetFunctionBreakpointsRequest) =>
+          request.breakpoints.map(({ id }) => ({ id, verified: false })),
+      ),
+      subscribe: vi.fn((handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+    } as unknown as DebugGateway;
+    let management!: DebugFunctionBreakpointManagement;
+    act(() => {
+      root.render(
+        <Harness
+          gateway={gateway}
+          getActiveSession={() => ({
+            adapterKind: "node",
+            rootPath: "/workspace",
+            sessionId: 7,
+            workspaceId: "workspace",
+          })}
+          isWorkspaceCurrent={() => true}
+          onValue={(value) => {
+            management = value;
+          }}
+          rootPath="/workspace"
+          storage={{
+            getItem: () => null,
+            removeItem: () => undefined,
+            setItem: () => undefined,
+          }}
+          workspaceId="workspace"
+        />,
+      );
+    });
+    await act(async () => {
+      await management.add("app.render");
+    });
+    const id = management.functionBreakpoints[0]?.id ?? "";
+    await act(async () => {
+      await management.remove(id);
+    });
+
+    act(() => {
+      emit({
+        rootPath: "/workspace",
+        sessionId: 7,
+        seq: 1,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          breakpoints: [{ id, verified: true }],
+        },
+      });
+    });
+
+    expect(management.functionBreakpoints).toEqual([]);
+  });
 });
 
 function Harness({

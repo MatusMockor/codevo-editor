@@ -26,7 +26,8 @@ interface ActiveFunctionBreakpointSession {
 }
 
 interface UseDebugFunctionBreakpointManagementOptions {
-  readonly gateway: Pick<DebugGateway, "setFunctionBreakpoints">;
+  readonly gateway: Pick<DebugGateway, "setFunctionBreakpoints"> &
+    Partial<Pick<DebugGateway, "subscribe">>;
   readonly getActiveSession: () => ActiveFunctionBreakpointSession | null;
   readonly isWorkspaceCurrent: (rootPath: string, workspaceId: string) => boolean;
   readonly isWorkspaceTrusted?: () => boolean;
@@ -68,6 +69,8 @@ export function useDebugFunctionBreakpointManagement({
   const storageRef = useRef(storage);
   storageRef.current = storage;
   const synchronizationByRootRef = useRef(new Map<string, Promise<void>>());
+  const verificationSessionByRootRef = useRef(new Map<string, number>());
+  const lastEventSeqBySessionRef = useRef(new Map<string, number>());
 
   useEffect(
     () => () => {
@@ -119,6 +122,68 @@ export function useDebugFunctionBreakpointManagement({
     [getActiveSession, ownerIsCurrent],
   );
 
+  const applyVerification = useCallback(
+    (
+      requestedRoot: string,
+      verification: readonly { readonly id: string; readonly verified: boolean }[],
+    ) => {
+      const key = normalizedWorkspaceRootKey(requestedRoot);
+      const current = byRootRef.current[key] ?? EMPTY_FUNCTION_BREAKPOINTS;
+      const byId = new Map(verification.map((entry) => [entry.id, entry.verified]));
+      const next = current.map((entry) =>
+        byId.has(entry.id) ? { ...entry, verified: byId.get(entry.id) } : entry,
+      );
+      byRootRef.current = { ...byRootRef.current, [key]: next };
+      setByRoot(byRootRef.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const subscribe = gateway.subscribe;
+    if (!subscribe) return;
+    return subscribe((event) => {
+      if (
+        event.payload.kind !== "functionBreakpointsVerified" &&
+        event.payload.kind !== "terminated"
+      ) {
+        return;
+      }
+      const rootKey = normalizedWorkspaceRootKey(event.rootPath);
+      const eventKey = `${rootKey}:${event.sessionId}`;
+      if (event.payload.kind === "terminated") {
+        if (verificationSessionByRootRef.current.get(rootKey) !== event.sessionId) return;
+        const lastSeq = lastEventSeqBySessionRef.current.get(eventKey) ?? 0;
+        if (event.seq <= lastSeq) return;
+        verificationSessionByRootRef.current.delete(rootKey);
+        lastEventSeqBySessionRef.current.delete(eventKey);
+        applyVerification(
+          event.rootPath,
+          (byRootRef.current[rootKey] ?? EMPTY_FUNCTION_BREAKPOINTS).map(({ id }) => ({
+            id,
+            verified: false,
+          })),
+        );
+        return;
+      }
+      const current = getActiveSession();
+      if (
+        current === null ||
+        current.adapterKind !== "node" ||
+        current.sessionId !== event.sessionId ||
+        !workspaceRootKeysEqual(current.rootPath, event.rootPath) ||
+        !exactSessionIsCurrent(current)
+      ) {
+        return;
+      }
+      const lastSeq = lastEventSeqBySessionRef.current.get(eventKey) ?? 0;
+      if (event.seq <= lastSeq) return;
+      lastEventSeqBySessionRef.current.set(eventKey, event.seq);
+      verificationSessionByRootRef.current.set(rootKey, event.sessionId);
+      applyVerification(current.rootPath, event.payload.breakpoints);
+    });
+  }, [applyVerification, exactSessionIsCurrent, gateway, getActiveSession]);
+
   const synchronize = useCallback(
     async (
       requested: ActiveFunctionBreakpointSession,
@@ -131,13 +196,24 @@ export function useDebugFunctionBreakpointManagement({
       const previous = synchronizationByRootRef.current.get(key);
       const send = async () => {
         if (!exactSessionIsCurrent(requested)) return false;
+        verificationSessionByRootRef.current.set(key, requested.sessionId);
+        applyVerification(
+          requested.rootPath,
+          list.map(({ id }) => ({ id, verified: false })),
+        );
         try {
-          await replace({
+          const verification = await replace({
             rootPath: requested.rootPath,
             sessionId: requested.sessionId,
-            breakpoints: list,
+            breakpoints: list.map(({ enabled, functionName, id }) => ({
+              enabled,
+              functionName,
+              id,
+            })),
           });
-          return exactSessionIsCurrent(requested);
+          if (!exactSessionIsCurrent(requested)) return false;
+          applyVerification(requested.rootPath, verification);
+          return true;
         } catch {
           return false;
         }
@@ -156,7 +232,7 @@ export function useDebugFunctionBreakpointManagement({
         }
       }
     },
-    [exactSessionIsCurrent, gateway],
+    [applyVerification, exactSessionIsCurrent, gateway],
   );
 
   const commit = useCallback((requestedRoot: string, list: FunctionBreakpoint[]) => {
@@ -264,7 +340,12 @@ function save(
       target.removeItem(storageKey(rootKey));
       return;
     }
-    target.setItem(storageKey(rootKey), serializeFunctionBreakpoints(breakpoints));
+    target.setItem(
+      storageKey(rootKey),
+      serializeFunctionBreakpoints(
+        breakpoints.map(({ enabled, functionName, id }) => ({ enabled, functionName, id })),
+      ),
+    );
   } catch {
     return;
   }
