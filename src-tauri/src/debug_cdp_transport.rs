@@ -131,7 +131,34 @@ mod shared_state {
 }
 pub(crate) use shared_state::PauseGenerationFloor;
 
-pub(super) type PendingCdpRequests = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
+const MAX_QUEUED_CDP_MESSAGES: usize = 256;
+
+pub(super) type PendingCdpRequests =
+    Arc<Mutex<HashMap<u64, mpsc::SyncSender<Result<Value, String>>>>>;
+
+#[derive(Clone)]
+struct DisconnectNotifier {
+    notified: Arc<AtomicBool>,
+    sender: Option<mpsc::Sender<()>>,
+}
+
+impl DisconnectNotifier {
+    fn new(sender: Option<mpsc::Sender<()>>) -> Self {
+        Self {
+            notified: Arc::new(AtomicBool::new(false)),
+            sender,
+        }
+    }
+
+    fn notify(&self) {
+        if self.notified.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(());
+        }
+    }
+}
 
 pub(super) struct BoundedCdpStream {
     inner: TcpStream,
@@ -171,10 +198,11 @@ pub(crate) struct CdpClient {
     io_completed: mpsc::Receiver<()>,
     io_thread: Option<JoinHandle<()>>,
     next_request_id: Arc<AtomicU64>,
-    outgoing: mpsc::Sender<String>,
+    outgoing: mpsc::SyncSender<String>,
     pending: PendingCdpRequests,
     pub(super) request_timeout: Duration,
     shutdown_requested: Arc<AtomicBool>,
+    disconnect_notifier: DisconnectNotifier,
 }
 
 impl CdpClient {
@@ -186,11 +214,14 @@ impl CdpClient {
         disconnected: Option<mpsc::Sender<()>>,
     ) -> Self {
         let pending: PendingCdpRequests = Arc::new(Mutex::new(HashMap::new()));
-        let (outgoing_tx, outgoing_rx) = mpsc::channel();
+        let (outgoing_tx, outgoing_rx) = mpsc::sync_channel(MAX_QUEUED_CDP_MESSAGES);
         let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let disconnect_notifier = DisconnectNotifier::new(disconnected);
         let next_request_id = Arc::new(AtomicU64::new(1));
         let (completed_tx, completed_rx) = mpsc::sync_channel(1);
+        let io_disconnect_notifier = disconnect_notifier.clone();
         let context = SocketLoopContext {
+            disconnect_notifier: disconnect_notifier.clone(),
             emitter,
             next_request_id: Arc::clone(&next_request_id),
             outgoing: outgoing_rx,
@@ -201,9 +232,7 @@ impl CdpClient {
         };
         let io_thread = thread::spawn(move || {
             run_socket_loop(socket, context);
-            if let Some(disconnected) = disconnected {
-                let _ = disconnected.send(());
-            }
+            io_disconnect_notifier.notify();
             let _ = completed_tx.send(());
         });
         Self {
@@ -214,6 +243,7 @@ impl CdpClient {
             pending,
             request_timeout,
             shutdown_requested,
+            disconnect_notifier,
         }
     }
 
@@ -228,17 +258,36 @@ impl CdpClient {
         timeout: Duration,
     ) -> Result<Value, String> {
         let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1);
         {
             let mut pending = self.pending.lock().map_err(|error| error.to_string())?;
             pending.insert(id, tx);
         }
         let payload = json!({"id": id, "method": method, "params": params}).to_string();
-        if self.outgoing.send(payload).is_err() {
-            remove_pending_cdp_request(&self.pending, id);
-            return Err(format!(
-                "Debugger connection is closed; unable to send `{method}`."
-            ));
+        match self.outgoing.try_send(payload) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                remove_pending_cdp_request(&self.pending, id);
+                fail_closed_transport(
+                    &self.pending,
+                    &self.shutdown_requested,
+                    &self.disconnect_notifier,
+                );
+                return Err(format!(
+                    "Debugger transport queue overflowed while sending `{method}`; connection closed."
+                ));
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                remove_pending_cdp_request(&self.pending, id);
+                fail_closed_transport(
+                    &self.pending,
+                    &self.shutdown_requested,
+                    &self.disconnect_notifier,
+                );
+                return Err(format!(
+                    "Debugger connection is closed; unable to send `{method}`."
+                ));
+            }
         }
         match rx.recv_timeout(timeout) {
             Ok(outcome) => outcome,
@@ -280,7 +329,18 @@ fn reject_pending_cdp_requests(pending: &PendingCdpRequests) {
     }
 }
 
+fn fail_closed_transport(
+    pending: &PendingCdpRequests,
+    shutdown: &AtomicBool,
+    disconnect_notifier: &DisconnectNotifier,
+) {
+    shutdown.store(true, Ordering::SeqCst);
+    reject_pending_cdp_requests(pending);
+    disconnect_notifier.notify();
+}
+
 pub(super) struct SocketLoopContext {
+    disconnect_notifier: DisconnectNotifier,
     emitter: CdpEventEmitter,
     next_request_id: Arc<AtomicU64>,
     outgoing: mpsc::Receiver<String>,
@@ -356,7 +416,13 @@ fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<St
             InternalResponse::Handled(reply) => return reply,
             InternalResponse::NotHandled => {}
         }
-        dispatch_response(id, &message, &context.pending);
+        dispatch_response(
+            id,
+            &message,
+            &context.pending,
+            &context.shutdown,
+            &context.disconnect_notifier,
+        );
         return None;
     }
     match message.get("method").and_then(Value::as_str) {
@@ -779,7 +845,13 @@ fn handle_script_parsed(params: &Value, context: &SocketLoopContext) {
     let _ = source_maps.register_script(generated_url, source_map_url);
 }
 
-fn dispatch_response(id: u64, message: &Value, pending: &PendingCdpRequests) {
+fn dispatch_response(
+    id: u64,
+    message: &Value,
+    pending: &PendingCdpRequests,
+    shutdown: &AtomicBool,
+    disconnect_notifier: &DisconnectNotifier,
+) {
     let sender = pending
         .lock()
         .ok()
@@ -795,7 +867,9 @@ fn dispatch_response(id: u64, message: &Value, pending: &PendingCdpRequests) {
             .unwrap_or_else(|| error.to_string())),
         None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
     };
-    let _ = sender.send(outcome);
+    if matches!(sender.try_send(outcome), Err(mpsc::TrySendError::Full(_))) {
+        fail_closed_transport(pending, shutdown, disconnect_notifier);
+    }
 }
 
 fn handle_paused(params: &Value, context: &SocketLoopContext) -> Option<String> {
@@ -1678,5 +1752,72 @@ impl DebugAdapter for NodeCdpAdapter {
             process.terminate();
         }
         self.ownership = DebuggeeOwnership::External;
+    }
+}
+
+#[cfg(test)]
+mod bounded_channel_tests {
+    use super::*;
+
+    #[test]
+    fn outgoing_queue_overflow_closes_transport_and_notifies_disconnect() {
+        let (outgoing_tx, outgoing_rx) = mpsc::sync_channel(MAX_QUEUED_CDP_MESSAGES);
+        for index in 0..MAX_QUEUED_CDP_MESSAGES {
+            assert!(outgoing_tx.try_send(index.to_string()).is_ok());
+        }
+        let (completed_tx, completed_rx) = mpsc::sync_channel(1);
+        let (disconnected_tx, disconnected_rx) = mpsc::channel();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let mut client = CdpClient {
+            io_completed: completed_rx,
+            io_thread: None,
+            next_request_id: Arc::new(AtomicU64::new(1)),
+            outgoing: outgoing_tx,
+            pending: Arc::clone(&pending),
+            request_timeout: Duration::from_secs(1),
+            shutdown_requested: Arc::clone(&shutdown_requested),
+            disconnect_notifier: DisconnectNotifier::new(Some(disconnected_tx)),
+        };
+
+        assert_eq!(
+            client.request("Runtime.enable", json!({})),
+            Err(
+                "Debugger transport queue overflowed while sending `Runtime.enable`; connection closed."
+                    .to_string()
+            )
+        );
+        assert!(shutdown_requested.load(Ordering::SeqCst));
+        assert_eq!(disconnected_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+        assert_eq!(outgoing_rx.try_iter().count(), MAX_QUEUED_CDP_MESSAGES);
+        assert!(pending.lock().is_ok_and(|pending| pending.is_empty()));
+        assert_eq!(completed_tx.try_send(()), Ok(()));
+        client.shutdown();
+    }
+
+    #[test]
+    fn response_queue_overflow_closes_transport_and_notifies_disconnect() {
+        let pending: PendingCdpRequests = Arc::new(Mutex::new(HashMap::new()));
+        let (response_tx, response_rx) = mpsc::sync_channel(1);
+        assert_eq!(response_tx.try_send(Ok(Value::Null)), Ok(()));
+        assert!(pending
+            .lock()
+            .is_ok_and(|mut pending| pending.insert(7, response_tx).is_none()));
+        let shutdown_requested = AtomicBool::new(false);
+        let (disconnected_tx, disconnected_rx) = mpsc::channel();
+        let disconnect_notifier = DisconnectNotifier::new(Some(disconnected_tx));
+
+        dispatch_response(
+            7,
+            &json!({"id": 7, "result": {}}),
+            &pending,
+            &shutdown_requested,
+            &disconnect_notifier,
+        );
+
+        assert!(shutdown_requested.load(Ordering::SeqCst));
+        assert_eq!(disconnected_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+        assert_eq!(response_rx.try_recv(), Ok(Ok(Value::Null)));
+        assert!(pending.lock().is_ok_and(|pending| pending.is_empty()));
     }
 }
