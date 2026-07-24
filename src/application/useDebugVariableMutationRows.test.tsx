@@ -34,7 +34,7 @@ function initialState(): DebugVariablePagesState {
         pages: {
           0: {
             start: 0,
-            variables: [{ name: "child", value: "old", variablesReference: 0 }],
+            variables: [{ name: "child", value: "old", variablesReference: 0, canSetValue: true }],
             nextStart: null,
           },
         },
@@ -50,6 +50,7 @@ function initialState(): DebugVariablePagesState {
 }
 
 function renderRows() {
+  const refreshDebugWatchEvaluations = vi.fn();
   const setVariable =
     vi.fn<(reference: number, name: string, value: string) => Promise<DebugVariable | null>>();
   const variablePagesRef = { current: initialState() };
@@ -61,6 +62,7 @@ function renderRows() {
   const root = createRoot(host);
   function Harness() {
     captured.rows = useDebugVariableMutationRows({
+      refreshDebugWatchEvaluations,
       setVariable,
       setVariablePages: (next) => {
         variablePagesRef.current =
@@ -73,7 +75,9 @@ function renderRows() {
   }
   act(() => root.render(<Harness />));
   return {
+    refreshDebugWatchEvaluations,
     select: () => captured.rows!.forRow(owner, 20, 0, 0),
+    selectNested: () => captured.rows!.forRow(owner, 30, 0, 0),
     setVariable,
     unmount: () => act(() => root.unmount()),
     variablePagesRef,
@@ -106,6 +110,27 @@ describe("useDebugVariableMutationRows", () => {
     expect(ui.setVariable).toHaveBeenCalledExactlyOnceWith(20, "count", "43");
     expect(ui.variablePagesRef.current.references[20]?.pages[0]?.variables[0]).toEqual(result);
     expect(ui.variablePagesRef.current.references[30]).toBeUndefined();
+    expect(ui.refreshDebugWatchEvaluations).toHaveBeenCalledOnce();
+    ui.unmount();
+  });
+
+  it("refreshes derived previews after a nested property reconcile without resetting pages", async () => {
+    const ui = renderRows();
+    const parentPage = ui.variablePagesRef.current.references[20];
+    const row = ui.selectNested();
+    const result = {
+      name: "child",
+      value: "new",
+      variablesReference: 0,
+      canSetValue: true as const,
+    };
+    ui.setVariable.mockResolvedValueOnce(result);
+
+    await expect(row?.commit("new")).resolves.toEqual(result);
+
+    expect(ui.variablePagesRef.current.references[20]).toBe(parentPage);
+    expect(ui.variablePagesRef.current.references[30]?.pages[0]?.variables[0]).toEqual(result);
+    expect(ui.refreshDebugWatchEvaluations).toHaveBeenCalledOnce();
     ui.unmount();
   });
 
@@ -146,8 +171,10 @@ describe("useDebugVariableMutationRows", () => {
     ui.setVariable.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("rejected"));
     await expect(row.commit("43")).resolves.toBeNull();
     expect(ui.variablePagesRef.current).toBe(before);
+    expect(ui.refreshDebugWatchEvaluations).not.toHaveBeenCalled();
     await expect(row.commit("44")).rejects.toThrow("rejected");
     expect(ui.variablePagesRef.current).toBe(before);
+    expect(ui.refreshDebugWatchEvaluations).not.toHaveBeenCalled();
     ui.unmount();
   });
 });

@@ -1395,6 +1395,9 @@ export function useWorkbenchDebugSession({
     setVariablePages((current) => createDebugVariablePagesState(current.owner));
     setDebugInspectionRevision((current) => current + 1);
   }, []);
+  const refreshDebugWatchEvaluations = useCallback(() => {
+    setDebugInspectionRevision((current) => current + 1);
+  }, []);
 
   const setWatchExpression = useDebugSetExpression({
     adapterKindForSession,
@@ -1443,6 +1446,7 @@ export function useWorkbenchDebugSession({
     workspaceOwnerEpochRef,
   });
   const variableMutationRows = useDebugVariableMutationRows({
+    refreshDebugWatchEvaluations,
     setVariable,
     setVariablePages,
     variablePageRequestsRef,

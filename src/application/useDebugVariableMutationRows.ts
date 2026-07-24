@@ -16,6 +16,7 @@ import type { DebugInspectionOwner, DebugVariablePagesState } from "../domain/de
 import type { DebugVariableMutationRows, DebugVariableRowMutation } from "./debugSessionContracts";
 
 interface DebugVariableMutationRowsOptions {
+  readonly refreshDebugWatchEvaluations: () => void;
   readonly setVariable: (
     variablesReference: number,
     name: string,
@@ -27,6 +28,7 @@ interface DebugVariableMutationRowsOptions {
 }
 
 export function useDebugVariableMutationRows({
+  refreshDebugWatchEvaluations,
   setVariable,
   setVariablePages,
   variablePageRequestsRef,
@@ -69,11 +71,18 @@ export function useDebugVariableMutationRows({
           );
           variablePagesRef.current = next;
           setVariablePages(next);
+          refreshDebugWatchEvaluations();
           return result;
         },
       });
     },
-    [setVariable, setVariablePages, variablePageRequestsRef, variablePagesRef],
+    [
+      refreshDebugWatchEvaluations,
+      setVariable,
+      setVariablePages,
+      variablePageRequestsRef,
+      variablePagesRef,
+    ],
   );
   return useMemo<DebugVariableMutationRows>(() => Object.freeze({ forRow }), [forRow]);
 }

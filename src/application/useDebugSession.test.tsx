@@ -4809,6 +4809,7 @@ describe("useDebugSession", () => {
     });
     const row = ui.hook().variableMutationRows.forRow(owner, 20, 0, 0);
     expect(row?.currentValue).toBe("42");
+    expect(ui.hook().debugInspectionRevision).toBe(0);
 
     let pendingSet!: Promise<DebugVariable | null>;
     act(() => {
@@ -4826,6 +4827,7 @@ describe("useDebugSession", () => {
     expect(ui.hook().variablesByReference[20]?.[0]).toEqual(result);
     expect(ui.hook().variablePages.references[30]).toBeUndefined();
     expect(ui.hook().variablesByReference[30]).toBeUndefined();
+    expect(ui.hook().debugInspectionRevision).toBe(1);
 
     let pendingRepl!: Promise<DebugVariable | null>;
     act(() => {
