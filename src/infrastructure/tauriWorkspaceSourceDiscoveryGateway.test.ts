@@ -32,10 +32,16 @@ describe("TauriWorkspaceSourceDiscoveryGateway", () => {
     const invokeCommand = vi
       .fn<InvokeWorkspaceSourceDiscoveryCommand>()
       .mockResolvedValueOnce({ files: ["src/a.ts"], truncated: false, visited: 4 })
+      .mockResolvedValueOnce({
+        files: ["package.json", "apps/api/package.json"],
+        truncated: false,
+        visited: 8,
+      })
       .mockResolvedValueOnce({ status: "changed" });
     const gateway = new TauriWorkspaceSourceDiscoveryGateway(identities(), invokeCommand);
 
     await gateway.enumerateJavaScriptSourceFiles(ROOT, { maxFiles: 2_000, maxVisited: 50_000 });
+    await gateway.enumeratePackageJsonFiles(ROOT, { maxFiles: 256, maxVisited: 50_000 });
     await gateway.readSourceTextBounded(ROOT, "src/a.ts", 2_097_152);
 
     expect(invokeCommand).toHaveBeenNthCalledWith(1, "workspace_enumerate_js_source_files", {
@@ -43,7 +49,12 @@ describe("TauriWorkspaceSourceDiscoveryGateway", () => {
       maxFiles: 2_000,
       maxVisited: 50_000,
     });
-    expect(invokeCommand).toHaveBeenNthCalledWith(2, "workspace_read_source_text_bounded", {
+    expect(invokeCommand).toHaveBeenNthCalledWith(2, "workspace_enumerate_package_json_files", {
+      workspaceId: "ws-1",
+      maxFiles: 256,
+      maxVisited: 50_000,
+    });
+    expect(invokeCommand).toHaveBeenNthCalledWith(3, "workspace_read_source_text_bounded", {
       workspaceId: "ws-1",
       relativePath: "src/a.ts",
       maxBytes: 2_097_152,

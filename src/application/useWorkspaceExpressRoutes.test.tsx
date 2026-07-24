@@ -58,6 +58,92 @@ describe("useWorkspaceExpressRoutes", () => {
     harness.unmount();
   });
 
+  it("flows nearest package labels into disk routes and unlabeled dirty panel snapshots", async () => {
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: ["src/root.ts", "apps/api/src/server.ts"],
+        truncated: false,
+        visited: 5,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["package.json", "apps/api/package.json"],
+        truncated: false,
+        visited: 5,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "package.json") {
+          return { status: "ok" as const, content: '{"name":"workspace"}' };
+        }
+        if (path === "apps/api/package.json") {
+          return { status: "ok" as const, content: '{"name":"@acme/api"}' };
+        }
+        return {
+          status: "ok" as const,
+          content:
+            path === "src/root.ts" ? "app.get('/root', handler);" : "app.get('/api', handler);",
+        };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().routes).toHaveLength(2));
+
+    expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledExactlyOnceWith(ROOT_A, {
+      maxFiles: 256,
+      maxVisited: 50_000,
+    });
+    expect(harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path }))).toEqual(
+      [
+        { packageLabel: "@acme/api", path: "/api" },
+        { packageLabel: undefined, path: "/root" },
+      ],
+    );
+
+    harness.set({
+      dirtySnapshots: [
+        {
+          relativeFilePath: "apps/api/src/server.ts",
+          source: "app.patch('/dirty-api', handler);",
+        },
+      ],
+    });
+
+    expect(
+      harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path })),
+    ).toEqual([
+      { packageLabel: "@acme/api", path: "/dirty-api" },
+      { packageLabel: undefined, path: "/root" },
+    ]);
+    harness.unmount();
+  });
+
+  it("skips malformed package manifests without failing route discovery", async () => {
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: ["apps/api/src/server.ts"],
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["apps/api/package.json"],
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => ({
+        status: "ok" as const,
+        content: path === "apps/api/package.json" ? "{ malformed" : "app.get('/api', handler);",
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().routes).toHaveLength(1));
+
+    expect(harness.hook().routes[0]).toMatchObject({ path: "/api" });
+    expect(harness.hook().routes[0]?.packageLabel).toBeUndefined();
+    expect(harness.hook().error).toBeNull();
+    harness.unmount();
+  });
+
   it("retries changed once and reports omitted changed and oversized sources as truncated", async () => {
     const attempts = new Map<string, number>();
     const gateway = discovery({
@@ -524,12 +610,18 @@ function discovery(
     overrides.readSourceTextBounded ??
     (async (): Promise<BoundedWorkspaceSourceRead> => ({ status: "ok", content: ROUTE_A }));
   return {
+    ...(overrides.enumeratePackageJsonFiles
+      ? { enumeratePackageJsonFiles: vi.fn(overrides.enumeratePackageJsonFiles) }
+      : {}),
     enumerateJavaScriptSourceFiles: vi.fn(enumerate),
     readSourceTextBounded: vi.fn(read),
   };
 }
 
 interface MockWorkspaceSourceDiscoveryGateway extends WorkspaceSourceDiscoveryGateway {
+  enumeratePackageJsonFiles?: ReturnType<
+    typeof vi.fn<NonNullable<WorkspaceSourceDiscoveryGateway["enumeratePackageJsonFiles"]>>
+  >;
   enumerateJavaScriptSourceFiles: ReturnType<
     typeof vi.fn<WorkspaceSourceDiscoveryGateway["enumerateJavaScriptSourceFiles"]>
   >;

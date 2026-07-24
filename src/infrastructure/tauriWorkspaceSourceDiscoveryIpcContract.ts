@@ -2,10 +2,12 @@ import type { InvokeArgs } from "@tauri-apps/api/core";
 import type {
   BoundedWorkspaceSourceRead,
   WorkspaceJavaScriptSourceFileEnumeration,
+  WorkspacePackageJsonFileEnumeration,
 } from "../domain/workspaceSourceDiscovery";
 
 export const WORKSPACE_SOURCE_DISCOVERY_IPC_COMMANDS = {
   enumerate: "workspace_enumerate_js_source_files",
+  enumeratePackageJson: "workspace_enumerate_package_json_files",
   readBounded: "workspace_read_source_text_bounded",
 } as const;
 
@@ -19,6 +21,12 @@ export type ReadWorkspaceSourceTextBoundedArgs = InvokeArgs & {
   readonly workspaceId: string;
   readonly relativePath: string;
   readonly maxBytes: number;
+};
+
+export type EnumerateWorkspacePackageJsonFilesArgs = InvokeArgs & {
+  readonly workspaceId: string;
+  readonly maxFiles: number;
+  readonly maxVisited: number;
 };
 
 export type InvokeWorkspaceSourceDiscoveryCommand = (
@@ -41,6 +49,25 @@ export async function invokeWorkspaceSourceEnumerationIpc(
   }
   if (result.visited > args.maxVisited) {
     return invalid("enumeration result.visited", `at most ${args.maxVisited}`);
+  }
+  return result;
+}
+
+export async function invokeWorkspacePackageJsonEnumerationIpc(
+  invokeCommand: InvokeWorkspaceSourceDiscoveryCommand,
+  args: EnumerateWorkspacePackageJsonFilesArgs,
+): Promise<WorkspacePackageJsonFileEnumeration> {
+  validateWorkspaceId(args.workspaceId, "package enumeration args.workspaceId");
+  positiveInteger(args.maxFiles, "package enumeration args.maxFiles");
+  positiveInteger(args.maxVisited, "package enumeration args.maxVisited");
+  const result = decodePackageJsonEnumeration(
+    await invokeCommand(WORKSPACE_SOURCE_DISCOVERY_IPC_COMMANDS.enumeratePackageJson, args),
+  );
+  if (result.files.length > args.maxFiles) {
+    return invalid("package enumeration result.files", `at most ${args.maxFiles} entries`);
+  }
+  if (result.visited > args.maxVisited) {
+    return invalid("package enumeration result.visited", `at most ${args.maxVisited}`);
   }
   return result;
 }
@@ -70,6 +97,12 @@ export function decodeWorkspaceSourceEnumeration(
   return decodeEnumeration(value);
 }
 
+export function decodeWorkspacePackageJsonEnumeration(
+  value: unknown,
+): WorkspacePackageJsonFileEnumeration {
+  return decodePackageJsonEnumeration(value);
+}
+
 export function decodeBoundedWorkspaceSourceRead(value: unknown): BoundedWorkspaceSourceRead {
   return decodeBoundedRead(value);
 }
@@ -89,6 +122,19 @@ function decodeEnumeration(value: unknown): WorkspaceJavaScriptSourceFileEnumera
     truncated: result.truncated,
     visited: unsignedInteger(result.visited, "enumeration result.visited"),
   };
+}
+
+function decodePackageJsonEnumeration(value: unknown): WorkspacePackageJsonFileEnumeration {
+  const result = decodeEnumeration(value);
+  for (const [index, file] of result.files.entries()) {
+    packageJsonRelativePath(file, `package enumeration result.files[${index}]`);
+  }
+  return result;
+}
+
+function packageJsonRelativePath(value: string, path: string): string {
+  if (value === "package.json" || value.endsWith("/package.json")) return value;
+  return invalid(path, "a package.json workspace-relative path");
 }
 
 function decodeBoundedRead(value: unknown): BoundedWorkspaceSourceRead {

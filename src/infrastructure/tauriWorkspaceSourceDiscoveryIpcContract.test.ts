@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   decodeBoundedWorkspaceSourceRead,
+  decodeWorkspacePackageJsonEnumeration,
   decodeWorkspaceSourceEnumeration,
+  invokeWorkspacePackageJsonEnumerationIpc,
   invokeWorkspaceSourceBoundedReadIpc,
   invokeWorkspaceSourceEnumerationIpc,
   type InvokeWorkspaceSourceDiscoveryCommand,
@@ -12,6 +14,11 @@ describe("workspace source discovery IPC contract", () => {
     const invokeCommand = vi
       .fn<InvokeWorkspaceSourceDiscoveryCommand>()
       .mockResolvedValueOnce({ files: ["apps/api/src/a.ts"], truncated: true, visited: 50_000 })
+      .mockResolvedValueOnce({
+        files: ["package.json", "apps/api/package.json"],
+        truncated: false,
+        visited: 12,
+      })
       .mockResolvedValueOnce({ status: "ok", content: "router.get('/a', handler);" })
       .mockResolvedValueOnce({ status: "tooLarge" })
       .mockResolvedValueOnce({ status: "changed" });
@@ -23,6 +30,17 @@ describe("workspace source discovery IPC contract", () => {
         maxVisited: 50_000,
       }),
     ).resolves.toEqual({ files: ["apps/api/src/a.ts"], truncated: true, visited: 50_000 });
+    await expect(
+      invokeWorkspacePackageJsonEnumerationIpc(invokeCommand, {
+        workspaceId: "ws-1",
+        maxFiles: 256,
+        maxVisited: 50_000,
+      }),
+    ).resolves.toEqual({
+      files: ["package.json", "apps/api/package.json"],
+      truncated: false,
+      visited: 12,
+    });
     await expect(
       invokeWorkspaceSourceBoundedReadIpc(invokeCommand, {
         workspaceId: "ws-1",
@@ -57,6 +75,16 @@ describe("workspace source discovery IPC contract", () => {
     expect(() => decodeWorkspaceSourceEnumeration(wire)).toThrow(
       "Invalid workspace source discovery IPC value",
     );
+  });
+
+  it("rejects non-package paths from package manifest enumeration", () => {
+    expect(() =>
+      decodeWorkspacePackageJsonEnumeration({
+        files: ["apps/api/package-lock.json"],
+        truncated: false,
+        visited: 1,
+      }),
+    ).toThrow("a package.json workspace-relative path");
   });
 
   it.each([

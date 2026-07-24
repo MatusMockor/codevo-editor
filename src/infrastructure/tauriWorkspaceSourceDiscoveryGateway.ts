@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BoundedWorkspaceSourceRead,
   WorkspaceJavaScriptSourceFileEnumeration,
+  WorkspacePackageJsonFileEnumeration,
   WorkspaceSourceDiscoveryGateway,
 } from "../domain/workspaceSourceDiscovery";
 import type {
@@ -13,6 +14,7 @@ import type {
 import type { WorkspaceIdentityDescriptorResolver } from "./tauriWorkspaceIdentityGateway";
 import {
   invokeWorkspaceSourceBoundedReadIpc,
+  invokeWorkspacePackageJsonEnumerationIpc,
   invokeWorkspaceSourceEnumerationIpc,
   type InvokeWorkspaceSourceDiscoveryCommand,
 } from "./tauriWorkspaceSourceDiscoveryIpcContract";
@@ -33,6 +35,17 @@ export class TauriWorkspaceSourceDiscoveryGateway
     limits: { readonly maxFiles: number; readonly maxVisited: number },
   ): Promise<WorkspaceJavaScriptSourceFileEnumeration> {
     return invokeWorkspaceSourceEnumerationIpc(this.invokeCommand, {
+      workspaceId: this.workspaceId(workspaceRoot),
+      maxFiles: limits.maxFiles,
+      maxVisited: limits.maxVisited,
+    });
+  }
+
+  enumeratePackageJsonFiles(
+    workspaceRoot: string,
+    limits: { readonly maxFiles: number; readonly maxVisited: number },
+  ): Promise<WorkspacePackageJsonFileEnumeration> {
+    return invokeWorkspacePackageJsonEnumerationIpc(this.invokeCommand, {
       workspaceId: this.workspaceId(workspaceRoot),
       maxFiles: limits.maxFiles,
       maxVisited: limits.maxVisited,

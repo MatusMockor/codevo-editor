@@ -4,12 +4,22 @@ export interface WorkspaceJavaScriptSourceFileEnumeration {
   readonly visited: number;
 }
 
+export interface WorkspacePackageJsonFileEnumeration {
+  readonly files: readonly string[];
+  readonly truncated: boolean;
+  readonly visited: number;
+}
+
 export type BoundedWorkspaceSourceRead =
   | { readonly status: "ok"; readonly content: string }
   | { readonly status: "tooLarge" }
   | { readonly status: "changed" };
 
 export interface WorkspaceSourceDiscoveryGateway {
+  enumeratePackageJsonFiles?(
+    workspaceRoot: string,
+    limits: { readonly maxFiles: number; readonly maxVisited: number },
+  ): Promise<WorkspacePackageJsonFileEnumeration>;
   enumerateJavaScriptSourceFiles(
     workspaceRoot: string,
     limits: { readonly maxFiles: number; readonly maxVisited: number },

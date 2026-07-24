@@ -44,6 +44,36 @@ describe("Express route discovery invalidation", () => {
     ).toBe(true);
   });
 
+  it("invalidates a real nested app package.json edit", () => {
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({ kind: "modified", relativePath: "apps/api/package.json" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("invalidates package.json renames so package labels are rescanned", () => {
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({
+          kind: "renamed",
+          previousRelativePath: "apps/api/package.json",
+          relativePath: "apps/api/package.json.old",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    "node_modules/package.json",
+    "apps/api/node_modules/dependency/package.json",
+    "apps\\api\\node_modules\\dependency\\package.json",
+  ])("ignores dependency package manifest changes at %s", (relativePath) => {
+    expect(workspaceFileChangeInvalidatesExpressRouteDiscovery(event({ relativePath }))).toBe(
+      false,
+    );
+  });
+
   it.each(["created", "deleted", "renamed"] as const)(
     "invalidates a %s directory subtree",
     (kind) => {
@@ -66,7 +96,7 @@ describe("Express route discovery invalidation", () => {
   it("ignores unrelated files, declarations, and directory modifications", () => {
     for (const relativePath of [
       "routes/web.php",
-      "package.json",
+      "package-lock.json",
       "src/routes.d.ts",
       "src/routes.d.mts",
       "src/routes.d.cts",

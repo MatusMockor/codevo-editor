@@ -5063,6 +5063,7 @@ pub fn run() {
             workspace_directory_commands::workspace_read_directory_bounded,
             workspace_commands::workspace_search_files,
             workspace_source_discovery::workspace_enumerate_js_source_files,
+            workspace_source_discovery::workspace_enumerate_package_json_files,
             workspace_source_discovery::workspace_read_source_text_bounded,
             symfony_commands::list_symfony_console_commands,
             symfony_commands::list_symfony_routes,

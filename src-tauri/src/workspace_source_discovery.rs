@@ -1,3 +1,4 @@
+use crate::run_blocking_command;
 use crate::workspace_registry::{
     opened_root_path, validate_relative_path, WorkspaceId, WorkspaceRegistry,
 };
@@ -9,6 +10,7 @@ use std::path::Path;
 use tauri::State;
 
 const MAX_FILES_CAP: usize = 2_000;
+const MAX_PACKAGE_JSON_FILES_CAP: usize = 256;
 const MAX_VISITED_CAP: usize = 50_000;
 const MAX_TEXT_BYTES_CAP: usize = 2 * 1024 * 1024;
 const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
@@ -24,7 +26,7 @@ const EXCLUDED_DIRECTORY_NAMES: &[&str] = &[
 
 #[derive(Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkspaceJavaScriptSourceFileEnumeration {
+pub(crate) struct WorkspaceSourceFileEnumeration {
     files: Vec<String>,
     truncated: bool,
     visited: usize,
@@ -39,19 +41,41 @@ pub(crate) enum BoundedWorkspaceSourceRead {
 }
 
 #[tauri::command]
-pub(crate) fn workspace_enumerate_js_source_files(
+pub(crate) async fn workspace_enumerate_js_source_files(
     registry: State<'_, WorkspaceRegistry>,
     workspace_id: WorkspaceId,
     max_files: usize,
     max_visited: usize,
-) -> Result<WorkspaceJavaScriptSourceFileEnumeration, String> {
+) -> Result<WorkspaceSourceFileEnumeration, String> {
     let max_files = require_positive_limit(max_files, "maxFiles")?;
     let max_visited = require_positive_limit(max_visited, "maxVisited")?;
     let root = registry
         .clone_root(&workspace_id)
         .map_err(|error| error.to_string())?;
-    enumerate_registered_js_source_files(&root, max_files, max_visited)
-        .map_err(|error| error.to_string())
+    run_blocking_command(move || {
+        enumerate_registered_js_source_files(&root, max_files, max_visited)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn workspace_enumerate_package_json_files(
+    registry: State<'_, WorkspaceRegistry>,
+    workspace_id: WorkspaceId,
+    max_files: usize,
+    max_visited: usize,
+) -> Result<WorkspaceSourceFileEnumeration, String> {
+    let max_files = require_positive_limit(max_files, "maxFiles")?;
+    let max_visited = require_positive_limit(max_visited, "maxVisited")?;
+    let root = registry
+        .clone_root(&workspace_id)
+        .map_err(|error| error.to_string())?;
+    run_blocking_command(move || {
+        enumerate_registered_package_json_files(&root, max_files, max_visited)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -81,7 +105,7 @@ fn enumerate_registered_js_source_files(
     root: &File,
     max_files: usize,
     max_visited: usize,
-) -> io::Result<WorkspaceJavaScriptSourceFileEnumeration> {
+) -> io::Result<WorkspaceSourceFileEnumeration> {
     let root_path = opened_root_path(root)?;
     ensure_registered_root_identity(root, &root_path)?;
     let result = enumerate_js_source_files(&root_path, max_files, max_visited)?;
@@ -95,12 +119,68 @@ fn enumerate_registered_js_source_files(
     Ok(result)
 }
 
+fn enumerate_registered_package_json_files(
+    root: &File,
+    max_files: usize,
+    max_visited: usize,
+) -> io::Result<WorkspaceSourceFileEnumeration> {
+    let root_path = opened_root_path(root)?;
+    ensure_registered_root_identity(root, &root_path)?;
+    let result = enumerate_package_json_files(&root_path, max_files, max_visited)?;
+    if opened_root_path(root)? != root_path {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "registered workspace root moved during package discovery",
+        ));
+    }
+    ensure_registered_root_identity(root, &root_path)?;
+    Ok(result)
+}
+
 fn enumerate_js_source_files(
     root: &Path,
     requested_max_files: usize,
     requested_max_visited: usize,
-) -> io::Result<WorkspaceJavaScriptSourceFileEnumeration> {
-    let max_files = requested_max_files.clamp(1, MAX_FILES_CAP);
+) -> io::Result<WorkspaceSourceFileEnumeration> {
+    enumerate_workspace_files(
+        root,
+        requested_max_files,
+        MAX_FILES_CAP,
+        requested_max_visited,
+        is_javascript_source_file,
+        "source file escaped workspace root",
+    )
+}
+
+fn enumerate_package_json_files(
+    root: &Path,
+    requested_max_files: usize,
+    requested_max_visited: usize,
+) -> io::Result<WorkspaceSourceFileEnumeration> {
+    enumerate_workspace_files(
+        root,
+        requested_max_files,
+        MAX_PACKAGE_JSON_FILES_CAP,
+        requested_max_visited,
+        |path| {
+            if path.parent() == Some(root) {
+                return false;
+            }
+            path.file_name().is_some_and(|name| name == "package.json")
+        },
+        "package manifest escaped workspace root",
+    )
+}
+
+fn enumerate_workspace_files(
+    root: &Path,
+    requested_max_files: usize,
+    max_files_cap: usize,
+    requested_max_visited: usize,
+    accepts_file: impl Fn(&Path) -> bool,
+    escaped_message: &str,
+) -> io::Result<WorkspaceSourceFileEnumeration> {
+    let max_files = requested_max_files.clamp(1, max_files_cap);
     let max_visited = requested_max_visited.clamp(1, MAX_VISITED_CAP);
     let mut builder = WalkBuilder::new(root);
     builder
@@ -133,27 +213,23 @@ fn enumerate_js_source_files(
         };
         let entry = entry.map_err(|error| io::Error::other(error.to_string()))?;
         visited += 1;
-        if !entry.file_type().is_some_and(|kind| kind.is_file())
-            || !is_javascript_source_file(entry.path())
-        {
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) || !accepts_file(entry.path()) {
             continue;
         }
         if files.len() >= max_files {
             truncated_by_files = true;
             continue;
         }
-        let relative = entry.path().strip_prefix(root).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "source file escaped workspace root",
-            )
-        })?;
+        let relative = entry
+            .path()
+            .strip_prefix(root)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, escaped_message))?;
         files.push(relative_path_string(relative)?);
     }
 
     let truncated_by_visits = !exhausted && entries.next().is_some();
     files.sort();
-    Ok(WorkspaceJavaScriptSourceFileEnumeration {
+    Ok(WorkspaceSourceFileEnumeration {
         files,
         truncated: truncated_by_visits || truncated_by_files,
         visited,
@@ -342,6 +418,31 @@ mod tests {
         let visits = enumerate_js_source_files(&root, 20, 1).expect("visit cap");
         assert_eq!(visits.visited, 1);
         assert!(visits.truncated);
+    }
+
+    #[test]
+    fn enumerates_non_root_package_json_files_deterministically_with_a_bounded_result() {
+        let root = fixture("package-json");
+        write(&root, "package.json", "{}");
+        for index in 0..=MAX_PACKAGE_JSON_FILES_CAP {
+            write(&root, &format!("packages/{index:03}/package.json"), "{}");
+        }
+        write(&root, "node_modules/ignored/package.json", "{}");
+
+        let result = enumerate_package_json_files(&root, 1_000, 1_000).expect("enumeration");
+
+        assert_eq!(result.files.len(), MAX_PACKAGE_JSON_FILES_CAP);
+        assert_eq!(
+            result.files.first().map(String::as_str),
+            Some("packages/000/package.json")
+        );
+        assert!(!result.files.iter().any(|path| path == "package.json"));
+        assert!(result.files.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(!result
+            .files
+            .iter()
+            .any(|path| path.starts_with("node_modules/")));
+        assert!(result.truncated);
     }
 
     #[test]
