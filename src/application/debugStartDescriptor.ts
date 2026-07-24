@@ -2,6 +2,7 @@ import {
   debuggerSessionId,
   type Breakpoint,
   type DebugExceptionPauseMode,
+  type DebugExceptionTypeFilter,
   type DebugGateway,
   type DebugLaunchTarget,
   type DebugRuntimeStatus,
@@ -17,6 +18,7 @@ import type {
 export interface DebugStartDescriptor {
   readonly adapterKind: "node" | "php";
   readonly confirmStart?: (rootPath: string, sessionId: number) => Promise<void>;
+  readonly exceptionTypeFilterSupported: boolean;
   readonly isStartAuthorized?: () => boolean;
   readonly restartLaunch: DebugLaunchTarget | null;
   readonly targetKind: DebugLaunchTarget["kind"];
@@ -24,6 +26,7 @@ export interface DebugStartDescriptor {
     rootPath: string,
     breakpoints: readonly Breakpoint[],
     exceptionPauseMode: DebugExceptionPauseMode,
+    exceptionTypeFilter: DebugExceptionTypeFilter,
   ): Promise<DebugRuntimeStatus>;
 }
 
@@ -57,10 +60,11 @@ export function legacyDebugStartDescriptor(
 ): DebugStartDescriptor {
   return {
     adapterKind: debugBreakpointAdapterForLaunch(launch),
+    exceptionTypeFilterSupported: true,
     restartLaunch: launch,
     targetKind: launch.kind,
-    start: (rootPath, breakpoints, exceptionPauseMode) =>
-      gateway.start(rootPath, launch, breakpoints, exceptionPauseMode),
+    start: (rootPath, breakpoints, exceptionPauseMode, exceptionTypeFilter) =>
+      gateway.start(rootPath, launch, breakpoints, exceptionPauseMode, exceptionTypeFilter),
   };
 }
 
@@ -70,14 +74,16 @@ export function nodeAttachCandidateStartDescriptor(
 ): DebugStartDescriptor {
   return {
     adapterKind: "node",
+    exceptionTypeFilterSupported: true,
     restartLaunch: null,
     targetKind: "node-attach",
-    start: (rootPath, breakpoints, exceptionPauseMode) =>
+    start: (rootPath, breakpoints, exceptionPauseMode, exceptionTypeFilter) =>
       gateway.start({
         rootPath,
         candidateLeaseId,
         breakpoints,
         exceptionPauseMode,
+        exceptionTypeFilter,
       }),
   };
 }
@@ -86,22 +92,24 @@ export function nativeNodeWatchDebugStartDescriptor(
   gateway: NativeNodeWatchDebugGateway,
   request: Omit<
     NativeNodeWatchDebugStartRequest,
-    "rootPath" | "breakpoints" | "exceptionPauseMode"
+    "rootPath" | "breakpoints" | "exceptionPauseMode" | "exceptionTypeFilter"
   >,
   isStartAuthorized?: () => boolean,
 ): DebugStartDescriptor {
   return {
     adapterKind: "node",
     confirmStart: (rootPath, sessionId) => gateway.confirmNativeNodeWatch(rootPath, sessionId),
+    exceptionTypeFilterSupported: false,
     ...(isStartAuthorized ? { isStartAuthorized } : {}),
     restartLaunch: null,
     targetKind: "node-configured-script",
-    start: (rootPath, breakpoints, exceptionPauseMode) =>
+    start: (rootPath, breakpoints, exceptionPauseMode, exceptionTypeFilter) =>
       gateway.startNativeNodeWatch({
         ...request,
         rootPath,
         breakpoints,
         exceptionPauseMode,
+        exceptionTypeFilter,
       }),
   };
 }

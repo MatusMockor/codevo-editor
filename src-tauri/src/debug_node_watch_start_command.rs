@@ -21,10 +21,12 @@ pub(crate) async fn debug_start_native_node_watch(
     preserve_output: Option<bool>,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
     just_my_code: Option<DebugJustMyCodePolicy>,
     app: AppHandle,
     registry: State<'_, Arc<DebugSessionRegistry>>,
 ) -> Result<DebugStartResponse, String> {
+    validate_native_watch_exception_filter(exception_type_filter)?;
     let preserve_output = validate_closed_intent(watch, preserve_output)?;
     let worker_app = app.clone();
     let worker_registry = Arc::clone(registry.inner());
@@ -104,9 +106,23 @@ fn validate_closed_intent(watch: bool, preserve_output: Option<bool>) -> Result<
     }
 }
 
+fn validate_native_watch_exception_filter(
+    exception_type_filter: Vec<String>,
+) -> Result<(), String> {
+    let filter =
+        crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(exception_type_filter)?;
+    if filter.is_empty() {
+        return Ok(());
+    }
+    Err("Exception type filters are unavailable for native Node watch generations.".to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{confirm_native_node_watch_blocking, validate_closed_intent};
+    use super::{
+        confirm_native_node_watch_blocking, validate_closed_intent,
+        validate_native_watch_exception_filter,
+    };
     use crate::debug_adapter::{
         DebugAdapter, DebugEvent, DebugEventSink, DebugScopeInfo, DebugStackFrame,
         DebugVariableInfo, StepKind,
@@ -126,6 +142,13 @@ mod tests {
         assert_eq!(validate_closed_intent(true, Some(true)), Ok(true));
         assert!(validate_closed_intent(false, None).is_err());
         assert!(validate_closed_intent(true, Some(false)).is_err());
+    }
+
+    #[test]
+    fn native_watch_rejects_exception_filters_until_generation_replay_supports_them() {
+        assert_eq!(validate_native_watch_exception_filter(Vec::new()), Ok(()));
+        assert!(validate_native_watch_exception_filter(vec!["DomainError".to_string()]).is_err());
+        assert!(validate_native_watch_exception_filter(vec!["invalid-name".to_string()]).is_err());
     }
 
     #[test]

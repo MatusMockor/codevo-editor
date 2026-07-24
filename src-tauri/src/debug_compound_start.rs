@@ -1,4 +1,4 @@
-use super::{create_debug_adapter, AppHandleDebugEventSink, DebugFinishGate};
+use super::{create_debug_adapter_with_exception_filter, AppHandleDebugEventSink, DebugFinishGate};
 use crate::debug_adapter::{
     DebugBreakpoint, DebugEventSink, DebugExceptionPauseMode, DebugLaunchTarget,
     DebugSessionRegistry, DebugStartupPermit,
@@ -40,6 +40,7 @@ struct DebugCompoundStartMember {
     launch: DebugCompoundLaunchTarget,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -197,6 +198,12 @@ fn valid_request_shape(request: &DebugCompoundStartRequest) -> bool {
     request.stop_all
         && (MIN_DEBUG_COMPOUND_MEMBERS..=MAX_DEBUG_COMPOUND_MEMBERS)
             .contains(&request.members.len())
+        && request.members.iter().all(|member| {
+            crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(
+                member.exception_type_filter.clone(),
+            )
+            .is_ok()
+        })
         && serde_json::to_vec(request)
             .is_ok_and(|encoded| encoded.len() <= MAX_DEBUG_COMPOUND_REQUEST_BYTES)
 }
@@ -244,6 +251,7 @@ async fn start_member(
             launch,
             breakpoints,
             member.exception_pause_mode,
+            member.exception_type_filter,
             sink,
             member_registry,
         ))
@@ -364,6 +372,7 @@ fn start_compound_member_blocking(
     launch: DebugLaunchTarget,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
     sink: Arc<dyn DebugEventSink>,
     registry: Arc<DebugSessionRegistry>,
 ) -> Result<u64, ()> {
@@ -389,11 +398,12 @@ fn start_compound_member_blocking(
             });
             let startup_is_current: Arc<dyn Fn() -> bool + Send + Sync> =
                 Arc::new(move || startup_registry.startup_is_current(&startup_permit));
-            create_debug_adapter(
+            create_debug_adapter_with_exception_filter(
                 &adapter_root,
                 &launch,
                 &breakpoints,
                 exception_pause_mode,
+                &exception_type_filter,
                 emitter,
                 finish,
                 startup_is_current,
@@ -502,7 +512,8 @@ mod tests {
                 "env": {}
             },
             "breakpoints": [],
-            "exceptionPauseMode": "none"
+            "exceptionPauseMode": "none",
+            "exceptionTypeFilter": ["DomainError"]
         });
         let request = serde_json::json!({
             "rootPath": "/workspace",
@@ -526,7 +537,8 @@ mod tests {
                 "members": [{
                     "launch": {"kind": "node-attach", "port": 9229},
                     "breakpoints": [],
-                    "exceptionPauseMode": "none"
+                    "exceptionPauseMode": "none",
+                    "exceptionTypeFilter": []
                 }, request["members"][0].clone()],
                 "stopAll": true
             }),
@@ -537,6 +549,19 @@ mod tests {
                         "kind": "node-script",
                         "scriptPath": "/workspace/a.js",
                         "preLaunchTask": "private"
+                    },
+                    "breakpoints": [],
+                    "exceptionPauseMode": "none",
+                    "exceptionTypeFilter": []
+                }, request["members"][0].clone()],
+                "stopAll": true
+            }),
+            serde_json::json!({
+                "rootPath": "/workspace",
+                "members": [{
+                    "launch": {
+                        "kind": "node-script",
+                        "scriptPath": "/workspace/a.js"
                     },
                     "breakpoints": [],
                     "exceptionPauseMode": "none"

@@ -50,11 +50,15 @@ pub(crate) async fn debug_start(
     launch: NodeDebugLaunchWire,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
     app: AppHandle,
     registry: State<'_, Arc<DebugSessionRegistry>>,
     workspace_registry: State<'_, WorkspaceRegistry>,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<DebugStartResponse, String> {
+    crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(
+        exception_type_filter.clone(),
+    )?;
     let retained_root =
         crate::debug_session_registry::retain_workspace_root(&workspace_registry, &root_path)?;
     let workspace = retained_root.try_clone_directory()?;
@@ -64,6 +68,7 @@ pub(crate) async fn debug_start(
         launch,
         breakpoints,
         exception_pause_mode,
+        exception_type_filter,
         app,
         registry,
         workspace_registry,

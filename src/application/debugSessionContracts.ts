@@ -3,6 +3,7 @@ import type {
   BreakpointCreationOwnership,
   BreakpointHitCondition,
   DebugExceptionPauseMode,
+  DebugExceptionTypeFilter,
   DebugGateway,
   DebugLaunchTarget,
   DebugRuntimeStatus,
@@ -122,6 +123,7 @@ export interface NodeDebugAttachCandidateStartPort {
     readonly candidateLeaseId: string;
     readonly breakpoints: readonly Breakpoint[];
     readonly exceptionPauseMode: DebugExceptionPauseMode;
+    readonly exceptionTypeFilter: DebugExceptionTypeFilter;
   }): Promise<DebugRuntimeStatus>;
 }
 
@@ -147,6 +149,7 @@ export interface UseDebugSessionResult {
   exceptionPauseError: string | null;
   exceptionPauseMode: DebugExceptionPauseMode;
   exceptionPausePending: boolean;
+  exceptionTypeFilter: DebugExceptionTypeFilter;
   output: DebugOutputLine[];
   lastStartError: string | null;
   selectedFrameId: number | null;
@@ -178,6 +181,7 @@ export interface UseDebugSessionResult {
   pauseDebug(): Promise<void>;
   toggleBreakpointsActivated(): Promise<boolean>;
   setExceptionPauseMode(mode: DebugExceptionPauseMode): Promise<void>;
+  setExceptionTypeFilter(filter: DebugExceptionTypeFilter): Promise<void>;
   toggleBreakpoint(
     filePath: string,
     lineNumber: number,

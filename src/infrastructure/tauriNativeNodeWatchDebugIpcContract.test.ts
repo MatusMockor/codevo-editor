@@ -16,6 +16,7 @@ const request: NativeNodeWatchDebugStartRequest = {
     },
   ],
   exceptionPauseMode: "uncaught",
+  exceptionTypeFilter: ["TypeError", "app.DomainError"],
   justMyCode: "nodeInternalsAndDependencies",
 };
 
@@ -53,6 +54,13 @@ describe("native Node watch debug IPC contract", () => {
     ["unsafe root", { ...request, rootPath: "/work\nspace" }],
     ["unsafe script", { ...request, scriptPath: "/workspace/\0server.js" }],
     ["invalid pause mode", { ...request, exceptionPauseMode: "caught" }],
+    ["missing exception filter", withoutExceptionTypeFilter(request)],
+    ["duplicate exception filter", { ...request, exceptionTypeFilter: ["Error", "Error"] }],
+    ["invalid exception filter", { ...request, exceptionTypeFilter: ["invalid-name"] }],
+    [
+      "oversized exception filter",
+      { ...request, exceptionTypeFilter: Array.from({ length: 9 }, (_, index) => `Error${index}`) },
+    ],
     ["invalid just-my-code policy", { ...request, justMyCode: "**/node_modules/**" }],
   ])("rejects %s before transport", async (_label, invalidRequest) => {
     const invokeCommand = vi.fn<InvokeDebugCommand>();
@@ -90,3 +98,10 @@ describe("native Node watch debug IPC contract", () => {
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 });
+
+function withoutExceptionTypeFilter(
+  value: NativeNodeWatchDebugStartRequest,
+): Omit<NativeNodeWatchDebugStartRequest, "exceptionTypeFilter"> {
+  const { exceptionTypeFilter: _, ...requestWithoutFilter } = value;
+  return requestWithoutFilter;
+}

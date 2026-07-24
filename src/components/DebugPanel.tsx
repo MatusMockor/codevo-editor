@@ -26,6 +26,7 @@ import type {
   Breakpoint,
   BreakpointHitCondition,
   DebugExceptionPauseMode,
+  DebugExceptionTypeFilter,
   DebugScope,
   DebugVariable,
   StackFrame,
@@ -76,6 +77,7 @@ import type {
 import type { DebugSetVariableSurface } from "./debugSetVariableSurface";
 import type { DebugAddToWatchVariableSurface } from "./debugAddToWatchSurface";
 import { FunctionBreakpoints } from "./FunctionBreakpoints";
+import { ExceptionTypeFilter } from "./ExceptionTypeFilter";
 
 type NodeLaunchConfigurationsProps = Omit<
   NodeDebugLaunchSelectorProps,
@@ -88,6 +90,7 @@ type NodeLaunchConfigurationsProps = Omit<
 };
 
 const EMPTY_STACK_FRAMES: readonly StackFrame[] = Object.freeze([]);
+const EMPTY_EXCEPTION_TYPE_FILTER: DebugExceptionTypeFilter = Object.freeze([]);
 
 export interface DebugCopyStackTraceCommand {
   canCopyStackTrace(): boolean;
@@ -136,6 +139,7 @@ export interface DebugPanelProps {
   exceptionPauseError: string | null;
   exceptionPauseMode: DebugExceptionPauseMode;
   exceptionPausePending: boolean;
+  exceptionTypeFilter?: DebugExceptionTypeFilter;
   hasJavaScriptTypeScriptWorkspace: boolean;
   nodeLaunchConfigurations?: NodeLaunchConfigurationsProps;
   nodeRunWithoutDebuggingPicker?: NodeRunWithoutDebuggingPickerCommand;
@@ -169,6 +173,7 @@ export interface DebugPanelProps {
   onSetBreakpointEnabled(id: string, enabled: boolean): void;
   onSetFunctionBreakpointEnabled?(id: string, enabled: boolean): void;
   onSetExceptionPauseMode(mode: DebugExceptionPauseMode): void;
+  onSetExceptionTypeFilter?(filter: DebugExceptionTypeFilter): void;
   onStep(kind: StepKind): void;
   onStop(): void;
   rootPath: string | null;
@@ -334,6 +339,7 @@ export function DebugPanel({
   exceptionPauseError,
   exceptionPauseMode,
   exceptionPausePending,
+  exceptionTypeFilter = EMPTY_EXCEPTION_TYPE_FILTER,
   hasJavaScriptTypeScriptWorkspace,
   lastStartError,
   nodeLaunchConfigurations,
@@ -366,6 +372,7 @@ export function DebugPanel({
   onSetBreakpointEnabled,
   onSetFunctionBreakpointEnabled,
   onSetExceptionPauseMode,
+  onSetExceptionTypeFilter,
   onStep,
   onStop,
   rootPath,
@@ -662,6 +669,16 @@ export function DebugPanel({
               </span>
             ) : null}
           </label>
+          {debugAdapterKind !== "php" &&
+          hasJavaScriptTypeScriptWorkspace &&
+          onSetExceptionTypeFilter ? (
+            <ExceptionTypeFilter
+              disabled={exceptionPauseDisabled || exceptionPauseMode === "none"}
+              filter={exceptionTypeFilter}
+              key={rootPath ?? ""}
+              onChange={onSetExceptionTypeFilter}
+            />
+          ) : null}
           <Breakpoints
             breakpoints={breakpoints}
             onNavigateToBreakpoint={onNavigateToBreakpoint}

@@ -5,7 +5,75 @@ use crate::{
     debug_logpoint::{parse_debug_log_template, DebugLogTemplate, MAX_DEBUG_LOGPOINTS_PER_PAUSE},
 };
 use serde_json::json;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+
+pub(crate) fn handle_script_parsed(
+    params: &Value,
+    context: &crate::debug_cdp::transport::SocketLoopContext,
+) {
+    let Some(generated_url) = params.get("url").and_then(Value::as_str) else {
+        return;
+    };
+    let Ok(mut shared) = context.shared.lock() else {
+        return;
+    };
+    let Some(source_maps) = shared.source_maps.as_mut() else {
+        return;
+    };
+    source_maps.evict_script(generated_url);
+    let Some(source_map_url) = params
+        .get("sourceMapURL")
+        .and_then(Value::as_str)
+        .filter(|url| !url.is_empty())
+    else {
+        return;
+    };
+    let _ = source_maps.register_script(generated_url, source_map_url);
+}
+
+pub(crate) fn handle_breakpoint_resolved(
+    params: &Value,
+    context: &crate::debug_cdp::transport::SocketLoopContext,
+) {
+    let Some(cdp_breakpoint_id) = params.get("breakpointId").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(resolved_line) = params
+        .pointer("/location/lineNumber")
+        .and_then(Value::as_u64)
+        .map(|line| line as u32)
+    else {
+        return;
+    };
+    let resolved_column = params
+        .pointer("/location/columnNumber")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let resolved = {
+        let Ok(mut shared) = context.shared.lock() else {
+            return;
+        };
+        crate::debug_cdp::transport::apply_breakpoint_resolution(
+            &mut shared,
+            cdp_breakpoint_id,
+            crate::debug_cdp::transport::GeneratedPosition {
+                line: resolved_line,
+                column: resolved_column,
+            },
+        )
+    };
+    let Some((file_path, breakpoints)) = resolved else {
+        return;
+    };
+    crate::debug_cdp::transport::emit_debug_event(
+        context,
+        crate::debug_adapter::DebugEventPayload::BreakpointsVerified {
+            file_path,
+            breakpoints,
+        },
+    );
+}
 
 pub(crate) fn set_breakpoints_active(
     client: &CdpClient,

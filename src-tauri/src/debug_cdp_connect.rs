@@ -108,17 +108,21 @@ fn open_cdp_transport_with_authorization(
     );
     shared_state.first_pause_seen = options.attached;
     let shared = Arc::new(Mutex::new(shared_state));
+    let exception_filter = Arc::new(Mutex::new(ExceptionFilterState::default()));
     let client = CdpClient::start(
         socket,
         Arc::clone(&shared),
+        Arc::clone(&exception_filter),
         emitter,
         options.request_timeout,
         options.disconnected,
+        Arc::clone(&options.startup_is_current),
     );
     Ok((
         NodeCdpAdapter {
             client,
             function_breakpoints: Default::default(),
+            exception_filter,
             ownership: options.ownership,
             shared,
             mutation_is_allowed: options.startup_is_current,
@@ -160,6 +164,7 @@ fn initialize_attached_debugger(
     emitter: &DebugEventEmitter,
     initial_breakpoints: &[DebugBreakpoint],
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: &[String],
     internal_step_filter: Option<DebugJustMyCodePolicy>,
 ) -> Result<(), String> {
     ensure_startup_current(adapter.mutation_is_allowed.as_ref())?;
@@ -180,7 +185,7 @@ fn initialize_attached_debugger(
         )?;
         ensure_startup_current(adapter.mutation_is_allowed.as_ref())?;
     }
-    adapter.set_exception_pause(exception_pause_mode)?;
+    adapter.set_exception_pause_filter(exception_pause_mode, exception_type_filter)?;
     for (file_path, breakpoints) in group_breakpoints_by_file(initial_breakpoints) {
         ensure_startup_current(adapter.mutation_is_allowed.as_ref())?;
         let verified = adapter.set_breakpoints(&file_path, &breakpoints)?;
@@ -264,10 +269,27 @@ impl NodeCdpAdapter {
         initial_breakpoints: &[DebugBreakpoint],
         options: NodeCdpConnectOptions<'_>,
     ) -> Result<Self, String> {
+        Self::connect_with_source_maps_and_exception_filter(
+            ws_url,
+            emitter,
+            initial_breakpoints,
+            &[],
+            options,
+        )
+    }
+
+    pub(super) fn connect_with_source_maps_and_exception_filter(
+        ws_url: &str,
+        emitter: DebugEventEmitter,
+        initial_breakpoints: &[DebugBreakpoint],
+        exception_type_filter: &[String],
+        options: NodeCdpConnectOptions<'_>,
+    ) -> Result<Self, String> {
         Self::connect_with_source_maps_at_pause_generation_floor(
             ws_url,
             emitter,
             initial_breakpoints,
+            exception_type_filter,
             options,
             PauseGenerationFloor::INITIAL,
         )
@@ -277,6 +299,7 @@ impl NodeCdpAdapter {
         ws_url: &str,
         emitter: DebugEventEmitter,
         initial_breakpoints: &[DebugBreakpoint],
+        exception_type_filter: &[String],
         options: NodeCdpConnectOptions<'_>,
         pause_generation_floor: PauseGenerationFloor,
     ) -> Result<Self, String> {
@@ -312,6 +335,7 @@ impl NodeCdpAdapter {
             &emitter,
             initial_breakpoints,
             exception_pause_mode,
+            exception_type_filter,
             internal_step_filter,
         )?;
         let startup_entry = match startup {
@@ -337,12 +361,26 @@ impl NodeCdpAdapter {
             .client
             .request("Runtime.runIfWaitingForDebugger", json!({}))?;
         if let Some(probe) = startup_probe {
-            probe.finish(request_timeout, |method, params| {
+            let startup_breakpoint = probe.finish(request_timeout, |method, params| {
                 ensure_startup_current(startup_is_current.as_ref())?;
                 adapter.client.request(method, params)
             })?;
+            if let Some(breakpoint_id) = startup_breakpoint {
+                ensure_startup_current(startup_is_current.as_ref())?;
+                adapter.remove_startup_breakpoint_without_wait(breakpoint_id)?;
+            }
         }
         Ok(adapter)
+    }
+
+    fn remove_startup_breakpoint_without_wait(
+        &self,
+        breakpoint_id: String,
+    ) -> Result<(), String> {
+        self.client.send_without_wait(
+            "Debugger.removeBreakpoint",
+            json!({"breakpointId": breakpoint_id}),
+        )
     }
 
     #[cfg(target_os = "macos")]
@@ -457,12 +495,42 @@ impl NodeCdpAdapter {
     }
 }
 
+impl CdpClient {
+    fn send_without_wait(&self, method: &str, params: Value) -> Result<(), String> {
+        let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+        let payload = json!({"id": id, "method": method, "params": params}).to_string();
+        self.outgoing.try_send(payload).map_err(|error| {
+            fail_closed_transport(
+                &self.pending,
+                &self.shutdown_requested,
+                &self.disconnect_notifier,
+            );
+            format!("Unable to queue debugger request `{method}`: {error}")
+        })
+    }
+}
+
 #[cfg(target_os = "macos")]
 impl HeldExternalNodeCdpAttach {
     pub(in crate::debug_cdp) fn initialize(
+        self,
+        initial_breakpoints: &[DebugBreakpoint],
+        exception_pause_mode: DebugExceptionPauseMode,
+        internal_step_filter: Option<DebugJustMyCodePolicy>,
+    ) -> Result<NodeCdpAdapter, String> {
+        self.initialize_with_exception_filter(
+            initial_breakpoints,
+            exception_pause_mode,
+            &[],
+            internal_step_filter,
+        )
+    }
+
+    pub(in crate::debug_cdp) fn initialize_with_exception_filter(
         mut self,
         initial_breakpoints: &[DebugBreakpoint],
         exception_pause_mode: DebugExceptionPauseMode,
+        exception_type_filter: &[String],
         internal_step_filter: Option<DebugJustMyCodePolicy>,
     ) -> Result<NodeCdpAdapter, String> {
         let adapter = self.adapter.as_mut().ok_or_else(identity_changed)?;
@@ -471,6 +539,7 @@ impl HeldExternalNodeCdpAttach {
             &self.emitter,
             initial_breakpoints,
             exception_pause_mode,
+            exception_type_filter,
             internal_step_filter,
         )?;
         self.adapter.take().ok_or_else(identity_changed)

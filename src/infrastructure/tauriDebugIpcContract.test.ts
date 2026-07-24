@@ -25,6 +25,7 @@ describe("debug Tauri IPC contract", () => {
           launch: { kind: "node-script", scriptPath: "/workspace/a.js" },
           breakpoints: [],
           exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
         },
         {
           launch: {
@@ -36,6 +37,7 @@ describe("debug Tauri IPC contract", () => {
           },
           breakpoints: [],
           exceptionPauseMode: "uncaught",
+          exceptionTypeFilter: [],
         },
       ],
     };
@@ -60,6 +62,7 @@ describe("debug Tauri IPC contract", () => {
             launch: { kind: "node-script", scriptPath: "/workspace/e.js" },
             breakpoints: [],
             exceptionPauseMode: "none",
+            exceptionTypeFilter: [],
           },
         ],
       },
@@ -70,6 +73,7 @@ describe("debug Tauri IPC contract", () => {
             launch: { kind: "node-attach", port: 9229 },
             breakpoints: [],
             exceptionPauseMode: "none",
+            exceptionTypeFilter: [],
           },
           request.members[1],
         ],
@@ -132,8 +136,12 @@ describe("debug Tauri IPC contract", () => {
       readonly request: { readonly rootPath: string; readonly sessionId: number };
     }>();
     expectTypeOf<DebugIpcCommandArgs<"debug_set_exception_pause">>().toEqualTypeOf<{
-      readonly sessionId: number;
-      readonly mode: "none" | "uncaught" | "all";
+      readonly request: {
+        readonly rootPath: string;
+        readonly sessionId: number;
+        readonly mode: "none" | "uncaught" | "all";
+        readonly exceptionTypeFilter: readonly string[];
+      };
     }>();
     expectTypeOf<DebugIpcCommandArgs<"debug_set_breakpoints_active">>().toEqualTypeOf<{
       readonly request: {
@@ -451,13 +459,21 @@ describe("debug Tauri IPC contract", () => {
 
     await expect(
       invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
-        sessionId: 8,
-        mode: "uncaught",
+        request: {
+          rootPath: "/workspace exact",
+          sessionId: 8,
+          mode: "uncaught",
+          exceptionTypeFilter: ["TypeError", "app.DomainError"],
+        },
       }),
     ).resolves.toBeUndefined();
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_set_exception_pause", {
-      sessionId: 8,
-      mode: "uncaught",
+      request: {
+        rootPath: "/workspace exact",
+        sessionId: 8,
+        mode: "uncaught",
+        exceptionTypeFilter: ["TypeError", "app.DomainError"],
+      },
     });
     expect(decodeDebugIpcResult("debug_set_exception_pause", null)).toBeUndefined();
     expect(() => decodeDebugIpcResult("debug_set_exception_pause", undefined)).toThrow(
@@ -981,10 +997,14 @@ describe("debug Tauri IPC contract", () => {
     const invokeCommand = vi.fn<InvokeDebugCommand>();
     await expect(
       invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
-        sessionId: 8,
-        mode: mode as "all",
+        request: {
+          rootPath: "/workspace",
+          sessionId: 8,
+          mode: mode as "all",
+          exceptionTypeFilter: [],
+        },
       }),
-    ).rejects.toThrow("debug_set_exception_pause args.mode");
+    ).rejects.toThrow("debug_set_exception_pause args.request.mode");
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
@@ -992,16 +1012,66 @@ describe("debug Tauri IPC contract", () => {
     const invokeCommand = vi.fn<InvokeDebugCommand>();
     await expect(
       invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
-        sessionId: 8,
+        request: {
+          rootPath: "/workspace",
+          sessionId: 8,
+          exceptionTypeFilter: [],
+        },
       } as never),
-    ).rejects.toThrow("debug_set_exception_pause args.mode");
+    ).rejects.toThrow("debug_set_exception_pause args.request.mode");
     await expect(
       invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
-        sessionId: 8,
-        mode: "all",
-        extra: true,
+        request: {
+          rootPath: "/workspace",
+          sessionId: 8,
+          mode: "all",
+        },
       } as never),
-    ).rejects.toThrow("debug_set_exception_pause args.extra");
+    ).rejects.toThrow("debug_set_exception_pause args.request.exceptionTypeFilter");
+    await expect(
+      invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
+        request: {
+          rootPath: "/workspace",
+          sessionId: 8,
+          mode: "all",
+          exceptionTypeFilter: [],
+          extra: true,
+        },
+      } as never),
+    ).rejects.toThrow("debug_set_exception_pause args.request.extra");
+    await expect(
+      invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
+        request: {
+          rootPath: "/work\nspace",
+          sessionId: 8,
+          mode: "all",
+          exceptionTypeFilter: [],
+        },
+      }),
+    ).rejects.toThrow("debug_set_exception_pause args.request.rootPath");
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    "TypeError",
+    ["not valid"],
+    ["TypeError", "TypeError"],
+    Array.from({ length: 9 }, (_, index) => `Error${index}`),
+    ["a.b.c.d.e.f.g.h.i"],
+    ["é".repeat(129)],
+  ])("rejects malformed exception type filter %# before IPC", async (exceptionTypeFilter) => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>();
+    await expect(
+      invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
+        request: {
+          rootPath: "/workspace",
+          sessionId: 8,
+          mode: "all",
+          exceptionTypeFilter,
+        },
+      } as never),
+    ).rejects.toThrow("debug_set_exception_pause args.request.exceptionTypeFilter");
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
@@ -1037,6 +1107,7 @@ describe("debug Tauri IPC contract", () => {
         launch,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).resolves.toEqual({ status: "ok", sessionId: 9 });
 
@@ -1046,6 +1117,7 @@ describe("debug Tauri IPC contract", () => {
         launch: { ...launch, env: { PORT: 3000 } } as unknown as typeof launch,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("launch.env.PORT");
   });
@@ -1071,6 +1143,7 @@ describe("debug Tauri IPC contract", () => {
           launch,
           breakpoints: [],
           exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
         }),
       ).resolves.toEqual({ status: "ok", sessionId: 9 });
       expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
@@ -1078,6 +1151,7 @@ describe("debug Tauri IPC contract", () => {
         launch,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       });
     },
   );
@@ -1097,6 +1171,7 @@ describe("debug Tauri IPC contract", () => {
         } as unknown as DebugLaunchTarget,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch.runtime");
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -1121,6 +1196,7 @@ describe("debug Tauri IPC contract", () => {
         launch,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).resolves.toEqual({ status: "ok", sessionId: 9 });
     expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
@@ -1128,6 +1204,7 @@ describe("debug Tauri IPC contract", () => {
       launch,
       breakpoints: [],
       exceptionPauseMode: "none",
+      exceptionTypeFilter: [],
     });
 
     await expect(
@@ -1143,6 +1220,7 @@ describe("debug Tauri IPC contract", () => {
         } as unknown as DebugLaunchTarget,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch.envFile");
   });
@@ -1165,12 +1243,20 @@ describe("debug Tauri IPC contract", () => {
       invokeDebugIpc(invokeCommand, "debug_start", {
         ...base,
         exceptionPauseMode: "caught",
+        exceptionTypeFilter: [],
       } as never),
     ).rejects.toThrow("debug_start args.exceptionPauseMode");
     await expect(
       invokeDebugIpc(invokeCommand, "debug_start", {
         ...base,
         exceptionPauseMode: "all",
+      } as never),
+    ).rejects.toThrow("debug_start args.exceptionTypeFilter");
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start", {
+        ...base,
+        exceptionPauseMode: "all",
+        exceptionTypeFilter: [],
         extra: true,
       } as never),
     ).rejects.toThrow("debug_start args.extra");
@@ -1187,6 +1273,7 @@ describe("debug Tauri IPC contract", () => {
       launch: { kind: "node-attach" as const, port: 9229 },
       breakpoints: [],
       exceptionPauseMode: "uncaught" as const,
+      exceptionTypeFilter: [],
     };
 
     await expect(invokeDebugIpc(invokeCommand, "debug_start", args)).resolves.toEqual({
@@ -1206,6 +1293,7 @@ describe("debug Tauri IPC contract", () => {
           launch: { kind: "node-attach", port } as never,
           breakpoints: [],
           exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
         }),
       ).rejects.toThrow("debug_start args.launch.port");
       expect(invokeCommand).not.toHaveBeenCalled();
@@ -1226,6 +1314,7 @@ describe("debug Tauri IPC contract", () => {
         launch: launch as never,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch");
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -1302,6 +1391,7 @@ describe("debug Tauri IPC contract", () => {
         launch,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).resolves.toEqual({ status: "ok", sessionId: 9 });
   });
@@ -1314,6 +1404,7 @@ describe("debug Tauri IPC contract", () => {
         launch: { ...launch, extra: true } as never,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch.extra");
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -1360,6 +1451,7 @@ describe("debug Tauri IPC contract", () => {
         launch: launch as never,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch");
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -1394,6 +1486,7 @@ describe("debug Tauri IPC contract", () => {
         launch: launch as never,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch");
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -1437,6 +1530,7 @@ describe("debug Tauri IPC contract", () => {
         launch: launch as never,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch");
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -1463,6 +1557,7 @@ describe("debug Tauri IPC contract", () => {
         } as never,
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("debug_start args.launch.selection");
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -1489,6 +1584,7 @@ describe("debug Tauri IPC contract", () => {
         },
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).resolves.toEqual({ status: "ok", sessionId: 9 });
   });
@@ -1511,6 +1607,7 @@ describe("debug Tauri IPC contract", () => {
             },
             breakpoints: [],
             exceptionPauseMode: "none",
+            exceptionTypeFilter: [],
           }),
         ).rejects.toThrow(`debug_start args.launch.${field}`);
         expect(invokeCommand).not.toHaveBeenCalled();
@@ -1536,6 +1633,7 @@ describe("debug Tauri IPC contract", () => {
             },
             breakpoints: [],
             exceptionPauseMode: "none",
+            exceptionTypeFilter: [],
           }),
         ).rejects.toThrow(`debug_start args.launch.${field}`);
         expect(invokeCommand).not.toHaveBeenCalled();
@@ -1559,6 +1657,7 @@ describe("debug Tauri IPC contract", () => {
           },
           breakpoints: [],
           exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
         }),
       ).rejects.toThrow("debug_start args.launch.selection.fullName");
       expect(invokeCommand).not.toHaveBeenCalled();
@@ -1581,6 +1680,7 @@ describe("debug Tauri IPC contract", () => {
         },
         breakpoints: [],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).resolves.toEqual({ status: "ok", sessionId: 10 });
   });
@@ -1661,6 +1761,7 @@ describe("debug Tauri IPC contract", () => {
         launch: { kind: "node-script", scriptPath: "/workspace/app.ts" },
         breakpoints: [breakpoint],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).resolves.toEqual({ status: "ok", sessionId: 9 });
 
@@ -1670,6 +1771,7 @@ describe("debug Tauri IPC contract", () => {
         launch: { kind: "node-script", scriptPath: "/workspace/app.ts" },
         breakpoints: [{ ...breakpoint, logMessage: "count={" }],
         exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("logMessage");
   });

@@ -9,7 +9,9 @@ import type {
   DebugConsoleCompletionRequest,
   DebugConsoleCompletionResponse,
 } from "./debugConsoleCompletions";
+import type { DebugExceptionTypeFilter } from "./debugExceptionTypeFilter";
 export type { BreakpointHitCondition } from "./debugBreakpointHitCondition";
+export type { DebugExceptionTypeFilter } from "./debugExceptionTypeFilter";
 
 export interface Breakpoint {
   id: string;
@@ -164,6 +166,13 @@ export type StepKind = "continue" | "stepOver" | "stepInto" | "stepOut";
 
 export type DebugExceptionPauseMode = "none" | "uncaught" | "all";
 
+export interface DebugSetExceptionPauseRequest {
+  readonly rootPath: string;
+  readonly sessionId: number;
+  readonly mode: DebugExceptionPauseMode;
+  readonly exceptionTypeFilter: DebugExceptionTypeFilter;
+}
+
 export const MIN_NODE_DEBUG_PORT = 1;
 export const MAX_NODE_DEBUG_PORT = 65_535;
 
@@ -246,6 +255,7 @@ export interface DebugCompoundLaunchMember {
   readonly launch: DebugCompoundLaunchTarget;
   readonly breakpoints: readonly Breakpoint[];
   readonly exceptionPauseMode: DebugExceptionPauseMode;
+  readonly exceptionTypeFilter: DebugExceptionTypeFilter;
 }
 
 export interface DebugCompoundStartRequest {
@@ -295,6 +305,7 @@ export interface DebugGateway {
     launch: DebugLaunchTarget,
     breakpoints: readonly Breakpoint[],
     exceptionPauseMode?: DebugExceptionPauseMode,
+    exceptionTypeFilter?: DebugExceptionTypeFilter,
   ): Promise<DebugRuntimeStatus>;
   /** Private application foundation; orchestration intentionally remains opt-in. */
   startCompound?(request: DebugCompoundStartRequest): Promise<DebugCompoundRuntimeStatus>;
@@ -314,7 +325,12 @@ export interface DebugGateway {
   pause(sessionId: number): Promise<void>;
   restartFrame(request: DebugRestartFrameRequest): Promise<void>;
   runToLocation(request: DebugRunToLocationRequest): Promise<void>;
-  setExceptionPause(sessionId: number, mode: DebugExceptionPauseMode): Promise<void>;
+  setExceptionPause(
+    rootPath: string,
+    sessionId: number,
+    mode: DebugExceptionPauseMode,
+    exceptionTypeFilter?: DebugExceptionTypeFilter,
+  ): Promise<void>;
   stackTrace(sessionId: number): Promise<StackFrame[]>;
   scopesAtPause(request: DebugScopesRequest): Promise<DebugScope[]>;
   variablesPage(request: DebugVariablePageRequest): Promise<DebugVariablePage>;

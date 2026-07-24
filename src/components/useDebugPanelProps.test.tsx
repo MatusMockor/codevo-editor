@@ -102,6 +102,7 @@ describe("useDebugPanelProps", () => {
       exceptionPauseError: null,
       exceptionPauseMode: "none",
       exceptionPausePending: false,
+      exceptionTypeFilter: ["TypeError"],
       lastStartError: null,
       loadVariables,
       output: [],
@@ -117,6 +118,7 @@ describe("useDebugPanelProps", () => {
       setBreakpointHitCondition: vi.fn().mockResolvedValue(undefined),
       setBreakpointLogMessage: vi.fn().mockResolvedValue(undefined),
       setExceptionPauseMode: vi.fn().mockResolvedValue(undefined),
+      setExceptionTypeFilter: vi.fn().mockResolvedValue(undefined),
       snapshot: { lastSeq: 0, state: { kind: "inactive" } },
       stepDebug,
       stopDebug: vi.fn().mockResolvedValue(undefined),
@@ -234,6 +236,9 @@ describe("useDebugPanelProps", () => {
     expect(panel?.debugStopPending).toBe(false);
     expect(panel?.breakpointBulkMutationPending).toBe(false);
     expect(panel?.breakpointCounts).toEqual({ disabled: 2, enabled: 1 });
+    expect(panel?.exceptionTypeFilter).toEqual(["TypeError"]);
+    panel?.onSetExceptionTypeFilter?.(["RangeError"]);
+    expect(debugSession.setExceptionTypeFilter).toHaveBeenCalledWith(["RangeError"]);
     expect(panel?.workspaceTrusted).toBe(true);
     act(() => root.unmount());
   });
@@ -459,6 +464,7 @@ function debugSessionStub(overrides: Record<string, unknown> = {}) {
     exceptionPauseError: null,
     exceptionPauseMode: "none",
     exceptionPausePending: false,
+    exceptionTypeFilter: [],
     lastStartError: null,
     loadVariables: vi.fn().mockResolvedValue(undefined),
     loadVariablePage: vi.fn().mockResolvedValue(undefined),
@@ -474,6 +480,7 @@ function debugSessionStub(overrides: Record<string, unknown> = {}) {
     setBreakpointHitCondition: vi.fn().mockResolvedValue(undefined),
     setBreakpointLogMessage: vi.fn().mockResolvedValue(undefined),
     setExceptionPauseMode: vi.fn().mockResolvedValue(undefined),
+    setExceptionTypeFilter: vi.fn().mockResolvedValue(undefined),
     snapshot: { lastSeq: 0, state: { kind: "inactive" } },
     stepDebug: vi.fn().mockResolvedValue(undefined),
     stopDebug: vi.fn().mockResolvedValue(undefined),

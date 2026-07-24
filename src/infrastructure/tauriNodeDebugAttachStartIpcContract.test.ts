@@ -30,6 +30,7 @@ function request(
     candidateLeaseId: LEASE_ID,
     breakpoints: [breakpoint()],
     exceptionPauseMode: "uncaught",
+    exceptionTypeFilter: ["TypeError", "app.DomainError"],
     justMyCode: "nodeInternalsAndDependencies",
     ...overrides,
   };
@@ -57,6 +58,7 @@ describe("Node debug attach candidate start IPC contract", () => {
         candidateLeaseId: LEASE_ID,
         breakpoints: [breakpoint()],
         exceptionPauseMode: "uncaught",
+        exceptionTypeFilter: ["TypeError", "app.DomainError"],
         justMyCode: "nodeInternalsAndDependencies",
       },
     });
@@ -65,6 +67,49 @@ describe("Node debug attach candidate start IPC contract", () => {
     expect(wire).not.toContain('"port"');
     expect(wire).not.toContain("webSocket");
     expect(wire).not.toContain("ws://");
+  });
+
+  it.each([
+    ["Error", "Error"],
+    ["Error", ""],
+    ["Error", "invalid-name"],
+    ["a.b.c.d.e.f.g.h.i"],
+    ["x".repeat(257)],
+  ])("rejects malformed exception filter %# before invoke", async (...exceptionTypeFilter) => {
+    const invoke = vi.fn<InvokeNodeDebugAttachStartCommand>();
+    const result = await invokeNodeDebugAttachCandidateStartIpc(
+      invoke,
+      request({ exceptionTypeFilter }),
+    );
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: "error",
+      message: NODE_DEBUG_ATTACH_START_FAILED,
+    });
+  });
+
+  it("snapshots the exception filter once before validation and encoding", async () => {
+    const invoke = vi.fn<InvokeNodeDebugAttachStartCommand>().mockResolvedValue({
+      status: "ok",
+      sessionId: 17,
+    });
+    let reads = 0;
+    const flippingRequest = {
+      ...request(),
+      get exceptionTypeFilter() {
+        reads += 1;
+        if (reads === 1) return ["TypeError"];
+        return Array.from({ length: 9 }, (_, index) => `Error${index}`);
+      },
+    };
+
+    await invokeNodeDebugAttachCandidateStartIpc(invoke, flippingRequest);
+
+    expect(reads).toBe(1);
+    expect(invoke).toHaveBeenCalledWith(DEBUG_START_NODE_ATTACH_CANDIDATE_IPC_COMMAND, {
+      request: expect.objectContaining({ exceptionTypeFilter: ["TypeError"] }),
+    });
   });
 
   it.each([

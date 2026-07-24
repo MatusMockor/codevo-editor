@@ -84,6 +84,7 @@ describe("native Node watch debug orchestration recipes", () => {
       },
     );
 
+    expect(descriptor.exceptionTypeFilterSupported).toBe(false);
     await expect(
       descriptor.start(
         "/workspace",
@@ -96,6 +97,7 @@ describe("native Node watch debug orchestration recipes", () => {
           },
         ],
         "uncaught",
+        ["TypeError", "app.DomainError"],
       ),
     ).resolves.toEqual({ kind: "ok", sessionId: 31 });
     expect(descriptor.restartLaunch).toBeNull();
@@ -115,6 +117,7 @@ describe("native Node watch debug orchestration recipes", () => {
         },
       ],
       exceptionPauseMode: "uncaught",
+      exceptionTypeFilter: ["TypeError", "app.DomainError"],
       justMyCode: "nodeInternals",
     });
     expect(genericStart).not.toHaveBeenCalled();
@@ -132,7 +135,7 @@ describe("native Node watch debug orchestration recipes", () => {
       { scriptPath: "/workspace/server.js", watch: true },
     );
 
-    await expect(descriptor.start("/workspace", [], "none")).resolves.toEqual({
+    await expect(descriptor.start("/workspace", [], "none", [])).resolves.toEqual({
       kind: "error",
       message: "watch unavailable",
     });

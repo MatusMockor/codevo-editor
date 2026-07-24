@@ -86,26 +86,34 @@ impl DebugEventSink for AppHandleDebugEventSink {
     }
 }
 
-pub(crate) fn create_debug_adapter(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_debug_adapter_with_exception_filter(
     root: &Path,
     launch: &DebugLaunchTarget,
     breakpoints: &[DebugBreakpoint],
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: &[String],
     emitter: DebugEventEmitter,
     finish: Box<dyn FnOnce(Option<i32>) + Send>,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Box<dyn DebugAdapter>, String> {
+    crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(
+        exception_type_filter.to_vec(),
+    )?;
     if launch.is_node() {
-        crate::debug_cdp::create_node_cdp_adapter(
+        crate::debug_cdp::create_node_cdp_adapter_with_exception_filter(
             root,
             launch,
             breakpoints,
             exception_pause_mode,
+            exception_type_filter,
             emitter,
             finish,
             startup_is_current,
         )
-    } else if exception_pause_mode == DebugExceptionPauseMode::None {
+    } else if exception_pause_mode == DebugExceptionPauseMode::None
+        && exception_type_filter.is_empty()
+    {
         crate::debug_dbgp::create_php_dbgp_adapter(root, launch, breakpoints, emitter, finish)
     } else {
         Err("Exception pause modes are only available for Node.js debug sessions.".to_string())
@@ -118,6 +126,7 @@ pub(crate) async fn debug_start(
     launch: DebugLaunchTarget,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
     app: AppHandle,
     registry: State<'_, Arc<DebugSessionRegistry>>,
     workspace_registry: State<'_, WorkspaceRegistry>,
@@ -129,6 +138,7 @@ pub(crate) async fn debug_start(
         launch,
         breakpoints,
         exception_pause_mode,
+        exception_type_filter,
         DebugStartBackend {
             sink: app_debug_event_sink(app),
             registry: Arc::clone(registry.inner()),
@@ -155,6 +165,7 @@ pub(crate) async fn debug_start_with_trust(
         launch,
         breakpoints,
         exception_pause_mode,
+        Vec::new(),
         DebugStartBackend {
             sink,
             registry,
@@ -179,6 +190,7 @@ async fn debug_start_with_trust_and_authority(
     launch: DebugLaunchTarget,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
     backend: DebugStartBackend<'_>,
 ) -> Result<DebugStartResponse, String> {
     let DebugStartBackend {
@@ -252,6 +264,7 @@ async fn debug_start_with_trust_and_authority(
             launch: &launch,
             breakpoints: &breakpoints,
             exception_pause_mode,
+            exception_type_filter,
             sink,
             registry: &registry,
             retained_root,
@@ -266,6 +279,7 @@ struct DebugSessionStartup<'a> {
     launch: &'a DebugLaunchTarget,
     breakpoints: &'a [DebugBreakpoint],
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
     sink: Arc<dyn DebugEventSink>,
     registry: &'a Arc<DebugSessionRegistry>,
     retained_root: Option<RetainedDebugWorkspaceRoot>,
@@ -278,6 +292,7 @@ fn start_debug_session_blocking(startup: DebugSessionStartup<'_>) -> DebugStartR
         launch,
         breakpoints,
         exception_pause_mode,
+        exception_type_filter,
         sink,
         registry,
         retained_root,
@@ -302,11 +317,12 @@ fn start_debug_session_blocking(startup: DebugSessionStartup<'_>) -> DebugStartR
                 Some(retained) => retained.live_path()?,
                 None => root.to_path_buf(),
             };
-            create_debug_adapter(
+            create_debug_adapter_with_exception_filter(
                 &adapter_root,
                 launch,
                 breakpoints,
                 exception_pause_mode,
+                &exception_type_filter,
                 emitter,
                 finish,
                 startup_is_current,
@@ -520,17 +536,38 @@ pub(crate) async fn debug_set_breakpoints(
 
 #[tauri::command]
 pub(crate) async fn debug_set_exception_pause(
-    session_id: u64,
-    mode: DebugExceptionPauseMode,
+    request: DebugSetExceptionPauseRequest,
     registry: State<'_, Arc<DebugSessionRegistry>>,
 ) -> Result<(), String> {
+    let root = super::canonicalize_workspace_root(&request.root_path)?;
+    let root_key = root.to_string_lossy().into_owned();
+    crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(
+        request.exception_type_filter.clone(),
+    )?;
     let registry = Arc::clone(registry.inner());
     super::run_blocking_command(move || {
-        with_debug_session(&registry, session_id, |adapter| {
-            adapter.set_exception_pause(mode)
-        })
+        set_exception_pause_for_session(&registry, &root_key, &request)
     })
     .await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DebugSetExceptionPauseRequest {
+    root_path: String,
+    session_id: u64,
+    mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
+}
+
+fn set_exception_pause_for_session(
+    registry: &DebugSessionRegistry,
+    root_key: &str,
+    request: &DebugSetExceptionPauseRequest,
+) -> Result<(), String> {
+    registry.control_for_session(request.session_id, root_key, |adapter| {
+        adapter.set_exception_pause_filter(request.mode, &request.exception_type_filter)
+    })?
 }
 
 #[tauri::command]

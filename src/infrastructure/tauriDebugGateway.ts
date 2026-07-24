@@ -34,6 +34,7 @@ import type {
   DebugConsoleCompletionRequest,
   DebugConsoleCompletionResponse,
 } from "../domain/debugConsoleCompletions";
+import type { DebugExceptionTypeFilter } from "../domain/debugExceptionTypeFilter";
 import type {
   NativeNodeWatchDebugGateway,
   NativeNodeWatchDebugStartRequest,
@@ -96,6 +97,7 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
     launch: DebugLaunchTarget,
     breakpoints: readonly Breakpoint[],
     exceptionPauseMode: DebugExceptionPauseMode = "none",
+    exceptionTypeFilter: DebugExceptionTypeFilter = [],
   ): Promise<DebugRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return { kind: "unavailable", message: DESKTOP_RUNTIME_REQUIRED };
@@ -106,6 +108,7 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
       launch,
       breakpoints: [...breakpoints],
       exceptionPauseMode,
+      exceptionTypeFilter: [...exceptionTypeFilter],
     });
 
     return toRuntimeStatus(response);
@@ -115,8 +118,18 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
     if (!this.isRuntimeAvailable()) {
       return { kind: "unavailable", message: DESKTOP_RUNTIME_REQUIRED };
     }
+    const ownedRequest: DebugCompoundStartRequest = {
+      rootPath: request.rootPath,
+      members: request.members.map((member) => ({
+        launch: member.launch,
+        breakpoints: [...member.breakpoints],
+        exceptionPauseMode: member.exceptionPauseMode,
+        exceptionTypeFilter: [...member.exceptionTypeFilter],
+      })),
+      stopAll: true,
+    };
     const response = await invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.startCompound, {
-      request,
+      request: ownedRequest,
     });
     return toCompoundRuntimeStatus(response);
   }
@@ -133,6 +146,7 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
       {
         ...request,
         breakpoints: [...request.breakpoints],
+        exceptionTypeFilter: [...request.exceptionTypeFilter],
       },
     );
     return toRuntimeStatus(response);
@@ -248,14 +262,23 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
     });
   }
 
-  setExceptionPause(sessionId: number, mode: DebugExceptionPauseMode): Promise<void> {
+  setExceptionPause(
+    rootPath: string,
+    sessionId: number,
+    mode: DebugExceptionPauseMode,
+    exceptionTypeFilter: DebugExceptionTypeFilter = [],
+  ): Promise<void> {
     if (!this.isRuntimeAvailable()) {
       return Promise.resolve();
     }
 
     return invokeDebugIpc(this.invokeCommand, DEBUG_IPC_COMMANDS.setExceptionPause, {
-      sessionId,
-      mode,
+      request: {
+        rootPath,
+        sessionId,
+        mode,
+        exceptionTypeFilter: [...exceptionTypeFilter],
+      },
     });
   }
 

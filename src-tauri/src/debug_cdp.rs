@@ -108,6 +108,7 @@ mod tests {
 
     #[path = "../../debug_cdp_completion_tests.rs"]
     mod completion_tests;
+    mod debug_exception_type_filter_integration_tests;
     #[cfg(target_os = "macos")]
     #[path = "debug_cdp_held_external_attach_tests.rs"]
     mod held_external_attach_tests;
@@ -164,7 +165,7 @@ mod tests {
             let port = listener.local_addr().expect("mock server addr").port();
             let requests = Arc::new(Mutex::new(Vec::new()));
             let recorded = Arc::clone(&requests);
-            let handle = thread::spawn(move || {
+            let _handle = thread::spawn(move || {
                 let Ok((stream, _)) = listener.accept() else {
                     return;
                 };
@@ -207,7 +208,7 @@ mod tests {
                 }
             });
             Self {
-                _handle: handle,
+                _handle,
                 requests,
                 url: format!("ws://127.0.0.1:{port}/mock-session"),
             }

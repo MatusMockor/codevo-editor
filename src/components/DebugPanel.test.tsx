@@ -67,6 +67,7 @@ function defaultProps(): DebugPanelProps {
     exceptionPauseError: null,
     exceptionPauseMode: "none",
     exceptionPausePending: false,
+    exceptionTypeFilter: [],
     hasJavaScriptTypeScriptWorkspace: true,
     lastStartError: null,
     onLoadVariables: vi.fn(),
@@ -87,6 +88,7 @@ function defaultProps(): DebugPanelProps {
     onSetBreakpointEnabled: vi.fn(),
     onSetFunctionBreakpointEnabled: vi.fn(),
     onSetExceptionPauseMode: vi.fn(),
+    onSetExceptionTypeFilter: vi.fn(),
     onStep: vi.fn(),
     onStop: vi.fn(),
     rootPath: "/workspace",
@@ -806,6 +808,95 @@ describe("DebugPanel", () => {
     ).toBe(true);
   });
 
+  it("edits a bounded exception type filter and validates constructor names", () => {
+    const filter = Array.from({ length: 7 }, (_, index) => `Error${index}`);
+    const props = render({
+      debugAdapterKind: "node",
+      exceptionPauseMode: "all",
+      exceptionTypeFilter: filter,
+    });
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Exception type"]');
+    expect(input?.disabled).toBe(false);
+
+    act(() => {
+      setInputValue(input, "errors.HttpError");
+    });
+    act(() => {
+      if (!input) return;
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(props.onSetExceptionTypeFilter).toHaveBeenCalledWith([...filter, "errors.HttpError"]);
+
+    act(() => {
+      setInputValue(input, "not valid");
+    });
+    act(() => {
+      if (!input) return;
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+    expect(props.onSetExceptionTypeFilter).toHaveBeenCalledTimes(1);
+
+    act(() => button("Remove exception type Error0").click());
+    expect(props.onSetExceptionTypeFilter).toHaveBeenLastCalledWith(filter.slice(1));
+  });
+
+  it("caps exception types at eight and hides the filter for PHP", () => {
+    render({
+      debugAdapterKind: "node",
+      exceptionTypeFilter: Array.from({ length: 8 }, (_, index) => `Error${index}`),
+    });
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="Exception type"]')?.disabled,
+    ).toBe(true);
+
+    render({ debugAdapterKind: "php" });
+    expect(host.querySelector('section[aria-label="Exception Type Filter"]')).toBeNull();
+  });
+
+  it("applies exception type editing only to all and uncaught pause modes", () => {
+    render({ debugAdapterKind: "node", exceptionPauseMode: "none" });
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="Exception type"]')?.disabled,
+    ).toBe(true);
+    expect(
+      host.querySelector('section[aria-label="Exception Type Filter"]')?.textContent,
+    ).toContain("Off");
+
+    render({ debugAdapterKind: "node", exceptionPauseMode: "uncaught" });
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="Exception type"]')?.disabled,
+    ).toBe(false);
+
+    render({ debugAdapterKind: "node", exceptionPauseMode: "all" });
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="Exception type"]')?.disabled,
+    ).toBe(false);
+  });
+
+  it("discards an exception type draft when the workspace root changes", () => {
+    render({
+      debugAdapterKind: "node",
+      exceptionPauseMode: "all",
+      rootPath: "/workspace/a",
+    });
+    const firstInput = host.querySelector<HTMLInputElement>('input[aria-label="Exception type"]');
+    act(() => setInputValue(firstInput, "TypeError"));
+
+    const next = render({
+      debugAdapterKind: "node",
+      exceptionPauseMode: "all",
+      rootPath: "/workspace/b",
+    });
+    const nextInput = host.querySelector<HTMLInputElement>('input[aria-label="Exception type"]');
+
+    expect(nextInput?.value).toBe("");
+    act(() => {
+      nextInput?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(next.onSetExceptionTypeFilter).not.toHaveBeenCalled();
+  });
+
   it("enables stepping while stopped and reports the pause reason", () => {
     const props = render({ snapshot: stoppedSnapshot() });
 
@@ -1471,7 +1562,9 @@ describe("DebugPanel", () => {
       onConsoleFocusRequestHandled,
       snapshot: stoppedSnapshot(),
     });
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]');
+    const input = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Debug expression"]',
+    );
     expect(document.activeElement).toBe(input);
     expect(console.submit).not.toHaveBeenCalled();
     expect(console.clear).not.toHaveBeenCalled();
@@ -1511,7 +1604,9 @@ describe("DebugPanel", () => {
       snapshot: { state: { kind: "running", sessionId: 7 }, lastSeq: 1 },
     });
 
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]');
+    const input = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Debug expression"]',
+    );
     const output = host.querySelector<HTMLDivElement>('[aria-label="Debug console output"]');
     expect(input?.disabled).toBe(true);
     expect(output?.tabIndex).toBe(-1);
@@ -1540,7 +1635,7 @@ describe("DebugPanel", () => {
     });
 
     expect(document.activeElement).not.toBe(
-      host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]'),
+      host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Debug expression"]'),
     );
     expect(console.submit).not.toHaveBeenCalled();
     expect(console.clear).not.toHaveBeenCalled();
@@ -1576,7 +1671,9 @@ describe("DebugPanel", () => {
   it("evaluates expressions while paused and keeps history isolated by session", async () => {
     const submit = vi.fn().mockResolvedValue(undefined);
     render({ console: consoleResult(undefined, submit), snapshot: stoppedSnapshot() });
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]');
+    const input = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Debug expression"]',
+    );
     expect(input?.disabled).toBe(false);
 
     await act(async () => {
@@ -1630,19 +1727,21 @@ describe("DebugPanel", () => {
       snapshot: { state: { kind: "running", sessionId: 7 }, lastSeq: 1 },
     });
     expect(
-      host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]')?.disabled,
+      host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Debug expression"]')?.disabled,
     ).toBe(true);
 
     render({ snapshot: stoppedSnapshot(), workspaceTrusted: false });
     expect(
-      host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]')?.disabled,
+      host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Debug expression"]')?.disabled,
     ).toBe(true);
   });
 
   it("renders evaluation errors and Escape clears the pending expression", async () => {
     const submit = vi.fn().mockResolvedValue(undefined);
     render({ console: consoleResult(undefined, submit), snapshot: stoppedSnapshot() });
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]');
+    const input = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Debug expression"]',
+    );
 
     await act(async () => {
       setInputValue(input, "broken(");
@@ -1738,12 +1837,16 @@ function mockScrollMetrics(
   });
 }
 
-function setInputValue(input: HTMLInputElement | null, value: string) {
+function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | null, value: string) {
   if (!input) {
     return;
   }
 
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  const prototype =
+    input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }

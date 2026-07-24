@@ -32,11 +32,13 @@ describe("TauriDebugGateway", () => {
           launch: { kind: "node-script", scriptPath: "/workspace/a.js" },
           breakpoints: [],
           exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
         },
         {
           launch: { kind: "node-script", scriptPath: "/workspace/b.js" },
           breakpoints: [],
           exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
         },
       ],
     };
@@ -54,6 +56,13 @@ describe("TauriDebugGateway", () => {
       sessionIds: [7, 8],
     });
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_compound", { request });
+    const invokedRequest = invokeCommand.mock.calls[0]?.[1]?.request as DebugCompoundStartRequest;
+    expect(invokedRequest).not.toBe(request);
+    expect(invokedRequest.members).not.toBe(request.members);
+    expect(invokedRequest.members[0]?.breakpoints).not.toBe(request.members[0]?.breakpoints);
+    expect(invokedRequest.members[0]?.exceptionTypeFilter).not.toBe(
+      request.members[0]?.exceptionTypeFilter,
+    );
   });
 
   it("keeps browser development runtime quiet outside Tauri", async () => {
@@ -105,7 +114,7 @@ describe("TauriDebugGateway", () => {
         columnNumber: 2,
       }),
     ).resolves.toBeUndefined();
-    await expect(gateway.setExceptionPause(1, "all")).resolves.toBeUndefined();
+    await expect(gateway.setExceptionPause("/workspace/one", 1, "all")).resolves.toBeUndefined();
     await expect(gateway.stackTrace(1)).resolves.toEqual([]);
     await expect(
       gateway.scopesAtPause({
@@ -313,7 +322,9 @@ describe("TauriDebugGateway", () => {
         columnNumber: 2,
       }),
     ).resolves.toBeUndefined();
-    await expect(gateway.setExceptionPause(4, "uncaught")).resolves.toBeUndefined();
+    await expect(
+      gateway.setExceptionPause("/workspace/one", 4, "uncaught", ["TypeError"]),
+    ).resolves.toBeUndefined();
     await expect(gateway.stackTrace(4)).resolves.toEqual([frame]);
     await expect(
       gateway.scopesAtPause({
@@ -349,6 +360,7 @@ describe("TauriDebugGateway", () => {
       launch: { kind: "node-script", scriptPath: "/workspace/one/index.js" },
       breakpoints: [breakpoint],
       exceptionPauseMode: "none",
+      exceptionTypeFilter: [],
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_stop", { sessionId: 4 });
     expect(invokeCommand).toHaveBeenCalledWith("debug_disconnect", {
@@ -393,8 +405,12 @@ describe("TauriDebugGateway", () => {
       },
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_set_exception_pause", {
-      sessionId: 4,
-      mode: "uncaught",
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        mode: "uncaught",
+        exceptionTypeFilter: ["TypeError"],
+      },
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_stack_trace", {
       sessionId: 4,
@@ -483,7 +499,7 @@ describe("TauriDebugGateway", () => {
     ).rejects.not.toThrow("callFrameId");
   });
 
-  it("forwards an explicit startup exception pause mode", async () => {
+  it("forwards an explicit startup exception pause policy", async () => {
     const invokeCommand = vi.fn<InvokeCommand>(async () => ({ status: "ok", sessionId: 4 }));
     const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
 
@@ -492,6 +508,7 @@ describe("TauriDebugGateway", () => {
       { kind: "node-script", scriptPath: "/workspace/one/index.js" },
       [],
       "all",
+      ["Error", "app.DomainError"],
     );
 
     expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
@@ -499,6 +516,7 @@ describe("TauriDebugGateway", () => {
       launch: { kind: "node-script", scriptPath: "/workspace/one/index.js" },
       breakpoints: [],
       exceptionPauseMode: "all",
+      exceptionTypeFilter: ["Error", "app.DomainError"],
     });
   });
 
@@ -507,7 +525,9 @@ describe("TauriDebugGateway", () => {
     const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
     const launch = { kind: "node-attach", port: 9229 } as const;
 
-    await expect(gateway.start("/workspace/one", launch, [], "uncaught")).resolves.toEqual({
+    await expect(
+      gateway.start("/workspace/one", launch, [], "uncaught", ["TypeError"]),
+    ).resolves.toEqual({
       kind: "ok",
       sessionId: 4,
     });
@@ -516,6 +536,7 @@ describe("TauriDebugGateway", () => {
       launch,
       breakpoints: [],
       exceptionPauseMode: "uncaught",
+      exceptionTypeFilter: ["TypeError"],
     });
   });
 
@@ -578,6 +599,7 @@ describe("TauriDebugGateway", () => {
       launch,
       breakpoints: [],
       exceptionPauseMode: "none",
+      exceptionTypeFilter: [],
     });
   });
 

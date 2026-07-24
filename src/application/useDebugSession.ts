@@ -4,6 +4,7 @@ import type {
   DebugCompoundLaunchTarget,
   DebugEvent,
   DebugExceptionPauseMode,
+  DebugExceptionTypeFilter,
   DebugLaunchTarget,
   DebugSetBreakpointsActiveRequest,
   DebugVariable,
@@ -278,20 +279,35 @@ export function useWorkbenchDebugSession({
     [isExactWorkspaceOwnerCurrent, isWorkspaceTrusted],
   );
   const setExceptionPauseForSession = useCallback(
-    async (rootPath: string, sessionId: number, mode: DebugExceptionPauseMode) => {
+    async (
+      rootPath: string,
+      sessionId: number,
+      mode: DebugExceptionPauseMode,
+      exceptionTypeFilter: DebugExceptionTypeFilter,
+    ) => {
+      const setPolicy = (targetSessionId: number) =>
+        exceptionTypeFilter.length === 0
+          ? gateway.setExceptionPause(rootPath, targetSessionId, mode)
+          : gateway.setExceptionPause(rootPath, targetSessionId, mode, exceptionTypeFilter);
       const compoundSessionIds = exactLiveCompoundSessionIds(rootPath, sessionId);
       if (compoundSessionIds === null) {
-        await gateway.setExceptionPause(sessionId, mode);
+        await setPolicy(sessionId);
         return;
       }
       if (compoundSessionIds.length === 0) throw new Error(COMPOUND_POLICY_SYNC_ERROR);
       try {
-        await Promise.all(
-          compoundSessionIds.map((compoundSessionId) =>
-            gateway.setExceptionPause(compoundSessionId, mode),
-          ),
-        );
+        await Promise.all(compoundSessionIds.map(setPolicy));
       } catch {
+        const currentSessionIds = exactLiveCompoundSessionIds(rootPath, sessionId);
+        if (
+          currentSessionIds === null ||
+          currentSessionIds.length !== compoundSessionIds.length ||
+          currentSessionIds.some(
+            (currentSessionId, index) => currentSessionId !== compoundSessionIds[index],
+          )
+        ) {
+          throw new Error(COMPOUND_POLICY_SYNC_ERROR);
+        }
         await failClosedCompoundPolicyRef.current(rootPath, sessionId);
         throw new Error(COMPOUND_POLICY_SYNC_ERROR);
       }
@@ -326,7 +342,9 @@ export function useWorkbenchDebugSession({
     exceptionPauseError,
     exceptionPauseMode,
     exceptionPausePending,
+    exceptionTypeFilter,
     setExceptionPauseMode,
+    setExceptionTypeFilter,
     startPolicy: exceptionPauseStartPolicy,
     startPolicyForAdapter: exceptionPauseStartPolicyForAdapter,
   } = useDebugExceptionPause({
@@ -512,7 +530,11 @@ export function useWorkbenchDebugSession({
         [key]: descriptor.adapterKind,
       };
       setStartPendingByRoot((current) => ({ ...current, [key]: true }));
-      const policy = exceptionPauseStartPolicyForAdapter(requestedRoot, descriptor.adapterKind);
+      const policy = exceptionPauseStartPolicyForAdapter(
+        requestedRoot,
+        descriptor.adapterKind,
+        descriptor.exceptionTypeFilterSupported,
+      );
 
       try {
         if (!startDescriptorAuthorized(descriptor)) return;
@@ -524,6 +546,7 @@ export function useWorkbenchDebugSession({
             breakpointsByRootRef.current[key] ?? [],
           ),
           policy.mode,
+          policy.exceptionTypeFilter,
         );
         if (status.kind !== "ok") {
           if (
@@ -1707,6 +1730,7 @@ export function useWorkbenchDebugSession({
       exceptionPauseError,
       exceptionPauseMode,
       exceptionPausePending,
+      exceptionTypeFilter,
       output: sessionId === null ? emptyOutput : (outputBySession[sessionId] ?? emptyOutput),
       lastStartError: startErrors[activeKey] ?? null,
       selectedFrameId: selection?.frameId ?? null,
@@ -1738,6 +1762,7 @@ export function useWorkbenchDebugSession({
       addInlineBreakpoint,
       relocateBreakpoint,
       setExceptionPauseMode,
+      setExceptionTypeFilter,
       toggleBreakpoint,
       setBreakpointEnabled,
       setBreakpointCondition,

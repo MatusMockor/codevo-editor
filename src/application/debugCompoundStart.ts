@@ -34,7 +34,8 @@ interface WorkspaceOwnerEpoch {
 
 interface ExceptionPausePolicy {
   readonly adapterKind: "node" | "php";
-  readonly mode: Parameters<DebugGateway["setExceptionPause"]>[1];
+  readonly mode: Parameters<DebugGateway["setExceptionPause"]>[2];
+  readonly exceptionTypeFilter: Parameters<DebugGateway["setExceptionPause"]>[3];
 }
 
 export interface ActiveDebugCompound {
@@ -185,6 +186,7 @@ export async function startDebugCompoundAccepted(
         launch: launchTarget,
         breakpoints: currentBreakpoints,
         exceptionPauseMode: policy.mode,
+        exceptionTypeFilter: policy.exceptionTypeFilter ?? [],
       })),
       stopAll: true,
     });

@@ -20,6 +20,14 @@ use crate::debug_adapter::{
     DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
     DebugSetVariableResult, DebugVariablePage, DebugVariablePageRequest,
 };
+use crate::debug_cdp_breakpoints::{handle_breakpoint_resolved, handle_script_parsed};
+use crate::debug_exception_type_filter::{
+    handle_paused, handle_response as handle_exception_classification_response, handle_resumed,
+    handle_timeout as handle_exception_classification_timeout, DebugExceptionTypeFilter,
+    ExceptionFilterState,
+};
+
+pub(crate) type TransportBreakpointPauseDecision = super::BreakpointPauseDecision;
 use std::net::SocketAddr;
 const NODE_INTERNALS_BLACKBOX_PATTERN: &str = r"^(?:node:|internal/)";
 // CDP matches these expressions against the generated script URL. This deliberately
@@ -35,11 +43,11 @@ mod this_receiver {
 }
 
 #[derive(Default)]
-pub(super) struct PauseInventory {
-    pub(super) pause_generation: u64,
-    pub(super) call_frame_ids: HashMap<u64, String>,
+pub(crate) struct PauseInventory {
+    pub(crate) pause_generation: u64,
+    pub(crate) call_frame_ids: HashMap<u64, String>,
     pub(super) call_frame_this_object_ids: HashMap<u64, String>,
-    pub(super) frames: Vec<DebugStackFrame>,
+    pub(crate) frames: Vec<DebugStackFrame>,
     pub(super) object_ids: HashMap<u64, ObjectReference>,
     pub(super) object_reference_ids: HashMap<ObjectReferenceKey, u64>,
     pub(super) variable_page_loads: usize,
@@ -60,67 +68,67 @@ pub(super) struct BreakpointResolutionTarget {
     pub(super) source_path: String,
 }
 
-struct PendingInternalResume {
-    deadline: Instant,
-    inventory: PauseInventory,
-    reason: DebugStopReason,
-    request_id: u64,
+pub(crate) struct PendingInternalResume {
+    pub(crate) deadline: Instant,
+    pub(crate) inventory: PauseInventory,
+    pub(crate) reason: DebugStopReason,
+    pub(crate) request_id: u64,
 }
 
-enum PendingInternalAction {
+pub(crate) enum PendingInternalAction {
     Resume(PendingInternalResume),
     Logpoint(PendingLogpoint),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PendingLogpointPhase {
+pub(crate) enum PendingLogpointPhase {
     Evaluate,
     Resume,
 }
 
-struct PendingLogpoint {
-    call_frame_id: String,
-    current_output: String,
-    deadline: Instant,
-    inventory: PauseInventory,
-    message_index: usize,
-    phase: PendingLogpointPhase,
-    reason: DebugStopReason,
-    request_id: u64,
-    segment_index: usize,
-    templates: Vec<DebugLogTemplate>,
+pub(crate) struct PendingLogpoint {
+    pub(crate) call_frame_id: String,
+    pub(crate) current_output: String,
+    pub(crate) deadline: Instant,
+    pub(crate) inventory: PauseInventory,
+    pub(crate) message_index: usize,
+    pub(crate) phase: PendingLogpointPhase,
+    pub(crate) reason: DebugStopReason,
+    pub(crate) request_id: u64,
+    pub(crate) segment_index: usize,
+    pub(crate) templates: Vec<DebugLogTemplate>,
 }
 
-struct PendingExplicitPause {
+pub(crate) struct PendingExplicitPause {
     deadline: Instant,
     recovery: Option<InternalFallback>,
     request_id: u64,
-    resume_confirmed: bool,
+    pub(crate) resume_confirmed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct GeneratedPosition {
-    pub(super) line: u32,
-    pub(super) column: u32,
+pub(crate) struct GeneratedPosition {
+    pub(crate) line: u32,
+    pub(crate) column: u32,
 }
 
-pub(super) struct CdpShared {
-    breakpoint_hits: CdpBreakpointHitRegistry,
+pub(crate) struct CdpShared {
+    pub(crate) breakpoint_hits: CdpBreakpointHitRegistry,
     pub(super) breakpoints_by_file: HashMap<String, Vec<DebugBreakpoint>>,
     cdp_ids_by_file: HashMap<String, Vec<String>>,
-    first_pause_seen: bool,
-    explicit_pause_requested: bool,
-    internal_action: Option<PendingInternalAction>,
+    pub(crate) first_pause_seen: bool,
+    pub(crate) explicit_pause_requested: bool,
+    pub(crate) internal_action: Option<PendingInternalAction>,
     next_id: u64,
     pause_generation_epoch: u64,
     pub(super) pause: Option<PauseInventory>,
-    pending_explicit_pause: Option<PendingExplicitPause>,
+    pub(crate) pending_explicit_pause: Option<PendingExplicitPause>,
     pub(super) pending_restart_frame: Option<super::restart_frame::PendingRestartFrame>,
     pub(super) pending_resolutions: HashMap<String, GeneratedPosition>,
     pub(super) resolution_index: HashMap<String, BreakpointResolutionTarget>,
-    pub(super) suppress_next_resumed: bool,
-    pub(super) source_maps: Option<SourceMapRegistry>,
-    startup_validation: Option<StartupEntryValidation>,
+    pub(crate) suppress_next_resumed: bool,
+    pub(crate) source_maps: Option<SourceMapRegistry>,
+    pub(crate) startup_validation: Option<StartupEntryValidation>,
 }
 
 pub(super) const MAX_PENDING_BREAKPOINT_RESOLUTIONS: usize = 2_000;
@@ -209,9 +217,11 @@ impl CdpClient {
     fn start(
         socket: WebSocket<BoundedCdpStream>,
         shared: Arc<Mutex<CdpShared>>,
+        exception_filter: Arc<Mutex<ExceptionFilterState>>,
         emitter: CdpEventEmitter,
         request_timeout: Duration,
         disconnected: Option<mpsc::Sender<()>>,
+        mutation_is_allowed: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Self {
         let pending: PendingCdpRequests = Arc::new(Mutex::new(HashMap::new()));
         let (outgoing_tx, outgoing_rx) = mpsc::sync_channel(MAX_QUEUED_CDP_MESSAGES);
@@ -223,12 +233,14 @@ impl CdpClient {
         let context = SocketLoopContext {
             disconnect_notifier: disconnect_notifier.clone(),
             emitter,
+            exception_filter,
             next_request_id: Arc::clone(&next_request_id),
             outgoing: outgoing_rx,
             pending: Arc::clone(&pending),
             request_timeout,
             shared,
             shutdown: Arc::clone(&shutdown_requested),
+            mutation_is_allowed,
         };
         let io_thread = thread::spawn(move || {
             run_socket_loop(socket, context);
@@ -339,15 +351,32 @@ fn fail_closed_transport(
     disconnect_notifier.notify();
 }
 
-pub(super) struct SocketLoopContext {
+pub(crate) fn fail_closed_exception_timeout(context: &SocketLoopContext) {
+    if let Ok(mut shared) = context.shared.lock() {
+        shared.explicit_pause_requested = false;
+        shared.internal_action = None;
+        shared.pending_explicit_pause = None;
+        shared.suppress_next_resumed = false;
+        shared.invalidate_pause();
+    }
+    fail_closed_transport(
+        &context.pending,
+        &context.shutdown,
+        &context.disconnect_notifier,
+    );
+}
+
+pub(crate) struct SocketLoopContext {
     disconnect_notifier: DisconnectNotifier,
-    emitter: CdpEventEmitter,
-    next_request_id: Arc<AtomicU64>,
+    pub(crate) emitter: CdpEventEmitter,
+    pub(crate) exception_filter: Arc<Mutex<ExceptionFilterState>>,
+    pub(crate) next_request_id: Arc<AtomicU64>,
     outgoing: mpsc::Receiver<String>,
     pending: PendingCdpRequests,
-    request_timeout: Duration,
-    shared: Arc<Mutex<CdpShared>>,
+    pub(crate) request_timeout: Duration,
+    pub(crate) shared: Arc<Mutex<CdpShared>>,
     shutdown: Arc<AtomicBool>,
+    pub(crate) mutation_is_allowed: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 fn run_socket_loop(mut socket: WebSocket<BoundedCdpStream>, context: SocketLoopContext) {
@@ -356,14 +385,13 @@ fn run_socket_loop(mut socket: WebSocket<BoundedCdpStream>, context: SocketLoopC
             let _ = socket.close(None);
             break;
         }
-        if let Some(request) = handle_internal_action_timeout(&context) {
-            if context.emitter.health().is_failed_closed() {
-                let _ = socket.close(None);
-                break;
-            }
-            if context.shutdown.load(Ordering::SeqCst) {
-                break;
-            }
+        let timeout_request = handle_exception_classification_timeout(&context)
+            .or_else(|| handle_internal_action_timeout(&context));
+        if context.shutdown.load(Ordering::SeqCst) || context.emitter.health().is_failed_closed() {
+            let _ = socket.close(None);
+            break;
+        }
+        if let Some(request) = timeout_request {
             if socket.send(Message::text(request)).is_err() {
                 break;
             }
@@ -412,6 +440,11 @@ fn run_socket_loop(mut socket: WebSocket<BoundedCdpStream>, context: SocketLoopC
 fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<String> {
     let message: Value = serde_json::from_str(text).ok()?;
     if let Some(id) = message.get("id").and_then(Value::as_u64) {
+        if let Some(InternalResponse::Handled(reply)) =
+            handle_exception_classification_response(id, &message, context)
+        {
+            return reply;
+        }
         match handle_internal_action_response(id, &message, context) {
             InternalResponse::Handled(reply) => return reply,
             InternalResponse::NotHandled => {}
@@ -442,12 +475,12 @@ fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<St
     }
 }
 
-enum InternalResponse {
+pub(crate) enum InternalResponse {
     NotHandled,
     Handled(Option<String>),
 }
 
-struct InternalFallback {
+pub(crate) struct InternalFallback {
     diagnostic: Option<String>,
     frames: Vec<DebugStackFrame>,
     inventory: PauseInventory,
@@ -594,7 +627,7 @@ fn handle_internal_action_response(
     InternalResponse::Handled(reply)
 }
 
-fn schedule_explicit_pause(
+pub(crate) fn schedule_explicit_pause(
     shared: &mut CdpShared,
     context: &SocketLoopContext,
     recovery: Option<InternalFallback>,
@@ -755,19 +788,19 @@ fn fallback_from_logpoint(
     }
 }
 
-fn fallback_from_internal_action(action: PendingInternalAction) -> InternalFallback {
+pub(crate) fn fallback_from_internal_action(action: PendingInternalAction) -> InternalFallback {
     match action {
         PendingInternalAction::Resume(pending) => fallback_from_resume(pending, None),
         PendingInternalAction::Logpoint(pending) => fallback_from_logpoint(pending, None),
     }
 }
 
-struct LogpointAdvance {
-    outputs: Vec<String>,
-    request: String,
+pub(crate) struct LogpointAdvance {
+    pub(crate) outputs: Vec<String>,
+    pub(crate) request: String,
 }
 
-fn advance_logpoint(
+pub(crate) fn advance_logpoint(
     pending: &mut PendingLogpoint,
     next_request_id: &AtomicU64,
     request_timeout: Duration,
@@ -824,27 +857,6 @@ fn advance_logpoint(
     }
 }
 
-fn handle_script_parsed(params: &Value, context: &SocketLoopContext) {
-    let Some(generated_url) = params.get("url").and_then(Value::as_str) else {
-        return;
-    };
-    let Ok(mut shared) = context.shared.lock() else {
-        return;
-    };
-    let Some(source_maps) = shared.source_maps.as_mut() else {
-        return;
-    };
-    source_maps.evict_script(generated_url);
-    let Some(source_map_url) = params
-        .get("sourceMapURL")
-        .and_then(Value::as_str)
-        .filter(|url| !url.is_empty())
-    else {
-        return;
-    };
-    let _ = source_maps.register_script(generated_url, source_map_url);
-}
-
 fn dispatch_response(
     id: u64,
     message: &Value,
@@ -872,260 +884,10 @@ fn dispatch_response(
     }
 }
 
-fn handle_paused(params: &Value, context: &SocketLoopContext) -> Option<String> {
-    let reason_text = params
-        .get("reason")
-        .and_then(Value::as_str)
-        .unwrap_or("other");
-    let hit_user_breakpoint = params
-        .get("hitBreakpoints")
-        .and_then(Value::as_array)
-        .is_some_and(|hits| !hits.is_empty());
-    let initial_entry_match = context
-        .shared
-        .lock()
-        .ok()
-        .and_then(|shared| {
-            shared
-                .startup_validation
-                .as_ref()
-                .map(|validation| validation.matches_pause(params))
-        })
-        .unwrap_or(false);
-    {
-        let Ok(mut shared) = context.shared.lock() else {
-            return None;
-        };
-        if !shared.first_pause_seen {
-            shared.first_pause_seen = true;
-            if initial_entry_match {
-                if let Some(validation) = shared.startup_validation.take() {
-                    validation.complete(true);
-                }
-                shared.suppress_next_resumed = true;
-                let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-                return Some(
-                    json!({"id": id, "method": "Debugger.resume", "params": {}}).to_string(),
-                );
-            }
-            let is_entry_pause =
-                !hit_user_breakpoint && matches!(reason_text, "other" | "Break on start");
-            if is_entry_pause {
-                shared.suppress_next_resumed = true;
-                let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-                return Some(
-                    json!({"id": id, "method": "Debugger.resume", "params": {}}).to_string(),
-                );
-            }
-        }
-    }
-    let startup_validation = context
-        .shared
-        .lock()
-        .ok()
-        .and_then(|mut shared| shared.startup_validation.take());
-    if let Some(validation) = startup_validation {
-        let accepted = validation.matches_pause(params);
-        validation.complete(accepted);
-        if let Ok(mut shared) = context.shared.lock() {
-            shared.suppress_next_resumed = true;
-        }
-        let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-        return Some(json!({"id": id, "method": "Debugger.resume", "params": {}}).to_string());
-    }
-    let explicit_pause_requested = context
-        .shared
-        .lock()
-        .map(|mut shared| {
-            let requested = std::mem::take(&mut shared.explicit_pause_requested);
-            if requested {
-                shared.pending_explicit_pause = None;
-                // This pause is now visible and authoritative. Suppression belongs only to the
-                // hidden internal resume that preceded it; carrying it across this stop would
-                // swallow the user's next Continue event.
-                shared.suppress_next_resumed = false;
-            }
-            requested
-        })
-        .unwrap_or(false);
-    if hit_user_breakpoint {
-        let decision = {
-            let Ok(mut shared) = context.shared.lock() else {
-                return None;
-            };
-            let hit_ids = params
-                .get("hitBreakpoints")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str);
-            shared.breakpoint_hits.record_pause(hit_ids)
-        };
-        let can_run_internal = !explicit_pause_requested
-            && !matches!(reason_text, "step" | "exception" | "promiseRejection");
-        if can_run_internal && decision == BreakpointPauseDecision::AutoResume {
-            let reason = map_stop_reason(reason_text);
-            let Ok(mut shared) = context.shared.lock() else {
-                return None;
-            };
-            let Ok(inventory) = build_pause_inventory(params, &mut shared) else {
-                return None;
-            };
-            shared.suppress_next_resumed = true;
-            let request_id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-            shared.internal_action = Some(PendingInternalAction::Resume(PendingInternalResume {
-                deadline: Instant::now() + context.request_timeout,
-                inventory,
-                reason,
-                request_id,
-            }));
-            return Some(
-                json!({"id": request_id, "method": "Debugger.resume", "params": {}}).to_string(),
-            );
-        }
-        if can_run_internal {
-            if let BreakpointPauseDecision::Log(templates) = decision {
-                let reason = map_stop_reason(reason_text);
-                let prepared = {
-                    let Ok(mut shared) = context.shared.lock() else {
-                        return None;
-                    };
-                    let Ok(inventory) = build_pause_inventory(params, &mut shared) else {
-                        return None;
-                    };
-                    let call_frame_id = inventory
-                        .frames
-                        .first()
-                        .and_then(|frame| inventory.call_frame_ids.get(&frame.frame_id))
-                        .cloned();
-                    call_frame_id.map(|call_frame_id| {
-                        let mut pending = PendingLogpoint {
-                            call_frame_id,
-                            current_output: String::new(),
-                            deadline: Instant::now() + context.request_timeout,
-                            inventory,
-                            message_index: 0,
-                            phase: PendingLogpointPhase::Evaluate,
-                            reason,
-                            request_id: 0,
-                            segment_index: 0,
-                            templates,
-                        };
-                        let advance = advance_logpoint(
-                            &mut pending,
-                            &context.next_request_id,
-                            context.request_timeout,
-                        );
-                        shared.suppress_next_resumed = true;
-                        shared.internal_action = Some(PendingInternalAction::Logpoint(pending));
-                        advance
-                    })
-                };
-                if let Some(advance) = prepared {
-                    for text in advance.outputs {
-                        context.emitter.emit(DebugEventPayload::Output {
-                            stream: DebugOutputStream::Stdout,
-                            text,
-                        });
-                    }
-                    return Some(advance.request);
-                }
-                context.emitter.emit(DebugEventPayload::Output {
-                    stream: DebugOutputStream::Stderr,
-                    text: "[logpoint] No call frame is available for evaluation.\n".into(),
-                });
-            }
-        }
-    }
-    let (frames, pause_generation, reason) = {
-        let Ok(mut shared) = context.shared.lock() else {
-            return None;
-        };
-        let Ok(pause) = super::restart_frame::install_visible_pause(params, &mut shared) else {
-            return None;
-        };
-        pause
-    };
-    context.emitter.emit(DebugEventPayload::Stopped {
-        reason,
-        frames,
-        pause_generation,
-    });
-    None
-}
-
-fn handle_resumed(context: &SocketLoopContext) -> Option<String> {
-    let (should_emit, request) = {
-        let Ok(mut shared) = context.shared.lock() else {
-            return None;
-        };
-        shared.invalidate_pause();
-        let internal_resume = shared.internal_action.is_some() || shared.suppress_next_resumed;
-        let recovery = shared
-            .internal_action
-            .take()
-            .map(fallback_from_internal_action);
-        let should_emit = !shared.suppress_next_resumed;
-        shared.suppress_next_resumed = false;
-        let request = if let Some(pending) = shared.pending_explicit_pause.as_mut() {
-            pending.resume_confirmed = true;
-            None
-        } else if internal_resume && shared.explicit_pause_requested {
-            schedule_explicit_pause(&mut shared, context, recovery, true)
-        } else {
-            None
-        };
-        (should_emit, request)
-    };
-    if should_emit {
-        context.emitter.emit(DebugEventPayload::Resumed);
-    }
-    request
-}
-
-fn handle_breakpoint_resolved(params: &Value, context: &SocketLoopContext) {
-    let Some(cdp_breakpoint_id) = params.get("breakpointId").and_then(Value::as_str) else {
-        return;
-    };
-    let Some(resolved_line) = params
-        .pointer("/location/lineNumber")
-        .and_then(Value::as_u64)
-        .map(|line| line as u32)
-    else {
-        return;
-    };
-    let resolved_column = params
-        .pointer("/location/columnNumber")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as u32;
-    let resolved = {
-        let Ok(mut shared) = context.shared.lock() else {
-            return;
-        };
-        apply_breakpoint_resolution(
-            &mut shared,
-            cdp_breakpoint_id,
-            GeneratedPosition {
-                line: resolved_line,
-                column: resolved_column,
-            },
-        )
-    };
-    let Some((file_path, breakpoints)) = resolved else {
-        return;
-    };
-    context
-        .emitter
-        .emit(DebugEventPayload::BreakpointsVerified {
-            file_path,
-            breakpoints,
-        });
-}
-
 /// A resolution for a not-yet-registered CDP breakpoint id is buffered in
 /// `pending_resolutions` so `set_breakpoints` can consume it after the
 /// `setBreakpointByUrl` response lands.
-pub(super) fn apply_breakpoint_resolution(
+pub(crate) fn apply_breakpoint_resolution(
     state: &mut CdpShared,
     cdp_breakpoint_id: &str,
     generated: GeneratedPosition,
@@ -1159,6 +921,25 @@ pub(super) fn original_breakpoint_line(
     original_breakpoint_position(state, target, generated).0
 }
 
+pub(crate) fn stop_reason(reason: &str) -> DebugStopReason {
+    map_stop_reason(reason)
+}
+
+pub(crate) fn invalidate_pause(shared: &mut CdpShared) {
+    shared.invalidate_pause();
+}
+
+pub(crate) fn emit_debug_event(context: &SocketLoopContext, payload: DebugEventPayload) {
+    context.emitter.emit(payload);
+}
+
+pub(crate) fn install_visible_pause(
+    params: &Value,
+    shared: &mut CdpShared,
+) -> Result<(Vec<DebugStackFrame>, u64, DebugStopReason), String> {
+    super::restart_frame::install_visible_pause(params, shared)
+}
+
 fn original_breakpoint_position(
     state: &CdpShared,
     target: &BreakpointResolutionTarget,
@@ -1178,7 +959,7 @@ fn original_breakpoint_position(
         ))
 }
 
-pub(super) fn build_pause_inventory(
+pub(crate) fn build_pause_inventory(
     params: &Value,
     state: &mut CdpShared,
 ) -> Result<PauseInventory, String> {
@@ -1289,6 +1070,7 @@ pub(super) fn build_pause_inventory(
 
 pub(crate) struct NodeCdpAdapter {
     client: CdpClient,
+    exception_filter: Arc<Mutex<ExceptionFilterState>>,
     function_breakpoints: crate::debug_cdp_function_breakpoints::FunctionBreakpointRegistrations,
     ownership: DebuggeeOwnership,
     shared: Arc<Mutex<CdpShared>>,
@@ -1406,11 +1188,39 @@ impl DebugAdapter for NodeCdpAdapter {
     }
 
     fn set_exception_pause(&mut self, mode: DebugExceptionPauseMode) -> Result<(), String> {
+        self.set_exception_pause_filter(mode, &[])
+    }
+
+    fn set_exception_pause_filter(
+        &mut self,
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: &[String],
+    ) -> Result<(), String> {
+        let filter = DebugExceptionTypeFilter::parse(exception_type_filter.to_vec())?;
+        {
+            let mut state = self
+                .exception_filter
+                .lock()
+                .map_err(|error| error.to_string())?;
+            state.begin_policy_update();
+        }
         crate::debug_cdp_breakpoints::set_exception_pause(
             &self.client,
             self.mutation_is_allowed.as_ref(),
             mode,
-        )
+        )?;
+        ensure_startup_current(self.mutation_is_allowed.as_ref())?;
+        let mut state = self
+            .exception_filter
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let filter = if mode == DebugExceptionPauseMode::None {
+            DebugExceptionTypeFilter::default()
+        } else {
+            filter
+        };
+        state.finish_policy_update(filter);
+        Ok(())
     }
 
     fn set_function_breakpoints(
@@ -1593,9 +1403,15 @@ impl DebugAdapter for NodeCdpAdapter {
     }
 
     fn pause(&mut self) -> Result<(), String> {
+        let exception_filter_pending = self
+            .exception_filter
+            .lock()
+            .map_err(|error| error.to_string())?
+            .pending
+            .is_some();
         let deferred_or_duplicate = {
             let mut shared = self.shared.lock().map_err(|error| error.to_string())?;
-            mark_explicit_pause_requested(&mut shared)
+            mark_explicit_pause_requested(&mut shared) || exception_filter_pending
         };
         if deferred_or_duplicate {
             return Ok(());

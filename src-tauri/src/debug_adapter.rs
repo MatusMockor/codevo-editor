@@ -532,6 +532,18 @@ pub trait DebugAdapter: Send {
     fn set_exception_pause(&mut self, _mode: DebugExceptionPauseMode) -> Result<(), String> {
         Err("Exception pause modes are only available for Node.js debug sessions.".to_string())
     }
+    fn set_exception_pause_filter(
+        &mut self,
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: &[String],
+    ) -> Result<(), String> {
+        if !exception_type_filter.is_empty() {
+            return Err(
+                "Exception type filters are only available for Node.js debug sessions.".to_string(),
+            );
+        }
+        self.set_exception_pause(mode)
+    }
     fn set_breakpoints(
         &mut self,
         file_path: &str,

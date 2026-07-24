@@ -1,4 +1,9 @@
-import type { Breakpoint, DebugExceptionPauseMode, DebugRuntimeStatus } from "./debug";
+import type {
+  Breakpoint,
+  DebugExceptionPauseMode,
+  DebugExceptionTypeFilter,
+  DebugRuntimeStatus,
+} from "./debug";
 import type { NodeDebugJustMyCodePolicy } from "./nodeDebugJustMyCode";
 
 export type NativeNodeWatchDebugStartRequest = Readonly<{
@@ -8,6 +13,7 @@ export type NativeNodeWatchDebugStartRequest = Readonly<{
   readonly preserveOutput?: true;
   readonly breakpoints: readonly Breakpoint[];
   readonly exceptionPauseMode: DebugExceptionPauseMode;
+  readonly exceptionTypeFilter: DebugExceptionTypeFilter;
   readonly justMyCode?: NodeDebugJustMyCodePolicy;
 }>;
 

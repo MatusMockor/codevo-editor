@@ -11,6 +11,7 @@ mod debug_cdp_breakpoints;
 mod debug_cdp_function_breakpoints;
 mod debug_commands;
 mod debug_dbgp;
+mod debug_exception_type_filter;
 mod debug_hit_condition;
 mod debug_inspector_attach;
 mod debug_inspector_discovery;
@@ -9782,7 +9783,7 @@ mod tests {
             DebugLaunchTarget::NodeScript {
                 script_path: path_string(&script),
             },
-            Vec::new(),
+            vec![],
             crate::debug_adapter::DebugExceptionPauseMode::None,
             Arc::clone(&sink) as Arc<dyn DebugEventSink>,
             Arc::clone(&registry),

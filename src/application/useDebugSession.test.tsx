@@ -255,6 +255,10 @@ describe("useDebugSession", () => {
   it("subscribes before native compound start, adopts an early stopped child, and targets it", async () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      await ui.hook().setExceptionPauseMode("all");
+      await ui.hook().setExceptionTypeFilter(["TypeError"]);
+    });
     harness.startCompound.mockImplementationOnce(async () => {
       harness.emit({
         rootPath: "/workspace/one",
@@ -299,12 +303,14 @@ describe("useDebugSession", () => {
         {
           launch,
           breakpoints: [],
-          exceptionPauseMode: "none",
+          exceptionPauseMode: "all",
+          exceptionTypeFilter: ["TypeError"],
         },
         {
           launch: compoundMembers[1],
           breakpoints: [],
-          exceptionPauseMode: "none",
+          exceptionPauseMode: "all",
+          exceptionTypeFilter: ["TypeError"],
         },
       ],
       stopAll: true,
@@ -417,8 +423,8 @@ describe("useDebugSession", () => {
 
     await act(async () => void (await ui.hook().setExceptionPauseMode("all")));
     expect(harness.setExceptionPause.mock.calls).toEqual([
-      [41, "all"],
-      [42, "all"],
+      ["/workspace/one", 41, "all"],
+      ["/workspace/one", 42, "all"],
     ]);
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 41 });
     ui.unmount();
@@ -451,7 +457,7 @@ describe("useDebugSession", () => {
 
   it("stops the exact compound after a partial exception-policy failure", async () => {
     const harness = createGateway();
-    harness.setExceptionPause.mockImplementation(async (sessionId) => {
+    harness.setExceptionPause.mockImplementation(async (_rootPath, sessionId) => {
       if (sessionId === 42) throw new Error("secret exception failure");
     });
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
@@ -798,7 +804,7 @@ describe("useDebugSession", () => {
       await ui.hook().startDebug(launch);
     });
 
-    expect(harness.start).toHaveBeenCalledWith("/workspace/one", launch, [], "none");
+    expect(harness.start).toHaveBeenCalledWith("/workspace/one", launch, [], "none", []);
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 4 });
     expect(ui.hook().isDebugStartBlocked()).toBe(true);
 
@@ -849,21 +855,45 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => void (await ui.hook().setExceptionPauseMode("all")));
+    await act(async () => void (await ui.hook().setExceptionTypeFilter(["TypeError"])));
     expect(harness.setExceptionPause).not.toHaveBeenCalled();
     await act(async () => void (await ui.hook().startDebug(launch)));
-    expect(harness.start).toHaveBeenLastCalledWith("/workspace/one", launch, [], "all");
+    expect(harness.start).toHaveBeenLastCalledWith("/workspace/one", launch, [], "all", [
+      "TypeError",
+    ]);
     expect(ui.hook().debugAdapterKind).toBe("node");
 
     ui.set({ workspaceRoot: "/workspace/two" });
     await act(async () => void (await ui.hook().setExceptionPauseMode("all")));
     const phpLaunch = { kind: "php-script", scriptPath: "/workspace/two/index.php" } as const;
     await act(async () => void (await ui.hook().startDebug(phpLaunch)));
-    expect(harness.start).toHaveBeenLastCalledWith("/workspace/two", phpLaunch, [], "none");
+    expect(harness.start).toHaveBeenLastCalledWith("/workspace/two", phpLaunch, [], "none", []);
     expect(ui.hook().debugAdapterKind).toBe("php");
 
     ui.set({ workspaceRoot: "/workspace/one" });
     expect(ui.hook().exceptionPauseMode).toBe("all");
     expect(ui.hook().debugAdapterKind).toBe("node");
+    ui.unmount();
+  });
+
+  it("does not send a stored exception filter to a native watch descriptor", async () => {
+    const harness = createGateway();
+    const start = vi.fn(async () => ({ kind: "ok" as const, sessionId: 19 }));
+    const descriptor: DebugStartDescriptor = {
+      adapterKind: "node",
+      exceptionTypeFilterSupported: false,
+      restartLaunch: null,
+      targetKind: "node-configured-script",
+      start,
+    };
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => void (await ui.hook().setExceptionTypeFilter(["TypeError"])));
+    await act(async () => {
+      await ui.hook().startDebugDescriptorSessionAccepted(descriptor);
+    });
+
+    expect(start).toHaveBeenCalledExactlyOnceWith("/workspace/one", [], "none", []);
     ui.unmount();
   });
 
@@ -873,7 +903,7 @@ describe("useDebugSession", () => {
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, true);
     await act(async () => void (await ui.hook().startDebug(launch)));
     await act(async () => void (await ui.hook().setExceptionPauseMode("uncaught")));
-    expect(harness.setExceptionPause).toHaveBeenCalledWith(4, "uncaught");
+    expect(harness.setExceptionPause).toHaveBeenCalledWith("/workspace/one", 4, "uncaught");
     expect(ui.hook().exceptionPauseMode).toBe("uncaught");
     expect(ui.hook().exceptionPauseError).toBe("CDP rejected pause policy");
     expect(ui.hook().exceptionPausePending).toBe(false);
@@ -1191,6 +1221,7 @@ describe("useDebugSession", () => {
       },
       [],
       "none",
+      [],
     );
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 9 });
     expect(ui.hook().debugRestartPending).toBe(false);
@@ -1294,6 +1325,7 @@ describe("useDebugSession", () => {
         },
       ]);
       await ui.hook().setExceptionPauseMode("all");
+      await ui.hook().setExceptionTypeFilter(["TypeError"]);
     });
 
     let accepted: number | null = null;
@@ -1314,6 +1346,7 @@ describe("useDebugSession", () => {
         }),
       ],
       exceptionPauseMode: "all",
+      exceptionTypeFilter: ["TypeError"],
     });
     expect(harness.start).not.toHaveBeenCalled();
     expect(ui.hook().snapshot.state).toMatchObject({
@@ -2401,6 +2434,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart,
+      exceptionTypeFilterSupported: true,
       isStartAuthorized: () => authorized,
       restartLaunch: null,
       targetKind: "node-configured-script",
@@ -2433,6 +2467,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart,
+      exceptionTypeFilterSupported: true,
       restartLaunch: null,
       targetKind: "node-configured-script",
       start: async () => ({ kind: "ok", sessionId: 19 }),
@@ -2484,6 +2519,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart: () => confirmation.promise,
+      exceptionTypeFilterSupported: true,
       restartLaunch: null,
       targetKind: "node-configured-script",
       start: async () => ({ kind: "ok", sessionId: 19 }),
@@ -2537,6 +2573,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart: () => confirmation.promise,
+      exceptionTypeFilterSupported: true,
       restartLaunch: null,
       targetKind: "node-configured-script",
       start: async () => ({ kind: "ok", sessionId: 19 }),
@@ -2597,6 +2634,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart: () => confirmation.promise,
+      exceptionTypeFilterSupported: true,
       restartLaunch: null,
       targetKind: "node-configured-script",
       start: async () => {
@@ -2658,6 +2696,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart,
+      exceptionTypeFilterSupported: true,
       restartLaunch: null,
       targetKind: "node-configured-script",
       start: async () => ({ kind: "ok", sessionId: 19 }),
@@ -2685,6 +2724,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart,
+      exceptionTypeFilterSupported: true,
       restartLaunch: null,
       targetKind: "node-configured-script",
       start: async () => ({ kind: "ok", sessionId: 19 }),
@@ -2717,6 +2757,7 @@ describe("useDebugSession", () => {
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
       confirmStart: () => confirmation.promise,
+      exceptionTypeFilterSupported: true,
       isStartAuthorized: () => authorized,
       restartLaunch: null,
       targetKind: "node-configured-script",
@@ -3893,6 +3934,7 @@ describe("useDebugSession", () => {
       expect.objectContaining({ kind: "php-script" }),
       [expect.objectContaining({ id: "php" })],
       "none",
+      [],
     );
     act(() => {
       harness.emit({

@@ -37,6 +37,7 @@ pub(crate) struct NodeDebugAttachCandidateStartRequest {
     candidate_lease_id: String,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: Vec<String>,
     just_my_code: Option<DebugJustMyCodePolicy>,
 }
 
@@ -48,6 +49,13 @@ pub(crate) async fn debug_start_node_attach_candidate(
     publications: State<'_, Arc<NodeAttachCandidatePublicationRegistry>>,
 ) -> Result<DebugStartResponse, String> {
     if !valid_root_path(&request.root_path) || !valid_lease_id(&request.candidate_lease_id) {
+        return Ok(closed());
+    }
+    if crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(
+        request.exception_type_filter.clone(),
+    )
+    .is_err()
+    {
         return Ok(closed());
     }
 
@@ -128,6 +136,7 @@ fn start_candidate_blocking(
     let root_path = request.root_path;
     let lease_id = request.candidate_lease_id;
     let exception_pause_mode = request.exception_pause_mode;
+    let exception_type_filter = request.exception_type_filter;
     let just_my_code = request.just_my_code;
     let factory_app = app.clone();
     let factory_retained = Arc::clone(&retained);
@@ -162,7 +171,7 @@ fn start_candidate_blocking(
                 .live_path()
                 .map_err(|_| START_CLOSED.to_string())?;
             let terminals = factory_app.state::<crate::terminal_session::TerminalSupervisor>();
-            crate::debug_cdp::create_node_attach_candidate_adapter(
+            crate::debug_cdp::create_node_attach_candidate_adapter_with_exception_filter(
                 &publications,
                 &authority,
                 &lease_id,
@@ -170,6 +179,7 @@ fn start_candidate_blocking(
                 &live_root,
                 &factory_breakpoints,
                 exception_pause_mode,
+                &exception_type_filter,
                 just_my_code,
                 emitter,
                 finish,
@@ -282,6 +292,7 @@ mod tests {
             "candidateLeaseId": "0123456789abcdef0123456789abcdef",
             "breakpoints": [breakpoint],
             "exceptionPauseMode": "uncaught",
+            "exceptionTypeFilter": ["DomainError"],
             "justMyCode": "nodeInternalsAndDependencies"
         });
         assert!(
@@ -298,6 +309,15 @@ mod tests {
                 "{forbidden}"
             );
         }
+
+        let mut missing_filter = request;
+        missing_filter
+            .as_object_mut()
+            .expect("request object")
+            .remove("exceptionTypeFilter");
+        assert!(
+            serde_json::from_value::<NodeDebugAttachCandidateStartRequest>(missing_filter).is_err()
+        );
     }
 
     #[test]

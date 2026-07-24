@@ -13,6 +13,7 @@ import type {
   DebugSetFunctionBreakpointsRequest,
   DebugRunToLocationRequest,
   DebugScope,
+  DebugSetExceptionPauseRequest,
   DebugSetVariableRequest,
   DebugScopesRequest,
   DebugVariable,
@@ -65,6 +66,7 @@ import {
   type DebugConsoleCompletionResponse,
 } from "../domain/debugConsoleCompletions";
 import type { NativeNodeWatchDebugStartRequest } from "../domain/nativeNodeWatchDebugGateway";
+import { isExceptionTypeFilter } from "../domain/debugExceptionTypeFilter";
 
 const DEBUG_IDENTIFIER_PATTERN = /^(?:[$_]|\p{ID_Start})(?:[$_\u200c\u200d]|\p{ID_Continue})*$/u;
 
@@ -155,6 +157,7 @@ interface DebugIpcContract {
       readonly launch: DebugLaunchTarget;
       readonly breakpoints: Breakpoint[];
       readonly exceptionPauseMode: DebugExceptionPauseMode;
+      readonly exceptionTypeFilter: readonly string[];
     };
     readonly result: DebugStartResponseWire;
   };
@@ -194,10 +197,7 @@ interface DebugIpcContract {
     readonly result: readonly FunctionBreakpointVerification[];
   };
   readonly debug_set_exception_pause: {
-    readonly args: {
-      readonly sessionId: number;
-      readonly mode: DebugExceptionPauseMode;
-    };
+    readonly args: { readonly request: DebugSetExceptionPauseRequest };
     readonly result: void;
   };
   readonly debug_step: {
@@ -395,8 +395,9 @@ export function decodeDebugIpcResult<Command extends DebugIpcCommand>(
 function validateSessionOwnerRequest(
   request: Record<string, unknown>,
   command: DebugIpcCommand,
-): void {
-  requireExactKeys(request, ["rootPath", "sessionId"], `${command} args.request`);
+  extraFields: string[] = [],
+) {
+  requireExactKeys(request, ["rootPath", "sessionId", ...extraFields], `${command} args.request`);
   const rootPath = requireBoundedString(
     request.rootPath,
     `${command} args.request.rootPath`,
@@ -407,10 +408,7 @@ function validateSessionOwnerRequest(
   requirePositiveSafeInteger(request.sessionId, `${command} args.request.sessionId`);
 }
 
-function validateCompletionRequest(
-  request: Record<string, unknown>,
-  command: DebugIpcCommand,
-): void {
+function validateCompletionRequest(request: Record<string, unknown>, command: DebugIpcCommand) {
   const path = `${command} args.request`;
   requireExactKeys(request, ["rootPath", "sessionId", "pauseGeneration", "frameId", "query"], path);
   const rootPath = requireBoundedString(
@@ -600,7 +598,7 @@ export function decodeDebugEvent(value: unknown): DebugEvent {
   };
 }
 
-function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
+function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
   const args = requireRecord(value, `${command} args`);
   switch (command) {
     case "debug_completions": {
@@ -611,7 +609,7 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
     case "debug_start": {
       requireExactKeys(
         args,
-        ["rootPath", "launch", "breakpoints", "exceptionPauseMode"],
+        ["rootPath", "launch", "breakpoints", "exceptionPauseMode", "exceptionTypeFilter"],
         `${command} args`,
       );
       requireString(args.rootPath, `${command} args.rootPath`);
@@ -623,13 +621,20 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
         MAX_DEBUG_BREAKPOINTS_PER_SESSION,
       );
       requireBreakpointFileCaps(startupBreakpoints, `${command} args.breakpoints`);
-      requireExceptionPauseMode(args.exceptionPauseMode, `${command} args.exceptionPauseMode`);
+      requireExceptionPausePolicy(args, "exceptionPauseMode", `${command} args`);
       return;
     }
     case "debug_start_native_node_watch": {
       requireObjectShape(
         args,
-        ["rootPath", "scriptPath", "watch", "breakpoints", "exceptionPauseMode"],
+        [
+          "rootPath",
+          "scriptPath",
+          "watch",
+          "breakpoints",
+          "exceptionPauseMode",
+          "exceptionTypeFilter",
+        ],
         ["preserveOutput", "justMyCode"],
         `${command} args`,
       );
@@ -660,7 +665,7 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
         MAX_DEBUG_BREAKPOINTS_PER_SESSION,
       );
       requireBreakpointFileCaps(startupBreakpoints, `${command} args.breakpoints`);
-      requireExceptionPauseMode(args.exceptionPauseMode, `${command} args.exceptionPauseMode`);
+      requireExceptionPausePolicy(args, "exceptionPauseMode", `${command} args`);
       decodeNodeDebugJustMyCode(args.justMyCode, `${command} args.justMyCode`);
       return;
     }
@@ -701,7 +706,11 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
         `${command} args.request.members`,
         (member, memberPath) => {
           const record = requireRecord(member, memberPath);
-          requireExactKeys(record, ["launch", "breakpoints", "exceptionPauseMode"], memberPath);
+          requireExactKeys(
+            record,
+            ["launch", "breakpoints", "exceptionPauseMode", "exceptionTypeFilter"],
+            memberPath,
+          );
           const launch = decodeLaunchTarget(record.launch, `${memberPath}.launch`);
           if (
             launch.kind !== "node-script" &&
@@ -720,7 +729,7 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
             MAX_DEBUG_BREAKPOINTS_PER_SESSION,
           );
           requireBreakpointFileCaps(breakpoints, `${memberPath}.breakpoints`);
-          requireExceptionPauseMode(record.exceptionPauseMode, `${memberPath}.exceptionPauseMode`);
+          requireExceptionPausePolicy(record, "exceptionPauseMode", memberPath);
           return member;
         },
         MAX_DEBUG_COMPOUND_MEMBERS,
@@ -802,11 +811,13 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
         throw invalidDebugWire(`${command} args.kind`, "a known step kind");
       }
       return;
-    case "debug_set_exception_pause":
-      requireExactKeys(args, ["sessionId", "mode"], `${command} args`);
-      requireUnsignedInteger(args.sessionId, `${command} args.sessionId`, U64_MAX);
-      requireExceptionPauseMode(args.mode, `${command} args.mode`);
+    case "debug_set_exception_pause": {
+      requireExactKeys(args, ["request"], `${command} args`);
+      const request = requireRecord(args.request, `${command} args.request`);
+      validateSessionOwnerRequest(request, command, ["mode", "exceptionTypeFilter"]);
+      requireExceptionPausePolicy(request, "mode", `${command} args.request`);
       return;
+    }
     case "debug_scopes":
       requireExactKeys(args, ["request"], `${command} args`);
       validateScopesRequest(requireRecord(args.request, `${command} args.request`), command);
@@ -1120,7 +1131,7 @@ function decodeNodeLaunchOptions(record: Record<string, unknown>, path: string):
   }
 }
 
-function decodeNodeDebugJustMyCode(value: unknown, path: string): void {
+function decodeNodeDebugJustMyCode(value: unknown, path: string) {
   decodeOptionalEnum(
     value,
     path,
@@ -1152,7 +1163,7 @@ function decodeBreakpointFields(
   defaultMissingVerified: boolean,
 ): Breakpoint {
   const record = requireRecord(value, path);
-  requireOnlyKeys(
+  requireAllowedKeys(
     record,
     [
       "id",
@@ -1690,11 +1701,9 @@ function requireExactKeys(
   value: Record<string, unknown>,
   expected: readonly string[],
   path: string,
-): void {
-  const unexpected = Object.keys(value).find((key) => !expected.includes(key));
-  if (unexpected) throw invalidDebugWire(`${path}.${unexpected}`, "no unknown field");
-  const missing = expected.find((key) => !(key in value));
-  if (missing) throw invalidDebugWire(`${path}.${missing}`, "a required field");
+) {
+  requireAllowedKeys(value, expected, path);
+  requirePresentKeys(value, expected, path);
 }
 
 function requireObjectShape(
@@ -1702,28 +1711,42 @@ function requireObjectShape(
   required: readonly string[],
   optional: readonly string[],
   path: string,
-): void {
-  const allowed = [...required, ...optional];
+) {
+  requireAllowedKeys(value, [...required, ...optional], path);
+  requirePresentKeys(value, required, path);
+}
+
+function requireAllowedKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  path: string,
+) {
   const unexpected = Object.keys(value).find((key) => !allowed.includes(key));
   if (unexpected) throw invalidDebugWire(`${path}.${unexpected}`, "no unknown field");
+}
+
+function requirePresentKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  path: string,
+) {
   const missing = required.find((key) => !(key in value));
   if (missing) throw invalidDebugWire(`${path}.${missing}`, "a required field");
 }
 
-function requireOnlyKeys(
+function requireExceptionPausePolicy(
   value: Record<string, unknown>,
-  expected: readonly string[],
+  modeKey: string,
   path: string,
-): void {
-  const unexpected = Object.keys(value).find((key) => !expected.includes(key));
-  if (unexpected) throw invalidDebugWire(`${path}.${unexpected}`, "no unknown field");
-}
-
-function requireExceptionPauseMode(value: unknown, path: string): DebugExceptionPauseMode {
-  if (!EXCEPTION_PAUSE_MODES.has(value)) {
-    throw invalidDebugWire(path, '"none", "uncaught", or "all"');
+) {
+  if (!EXCEPTION_PAUSE_MODES.has(value[modeKey])) {
+    throw invalidDebugWire(`${path}.${modeKey}`, '"none", "uncaught", or "all"');
   }
-  return value as DebugExceptionPauseMode;
+  if (isExceptionTypeFilter(value.exceptionTypeFilter)) return;
+  throw invalidDebugWire(
+    `${path}.exceptionTypeFilter`,
+    "at most 8 unique exception constructor names",
+  );
 }
 
 function requireString(value: unknown, path: string): string {
