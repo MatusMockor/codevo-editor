@@ -4,7 +4,7 @@ use crate::debug_adapter::{
 };
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -21,6 +21,7 @@ const NODE_DEBUG_ENV_FILE_READ_ERROR: &str =
 #[serde(untagged)]
 pub(crate) enum NodeDebugLaunchWire {
     ConfiguredScript(NodeConfiguredScriptLaunchWire),
+    SourceMapped(NodeSourceMappedLaunchWire),
     Existing(DebugLaunchTarget),
 }
 
@@ -35,6 +36,43 @@ pub(crate) struct NodeConfiguredScriptLaunchWire {
     env_file: Option<String>,
     just_my_code: Option<DebugJustMyCodePolicy>,
     runtime: Option<NodeConfiguredScriptRuntime>,
+    #[serde(default, deserialize_with = "deserialize_optional_bool")]
+    source_maps: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub(crate) enum NodeSourceMappedLaunchWire {
+    #[serde(rename = "node-attach", rename_all = "camelCase")]
+    Attach {
+        port: u16,
+        #[serde(default, deserialize_with = "deserialize_optional_bool")]
+        source_maps: Option<bool>,
+    },
+    #[serde(rename = "node-script", rename_all = "camelCase")]
+    Script {
+        script_path: String,
+        #[serde(default, deserialize_with = "deserialize_optional_bool")]
+        source_maps: Option<bool>,
+    },
+    #[serde(rename = "node-npm-script", rename_all = "camelCase")]
+    NpmScript {
+        script: String,
+        package_root_path: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        env: HashMap<String, String>,
+        just_my_code: Option<DebugJustMyCodePolicy>,
+        #[serde(default, deserialize_with = "deserialize_optional_bool")]
+        source_maps: Option<bool>,
+    },
+}
+
+pub(crate) fn deserialize_optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    bool::deserialize(deserializer).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -62,13 +100,14 @@ pub(crate) async fn debug_start(
     let retained_root =
         crate::debug_session_registry::retain_workspace_root(&workspace_registry, &root_path)?;
     let workspace = retained_root.try_clone_directory()?;
-    let launch = decode_node_launch_with_env_file(&workspace, launch)?;
+    let (launch, source_maps_enabled) = decode_node_launch_with_env_file(&workspace, launch)?;
     crate::debug_commands::debug_start(
         root_path,
         launch,
         breakpoints,
         exception_pause_mode,
         exception_type_filter,
+        source_maps_enabled,
         app,
         registry,
         workspace_registry,
@@ -80,10 +119,13 @@ pub(crate) async fn debug_start(
 fn decode_node_launch_with_env_file(
     workspace: &File,
     launch: NodeDebugLaunchWire,
-) -> Result<DebugLaunchTarget, String> {
+) -> Result<(DebugLaunchTarget, bool), String> {
     let configured = match launch {
         NodeDebugLaunchWire::ConfiguredScript(configured) => configured,
-        NodeDebugLaunchWire::Existing(existing) => return Ok(existing),
+        NodeDebugLaunchWire::SourceMapped(source_mapped) => {
+            return Ok(decode_source_mapped_launch(source_mapped))
+        }
+        NodeDebugLaunchWire::Existing(existing) => return Ok((existing, true)),
     };
     let NodeConfiguredScriptLaunchWire {
         kind: NodeConfiguredScriptKind::NodeConfiguredScript,
@@ -94,6 +136,7 @@ fn decode_node_launch_with_env_file(
         env_file,
         just_my_code,
         runtime,
+        source_maps,
     } = configured;
     let mut environment = env;
     if let Some(env_file) = env_file {
@@ -108,22 +151,63 @@ fn decode_node_launch_with_env_file(
         environment = merged;
     }
     if let Some(runtime) = runtime {
-        return Ok(DebugLaunchTarget::NodeConfiguredRuntimeScript {
+        return Ok((
+            DebugLaunchTarget::NodeConfiguredRuntimeScript {
+                script_path,
+                args,
+                cwd,
+                env: environment,
+                runtime,
+                just_my_code,
+            },
+            source_maps.unwrap_or(true),
+        ));
+    }
+    Ok((
+        DebugLaunchTarget::NodeConfiguredScript {
             script_path,
             args,
             cwd,
             env: environment,
-            runtime,
             just_my_code,
-        });
+        },
+        source_maps.unwrap_or(true),
+    ))
+}
+
+fn decode_source_mapped_launch(value: NodeSourceMappedLaunchWire) -> (DebugLaunchTarget, bool) {
+    match value {
+        NodeSourceMappedLaunchWire::Attach { port, source_maps } => (
+            DebugLaunchTarget::NodeAttach { port },
+            source_maps.unwrap_or(true),
+        ),
+        NodeSourceMappedLaunchWire::Script {
+            script_path,
+            source_maps,
+        } => (
+            DebugLaunchTarget::NodeScript { script_path },
+            source_maps.unwrap_or(true),
+        ),
+        NodeSourceMappedLaunchWire::NpmScript {
+            script,
+            package_root_path,
+            args,
+            cwd,
+            env,
+            just_my_code,
+            source_maps,
+        } => (
+            DebugLaunchTarget::NodeNpmScript {
+                script,
+                package_root_path,
+                args,
+                cwd,
+                env,
+                just_my_code,
+            },
+            source_maps.unwrap_or(true),
+        ),
     }
-    Ok(DebugLaunchTarget::NodeConfiguredScript {
-        script_path,
-        args,
-        cwd,
-        env: environment,
-        just_my_code,
-    })
 }
 
 pub(crate) fn load_node_debug_env_file(
@@ -333,7 +417,8 @@ REFERENCE=${PLAIN}
         });
         let wire = serde_json::from_value(launch).unwrap();
 
-        let decoded = decode_node_launch_with_env_file(&fixture.directory, wire).unwrap();
+        let (decoded, source_maps_enabled) =
+            decode_node_launch_with_env_file(&fixture.directory, wire).unwrap();
 
         let environment = match decoded {
             DebugLaunchTarget::NodeConfiguredScript { env, .. } => Some(env),
@@ -344,6 +429,7 @@ REFERENCE=${PLAIN}
         assert_eq!(environment.get("FROM_FILE").unwrap(), "file");
         assert_eq!(environment.get("INLINE").unwrap(), "inline");
         assert_eq!(environment.get("OVERRIDE").unwrap(), "inline");
+        assert!(source_maps_enabled);
     }
 
     #[test]
@@ -361,7 +447,7 @@ REFERENCE=${PLAIN}
                 "runtime": wire_name
             });
             let wire = serde_json::from_value(launch).expect("runtime wire");
-            let decoded =
+            let (decoded, source_maps_enabled) =
                 decode_node_launch_with_env_file(&fixture.directory, wire).expect("runtime target");
             assert!(matches!(
                 decoded,
@@ -370,6 +456,7 @@ REFERENCE=${PLAIN}
                     ..
                 } if decoded_runtime == runtime
             ));
+            assert!(source_maps_enabled);
         }
 
         for launch in [
@@ -398,6 +485,41 @@ REFERENCE=${PLAIN}
         ] {
             assert!(serde_json::from_value::<NodeDebugLaunchWire>(launch).is_err());
         }
+    }
+
+    #[test]
+    fn source_maps_wire_defaults_enabled_preserves_false_and_rejects_non_boolean_values() {
+        let fixture = Fixture::new("source-maps-wire");
+        for (source_maps, expected) in [
+            (serde_json::Value::Null, true),
+            (serde_json::json!(true), true),
+            (serde_json::json!(false), false),
+        ] {
+            let mut launch = serde_json::json!({
+                "kind": "node-script",
+                "scriptPath": fixture.root.join("server.js").to_string_lossy()
+            });
+            if !source_maps.is_null() {
+                launch["sourceMaps"] = source_maps;
+            }
+            let wire = serde_json::from_value(launch).expect("source maps wire");
+            let (_, source_maps_enabled) =
+                decode_node_launch_with_env_file(&fixture.directory, wire).expect("launch");
+            assert_eq!(source_maps_enabled, expected);
+        }
+
+        let invalid = serde_json::json!({
+            "kind": "node-attach",
+            "port": 9229,
+            "sourceMaps": "false"
+        });
+        assert!(serde_json::from_value::<NodeDebugLaunchWire>(invalid).is_err());
+        let null = serde_json::json!({
+            "kind": "node-script",
+            "scriptPath": fixture.root.join("server.js").to_string_lossy(),
+            "sourceMaps": null
+        });
+        assert!(serde_json::from_value::<NodeDebugLaunchWire>(null).is_err());
     }
 
     #[test]

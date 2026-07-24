@@ -185,6 +185,8 @@ export class DebugRestartCoordinator {
 /** Creates the bounded immutable Node launch recipe used by restart lifecycles. */
 export function cloneNodeLaunchTarget(launch: DebugLaunchTarget): NodeDebugLaunchTarget | null {
   if (!isRecord(launch) || typeof launch.kind !== "string") return null;
+  const sourceMaps = cloneSourceMaps(launch);
+  if (!sourceMaps) return null;
   let clone: NodeDebugLaunchTarget | null = null;
   switch (launch.kind) {
     case "node-attach":
@@ -259,9 +261,28 @@ export function cloneNodeLaunchTarget(launch: DebugLaunchTarget): NodeDebugLaunc
     default:
       return null;
   }
-  return clone && launchTextBytes(clone) <= MAX_DEBUG_RESTART_RETAINED_TEXT_BYTES
-    ? deepFreezeLaunch(clone)
+  const launchWithSourceMaps = clone
+    ? ({ ...clone, ...sourceMaps } as NodeDebugLaunchTarget)
     : null;
+  return launchWithSourceMaps &&
+    launchTextBytes(launchWithSourceMaps) <= MAX_DEBUG_RESTART_RETAINED_TEXT_BYTES
+    ? deepFreezeLaunch(launchWithSourceMaps)
+    : null;
+}
+
+function cloneSourceMaps(
+  launch: Record<string, unknown>,
+): { readonly sourceMaps?: boolean } | null {
+  if (!Object.prototype.hasOwnProperty.call(launch, "sourceMaps")) return {};
+  if (
+    launch.kind !== "node-attach" &&
+    launch.kind !== "node-script" &&
+    launch.kind !== "node-configured-script" &&
+    launch.kind !== "node-npm-script"
+  ) {
+    return null;
+  }
+  return typeof launch.sourceMaps === "boolean" ? { sourceMaps: launch.sourceMaps } : null;
 }
 
 function cloneSelectedTestLaunch(

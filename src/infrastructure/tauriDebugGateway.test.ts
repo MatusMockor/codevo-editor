@@ -628,19 +628,44 @@ describe("TauriDebugGateway", () => {
     expect(captured.emit).not.toBeNull();
     captured.emit?.({ payload: event });
     expect(handler).toHaveBeenCalledWith(event);
+    const functionVerification: DebugEvent = {
+      ...event,
+      seq: 2,
+      payload: {
+        kind: "functionBreakpointsVerified",
+        breakpoints: [{ id: "fn-1", verified: true }],
+      },
+    };
+    captured.emit?.({ payload: functionVerification });
+    expect(handler).toHaveBeenCalledWith(functionVerification);
 
     expect(() =>
       captured.emit?.({
         payload: { ...event, sessionId: -1 },
       }),
     ).toThrow("Invalid debug IPC value at debug event.sessionId");
-    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(() =>
+      captured.emit?.({
+        payload: {
+          ...functionVerification,
+          payload: {
+            kind: "functionBreakpointsVerified",
+            breakpoints: [
+              { id: "fn-1", verified: true },
+              { id: "fn-1", verified: true },
+            ],
+          },
+        },
+      }),
+    ).toThrow("Invalid debug function breakpoint verification event.");
+    expect(handler).toHaveBeenCalledTimes(2);
 
     unsubscribe();
     await Promise.resolve();
 
     captured.emit?.({ payload: { ...event, seq: 2 } });
-    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(2);
     expect(unlisten).toHaveBeenCalledTimes(1);
   });
 });

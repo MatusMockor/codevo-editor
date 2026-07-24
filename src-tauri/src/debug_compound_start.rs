@@ -47,7 +47,14 @@ struct DebugCompoundStartMember {
 #[serde(tag = "kind", deny_unknown_fields)]
 enum DebugCompoundLaunchTarget {
     #[serde(rename = "node-script", rename_all = "camelCase")]
-    Script { script_path: String },
+    Script {
+        script_path: String,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
+        source_maps: Option<bool>,
+    },
     #[serde(rename = "node-configured-script", rename_all = "camelCase")]
     ConfiguredScript {
         script_path: String,
@@ -56,6 +63,11 @@ enum DebugCompoundLaunchTarget {
         env: HashMap<String, String>,
         #[serde(default)]
         just_my_code: Option<crate::debug_adapter::DebugJustMyCodePolicy>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
+        source_maps: Option<bool>,
     },
     #[serde(rename = "node-npm-script", rename_all = "camelCase")]
     NpmScript {
@@ -66,41 +78,60 @@ enum DebugCompoundLaunchTarget {
         env: HashMap<String, String>,
         #[serde(default)]
         just_my_code: Option<crate::debug_adapter::DebugJustMyCodePolicy>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
+        source_maps: Option<bool>,
     },
 }
 
-impl From<DebugCompoundLaunchTarget> for DebugLaunchTarget {
-    fn from(value: DebugCompoundLaunchTarget) -> Self {
-        match value {
-            DebugCompoundLaunchTarget::Script { script_path } => Self::NodeScript { script_path },
-            DebugCompoundLaunchTarget::ConfiguredScript {
+impl DebugCompoundLaunchTarget {
+    fn into_launch(self) -> (DebugLaunchTarget, bool) {
+        match self {
+            Self::Script {
+                script_path,
+                source_maps,
+            } => (
+                DebugLaunchTarget::NodeScript { script_path },
+                source_maps.unwrap_or(true),
+            ),
+            Self::ConfiguredScript {
                 script_path,
                 args,
                 cwd,
                 env,
                 just_my_code,
-            } => Self::NodeConfiguredScript {
-                script_path,
-                args,
-                cwd,
-                env,
-                just_my_code,
-            },
-            DebugCompoundLaunchTarget::NpmScript {
+                source_maps,
+            } => (
+                DebugLaunchTarget::NodeConfiguredScript {
+                    script_path,
+                    args,
+                    cwd,
+                    env,
+                    just_my_code,
+                },
+                source_maps.unwrap_or(true),
+            ),
+            Self::NpmScript {
                 script,
                 package_root_path,
                 args,
                 cwd,
                 env,
                 just_my_code,
-            } => Self::NodeNpmScript {
-                script,
-                package_root_path,
-                args,
-                cwd,
-                env,
-                just_my_code,
-            },
+                source_maps,
+            } => (
+                DebugLaunchTarget::NodeNpmScript {
+                    script,
+                    package_root_path,
+                    args,
+                    cwd,
+                    env,
+                    just_my_code,
+                },
+                source_maps.unwrap_or(true),
+            ),
         }
     }
 }
@@ -242,7 +273,7 @@ async fn start_member(
     let member_root = Arc::clone(context.retained_root);
     let member_registry = Arc::clone(context.registry);
     let member_group = context.group.clone();
-    let launch = DebugLaunchTarget::from(member.launch);
+    let (launch, source_maps_enabled) = member.launch.into_launch();
     let result = crate::run_blocking_command(move || {
         Ok(start_compound_member_blocking(
             member_root,
@@ -252,6 +283,7 @@ async fn start_member(
             breakpoints,
             member.exception_pause_mode,
             member.exception_type_filter,
+            source_maps_enabled,
             sink,
             member_registry,
         ))
@@ -373,6 +405,7 @@ fn start_compound_member_blocking(
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
+    source_maps_enabled: bool,
     sink: Arc<dyn DebugEventSink>,
     registry: Arc<DebugSessionRegistry>,
 ) -> Result<u64, ()> {
@@ -404,6 +437,7 @@ fn start_compound_member_blocking(
                 &breakpoints,
                 exception_pause_mode,
                 &exception_type_filter,
+                source_maps_enabled,
                 emitter,
                 finish,
                 startup_is_current,
@@ -571,6 +605,47 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<DebugCompoundStartRequest>(malformed).is_err());
         }
+    }
+
+    #[test]
+    fn compound_source_maps_defaults_enabled_preserves_false_and_is_typed() {
+        for (source_maps, expected) in [
+            (serde_json::Value::Null, true),
+            (serde_json::json!(true), true),
+            (serde_json::json!(false), false),
+        ] {
+            let mut launch = serde_json::json!({
+                "kind": "node-script",
+                "scriptPath": "/workspace/a.js"
+            });
+            if !source_maps.is_null() {
+                launch["sourceMaps"] = source_maps;
+            }
+            let decoded: DebugCompoundLaunchTarget =
+                serde_json::from_value(launch).expect("compound launch");
+            let (_, source_maps_enabled) = decoded.into_launch();
+            assert_eq!(source_maps_enabled, expected);
+        }
+
+        assert!(
+            serde_json::from_value::<DebugCompoundLaunchTarget>(serde_json::json!({
+                "kind": "node-npm-script",
+                "script": "dev",
+                "packageRootPath": "/workspace",
+                "args": [],
+                "env": {},
+                "sourceMaps": "false"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<DebugCompoundLaunchTarget>(serde_json::json!({
+                "kind": "node-script",
+                "scriptPath": "/workspace/a.js",
+                "sourceMaps": null
+            }))
+            .is_err()
+        );
     }
 
     #[test]

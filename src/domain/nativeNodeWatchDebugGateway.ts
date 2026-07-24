@@ -15,6 +15,7 @@ export type NativeNodeWatchDebugStartRequest = Readonly<{
   readonly exceptionPauseMode: DebugExceptionPauseMode;
   readonly exceptionTypeFilter: DebugExceptionTypeFilter;
   readonly justMyCode?: NodeDebugJustMyCodePolicy;
+  readonly sourceMaps?: boolean;
 }>;
 
 /**

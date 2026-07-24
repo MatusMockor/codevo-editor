@@ -130,7 +130,7 @@ export function prepareNodeDebugLaunch(
   if (envFile.kind === "invalid") {
     return { kind: "unsupported", reason: "invalidOptions" };
   }
-  const launch = debugLaunchWithJustMyCode(
+  const launch = debugLaunchWithVscodeOptions(
     nodeLaunchTargetFromConfiguration(configuration, rootPath),
     entry,
   );
@@ -192,7 +192,7 @@ export function prepareNodeDebugCompoundLaunch(
   }
   const recipes = cloneNodeDebugCompoundMembers(
     entry.compound.members.map((member) => ({
-      launch: debugLaunchWithJustMyCode(
+      launch: debugLaunchWithVscodeOptions(
         nodeLaunchTargetFromConfiguration(member.configuration, rootPath),
         { source: "vscode", ...member },
       ),
@@ -216,13 +216,17 @@ export function prepareNodeDebugCompoundLaunch(
   };
 }
 
-function debugLaunchWithJustMyCode(
+function debugLaunchWithVscodeOptions(
   launch: DebugLaunchTarget,
   entry: NodeLaunchConfigurationEntry,
 ): DebugLaunchTarget {
-  return entry.source === "vscode" && entry.justMyCode
-    ? Object.freeze({ ...launch, justMyCode: entry.justMyCode })
-    : launch;
+  if (entry.source !== "vscode") return launch;
+  if (entry.justMyCode === undefined && entry.sourceMaps === undefined) return launch;
+  return Object.freeze({
+    ...launch,
+    ...(entry.justMyCode ? { justMyCode: entry.justMyCode } : {}),
+    ...(entry.sourceMaps !== undefined ? { sourceMaps: entry.sourceMaps } : {}),
+  }) as DebugLaunchTarget;
 }
 
 function importedEnvFile(

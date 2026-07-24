@@ -1,10 +1,9 @@
 use crate::debug_adapter::variable_name::MAX_DEBUG_VARIABLE_NAME_BYTES;
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEvaluateContext, DebugEvaluateErrorKind,
-    DebugEvaluateFailure, DebugEvaluatePolicy, DebugEvent, DebugEventEmitter, DebugEventSink,
-    DebugExceptionPauseMode, DebugLaunchTarget, DebugScopeInfo, DebugSessionRegistry,
-    DebugStackFrame, DebugStartResponse, DebugStartupPermit, DebugVariableInfo, DebugVariablePage,
-    DebugVariablePageRequest, StepKind,
+    DebugEvaluateFailure, DebugEvaluatePolicy, DebugEvent, DebugEventSink, DebugExceptionPauseMode,
+    DebugLaunchTarget, DebugScopeInfo, DebugSessionRegistry, DebugStackFrame, DebugStartResponse,
+    DebugStartupPermit, DebugVariableInfo, DebugVariablePage, DebugVariablePageRequest, StepKind,
 };
 use crate::debug_breakpoint_policy::{validate_initial_breakpoints, DebugBreakpointAdapterKind};
 use crate::debug_session_registry::{
@@ -22,6 +21,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[path = "debug_disconnect_request.rs"]
 mod disconnect_request;
 use disconnect_request::{validated_disconnect_authority, DebugDisconnectRequest};
+#[path = "debug_adapter_factory.rs"]
+mod adapter_factory;
+pub(crate) use adapter_factory::create_debug_adapter_with_exception_filter;
 #[path = "debug_evaluate_wire.rs"]
 mod evaluate_wire;
 use evaluate_wire::{
@@ -87,46 +89,13 @@ impl DebugEventSink for AppHandleDebugEventSink {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn create_debug_adapter_with_exception_filter(
-    root: &Path,
-    launch: &DebugLaunchTarget,
-    breakpoints: &[DebugBreakpoint],
-    exception_pause_mode: DebugExceptionPauseMode,
-    exception_type_filter: &[String],
-    emitter: DebugEventEmitter,
-    finish: Box<dyn FnOnce(Option<i32>) + Send>,
-    startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
-) -> Result<Box<dyn DebugAdapter>, String> {
-    crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(
-        exception_type_filter.to_vec(),
-    )?;
-    if launch.is_node() {
-        crate::debug_cdp::create_node_cdp_adapter_with_exception_filter(
-            root,
-            launch,
-            breakpoints,
-            exception_pause_mode,
-            exception_type_filter,
-            emitter,
-            finish,
-            startup_is_current,
-        )
-    } else if exception_pause_mode == DebugExceptionPauseMode::None
-        && exception_type_filter.is_empty()
-    {
-        crate::debug_dbgp::create_php_dbgp_adapter(root, launch, breakpoints, emitter, finish)
-    } else {
-        Err("Exception pause modes are only available for Node.js debug sessions.".to_string())
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn debug_start(
     root_path: String,
     launch: DebugLaunchTarget,
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
+    source_maps_enabled: bool,
     app: AppHandle,
     registry: State<'_, Arc<DebugSessionRegistry>>,
     workspace_registry: State<'_, WorkspaceRegistry>,
@@ -139,6 +108,7 @@ pub(crate) async fn debug_start(
         breakpoints,
         exception_pause_mode,
         exception_type_filter,
+        source_maps_enabled,
         DebugStartBackend {
             sink: app_debug_event_sink(app),
             registry: Arc::clone(registry.inner()),
@@ -166,6 +136,7 @@ pub(crate) async fn debug_start_with_trust(
         breakpoints,
         exception_pause_mode,
         Vec::new(),
+        true,
         DebugStartBackend {
             sink,
             registry,
@@ -191,6 +162,7 @@ async fn debug_start_with_trust_and_authority(
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
+    source_maps_enabled: bool,
     backend: DebugStartBackend<'_>,
 ) -> Result<DebugStartResponse, String> {
     let DebugStartBackend {
@@ -258,17 +230,20 @@ async fn debug_start_with_trust_and_authority(
     };
 
     super::run_blocking_command(move || {
-        Ok(start_debug_session_blocking(DebugSessionStartup {
-            root: &root,
-            permit,
-            launch: &launch,
-            breakpoints: &breakpoints,
-            exception_pause_mode,
-            exception_type_filter,
-            sink,
-            registry: &registry,
-            retained_root,
-        }))
+        Ok(start_debug_session_blocking(
+            DebugSessionStartup {
+                root: &root,
+                permit,
+                launch: &launch,
+                breakpoints: &breakpoints,
+                exception_pause_mode,
+                exception_type_filter,
+                sink,
+                registry: &registry,
+                retained_root,
+            },
+            source_maps_enabled,
+        ))
     })
     .await
 }
@@ -285,7 +260,10 @@ struct DebugSessionStartup<'a> {
     retained_root: Option<RetainedDebugWorkspaceRoot>,
 }
 
-fn start_debug_session_blocking(startup: DebugSessionStartup<'_>) -> DebugStartResponse {
+fn start_debug_session_blocking(
+    startup: DebugSessionStartup<'_>,
+    source_maps_enabled: bool,
+) -> DebugStartResponse {
     let DebugSessionStartup {
         root,
         permit,
@@ -323,6 +301,7 @@ fn start_debug_session_blocking(startup: DebugSessionStartup<'_>) -> DebugStartR
                 breakpoints,
                 exception_pause_mode,
                 &exception_type_filter,
+                source_maps_enabled,
                 emitter,
                 finish,
                 startup_is_current,

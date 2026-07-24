@@ -13,6 +13,7 @@ describe("cloneNodeDebugCompoundMembers", () => {
           justMyCode: "nodeInternalsAndDependencies" as const,
           kind: "node-configured-script" as const,
           scriptPath: "/workspace/api.ts",
+          sourceMaps: false,
         },
         preLaunchTask: null,
       },
@@ -38,6 +39,7 @@ describe("cloneNodeDebugCompoundMembers", () => {
       args: ["--watch"],
       env: { PRIVATE_TOKEN: "original" },
       justMyCode: "nodeInternalsAndDependencies",
+      sourceMaps: false,
     });
     expect(cloned?.[1]?.launch).toMatchObject({ justMyCode: "dependencies" });
     expect(Object.isFrozen(cloned)).toBe(true);

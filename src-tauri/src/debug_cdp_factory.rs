@@ -35,6 +35,13 @@ fn spawn_debug_transport_finish(
     })
 }
 
+fn optional_source_maps<T>(
+    enabled: bool,
+    create: impl FnOnce() -> Result<T, String>,
+) -> Result<Option<T>, String> {
+    enabled.then(create).transpose()
+}
+
 /// Runs on the process waiter thread after exit. Wire it to
 /// `DebugSessionRegistry::finish_session`; the adapter never emits
 /// `Terminated`. Factory failures never invoke it.
@@ -54,6 +61,7 @@ pub(crate) fn create_node_cdp_adapter(
         initial_breakpoints,
         exception_pause_mode,
         &[],
+        true,
         emitter,
         finish,
         startup_is_current,
@@ -67,6 +75,7 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
     initial_breakpoints: &[DebugBreakpoint],
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: &[String],
+    source_maps_enabled: bool,
     emitter: DebugEventEmitter,
     finish: DebugSessionFinish,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -76,7 +85,8 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
         ensure_startup_current(startup_is_current.as_ref())?;
         let target = crate::debug_inspector_attach::discover_single_node_target(root, *port)?;
         ensure_startup_current(startup_is_current.as_ref())?;
-        let source_maps = SourceMapRegistry::new(root)?;
+        let source_maps =
+            optional_source_maps(source_maps_enabled, || SourceMapRegistry::new(root))?;
         let (disconnected_tx, disconnected_rx) = mpsc::channel();
         let adapter = NodeCdpAdapter::connect_with_source_maps_and_exception_filter(
             &target.web_socket_url,
@@ -87,7 +97,7 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
                 exception_pause_mode,
                 request_timeout: CDP_REQUEST_TIMEOUT,
                 ownership: DebuggeeOwnership::External,
-                source_maps: Some(source_maps),
+                source_maps,
                 startup: CdpStartupPolicy::Attached,
                 disconnected: Some(disconnected_tx),
                 startup_is_current: Arc::clone(&startup_is_current),
@@ -107,8 +117,14 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
         });
         return Ok(Box::new(adapter));
     }
-    let launch = build_launch_plan(root, launch_target)?;
-    let source_maps = source_map_registry(root, launch_target)?;
+    let launch = crate::debug_node_launch::build_launch_plan_with_source_maps(
+        root,
+        launch_target,
+        source_maps_enabled,
+    )?;
+    let source_maps = optional_source_maps(source_maps_enabled, || {
+        source_map_registry(root, launch_target)
+    })?;
     let mut process =
         spawn_node_inspector(&launch, emitter.clone(), Arc::clone(&startup_is_current))?;
     let (disconnected_tx, disconnected_rx) = mpsc::channel();
@@ -123,7 +139,7 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
             exception_pause_mode,
             request_timeout: CDP_REQUEST_TIMEOUT,
             ownership: DebuggeeOwnership::Spawned(process.process),
-            source_maps: Some(source_maps),
+            source_maps,
             startup: CdpStartupPolicy::SpawnedWaiting {
                 startup_entry: launch.startup_entry.as_deref(),
             },
@@ -241,4 +257,17 @@ pub(crate) fn create_node_attach_candidate_adapter_with_exception_filter(
         }
     });
     Ok(Box::new(adapter))
+}
+
+#[cfg(test)]
+#[test]
+fn disabled_source_maps_skip_registry_creation() {
+    let called = std::sync::atomic::AtomicBool::new(false);
+    let result = optional_source_maps(false, || {
+        called.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok::<_, String>(())
+    });
+
+    assert_eq!(result, Ok(None));
+    assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
 }

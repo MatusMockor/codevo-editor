@@ -30,6 +30,7 @@ export type NodeLaunchConfigurationEntry =
       /** Private closed semantic intent; never projected into Codevo persistence. */
       readonly nativeWatch?: NativeNodeWatchLaunchIntent;
       readonly justMyCode?: NodeDebugJustMyCodePolicy;
+      readonly sourceMaps?: boolean;
       /** Display-safe label only; task execution remains owned by the task coordinator. */
       readonly preLaunchTask?: string;
       /** Display-safe label only; task execution remains owned by the task coordinator. */
@@ -241,6 +242,7 @@ function importedVscodeResult(
       configuration,
       nativeWatch,
       justMyCode,
+      sourceMaps,
       preLaunchTask,
       postDebugTask,
       serverReadyAction,
@@ -249,6 +251,7 @@ function importedVscodeResult(
       configuration,
       ...(nativeWatch ? { nativeWatch } : {}),
       ...(justMyCode ? { justMyCode } : {}),
+      ...(sourceMaps !== undefined ? { sourceMaps } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
       ...(serverReadyAction ? { serverReadyAction } : {}),

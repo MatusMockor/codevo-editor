@@ -28,9 +28,11 @@ describe("native Node watch debug IPC contract", () => {
     });
 
     await expect(
-      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", request),
+      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", { request }),
     ).resolves.toEqual({ status: "ok", sessionId: 19 });
-    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_native_node_watch", request);
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_native_node_watch", {
+      request,
+    });
   });
 
   it("validates the exact confirmation owner and void response", async () => {
@@ -62,15 +64,14 @@ describe("native Node watch debug IPC contract", () => {
       { ...request, exceptionTypeFilter: Array.from({ length: 9 }, (_, index) => `Error${index}`) },
     ],
     ["invalid just-my-code policy", { ...request, justMyCode: "**/node_modules/**" }],
+    ["null source maps", { ...request, sourceMaps: null }],
   ])("rejects %s before transport", async (_label, invalidRequest) => {
     const invokeCommand = vi.fn<InvokeDebugCommand>();
 
     await expect(
-      invokeDebugIpc(
-        invokeCommand,
-        "debug_start_native_node_watch",
-        invalidRequest as NativeNodeWatchDebugStartRequest,
-      ),
+      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
+        request: invalidRequest as NativeNodeWatchDebugStartRequest,
+      }),
     ).rejects.toThrow("debug_start_native_node_watch args");
     expect(invokeCommand).not.toHaveBeenCalled();
   });
@@ -80,21 +81,22 @@ describe("native Node watch debug IPC contract", () => {
 
     await expect(
       invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
-        ...request,
-        scriptPath: `/${"a".repeat(4_096)}`,
+        request: { ...request, scriptPath: `/${"a".repeat(4_096)}` },
       }),
-    ).rejects.toThrow("debug_start_native_node_watch args.scriptPath");
+    ).rejects.toThrow("debug_start_native_node_watch args.request.scriptPath");
     await expect(
       invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
-        ...request,
-        breakpoints: Array.from({ length: 2_001 }, (_, index) => ({
-          id: `breakpoint-${index}`,
-          filePath: `/workspace/file-${index}.js`,
-          lineNumber: 1,
-          enabled: true,
-        })),
+        request: {
+          ...request,
+          breakpoints: Array.from({ length: 2_001 }, (_, index) => ({
+            id: `breakpoint-${index}`,
+            filePath: `/workspace/file-${index}.js`,
+            lineNumber: 1,
+            enabled: true,
+          })),
+        },
       }),
-    ).rejects.toThrow("debug_start_native_node_watch args.breakpoints");
+    ).rejects.toThrow("debug_start_native_node_watch args.request.breakpoints");
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 });

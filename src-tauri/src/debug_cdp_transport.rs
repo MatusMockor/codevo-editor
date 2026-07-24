@@ -211,7 +211,14 @@ pub(crate) struct CdpClient {
     pub(super) request_timeout: Duration,
     shutdown_requested: Arc<AtomicBool>,
     disconnect_notifier: DisconnectNotifier,
+    function_breakpoint_worker: Option<JoinHandle<()>>,
 }
+
+mod request_handle {
+    use super::*;
+    include!("debug_cdp_request_handle.rs");
+}
+use request_handle::{CdpClientStartOptions, CdpRequestHandle};
 
 impl CdpClient {
     fn start(
@@ -219,16 +226,29 @@ impl CdpClient {
         shared: Arc<Mutex<CdpShared>>,
         exception_filter: Arc<Mutex<ExceptionFilterState>>,
         emitter: CdpEventEmitter,
-        request_timeout: Duration,
-        disconnected: Option<mpsc::Sender<()>>,
-        mutation_is_allowed: Arc<dyn Fn() -> bool + Send + Sync>,
+        options: CdpClientStartOptions,
     ) -> Self {
+        let CdpClientStartOptions {
+            disconnected,
+            function_breakpoints,
+            mutation_is_allowed,
+            request_timeout,
+        } = options;
         let pending: PendingCdpRequests = Arc::new(Mutex::new(HashMap::new()));
         let (outgoing_tx, outgoing_rx) = mpsc::sync_channel(MAX_QUEUED_CDP_MESSAGES);
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let disconnect_notifier = DisconnectNotifier::new(disconnected);
         let next_request_id = Arc::new(AtomicU64::new(1));
         let (completed_tx, completed_rx) = mpsc::sync_channel(1);
+        let request_handle = CdpRequestHandle {
+            disconnect_notifier: disconnect_notifier.clone(),
+            next_request_id: Arc::clone(&next_request_id),
+            outgoing: outgoing_tx.clone(),
+            pending: Arc::clone(&pending),
+            request_timeout,
+            shutdown_requested: Arc::clone(&shutdown_requested),
+        };
+        let (function_breakpoint_trigger, function_breakpoint_triggers) = mpsc::sync_channel(1);
         let io_disconnect_notifier = disconnect_notifier.clone();
         let context = SocketLoopContext {
             disconnect_notifier: disconnect_notifier.clone(),
@@ -241,11 +261,26 @@ impl CdpClient {
             shared,
             shutdown: Arc::clone(&shutdown_requested),
             mutation_is_allowed,
+            function_breakpoint_trigger,
         };
+        let function_breakpoint_emitter = context.emitter.clone();
+        let emit_function_breakpoint_verification = Arc::new(move |payload| {
+            function_breakpoint_emitter.emit(payload);
+        });
+        let function_breakpoint_authority = Arc::clone(&context.mutation_is_allowed);
         let io_thread = thread::spawn(move || {
             run_socket_loop(socket, context);
             io_disconnect_notifier.notify();
             let _ = completed_tx.send(());
+        });
+        let function_breakpoint_worker = thread::spawn(move || {
+            crate::debug_cdp_function_breakpoints::run_reresolution_worker(
+                function_breakpoint_triggers,
+                request_handle,
+                function_breakpoints,
+                emit_function_breakpoint_verification,
+                function_breakpoint_authority,
+            );
         });
         Self {
             io_completed: completed_rx,
@@ -256,6 +291,7 @@ impl CdpClient {
             request_timeout,
             shutdown_requested,
             disconnect_notifier,
+            function_breakpoint_worker: Some(function_breakpoint_worker),
         }
     }
 
@@ -269,53 +305,23 @@ impl CdpClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, String> {
-        let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
-        let (tx, rx) = mpsc::sync_channel(1);
-        {
-            let mut pending = self.pending.lock().map_err(|error| error.to_string())?;
-            pending.insert(id, tx);
+        CdpRequestHandle {
+            disconnect_notifier: self.disconnect_notifier.clone(),
+            next_request_id: Arc::clone(&self.next_request_id),
+            outgoing: self.outgoing.clone(),
+            pending: Arc::clone(&self.pending),
+            request_timeout: self.request_timeout,
+            shutdown_requested: Arc::clone(&self.shutdown_requested),
         }
-        let payload = json!({"id": id, "method": method, "params": params}).to_string();
-        match self.outgoing.try_send(payload) {
-            Ok(()) => {}
-            Err(mpsc::TrySendError::Full(_)) => {
-                remove_pending_cdp_request(&self.pending, id);
-                fail_closed_transport(
-                    &self.pending,
-                    &self.shutdown_requested,
-                    &self.disconnect_notifier,
-                );
-                return Err(format!(
-                    "Debugger transport queue overflowed while sending `{method}`; connection closed."
-                ));
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                remove_pending_cdp_request(&self.pending, id);
-                fail_closed_transport(
-                    &self.pending,
-                    &self.shutdown_requested,
-                    &self.disconnect_notifier,
-                );
-                return Err(format!(
-                    "Debugger connection is closed; unable to send `{method}`."
-                ));
-            }
-        }
-        match rx.recv_timeout(timeout) {
-            Ok(outcome) => outcome,
-            Err(RecvTimeoutError::Timeout) => {
-                remove_pending_cdp_request(&self.pending, id);
-                Err(format!("Debugger request `{method}` timed out."))
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                Err(format!("Debugger connection closed during `{method}`."))
-            }
-        }
+        .request_with_timeout(method, params, timeout)
     }
 
     pub(super) fn shutdown(&mut self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         if let Some(handle) = self.io_thread.take() {
+            let _ = handle.join();
+        }
+        if let Some(handle) = self.function_breakpoint_worker.take() {
             let _ = handle.join();
         }
     }
@@ -377,6 +383,7 @@ pub(crate) struct SocketLoopContext {
     pub(crate) shared: Arc<Mutex<CdpShared>>,
     shutdown: Arc<AtomicBool>,
     pub(crate) mutation_is_allowed: Arc<dyn Fn() -> bool + Send + Sync>,
+    function_breakpoint_trigger: mpsc::SyncSender<()>,
 }
 
 fn run_socket_loop(mut socket: WebSocket<BoundedCdpStream>, context: SocketLoopContext) {
@@ -469,6 +476,7 @@ fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<St
         }
         Some("Debugger.scriptParsed") => {
             handle_script_parsed(message.get("params").unwrap_or(&Value::Null), context);
+            let _ = context.function_breakpoint_trigger.try_send(());
             None
         }
         _ => None,
@@ -1071,7 +1079,8 @@ pub(crate) fn build_pause_inventory(
 pub(crate) struct NodeCdpAdapter {
     client: CdpClient,
     exception_filter: Arc<Mutex<ExceptionFilterState>>,
-    function_breakpoints: crate::debug_cdp_function_breakpoints::FunctionBreakpointRegistrations,
+    function_breakpoints:
+        Arc<crate::debug_cdp_function_breakpoints::FunctionBreakpointSessionState>,
     ownership: DebuggeeOwnership,
     shared: Arc<Mutex<CdpShared>>,
     mutation_is_allowed: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -1228,9 +1237,22 @@ impl DebugAdapter for NodeCdpAdapter {
         breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
     ) -> Result<Vec<crate::debug_adapter::DebugFunctionBreakpointVerification>, String> {
         let authority = Arc::clone(&self.mutation_is_allowed);
+        let _publication = self
+            .function_breakpoints
+            .publication
+            .lock()
+            .map_err(|error| error.to_string())?;
+        self.function_breakpoints
+            .revision
+            .fetch_add(1, Ordering::AcqRel);
+        let mut registrations = self
+            .function_breakpoints
+            .registrations
+            .lock()
+            .map_err(|error| error.to_string())?;
         crate::debug_cdp_function_breakpoints::replace_function_breakpoints(
             &mut self.client,
-            &mut self.function_breakpoints,
+            &mut registrations,
             breakpoints,
             move || authority(),
         )
@@ -1594,6 +1616,7 @@ mod bounded_channel_tests {
             request_timeout: Duration::from_secs(1),
             shutdown_requested: Arc::clone(&shutdown_requested),
             disconnect_notifier: DisconnectNotifier::new(Some(disconnected_tx)),
+            function_breakpoint_worker: None,
         };
 
         assert_eq!(

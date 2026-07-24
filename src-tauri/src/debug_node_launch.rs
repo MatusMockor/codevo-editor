@@ -3,9 +3,9 @@ use crate::debug_adapter::{
     NodeConfiguredScriptRuntime,
 };
 use crate::debug_source_map::{
-    emitted_type_script_path, source_map_url_from_generated, SourceMapRegistry,
+    emitted_type_script_path, emitted_type_script_path_without_source_map,
 };
-use crate::debug_support::{file_url_from_path, validate_workspace_file};
+use crate::debug_support::validate_workspace_file;
 use crate::package_tool_context::PackageToolContext;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -14,9 +14,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[path = "debug_node_source_map_launch.rs"]
+mod source_map_launch;
 #[path = "debug_node_watch_launch_policy.rs"]
 mod watch_launch_policy;
 
+pub(crate) use source_map_launch::source_map_registry;
 pub(crate) use watch_launch_policy::NativeNodeWatchLaunchPolicy;
 
 #[allow(dead_code)]
@@ -135,13 +138,28 @@ pub(crate) fn build_launch_plan(
     root: &Path,
     launch_target: &DebugLaunchTarget,
 ) -> Result<NodeLaunchPlan, String> {
+    build_launch_plan_with_source_maps(root, launch_target, true)
+}
+
+pub(crate) fn build_launch_plan_with_source_maps(
+    root: &Path,
+    launch_target: &DebugLaunchTarget,
+    source_maps_enabled: bool,
+) -> Result<NodeLaunchPlan, String> {
     match launch_target {
         DebugLaunchTarget::NodeAttach { .. } => {
             Err("Node inspector attach targets do not spawn a process.".to_string())
         }
-        DebugLaunchTarget::NodeScript { script_path, .. } => {
-            script_plan(root, script_path, &[], None, HashMap::new(), false, None)
-        }
+        DebugLaunchTarget::NodeScript { script_path, .. } => script_plan(
+            root,
+            script_path,
+            &[],
+            None,
+            HashMap::new(),
+            false,
+            None,
+            source_maps_enabled,
+        ),
         DebugLaunchTarget::JsTestFile {
             runner,
             file_path,
@@ -171,6 +189,7 @@ pub(crate) fn build_launch_plan(
             env.clone(),
             true,
             None,
+            source_maps_enabled,
         ),
         DebugLaunchTarget::NodeConfiguredRuntimeScript {
             script_path,
@@ -187,6 +206,7 @@ pub(crate) fn build_launch_plan(
             env.clone(),
             true,
             Some(*runtime),
+            source_maps_enabled,
         ),
         DebugLaunchTarget::JsConfiguredTest {
             runner,
@@ -285,6 +305,7 @@ fn reject_configured_inspector_arguments(target: &DebugLaunchTarget) -> Result<(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn script_plan(
     root: &Path,
     script_path: &str,
@@ -293,6 +314,7 @@ fn script_plan(
     environment: HashMap<String, String>,
     isolated_environment: bool,
     runtime: Option<NodeConfiguredScriptRuntime>,
+    source_maps_enabled: bool,
 ) -> Result<NodeLaunchPlan, String> {
     if isolated_environment {
         validate_configured_arguments(args)?;
@@ -324,14 +346,17 @@ fn script_plan(
     }
     let is_type_script = is_type_script_path(source);
     let launched = if is_type_script {
-        emitted_type_script_path(root, source)?
-            .to_string_lossy()
-            .to_string()
+        let emitted = if source_maps_enabled {
+            emitted_type_script_path(root, source)?
+        } else {
+            emitted_type_script_path_without_source_map(root, source)?
+        };
+        emitted.to_string_lossy().to_string()
     } else {
         script
     };
     let mut arguments = vec![INSPECT_FLAG.to_string()];
-    if is_type_script {
+    if is_type_script && source_maps_enabled {
         arguments.push("--enable-source-maps".to_string());
     }
     arguments.push(launched);
@@ -813,28 +838,6 @@ fn validate_working_directory(root: &Path, cwd: Option<&str>) -> Result<PathBuf,
     Ok(directory)
 }
 
-pub(crate) fn source_map_registry(
-    root: &Path,
-    launch_target: &DebugLaunchTarget,
-) -> Result<SourceMapRegistry, String> {
-    let mut registry = SourceMapRegistry::new(root)?;
-    let script_path = match launch_target {
-        DebugLaunchTarget::NodeScript { script_path, .. }
-        | DebugLaunchTarget::NodeConfiguredScript { script_path, .. } => script_path,
-        _ => return Ok(registry),
-    };
-    let source = Path::new(script_path);
-    if !is_type_script_path(source) {
-        return Ok(registry);
-    }
-    let emitted = emitted_type_script_path(root, source)?;
-    let map_url = source_map_url_from_generated(&emitted).ok_or_else(|| {
-        "Compile the TypeScript project with sourceMap enabled before debugging.".to_string()
-    })?;
-    registry.register_script(&file_url_from_path(&emitted.to_string_lossy()), &map_url)?;
-    Ok(registry)
-}
-
 fn validate_node_script_path(path: &Path) -> Result<(), String> {
     if is_type_script_declaration(path) {
         return Err("TypeScript declaration files cannot be launched.".to_string());
@@ -922,6 +925,8 @@ mod tests {
 
     #[path = "debug_node_launch_runtime_tests.rs"]
     mod runtime_tests;
+    #[path = "debug_node_launch_source_map_tests.rs"]
+    mod source_map_tests;
 
     #[test]
     fn configured_script_applies_args_cwd_and_environment() {

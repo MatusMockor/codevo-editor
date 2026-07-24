@@ -48,6 +48,7 @@ export interface VscodeNodeLaunchConfiguration {
   /** Private semantic import metadata; raw runtime arguments are never retained. */
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly justMyCode?: NodeDebugJustMyCodePolicy;
+  readonly sourceMaps?: boolean;
   /** Exact display-safe task label only. No task command or execution capability is projected. */
   readonly preLaunchTask?: string;
   /** Exact display-safe task label only. No task command or execution capability is projected. */
@@ -362,6 +363,13 @@ function parseConfiguration(
   | { readonly kind: "error"; readonly message: string } {
   const path = `configurations[${index}]`;
   if (!isRecord(value)) return rejected(`${path} must be an object`);
+  for (const field of ["outFiles", "resolveSourceMapLocations"] as const) {
+    if (Object.prototype.hasOwnProperty.call(value, field)) {
+      return rejected(
+        `${path}.${field} is unsupported; use tsconfig outDir-driven generated-file discovery`,
+      );
+    }
+  }
   const unknown = unknownKey(value, [
     "type",
     "request",
@@ -378,9 +386,13 @@ function parseConfiguration(
     "postDebugTask",
     "skipFiles",
     "justMyCode",
+    "sourceMaps",
     "serverReadyAction",
   ]);
   if (unknown) return rejected(`${path} contains unsupported field "${unknown}"`);
+  if (value.sourceMaps !== undefined && typeof value.sourceMaps !== "boolean") {
+    return rejected(`${path}.sourceMaps must be a boolean`);
+  }
   if (
     Object.prototype.hasOwnProperty.call(value, "justMyCode") &&
     Object.prototype.hasOwnProperty.call(value, "skipFiles")
@@ -441,6 +453,7 @@ function parseConfiguration(
           name: value.name,
           target: { kind: "attach", port: value.port },
         },
+        ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps } : {}),
         ...(preLaunchTask.value ? { preLaunchTask: preLaunchTask.value } : {}),
         ...(postDebugTask.value ? { postDebugTask: postDebugTask.value } : {}),
       },
@@ -554,6 +567,7 @@ function parseScriptLaunchConfiguration(
       },
       ...(envFile.value ? { envFile: envFile.value } : {}),
       ...(justMyCode ? { justMyCode } : {}),
+      ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
       ...(serverReadyAction ? { serverReadyAction } : {}),
@@ -627,6 +641,7 @@ function parseNativeNodeWatchConfiguration(
       },
       nativeWatch: intent.intent,
       ...(justMyCode ? { justMyCode } : {}),
+      ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
       ...(serverReadyAction ? { serverReadyAction } : {}),
@@ -696,6 +711,7 @@ function parseNpmLaunchConfiguration(
         },
       },
       ...(justMyCode ? { justMyCode } : {}),
+      ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
       ...(serverReadyAction ? { serverReadyAction } : {}),

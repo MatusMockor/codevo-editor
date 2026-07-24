@@ -1100,6 +1100,7 @@ describe("debug Tauri IPC contract", () => {
       args: ["--port", "3000"],
       cwd: "/workspace",
       env: { PORT: "3000" },
+      sourceMaps: false,
     };
     await expect(
       invokeDebugIpc(invokeCommand, "debug_start", {
@@ -1114,12 +1115,52 @@ describe("debug Tauri IPC contract", () => {
     await expect(
       invokeDebugIpc(invokeCommand, "debug_start", {
         rootPath: "/workspace",
+        launch: { ...launch, sourceMaps: "false" } as never,
+        breakpoints: [],
+        exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
+      }),
+    ).rejects.toThrow("debug_start args.launch.sourceMaps");
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start", {
+        rootPath: "/workspace",
         launch: { ...launch, env: { PORT: 3000 } } as unknown as typeof launch,
         breakpoints: [],
         exceptionPauseMode: "none",
         exceptionTypeFilter: [],
       }),
     ).rejects.toThrow("launch.env.PORT");
+  });
+
+  it("validates native Node watch sourceMaps as a boolean", async () => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
+      status: "ok",
+      sessionId: 9,
+    });
+    const args = {
+      rootPath: "/workspace",
+      scriptPath: "/workspace/app.js",
+      watch: true as const,
+      breakpoints: [],
+      exceptionPauseMode: "none" as const,
+      exceptionTypeFilter: [],
+      sourceMaps: false,
+    };
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", { request: args }),
+    ).resolves.toEqual({ status: "ok", sessionId: 9 });
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
+        request: { ...args, sourceMaps: "false" },
+      } as never),
+    ).rejects.toThrow("debug_start_native_node_watch args.request.sourceMaps");
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
+        request: { ...args, sourceMaps: null },
+      } as never),
+    ).rejects.toThrow("debug_start_native_node_watch args.request.sourceMaps");
   });
 
   it.each(["tsx", "ts-node"] as const)(

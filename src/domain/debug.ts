@@ -29,6 +29,7 @@ export interface FunctionBreakpoint {
   readonly id: string;
   readonly functionName: string;
   readonly enabled: boolean;
+  readonly verified?: boolean;
 }
 
 export interface FunctionBreakpointVerification {
@@ -36,10 +37,16 @@ export interface FunctionBreakpointVerification {
   readonly verified: boolean;
 }
 
+export interface DebugFunctionBreakpointInput {
+  readonly id: string;
+  readonly functionName: string;
+  readonly enabled: boolean;
+}
+
 export interface DebugSetFunctionBreakpointsRequest {
   readonly rootPath: string;
   readonly sessionId: number;
-  readonly breakpoints: readonly FunctionBreakpoint[];
+  readonly breakpoints: readonly DebugFunctionBreakpointInput[];
 }
 
 export interface BreakpointCreationOwnership {
@@ -198,8 +205,8 @@ export type DebuggerState =
   | { kind: "terminated"; sessionId: number; exitCode: number | null };
 
 export type DebugLaunchTarget =
-  | { kind: "node-attach"; port: number }
-  | { kind: "node-script"; scriptPath: string }
+  | { kind: "node-attach"; port: number; sourceMaps?: boolean }
+  | { kind: "node-script"; scriptPath: string; sourceMaps?: boolean }
   | {
       kind: "js-test-file";
       runner: "vitest" | "jest";
@@ -223,6 +230,7 @@ export type DebugLaunchTarget =
       cwd?: string;
       env: Record<string, string>;
       justMyCode?: NodeDebugJustMyCodePolicy;
+      sourceMaps?: boolean;
     }
   | {
       kind: "js-configured-test";
@@ -241,6 +249,7 @@ export type DebugLaunchTarget =
       cwd?: string;
       env: Record<string, string>;
       justMyCode?: NodeDebugJustMyCodePolicy;
+      sourceMaps?: boolean;
     }
   | { kind: "php-script"; scriptPath: string }
   | { kind: "php-test-file"; filePath: string }
@@ -285,6 +294,10 @@ export type DebugEventPayload =
       kind: "breakpointsVerified";
       filePath: string;
       breakpoints: Breakpoint[];
+    }
+  | {
+      kind: "functionBreakpointsVerified";
+      breakpoints: readonly FunctionBreakpointVerification[];
     };
 
 export interface DebugEvent {

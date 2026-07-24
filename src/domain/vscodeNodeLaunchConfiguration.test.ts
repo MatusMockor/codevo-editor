@@ -891,6 +891,106 @@ describe("VS Code Node launch configuration import", () => {
     ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
     ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
     ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
+    ["attach", { request: "attach", port: 9229 }],
+    ["native watch", { program: "src/server.js", runtimeArgs: ["--watch"] }],
+  ])("accepts explicit sourceMaps booleans for a %s configuration", (_case, fields) => {
+    for (const sourceMaps of [true, false]) {
+      expect(
+        parseVscodeNodeLaunchConfigurations(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "Source maps",
+                ...fields,
+                sourceMaps,
+              },
+            ],
+          }),
+        ),
+      ).toMatchObject({
+        kind: "ok",
+        configurations: [{ sourceMaps }],
+        diagnostics: [],
+      });
+    }
+  });
+
+  it.each([
+    ["script", { program: "src/server.js" }],
+    ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
+    ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
+    ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
+    ["attach", { request: "attach", port: 9229 }],
+    ["native watch", { program: "src/server.js", runtimeArgs: ["--watch"] }],
+  ])("rejects a non-boolean sourceMaps value for a %s configuration", (_case, fields) => {
+    for (const sourceMaps of ["false", null]) {
+      expect(
+        parseVscodeNodeLaunchConfigurations(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "Source maps",
+                ...fields,
+                sourceMaps,
+              },
+            ],
+          }),
+        ),
+      ).toEqual({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [
+          {
+            configurationIndex: 0,
+            message: "configurations[0].sourceMaps must be a boolean.",
+          },
+        ],
+      });
+    }
+  });
+
+  it.each(["outFiles", "resolveSourceMapLocations"] as const)(
+    "rejects %s with the supported source-map discovery alternative",
+    (field) => {
+      expect(
+        parseVscodeNodeLaunchConfigurations(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "Source maps",
+                program: "src/server.js",
+                [field]: ["dist/**/*.js"],
+              },
+            ],
+          }),
+        ),
+      ).toEqual({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [
+          {
+            configurationIndex: 0,
+            message: `configurations[0].${field} is unsupported; use tsconfig outDir-driven generated-file discovery.`,
+          },
+        ],
+      });
+    },
+  );
+
+  it.each([
+    ["script", { program: "src/server.js" }],
+    ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
+    ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
+    ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
     ["npm.cmd", { runtimeExecutable: "npm.cmd", runtimeArgs: ["run", "dev"] }],
     ["native watch", { program: "src/server.js", runtimeArgs: ["--watch"] }],
   ])("rejects invalid justMyCode forms for a %s launch", (_case, fields) => {

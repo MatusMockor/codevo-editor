@@ -35,6 +35,7 @@ import type {
   DebugConsoleCompletionResponse,
 } from "../domain/debugConsoleCompletions";
 import type { DebugExceptionTypeFilter } from "../domain/debugExceptionTypeFilter";
+import { decodeFunctionBreakpointVerificationList } from "../domain/debugFunctionBreakpoints";
 import type {
   NativeNodeWatchDebugGateway,
   NativeNodeWatchDebugStartRequest,
@@ -144,9 +145,11 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
       this.invokeCommand,
       DEBUG_IPC_COMMANDS.startNativeNodeWatch,
       {
-        ...request,
-        breakpoints: [...request.breakpoints],
-        exceptionTypeFilter: [...request.exceptionTypeFilter],
+        request: {
+          ...request,
+          breakpoints: [...request.breakpoints],
+          exceptionTypeFilter: [...request.exceptionTypeFilter],
+        },
       },
     );
     return toRuntimeStatus(response);
@@ -386,7 +389,7 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
         return;
       }
 
-      handler(decodeDebugEvent(event.payload));
+      handler(decodeGatewayDebugEvent(event.payload));
     });
     unlistenPromise.catch(() => undefined);
 
@@ -399,4 +402,35 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
       unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
     };
   }
+}
+
+function decodeGatewayDebugEvent(value: unknown): DebugEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return decodeDebugEvent(value);
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    !record.payload ||
+    typeof record.payload !== "object" ||
+    Array.isArray(record.payload) ||
+    (record.payload as Record<string, unknown>).kind !== "functionBreakpointsVerified"
+  ) {
+    return decodeDebugEvent(value);
+  }
+  const payload = record.payload as Record<string, unknown>;
+  if (
+    Object.keys(payload).length !== 2 ||
+    !Object.prototype.hasOwnProperty.call(payload, "breakpoints")
+  ) {
+    throw new Error("Invalid debug function breakpoint verification event.");
+  }
+  const breakpoints = decodeFunctionBreakpointVerificationList(payload.breakpoints);
+  if (!breakpoints || new Set(breakpoints.map(({ id }) => id)).size !== breakpoints.length) {
+    throw new Error("Invalid debug function breakpoint verification event.");
+  }
+  const envelope = decodeDebugEvent({ ...record, payload: { kind: "resumed" } });
+  return {
+    ...envelope,
+    payload: { kind: "functionBreakpointsVerified", breakpoints },
+  };
 }

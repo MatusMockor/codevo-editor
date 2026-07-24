@@ -21,6 +21,7 @@ const entry = {
     preserveOutput: true as const,
   },
   justMyCode: "nodeInternals" as const,
+  sourceMaps: false,
   preLaunchTask: "build server",
   postDebugTask: "clean server",
 };
@@ -78,6 +79,7 @@ describe("native Node watch debug orchestration recipes", () => {
       { startNativeNodeWatch, confirmNativeNodeWatch },
       {
         scriptPath: "/workspace/src/server.js",
+        sourceMaps: false,
         watch: true,
         preserveOutput: true,
         justMyCode: "nodeInternals",
@@ -119,6 +121,7 @@ describe("native Node watch debug orchestration recipes", () => {
       exceptionPauseMode: "uncaught",
       exceptionTypeFilter: ["TypeError", "app.DomainError"],
       justMyCode: "nodeInternals",
+      sourceMaps: false,
     });
     expect(genericStart).not.toHaveBeenCalled();
   });

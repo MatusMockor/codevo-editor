@@ -34,6 +34,7 @@ describe("DebugRestartCoordinator retention", () => {
       justMyCode: "nodeInternals",
       kind: "node-configured-script",
       scriptPath: `${ROOT}/server.js`,
+      sourceMaps: false,
     },
     {
       args: ["--runInBand"],
@@ -67,6 +68,35 @@ describe("DebugRestartCoordinator retention", () => {
     const resolved = coordinator.resolve(attempt, current());
     expect(resolved).toEqual(launch);
     expect(Object.isFrozen(resolved)).toBe(true);
+  });
+
+  it("preserves an explicit source-map disable across a restart lease", () => {
+    const coordinator = new DebugRestartCoordinator();
+    const launch: DebugLaunchTarget = {
+      args: [],
+      env: {},
+      kind: "node-configured-script",
+      scriptPath: `${ROOT}/server.ts`,
+      sourceMaps: false,
+    };
+
+    expect(coordinator.retain(ROOT, SESSION, launch)).toBe(true);
+    const resolved = coordinator.resolve(coordinator.begin(eligible())!, current());
+
+    expect(resolved).toEqual(launch);
+  });
+
+  it("rejects sourceMaps on JavaScript test launch kinds before retention", () => {
+    const coordinator = new DebugRestartCoordinator();
+    const launch = {
+      filePath: `${ROOT}/a.test.ts`,
+      kind: "js-test-file",
+      packageRootPath: ROOT,
+      runner: "vitest",
+      sourceMaps: false,
+    } as unknown as DebugLaunchTarget;
+
+    expect(coordinator.retain(ROOT, SESSION, launch)).toBe(false);
   });
 
   it("never exposes private args or env in the UI-safe availability or attempt", () => {

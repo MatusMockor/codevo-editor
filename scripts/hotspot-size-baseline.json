@@ -5,7 +5,7 @@
   "files": {
     "src-tauri/src/debug_cdp.rs": {
       "rawLines": 1493,
-      "structuralTokens": 8994
+      "structuralTokens": 8992
     },
     "src-tauri/src/debug_dbgp.rs": {
       "rawLines": 2623,

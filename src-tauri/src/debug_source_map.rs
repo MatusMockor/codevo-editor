@@ -249,6 +249,21 @@ impl SourceMapRegistry {
 }
 
 pub(crate) fn emitted_type_script_path(root: &Path, source: &Path) -> Result<PathBuf, String> {
+    emitted_type_script_path_with_policy(root, source, true)
+}
+
+pub(crate) fn emitted_type_script_path_without_source_map(
+    root: &Path,
+    source: &Path,
+) -> Result<PathBuf, String> {
+    emitted_type_script_path_with_policy(root, source, false)
+}
+
+fn emitted_type_script_path_with_policy(
+    root: &Path,
+    source: &Path,
+    require_source_map: bool,
+) -> Result<PathBuf, String> {
     let source = source
         .canonicalize()
         .map_err(|error| format!("Unable to resolve TypeScript source: {error}"))?;
@@ -288,13 +303,13 @@ pub(crate) fn emitted_type_script_path(root: &Path, source: &Path) -> Result<Pat
         &source,
         compiler.jsx_preserve.unwrap_or(false),
     ));
-    let emitted = emitted.canonicalize().map_err(|_| {
-        "Compile the TypeScript project with sourceMap enabled before debugging.".to_string()
-    })?;
+    let emitted = emitted
+        .canonicalize()
+        .map_err(|_| "Compile the TypeScript project before debugging.".to_string())?;
     if !emitted.starts_with(&root) {
         return Err("Emitted TypeScript output is outside the workspace root.".to_string());
     }
-    if source_map_url_from_generated(&emitted).is_none() {
+    if require_source_map && source_map_url_from_generated(&emitted).is_none() {
         return Err(
             "Compile the TypeScript project with sourceMap enabled before debugging.".to_string(),
         );
@@ -642,7 +657,10 @@ fn inline_base64_payload(url: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{emitted_type_script_path, source_map_url_from_generated, SourceMapRegistry};
+    use super::{
+        emitted_type_script_path, emitted_type_script_path_without_source_map,
+        source_map_url_from_generated, SourceMapRegistry,
+    };
     use crate::debug_support::file_url_from_path;
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
@@ -864,6 +882,26 @@ mod tests {
             generated.canonicalize().expect("canonical generated")
         );
         assert!(source_map_url_from_generated(&generated).is_some());
+    }
+
+    #[test]
+    fn resolves_emitted_typescript_without_requiring_a_source_map() {
+        let root = fixture("emitted-without-map");
+        let source = root.join("src/cli.ts");
+        let generated = root.join("dist/cli.js");
+        write(&source, "console.log('ts');\n");
+        write(&generated, "console.log('js');\n");
+        write(
+            &root.join("tsconfig.json"),
+            "{ compilerOptions: { rootDir: 'src', outDir: 'dist' } }",
+        );
+
+        assert_eq!(
+            emitted_type_script_path_without_source_map(&root, &source)
+                .expect("map-less emitted path"),
+            generated.canonicalize().expect("canonical generated")
+        );
+        assert!(emitted_type_script_path(&root, &source).is_err());
     }
 
     #[test]

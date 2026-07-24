@@ -29,6 +29,7 @@ pub(crate) struct NativeNodeWatchWorkspaceStartup<'a> {
     pub(crate) breakpoints: &'a [DebugBreakpoint],
     pub(crate) exception_pause_mode: DebugExceptionPauseMode,
     pub(crate) just_my_code: Option<DebugJustMyCodePolicy>,
+    pub(crate) source_maps_enabled: bool,
     pub(crate) sink: Arc<dyn DebugEventSink>,
     pub(crate) registry: &'a Arc<DebugSessionRegistry>,
     pub(crate) workspace_registry: &'a WorkspaceRegistry,
@@ -42,6 +43,7 @@ pub(crate) struct NativeNodeWatchIntentWorkspaceStartup<'a> {
     pub(crate) breakpoints: &'a [DebugBreakpoint],
     pub(crate) exception_pause_mode: DebugExceptionPauseMode,
     pub(crate) just_my_code: Option<DebugJustMyCodePolicy>,
+    pub(crate) source_maps_enabled: bool,
     pub(crate) sink: Arc<dyn DebugEventSink>,
     pub(crate) registry: &'a Arc<DebugSessionRegistry>,
     pub(crate) workspace_registry: &'a WorkspaceRegistry,
@@ -60,6 +62,7 @@ pub(crate) fn start_native_node_watch_intent_for_retained_workspace(
             breakpoints: startup.breakpoints,
             exception_pause_mode: startup.exception_pause_mode,
             just_my_code: startup.just_my_code,
+            source_maps_enabled: startup.source_maps_enabled,
             sink: startup.sink,
             registry: startup.registry,
             workspace_registry: startup.workspace_registry,
@@ -87,6 +90,7 @@ fn start_native_node_watch_with_readiness(
         breakpoints,
         exception_pause_mode,
         just_my_code,
+        source_maps_enabled,
         sink,
         registry,
         workspace_registry,
@@ -125,7 +129,10 @@ fn start_native_node_watch_with_readiness(
                 policy,
                 exception_pause_mode,
                 just_my_code,
-                authority: authorized.authority.with_verified_runtime(runtime),
+                authority: authorized
+                    .authority
+                    .with_verified_runtime(runtime)
+                    .with_source_maps_enabled(source_maps_enabled),
             })
         },
     )
@@ -514,6 +521,7 @@ mod tests {
             breakpoints: &[],
             exception_pause_mode: DebugExceptionPauseMode::None,
             just_my_code: None,
+            source_maps_enabled: true,
             sink: Arc::new(TestSink),
             registry: &fixture.registry,
             workspace_registry: &fixture.workspace_registry,
@@ -531,6 +539,7 @@ mod tests {
                 breakpoints: &[],
                 exception_pause_mode: DebugExceptionPauseMode::None,
                 just_my_code: None,
+                source_maps_enabled: true,
                 sink: Arc::new(TestSink),
                 registry: &fixture.registry,
                 workspace_registry: &fixture.workspace_registry,

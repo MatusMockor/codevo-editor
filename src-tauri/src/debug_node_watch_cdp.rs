@@ -48,6 +48,7 @@ pub(crate) struct NodeCdpWatchConnector {
     cancellation: WatchSupervisorCancellation,
     gate: Arc<WatchDebugEventGate>,
     control_proxy: WatchDebugControlProxy,
+    source_maps_enabled: bool,
     connected_once: bool,
 }
 
@@ -229,6 +230,7 @@ pub(crate) struct NodeCdpWatchPublisher {
 pub(crate) struct NodeCdpWatchAdapterPolicy {
     request_timeout: Duration,
     command_policy: WatchDebugCommandWorkerPolicy,
+    source_maps_enabled: bool,
 }
 
 impl NodeCdpWatchAdapterPolicy {
@@ -242,7 +244,13 @@ impl NodeCdpWatchAdapterPolicy {
         Ok(Self {
             request_timeout,
             command_policy,
+            source_maps_enabled: true,
         })
+    }
+
+    pub(crate) fn with_source_maps_enabled(mut self, enabled: bool) -> Self {
+        self.source_maps_enabled = enabled;
+        self
     }
 }
 
@@ -317,6 +325,7 @@ pub(crate) fn node_cdp_watch_adapters_with_start_gate(
             cancellation: cancellation.clone(),
             gate: Arc::clone(&gate),
             control_proxy: control_proxy.clone(),
+            source_maps_enabled: policy.source_maps_enabled,
             connected_once: false,
         },
         NodeCdpWatchReplay {
@@ -359,7 +368,11 @@ impl WatchTargetConnector for NodeCdpWatchConnector {
             lease.clone(),
             Arc::clone(&pause_epoch),
         );
-        let source_maps = match SourceMapRegistry::new(&self.root) {
+        let source_maps = match self
+            .source_maps_enabled
+            .then(|| SourceMapRegistry::new(&self.root))
+            .transpose()
+        {
             Ok(source_maps) => source_maps,
             Err(_) => {
                 let _ = self.gate.end_before_transport_close(
@@ -375,7 +388,7 @@ impl WatchTargetConnector for NodeCdpWatchConnector {
             &endpoint.web_socket_url(),
             emitter,
             self.request_timeout,
-            Some(source_maps),
+            source_maps,
             Arc::clone(&self.startup_is_current),
             pause_generation_floor,
             Some(disconnected_tx),
@@ -614,6 +627,16 @@ mod tests {
     use std::cell::Cell;
     use std::cell::RefCell;
     use std::time::Instant;
+
+    #[test]
+    fn watch_adapter_policy_defaults_source_maps_on_and_preserves_disabled_policy() {
+        let command_policy =
+            WatchDebugCommandWorkerPolicy::new(1, Duration::from_secs(1)).expect("policy");
+        let enabled = NodeCdpWatchAdapterPolicy::new(Duration::from_secs(1), command_policy)
+            .expect("adapter policy");
+        assert!(enabled.source_maps_enabled);
+        assert!(!enabled.with_source_maps_enabled(false).source_maps_enabled);
+    }
 
     #[test]
     fn watch_event_sink_maps_all_gate_dispositions_without_losing_reason() {

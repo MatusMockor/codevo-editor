@@ -43,6 +43,7 @@ const ENDPOINT_BEFORE_CLOSE_GRACE_TICKS: u64 = 2_000;
 pub(crate) struct NativeNodeWatchLaunchAuthority {
     is_current: Arc<dyn Fn() -> bool + Send + Sync>,
     verified_runtime: Option<crate::debug_node_launch::NodeLaunchProgram>,
+    source_maps_enabled: bool,
     start_confirm_timeout: Duration,
     #[cfg(test)]
     after_supervisor_started: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -53,6 +54,7 @@ impl NativeNodeWatchLaunchAuthority {
         Self {
             is_current,
             verified_runtime: None,
+            source_maps_enabled: true,
             start_confirm_timeout: START_CONFIRM_TIMEOUT,
             #[cfg(test)]
             after_supervisor_started: None,
@@ -68,6 +70,11 @@ impl NativeNodeWatchLaunchAuthority {
         runtime: crate::debug_node_launch::NodeLaunchProgram,
     ) -> Self {
         self.verified_runtime = Some(runtime);
+        self
+    }
+
+    pub(crate) fn with_source_maps_enabled(mut self, enabled: bool) -> Self {
+        self.source_maps_enabled = enabled;
         self
     }
 
@@ -140,7 +147,8 @@ pub(crate) fn start_native_node_watch_session(
     let adapter_policy = NodeCdpWatchAdapterPolicy::new(
         REQUEST_TIMEOUT,
         WatchDebugCommandWorkerPolicy::new(COMMAND_QUEUE_CAPACITY, COMMAND_TIMEOUT)?,
-    )?;
+    )?
+    .with_source_maps_enabled(authority.source_maps_enabled);
     let generation_policy =
         WatchGenerationPolicy::new(REPLACEMENT_TIMEOUT_TICKS, MAX_ENDPOINT_EVENTS)
             .map_err(|_| "Invalid native Node watch generation policy.".to_string())?;
@@ -467,6 +475,16 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn native_watch_authority_defaults_source_maps_on_and_preserves_disabled_policy() {
+        let enabled = NativeNodeWatchLaunchAuthority::new(Arc::new(|| true));
+        assert!(enabled.source_maps_enabled);
+
+        let disabled =
+            NativeNodeWatchLaunchAuthority::new(Arc::new(|| true)).with_source_maps_enabled(false);
+        assert!(!disabled.source_maps_enabled);
     }
 
     fn startup<'a>(

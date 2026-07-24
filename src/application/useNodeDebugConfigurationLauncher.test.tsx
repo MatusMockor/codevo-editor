@@ -79,6 +79,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
               env: { PRIVATE_TOKEN: "hidden-value" },
               preLaunchTask: "build imported",
               postDebugTask: "stop imported",
+              sourceMaps: false,
               skipFiles: ["<node_internals>/**"],
               serverReadyAction: {
                 action: "openExternally",
@@ -123,6 +124,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
         cwd: `${ROOT_A}/private-package`,
         env: { PRIVATE_TOKEN: "hidden-value" },
         justMyCode: "nodeInternals",
+        sourceMaps: false,
       },
       preLaunchTask: { label: "build imported" },
       postDebugTask: { label: "stop imported" },

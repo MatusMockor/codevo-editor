@@ -43,7 +43,7 @@ pub struct DebugFunctionBreakpoint {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DebugFunctionBreakpointVerification {
     pub id: String,
@@ -489,6 +489,10 @@ pub enum DebugEventPayload {
     BreakpointsVerified {
         file_path: String,
         breakpoints: Vec<DebugBreakpoint>,
+    },
+    #[serde(rename_all = "camelCase")]
+    FunctionBreakpointsVerified {
+        breakpoints: Vec<DebugFunctionBreakpointVerification>,
     },
 }
 

@@ -11,6 +11,7 @@ const request: NativeNodeWatchDebugStartRequest = {
   breakpoints: [],
   exceptionPauseMode: "none",
   exceptionTypeFilter: ["TypeError"],
+  sourceMaps: false,
 };
 
 describe("TauriDebugGateway native Node watch seam", () => {
@@ -45,13 +46,15 @@ describe("TauriDebugGateway native Node watch seam", () => {
       sessionId: 23,
     });
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_native_node_watch", {
-      ...request,
-      breakpoints,
+      request: {
+        ...request,
+        breakpoints,
+      },
     });
-    expect(invokeCommand.mock.calls[0]?.[1]?.breakpoints).not.toBe(breakpoints);
-    expect(invokeCommand.mock.calls[0]?.[1]?.exceptionTypeFilter).not.toBe(
-      request.exceptionTypeFilter,
-    );
+    const payload = invokeCommand.mock.calls[0]?.[1] as
+      { request: NativeNodeWatchDebugStartRequest } | undefined;
+    expect(payload?.request.breakpoints).not.toBe(breakpoints);
+    expect(payload?.request.exceptionTypeFilter).not.toBe(request.exceptionTypeFilter);
   });
 
   it("confirms only the exact paused session through the dedicated command", async () => {

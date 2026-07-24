@@ -9,12 +9,13 @@ use crate::debug_node_process::{
 use crate::debug_session_registry::retain_workspace_root;
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
+use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 
-#[tauri::command]
-#[allow(clippy::too_many_arguments)] // Flat Tauri keys form one closed launch intent.
-pub(crate) async fn debug_start_native_node_watch(
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct NativeNodeWatchStartRequest {
     root_path: String,
     script_path: String,
     watch: bool,
@@ -23,9 +24,30 @@ pub(crate) async fn debug_start_native_node_watch(
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     just_my_code: Option<DebugJustMyCodePolicy>,
+    #[serde(
+        default,
+        deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+    )]
+    source_maps: Option<bool>,
+}
+
+#[tauri::command]
+pub(crate) async fn debug_start_native_node_watch(
+    request: NativeNodeWatchStartRequest,
     app: AppHandle,
     registry: State<'_, Arc<DebugSessionRegistry>>,
 ) -> Result<DebugStartResponse, String> {
+    let NativeNodeWatchStartRequest {
+        root_path,
+        script_path,
+        watch,
+        preserve_output,
+        breakpoints,
+        exception_pause_mode,
+        exception_type_filter,
+        just_my_code,
+        source_maps,
+    } = request;
     validate_native_watch_exception_filter(exception_type_filter)?;
     let preserve_output = validate_closed_intent(watch, preserve_output)?;
     let worker_app = app.clone();
@@ -41,6 +63,7 @@ pub(crate) async fn debug_start_native_node_watch(
                 breakpoints: &breakpoints,
                 exception_pause_mode,
                 just_my_code,
+                source_maps_enabled: source_maps.unwrap_or(true),
                 sink: app_debug_event_sink(worker_app.clone()),
                 registry: &worker_registry,
                 workspace_registry: workspace_registry.inner(),
@@ -121,7 +144,7 @@ fn validate_native_watch_exception_filter(
 mod tests {
     use super::{
         confirm_native_node_watch_blocking, validate_closed_intent,
-        validate_native_watch_exception_filter,
+        validate_native_watch_exception_filter, NativeNodeWatchStartRequest,
     };
     use crate::debug_adapter::{
         DebugAdapter, DebugEvent, DebugEventSink, DebugScopeInfo, DebugStackFrame,
@@ -149,6 +172,25 @@ mod tests {
         assert_eq!(validate_native_watch_exception_filter(Vec::new()), Ok(()));
         assert!(validate_native_watch_exception_filter(vec!["DomainError".to_string()]).is_err());
         assert!(validate_native_watch_exception_filter(vec!["invalid-name".to_string()]).is_err());
+    }
+
+    #[test]
+    fn native_watch_source_maps_wire_rejects_null_and_non_boolean_values() {
+        let request = serde_json::json!({
+            "rootPath": "/workspace",
+            "scriptPath": "/workspace/server.js",
+            "watch": true,
+            "breakpoints": [],
+            "exceptionPauseMode": "none",
+            "exceptionTypeFilter": [],
+            "sourceMaps": false
+        });
+        assert!(serde_json::from_value::<NativeNodeWatchStartRequest>(request.clone()).is_ok());
+        for invalid in [serde_json::Value::Null, serde_json::json!("false")] {
+            let mut request = request.clone();
+            request["sourceMaps"] = invalid;
+            assert!(serde_json::from_value::<NativeNodeWatchStartRequest>(request).is_err());
+        }
     }
 
     #[test]

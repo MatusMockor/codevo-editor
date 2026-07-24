@@ -109,19 +109,25 @@ fn open_cdp_transport_with_authorization(
     shared_state.first_pause_seen = options.attached;
     let shared = Arc::new(Mutex::new(shared_state));
     let exception_filter = Arc::new(Mutex::new(ExceptionFilterState::default()));
+    let function_breakpoints = Arc::new(
+        crate::debug_cdp_function_breakpoints::FunctionBreakpointSessionState::default(),
+    );
     let client = CdpClient::start(
         socket,
         Arc::clone(&shared),
         Arc::clone(&exception_filter),
         emitter,
-        options.request_timeout,
-        options.disconnected,
-        Arc::clone(&options.startup_is_current),
+        CdpClientStartOptions {
+            disconnected: options.disconnected,
+            function_breakpoints: Arc::clone(&function_breakpoints),
+            mutation_is_allowed: Arc::clone(&options.startup_is_current),
+            request_timeout: options.request_timeout,
+        },
     );
     Ok((
         NodeCdpAdapter {
             client,
-            function_breakpoints: Default::default(),
+            function_breakpoints,
             exception_filter,
             ownership: options.ownership,
             shared,

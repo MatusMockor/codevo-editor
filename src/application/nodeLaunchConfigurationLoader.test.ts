@@ -276,6 +276,7 @@ describe("loadNodeLaunchConfigurations", () => {
           "program": "src/server.ts",
           "preLaunchTask": "build",
           "postDebugTask": "cleanup",
+          "sourceMaps": false,
           "skipFiles": ["<node_internals>/**"]
         },
         {
@@ -310,6 +311,7 @@ describe("loadNodeLaunchConfigurations", () => {
           justMyCode: "nodeInternals",
           preLaunchTask: "build",
           postDebugTask: "cleanup",
+          sourceMaps: false,
         },
       ],
       diagnostics: [
@@ -322,6 +324,7 @@ describe("loadNodeLaunchConfigurations", () => {
     });
     if (result.kind !== "loaded") return;
     expect(result.configurations[0]).not.toHaveProperty("postDebugTask");
+    expect(result.configurations[0]).not.toHaveProperty("sourceMaps");
   });
 
   it("retains private native watch metadata without projecting it into launch configurations", async () => {

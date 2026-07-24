@@ -14,9 +14,9 @@ use crate::debug_inspector_startup::{
 use crate::debug_logpoint::{
     append_bounded_log_output, render_remote_object, DebugLogSegment, DebugLogTemplate,
 };
+use crate::debug_node_launch::source_map_registry;
 #[cfg(test)]
-use crate::debug_node_launch::{build_launch_arguments, INSPECT_FLAG};
-use crate::debug_node_launch::{build_launch_plan, source_map_registry};
+use crate::debug_node_launch::{build_launch_arguments, build_launch_plan, INSPECT_FLAG};
 use crate::debug_node_process::spawn_node_inspector;
 use crate::debug_source_map::SourceMapRegistry;
 use crate::debug_support::{
