@@ -26,13 +26,13 @@ interface ActiveFunctionBreakpointSession {
 }
 
 interface UseDebugFunctionBreakpointManagementOptions {
-  readonly gateway: Pick<DebugGateway, "setFunctionBreakpoints"> &
-    Partial<Pick<DebugGateway, "subscribe">>;
+  readonly gateway: Pick<DebugGateway, "setFunctionBreakpoints">;
   readonly getActiveSession: () => ActiveFunctionBreakpointSession | null;
   readonly isWorkspaceCurrent: (rootPath: string, workspaceId: string) => boolean;
   readonly isWorkspaceTrusted?: () => boolean;
   readonly rootPath: string | null;
   readonly storage?: FunctionBreakpointStorage;
+  readonly subscribe?: DebugGateway["subscribe"];
   readonly workspaceId: string | null;
 }
 
@@ -56,6 +56,7 @@ export function useDebugFunctionBreakpointManagement({
   isWorkspaceTrusted = () => true,
   rootPath,
   storage,
+  subscribe,
   workspaceId,
 }: UseDebugFunctionBreakpointManagementOptions): DebugFunctionBreakpointManagement {
   const [byRoot, setByRoot] = useState<Record<string, FunctionBreakpoint[]>>({});
@@ -140,9 +141,9 @@ export function useDebugFunctionBreakpointManagement({
   );
 
   useEffect(() => {
-    const subscribe = gateway.subscribe;
     if (!subscribe) return;
     return subscribe((event) => {
+      if (typeof event?.payload?.kind !== "string") return;
       if (
         event.payload.kind !== "functionBreakpointsVerified" &&
         event.payload.kind !== "terminated"
@@ -182,7 +183,7 @@ export function useDebugFunctionBreakpointManagement({
       verificationSessionByRootRef.current.set(rootKey, event.sessionId);
       applyVerification(current.rootPath, event.payload.breakpoints);
     });
-  }, [applyVerification, exactSessionIsCurrent, gateway, getActiveSession]);
+  }, [applyVerification, exactSessionIsCurrent, getActiveSession, subscribe]);
 
   const synchronize = useCallback(
     async (

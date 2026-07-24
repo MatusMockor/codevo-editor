@@ -1325,6 +1325,10 @@ export function useWorkbenchDebugSession({
       workspaceId: owner.workspaceId,
     };
   }, [activeControlSessionId, adapterKindForSession]);
+  const subscribeToFunctionBreakpointVerification = useCallback(
+    (handler: (event: DebugEvent) => void) => gateway.subscribe(handler),
+    [gateway],
+  );
   const {
     add: addFunctionBreakpoint,
     functionBreakpoints,
@@ -1338,6 +1342,7 @@ export function useWorkbenchDebugSession({
       isExactWorkspaceOwnerCurrent(rootPath, requestedWorkspaceId),
     isWorkspaceTrusted,
     rootPath: workspaceRoot,
+    subscribe: subscribeToFunctionBreakpointVerification,
     workspaceId,
   });
   syncFunctionBreakpointsForSessionRef.current = synchronizeFunctionBreakpointsForSession;

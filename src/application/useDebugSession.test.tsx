@@ -5820,8 +5820,8 @@ describe("useDebugSession", () => {
     const gateway: DebugGateway = { ...harness.gateway, subscribe };
     const ui = renderHook(gateway, "/workspace/one");
 
-    expect(subscribe).toHaveBeenCalledTimes(1);
-    expect(handlers.size).toBe(1);
+    expect(subscribe).toHaveBeenCalledTimes(2);
+    expect(handlers.size).toBe(2);
 
     ui.unmount();
     expect(handlers.size).toBe(0);

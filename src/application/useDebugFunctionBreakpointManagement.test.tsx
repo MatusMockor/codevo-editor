@@ -224,6 +224,7 @@ describe("useDebugFunctionBreakpointManagement", () => {
           }}
           rootPath="/workspace"
           storage={storage}
+          subscribe={gateway.subscribe}
           workspaceId="workspace"
         />,
       );
@@ -317,6 +318,7 @@ describe("useDebugFunctionBreakpointManagement", () => {
             removeItem: () => undefined,
             setItem: () => undefined,
           }}
+          subscribe={gateway.subscribe}
           workspaceId="workspace"
         />,
       );
