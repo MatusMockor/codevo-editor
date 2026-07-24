@@ -65,8 +65,10 @@ For each slice:
 9. Run all applicable repository gates, not only focused tests.
 10. Report what is proven, what remains unsupported, and any residual risk.
 
-Do not commit, push, create a branch, or open a pull request unless the user explicitly
-asks. Never discard, reset, rewrite, or broadly format unrelated worktree changes.
+Work directly on `main`. Never create a feature branch unless the user explicitly asks.
+Commit each completed, reviewed, and validated slice to `main`. Push and pull requests
+only after explicit user authorization. Never discard, reset, rewrite, or broadly format
+unrelated worktree changes.
 
 ## Dependency rule and layer boundaries
 
