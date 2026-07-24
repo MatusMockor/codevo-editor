@@ -94,7 +94,7 @@ const EDITOR_SURFACE_IDENTITY = {};
     }
 
     act(() => root.render(<Harness />));
-    expect(host.querySelector('input[aria-label="Debug expression"]')).toBeNull();
+    expect(host.querySelector('textarea[aria-label="Debug expression"]')).toBeNull();
 
     const event = new KeyboardEvent("keydown", {
       bubbles: true,
@@ -105,11 +105,13 @@ const EDITOR_SURFACE_IDENTITY = {};
     });
     act(() => window.dispatchEvent(event));
 
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="Debug expression"]');
+    const textarea = host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Debug expression"]',
+    );
     expect(event.defaultPrevented).toBe(true);
     expect(deliveredFocusRequest).toEqual({ generation: 1, workspaceOwnerKey: "workspace-a" });
     expect(captured.current?.focusRequest).toBeNull();
-    expect(document.activeElement).toBe(input);
+    expect(document.activeElement).toBe(textarea);
     expect(consoleResult.submit).not.toHaveBeenCalled();
     expect(consoleResult.clear).not.toHaveBeenCalled();
 

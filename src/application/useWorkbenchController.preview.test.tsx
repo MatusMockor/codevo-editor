@@ -73176,6 +73176,13 @@ MissingClass::class;
   });
 
   describe("debugger wiring", () => {
+    const expectDefaultDebugStart = (
+      start: DebugGatewayHarness["start"],
+      launch: Parameters<DebugGateway["start"]>[1],
+    ): void => {
+      void expect(start).toHaveBeenCalledWith("/workspace", launch, [], "none", []);
+    };
+
     it("starts a vitest debug session for the active JS test file via debug.start", async () => {
       const testPath = "/workspace/packages/math/src/sum.test.ts";
       const readTextFile = vi.fn(async (path: string) => {
@@ -73211,17 +73218,12 @@ MissingClass::class;
       });
       await flushAsyncTurns();
 
-      expect(debugGateway.start).toHaveBeenCalledWith(
-        "/workspace",
-        {
-          kind: "js-test-file",
-          runner: "vitest",
-          filePath: testPath,
-          packageRootPath: "/workspace/packages/math",
-        },
-        [],
-        "none",
-      );
+      expectDefaultDebugStart(debugGateway.start, {
+        kind: "js-test-file",
+        runner: "vitest",
+        filePath: testPath,
+        packageRootPath: "/workspace/packages/math",
+      });
       expect(getWorkbench().debugSession.snapshot.state).toEqual({
         kind: "running",
         sessionId: 7,
@@ -73293,12 +73295,7 @@ MissingClass::class;
         await flushAsyncTurns();
       });
 
-      expect(debugGateway.start).toHaveBeenCalledWith(
-        "/workspace",
-        { kind: "node-script", scriptPath },
-        [],
-        "none",
-      );
+      expectDefaultDebugStart(debugGateway.start, { kind: "node-script", scriptPath });
     });
 
     it("starts a php-script debug session for the active PHP file via debug.start", async () => {
@@ -73323,12 +73320,7 @@ MissingClass::class;
         await flushAsyncTurns();
       });
 
-      expect(debugGateway.start).toHaveBeenCalledWith(
-        "/workspace",
-        { kind: "php-script", scriptPath },
-        [],
-        "none",
-      );
+      expectDefaultDebugStart(debugGateway.start, { kind: "php-script", scriptPath });
       expect(getWorkbench().bottomPanelVisible).toBe(true);
     });
 
@@ -73355,12 +73347,7 @@ MissingClass::class;
         await flushAsyncTurns();
       });
 
-      expect(debugGateway.start).toHaveBeenCalledWith(
-        "/workspace",
-        { kind: "php-test-file", filePath: testPath },
-        [],
-        "none",
-      );
+      expectDefaultDebugStart(debugGateway.start, { kind: "php-test-file", filePath: testPath });
       expect(String(getWorkbench().bottomPanelView)).toBe("debug");
     });
 
@@ -73381,12 +73368,7 @@ MissingClass::class;
         await flushAsyncTurns();
       });
 
-      expect(debugGateway.start).toHaveBeenCalledWith(
-        "/workspace",
-        { kind: "php-listen" },
-        [],
-        "none",
-      );
+      expectDefaultDebugStart(debugGateway.start, { kind: "php-listen" });
       expect(String(getWorkbench().bottomPanelView)).toBe("debug");
       expect(getWorkbench().bottomPanelVisible).toBe(true);
     });
