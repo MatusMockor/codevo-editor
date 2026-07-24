@@ -57,7 +57,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
 
     harness.publish(event({ relativePath: "package.json" }));
     expect(harness.current()).toMatchObject({
-      expressRouteDiscoveryVersion: 2,
+      expressRouteDiscoveryVersion: 3,
       jsTestContinuousRunVersion: 3,
       jsTestCoverageVersion: 3,
       jsTestDiscoveryVersion: 1,
@@ -68,7 +68,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
 
     harness.publish(event({ fileKind: "directory", kind: "created", relativePath: "src/http" }));
     expect(harness.current()).toMatchObject({
-      expressRouteDiscoveryVersion: 3,
+      expressRouteDiscoveryVersion: 4,
       jsTestContinuousRunVersion: 4,
       jsTestCoverageVersion: 4,
       jsTestDiscoveryVersion: 2,
@@ -79,7 +79,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
 
     harness.publish(event({ relativePath: "config/routes.yaml" }));
     expect(harness.current()).toMatchObject({
-      expressRouteDiscoveryVersion: 3,
+      expressRouteDiscoveryVersion: 4,
       jsTestContinuousRunVersion: 5,
       jsTestCoverageVersion: 4,
       jsTestDiscoveryVersion: 2,
@@ -96,7 +96,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
       }),
     );
     expect(harness.current()).toMatchObject({
-      expressRouteDiscoveryVersion: 3,
+      expressRouteDiscoveryVersion: 4,
       jsTestContinuousRunVersion: 6,
       jsTestCoverageVersion: 4,
       jsTestDiscoveryVersion: 2,
