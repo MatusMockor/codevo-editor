@@ -13,6 +13,7 @@ export interface WindowedRowsInput {
   readonly overscan?: number;
   readonly fallbackViewportHeight?: number;
   readonly pinnedIndices?: readonly number[];
+  readonly preserveScrollAnchor?: boolean;
 }
 
 export interface WindowedRow {
@@ -46,7 +47,13 @@ interface WindowRange {
 
 interface LiveKeys {
   readonly indexByKey: ReadonlyMap<string, number>;
+  readonly keysByIndex: readonly string[];
   readonly keys: ReadonlySet<string>;
+}
+
+interface ScrollAnchorSnapshot {
+  readonly keys: readonly string[];
+  readonly offsets: readonly number[];
 }
 
 export function useWindowedRows(input: WindowedRowsInput): WindowedRowsResult {
@@ -58,6 +65,7 @@ export function useWindowedRows(input: WindowedRowsInput): WindowedRowsResult {
     keyForIndex,
     overscan = DEFAULT_OVERSCAN,
     pinnedIndices = [],
+    preserveScrollAnchor = false,
   } = input;
   const normalizedItemCount = Math.max(0, Math.trunc(itemCount));
   const normalizedOverscan = Math.max(0, Math.trunc(overscan));
@@ -67,6 +75,7 @@ export function useWindowedRows(input: WindowedRowsInput): WindowedRowsResult {
   const containerWidthRef = useRef<number | null>(null);
   const pendingScrollTopRef = useRef(0);
   const scrollAnimationFrameRef = useRef<number | null>(null);
+  const scrollAnchorSnapshotRef = useRef<ScrollAnchorSnapshot | null>(null);
   const [containerElement, setContainerElement] = useState<HTMLElement | null>(null);
   const [measurementEpoch, setMeasurementEpoch] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -79,10 +88,12 @@ export function useWindowedRows(input: WindowedRowsInput): WindowedRowsResult {
 
   const liveKeys = useMemo<LiveKeys>(() => {
     const indexByKey = new Map<string, number>();
+    const keysByIndex: string[] = [];
     const keys = new Set<string>();
 
     for (let index = 0; index < normalizedItemCount; index += 1) {
       const key = keyForIndex(index);
+      keysByIndex.push(key);
       keys.add(key);
 
       if (!indexByKey.has(key)) {
@@ -90,7 +101,7 @@ export function useWindowedRows(input: WindowedRowsInput): WindowedRowsResult {
       }
     }
 
-    return { indexByKey, keys };
+    return { indexByKey, keys, keysByIndex };
   }, [keyForIndex, normalizedItemCount]);
 
   const heightModel = useMemo<HeightModel>(() => {
@@ -218,14 +229,56 @@ export function useWindowedRows(input: WindowedRowsInput): WindowedRowsResult {
   const normalizedScrollTop = Math.max(0, Math.min(scrollTop, maxScrollTop));
 
   useLayoutEffect(() => {
-    if (!containerElement || containerElement.scrollTop === normalizedScrollTop) {
+    const previousSnapshot = scrollAnchorSnapshotRef.current;
+    scrollAnchorSnapshotRef.current = {
+      keys: liveKeys.keysByIndex,
+      offsets: heightModel.offsets,
+    };
+
+    if (!containerElement) {
       return;
     }
 
-    containerElement.scrollTop = normalizedScrollTop;
-    pendingScrollTopRef.current = normalizedScrollTop;
-    setScrollTop(normalizedScrollTop);
-  }, [containerElement, normalizedScrollTop]);
+    let nextScrollTop = normalizedScrollTop;
+
+    if (enabled && preserveScrollAnchor && previousSnapshot) {
+      const delta = scrollAnchorDelta(
+        previousSnapshot,
+        liveKeys.indexByKey,
+        heightModel.offsets,
+        containerElement.scrollTop,
+      );
+
+      if (delta !== null) {
+        const currentViewportHeight =
+          containerElement.clientHeight > 0
+            ? containerElement.clientHeight
+            : effectiveViewportHeight;
+        const currentMaxScrollTop = Math.max(0, heightModel.totalHeight - currentViewportHeight);
+        nextScrollTop = Math.max(
+          0,
+          Math.min(currentMaxScrollTop, containerElement.scrollTop + delta),
+        );
+      }
+    }
+
+    if (containerElement.scrollTop === nextScrollTop) {
+      return;
+    }
+
+    containerElement.scrollTop = nextScrollTop;
+    pendingScrollTopRef.current = nextScrollTop;
+    setScrollTop(nextScrollTop);
+  }, [
+    containerElement,
+    effectiveViewportHeight,
+    enabled,
+    heightModel.offsets,
+    heightModel.totalHeight,
+    liveKeys,
+    normalizedScrollTop,
+    preserveScrollAnchor,
+  ]);
 
   const windowRange = useMemo<WindowRange>(() => {
     if (!enabled) {
@@ -452,6 +505,54 @@ function normalizedHeight(height: number): number {
   }
 
   return Math.max(0, height);
+}
+
+function indexAtOffsets(offsets: readonly number[], offset: number): number {
+  const itemCount = Math.max(0, offsets.length - 1);
+  let lowerBound = 0;
+  let upperBound = itemCount;
+
+  while (lowerBound < upperBound) {
+    const middle = Math.floor((lowerBound + upperBound) / 2);
+
+    if ((offsets[middle + 1] ?? 0) <= offset) {
+      lowerBound = middle + 1;
+      continue;
+    }
+
+    upperBound = middle;
+  }
+
+  return Math.min(Math.max(0, itemCount - 1), lowerBound);
+}
+
+function scrollAnchorDelta(
+  previousSnapshot: ScrollAnchorSnapshot,
+  currentIndexByKey: ReadonlyMap<string, number>,
+  currentOffsets: readonly number[],
+  scrollTop: number,
+): number | null {
+  let previousIndex = indexAtOffsets(previousSnapshot.offsets, scrollTop);
+  let currentIndex: number | undefined;
+
+  while (previousIndex < previousSnapshot.keys.length) {
+    const key = previousSnapshot.keys[previousIndex];
+    currentIndex = key === undefined ? undefined : currentIndexByKey.get(key);
+
+    if (currentIndex !== undefined) {
+      break;
+    }
+
+    previousIndex += 1;
+  }
+
+  if (currentIndex === undefined) {
+    return null;
+  }
+
+  const previousOffset = previousSnapshot.offsets[previousIndex] ?? 0;
+  const currentOffset = currentOffsets[currentIndex] ?? 0;
+  return currentOffset - previousOffset;
 }
 
 function indexAtOffset(model: HeightModel, itemCount: number, offset: number): number {

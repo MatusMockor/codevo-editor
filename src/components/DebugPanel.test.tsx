@@ -1787,7 +1787,7 @@ describe("DebugPanel", () => {
       ]),
     });
 
-    expect(body?.scrollTop).toBe(100);
+    expect(body?.scrollTop).toBe(50);
   });
 
   it("does not hijack the scroll position after the reader scrolls up", () => {

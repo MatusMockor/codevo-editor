@@ -154,6 +154,79 @@ describe("useWindowedRows", () => {
     expect(hook.element.scrollTop).toBe(70);
   });
 
+  it("preserves the visible row offset when leading keyed rows are removed", () => {
+    geometry.setHeight(60);
+    const previousKeys = [
+      "marker",
+      ...Array.from({ length: 19 }, (_value, index) => `row-${index}`),
+    ];
+    const hook = renderWindowedRows(
+      root,
+      animationFrame,
+      uniformInput({
+        itemCount: previousKeys.length,
+        keyForIndex: (index) => previousKeys[index]!,
+        overscan: 0,
+        preserveScrollAnchor: true,
+      }),
+    );
+    hook.element.scrollTop = 200;
+    act(() => {
+      hook.current.onScroll(scrollEvent(hook.element));
+      animationFrame.flush();
+    });
+    const nextKeys = ["marker", ...previousKeys.slice(3), "row-19", "row-20"];
+
+    hook.rerender(
+      uniformInput({
+        itemCount: nextKeys.length,
+        keyForIndex: (index) => nextKeys[index]!,
+        overscan: 0,
+        preserveScrollAnchor: true,
+      }),
+    );
+
+    expect(hook.element.scrollTop).toBe(160);
+  });
+
+  it("anchors before clamping when evicted rows shrink the total height", () => {
+    geometry.setHeight(60);
+    const previousKeys = [
+      "marker",
+      ...Array.from({ length: 19 }, (_value, index) => `row-${index}`),
+    ];
+    const heightForKey = (key: string) => (key === "row-0" || key === "row-1" ? 100 : 20);
+    const hook = renderWindowedRows(
+      root,
+      animationFrame,
+      uniformInput({
+        estimateHeight: (index) => heightForKey(previousKeys[index]!),
+        itemCount: previousKeys.length,
+        keyForIndex: (index) => previousKeys[index]!,
+        overscan: 0,
+        preserveScrollAnchor: true,
+      }),
+    );
+    hook.element.scrollTop = 480;
+    act(() => {
+      hook.current.onScroll(scrollEvent(hook.element));
+      animationFrame.flush();
+    });
+    const nextKeys = ["marker", ...previousKeys.slice(3), "row-19", "row-20"];
+
+    hook.rerender(
+      uniformInput({
+        estimateHeight: (index) => heightForKey(nextKeys[index]!),
+        itemCount: nextKeys.length,
+        keyForIndex: (index) => nextKeys[index]!,
+        overscan: 0,
+        preserveScrollAnchor: true,
+      }),
+    );
+
+    expect(hook.element.scrollTop).toBe(280);
+  });
+
   it("clamps scrollToIndex and aligns nearest, start, and end", () => {
     geometry.setHeight(60);
     const hook = renderWindowedRows(
@@ -261,6 +334,7 @@ describe("useWindowedRows", () => {
 interface WindowedRowsHarness {
   readonly current: WindowedRowsResult;
   readonly element: HTMLDivElement;
+  readonly rerender: (input: WindowedRowsInput) => void;
 }
 
 function renderWindowedRows(
@@ -269,9 +343,10 @@ function renderWindowedRows(
   input: WindowedRowsInput,
 ): WindowedRowsHarness {
   let current: WindowedRowsResult | null = null;
+  let currentInput = input;
 
   function Harness(): ReactElement {
-    const result = useWindowedRows(input);
+    const result = useWindowedRows(currentInput);
     current = result;
 
     return createElement("div", { ref: result.containerRef });
@@ -295,6 +370,10 @@ function renderWindowedRows(
       return current;
     },
     element,
+    rerender(nextInput) {
+      currentInput = nextInput;
+      act(() => root.render(createElement(Harness)));
+    },
   };
 }
 
