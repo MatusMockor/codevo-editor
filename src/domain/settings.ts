@@ -73,7 +73,7 @@ export type WorkspaceSessionBottomPanelView =
   | "history"
   | "terminal"
   | "runtime";
-export type WorkspaceSessionSidebarView = "files" | "git" | "php";
+export type WorkspaceSessionSidebarView = "files" | "git" | "php" | "scripts";
 export type SettingsSection =
   | "general"
   | "keymap"
@@ -1217,7 +1217,7 @@ function isWorkspaceSessionBottomPanelView(
 function isWorkspaceSessionSidebarView(
   value: unknown,
 ): value is WorkspaceSessionSidebarView {
-  return value === "files" || value === "git" || value === "php";
+  return value === "files" || value === "git" || value === "php" || value === "scripts";
 }
 
 function normalizeNullableString(

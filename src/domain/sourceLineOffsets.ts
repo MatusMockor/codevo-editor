@@ -17,10 +17,7 @@ export function computeLineStartOffsets(source: string): number[] {
   return lineStartOffsets;
 }
 
-export function lineColumnAt(
-  lineStartOffsets: number[],
-  offset: number,
-): EditorPosition {
+export function lineColumnAt(lineStartOffsets: readonly number[], offset: number): EditorPosition {
   let low = 0;
   let high = lineStartOffsets.length - 1;
 

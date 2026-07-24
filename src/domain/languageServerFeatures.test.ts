@@ -97,6 +97,9 @@ describe("pathFromLanguageServerUri", () => {
     expect(pathFromLanguageServerUri("file:///project/src/User%20Model.php")).toBe(
       "/project/src/User Model.php",
     );
+    expect(pathFromLanguageServerUri("file:///project/bad%5Cname.php")).toBe(
+      "/project/bad\\name.php",
+    );
   });
 
   it("returns null for unsupported URIs", () => {
@@ -106,6 +109,8 @@ describe("pathFromLanguageServerUri", () => {
 
   it.each([
     "file://server/project/User.php",
+    "file://./project/User.php",
+    "file://../project/User.php",
     "file:///project/bad%2Fname.php",
     "file:///project/bad%00name.php",
     "file:///project/bad%ZZname.php",
@@ -127,12 +132,7 @@ describe("pathFromLanguageServerUri", () => {
       throw new Error(root.error.message);
     }
 
-    expect(
-      workspacePathFromLanguageServerUri(
-        root.value,
-        "file:///other/User.php",
-      ),
-    ).toBeNull();
+    expect(workspacePathFromLanguageServerUri(root.value, "file:///other/User.php")).toBeNull();
   });
 });
 

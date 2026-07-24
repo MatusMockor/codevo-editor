@@ -3,6 +3,7 @@ import type { Psr4Root } from "./workspace";
 import {
   isPhpTestRelativePath,
   phpTestNavigationTargets,
+  phpTestPartnerMissingMessage,
 } from "./phpTestNavigation";
 
 function psr4(namespace: string, paths: string[], dev = false): Psr4Root {
@@ -12,6 +13,13 @@ function psr4(namespace: string, paths: string[], dev = false): Psr4Root {
 const APP_ROOT = psr4("App\\", ["app/"]);
 const TESTS_DEV_ROOT = psr4("Tests\\", ["tests/"], true);
 const ROOTS = [APP_ROOT, TESTS_DEV_ROOT];
+
+describe("phpTestPartnerMissingMessage", () => {
+  it("describes the missing side of each navigation direction", () => {
+    expect(phpTestPartnerMissingMessage("toSubject")).toContain("No test subject found");
+    expect(phpTestPartnerMissingMessage("toTest")).toContain("No test found");
+  });
+});
 
 describe("isPhpTestRelativePath", () => {
   it("treats a file under the tests root as a test", () => {

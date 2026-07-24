@@ -911,6 +911,15 @@ describe("normalizeLargeSmartDocumentPolicy", () => {
 });
 
 describe("normalizeWorkspaceSession", () => {
+  it("restores the Scripts sidebar view", () => {
+    expect(
+      normalizeWorkspaceSession({
+        ...defaultWorkspaceSessionState(),
+        sidebarView: "scripts",
+      }).sidebarView,
+    ).toBe("scripts");
+  });
+
   it("migrates legacy flat fields into the primary group and unpins preview", () => {
     const normalized = normalizeWorkspaceSession({
       activePath: "/project/Preview.php",

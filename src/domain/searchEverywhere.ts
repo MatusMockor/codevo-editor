@@ -1,4 +1,4 @@
-import type { Command, CommandContext } from "../application/commandRegistry";
+import type { Command, CommandContext } from "./command";
 import type { ProjectSymbolSearchResult } from "./projectSymbols";
 import type { FileSearchResult } from "./workspace";
 

@@ -1,4 +1,4 @@
-import { createWorkbenchNotice, type WorkbenchNotice } from "../application/workbenchNotice";
+import { createWorkbenchNotice, type WorkbenchNotice } from "./workbenchNotice";
 import { joinWorkspacePath } from "./workspace";
 
 export interface EslintDiagnostic {

@@ -56,7 +56,7 @@ describe("reduceDebuggerSnapshot", () => {
     const snapshot = initialDebuggerSnapshot();
     const payloads: DebugEventPayload[] = [
       { kind: "started", sessionId: 1 },
-      { kind: "stopped", reason: "breakpoint", frames: [] },
+      { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 },
       { kind: "resumed" },
       { kind: "terminated", exitCode: 0 },
       { kind: "output", stream: "stdout", text: "x" },
@@ -98,7 +98,7 @@ describe("reduceDebuggerSnapshot", () => {
 
     const afterStopped = reduceDebuggerSnapshot(
       snapshot,
-      event(1, { kind: "stopped", reason: "entry", frames: [frame()] }),
+      event(1, { kind: "stopped", reason: "entry", frames: [frame()], pauseGeneration: 1 }),
     );
     const afterResumed = reduceDebuggerSnapshot(
       snapshot,
@@ -132,6 +132,7 @@ describe("reduceDebuggerSnapshot", () => {
         kind: "stopped",
         reason: "breakpoint",
         frames: [top, frame({ frameId: 8 })],
+        pauseGeneration: 1,
       }),
     );
 
@@ -148,7 +149,7 @@ describe("reduceDebuggerSnapshot", () => {
   it("stops with a null top frame when no frames arrive", () => {
     const next = reduceDebuggerSnapshot(
       runningSnapshot(),
-      event(2, { kind: "stopped", reason: "pause", frames: [] }),
+      event(2, { kind: "stopped", reason: "pause", frames: [], pauseGeneration: 1 }),
     );
 
     expect(next.state).toEqual({
@@ -163,7 +164,7 @@ describe("reduceDebuggerSnapshot", () => {
   it("resumes a stopped session back to running", () => {
     const stopped = reduceDebuggerSnapshot(
       runningSnapshot(),
-      event(2, { kind: "stopped", reason: "breakpoint", frames: [] }),
+      event(2, { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 }),
     );
     const next = reduceDebuggerSnapshot(stopped, event(3, { kind: "resumed" }));
 
@@ -176,7 +177,12 @@ describe("reduceDebuggerSnapshot", () => {
   it("replaces one stop with the next when a step lands", () => {
     const stopped = reduceDebuggerSnapshot(
       runningSnapshot(),
-      event(2, { kind: "stopped", reason: "breakpoint", frames: [frame()] }),
+      event(2, {
+        kind: "stopped",
+        reason: "breakpoint",
+        frames: [frame()],
+        pauseGeneration: 1,
+      }),
     );
     const next = reduceDebuggerSnapshot(
       stopped,
@@ -184,6 +190,7 @@ describe("reduceDebuggerSnapshot", () => {
         kind: "stopped",
         reason: "step",
         frames: [frame({ lineNumber: 11 })],
+        pauseGeneration: 2,
       }),
     );
 
@@ -216,7 +223,7 @@ describe("reduceDebuggerSnapshot", () => {
     );
     const payloads: DebugEventPayload[] = [
       { kind: "started", sessionId: 1 },
-      { kind: "stopped", reason: "breakpoint", frames: [] },
+      { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 },
       { kind: "resumed" },
       { kind: "output", stream: "stderr", text: "late" },
     ];
@@ -232,7 +239,7 @@ describe("reduceDebuggerSnapshot", () => {
     const snapshot = runningSnapshot();
     const foreign = event(
       2,
-      { kind: "stopped", reason: "breakpoint", frames: [] },
+      { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 },
       2,
     );
 
@@ -242,17 +249,17 @@ describe("reduceDebuggerSnapshot", () => {
   it("ignores replayed events with a seq at or below the last processed", () => {
     const stopped = reduceDebuggerSnapshot(
       runningSnapshot(),
-      event(2, { kind: "stopped", reason: "breakpoint", frames: [] }),
+      event(2, { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 }),
     );
     const resumed = reduceDebuggerSnapshot(stopped, event(3, { kind: "resumed" }));
 
     const replayedStop = reduceDebuggerSnapshot(
       resumed,
-      event(2, { kind: "stopped", reason: "breakpoint", frames: [] }),
+      event(2, { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 }),
     );
     const sameSeq = reduceDebuggerSnapshot(
       resumed,
-      event(3, { kind: "stopped", reason: "breakpoint", frames: [] }),
+      event(3, { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 }),
     );
 
     expect(replayedStop).toBe(resumed);

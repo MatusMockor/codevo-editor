@@ -1100,7 +1100,7 @@ function f()
     expect(unusedVariableMessages(source)).toEqual([]);
   });
 
-  it("does not flag a variable used in curly interpolation {\$x}", () => {
+  it("does not flag a variable used in curly interpolation {$x}", () => {
     const source = `<?php
 
 function f()
@@ -1320,7 +1320,7 @@ function f($data)
 
   // --- false-positive guards: variable variables ---
 
-  it("suppresses the whole scope when a variable variable \$\$x is present", () => {
+  it("suppresses the whole scope when a variable variable $$x is present", () => {
     const source = `<?php
 
 function f($key)
@@ -1334,7 +1334,7 @@ function f($key)
     expect(unusedVariableMessages(source)).toEqual([]);
   });
 
-  it("suppresses the whole scope for \${\$x} dynamic variable", () => {
+  it("suppresses the whole scope for ${$x} dynamic variable", () => {
     const source = `<?php
 
 function f($key)
@@ -1376,7 +1376,7 @@ function f($items)
     expect(unusedVariableMessages(source)).toEqual([]);
   });
 
-  it("does not flag a reference alias assignment \$ref = &\$x", () => {
+  it("does not flag a reference alias assignment $ref = &$x", () => {
     const source = `<?php
 
 function f()
@@ -1406,7 +1406,7 @@ function f()
 
   // --- false-positive guards: superglobals / this / global / static ---
 
-  it("does not flag \$this", () => {
+  it("does not flag $this", () => {
     const source = `<?php
 
 namespace App;

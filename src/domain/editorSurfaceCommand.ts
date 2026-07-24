@@ -5,8 +5,14 @@ export const editorSurfaceCommandIds = [
   "editor.quickDefinition",
   "editor.rename",
   "editor.quickFix",
+  "editor.action.refactor",
   "editor.formatDocument",
   "editor.formatSelection",
+  "editor.action.organizeImports",
+  "typescript.sortImports",
+  "javascript.sortImports",
+  "typescript.removeUnusedImports",
+  "javascript.removeUnusedImports",
   "editor.gotoLine",
   "editor.nextChange",
   "editor.previousChange",
@@ -34,10 +40,7 @@ export function editorSurfaceCommandInvocationScopesEqual(
 }
 
 export interface EditorSurfaceCommandRunner {
-  (
-    commandId: EditorSurfaceCommandId,
-    scope?: EditorSurfaceCommandInvocationScope,
-  ): void;
+  (commandId: EditorSurfaceCommandId, scope?: EditorSurfaceCommandInvocationScope): void;
   captureScope?(): EditorSurfaceCommandInvocationScope | null;
   isEnabled?(
     commandId: EditorSurfaceCommandId,

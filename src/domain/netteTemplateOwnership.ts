@@ -389,7 +389,7 @@ function staticPhpString(value: string): string | null {
 
   const body = value.slice(1, -1);
 
-  if (quote === '"' && /[$\{]/.test(body)) {
+  if (quote === '"' && /[${]/.test(body)) {
     return null;
   }
 

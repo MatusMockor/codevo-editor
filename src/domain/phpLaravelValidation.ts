@@ -325,7 +325,7 @@ function isMapValueOffset(
 }
 
 function isRulesMethodReturnArray(source: string, arrayOpen: number): boolean {
-  const pattern = /\bfunction\s+rules\s*\([^)]*\)\s*(?::\s*[^\{]+)?\s*\{/g;
+  const pattern = /\bfunction\s+rules\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/g;
 
   for (const match of source.matchAll(pattern)) {
     const bodyStart = (match.index ?? 0) + match[0].lastIndexOf("{");

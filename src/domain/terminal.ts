@@ -30,6 +30,7 @@ export interface TerminalProfile {
 export type TerminalUnsubscribeFn = () => void;
 
 export interface TerminalGateway {
+  acknowledgeStart(sessionId: number): Promise<void>;
   listProfiles(): Promise<TerminalProfile[]>;
   resize(sessionId: number, size: TerminalSize): Promise<void>;
   start(
@@ -41,15 +42,18 @@ export interface TerminalGateway {
   stop(sessionId: number): Promise<TerminalRuntimeStatus>;
   stopRoot(rootPath: string): Promise<void>;
   stopAll(): Promise<void>;
-  subscribeOutput(
-    listener: (event: TerminalOutputEvent) => void,
+  subscribeOutput(listener: (event: TerminalOutputEvent) => void): Promise<TerminalUnsubscribeFn>;
+  subscribeStatus?(
+    listener: (status: TerminalRuntimeStatus) => void,
   ): Promise<TerminalUnsubscribeFn>;
   writeInput(sessionId: number, data: string): Promise<void>;
 }
 
-export function terminalSessionId(
-  status: TerminalRuntimeStatus,
-): number | null {
+export function isTerminalRuntimeTerminal(status: TerminalRuntimeStatus): boolean {
+  return status.kind === "stopped" || status.kind === "exited" || status.kind === "crashed";
+}
+
+export function terminalSessionId(status: TerminalRuntimeStatus): number | null {
   if (status.kind === "running") {
     return status.sessionId;
   }

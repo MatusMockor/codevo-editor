@@ -1,0 +1,1289 @@
+import { describe, expect, it } from "vitest";
+import {
+  parseVscodeNodeLaunchConfigurations,
+  VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN,
+  VSCODE_NODE_INTERNALS_SKIP_PATTERN,
+  VSCODE_POST_DEBUG_TASK_MAX_BYTES,
+  VSCODE_PRE_LAUNCH_TASK_MAX_BYTES,
+  VSCODE_SERVER_READY_PATTERN_MAX_BYTES,
+  VSCODE_SERVER_READY_URI_FORMAT_MAX_BYTES,
+} from "./vscodeNodeLaunchConfiguration";
+
+describe("VS Code Node launch configuration import", () => {
+  it("imports bounded JSONC launch metadata without projecting a task command", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(`{
+      // VS Code-compatible comments and trailing commas are accepted.
+      "version": "0.2.0",
+      "configurations": [{
+        "type": "pwa-node",
+        "request": "launch",
+        "name": "API",
+        "program": "\${workspaceFolder}/src/server.ts",
+        "cwd": "\${workspaceFolder}/apps/api",
+        "args": ["--port", "4100"],
+        "env": { "NODE_ENV": "development" },
+        "preLaunchTask": "build api",
+        "postDebugTask": "stop api",
+      }],
+    }`);
+
+    expect(parsed).toEqual({
+      kind: "ok",
+      diagnostics: [],
+      configurations: [
+        {
+          configuration: {
+            args: ["--port", "4100"],
+            cwd: "apps/api",
+            default: false,
+            env: { NODE_ENV: "development" },
+            name: "API",
+            target: { kind: "script", path: "src/server.ts" },
+          },
+          justMyCode: "nodeInternals",
+          preLaunchTask: "build api",
+          postDebugTask: "stop api",
+        },
+      ],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.configurations[0]).not.toHaveProperty("command");
+    expect(parsed.configurations[0]).not.toHaveProperty("task");
+  });
+
+  it("imports attach and preserves lifecycle task labels only as exact metadata", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "attach",
+              name: "Inspector",
+              port: 9229,
+              preLaunchTask: "start inspector",
+              postDebugTask: "stop inspector",
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [
+        {
+          configuration: { target: { kind: "attach", port: 9229 } },
+          preLaunchTask: "start inspector",
+          postDebugTask: "stop inspector",
+        },
+      ],
+    });
+  });
+
+  it("imports a strict serverReadyAction as a frozen semantic loopback recipe", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "pwa-node",
+            request: "launch",
+            name: "Express API",
+            program: "src/server.ts",
+            serverReadyAction: {
+              action: "openExternally",
+              pattern: "Example app listening on port ([0-9]+)!",
+              uriFormat: "https://127.0.0.1:%s/api/v1",
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      diagnostics: [],
+      configurations: [
+        {
+          configuration: { name: "Express API" },
+          serverReadyAction: {
+            action: "openExternally",
+            match: {
+              kind: "port",
+              prefix: "Example app listening on port ",
+              suffix: "!",
+            },
+            uri: {
+              scheme: "https",
+              host: "127.0.0.1",
+              path: "/api/v1",
+            },
+          },
+        },
+      ],
+    });
+    if (parsed.kind !== "ok") return;
+    const recipe = parsed.configurations[0]?.serverReadyAction;
+    expect(Object.isFrozen(recipe)).toBe(true);
+    expect(Object.isFrozen(recipe?.match)).toBe(true);
+    expect(Object.isFrozen(recipe?.uri)).toBe(true);
+    expect(recipe).not.toHaveProperty("pattern");
+    expect(recipe).not.toHaveProperty("uriFormat");
+    expect(parsed.configurations[0]).not.toHaveProperty("command");
+  });
+
+  it.each([
+    ["missing action", { pattern: "listening on port ([0-9]+)", uriFormat: "http://localhost:%s" }],
+    [
+      "browser debugger action",
+      {
+        action: "debugWithChrome",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s",
+      },
+    ],
+    [
+      "arbitrary launch action",
+      {
+        action: "startDebugging",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s",
+      },
+    ],
+    [
+      "unknown command-like field",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s",
+        command: "open",
+      },
+    ],
+    [
+      "raw regex operator",
+      {
+        action: "openExternally",
+        pattern: "listening.* on port ([0-9]+)",
+        uriFormat: "http://localhost:%s",
+      },
+    ],
+    [
+      "nested quantifier",
+      {
+        action: "openExternally",
+        pattern: "((a+)+)([0-9]+)",
+        uriFormat: "http://localhost:%s",
+      },
+    ],
+    [
+      "second capture",
+      {
+        action: "openExternally",
+        pattern: "port ([0-9]+) or ([0-9]+)",
+        uriFormat: "http://localhost:%s",
+      },
+    ],
+    [
+      "digit-leading suffix with ambiguous capture",
+      {
+        action: "openExternally",
+        pattern: "port ([0-9]+)0",
+        uriFormat: "http://localhost:%s",
+      },
+    ],
+    [
+      "remote host",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "https://example.com:%s",
+      },
+    ],
+    [
+      "non-http scheme",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "file://localhost:%s",
+      },
+    ],
+    [
+      "credentials",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://user@localhost:%s",
+      },
+    ],
+    [
+      "query injection",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s/?next=https://example.com",
+      },
+    ],
+    [
+      "parent path",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s/../admin",
+      },
+    ],
+    [
+      "encoded parent path",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s/%2e%2e/admin",
+      },
+    ],
+    [
+      "encoded path separator",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s/safe%2f..%2fadmin",
+      },
+    ],
+    [
+      "encoded backslash",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s/safe%5c..%5cadmin",
+      },
+    ],
+    [
+      "encoded control",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s/safe%00admin",
+      },
+    ],
+    [
+      "double-encoded escape",
+      {
+        action: "openExternally",
+        pattern: "listening on port ([0-9]+)",
+        uriFormat: "http://localhost:%s/%252e%252e/admin",
+      },
+    ],
+  ])("rejects unsafe serverReadyAction shape: %s", (_case, serverReadyAction) => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Unsafe",
+              program: "src/server.js",
+              serverReadyAction,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [
+        { configurationIndex: 0, message: expect.stringContaining("serverReadyAction") },
+      ],
+    });
+  });
+
+  it("does not project an attacker-controlled unknown field name into diagnostics", () => {
+    const privateField = `secret-token-\u202e${"x".repeat(64)}`;
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Private diagnostic",
+            program: "src/server.js",
+            serverReadyAction: {
+              action: "openExternally",
+              pattern: "port ([0-9]+)",
+              uriFormat: "http://localhost:%s",
+              [privateField]: true,
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ configurationIndex: 0, message: expect.stringContaining("unsupported") }],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.diagnostics[0]?.message).not.toContain(privateField);
+    expect(parsed.diagnostics[0]?.message).not.toContain("secret-token");
+  });
+
+  it("rejects serverReadyAction for attach and for compound members", () => {
+    const serverReadyAction = {
+      action: "openExternally",
+      pattern: "listening on port ([0-9]+)",
+      uriFormat: "http://localhost:%s",
+    };
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "attach",
+            name: "Inspector",
+            port: 9229,
+            serverReadyAction,
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "API",
+            program: "src/api.js",
+            serverReadyAction,
+          },
+          { type: "node", request: "launch", name: "Worker", program: "src/worker.js" },
+        ],
+        compounds: [{ name: "Services", configurations: ["API", "Worker"], stopAll: true }],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [
+        { configuration: { name: "API" }, serverReadyAction: { action: "openExternally" } },
+        { configuration: { name: "Worker" } },
+      ],
+      compounds: [],
+      diagnostics: [
+        { configurationIndex: 0, message: expect.stringContaining("only for launch") },
+        {
+          compoundIndex: 0,
+          message: expect.stringContaining("without serverReadyAction"),
+        },
+      ],
+    });
+  });
+
+  it("bounds serverReadyAction pattern and URI format by UTF-8 bytes", () => {
+    const parse = (pattern: string, uriFormat: string) =>
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Boundary",
+              program: "src/server.js",
+              serverReadyAction: { action: "openExternally", pattern, uriFormat },
+            },
+          ],
+        }),
+      );
+
+    expect(
+      parse(
+        `${"a".repeat(VSCODE_SERVER_READY_PATTERN_MAX_BYTES - "([0-9]+)".length)}([0-9]+)`,
+        "http://[::1]:%s",
+      ),
+    ).toMatchObject({ kind: "ok", configurations: [expect.anything()], diagnostics: [] });
+    expect(
+      parse(
+        `${"a".repeat(VSCODE_SERVER_READY_PATTERN_MAX_BYTES - "([0-9]+)".length + 1)}([0-9]+)`,
+        "http://localhost:%s",
+      ),
+    ).toMatchObject({ kind: "ok", configurations: [], diagnostics: [expect.anything()] });
+    expect(
+      parse(
+        "port ([0-9]+)",
+        `http://localhost:%s/${"a".repeat(VSCODE_SERVER_READY_URI_FORMAT_MAX_BYTES)}`,
+      ),
+    ).toMatchObject({ kind: "ok", configurations: [], diagnostics: [expect.anything()] });
+  });
+
+  it("imports only the exact npm run forms into the internal npm target", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "pwa-node",
+            request: "launch",
+            name: "API dev",
+            runtimeExecutable: "npm",
+            runtimeArgs: ["run", "dev:api"],
+            cwd: "${workspaceFolder}/apps/api",
+            env: { NODE_ENV: "development" },
+            preLaunchTask: "generate api",
+            postDebugTask: "stop api",
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Windows build",
+            runtimeExecutable: "npm.cmd",
+            runtimeArgs: ["run", "build"],
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Documented alias",
+            runtimeExecutable: "npm",
+            runtimeArgs: ["run-script", "serve"],
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toEqual({
+      kind: "ok",
+      diagnostics: [],
+      configurations: [
+        {
+          configuration: {
+            args: [],
+            cwd: "apps/api",
+            default: false,
+            env: { NODE_ENV: "development" },
+            name: "API dev",
+            target: { kind: "npm", script: "dev:api", packageRoot: "apps/api" },
+          },
+          justMyCode: "nodeInternals",
+          preLaunchTask: "generate api",
+          postDebugTask: "stop api",
+        },
+        {
+          configuration: {
+            args: [],
+            default: false,
+            env: {},
+            name: "Windows build",
+            target: { kind: "npm", script: "build" },
+          },
+          justMyCode: "nodeInternals",
+        },
+        {
+          configuration: {
+            args: [],
+            default: false,
+            env: {},
+            name: "Documented alias",
+            target: { kind: "npm", script: "serve" },
+          },
+          justMyCode: "nodeInternals",
+        },
+      ],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.configurations[0]).not.toHaveProperty("runtimeExecutable");
+    expect(parsed.configurations[0]).not.toHaveProperty("runtimeArgs");
+  });
+
+  it("imports exact direct native Node watch forms as frozen semantic metadata", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "API watch",
+            program: "${workspaceFolder}/src/server.js",
+            runtimeArgs: ["--watch"],
+          },
+          {
+            type: "pwa-node",
+            request: "launch",
+            name: "Worker watch",
+            program: "src/worker.mjs",
+            runtimeArgs: ["--watch", "--watch-preserve-output"],
+            args: [],
+            env: {},
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toEqual({
+      kind: "ok",
+      diagnostics: [],
+      configurations: [
+        {
+          configuration: {
+            args: [],
+            default: false,
+            env: {},
+            name: "API watch",
+            target: { kind: "script", path: "src/server.js" },
+          },
+          nativeWatch: {
+            kind: "native-node-watch",
+            scriptPath: "src/server.js",
+            watch: true,
+          },
+          justMyCode: "nodeInternals",
+        },
+        {
+          configuration: {
+            args: [],
+            default: false,
+            env: {},
+            name: "Worker watch",
+            target: { kind: "script", path: "src/worker.mjs" },
+          },
+          nativeWatch: {
+            kind: "native-node-watch",
+            scriptPath: "src/worker.mjs",
+            watch: true,
+            preserveOutput: true,
+          },
+          justMyCode: "nodeInternals",
+        },
+      ],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(Object.isFrozen(parsed.configurations[0]?.nativeWatch)).toBe(true);
+    expect(parsed.configurations[0]).not.toHaveProperty("runtimeArgs");
+    expect(parsed.configurations[0]?.nativeWatch).not.toHaveProperty("runtime");
+  });
+
+  it.each([
+    ["missing watch flag", []],
+    ["preserve only", ["--watch-preserve-output"]],
+    ["reordered", ["--watch-preserve-output", "--watch"]],
+    ["duplicate watch", ["--watch", "--watch"]],
+    ["duplicate preserve", ["--watch", "--watch-preserve-output", "--watch-preserve-output"]],
+    ["extra flag", ["--watch", "--trace-warnings"]],
+    ["npm form without npm", ["run", "dev"]],
+  ])("rejects native Node watch runtimeArgs: %s", (_case, runtimeArgs) => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Unsafe watch",
+              program: "src/server.js",
+              runtimeArgs,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("runtimeArgs must be exactly") }],
+    });
+  });
+
+  it.each([
+    ["TypeScript program", { program: "src/server.ts" }],
+    ["tsx executable", { runtimeExecutable: "tsx" }],
+    ["nodemon executable", { runtimeExecutable: "nodemon" }],
+    ["shell executable", { runtimeExecutable: "/bin/sh" }],
+    ["explicit cwd", { cwd: "apps/api" }],
+    ["non-empty args", { args: ["--port", "4000"] }],
+    ["non-empty env", { env: { NODE_ENV: "development" } }],
+  ])("rejects unsupported native Node watch capability: %s", (_case, extra) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Unsafe watch",
+            program: "src/server.js",
+            runtimeArgs: ["--watch"],
+            ...extra,
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [expect.anything()],
+    });
+  });
+
+  it("fails closed when a compound contains native watch metadata", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "API watch",
+            program: "src/api.cjs",
+            runtimeArgs: ["--watch"],
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Worker",
+            program: "src/worker.js",
+          },
+        ],
+        compounds: [{ name: "Services", configurations: ["API watch", "Worker"], stopAll: true }],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [{ nativeWatch: { kind: "native-node-watch" } }, expect.anything()],
+      compounds: [],
+      diagnostics: [
+        {
+          compoundIndex: 0,
+          message: expect.stringContaining("task-free script or npm"),
+        },
+      ],
+    });
+  });
+
+  it("accepts the backend-compatible 128-byte npm script-name boundary", () => {
+    const script = "a".repeat(128);
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Boundary",
+              runtimeExecutable: "npm",
+              runtimeArgs: ["run", script],
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [{ configuration: { target: { kind: "npm", script } } }],
+      diagnostics: [],
+    });
+  });
+
+  it("applies the Node-internals launch default and respects an explicit empty opt-out", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "attach",
+            name: "Attach",
+            port: 9229,
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Default",
+            program: "src/server.js",
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Explicit",
+            runtimeExecutable: "npm",
+            runtimeArgs: ["run", "dev"],
+            skipFiles: [VSCODE_NODE_INTERNALS_SKIP_PATTERN],
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "None",
+            program: "src/none.js",
+            skipFiles: [],
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [
+        { configuration: { name: "Attach" } },
+        { configuration: { name: "Default" }, justMyCode: "nodeInternals" },
+        { configuration: { name: "Explicit" }, justMyCode: "nodeInternals" },
+        { configuration: { name: "None" } },
+      ],
+      diagnostics: [],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.configurations[1]?.configuration).not.toHaveProperty("skipFiles");
+    expect(parsed.configurations[3]).not.toHaveProperty("justMyCode");
+  });
+
+  it("canonicalizes the exact documented node_modules and Node-internals filters", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Dependencies",
+            program: "src/dependencies.js",
+            skipFiles: [VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN],
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Both documented order",
+            program: "src/both.js",
+            skipFiles: [VSCODE_NODE_INTERNALS_SKIP_PATTERN, VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN],
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Both reverse order",
+            program: "src/reverse.js",
+            skipFiles: [VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN, VSCODE_NODE_INTERNALS_SKIP_PATTERN],
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [
+        { justMyCode: "dependencies" },
+        { justMyCode: "nodeInternalsAndDependencies" },
+        { justMyCode: "nodeInternalsAndDependencies" },
+      ],
+      diagnostics: [],
+    });
+    expect(JSON.stringify(parsed)).not.toContain("node_modules");
+    expect(JSON.stringify(parsed)).not.toContain("<node_internals>");
+  });
+
+  it.each([
+    ["raw string", VSCODE_NODE_INTERNALS_SKIP_PATTERN],
+    ["unknown pattern", ["**/*.generated.js"]],
+    ["workspace-expanded node modules", ["${workspaceFolder}/node_modules/**"]],
+    ["duplicate", [VSCODE_NODE_INTERNALS_SKIP_PATTERN, VSCODE_NODE_INTERNALS_SKIP_PATTERN]],
+    [
+      "duplicate node modules",
+      [VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN, VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN],
+    ],
+    [
+      "extra",
+      [
+        VSCODE_NODE_INTERNALS_SKIP_PATTERN,
+        "${workspaceFolder}/node_modules/**",
+        "**/*.generated.js",
+      ],
+    ],
+    ["non-string", [VSCODE_NODE_INTERNALS_SKIP_PATTERN, 1]],
+  ])("fails closed for unsupported skipFiles form: %s", (_case, skipFiles) => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Unsafe",
+              program: "src/server.js",
+              skipFiles,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("skipFiles") }],
+    });
+  });
+
+  it("rejects non-empty attach skipFiles until attach filtering has an owned lifecycle", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "attach",
+              name: "Attach",
+              port: 9229,
+              skipFiles: [VSCODE_NODE_INTERNALS_SKIP_PATTERN],
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("absent or empty for attach") }],
+    });
+  });
+
+  it.each([
+    ["empty", ""],
+    ["leading whitespace", " build"],
+    ["trailing whitespace", "build "],
+    ["control", "build\nsecret"],
+    ["bidi", "build\u202esecret"],
+    ["oversize", "x".repeat(VSCODE_PRE_LAUNCH_TASK_MAX_BYTES + 1)],
+    ["non-string", { label: "build" }],
+  ])("fails closed for %s preLaunchTask metadata", (_case, preLaunchTask) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "API",
+            program: "src/server.ts",
+            preLaunchTask,
+          },
+        ],
+      }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("preLaunchTask") }],
+    });
+  });
+
+  it.each([
+    ["empty", ""],
+    ["leading whitespace", " cleanup"],
+    ["trailing whitespace", "cleanup "],
+    ["control", "cleanup\nsecret"],
+    ["bidi", "cleanup\u202esecret"],
+    ["oversize", "x".repeat(VSCODE_POST_DEBUG_TASK_MAX_BYTES + 1)],
+    ["non-string", { label: "cleanup" }],
+  ])("fails closed for %s postDebugTask metadata", (_case, postDebugTask) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "attach",
+            name: "Inspector",
+            port: 9229,
+            postDebugTask,
+          },
+        ],
+      }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("postDebugTask") }],
+    });
+  });
+
+  it.each(["console"])("rejects unsupported execution field %s instead of ignoring it", (field) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "API",
+            program: "src/server.ts",
+            [field]: "payload",
+          },
+        ],
+      }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining(`unsupported field "${field}"`) }],
+    });
+  });
+
+  it.each([
+    ["arbitrary executable", "node", ["run", "dev"], undefined],
+    ["executable path", "./node_modules/.bin/npm", ["run", "dev"], undefined],
+    ["missing runtime args", "npm", undefined, undefined],
+    ["missing executable", undefined, ["run", "dev"], undefined],
+    ["wrong verb", "npm", ["start", "dev"], undefined],
+    ["missing script", "npm", ["run"], undefined],
+    ["extra runtime arg", "npm", ["run", "dev", "--", "--watch"], undefined],
+    ["leading dash", "npm", ["run", "-dev"], undefined],
+    ["space", "npm", ["run", "dev api"], undefined],
+    ["dynamic script", "npm", ["run", "${input:script}"], undefined],
+    ["non-ASCII script", "npm", ["run", "développement"], undefined],
+    ["oversized script", "npm", ["run", "a".repeat(129)], undefined],
+    ["program mixed in", "npm", ["run", "dev"], "server.js"],
+  ])("rejects unsafe npm launch form: %s", (_case, runtimeExecutable, runtimeArgs, program) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "npm",
+            runtimeExecutable,
+            runtimeArgs,
+            ...(program ? { program } : {}),
+          },
+        ],
+      }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringMatching(/runtime|script program/) }],
+    });
+  });
+
+  it("rejects non-empty npm args to avoid forwarding them with different semantics", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "npm",
+              runtimeExecutable: "npm",
+              runtimeArgs: ["run", "dev"],
+              args: ["--watch"],
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("absent or empty") }],
+    });
+  });
+
+  it.each([
+    "PATH",
+    "path",
+    "NODE_OPTIONS",
+    "SHELL",
+    "COMSPEC",
+    "PATHEXT",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "npm_config_registry",
+  ])("rejects protected npm environment name %s without exposing its value", (name) => {
+    const secret = "SUPER_SECRET_RAW_VALUE";
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "npm",
+            runtimeExecutable: "npm",
+            runtimeArgs: ["run", "dev"],
+            env: { [name]: secret },
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("protected environment name") }],
+    });
+    expect(JSON.stringify(parsed)).not.toContain(secret);
+  });
+
+  it("rejects dynamic substitutions, absolute paths, attach env, and launch ports", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Dynamic",
+            program: "${file}",
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Absolute",
+            program: "/private/server.js",
+          },
+          {
+            type: "node",
+            request: "attach",
+            name: "Attach env",
+            port: 9229,
+            env: { SECRET: "value" },
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Launch port",
+            program: "server.js",
+            port: 9229,
+          },
+        ],
+      }),
+    );
+    expect(parsed).toMatchObject({ kind: "ok", configurations: [] });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.diagnostics).toHaveLength(4);
+  });
+
+  it("retains prototype-shaped environment names as exact own data properties", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      `{
+        "version": "0.2.0",
+        "configurations": [{
+          "type": "node",
+          "request": "launch",
+          "name": "API",
+          "program": "server.js",
+          "env": {
+            "__proto__": "literal-prototype",
+            "constructor": "literal-constructor"
+          }
+        }]
+      }`,
+    );
+
+    expect(parsed).toMatchObject({ kind: "ok", diagnostics: [] });
+    if (parsed.kind !== "ok") return;
+    const environment = parsed.configurations[0]!.configuration.env;
+    expect(Object.prototype.hasOwnProperty.call(environment, "__proto__")).toBe(true);
+    expect(environment.__proto__).toBe("literal-prototype");
+    expect(environment.constructor).toBe("literal-constructor");
+    expect(Object.getPrototypeOf(environment)).toBe(Object.prototype);
+  });
+
+  it("invalidates every duplicate name instead of creating ambiguous task binding", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          { type: "node", request: "launch", name: "API", program: "a.js" },
+          { type: "node", request: "launch", name: "API", program: "b.js" },
+          { type: "node", request: "launch", name: "Worker", program: "worker.js" },
+        ],
+      }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [{ configuration: { name: "Worker" } }],
+      diagnostics: [
+        expect.objectContaining({ message: expect.stringContaining('named "API"') }),
+        expect.objectContaining({ message: expect.stringContaining('named "API"') }),
+      ],
+    });
+  });
+
+  it.each([
+    '{"__proto__":{"version":"0.2.0","configurations":[]}}',
+    '{"constructor":{"prototype":{"version":"0.2.0","configurations":[]}}}',
+    '{"version":"0.2.0","version":"0.2.0","configurations":[]}',
+  ])("rejects duplicate or prototype-shaped root payload %s", (source) => {
+    expect(parseVscodeNodeLaunchConfigurations(source)).toMatchObject({ kind: "error" });
+  });
+
+  it("imports only resolved, bounded, task-safe script/npm compounds as frozen metadata", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          { type: "node", request: "launch", name: "API", program: "src/api.js" },
+          {
+            type: "node",
+            request: "launch",
+            name: "Worker",
+            runtimeExecutable: "npm",
+            runtimeArgs: ["run", "worker"],
+          },
+        ],
+        compounds: [
+          {
+            name: "Services",
+            configurations: ["API", "Worker"],
+            stopAll: true,
+            preLaunchTask: "build services",
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      compounds: [
+        {
+          name: "Services",
+          members: [
+            { configuration: { name: "API", target: { kind: "script" } } },
+            { configuration: { name: "Worker", target: { kind: "npm" } } },
+          ],
+          preLaunchTask: "build services",
+        },
+      ],
+      diagnostics: [],
+    });
+    if (parsed.kind !== "ok" || !parsed.compounds) return;
+    expect(Object.isFrozen(parsed.compounds)).toBe(true);
+    expect(Object.isFrozen(parsed.compounds[0])).toBe(true);
+    expect(Object.isFrozen(parsed.compounds[0]?.members)).toBe(true);
+    expect(Object.isFrozen(parsed.compounds[0]?.members[0])).toBe(true);
+    expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.configuration)).toBe(true);
+    expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.configuration.args)).toBe(true);
+    expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.configuration.env)).toBe(true);
+    expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.configuration.target)).toBe(true);
+    expect(parsed.compounds[0]).not.toHaveProperty("stopAll");
+    expect(parsed.compounds[0]).not.toHaveProperty("configurations");
+  });
+
+  it("skips ambiguous, unknown, colliding, attach, and child-task compound bindings", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          { type: "node", request: "launch", name: "API", program: "src/api.js" },
+          { type: "node", request: "launch", name: "Worker", program: "src/worker.js" },
+          { type: "node", request: "attach", name: "Inspector", port: 9229 },
+          {
+            type: "node",
+            request: "launch",
+            name: "Prepared",
+            program: "src/prepared.js",
+            preLaunchTask: "build prepared",
+          },
+        ],
+        compounds: [
+          { name: "Duplicate", configurations: ["API", "Worker"], stopAll: true },
+          { name: "Duplicate", configurations: ["API", "Worker"], stopAll: true },
+          { name: "Unknown", configurations: ["API", "Missing"], stopAll: true },
+          { name: "API", configurations: ["API", "Worker"], stopAll: true },
+          { name: "Attach child", configurations: ["API", "Inspector"], stopAll: true },
+          { name: "Task child", configurations: ["API", "Prepared"], stopAll: true },
+          { name: "Repeated child", configurations: ["API", "API"], stopAll: true },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({ kind: "ok", compounds: [] });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.diagnostics).toHaveLength(7);
+    expect(parsed.diagnostics.map(({ message }) => message)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("ambiguous"),
+        expect.stringContaining("unknown launch configuration"),
+        expect.stringContaining("collides"),
+        expect.stringContaining("task-free script or npm"),
+        expect.stringContaining("unique member names"),
+      ]),
+    );
+  });
+
+  it.each([
+    ["stopAll missing", { name: "Services", configurations: ["API", "Worker"] }],
+    ["stopAll false", { name: "Services", configurations: ["API", "Worker"], stopAll: false }],
+    ["one member", { name: "Services", configurations: ["API"], stopAll: true }],
+    [
+      "five members",
+      {
+        name: "Services",
+        configurations: ["API", "Worker", "Three", "Four", "Five"],
+        stopAll: true,
+      },
+    ],
+    [
+      "unsafe task",
+      {
+        name: "Services",
+        configurations: ["API", "Worker"],
+        stopAll: true,
+        preLaunchTask: " build",
+      },
+    ],
+    [
+      "post task",
+      {
+        name: "Services",
+        configurations: ["API", "Worker"],
+        stopAll: true,
+        postDebugTask: "cleanup",
+      },
+    ],
+  ])("fails closed for compound shape: %s", (_case, compound) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          { type: "node", request: "launch", name: "API", program: "src/api.js" },
+          { type: "node", request: "launch", name: "Worker", program: "src/worker.js" },
+        ],
+        compounds: [compound],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      compounds: [],
+      diagnostics: [{ compoundIndex: 0 }],
+    });
+  });
+
+  it("bounds compound count and keeps the legacy result shape when none were declared", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [],
+          compounds: Array.from({ length: 17 }, (_, index) => ({
+            name: `Compound ${index}`,
+            configurations: ["A", "B"],
+            stopAll: true,
+          })),
+        }),
+      ),
+    ).toMatchObject({ kind: "error", message: expect.stringContaining("at most 16") });
+
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({ version: "0.2.0", configurations: [] }),
+    );
+    expect(parsed).toEqual({ kind: "ok", configurations: [], diagnostics: [] });
+    expect(parsed).not.toHaveProperty("compounds");
+  });
+
+  it("rejects ignored VS Code root capability inputs", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({ version: "0.2.0", configurations: [], inputs: [] }),
+      ),
+    ).toMatchObject({ kind: "error", message: expect.stringContaining("inputs") });
+  });
+});

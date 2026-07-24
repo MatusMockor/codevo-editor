@@ -392,6 +392,19 @@ export function isUncommittedBlameLine(line: GitBlameLine): boolean {
   return UNCOMMITTED_BLAME_SHA.test(line.sha);
 }
 
+export function gitBlameShaAtLine(
+  lines: readonly GitBlameLine[],
+  lineNumber: number,
+): string | null {
+  const line = lines.find((candidate) => candidate.lineNumber === lineNumber);
+
+  if (!line || !line.sha || isUncommittedBlameLine(line)) {
+    return null;
+  }
+
+  return line.sha;
+}
+
 export function gitBlameAnnotation(
   line: GitBlameLine,
   now: number = Date.now(),

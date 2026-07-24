@@ -174,7 +174,7 @@ function hasExpressionContent(
   rawSelection: string,
   maskedSelection: string,
 ): boolean {
-  if (/[A-Za-z0-9_$]/.test(maskedSelection) || /[(\[]/.test(maskedSelection)) {
+  if (/[A-Za-z0-9_$]/.test(maskedSelection) || /(?:\(|\[)/.test(maskedSelection)) {
     return true;
   }
 

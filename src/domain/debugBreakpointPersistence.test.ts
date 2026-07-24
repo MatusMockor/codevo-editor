@@ -29,6 +29,8 @@ const BREAKPOINTS: Breakpoint[] = [
     lineNumber: 12,
     enabled: true,
     condition: "count > 2",
+    hitCondition: { kind: "equals", count: 3 },
+    logMessage: "count={count}",
   },
   {
     id: "bp-2",
@@ -59,6 +61,8 @@ describe("debugBreakpointPersistence", () => {
         lineNumber: 12,
         enabled: true,
         condition: "count > 2",
+        hitCondition: { kind: "equals", count: 3 },
+        logMessage: "count={count}",
       },
       {
         id: "bp-2",
@@ -110,12 +114,8 @@ describe("debugBreakpointPersistence", () => {
       },
     };
 
-    expect(() =>
-      savePersistedBreakpoints(storage, "/workspace/app", BREAKPOINTS),
-    ).not.toThrow();
-    expect(() =>
-      savePersistedBreakpoints(storage, "/workspace/app", []),
-    ).not.toThrow();
+    expect(() => savePersistedBreakpoints(storage, "/workspace/app", BREAKPOINTS)).not.toThrow();
+    expect(() => savePersistedBreakpoints(storage, "/workspace/app", [])).not.toThrow();
   });
 
   it("keeps breakpoints isolated between workspace roots", () => {
@@ -125,8 +125,6 @@ describe("debugBreakpointPersistence", () => {
     savePersistedBreakpoints(storage, "/workspace/b", [BREAKPOINTS[1]]);
 
     expect(loadPersistedBreakpoints(storage, "/workspace/a")).toHaveLength(1);
-    expect(
-      loadPersistedBreakpoints(storage, "/workspace/b")[0]?.id,
-    ).toBe("bp-2");
+    expect(loadPersistedBreakpoints(storage, "/workspace/b")[0]?.id).toBe("bp-2");
   });
 });

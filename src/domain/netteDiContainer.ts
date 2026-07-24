@@ -225,15 +225,9 @@ const PHP_BUILTIN_TYPES: ReadonlySet<string> = new Set([
   "never",
 ]);
 
-const SERVICE_CLASS_KEYS: ReadonlySet<string> = new Set([
-  "class",
-  "type",
-]);
+const SERVICE_CLASS_KEYS: ReadonlySet<string> = new Set(["class", "type"]);
 
-const SERVICE_FACTORY_KEYS: ReadonlySet<string> = new Set([
-  "create",
-  "factory",
-]);
+const SERVICE_FACTORY_KEYS: ReadonlySet<string> = new Set(["create", "factory"]);
 
 function isSpace(character: string): boolean {
   return character === " " || character === "\t";
@@ -353,10 +347,7 @@ function findCommentStart(source: string, from: number, limit: number): number {
       continue;
     }
 
-    if (
-      character === "#" &&
-      (index === from || isSpace(source[index - 1] ?? ""))
-    ) {
+    if (character === "#" && (index === from || isSpace(source[index - 1] ?? ""))) {
       return index;
     }
 
@@ -557,8 +548,7 @@ function buildLines(source: string): NeonLine[] {
   while (lineStart <= source.length) {
     const newlineIndex = source.indexOf("\n", lineStart);
     const end = newlineIndex < 0 ? source.length : newlineIndex;
-    const contentLimit =
-      end > lineStart && source[end - 1] === "\r" ? end - 1 : end;
+    const contentLimit = end > lineStart && source[end - 1] === "\r" ? end - 1 : end;
 
     const model = buildLine(source, lineStart, end, contentLimit, currentSection);
     currentSection = model.section;
@@ -953,7 +943,7 @@ function scanPercentTokens(source: string, start: number, end: number): PercentT
 }
 
 /** Every complete `%name%` reference in the document, in order. */
-function neonParameterReferences(source: string): NeonParameterReference[] {
+export function neonParameterReferences(source: string): NeonParameterReference[] {
   const references: NeonParameterReference[] = [];
 
   for (const line of buildLines(source)) {
@@ -1054,11 +1044,7 @@ interface ClassifiedValue {
  * Classifies a service value region as a produced class, a `Class::method`
  * static factory, or neither (alias `@x`, `%param%`, string, scalar).
  */
-function classifyServiceValue(
-  source: string,
-  start: number,
-  end: number,
-): ClassifiedValue {
+function classifyServiceValue(source: string, start: number, end: number): ClassifiedValue {
   const range = trimRange(source, start, end);
   const empty: ClassifiedValue = {
     className: null,
@@ -1140,11 +1126,7 @@ function classifyServiceValue(
   };
 }
 
-function callableMethodEnd(
-  source: string,
-  methodStart: number,
-  rangeEnd: number,
-): number | null {
+function callableMethodEnd(source: string, methodStart: number, rangeEnd: number): number | null {
   if (!isMethodNameStart(source[methodStart] ?? "")) {
     return null;
   }
@@ -1347,10 +1329,7 @@ function serviceSources(source: string, head: NeonLine, body: NeonLine[]): Servi
   return sources;
 }
 
-function blockAutowiredTargets(
-  source: string,
-  body: readonly NeonLine[],
-): string[] | null {
+function blockAutowiredTargets(source: string, body: readonly NeonLine[]): string[] | null {
   const targets: string[] = [];
   let configured = false;
 
@@ -1378,9 +1357,7 @@ function blockAutowiredTargets(
         continue;
       }
 
-      const target = source
-        .slice(nested.valueStart, nested.commentStart)
-        .trim();
+      const target = source.slice(nested.valueStart, nested.commentStart).trim();
 
       if (isPlausibleClass(target) || target.toLowerCase() === "self") {
         targets.push(target);
@@ -1425,19 +1402,11 @@ function parseServiceGroupDefinition(
 
       const targetRanges =
         value.startsWith("[") && value.endsWith("]")
-          ? splitTopLevelRanges(
-              source,
-              valueRange.start + 1,
-              valueRange.end - 1,
-              ",",
-            )
+          ? splitTopLevelRanges(source, valueRange.start + 1, valueRange.end - 1, ",")
           : [];
       const targets = targetRanges
         .map((range) => source.slice(range.start, range.end).trim())
-        .filter(
-          (target) =>
-            isPlausibleClass(target) || target.toLowerCase() === "self",
-        );
+        .filter((target) => isPlausibleClass(target) || target.toLowerCase() === "self");
       const scalarTarget = value.toLowerCase() === "self" || isPlausibleClass(value);
 
       autowired = scalarTarget ? [value] : targets;
@@ -1490,12 +1459,7 @@ function parseServiceGroupDefinition(
     autowired = blockTargets;
   }
 
-  if (
-    serviceName === null &&
-    className === null &&
-    factory === null &&
-    factoryMetadata === null
-  ) {
+  if (serviceName === null && className === null && factory === null && factoryMetadata === null) {
     return null;
   }
 
@@ -1521,11 +1485,7 @@ function parseServiceGroupDefinition(
   };
 }
 
-function parseServiceGroup(
-  source: string,
-  head: NeonLine,
-  body: NeonLine[],
-): NeonService | null {
+function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): NeonService | null {
   return parseServiceGroupDefinition(source, head, body)?.service ?? null;
 }
 
@@ -1597,18 +1557,12 @@ export function neonServicesFromSource(source: string): NeonService[] {
   return services;
 }
 
-export function neonServiceDefinitionsFromSource(
-  source: string,
-): NeonServiceDefinition[] {
+export function neonServiceDefinitionsFromSource(source: string): NeonServiceDefinition[] {
   const lines = buildLines(source);
   const definitions: NeonServiceDefinition[] = [];
 
   for (const group of serviceGroups(lines)) {
-    const definition = parseServiceGroupDefinition(
-      source,
-      group.head,
-      group.body,
-    );
+    const definition = parseServiceGroupDefinition(source, group.head, group.body);
 
     if (definition) {
       definitions.push(definition);
@@ -1657,11 +1611,7 @@ export function neonServiceAliasesFromSource(source: string): NeonServiceAlias[]
         continue;
       }
 
-      const alias = serviceAliasTargetInValue(
-        source,
-        entry.valueStart,
-        entry.valueEnd,
-      );
+      const alias = serviceAliasTargetInValue(source, entry.valueStart, entry.valueEnd);
 
       if (!alias) {
         continue;
@@ -1824,9 +1774,7 @@ function setupMethodCompletionInRun(
 }
 
 /** Every setup method call in `source`, in document order. */
-export function neonServiceSetupMethodsFromSource(
-  source: string,
-): NeonServiceSetupMethod[] {
+export function neonServiceSetupMethodsFromSource(source: string): NeonServiceSetupMethod[] {
   const lines = buildLines(source);
   const methods: NeonServiceSetupMethod[] = [];
 
@@ -1952,7 +1900,7 @@ function scanServiceRefsInRun(
   }
 }
 
-function neonServiceReferences(source: string): NeonServiceReference[] {
+export function neonServiceReferences(source: string): NeonServiceReference[] {
   const references: NeonServiceReference[] = [];
 
   for (const line of buildLines(source)) {
@@ -2117,10 +2065,7 @@ function sourceRanges(
   return ranges;
 }
 
-function maskPhpSourceKeepingRanges(
-  source: string,
-  ranges: readonly NeonSpan[],
-): string {
+function maskPhpSourceKeepingRanges(source: string, ranges: readonly NeonSpan[]): string {
   const prepared = source.split("");
 
   for (const range of ranges) {
@@ -2193,10 +2138,7 @@ function typeSpan(
   return { start, end: start + type.length };
 }
 
-function collectInjectAttributes(
-  source: string,
-  out: RangedNetteInjectedProperty[],
-): void {
+function collectInjectAttributes(source: string, out: RangedNetteInjectedProperty[]): void {
   for (const match of source.matchAll(INJECT_ATTRIBUTE_PROPERTY)) {
     const rawType = match[1] ?? "";
     const type = acceptReceiverType(rawType);
@@ -2229,10 +2171,7 @@ function docblockVarType(block: string): string | null {
   return match ? (match[1] ?? null) : null;
 }
 
-function collectDocblockInjects(
-  source: string,
-  out: RangedNetteInjectedProperty[],
-): void {
+function collectDocblockInjects(source: string, out: RangedNetteInjectedProperty[]): void {
   for (const match of source.matchAll(DOCBLOCK)) {
     const block = match[0];
 
@@ -2264,10 +2203,7 @@ function collectDocblockInjects(
         afterStart,
         propertyType,
         type,
-        property[0].lastIndexOf(
-          propertyType,
-          property[0].lastIndexOf(`$${name}`),
-        ),
+        property[0].lastIndexOf(propertyType, property[0].lastIndexOf(`$${name}`)),
       );
     } else {
       const variableType = DOCBLOCK_VAR.exec(block);
@@ -2281,8 +2217,7 @@ function collectDocblockInjects(
         match.index ?? 0,
         variableType[1] ?? "",
         type,
-        (variableType.index ?? 0) +
-          variableType[0].indexOf(variableType[1] ?? ""),
+        (variableType.index ?? 0) + variableType[0].indexOf(variableType[1] ?? ""),
       );
     }
 
@@ -2358,9 +2293,7 @@ function collectMethodParams(
  * builtins and union/intersection receivers dropped, deduplicated by offset and
  * returned in document order.
  */
-function rangedNetteInjectedPropertyTypes(
-  phpSource: string,
-): RangedNetteInjectedProperty[] {
+function rangedNetteInjectedPropertyTypes(phpSource: string): RangedNetteInjectedProperty[] {
   const collected: RangedNetteInjectedProperty[] = [];
   const structuralSource = maskPhpSourceKeepingRanges(
     phpSource,
@@ -2395,12 +2328,12 @@ function rangedNetteInjectedPropertyTypes(
   return unique.sort((a, b) => a.offset - b.offset);
 }
 
-export function netteInjectedPropertyTypes(
-  phpSource: string,
-): NetteInjectedProperty[] {
-  return rangedNetteInjectedPropertyTypes(phpSource).map(
-    ({ name, offset, type }) => ({ name, offset, type }),
-  );
+export function netteInjectedPropertyTypes(phpSource: string): NetteInjectedProperty[] {
+  return rangedNetteInjectedPropertyTypes(phpSource).map(({ name, offset, type }) => ({
+    name,
+    offset,
+    type,
+  }));
 }
 
 export function netteInjectionTypeReferenceAt(

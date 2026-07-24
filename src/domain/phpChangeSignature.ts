@@ -363,7 +363,7 @@ export function auditPhpChangeSignatureReferenceCoverage(
 ): { complete: true } | { complete: false; reason: "uncoveredStaticReference" | "dynamicCallable" } {
   const escaped = callableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const callableArray = new RegExp(
-    `(?:\\[|,)\\s*(['\"])${escaped}\\1\\s*(?:,|\\])`,
+    `(?:\\[|,)\\s*(['"])${escaped}\\1\\s*(?:,|\\])`,
     "i",
   );
   if (callableArray.test(source)) {

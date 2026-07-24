@@ -55,9 +55,28 @@ export interface ReplaceInPathFailure {
 
 export type ReplaceInPathResult =
   | ReplaceInPathSuccessResult
-  | { status: "conflict"; files: ReplaceInPathFileResult[]; totalReplacements: number; conflicts: ReplaceInPathFailure[]; message: string }
-  | { status: "partial"; files: ReplaceInPathFileResult[]; totalReplacements: number; conflicts: ReplaceInPathFailure[]; errors: ReplaceInPathFailure[]; message: string }
-  | { status: "error"; files: ReplaceInPathFileResult[]; totalReplacements: number; errors: ReplaceInPathFailure[]; message: string };
+  | {
+      status: "conflict";
+      files: ReplaceInPathFileResult[];
+      totalReplacements: number;
+      conflicts: ReplaceInPathFailure[];
+      message: string;
+    }
+  | {
+      status: "partial";
+      files: ReplaceInPathFileResult[];
+      totalReplacements: number;
+      conflicts: ReplaceInPathFailure[];
+      errors: ReplaceInPathFailure[];
+      message: string;
+    }
+  | {
+      status: "error";
+      files: ReplaceInPathFileResult[];
+      totalReplacements: number;
+      errors: ReplaceInPathFailure[];
+      message: string;
+    };
 
 /**
  * Find-in-Path filters. All-default ({@link defaultTextSearchOptions})
@@ -150,13 +169,8 @@ export function javaScriptTypeScriptWorkspaceLabel(
 ): string {
   const packageName = descriptor.packageName || "JavaScript/TypeScript";
   const frameworkLabel =
-    descriptor.frameworks.length > 0
-      ? descriptor.frameworks.slice(0, 3).join(" + ")
-      : null;
-  const typeScriptLabel = javaScriptTypeScriptVersionLabel(
-    descriptor,
-    typeScriptVersionPreference,
-  );
+    descriptor.frameworks.length > 0 ? descriptor.frameworks.slice(0, 3).join(" + ") : null;
+  const typeScriptLabel = javaScriptTypeScriptVersionLabel(descriptor, typeScriptVersionPreference);
   const languageLabel = descriptor.usesTypeScript
     ? "TypeScript"
     : descriptor.hasJsconfig
@@ -220,11 +234,7 @@ export interface ToolLocation {
   executable: string;
   path: string;
   source:
-    | "bundledNodeModulesBin"
-    | "managed"
-    | "path"
-    | "workspaceNodeModulesBin"
-    | "workspaceVendorBin";
+    "bundledNodeModulesBin" | "managed" | "path" | "workspaceNodeModulesBin" | "workspaceVendorBin";
 }
 
 export interface EditorDocument {
@@ -267,8 +277,16 @@ export interface WorkspaceFileGateway {
   createTextFile(path: string): Promise<void>;
   deletePath(path: string): Promise<void>;
   readDirectory(path: string): Promise<FileEntry[]>;
+  readDirectoryBounded?(
+    path: string,
+    maxEntries: number,
+  ): Promise<{ readonly entries: readonly FileEntry[]; readonly truncated: boolean }>;
   readImageFile?(path: string): Promise<WorkspaceImageFile>;
   readTextFile(path: string): Promise<string>;
+  readTextFileBounded?(
+    path: string,
+    maxBytes: number,
+  ): Promise<{ readonly status: "ok"; readonly content: string } | { readonly status: "tooLarge" }>;
   readTextFileSnapshot?(path: string): Promise<WorkspaceTextFileSnapshot>;
   renamePath(from: string, to: string): Promise<void>;
   writeTextFile(
@@ -285,6 +303,12 @@ export interface WorkspaceEditTransaction {
 
 /** Writes through one admitted native workspace instead of path-based routing. */
 export interface WorkspaceOwnerFileGateway {
+  createDirectoryForWorkspace(workspaceId: string, path: string): Promise<void>;
+  createTextFileWithContentForWorkspace(
+    workspaceId: string,
+    path: string,
+    content: string,
+  ): Promise<WorkspaceWriteResult>;
   writeTextFileForWorkspace(
     workspaceId: string,
     path: string,
@@ -351,10 +375,7 @@ export async function createWorkspaceTextFileWithContent(
 ): Promise<WorkspaceFileRevision | null> {
   await gateway.createTextFile(path);
   if (!gateway.readTextFileSnapshot) {
-    return requireWorkspaceWriteSuccess(
-      await gateway.writeTextFile(path, content),
-      "Create file",
-    );
+    return requireWorkspaceWriteSuccess(await gateway.writeTextFile(path, content), "Create file");
   }
 
   const created = await readWorkspaceTextFileSnapshot(gateway, path);
@@ -403,11 +424,7 @@ export interface PhpToolGateway {
 }
 
 export interface FileSearchGateway {
-  searchFiles(
-    root: string,
-    query: string,
-    limit: number,
-  ): Promise<FileSearchResult[]>;
+  searchFiles(root: string, query: string, limit: number): Promise<FileSearchResult[]>;
 }
 
 export interface TextSearchGateway {
@@ -485,10 +502,7 @@ export function isDirty(document: EditorDocument): boolean {
   return document.content !== document.savedContent;
 }
 
-export function visibleEditorPaths(
-  openPaths: string[],
-  previewPath: string | null,
-): string[] {
+export function visibleEditorPaths(openPaths: string[], previewPath: string | null): string[] {
   if (!previewPath) {
     return openPaths;
   }
@@ -524,16 +538,8 @@ export function getParentPath(path: string): string {
 }
 
 export function joinWorkspacePath(rootPath: string, relativePath: string): string {
-  const normalizedRootPath = rootPath
-    .trim()
-    .split("\\")
-    .join("/")
-    .replace(/\/+$/, "");
-  const normalizedRelativePath = relativePath
-    .trim()
-    .split("\\")
-    .join("/")
-    .replace(/^\/+/, "");
+  const normalizedRootPath = rootPath.trim().split("\\").join("/").replace(/\/+$/, "");
+  const normalizedRelativePath = relativePath.trim().split("\\").join("/").replace(/^\/+/, "");
 
   if (!normalizedRelativePath) {
     return normalizedRootPath;
@@ -542,20 +548,9 @@ export function joinWorkspacePath(rootPath: string, relativePath: string): strin
   return `${normalizedRootPath}/${normalizedRelativePath}`;
 }
 
-export function workspaceRelativePath(
-  rootPath: string,
-  absolutePath: string,
-): string | null {
-  const normalizedRootPath = rootPath
-    .trim()
-    .split("\\")
-    .join("/")
-    .replace(/\/+$/, "");
-  const normalizedAbsolutePath = absolutePath
-    .trim()
-    .split("\\")
-    .join("/")
-    .replace(/\/+$/, "");
+export function workspaceRelativePath(rootPath: string, absolutePath: string): string | null {
+  const normalizedRootPath = rootPath.trim().split("\\").join("/").replace(/\/+$/, "");
+  const normalizedAbsolutePath = absolutePath.trim().split("\\").join("/").replace(/\/+$/, "");
   const prefix = `${normalizedRootPath}/`;
 
   if (!normalizedAbsolutePath.startsWith(prefix)) {
@@ -580,17 +575,12 @@ const LSP_EXCLUDED_DIRECTORY_NAMES: ReadonlySet<string> = new Set([
   "vendor",
 ]);
 
-export function isLspExcludedDirectoryPath(
-  workspaceRootPath: string,
-  path: string,
-): boolean {
+export function isLspExcludedDirectoryPath(workspaceRootPath: string, path: string): boolean {
   const relativePath = workspaceRelativePath(workspaceRootPath, path);
 
   if (!relativePath) {
     return false;
   }
 
-  return relativePath
-    .split("/")
-    .some((segment) => LSP_EXCLUDED_DIRECTORY_NAMES.has(segment));
+  return relativePath.split("/").some((segment) => LSP_EXCLUDED_DIRECTORY_NAMES.has(segment));
 }

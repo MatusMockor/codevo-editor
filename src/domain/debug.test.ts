@@ -6,6 +6,7 @@ import {
   type DebuggerState,
   type StackFrame,
   debuggerSessionId,
+  isNodeDebugPort,
 } from "./debug";
 
 function frame(overrides: Partial<StackFrame> = {}): StackFrame {
@@ -97,18 +98,27 @@ describe("DebugGateway", () => {
         sessionId: 1,
       }),
       stop: async () => {},
-      setBreakpoints: async (_sessionId, _filePath, breakpoints) => [
-        ...breakpoints,
-      ],
+      disconnect: async () => {},
+      setBreakpoints: async (_rootPath, _sessionId, _filePath, breakpoints) => [...breakpoints],
       step: async () => {},
       pause: async () => {},
+      restartFrame: async () => {},
+      runToLocation: async () => {},
+      setExceptionPause: async () => {},
       stackTrace: async () => [frame()],
-      scopes: async () => [
-        { name: "Local", variablesReference: 7, expensive: false },
-      ],
-      variables: async () => [
-        { name: "answer", value: "42", type: "number", variablesReference: 0 },
-      ],
+      scopesAtPause: async () => [{ name: "Local", variablesReference: 7, expensive: false }],
+      variablesPage: async (request) => ({
+        variables: [{ name: "answer", value: "42", type: "number", variablesReference: 0 }],
+        start: request.start,
+        returned: 1,
+        truncated: false,
+      }),
+      setVariable: async () => ({ name: "answer", value: "43", variablesReference: 0 }),
+      setExpression: async (request) => ({
+        setExpressionReference: request.setExpressionReference,
+        expression: request.expression,
+        value: { status: "ok", value: "43", variablesReference: 0 },
+      }),
       evaluate: async () => null,
       subscribe: (handler) => {
         handlers.push(handler);
@@ -152,30 +162,25 @@ describe("DebugGateway", () => {
       },
     };
 
+    await gateway.start("/root", { kind: "node-attach", port: 9229 }, []);
+    await gateway.start("/root", { kind: "node-script", scriptPath: "/a.js" }, []);
     await gateway.start(
       "/root",
-      { kind: "node-script", scriptPath: "/a.js" },
+      {
+        kind: "js-test-file",
+        runner: "vitest",
+        filePath: "/a.test.ts",
+        packageRootPath: "/",
+      },
       [],
     );
-    await gateway.start(
-      "/root",
-      { kind: "js-test-file", runner: "vitest", filePath: "/a.test.ts" },
-      [],
-    );
-    await gateway.start(
-      "/root",
-      { kind: "php-script", scriptPath: "/a.php" },
-      [],
-    );
-    await gateway.start(
-      "/root",
-      { kind: "php-test-file", filePath: "/tests/A.test.php" },
-      [],
-    );
+    await gateway.start("/root", { kind: "php-script", scriptPath: "/a.php" }, []);
+    await gateway.start("/root", { kind: "php-test-file", filePath: "/tests/A.test.php" }, []);
     await gateway.start("/root", { kind: "php-listen" }, []);
     await gateway.start("/root", { kind: "php-listen", port: 9003 }, []);
 
     expect(seen).toEqual([
+      "node-attach",
       "node-script",
       "js-test-file",
       "php-script",
@@ -183,5 +188,15 @@ describe("DebugGateway", () => {
       "php-listen",
       "php-listen",
     ]);
+  });
+});
+
+describe("Node debug port", () => {
+  it.each([1, 9229, 65_535])("accepts port %s", (port) => {
+    expect(isNodeDebugPort(port)).toBe(true);
+  });
+
+  it.each([0, 65_536, 9229.5, Number.NaN, "9229", null])("rejects port %#", (port) => {
+    expect(isNodeDebugPort(port)).toBe(false);
   });
 });

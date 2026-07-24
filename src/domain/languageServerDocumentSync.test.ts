@@ -45,21 +45,13 @@ describe("createLanguageServerTextDocument", () => {
 
 describe("isJavaScriptTypeScriptLanguageServerDocument", () => {
   it("routes JavaScript, TypeScript, React and Vue documents through the JS/TS server", () => {
+    expect(isJavaScriptTypeScriptLanguageServerDocument(document("javascript"))).toBe(true);
+    expect(isJavaScriptTypeScriptLanguageServerDocument(document("typescript"))).toBe(true);
     expect(
-      isJavaScriptTypeScriptLanguageServerDocument(document("javascript")),
+      isJavaScriptTypeScriptLanguageServerDocument(document("javascript", "/project/src/App.jsx")),
     ).toBe(true);
     expect(
-      isJavaScriptTypeScriptLanguageServerDocument(document("typescript")),
-    ).toBe(true);
-    expect(
-      isJavaScriptTypeScriptLanguageServerDocument(
-        document("javascript", "/project/src/App.jsx"),
-      ),
-    ).toBe(true);
-    expect(
-      isJavaScriptTypeScriptLanguageServerDocument(
-        document("typescript", "/project/src/App.tsx"),
-      ),
+      isJavaScriptTypeScriptLanguageServerDocument(document("typescript", "/project/src/App.tsx")),
     ).toBe(true);
     expect(
       isJavaScriptTypeScriptLanguageServerDocument(
@@ -72,54 +64,38 @@ describe("isJavaScriptTypeScriptLanguageServerDocument", () => {
       ),
     ).toBe(true);
     expect(
-      isJavaScriptTypeScriptLanguageServerDocument(
-        document("vue", "/project/src/App.vue"),
-      ),
+      isJavaScriptTypeScriptLanguageServerDocument(document("vue", "/project/src/App.vue")),
     ).toBe(true);
   });
 
   it("does not route PHP or plaintext documents through the JS/TS server", () => {
-    expect(isJavaScriptTypeScriptLanguageServerDocument(document("php"))).toBe(
-      false,
-    );
-    expect(
-      isJavaScriptTypeScriptLanguageServerDocument(document("plaintext")),
-    ).toBe(false);
+    expect(isJavaScriptTypeScriptLanguageServerDocument(document("php"))).toBe(false);
+    expect(isJavaScriptTypeScriptLanguageServerDocument(document("plaintext"))).toBe(false);
   });
 });
 
 describe("languageServerLanguageIdForDocument", () => {
   it("maps Vue single file components to the vue language id", () => {
-    expect(
-      languageServerLanguageIdForDocument(
-        document("vue", "/project/src/App.vue"),
-      ),
-    ).toBe("vue");
+    expect(languageServerLanguageIdForDocument(document("vue", "/project/src/App.vue"))).toBe(
+      "vue",
+    );
   });
 
   it("uses VS Code language ids for JavaScript and TypeScript React files", () => {
     expect(
-      languageServerLanguageIdForDocument(
-        document("javascript", "/project/src/App.jsx"),
-      ),
+      languageServerLanguageIdForDocument(document("javascript", "/project/src/App.jsx")),
     ).toBe("javascriptreact");
     expect(
-      languageServerLanguageIdForDocument(
-        document("typescript", "/project/src/App.tsx"),
-      ),
+      languageServerLanguageIdForDocument(document("typescript", "/project/src/App.tsx")),
     ).toBe("typescriptreact");
   });
 
   it("keeps non-React language ids unchanged", () => {
+    expect(languageServerLanguageIdForDocument(document("typescript", "/project/src/app.ts"))).toBe(
+      "typescript",
+    );
     expect(
-      languageServerLanguageIdForDocument(
-        document("typescript", "/project/src/app.ts"),
-      ),
-    ).toBe("typescript");
-    expect(
-      languageServerLanguageIdForDocument(
-        document("javascript", "/project/src/app.mjs"),
-      ),
+      languageServerLanguageIdForDocument(document("javascript", "/project/src/app.mjs")),
     ).toBe("javascript");
   });
 });
@@ -129,15 +105,11 @@ describe("fileUriFromPath", () => {
     expect(fileUriFromPath("/project/src/User Name.php")).toBe(
       "file:///project/src/User%20Name.php",
     );
-    expect(fileUriFromPath("C:\\project\\src\\User.php")).toBe(
-      "file:///C:/project/src/User.php",
-    );
+    expect(fileUriFromPath("C:\\project\\src\\User.php")).toBe("file:///C:/project/src/User.php");
   });
 
   it("emits one canonical URI and rejects unsafe paths", () => {
-    expect(fileUriFromPath("/project/./src/%name.ts")).toBe(
-      "file:///project/src/%25name.ts",
-    );
+    expect(fileUriFromPath("/project/./src/%name.ts")).toBe("file:///project/src/%25name.ts");
     expect(() => fileUriFromPath("/project/bad\0name.ts")).toThrow(TypeError);
   });
 
@@ -150,67 +122,48 @@ describe("fileUriFromPath", () => {
     }
 
     expect(fileUriFromWorkspacePath(root.value, "/other/App.ts")).toBeNull();
-    expect(fileUriFromWorkspacePath(root.value, "/project/App.ts")).toBe(
-      "file:///project/App.ts",
-    );
+    expect(fileUriFromWorkspacePath(root.value, "/project/App.ts")).toBe("file:///project/App.ts");
   });
 });
 
 describe("workspace-scoped sync keys", () => {
   it("separates the same document path by workspace root", () => {
-    const documentKey = languageServerDocumentSyncKey(
-      "/workspace-a/",
-      "/workspace-a/src/App.ts",
-    );
+    const documentKey = languageServerDocumentSyncKey("/workspace-a/", "/workspace-a/src/App.ts");
 
     expect(documentKey).not.toBe(
-      languageServerDocumentSyncKey(
-        "/workspace-b/",
-        "/workspace-b/src/App.ts",
-      ),
+      languageServerDocumentSyncKey("/workspace-b/", "/workspace-b/src/App.ts"),
     );
-    expect(
-      languageServerPathFromDocumentSyncKey("/workspace-a", documentKey),
-    ).toBe("/workspace-a/src/App.ts");
-    expect(
-      languageServerPathFromDocumentSyncKey("/workspace-b", documentKey),
-    ).toBeNull();
+    expect(languageServerPathFromDocumentSyncKey("/workspace-a", documentKey)).toBe(
+      "/workspace-a/src/App.ts",
+    );
+    expect(languageServerPathFromDocumentSyncKey("/workspace-b", documentKey)).toBeNull();
   });
 
   it("separates document versions by workspace root and uri", () => {
     const uri = fileUriFromPath("/workspace-a/src/App.ts");
 
     expect(languageServerUriSyncKey("/workspace-a", uri)).not.toBe(
-      languageServerUriSyncKey(
-        "/workspace-b",
-        fileUriFromPath("/workspace-b/src/App.ts"),
-      ),
+      languageServerUriSyncKey("/workspace-b", fileUriFromPath("/workspace-b/src/App.ts")),
     );
   });
 
   it("uses the decoded canonical path for equivalent file URI version keys", () => {
-    expect(
-      languageServerUriSyncKey(
-        "/project",
-        "file:///project/src/User%20Service.ts",
-      ),
-    ).toBe(
-      languageServerUriSyncKey(
-        "/project/",
-        "file://localhost/project/src/User%20Service.ts",
-      ),
+    expect(languageServerUriSyncKey("/project", "file:///project/src/User%20Service.ts")).toBe(
+      languageServerUriSyncKey("/project/", "file://localhost/project/src/User%20Service.ts"),
     );
   });
 
   it("converges encoded URI aliases through workspace path identity", () => {
-    expect(
-      languageServerUriSyncKey("/project", "file:///project/src/%41pp.ts"),
-    ).toBe(languageServerDocumentSyncKey("/project/", "/project/src/App.ts"));
+    expect(languageServerUriSyncKey("/project", "file:///project/src/%41pp.ts")).toBe(
+      languageServerDocumentSyncKey("/project/", "/project/src/App.ts"),
+    );
   });
 
   it.each([
     "https://example.test/project/App.ts",
     "file://server/project/App.ts",
+    "file://./project/App.ts",
+    "file://../project/App.ts",
     "file:///project/bad%2Fname.ts",
     "file:///project/bad%00name.ts",
     "file:///project/bad%ZZname.ts",
@@ -228,18 +181,9 @@ describe("workspace-scoped sync keys", () => {
     const path = "C:\\project\\src\\App.ts";
     const key = languageServerDocumentSyncKey(root, path);
 
-    expect(languageServerPathFromDocumentSyncKey(root, key)).toBe(
-      "C:/project/src/App.ts",
-    );
-    expect(
-      tryLanguageServerUriSyncKey(root, "file:///C:/project/src/App.ts"),
-    ).toBe(key);
-    expect(
-      tryLanguageServerUriSyncKey(
-        root,
-        "file://localhost/C:/project/src/%41pp.ts",
-      ),
-    ).toBe(key);
+    expect(languageServerPathFromDocumentSyncKey(root, key)).toBe("C:/project/src/App.ts");
+    expect(tryLanguageServerUriSyncKey(root, "file:///C:/project/src/App.ts")).toBe(key);
+    expect(tryLanguageServerUriSyncKey(root, "file://localhost/C:/project/src/%41pp.ts")).toBe(key);
   });
 
   it.each([

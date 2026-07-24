@@ -298,7 +298,7 @@ describe("latteStaticFileIncludes", () => {
   it("skips include-looking text inside every non-include Latte tag range", () => {
     const source = [
       `{if check("{include 'if-string.latte'}", [1, 2])}`,
-      `{var $sample = '{include \'var-string.latte\'}'}`,
+      `{var $sample = '{include 'var-string.latte'}'}`,
       "{foreach /* {include 'comment.latte'} */ $rows as $row}",
       "{$value ?? \"{include 'echo-string.latte'}\"}",
       "{include 'top-level.latte'}",

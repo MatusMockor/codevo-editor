@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { WorkbenchNotice } from "../application/workbenchNotice";
+import type { WorkbenchNotice } from "./workbenchNotice";
 import { buildProblemsView } from "./problemsView";
 
 const ROOT = "/workspace";

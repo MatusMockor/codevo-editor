@@ -2,7 +2,7 @@ import type {
   WorkbenchNotice,
   WorkbenchNoticeNavigationTarget,
   WorkbenchNoticePosition,
-} from "../application/workbenchNotice";
+} from "./workbenchNotice";
 import { isDiagnosticNotice } from "./diagnosticsSummary";
 
 export interface ProblemLocation {

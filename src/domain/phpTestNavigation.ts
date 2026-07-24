@@ -36,6 +36,12 @@ export interface PhpTestNavigationResult {
   direction: PhpTestNavigationDirection;
 }
 
+export function phpTestPartnerMissingMessage(direction: PhpTestNavigationDirection): string {
+  return direction === "toSubject"
+    ? "No test subject found for this test. Create the class first."
+    : "No test found for this class. Run Generate Test to create one.";
+}
+
 export function phpTestNavigationTargets(
   input: PhpTestNavigationInput,
 ): PhpTestNavigationResult | null {

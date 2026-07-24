@@ -302,9 +302,7 @@ function phpIdentifierEnd(source: string, start: number): number | null {
   return cursor;
 }
 
-function serviceClassNamePayload(service: NeonServiceSetupMethod["service"]):
-  | { serviceClassName: string }
-  | {} {
+function serviceClassNamePayload(service: NeonServiceSetupMethod["service"]) {
   const className = selfServiceClassName(service);
 
   return className ? { serviceClassName: className } : {};

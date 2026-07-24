@@ -42,19 +42,14 @@ function root(
   return valueOf(createWorkspaceRoot(workspaceId, nativePath, policy));
 }
 
-function path(
-  descriptor: WorkspaceRootDescriptor,
-  pathOrUri: string,
-): WorkspacePath {
+function path(descriptor: WorkspaceRootDescriptor, pathOrUri: string): WorkspacePath {
   return valueOf(parseWorkspacePath(descriptor, pathOrUri));
 }
 
 describe("workspace path identity", () => {
   it("derives the same root identity from canonical path aliases", () => {
     const nativeRoot = valueOf(createWorkspaceRootFromPath("/work/project/"));
-    const uriRoot = valueOf(
-      createWorkspaceRootFromPath("file://localhost/work/project"),
-    );
+    const uriRoot = valueOf(createWorkspaceRootFromPath("file://localhost/work/project"));
 
     expect(nativeRoot).toEqual(uriRoot);
     expect(path(nativeRoot, "/work/project/src/App.ts").key).toBe(
@@ -62,35 +57,37 @@ describe("workspace path identity", () => {
     );
   });
 
+  it("canonicalizes native Windows drive and UNC paths through file URI aliases", () => {
+    const windowsRoot = root("windows", "C:\\Workspace", CASE_INSENSITIVE);
+    expect(windowsRoot.nativePath).toBe("/C:/Workspace");
+    expect(path(windowsRoot, "C:\\Workspace\\src\\App.ts").key).toBe(
+      path(windowsRoot, "file:///c:/workspace/src/App.ts").key,
+    );
+
+    const uncRoot = root("unc", "\\\\SERVER\\Share", CASE_INSENSITIVE);
+    const native = path(uncRoot, "\\\\SERVER\\Share\\src\\App.ts");
+    const uri = path(uncRoot, "file://server/share/src/App.ts");
+    expect(uncRoot.nativePath).toBe("//SERVER/Share");
+    expect(uncRoot.fileUri).toBe("file://SERVER/Share");
+    expect(native.key).toBe(uri.key);
+    expect(uri.fileUri).toBe("file://server/share/src/App.ts");
+  });
+
   it("canonicalizes native paths and derives every representation", () => {
-    const descriptor = root(
-      "project-a",
-      "/Users/me//project/./packages/..",
-    );
-    const parsed = path(
-      descriptor,
-      "/Users/me/project/src//domain/../User Name.php",
-    );
+    const descriptor = root("project-a", "/Users/me//project/./packages/..");
+    const parsed = path(descriptor, "/Users/me/project/src//domain/../User Name.php");
 
     expect(descriptor.nativePath).toBe("/Users/me/project");
     expect(descriptor.fileUri).toBe("file:///Users/me/project");
-    expect(parsed.key).toBe('["project-a","src","User Name.php"]');
+    expect(parsed.key).toBe('["project-a","posix","/","src","User Name.php"]');
     expect(parsed.nativePath).toBe("/Users/me/project/src/User Name.php");
-    expect(parsed.fileUri).toBe(
-      "file:///Users/me/project/src/User%20Name.php",
-    );
+    expect(parsed.fileUri).toBe("file:///Users/me/project/src/User%20Name.php");
     expect(parsed.relativePath).toBe("src/User Name.php");
   });
 
   it("parses local file URIs and canonicalizes localhost away", () => {
-    const descriptor = root(
-      "project-a",
-      "file://localhost/work/project",
-    );
-    const parsed = path(
-      descriptor,
-      "FILE:///work/project/src/Hello%20World.ts",
-    );
+    const descriptor = root("project-a", "file://localhost/work/project");
+    const parsed = path(descriptor, "FILE:///work/project/src/Hello%20World.ts");
 
     expect(descriptor.fileUri).toBe("file:///work/project");
     expect(parsed.nativePath).toBe("/work/project/src/Hello World.ts");
@@ -105,6 +102,27 @@ describe("workspace path identity", () => {
     "file:///work/project/file.ts#section",
   ])("returns an error for non-local or decorated URI %s", (uri) => {
     expect(parseWorkspacePath(root(), uri).ok).toBe(false);
+  });
+
+  it("keeps POSIX, drive, and UNC anchors isolated during containment", () => {
+    const posix = root("posix", "/workspace");
+    expect(parseWorkspacePath(posix, "file://workspace/project.ts").ok).toBe(false);
+    expect(parseWorkspacePath(posix, "file://./workspace/project.ts").ok).toBe(false);
+    expect(parseWorkspacePath(posix, "file://../workspace/project.ts").ok).toBe(false);
+
+    const drive = root("drive", "C:\\workspace", CASE_INSENSITIVE);
+    expect(parseWorkspacePath(drive, "file:///D:/workspace/project.ts").ok).toBe(false);
+
+    const unc = root("unc", "\\\\server\\share", CASE_INSENSITIVE);
+    expect(parseWorkspacePath(unc, "file://server/other/project.ts").ok).toBe(false);
+    expect(parseWorkspacePath(unc, "file://server/share/../escape.ts").ok).toBe(false);
+    expect(parseWorkspacePath(unc, "file://server/share/a/../../escape.ts").ok).toBe(false);
+
+    const sharedIdPosix = root("shared", "/workspace");
+    const sharedIdUnc = root("shared", "\\\\workspace\\share");
+    expect(path(sharedIdPosix, "/workspace/file.ts").key).not.toBe(
+      path(sharedIdUnc, "\\\\workspace\\share\\file.ts").key,
+    );
   });
 
   it.each([
@@ -124,32 +142,64 @@ describe("workspace path identity", () => {
     expect(backslash.nativePath).toBe("/work/a\\b");
     expect(backslash.fileUri).toBe("file:///work/a%5Cb");
     expect(path(descriptor, backslash.fileUri)).toEqual(backslash);
+    expect(path(descriptor, "file:///work/a%5cb")).toEqual(backslash);
     expect(backslash.key).not.toBe(separator.key);
     expect(backslash.monacoUri).not.toBe(separator.monacoUri);
   });
 
+  it.each([
+    ["Windows drive", root("drive", "C:\\work"), "file:///C:/work/a%5Cb"],
+    ["Windows drive traversal", root("drive", "C:\\work"), "file:///C:/work/a%5C..%5Coutside"],
+    ["UNC", root("unc", "\\\\server\\share"), "file://server/share/a%5Cb"],
+    ["UNC traversal", root("unc", "\\\\server\\share"), "file://server/share/a%5C..%5Coutside"],
+  ])("rejects encoded backslashes for %s file URIs", (_flavor, descriptor, uri) => {
+    expect(parseWorkspacePath(descriptor, uri)).toMatchObject({
+      ok: false,
+      error: { code: "unsafe-path" },
+    });
+  });
+
+  it.each([
+    [
+      "slash-prefixed Windows drive",
+      root("drive", "C:\\work"),
+      "/C:/work/nested\\..\\..\\outside.ts",
+    ],
+    [
+      "forward-slash UNC",
+      root("unc", "\\\\server\\share\\work"),
+      "//server/share/work/nested\\..\\..\\outside.ts",
+    ],
+  ])(
+    "treats mixed native backslashes as separators for %s containment",
+    (_flavor, descriptor, candidate) => {
+      expect(parseWorkspacePath(descriptor, candidate)).toMatchObject({
+        ok: false,
+        error: { code: "outside-workspace" },
+      });
+    },
+  );
+
   it("decodes URI segments before resolving dot traversal", () => {
-    expect(
-      parseWorkspacePath(root(), "file:///work/project/%2e%2e/outside.ts"),
-    ).toMatchObject({ ok: false, error: { code: "outside-workspace" } });
-    expect(createWorkspaceRoot("bad", "/../../outside", CASE_SENSITIVE)).toMatchObject(
-      { ok: false, error: { code: "unsafe-path" } },
-    );
+    expect(parseWorkspacePath(root(), "file:///work/project/%2e%2e/outside.ts")).toMatchObject({
+      ok: false,
+      error: { code: "outside-workspace" },
+    });
+    expect(createWorkspaceRoot("bad", "/../../outside", CASE_SENSITIVE)).toMatchObject({
+      ok: false,
+      error: { code: "unsafe-path" },
+    });
   });
 
   it("uses segment containment for neighbors and overlapping roots", () => {
     const project = root("project", "/work/project");
     const packageRoot = root("package", "/work/project/packages/core");
 
-    expect(parseWorkspacePath(project, "/work/projectile/file.ts").ok).toBe(
-      false,
+    expect(parseWorkspacePath(project, "/work/projectile/file.ts").ok).toBe(false);
+    expect(path(project, "/work/project/packages/core/a.ts").relativePath).toBe(
+      "packages/core/a.ts",
     );
-    expect(
-      path(project, "/work/project/packages/core/a.ts").relativePath,
-    ).toBe("packages/core/a.ts");
-    expect(
-      path(packageRoot, "/work/project/packages/core/a.ts").relativePath,
-    ).toBe("a.ts");
+    expect(path(packageRoot, "/work/project/packages/core/a.ts").relativePath).toBe("a.ts");
   });
 
   it("uses comparison identity for both keys and Monaco URIs", () => {
@@ -190,9 +240,7 @@ describe("workspace path identity", () => {
     const first = path(descriptor, "/work/project/Stra\u00dfe.ts");
     const second = path(descriptor, "/WORK/PROJECT/STRASSE.ts");
 
-    expect(
-      Object.prototype.hasOwnProperty.call(descriptor.policy, "foldCase"),
-    ).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(descriptor.policy, "foldCase")).toBe(true);
     expect(first.key).toBe(second.key);
     expect(first.monacoUri).toBe(second.monacoUri);
   });
@@ -209,9 +257,7 @@ describe("workspace path identity", () => {
       caseSensitive: true,
       unicodeNormalization: "none",
     });
-    expect(parseWorkspacePath(literal, `/work/${decomposed}/file.ts`).ok).toBe(
-      false,
-    );
+    expect(parseWorkspacePath(literal, `/work/${decomposed}/file.ts`).ok).toBe(false);
   });
 
   it("keeps workspace IDs collision-free in Monaco URI path segments", () => {
@@ -219,9 +265,7 @@ describe("workspace path identity", () => {
     const splitPath = path(root("a", "/work"), "/work/b");
 
     expect(combinedId.monacoUri).not.toBe(splitPath.monacoUri);
-    expect(URI.parse(combinedId.monacoUri).toString()).toBe(
-      combinedId.monacoUri,
-    );
+    expect(URI.parse(combinedId.monacoUri).toString()).toBe(combinedId.monacoUri);
     expect(URI.parse(splitPath.monacoUri).toString()).toBe(splitPath.monacoUri);
   });
 
@@ -232,26 +276,24 @@ describe("workspace path identity", () => {
     );
 
     expect(URI.parse(parsed.monacoUri).toString()).toBe(parsed.monacoUri);
-    expect(path(root("project", "/work/project"), parsed.fileUri).fileUri).toBe(
-      parsed.fileUri,
-    );
+    expect(path(root("project", "/work/project"), parsed.fileUri).fileUri).toBe(parsed.fileUri);
   });
 
   it.each(["\ud800", "\udc00", "valid\ud800bad"])(
     "returns errors for ill-formed Unicode %j",
     (invalid) => {
-      expect(createWorkspaceRoot(invalid, "/work", CASE_SENSITIVE)).toMatchObject(
-        { ok: false, error: { code: "invalid-workspace-id" } },
-      );
-      expect(
-        createWorkspaceRoot("project", `/work/${invalid}`, CASE_SENSITIVE),
-      ).toMatchObject({
+      expect(createWorkspaceRoot(invalid, "/work", CASE_SENSITIVE)).toMatchObject({
+        ok: false,
+        error: { code: "invalid-workspace-id" },
+      });
+      expect(createWorkspaceRoot("project", `/work/${invalid}`, CASE_SENSITIVE)).toMatchObject({
         ok: false,
         error: { code: "invalid-unicode" },
       });
-      expect(parseWorkspacePath(root(), `/work/project/${invalid}`)).toMatchObject(
-        { ok: false, error: { code: "invalid-unicode" } },
-      );
+      expect(parseWorkspacePath(root(), `/work/project/${invalid}`)).toMatchObject({
+        ok: false,
+        error: { code: "invalid-unicode" },
+      });
     },
   );
 

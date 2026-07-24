@@ -87,4 +87,38 @@ describe("jsTestRunCommand", () => {
       jsTestRunCommand({ filePath: null, filter: null, runner: "vitest" }),
     ).toBe("node_modules/.bin/vitest run");
   });
+
+  it("runs inside a nested package with a package-relative test path", () => {
+    expect(
+      jsTestRunCommand({
+        filePath: "src/math.test.ts",
+        runner: "vitest",
+        workingDirectory: "packages/accounting",
+      }),
+    ).toBe(
+      "cd 'packages/accounting' && node_modules/.bin/vitest run 'src/math.test.ts'",
+    );
+  });
+
+  it("rejects an absolute or escaping package working directory", () => {
+    expect(
+      jsTestRunCommand({ runner: "jest", workingDirectory: "../outside" }),
+    ).toBeNull();
+    expect(
+      jsTestRunCommand({ runner: "jest", workingDirectory: "/outside" }),
+    ).toBeNull();
+  });
+
+  it("uses a safely quoted hoisted runner selected by the resolver", () => {
+    expect(
+      jsTestRunCommand({
+        executablePath: "../../node_modules/.bin/vitest",
+        filePath: "src/math.test.ts",
+        runner: "vitest",
+        workingDirectory: "packages/accounting",
+      }),
+    ).toBe(
+      "cd 'packages/accounting' && '../../node_modules/.bin/vitest' run 'src/math.test.ts'",
+    );
+  });
 });

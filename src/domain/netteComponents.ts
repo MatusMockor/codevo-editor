@@ -1333,7 +1333,7 @@ interface NNameAttribute {
   valueStart: number;
 }
 
-const N_NAME_KEYWORD = /(?:^|[\s<\/])n:name/gi;
+const N_NAME_KEYWORD = /(?:^|[\s</])n:name/gi;
 
 /**
  * Yields every `n:name="..."` / `n:name='...'` / `n:name=bare` attribute, using
@@ -2332,7 +2332,7 @@ function readThisAddComponentRegistration(
   index = skipWhitespace(source, index + 2);
   const method = readIdentifierToken(source, index, limit);
 
-  if (!method || method.name !== "addComponent") {
+  if (!method || method.name.toLowerCase() !== "addcomponent") {
     return null;
   }
 
@@ -4259,17 +4259,9 @@ function fullyQualifiedClassName(value: string): string | null {
 }
 
 function ucfirst(value: string): string {
-  if (value.length === 0) {
-    return value;
-  }
-
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function lcfirst(value: string): string {
-  if (value.length === 0) {
-    return value;
-  }
-
   return value.charAt(0).toLowerCase() + value.slice(1);
 }

@@ -465,7 +465,7 @@ function containsReferenceBind(maskedSelection: string): boolean {
  * (`$obj->prop`, `$obj?->p`, `$a->b()->c()`) contain none of these and pass.
  */
 function containsDynamicIdentifierForm(maskedSelection: string): boolean {
-  return /::\s*\$|\$\s*[$\{]|(->|\?->)\s*\$/.test(maskedSelection);
+  return /::\s*\$|\$\s*[${]|(->|\?->)\s*\$/.test(maskedSelection);
 }
 
 function containsStatementLabel(maskedSelection: string): boolean {

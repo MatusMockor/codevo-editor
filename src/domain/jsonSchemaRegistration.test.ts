@@ -81,7 +81,7 @@ describe("extractLocalSchemaReference", () => {
   });
 
   it("tolerates a leading UTF-8 BOM", () => {
-    const content = `﻿${JSON.stringify({
+    const content = `${String.fromCharCode(0xfeff)}${JSON.stringify({
       $schema: "/Users/me/phpactor.schema.json",
     })}`;
 

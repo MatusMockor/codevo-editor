@@ -1,0 +1,239 @@
+import { workspaceRelativePath } from "./workspace";
+
+export const JS_TEST_COVERAGE_LIMITS = {
+  maxFiles: 20_000,
+  maxLcovBytes: 8 * 1024 * 1024,
+  maxLineRecords: 1_000_000,
+  maxPathBytes: 16 * 1024,
+} as const;
+
+export interface JsTestCoverageMetric {
+  readonly covered: number;
+  readonly total: number;
+  readonly percentage: number | null;
+}
+
+export interface JsTestCoverageLine {
+  readonly lineNumber: number;
+  readonly hits: number;
+}
+
+export interface JsTestFileCoverage {
+  readonly path: string;
+  readonly lines: readonly JsTestCoverageLine[];
+  readonly summary: JsTestCoverageMetric;
+  readonly firstUncoveredLine: number | null;
+}
+
+export interface JsTestCoverageReport {
+  readonly summary: JsTestCoverageMetric;
+  readonly files: readonly JsTestFileCoverage[];
+}
+
+export type JsTestCoverageResponse =
+  | { readonly status: "ok"; readonly report: JsTestCoverageReport }
+  | { readonly status: "unavailable" | "error"; readonly message: string };
+
+export interface JsTestCoverageGateway {
+  run(rootPath: string): Promise<JsTestCoverageResponse>;
+}
+
+export interface LcovParseLimits {
+  readonly maxFiles?: number;
+  readonly maxLcovBytes?: number;
+  readonly maxLineRecords?: number;
+  readonly maxPathBytes?: number;
+}
+
+/** Parses line coverage only. Malformed, oversized, or out-of-workspace data is rejected. */
+export function parseLcovReport(
+  source: string,
+  workspaceRoot: string,
+  limits: LcovParseLimits = {},
+): JsTestCoverageReport {
+  const resolvedLimits = {
+    maxFiles: positiveLimit(limits.maxFiles, JS_TEST_COVERAGE_LIMITS.maxFiles, "maxFiles"),
+    maxLcovBytes: positiveLimit(
+      limits.maxLcovBytes,
+      JS_TEST_COVERAGE_LIMITS.maxLcovBytes,
+      "maxLcovBytes",
+    ),
+    maxLineRecords: positiveLimit(
+      limits.maxLineRecords,
+      JS_TEST_COVERAGE_LIMITS.maxLineRecords,
+      "maxLineRecords",
+    ),
+    maxPathBytes: positiveLimit(
+      limits.maxPathBytes,
+      JS_TEST_COVERAGE_LIMITS.maxPathBytes,
+      "maxPathBytes",
+    ),
+  };
+  if (utf8ByteLength(source) > resolvedLimits.maxLcovBytes) {
+    throw invalidLcov(`input exceeds ${resolvedLimits.maxLcovBytes} UTF-8 bytes`);
+  }
+
+  const files = new Map<string, Map<number, number>>();
+  let currentPath: string | null = null;
+  let currentLines: Map<number, number> | null = null;
+  let recordOpen = false;
+  let lineRecords = 0;
+
+  for (const [index, rawLine] of source.split(/\r?\n/).entries()) {
+    const lineNumber = index + 1;
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (!line || line.startsWith("TN:")) continue;
+
+    if (line.startsWith("SF:")) {
+      if (recordOpen) throw invalidLcov(`line ${lineNumber}: nested SF record`);
+      currentPath = normalizedCoveragePath(
+        line.slice(3),
+        workspaceRoot,
+        resolvedLimits.maxPathBytes,
+        `line ${lineNumber}`,
+      );
+      currentLines = files.get(currentPath) ?? new Map<number, number>();
+      if (!files.has(currentPath)) {
+        if (files.size >= resolvedLimits.maxFiles) {
+          throw invalidLcov(`report exceeds ${resolvedLimits.maxFiles} files`);
+        }
+        files.set(currentPath, currentLines);
+      }
+      recordOpen = true;
+      continue;
+    }
+
+    if (line.startsWith("DA:")) {
+      if (!recordOpen || !currentLines) {
+        throw invalidLcov(`line ${lineNumber}: DA appears outside an SF record`);
+      }
+      if (++lineRecords > resolvedLimits.maxLineRecords) {
+        throw invalidLcov(`report exceeds ${resolvedLimits.maxLineRecords} line records`);
+      }
+      const fields = line.slice(3).split(",");
+      if (fields.length < 2 || fields.length > 3) {
+        throw invalidLcov(`line ${lineNumber}: malformed DA record`);
+      }
+      const coveredLine = positiveSafeInteger(fields[0], `line ${lineNumber}: DA line`);
+      const hits = nonNegativeSafeInteger(fields[1], `line ${lineNumber}: DA hits`);
+      const previousHits = currentLines.get(coveredLine) ?? 0;
+      if (previousHits > Number.MAX_SAFE_INTEGER - hits) {
+        throw invalidLcov(`line ${lineNumber}: accumulated hit count is unsafe`);
+      }
+      currentLines.set(coveredLine, previousHits + hits);
+      continue;
+    }
+
+    if (line === "end_of_record") {
+      if (!recordOpen) throw invalidLcov(`line ${lineNumber}: unexpected end_of_record`);
+      currentPath = null;
+      currentLines = null;
+      recordOpen = false;
+      continue;
+    }
+
+    if (!recordOpen || !isIgnoredLcovRecord(line)) {
+      throw invalidLcov(`line ${lineNumber}: unsupported record`);
+    }
+  }
+  if (recordOpen) throw invalidLcov("unterminated SF record");
+
+  const resultFiles = [...files.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([path, byLine]) => fileCoverage(path, byLine));
+  return {
+    files: resultFiles,
+    summary: coverageMetric(
+      resultFiles.reduce((sum, file) => sum + file.summary.covered, 0),
+      resultFiles.reduce((sum, file) => sum + file.summary.total, 0),
+    ),
+  };
+}
+
+export function coverageMetric(covered: number, total: number): JsTestCoverageMetric {
+  if (!Number.isSafeInteger(covered) || covered < 0 || !Number.isSafeInteger(total) || total < 0) {
+    throw new TypeError("Coverage counts must be non-negative safe integers.");
+  }
+  if (covered > total) throw new TypeError("Covered lines cannot exceed total lines.");
+  return { covered, total, percentage: total === 0 ? null : (covered / total) * 100 };
+}
+
+function fileCoverage(path: string, byLine: Map<number, number>): JsTestFileCoverage {
+  const lines = [...byLine.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([lineNumber, hits]) => ({ lineNumber, hits }));
+  const covered = lines.filter((line) => line.hits > 0).length;
+  return {
+    path,
+    lines,
+    summary: coverageMetric(covered, lines.length),
+    firstUncoveredLine: lines.find((line) => line.hits === 0)?.lineNumber ?? null,
+  };
+}
+
+function normalizedCoveragePath(
+  value: string,
+  workspaceRoot: string,
+  maxPathBytes: number,
+  location: string,
+): string {
+  if (!value || hasControlCharacter(value) || utf8ByteLength(value) > maxPathBytes) {
+    throw invalidLcov(`${location}: invalid SF path`);
+  }
+  const normalized = value.replace(/\\/g, "/");
+  const relative = isAbsolutePath(normalized)
+    ? workspaceRelativePath(workspaceRoot, normalized)
+    : normalized;
+  if (
+    relative === null ||
+    !relative ||
+    relative.startsWith("/") ||
+    /^[A-Za-z]:\//.test(relative) ||
+    relative.split("/").some((part) => !part || part === "." || part === "..")
+  ) {
+    throw invalidLcov(`${location}: SF path must be a workspace-relative descendant`);
+  }
+  return relative;
+}
+
+function isIgnoredLcovRecord(line: string): boolean {
+  return /^(?:FN|FNDA|FNF|FNH|BRDA|BRF|BRH|LF|LH):/.test(line);
+}
+
+function positiveLimit(value: number | undefined, fallback: number, name: string): number {
+  const result = value ?? fallback;
+  if (!Number.isSafeInteger(result) || result <= 0) {
+    throw new TypeError(`${name} must be a positive safe integer.`);
+  }
+  return result;
+}
+
+function positiveSafeInteger(value: string | undefined, location: string): number {
+  if (!value || !/^[1-9]\d*$/.test(value)) throw invalidLcov(`${location} is invalid`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw invalidLcov(`${location} is unsafe`);
+  return parsed;
+}
+
+function nonNegativeSafeInteger(value: string | undefined, location: string): number {
+  if (value === undefined || !/^\d+$/.test(value)) throw invalidLcov(`${location} is invalid`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw invalidLcov(`${location} is unsafe`);
+  return parsed;
+}
+
+function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
+}
+
+function hasControlCharacter(value: string): boolean {
+  return /[\x00-\x1f\x7f]/.test(value);
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function invalidLcov(message: string): TypeError {
+  return new TypeError(`Invalid LCOV report: ${message}.`);
+}

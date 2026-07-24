@@ -755,7 +755,7 @@ function thisPropertyTypeForName(
 
 function phpDocVarType(docblock: string): string | null {
   const match =
-    /@var\s+([\\?A-Za-z_][\\A-Za-z0-9_|&<>?,\[\]\s]*)/.exec(docblock);
+    /@var\s+([\\?A-Za-z_][\\A-Za-z0-9_|&<>?,\u005B\u005D\s]*)/.exec(docblock);
 
   return match?.[1] ? normalizeType(match[1]) : null;
 }

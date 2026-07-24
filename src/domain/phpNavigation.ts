@@ -60,10 +60,16 @@ export type PhpCoreIdentifierContext =
       kind: "classConstant";
     };
 
-export interface PhpFrameworkIdentifierContextContributions {}
+declare const phpFrameworkIdentifierContextBrand: unique symbol;
+
+export interface PhpFrameworkIdentifierContextContributions {
+  readonly [phpFrameworkIdentifierContextBrand]?: never;
+}
 
 export type PhpFrameworkIdentifierContext =
-  PhpFrameworkIdentifierContextContributions[keyof PhpFrameworkIdentifierContextContributions];
+  PhpFrameworkIdentifierContextContributions[
+    Exclude<keyof PhpFrameworkIdentifierContextContributions, typeof phpFrameworkIdentifierContextBrand>
+  ];
 
 export type PhpIdentifierContext =
   | PhpCoreIdentifierContext

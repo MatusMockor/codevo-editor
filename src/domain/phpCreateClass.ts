@@ -845,7 +845,7 @@ function keywordBefore(masked: string, start: number): string | null {
     index -= 1;
   }
 
-  let wordEnd = index;
+  const wordEnd = index;
   let wordStart = index;
 
   while (wordStart > 0 && isIdentifierChar(masked[wordStart - 1] ?? "")) {

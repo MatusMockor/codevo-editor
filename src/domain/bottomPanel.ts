@@ -4,7 +4,11 @@ export type BottomPanelView =
   | "history"
   | "terminal"
   | "runtime"
-  | "debug";
+  | "debug"
+  | "expressRoutes"
+  | "packages"
+  | "nette"
+  | "symfony";
 
 export function bottomPanelLabel(view: BottomPanelView): string {
   if (view === "index") {
@@ -25,6 +29,22 @@ export function bottomPanelLabel(view: BottomPanelView): string {
 
   if (view === "debug") {
     return "Debug";
+  }
+
+  if (view === "expressRoutes") {
+    return "Express Routes";
+  }
+
+  if (view === "packages") {
+    return "Packages";
+  }
+
+  if (view === "nette") {
+    return "Nette";
+  }
+
+  if (view === "symfony") {
+    return "Symfony";
   }
 
   return "Problems";

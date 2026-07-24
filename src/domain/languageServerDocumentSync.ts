@@ -3,7 +3,6 @@ import {
   createWorkspaceRootFromPath,
   parseWorkspacePath,
   type CanonicalFileUri,
-  type WorkspacePath,
   type WorkspacePathKey,
   type WorkspaceRootDescriptor,
 } from "./workspacePath";
@@ -43,20 +42,14 @@ export interface SessionBoundLanguageServerDocumentSyncGateway {
     document: LanguageServerTextDocument,
     expectedSessionId: number,
   ): Promise<void>;
-  didClose(
-    rootPath: string,
-    path: string,
-    expectedSessionId: number,
-  ): Promise<void>;
+  didClose(rootPath: string, path: string, expectedSessionId: number): Promise<void>;
 }
 
 export function isLanguageServerDocument(document: EditorDocument): boolean {
   return document.language === "php";
 }
 
-export function isJavaScriptTypeScriptLanguageServerDocument(
-  document: EditorDocument,
-): boolean {
+export function isJavaScriptTypeScriptLanguageServerDocument(document: EditorDocument): boolean {
   const extension = document.path.split(".").pop()?.toLowerCase();
 
   return (
@@ -99,20 +92,13 @@ export function languageServerLanguageIdForDocument(
 }
 
 export function fileUriFromPath(path: string): string {
-  const normalized = path.split("\\").join("/");
-  const absolutePath = normalized.startsWith("/")
-    ? normalized
-    : `/${normalized}`;
-  const workspacePath = localWorkspacePath(absolutePath);
+  const workspacePath = createWorkspaceRootFromPath(path);
 
-  if (!workspacePath) {
+  if (!workspacePath.ok) {
     throw new TypeError(`Invalid local file path: ${path}`);
   }
 
-  return workspacePath.fileUri.replace(
-    /^file:\/\/\/([A-Za-z])%3A\//,
-    "file:///$1:/",
-  );
+  return workspacePath.value.fileUri.replace(/^file:\/\/\/([A-Za-z])%3A\//, "file:///$1:/");
 }
 
 export function fileUriFromWorkspacePath(
@@ -124,10 +110,7 @@ export function fileUriFromWorkspacePath(
   return workspacePath.ok ? workspacePath.value.fileUri : null;
 }
 
-export function languageServerDocumentSyncKey(
-  rootPath: string,
-  path: string,
-): WorkspacePathKey {
+export function languageServerDocumentSyncKey(rootPath: string, path: string): WorkspacePathKey {
   return workspacePathKey(rootPath, path) ?? legacySyncKey(rootPath, path);
 }
 
@@ -135,10 +118,7 @@ export function languageServerDocumentSyncKey(
  * Unscoped compatibility wrapper for callers not yet migrated to nullable keys.
  * Prefer tryLanguageServerUriSyncKey at server trust boundaries.
  */
-export function languageServerUriSyncKey(
-  rootPath: string,
-  uri: string,
-): WorkspacePathKey {
+export function languageServerUriSyncKey(rootPath: string, uri: string): WorkspacePathKey {
   return tryLanguageServerUriSyncKey(rootPath, uri) ?? legacySyncKey(rootPath, uri);
 }
 
@@ -146,18 +126,6 @@ export function tryLanguageServerUriSyncKey(
   rootPath: string,
   uri: string,
 ): WorkspacePathKey | null {
-  const normalizedRoot = normalizedLegacySyncPath(rootPath);
-
-  if (isWindowsDrivePath(normalizedRoot)) {
-    const documentPath = windowsPathFromFileUri(uri);
-
-    if (!documentPath || !isSameOrChildPath(normalizedRoot, documentPath)) {
-      return null;
-    }
-
-    return legacySyncKey(normalizedRoot, documentPath);
-  }
-
   return workspacePathKey(rootPath, uri);
 }
 
@@ -172,25 +140,28 @@ export function languageServerPathFromDocumentSyncKey(
   }
 
   const keyParts = workspacePathKeyParts(key);
+  const rootPathIdentity = parseWorkspacePath(root, root.nativePath);
+  const rootKeyParts = rootPathIdentity.ok
+    ? workspacePathKeyParts(rootPathIdentity.value.key)
+    : null;
 
-  if (!keyParts || keyParts[0] !== root.workspaceId) {
+  if (!keyParts || !rootKeyParts || rootKeyParts.some((part, index) => keyParts[index] !== part)) {
     return null;
   }
 
-  const path = [root.nativePath, ...keyParts.slice(1)].join("/");
+  const path = [root.nativePath, ...keyParts.slice(rootKeyParts.length)].join("/");
   const workspacePath = parseWorkspacePath(root, path);
 
   if (!workspacePath.ok || workspacePath.value.key !== key) {
     return null;
   }
 
-  return workspacePath.value.nativePath;
+  return root.flavor === "windows-drive"
+    ? workspacePath.value.nativePath.slice(1)
+    : workspacePath.value.nativePath;
 }
 
-function workspacePathKey(
-  rootPath: string,
-  pathOrUri: string,
-): WorkspacePathKey | null {
+function workspacePathKey(rootPath: string, pathOrUri: string): WorkspacePathKey | null {
   const root = workspaceRoot(rootPath);
 
   if (!root) {
@@ -209,26 +180,11 @@ function workspaceRoot(rootPath: string): WorkspaceRootDescriptor | null {
   return root.ok ? root.value : null;
 }
 
-function localWorkspacePath(pathOrUri: string): WorkspacePath | null {
-  const root = createWorkspaceRootFromPath("/");
-
-  if (!root.ok) {
-    return null;
-  }
-
-  const path = parseWorkspacePath(root.value, pathOrUri);
-
-  return path.ok ? path.value : null;
-}
-
 function workspacePathKeyParts(key: string): string[] | null {
   try {
     const value: unknown = JSON.parse(key);
 
-    if (
-      !Array.isArray(value) ||
-      !value.every((part) => typeof part === "string")
-    ) {
+    if (!Array.isArray(value) || !value.every((part) => typeof part === "string")) {
       return null;
     }
 
@@ -241,10 +197,9 @@ function workspacePathKeyParts(key: string): string[] | null {
 const LEGACY_SYNC_KEY_SEPARATOR = "\u0000";
 
 function legacySyncKey(rootPath: string, path: string): WorkspacePathKey {
-  return [
-    normalizedLegacySyncPath(rootPath),
-    normalizedLegacySyncPath(path),
-  ].join(LEGACY_SYNC_KEY_SEPARATOR) as WorkspacePathKey;
+  return [normalizedLegacySyncPath(rootPath), normalizedLegacySyncPath(path)].join(
+    LEGACY_SYNC_KEY_SEPARATOR,
+  ) as WorkspacePathKey;
 }
 
 function legacyPathFromSyncKey(rootPath: string, key: string): string | null {
@@ -255,48 +210,4 @@ function legacyPathFromSyncKey(rootPath: string, key: string): string | null {
 
 function normalizedLegacySyncPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
-}
-
-function isWindowsDrivePath(path: string): boolean {
-  return /^[A-Za-z]:\//.test(path);
-}
-
-function windowsPathFromFileUri(uri: string): string | null {
-  if (
-    !uri.toLowerCase().startsWith("file:") ||
-    uri.includes("?") ||
-    uri.includes("#") ||
-    uri.includes("\\") ||
-    /%(?:2f|5c)/i.test(uri)
-  ) {
-    return null;
-  }
-
-  const match = /^file:(?:\/\/([^/]*))?(\/.*)$/i.exec(uri);
-
-  if (!match) {
-    return null;
-  }
-
-  const authority = match[1] ?? "";
-
-  if (authority && authority.toLowerCase() !== "localhost") {
-    return null;
-  }
-
-  try {
-    const decodedPath = decodeURIComponent(match[2] ?? "").slice(1);
-
-    if (!isWindowsDrivePath(decodedPath) || decodedPath.includes("\0")) {
-      return null;
-    }
-
-    return normalizedLegacySyncPath(decodedPath);
-  } catch {
-    return null;
-  }
-}
-
-function isSameOrChildPath(rootPath: string, path: string): boolean {
-  return path === rootPath || path.startsWith(`${rootPath}/`);
 }

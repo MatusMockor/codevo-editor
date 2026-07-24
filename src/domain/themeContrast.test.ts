@@ -336,7 +336,12 @@ describe("Monaco popup chrome", () => {
   it("keeps focused popup rows on the contrast-checked soft accent treatment", () => {
     for (const selector of [
       ".monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused",
-      ".monaco-menu\n  .monaco-action-bar.vertical\n  .action-item.focused\n  .action-menu-item",
+      [
+        ".monaco-menu",
+        ".monaco-action-bar.vertical",
+        ".action-item.focused",
+        ".action-menu-item",
+      ].join(" "),
       ".monaco-editor .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled)",
     ]) {
       const block = cssBlockContainingSelector(appCss, selector);

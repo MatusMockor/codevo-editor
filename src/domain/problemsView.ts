@@ -43,6 +43,7 @@ const diagnosticGroupPrefixes = [
   "language-server-diagnostics:",
   "javascript-typescript-diagnostics:",
   "php-local-diagnostics:",
+  "node-package-task-problems:",
 ];
 const globalNoticeOverflowGroupKey = "workbench-notice-overflow";
 

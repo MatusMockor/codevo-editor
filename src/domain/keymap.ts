@@ -1,3 +1,23 @@
+import {
+  normalizeShortcutSequenceInput,
+  parseShortcutSequence,
+  shortcutSequenceForPlatform,
+} from "./shortcutSequence";
+
+export {
+  findKeymapSequenceConflicts,
+  lookupKeymapShortcutSequence,
+  normalizeShortcutSequenceInput,
+  parseShortcutSequence,
+  shortcutSequenceForPlatform,
+} from "./shortcutSequence";
+export type {
+  ShortcutSequence,
+  ShortcutSequenceConflict,
+  ShortcutSequenceLookup,
+  ShortcutStroke,
+} from "./shortcutSequence";
+
 export const keymapCommands = [
   {
     category: "Application",
@@ -153,6 +173,78 @@ export const keymapCommands = [
     label: "Format Document",
   },
   {
+    category: "Test",
+    // VS Code's editorTextFocus-scoped Run Test at Cursor key chord.
+    defaultShortcut: "Cmd+; C",
+    id: "testing.runAtCursor",
+    label: "Run Test at Cursor",
+  },
+  {
+    category: "Test",
+    // VS Code's editorTextFocus-scoped Debug Test at Cursor key chord.
+    defaultShortcut: "Cmd+; Cmd+C",
+    id: "testing.debugAtCursor",
+    label: "Debug Test at Cursor",
+  },
+  {
+    category: "Test",
+    // VS Code's editorTextFocus-scoped Run Tests in Current File key chord.
+    defaultShortcut: "Cmd+; F",
+    id: "testing.runCurrentFile",
+    label: "Run Tests in Current File",
+  },
+  {
+    category: "Test",
+    // VS Code's global Rerun Failed Tests key chord.
+    defaultShortcut: "Cmd+; E",
+    id: "testing.reRunFailTests",
+    label: "Rerun Failed Tests",
+  },
+  {
+    category: "Test",
+    // VS Code's global Rerun Last Run key chord.
+    defaultShortcut: "Cmd+; L",
+    id: "testing.reRunLastRun",
+    label: "Rerun Last Run",
+  },
+  {
+    category: "Test",
+    // VS Code's global Test Explorer Cancel Test Run key chord.
+    defaultShortcut: "Cmd+; Cmd+X",
+    id: "testing.cancelRun",
+    label: "Cancel Test Run",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Shift+Alt+O",
+    id: "editor.action.organizeImports",
+    label: "Organize Imports",
+  },
+  {
+    category: "TypeScript",
+    defaultShortcut: "",
+    id: "typescript.sortImports",
+    label: "Sort Imports",
+  },
+  {
+    category: "JavaScript",
+    defaultShortcut: "",
+    id: "javascript.sortImports",
+    label: "Sort Imports",
+  },
+  {
+    category: "TypeScript",
+    defaultShortcut: "",
+    id: "typescript.removeUnusedImports",
+    label: "Remove Unused Imports",
+  },
+  {
+    category: "JavaScript",
+    defaultShortcut: "",
+    id: "javascript.removeUnusedImports",
+    label: "Remove Unused Imports",
+  },
+  {
     category: "Editor",
     defaultShortcut: "Cmd+Alt+L",
     id: "editor.formatSelection",
@@ -163,6 +255,12 @@ export const keymapCommands = [
     defaultShortcut: "Alt+Enter",
     id: "editor.quickFix",
     label: "Context Actions",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+Shift+R",
+    id: "editor.action.refactor",
+    label: "Refactor",
   },
   {
     category: "Editor",
@@ -592,13 +690,13 @@ export const keymapCommands = [
   },
   {
     category: "Bookmarks",
-    defaultShortcut: "F11",
+    defaultShortcut: "Alt+F11",
     id: "bookmark.toggle",
     label: "Toggle Bookmark",
   },
   {
     category: "Bookmarks",
-    defaultShortcut: "Shift+F11",
+    defaultShortcut: "Shift+Alt+F11",
     id: "bookmark.showPanel",
     label: "Show Bookmarks",
   },
@@ -615,10 +713,34 @@ export const keymapCommands = [
     label: "Previous Bookmark",
   },
   {
+    category: "NPM",
+    defaultShortcut: "",
+    id: "npm.runSelectedScript",
+    label: "Run Script",
+  },
+  {
     category: "Debug",
     defaultShortcut: "F5",
     id: "debug.start",
     label: "Debug: Start or Continue",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "Ctrl+F5",
+    id: "debug.runWithoutDebugging",
+    label: "Run: Start Without Debugging",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "Shift+Cmd+F5",
+    id: "debug.restart",
+    label: "Debug: Restart",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "Ctrl+F10",
+    id: "debug.runToCursor",
+    label: "Debug: Run to Cursor",
   },
   {
     category: "Debug",
@@ -628,15 +750,99 @@ export const keymapCommands = [
   },
   {
     category: "Debug",
+    defaultShortcut: "Shift+F5",
+    id: "workbench.action.debug.disconnect",
+    label: "Debug: Disconnect",
+  },
+  {
+    category: "Debug",
     defaultShortcut: "F9",
     id: "debug.toggleBreakpoint",
     label: "Debug: Toggle Breakpoint",
   },
   {
     category: "Debug",
+    defaultShortcut: "Ctrl+F9",
+    id: "workbench.debug.viewlet.action.toggleBreakpointsActivatedAction",
+    label: "Debug: Toggle Activate Breakpoints",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "Shift+F9",
+    id: "editor.debug.action.toggleInlineBreakpoint",
+    label: "Debug: Inline Breakpoint",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "",
+    id: "workbench.action.debug.callStackTop",
+    label: "Debug: Navigate to Top of Call Stack",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "",
+    id: "workbench.action.debug.callStackBottom",
+    label: "Debug: Navigate to Bottom of Call Stack",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "",
+    id: "workbench.action.debug.callStackUp",
+    label: "Debug: Navigate Up Call Stack",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "",
+    id: "workbench.action.debug.callStackDown",
+    label: "Debug: Navigate Down Call Stack",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "",
+    id: "workbench.action.debug.restartFrame",
+    label: "Restart Frame",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "F2",
+    id: "debug.setVariable",
+    label: "Set Value",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "",
+    id: "debug.addToWatchExpressions",
+    label: "Add to Watch",
+  },
+  {
+    category: "Debug",
     defaultShortcut: "F10",
     id: "debug.stepOver",
     label: "Debug: Step Over",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "F11",
+    id: "debug.stepInto",
+    label: "Debug: Step Into",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "Shift+F11",
+    id: "debug.stepOut",
+    label: "Debug: Step Out",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "Shift+Cmd+Y",
+    id: "debug.focusConsole",
+    label: "Debug: Focus Debug Console",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "",
+    id: "debug.clearConsole",
+    label: "Debug: Clear Console",
   },
   {
     category: "Terminal",
@@ -646,7 +852,7 @@ export const keymapCommands = [
   },
   {
     category: "Workbench",
-    defaultShortcut: "Cmd+Shift+R",
+    defaultShortcut: "",
     id: "runtime.show",
     label: "Show Runtime Panel",
   },
@@ -684,8 +890,9 @@ let cachedPlatformKey: KeymapNavigator | symbol | undefined;
 let cachedPlatform: KeymapPlatform | undefined;
 
 export function detectKeymapPlatform(
-  navigatorLike: KeymapNavigator | undefined =
-    typeof navigator === "undefined" ? undefined : navigator,
+  navigatorLike: KeymapNavigator | undefined = typeof navigator === "undefined"
+    ? undefined
+    : navigator,
 ): KeymapPlatform {
   const cacheKey = navigatorLike ?? KEYMAP_PLATFORM_DEFAULT_KEY;
 
@@ -708,9 +915,7 @@ export function __resetKeymapPlatformCacheForTests(): void {
   cachedPlatform = undefined;
 }
 
-function computeKeymapPlatform(
-  navigatorLike: KeymapNavigator | undefined,
-): KeymapPlatform {
+function computeKeymapPlatform(navigatorLike: KeymapNavigator | undefined): KeymapPlatform {
   const platformText = [
     navigatorLike?.userAgentData?.platform,
     navigatorLike?.platform,
@@ -740,10 +945,7 @@ export function defaultKeymapSettings(
   platform: KeymapPlatform = detectKeymapPlatform(),
 ): KeymapSettings {
   return Object.fromEntries(
-    keymapCommands.map((command) => [
-      command.id,
-      defaultShortcutForCommand(command.id, platform),
-    ]),
+    keymapCommands.map((command) => [command.id, defaultShortcutForCommand(command.id, platform)]),
   ) as KeymapSettings;
 }
 
@@ -757,7 +959,17 @@ export function defaultShortcutForCommand(
     return "";
   }
 
+  if (commandId === "debug.setVariable") {
+    return debugSetVariableShortcut(platform);
+  }
+
   return shortcutForPlatform(command.defaultShortcut, platform);
+}
+
+export function debugSetVariableShortcut(platform: KeymapPlatform): string {
+  if (platform === "mac") return "Enter";
+  if (platform === "linux" || platform === "windows") return "F2";
+  return "";
 }
 
 export function normalizeKeymapSettings(
@@ -802,19 +1014,38 @@ export function keymapCommandIdForShortcut(
   shortcut: string,
   platform: KeymapPlatform = detectKeymapPlatform(),
 ): KeymapCommandId | null {
-  const normalizedShortcut = normalizeShortcutInput(shortcut);
+  return keymapCommandIdsForShortcut(keymap, shortcut, platform)[0] ?? null;
+}
 
-  for (const command of keymapCommands) {
+export function keymapCommandIdsForShortcut(
+  keymap: KeymapSettings,
+  shortcut: string,
+  platform: KeymapPlatform = detectKeymapPlatform(),
+): KeymapCommandId[] {
+  const normalizedShortcut = normalizeShortcutInput(shortcut);
+  if (!normalizedShortcut) {
+    return [];
+  }
+
+  const matches: KeymapCommandId[] = [];
+  const collected = new Set<KeymapCommandId>();
+
+  for (let index = keymapCommands.length - 1; index >= 0; index -= 1) {
+    const command = keymapCommands[index];
+    if (!command || collected.has(command.id)) {
+      continue;
+    }
+
+    collected.add(command.id);
     if (
-      normalizeShortcutInput(
-        shortcutForCommand(keymap, command.id, platform),
-      ) === normalizedShortcut
+      normalizeShortcutInput(shortcutForCommand(keymap, command.id, platform)) ===
+      normalizedShortcut
     ) {
-      return command.id;
+      matches.push(command.id);
     }
   }
 
-  return null;
+  return matches;
 }
 
 export interface KeymapConflict {
@@ -834,9 +1065,7 @@ export function findKeymapConflicts(
   commandId: KeymapCommandId,
   platform: KeymapPlatform = detectKeymapPlatform(),
 ): KeymapConflict[] {
-  const shortcut = normalizeShortcutInput(
-    shortcutForCommand(keymap, commandId, platform),
-  );
+  const shortcut = normalizeShortcutInput(shortcutForCommand(keymap, commandId, platform));
 
   if (!shortcut) {
     return [];
@@ -846,9 +1075,7 @@ export function findKeymapConflicts(
     .filter((command) => command.id !== commandId)
     .filter(
       (command) =>
-        normalizeShortcutInput(
-          shortcutForCommand(keymap, command.id, platform),
-        ) === shortcut,
+        normalizeShortcutInput(shortcutForCommand(keymap, command.id, platform)) === shortcut,
     )
     .map((command) => ({ id: command.id, label: command.label }));
 }
@@ -861,14 +1088,7 @@ interface KeymapCaptureEvent {
   shiftKey: boolean;
 }
 
-const CAPTURE_MODIFIER_ONLY_KEYS = new Set([
-  "Alt",
-  "AltGraph",
-  "Control",
-  "Meta",
-  "OS",
-  "Shift",
-]);
+const CAPTURE_MODIFIER_ONLY_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta", "OS", "Shift"]);
 
 /**
  * Builds a normalized shortcut string directly from a keydown event so the
@@ -886,9 +1106,7 @@ const CAPTURE_MODIFIER_ONLY_KEYS = new Set([
  *   and cannot be represented (normalization would degrade it to a
  *   modifier-only string).
  */
-export function shortcutFromKeyboardEvent(
-  event: KeymapCaptureEvent,
-): string | null {
+export function shortcutFromKeyboardEvent(event: KeymapCaptureEvent): string | null {
   const hasStrongModifier = event.ctrlKey || event.altKey || event.metaKey;
 
   if (!hasStrongModifier && !event.shiftKey) {
@@ -974,13 +1192,11 @@ interface KeymapModifierEvent {
  * treated as "has a modifier" by {@link eventCanMatchKeymapShortcut}, which
  * keeps the loop running for Shift-bearing events.
  */
-export function collectBareKeyShortcutKeys(
-  keymap: KeymapSettings,
-): ReadonlySet<string> {
+export function collectBareKeyShortcutKeys(keymap: KeymapSettings): ReadonlySet<string> {
   const bareKeys = new Set<string>();
 
   for (const shortcut of Object.values(keymap)) {
-    const parsed = parseShortcut(shortcut);
+    const parsed = parseShortcutSequence(shortcut)?.[0];
 
     if (!parsed) {
       continue;
@@ -1017,29 +1233,31 @@ export function eventCanMatchKeymapShortcut(
 }
 
 export function parseShortcut(shortcut: string): ParsedShortcut | null {
-  const normalized = normalizeShortcutInput(shortcut);
-
-  if (!normalized) {
+  const sequence = parseShortcutSequence(shortcut);
+  if (!sequence || sequence.length !== 1) {
     return null;
   }
 
-  const parts = normalized.split("+").map((part) => part.trim()).filter(Boolean);
-  const key = parts[parts.length - 1];
-
-  if (!key) {
-    return null;
-  }
+  const [stroke] = sequence;
 
   return {
-    alt: parts.slice(0, -1).some((part) => part.toLowerCase() === "alt"),
-    ctrl: parts.slice(0, -1).some((part) => part.toLowerCase() === "ctrl"),
-    key: normalizeShortcutKey(key),
-    meta: parts.slice(0, -1).some((part) => part.toLowerCase() === "cmd"),
-    shift: parts.slice(0, -1).some((part) => part.toLowerCase() === "shift"),
+    alt: stroke.alt,
+    ctrl: stroke.ctrl,
+    key: stroke.key,
+    meta: stroke.meta,
+    shift: stroke.shift,
   };
 }
 
 export function normalizeShortcutInput(value: string): string {
+  const parsedSequence = parseShortcutSequence(value);
+  if (parsedSequence?.length === 2) {
+    return normalizeShortcutSequenceInput(value);
+  }
+
+  // Preserve the original single-stroke input tolerance for settings already
+  // persisted as e.g. "option + return". New sequence input uses strict
+  // whitespace-separated strokes through normalizeShortcutSequenceInput.
   return value
     .split("+")
     .map((part) => normalizeShortcutPart(part.trim()))
@@ -1085,10 +1303,6 @@ function normalizeShortcutPart(part: string): string {
   return part;
 }
 
-function normalizeShortcutKey(key: string): string {
-  return normalizeKeyboardEventKey(normalizeShortcutPart(key));
-}
-
 function normalizeKeyboardEventKey(key: string): string {
   if (key.length === 1) {
     return key.toLowerCase();
@@ -1097,10 +1311,12 @@ function normalizeKeyboardEventKey(key: string): string {
   return key.toLowerCase();
 }
 
-function shortcutForPlatform(
-  shortcut: string,
-  platform: KeymapPlatform,
-): string {
+function shortcutForPlatform(shortcut: string, platform: KeymapPlatform): string {
+  const parsedSequence = parseShortcutSequence(shortcut);
+  if (parsedSequence?.length === 2) {
+    return shortcutSequenceForPlatform(shortcut, platform);
+  }
+
   const normalized = normalizeShortcutInput(shortcut);
 
   if (platform === "mac") {
@@ -1122,7 +1338,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function processPlatform(): string {
-  return (
-    (globalThis as { process?: { platform?: string } }).process?.platform ?? ""
-  );
+  return (globalThis as { process?: { platform?: string } }).process?.platform ?? "";
 }

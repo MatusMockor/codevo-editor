@@ -1,0 +1,11 @@
+{
+  "commands": [
+    { "command": "node --test", "supported": true },
+    { "command": " node.exe --test test/*.test.js ", "supported": true },
+    { "command": "node app.mjs --test", "supported": false },
+    { "command": "npm exec node -- --test", "supported": false },
+    { "command": "node --test && echo done", "supported": false },
+    { "command": "$NODE --test", "supported": false },
+    { "command": "node --test", "supported": false }
+  ]
+}
