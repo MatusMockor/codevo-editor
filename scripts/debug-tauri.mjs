@@ -3,9 +3,14 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { spawnDebugApp } from "./debug-tauri-launcher.mjs";
 import { debugAppExecutables } from "./debug-tauri-processes.mjs";
+import {
+  cleanTargetIfOversized,
+  describeTargetClean,
+} from "./debug-tauri-target-clean.mjs";
 
 const args = process.argv.slice(2);
 const smokeMode = args.includes("--smoke");
+const cleanForced = args.includes("--clean");
 const repoRoot = process.cwd();
 const devAppExecutables = debugAppExecutables(repoRoot);
 const managedPhpactorMarkers = [
@@ -356,6 +361,7 @@ async function runSmoke() {
     await sleep(smokeCleanupGraceMs);
   }
 
+  reportTargetClean(cleanTargetIfOversized({ forced: cleanForced, repoRoot }));
   execFileSync("npm", ["run", "debug:build"], {
     stdio: "inherit",
   });
@@ -390,10 +396,18 @@ async function runSmoke() {
   console.log("Debug app boot smoke passed: no matching dev/runtime processes remain.");
 }
 
+function reportTargetClean(result) {
+  const message = describeTargetClean(result);
+  if (message) {
+    console.log(message);
+  }
+}
+
 function runDebug() {
   killDevAppProcesses();
   killRuntimeProcesses();
 
+  reportTargetClean(cleanTargetIfOversized({ forced: cleanForced, repoRoot }));
   execFileSync("npm", ["run", "debug:build"], {
     stdio: "inherit",
   });
