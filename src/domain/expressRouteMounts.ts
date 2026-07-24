@@ -12,6 +12,9 @@ const MAX_CONSTANT_DEPTH = 32;
 const MAX_STATIC_PREFIX_BYTES = 4_096;
 const MAX_MOUNT_DEPTH = 64;
 const MAX_EXPORT_DEPTH = 64;
+const MAX_IMPORT_PATH_CANDIDATES = 4;
+
+export type ExpressImportPathResolver = (specifier: string) => readonly string[];
 
 export interface ExpressRouteMountSnapshot {
   readonly packageLabel?: string;
@@ -103,9 +106,10 @@ export function normalizeExpressPackageLabel(packageLabel: string | undefined): 
 export function resolveExpressRouteMountsBounded(
   snapshots: readonly ExpressRouteMountSnapshot[],
   maxRoutes: number,
+  importPathResolver?: ExpressImportPathResolver,
 ): BoundedResolvedExpressRoutes {
   const limit = boundedLimit(maxRoutes);
-  const analyses = snapshots.map(analyzeFile);
+  const analyses = snapshots.map((snapshot) => analyzeFile(snapshot, importPathResolver));
   const analysesByPath = uniqueAnalysesByModule(analyses);
   const mountEdges = new Map<string, MountEdge[]>();
   const symbolResolution: SymbolResolutionContext = { exhausted: false, traversals: 0 };
@@ -119,9 +123,21 @@ export function resolveExpressRouteMountsBounded(
         truncated = true;
         break;
       }
-      const target = resolveLocalSymbol(analysis, mount.target, analysesByPath, symbolResolution);
+      const target = resolveLocalSymbol(
+        analysis,
+        mount.target,
+        analysesByPath,
+        symbolResolution,
+        importPathResolver,
+      );
       if (!target || !isRouterSymbol(target, analysesByPath)) continue;
-      const owner = resolveLocalSymbol(analysis, mount.owner, analysesByPath, symbolResolution);
+      const owner = resolveLocalSymbol(
+        analysis,
+        mount.owner,
+        analysesByPath,
+        symbolResolution,
+        importPathResolver,
+      );
       if (!owner || !isExpressReceiver(owner, analysesByPath)) continue;
       const key = symbolKey(target);
       const edges = mountEdges.get(key) ?? [];
@@ -170,7 +186,10 @@ export function resolveExpressRouteMountsBounded(
   return { routes, truncated };
 }
 
-function analyzeFile(snapshot: ExpressRouteMountSnapshot): FileAnalysis {
+function analyzeFile(
+  snapshot: ExpressRouteMountSnapshot,
+  importPathResolver: ExpressImportPathResolver | undefined,
+): FileAnalysis {
   const { source } = snapshot;
   const packageLabel = normalizeExpressPackageLabel(snapshot.packageLabel);
   if (
@@ -209,6 +228,7 @@ function analyzeFile(snapshot: ExpressRouteMountSnapshot): FileAnalysis {
     routerFactories,
     routerReceivers,
     imports,
+    importPathResolver,
   );
   const appReceivers = new Set<string>();
   collectReceiverDeclarations(
@@ -251,7 +271,7 @@ function analyzeFile(snapshot: ExpressRouteMountSnapshot): FileAnalysis {
     ),
     ...(packageLabel ? { packageLabel } : {}),
     routes: parsed.routes,
-    reExports: collectReExports(source, masked, topLevelOffsets, bindingBudget),
+    reExports: collectReExports(source, masked, topLevelOffsets, bindingBudget, importPathResolver),
     routerReceivers,
     truncated: bindingBudget.truncated,
   };
@@ -266,6 +286,7 @@ function collectExpressImports(
   routerFactories: Set<string>,
   routerReceivers: Set<string>,
   imports: Map<string, { imported: string; specifier: string }>,
+  importPathResolver: ExpressImportPathResolver | undefined,
 ): void {
   const importPattern = /\bimport\s+([^;\n]+?)\s+from\s+(['"])([^'"\r\n]+)\2/g;
   for (const match of source.matchAll(importPattern)) {
@@ -291,7 +312,7 @@ function collectExpressImports(
       }
       continue;
     }
-    if (!specifier.startsWith(".")) continue;
+    if (!isFollowedImportSpecifier(specifier, importPathResolver)) continue;
     const defaultImport = clause.match(/^([A-Za-z_$][\w$]*)\s*(?:,|$)/);
     if (defaultImport?.[1] && consumeBinding(budget)) {
       imports.set(defaultImport[1], { imported: "default", specifier });
@@ -318,7 +339,7 @@ function collectExpressImports(
     const local = match[1] ?? "";
     const specifier = match[3] ?? "";
     if (specifier === "express" && consumeBinding(budget)) expressFactories.add(local);
-    else if (specifier.startsWith(".") && consumeBinding(budget)) {
+    else if (isFollowedImportSpecifier(specifier, importPathResolver) && consumeBinding(budget)) {
       imports.set(local, { imported: "default", specifier });
     }
   }
@@ -342,7 +363,7 @@ function collectExpressImports(
         if (masked[afterMember] === "(") routerReceivers.add(local);
         else routerFactories.add(local);
       }
-    } else if (specifier.startsWith(".") && consumeBinding(budget)) {
+    } else if (isFollowedImportSpecifier(specifier, importPathResolver) && consumeBinding(budget)) {
       imports.set(local, { imported, specifier });
     }
   }
@@ -365,7 +386,10 @@ function collectExpressImports(
       const local = named[2] ?? imported;
       if (specifier === "express" && imported === "Router" && consumeBinding(budget)) {
         routerFactories.add(local);
-      } else if (specifier.startsWith(".") && consumeBinding(budget)) {
+      } else if (
+        isFollowedImportSpecifier(specifier, importPathResolver) &&
+        consumeBinding(budget)
+      ) {
         imports.set(local, { imported, specifier });
       }
     }
@@ -458,6 +482,7 @@ function collectReExports(
   masked: string,
   topLevelOffsets: Uint8Array,
   budget: BindingBudget,
+  importPathResolver: ExpressImportPathResolver | undefined,
 ): ReExportBinding[] {
   const bindings: ReExportBinding[] = [];
   const namedPattern = /\bexport\s*\{([^}]*)\}\s*from\s*(['"])([^'"\r\n]+)\2\s*;?/g;
@@ -470,7 +495,7 @@ function collectReExports(
       continue;
     }
     const specifier = match[3] ?? "";
-    if (!specifier.startsWith(".")) continue;
+    if (!isFollowedImportSpecifier(specifier, importPathResolver)) continue;
     for (const item of (match[1] ?? "").split(",")) {
       const named = item.trim().match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
       if (named?.[1] && consumeBinding(budget)) {
@@ -492,7 +517,7 @@ function collectReExports(
       continue;
     }
     const specifier = match[2] ?? "";
-    if (specifier.startsWith(".") && consumeBinding(budget)) {
+    if (isFollowedImportSpecifier(specifier, importPathResolver) && consumeBinding(budget)) {
       bindings.push({ exported: "*", imported: "*", specifier });
     }
   }
@@ -724,6 +749,7 @@ function resolveLocalSymbol(
   localName: string,
   files: ReadonlyMap<string, FileAnalysis>,
   context: SymbolResolutionContext,
+  importPathResolver: ExpressImportPathResolver | undefined,
   seen: ReadonlySet<string> = new Set(),
   depth = 0,
 ): SymbolReference | null {
@@ -743,13 +769,14 @@ function resolveLocalSymbol(
   }
   const binding = analysis.imports.get(localName);
   if (!binding) return null;
-  const target = resolveModuleAnalysis(analysis, binding.specifier, files);
+  const target = resolveModuleAnalysis(analysis, binding.specifier, files, importPathResolver);
   return target
     ? resolveExportedSymbol(
         target,
         binding.imported,
         files,
         context,
+        importPathResolver,
         new Set(seen).add(localKey),
         depth + 1,
       )
@@ -761,6 +788,7 @@ function resolveExportedSymbol(
   exportedName: string,
   files: ReadonlyMap<string, FileAnalysis>,
   context: SymbolResolutionContext,
+  importPathResolver: ExpressImportPathResolver | undefined,
   seen: ReadonlySet<string>,
   depth: number,
 ): SymbolReference | null {
@@ -771,7 +799,15 @@ function resolveExportedSymbol(
   const candidates: SymbolReference[] = [];
   const local = analysis.exports.get(exportedName);
   if (local) {
-    const resolved = resolveLocalSymbol(analysis, local, files, context, nextSeen, depth + 1);
+    const resolved = resolveLocalSymbol(
+      analysis,
+      local,
+      files,
+      context,
+      importPathResolver,
+      nextSeen,
+      depth + 1,
+    );
     return resolved;
   }
   const directBindings = analysis.reExports.filter((binding) => binding.exported === exportedName);
@@ -779,20 +815,29 @@ function resolveExportedSymbol(
     if (directBindings.length !== 1) return null;
     const binding = directBindings[0];
     if (!binding) return null;
-    const target = resolveModuleAnalysis(analysis, binding.specifier, files);
+    const target = resolveModuleAnalysis(analysis, binding.specifier, files, importPathResolver);
     return target
-      ? resolveExportedSymbol(target, binding.imported, files, context, nextSeen, depth + 1)
+      ? resolveExportedSymbol(
+          target,
+          binding.imported,
+          files,
+          context,
+          importPathResolver,
+          nextSeen,
+          depth + 1,
+        )
       : null;
   }
   for (const binding of analysis.reExports) {
     if (binding.exported !== "*" || exportedName === "default") continue;
-    const target = resolveModuleAnalysis(analysis, binding.specifier, files);
+    const target = resolveModuleAnalysis(analysis, binding.specifier, files, importPathResolver);
     if (!target) continue;
     const resolved = resolveExportedSymbol(
       target,
       exportedName,
       files,
       context,
+      importPathResolver,
       nextSeen,
       depth + 1,
     );
@@ -807,23 +852,52 @@ function resolveModuleAnalysis(
   from: FileAnalysis,
   specifier: string,
   files: ReadonlyMap<string, FileAnalysis>,
+  importPathResolver: ExpressImportPathResolver | undefined,
 ): FileAnalysis | null {
-  if (!specifier.startsWith(".")) return null;
-  const base = normalizeRelativeModulePath(`${directoryName(from.filePath)}/${specifier}`);
-  if (!base) return null;
-  const explicitExtension = SOURCE_EXTENSIONS.find((extension) => base.endsWith(extension));
-  const extensionlessBase = explicitExtension ? base.slice(0, -explicitExtension.length) : base;
-  const candidates = new Set([
-    base,
-    ...(explicitExtension
-      ? SOURCE_EXTENSIONS.map((extension) => `${extensionlessBase}${extension}`)
-      : SOURCE_EXTENSIONS.map((extension) => `${base}${extension}`)),
-    ...SOURCE_EXTENSIONS.map((extension) => `${base}/index${extension}`),
-  ]);
+  const bases = resolveModuleBases(from, specifier, importPathResolver);
+  const candidates = new Set<string>();
+  for (const base of bases) {
+    const explicitExtension = SOURCE_EXTENSIONS.find((extension) => base.endsWith(extension));
+    const extensionlessBase = explicitExtension ? base.slice(0, -explicitExtension.length) : base;
+    candidates.add(base);
+    for (const extension of SOURCE_EXTENSIONS) {
+      candidates.add(
+        explicitExtension ? `${extensionlessBase}${extension}` : `${base}${extension}`,
+      );
+      candidates.add(`${base}/index${extension}`);
+    }
+  }
   const matches = [...candidates]
     .map((candidate) => files.get(moduleKey(from.packageLabel, candidate)))
     .filter((candidate): candidate is FileAnalysis => candidate !== undefined);
   return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+function resolveModuleBases(
+  from: FileAnalysis,
+  specifier: string,
+  importPathResolver: ExpressImportPathResolver | undefined,
+): readonly string[] {
+  if (specifier.startsWith(".")) {
+    const relative = normalizeRelativeModulePath(`${directoryName(from.filePath)}/${specifier}`);
+    return relative ? [relative] : [];
+  }
+  const candidates = importPathResolver?.(specifier) ?? [];
+  const bases: string[] = [];
+  for (const candidate of candidates.slice(0, MAX_IMPORT_PATH_CANDIDATES)) {
+    if (candidate.startsWith("/") || /^[A-Za-z]:[\\/]/.test(candidate)) continue;
+    const normalized = normalizeRelativeModulePath(candidate);
+    if (!normalized || bases.includes(normalized)) continue;
+    bases.push(normalized);
+  }
+  return bases;
+}
+
+function isFollowedImportSpecifier(
+  specifier: string,
+  importPathResolver: ExpressImportPathResolver | undefined,
+): boolean {
+  return specifier.startsWith(".") || importPathResolver !== undefined;
 }
 
 function directoryName(filePath: string): string {

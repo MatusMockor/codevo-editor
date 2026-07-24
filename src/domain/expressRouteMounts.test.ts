@@ -1,7 +1,119 @@
 import { describe, expect, it } from "vitest";
 import { resolveExpressRouteMountsBounded } from "./expressRouteMounts";
+import { createTsPathAliasResolver } from "./tsPathAliasResolver";
 
 describe("resolveExpressRouteMountsBounded", () => {
+  it("resolves an aliased router import to its mount prefix", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import router from '@/routes/api';",
+            "const app = express();",
+            "app.use('/api', router);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/routes/api.ts",
+          source: [
+            "import express from 'express';",
+            "const router = express.Router();",
+            "router.get('/users', listUsers);",
+            "export default router;",
+          ].join("\n"),
+        },
+      ],
+      100,
+      (specifier) => (specifier === "@/routes/api" ? ["src/routes/api"] : []),
+    );
+
+    expect(result.routes).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: "/api/users",
+        relativeFilePath: "src/routes/api.ts",
+      }),
+    );
+  });
+
+  it("resolves a wildcard alias through the existing extension candidates", () => {
+    const { resolve: resolveAlias } = createTsPathAliasResolver({
+      compilerOptions: {
+        baseUrl: ".",
+        paths: {
+          "@/*": ["src/*"],
+        },
+      },
+    });
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import router from '@/routes/api';",
+            "const app = express();",
+            "app.use('/api', router);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/routes/api/index.ts",
+          source: [
+            "import express from 'express';",
+            "const router = express.Router();",
+            "router.get('/status', handler);",
+            "export default router;",
+          ].join("\n"),
+        },
+      ],
+      100,
+      resolveAlias,
+    );
+
+    expect(result.routes).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: "/api/status",
+        relativeFilePath: "src/routes/api/index.ts",
+      }),
+    );
+  });
+
+  it("leaves an unresolved aliased router without a mount edge", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import router from '@/routes/api';",
+            "const app = express();",
+            "app.use('/api', router);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/routes/api.ts",
+          source: [
+            "import express from 'express';",
+            "const router = express.Router();",
+            "router.get('/status', handler);",
+            "export default router;",
+          ].join("\n"),
+        },
+      ],
+      100,
+      () => [],
+    );
+
+    expect(
+      result.routes.find(
+        (route) => route.method === "GET" && route.relativeFilePath === "src/routes/api.ts",
+      )?.path,
+    ).toBe("/status");
+  });
+
   it("resolves a default-imported router through a literal app mount", () => {
     const result = resolveExpressRouteMountsBounded(
       [
