@@ -1,7 +1,8 @@
 use super::*;
 use crate::debug_adapter::{
-    DebugSetExpressionResult, DebugSetVariableRequest, DebugSetVariableResult, DebugVariableInfo,
-    DebugVariablePage, DebugVariablePageRequest,
+    DebugFunctionBreakpoint, DebugFunctionBreakpointVerification, DebugSetExpressionResult,
+    DebugSetVariableRequest, DebugSetVariableResult, DebugVariableInfo, DebugVariablePage,
+    DebugVariablePageRequest,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Barrier};
@@ -121,7 +122,60 @@ fn response_for(command: WatchDebugControlCommand) -> WatchDebugControlResponse 
                 breakpoints: request.breakpoints().to_vec(),
             }
         }
+        WatchDebugControlCommand::SetFunctionBreakpoints(request) => {
+            WatchDebugControlResponse::FunctionBreakpointsVerified(
+                request
+                    .breakpoints()
+                    .iter()
+                    .map(|breakpoint| DebugFunctionBreakpointVerification {
+                        id: breakpoint.id.clone(),
+                        verified: breakpoint.enabled,
+                    })
+                    .collect(),
+            )
+        }
     }
+}
+
+#[test]
+fn function_breakpoint_response_matching_is_closed_and_ordered() {
+    let request = WatchSetFunctionBreakpointsRequest::new(vec![
+        DebugFunctionBreakpoint {
+            id: "fn-one".to_string(),
+            function_name: "app.one".to_string(),
+            enabled: true,
+        },
+        DebugFunctionBreakpoint {
+            id: "fn-two".to_string(),
+            function_name: "app.two".to_string(),
+            enabled: false,
+        },
+    ]);
+    let command = WatchDebugControlCommand::SetFunctionBreakpoints(request);
+    let matching = WatchDebugControlResponse::FunctionBreakpointsVerified(vec![
+        DebugFunctionBreakpointVerification {
+            id: "fn-one".to_string(),
+            verified: true,
+        },
+        DebugFunctionBreakpointVerification {
+            id: "fn-two".to_string(),
+            verified: false,
+        },
+    ]);
+    let reordered = WatchDebugControlResponse::FunctionBreakpointsVerified(vec![
+        DebugFunctionBreakpointVerification {
+            id: "fn-two".to_string(),
+            verified: false,
+        },
+        DebugFunctionBreakpointVerification {
+            id: "fn-one".to_string(),
+            verified: true,
+        },
+    ]);
+
+    assert!(matching.matches(&command));
+    assert!(!reordered.matches(&command));
+    assert!(!WatchDebugControlResponse::Ack.matches(&command));
 }
 
 fn generation(value: u64) -> TargetGeneration {

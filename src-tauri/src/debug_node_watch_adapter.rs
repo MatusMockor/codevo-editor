@@ -3,9 +3,9 @@ use super::watch_control_proxy::{WatchDebugControlFailure, WatchDebugControlProx
 use super::watch_inspection_contract::{WatchScopesResult, WatchStackTraceResult};
 use crate::debug_adapter::{
     DebugBreakpoint, DebugEvaluateFailure, DebugEvaluatePolicy, DebugExceptionPauseMode,
-    DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
-    DebugSetVariableResult, DebugVariableInfo, DebugVariablePage, DebugVariablePageRequest,
-    StepKind,
+    DebugFunctionBreakpoint, DebugFunctionBreakpointVerification, DebugSetExpressionRequest,
+    DebugSetExpressionResult, DebugSetVariableRequest, DebugSetVariableResult, DebugVariableInfo,
+    DebugVariablePage, DebugVariablePageRequest, StepKind,
 };
 use std::sync::Arc;
 
@@ -58,6 +58,17 @@ impl WatchNodeDebugAdapter {
             .as_ref()
             .ok_or(WatchNodeDebugAdapterFailure::BreakpointSyncUnavailable)?
             .set_breakpoints_active(active)
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn set_function_breakpoints(
+        &self,
+        breakpoints: &[DebugFunctionBreakpoint],
+    ) -> Result<Vec<DebugFunctionBreakpointVerification>, WatchNodeDebugAdapterFailure> {
+        self.breakpoints
+            .as_ref()
+            .ok_or(WatchNodeDebugAdapterFailure::BreakpointSyncUnavailable)?
+            .set_function_breakpoints(breakpoints)
             .map_err(Into::into)
     }
 

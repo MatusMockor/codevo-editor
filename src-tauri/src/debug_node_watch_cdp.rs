@@ -1,5 +1,8 @@
 use super::watch_adapter::WatchNodeDebugAdapter;
 use super::watch_breakpoint_sync::WatchBreakpointSynchronizer;
+use super::watch_cdp_activation::{
+    ensure_watch_current, publish_and_activate_control, WatchTargetActivationRollback,
+};
 use super::watch_cdp_command_runtime::NodeCdpCommandRuntime;
 use super::watch_command_worker::{WatchDebugCommandWorkerPolicy, WatchDebugCommandWorkerPort};
 use super::watch_control_proxy::{
@@ -204,76 +207,6 @@ fn terminate_target_ownership(ownership: Option<NodeCdpWatchTargetOwnership>) {
         Some(NodeCdpWatchTargetOwnership::Startup(mut adapter)) => adapter.terminate(),
         Some(NodeCdpWatchTargetOwnership::Active { worker, .. }) => worker.revoke(),
         None => {}
-    }
-}
-
-struct WatchTargetActivationRollback<'a> {
-    control_proxy: &'a WatchDebugControlProxy,
-    gate: &'a WatchDebugEventGate,
-    event_lease: &'a WatchEventGenerationLease,
-    intentional_close: &'a AtomicBool,
-    worker: Option<WatchDebugCommandWorkerPort>,
-    control_lease: Option<WatchDebugControlLease>,
-}
-
-impl<'a> WatchTargetActivationRollback<'a> {
-    fn new(
-        control_proxy: &'a WatchDebugControlProxy,
-        gate: &'a WatchDebugEventGate,
-        event_lease: &'a WatchEventGenerationLease,
-        intentional_close: &'a AtomicBool,
-        worker: WatchDebugCommandWorkerPort,
-    ) -> Self {
-        Self {
-            control_proxy,
-            gate,
-            event_lease,
-            intentional_close,
-            worker: Some(worker),
-            control_lease: None,
-        }
-    }
-
-    fn worker(&self) -> &WatchDebugCommandWorkerPort {
-        self.worker.as_ref().expect("activation worker")
-    }
-
-    fn record_control(&mut self, lease: WatchDebugControlLease) {
-        debug_assert!(self.control_lease.is_none());
-        self.control_lease = Some(lease);
-    }
-
-    fn commit(mut self) -> (WatchDebugCommandWorkerPort, WatchDebugControlLease) {
-        let worker = self.worker.take().expect("activation worker");
-        let control_lease = self.control_lease.take().expect("activated control");
-        (worker, control_lease)
-    }
-}
-
-impl Drop for WatchTargetActivationRollback<'_> {
-    fn drop(&mut self) {
-        let Some(worker) = self.worker.take() else {
-            debug_assert!(self.control_lease.is_none());
-            return;
-        };
-        if let Some(control_lease) = self.control_lease.take() {
-            let _ = self.control_proxy.revoke(&control_lease);
-        }
-        self.intentional_close.store(true, Ordering::Release);
-        let mut worker = Some(worker);
-        let ended = self
-            .gate
-            .end_before_transport_close(self.event_lease, WatchTransportEnd::Terminated, || {
-                if let Some(worker) = worker.take() {
-                    worker.revoke();
-                }
-            })
-            .is_some();
-        if !ended {
-            if let Some(worker) = worker.take() {
-                worker.revoke();
-            }
-        }
     }
 }
 
@@ -518,7 +451,8 @@ impl WatchTargetHandle for NodeCdpWatchTarget {
                     | WatchDebugControlResponse::Evaluate(_)
                     | WatchDebugControlResponse::VariableSet(_)
                     | WatchDebugControlResponse::ExpressionSet(_)
-                    | WatchDebugControlResponse::BreakpointsVerified { .. } => Err(()),
+                    | WatchDebugControlResponse::BreakpointsVerified { .. }
+                    | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => Err(()),
                 }
             }
         }
@@ -626,74 +560,8 @@ impl WatchTargetPublisher<NodeCdpWatchTarget> for NodeCdpWatchPublisher {
     }
 }
 
-fn publish_and_activate_control(
-    control_proxy: &WatchDebugControlProxy,
-    generation: TargetGeneration,
-    port: Arc<dyn WatchDebugControlPort>,
-    gate: &WatchDebugEventGate,
-    event_lease: &WatchEventGenerationLease,
-    cancellation: &WatchSupervisorCancellation,
-    rollback: &mut WatchTargetActivationRollback<'_>,
-) -> Result<(), ()> {
-    let pending = control_proxy
-        .prepare_install(generation, Arc::clone(&port))
-        .map_err(|_| ())?;
-    let Some(event_publication) = gate.begin_publish(event_lease) else {
-        let _ = control_proxy.abort_pending(&pending);
-        return Err(());
-    };
-    let mut event_flush = None;
-    let activation = control_proxy.activate_exact_with(&pending, || {
-        match port
-            .execute(WatchDebugControlCommand::RunIfWaitingForDebugger)
-            .map_err(|_| ())?
-        {
-            WatchDebugControlResponse::Ack => {}
-            WatchDebugControlResponse::PauseEpoch(_)
-            | WatchDebugControlResponse::StackTrace(_)
-            | WatchDebugControlResponse::Scopes(_)
-            | WatchDebugControlResponse::Variables(_)
-            | WatchDebugControlResponse::Evaluate(_)
-            | WatchDebugControlResponse::VariableSet(_)
-            | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => return Err(()),
-        };
-        ensure_watch_current(cancellation)?;
-        event_flush = gate.seal_publish(&event_publication);
-        event_flush.as_ref().map(|_| ()).ok_or(())
-    });
-    match activation {
-        Ok(control_lease) => {
-            rollback.record_control(control_lease);
-            let Some(event_flush) = event_flush else {
-                let _ = gate.abort_publish(&event_publication);
-                return Err(());
-            };
-            if gate.flush_publish(&event_flush) {
-                Ok(())
-            } else {
-                let _ = gate.abort_flush(&event_flush);
-                Err(())
-            }
-        }
-        Err(_) => {
-            let _ = control_proxy.abort_pending(&pending);
-            if let Some(event_flush) = event_flush {
-                let _ = gate.abort_flush(&event_flush);
-            } else {
-                let _ = gate.abort_publish(&event_publication);
-            }
-            Err(())
-        }
-    }
-}
-
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|error| error.into_inner())
-}
-
-fn ensure_watch_current(cancellation: &WatchSupervisorCancellation) -> Result<(), ()> {
-    (!cancellation.is_revoked()).then_some(()).ok_or(())
 }
 
 trait DisconnectPublication {
@@ -805,6 +673,20 @@ mod tests {
                         breakpoints: request.breakpoints().to_vec(),
                     }
                 }
+                WatchDebugControlCommand::SetFunctionBreakpoints(request) => {
+                    WatchDebugControlResponse::FunctionBreakpointsVerified(
+                        request
+                            .breakpoints()
+                            .iter()
+                            .map(|breakpoint| {
+                                crate::debug_adapter::DebugFunctionBreakpointVerification {
+                                    id: breakpoint.id.clone(),
+                                    verified: breakpoint.enabled,
+                                }
+                            })
+                            .collect(),
+                    )
+                }
             })
         }
     }
@@ -857,6 +739,13 @@ mod tests {
         ) -> Result<(), ()> {
             self.call("breakpoints")
         }
+
+        fn set_function_breakpoints(
+            &mut self,
+            _breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+        ) -> Result<(), ()> {
+            self.call("function-breakpoints")
+        }
     }
 
     fn setup_steps() -> Vec<DesiredDebuggerReplayStep> {
@@ -870,6 +759,9 @@ mod tests {
             DesiredDebuggerReplayStep::SetBreakpointsActive(true),
             DesiredDebuggerReplayStep::SetBreakpoints {
                 file_path: "/workspace/app.ts".into(),
+                breakpoints: Vec::new(),
+            },
+            DesiredDebuggerReplayStep::SetFunctionBreakpoints {
                 breakpoints: Vec::new(),
             },
         ]
@@ -890,7 +782,8 @@ mod tests {
                 "blackbox",
                 "exceptions",
                 "activation",
-                "breakpoints"
+                "breakpoints",
+                "function-breakpoints"
             ]
         );
     }
@@ -987,6 +880,14 @@ mod tests {
                     .map(|breakpoint| breakpoint.id.clone())
                     .collect(),
             ));
+            Ok(())
+        }
+
+        fn set_function_breakpoints(
+            &mut self,
+            _breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+        ) -> Result<(), ()> {
+            self.setup_calls.push("function-breakpoints");
             Ok(())
         }
     }
@@ -1464,7 +1365,8 @@ mod tests {
                 | WatchDebugControlCommand::SetVariable(_)
                 | WatchDebugControlCommand::SetExpression(_)
                 | WatchDebugControlCommand::SetBreakpointsActive(_)
-                | WatchDebugControlCommand::SetExceptionPause(_) => {
+                | WatchDebugControlCommand::SetExceptionPause(_)
+                | WatchDebugControlCommand::SetFunctionBreakpoints(_) => {
                     return Err(WatchDebugCommandFailure::TargetRejected);
                 }
                 WatchDebugControlCommand::SetBreakpoints(_) => {
@@ -1506,7 +1408,8 @@ mod tests {
                 | WatchDebugControlCommand::SetExpression(_) => {
                     return Err(WatchDebugCommandFailure::TargetRejected);
                 }
-                WatchDebugControlCommand::SetBreakpoints(_) => {
+                WatchDebugControlCommand::SetBreakpoints(_)
+                | WatchDebugControlCommand::SetFunctionBreakpoints(_) => {
                     return Err(WatchDebugCommandFailure::TargetRejected);
                 }
             })

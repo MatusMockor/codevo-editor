@@ -6,7 +6,10 @@ use super::super::watch_desired_policy::{
 };
 use super::super::watch_generation::TargetGeneration;
 use super::*;
-use crate::debug_adapter::{DebugExceptionPauseMode, DebugJustMyCodePolicy};
+use crate::debug_adapter::{
+    DebugExceptionPauseMode, DebugFunctionBreakpoint, DebugFunctionBreakpointVerification,
+    DebugJustMyCodePolicy,
+};
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
@@ -55,6 +58,18 @@ impl WatchDebugControlPort for EchoPort {
     ) -> Result<WatchDebugControlResponse, WatchDebugCommandFailure> {
         match command {
             WatchDebugControlCommand::SetBreakpoints(request) => Ok(verified(request)),
+            WatchDebugControlCommand::SetFunctionBreakpoints(request) => {
+                Ok(WatchDebugControlResponse::FunctionBreakpointsVerified(
+                    request
+                        .breakpoints()
+                        .iter()
+                        .map(|breakpoint| DebugFunctionBreakpointVerification {
+                            id: breakpoint.id.clone(),
+                            verified: breakpoint.enabled,
+                        })
+                        .collect(),
+                ))
+            }
             WatchDebugControlCommand::SetBreakpointsActive(_)
             | WatchDebugControlCommand::SetExceptionPause(_) => Ok(WatchDebugControlResponse::Ack),
             _ => Err(WatchDebugCommandFailure::TargetRejected),
@@ -136,6 +151,59 @@ fn desired_breakpoints(desired: &Mutex<DesiredDebuggerPolicy>) -> Vec<DebugBreak
             _ => None,
         })
         .unwrap_or_default()
+}
+
+fn function_breakpoint(id: &str, function_name: &str, enabled: bool) -> DebugFunctionBreakpoint {
+    DebugFunctionBreakpoint {
+        id: id.to_string(),
+        function_name: function_name.to_string(),
+        enabled,
+    }
+}
+
+fn desired_function_breakpoints(
+    desired: &Mutex<DesiredDebuggerPolicy>,
+) -> Vec<DebugFunctionBreakpoint> {
+    lock_recover(desired)
+        .replay_plan()
+        .steps()
+        .iter()
+        .find_map(|step| match step {
+            DesiredDebuggerReplayStep::SetFunctionBreakpoints { breakpoints } => {
+                Some(breakpoints.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn initial_function_breakpoint_install_commits_verified_replay_state() {
+    let fixture = Fixture::new();
+    let (desired, synchronizer, _control) = setup(&fixture, Arc::new(EchoPort::default()));
+    let requested = vec![
+        function_breakpoint("fn-one", "app.one", true),
+        function_breakpoint("fn-two", "app.two", false),
+    ];
+
+    let verified = synchronizer
+        .set_function_breakpoints(&requested)
+        .expect("install function breakpoints");
+
+    assert_eq!(
+        verified,
+        vec![
+            DebugFunctionBreakpointVerification {
+                id: "fn-one".to_string(),
+                verified: true,
+            },
+            DebugFunctionBreakpointVerification {
+                id: "fn-two".to_string(),
+                verified: false,
+            },
+        ]
+    );
+    assert_eq!(desired_function_breakpoints(&desired), requested);
 }
 
 #[test]
@@ -270,6 +338,28 @@ impl WatchDebugControlPort for StaleAfterAckPort {
                     .expect("adversarial desired revision");
                 Ok(verified(request))
             }
+            WatchDebugControlCommand::SetFunctionBreakpoints(request) => {
+                lock_recover(&self.desired)
+                    .replace(
+                        &self.root,
+                        DebugBreakpointAdapterKind::Node,
+                        Vec::new(),
+                        DebugExceptionPauseMode::All,
+                        true,
+                        Some(DebugJustMyCodePolicy::NodeInternals),
+                    )
+                    .expect("adversarial desired revision");
+                Ok(WatchDebugControlResponse::FunctionBreakpointsVerified(
+                    request
+                        .breakpoints()
+                        .iter()
+                        .map(|breakpoint| DebugFunctionBreakpointVerification {
+                            id: breakpoint.id.clone(),
+                            verified: true,
+                        })
+                        .collect(),
+                ))
+            }
             _ => Err(WatchDebugCommandFailure::TargetRejected),
         }
     }
@@ -320,6 +410,49 @@ fn stale_commit_after_ack_closes_exact_generation_and_never_publishes_ghost_poli
         Err(WatchDebugControlFailure::NoActiveTarget)
     );
     assert!(desired_breakpoints(&desired).is_empty());
+}
+
+#[test]
+fn stale_function_commit_closes_generation_without_orphaning_desired_state() {
+    let fixture = Fixture::new();
+    let desired = Arc::new(Mutex::new(DesiredDebuggerPolicy::new(
+        DesiredDebuggerPolicySnapshot::new(
+            &fixture.root,
+            DebugBreakpointAdapterKind::Node,
+            Vec::new(),
+            DebugExceptionPauseMode::None,
+            true,
+            None,
+        )
+        .expect("desired policy"),
+    )));
+    let port = Arc::new(StaleAfterAckPort {
+        closed: AtomicBool::new(false),
+        desired: Arc::clone(&desired),
+        root: fixture.root.clone(),
+    });
+    let control = WatchDebugControlProxy::new();
+    control
+        .install(TargetGeneration::from_value_for_test(1), port.clone())
+        .expect("generation one");
+    let synchronizer = WatchBreakpointSynchronizer::new(
+        fixture.root.clone(),
+        DebugBreakpointAdapterKind::Node,
+        Arc::clone(&desired),
+        control.clone(),
+        Arc::new(Mutex::new(())),
+    );
+
+    assert_eq!(
+        synchronizer.set_function_breakpoints(&[function_breakpoint("fn-one", "app.one", true)]),
+        Err(WatchBreakpointSyncFailure::StaleAuthority)
+    );
+    assert!(port.closed.load(Ordering::Acquire));
+    assert_eq!(
+        control.pause(),
+        Err(WatchDebugControlFailure::NoActiveTarget)
+    );
+    assert!(desired_function_breakpoints(&desired).is_empty());
 }
 
 struct FailingPort(WatchDebugCommandFailure);

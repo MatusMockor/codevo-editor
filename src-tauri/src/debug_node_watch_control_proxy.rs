@@ -6,8 +6,8 @@ use super::watch_inspection_contract::{
     WatchVariablesResult,
 };
 use crate::debug_adapter::{
-    DebugBreakpoint, DebugEvaluatePolicy, DebugExceptionPauseMode,
-    DebugSetExpressionRequest as AdapterSetExpressionRequest,
+    DebugBreakpoint, DebugEvaluatePolicy, DebugExceptionPauseMode, DebugFunctionBreakpoint,
+    DebugFunctionBreakpointVerification, DebugSetExpressionRequest as AdapterSetExpressionRequest,
     DebugSetExpressionResult as AdapterSetExpressionResult,
     DebugSetVariableRequest as AdapterSetVariableRequest,
     DebugSetVariableResult as AdapterSetVariableResult, DebugVariablePageRequest, StepKind,
@@ -47,6 +47,7 @@ pub(crate) enum WatchDebugControlCommand {
     SetBreakpointsActive(bool),
     SetExceptionPause(DebugExceptionPauseMode),
     SetBreakpoints(WatchSetBreakpointsRequest),
+    SetFunctionBreakpoints(WatchSetFunctionBreakpointsRequest),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,6 +74,21 @@ impl WatchSetBreakpointsRequest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WatchSetFunctionBreakpointsRequest {
+    breakpoints: Vec<DebugFunctionBreakpoint>,
+}
+
+impl WatchSetFunctionBreakpointsRequest {
+    pub(crate) fn new(breakpoints: Vec<DebugFunctionBreakpoint>) -> Self {
+        Self { breakpoints }
+    }
+
+    pub(crate) fn breakpoints(&self) -> &[DebugFunctionBreakpoint] {
+        &self.breakpoints
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WatchDebugControlResponse {
     Ack,
     PauseEpoch(u64),
@@ -86,6 +102,7 @@ pub(crate) enum WatchDebugControlResponse {
         file_path: String,
         breakpoints: Vec<DebugBreakpoint>,
     },
+    FunctionBreakpointsVerified(Vec<DebugFunctionBreakpointVerification>),
 }
 
 impl WatchDebugControlResponse {
@@ -141,6 +158,16 @@ impl WatchDebugControlResponse {
                                 && actual.log_message == expected.log_message
                                 && actual.enabled == expected.enabled
                         })
+            }
+            (
+                WatchDebugControlCommand::SetFunctionBreakpoints(request),
+                Self::FunctionBreakpointsVerified(verification),
+            ) => {
+                verification.len() == request.breakpoints().len()
+                    && verification
+                        .iter()
+                        .zip(request.breakpoints())
+                        .all(|(actual, expected)| actual.id == expected.id)
             }
             _ => false,
         }
@@ -541,7 +568,8 @@ impl WatchDebugControlProxy {
             | WatchDebugControlResponse::Evaluate(_)
             | WatchDebugControlResponse::VariableSet(_)
             | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => {
+            | WatchDebugControlResponse::BreakpointsVerified { .. }
+            | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => {
                 Err(WatchDebugControlFailure::ResponseMismatch)
             }
         }
@@ -557,7 +585,8 @@ impl WatchDebugControlProxy {
             | WatchDebugControlResponse::Evaluate(_)
             | WatchDebugControlResponse::VariableSet(_)
             | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => {
+            | WatchDebugControlResponse::BreakpointsVerified { .. }
+            | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => {
                 Err(WatchDebugControlFailure::ResponseMismatch)
             }
         }
@@ -573,7 +602,8 @@ impl WatchDebugControlProxy {
             | WatchDebugControlResponse::Evaluate(_)
             | WatchDebugControlResponse::VariableSet(_)
             | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => {
+            | WatchDebugControlResponse::BreakpointsVerified { .. }
+            | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => {
                 Err(WatchDebugControlFailure::ResponseMismatch)
             }
         }
@@ -599,7 +629,8 @@ impl WatchDebugControlProxy {
             | WatchDebugControlResponse::Evaluate(_)
             | WatchDebugControlResponse::VariableSet(_)
             | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => {
+            | WatchDebugControlResponse::BreakpointsVerified { .. }
+            | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => {
                 Err(WatchDebugControlFailure::ResponseMismatch)
             }
         }
@@ -626,7 +657,8 @@ impl WatchDebugControlProxy {
             | WatchDebugControlResponse::Evaluate(_)
             | WatchDebugControlResponse::VariableSet(_)
             | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => {
+            | WatchDebugControlResponse::BreakpointsVerified { .. }
+            | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => {
                 Err(WatchDebugControlFailure::ResponseMismatch)
             }
         }
@@ -652,7 +684,8 @@ impl WatchDebugControlProxy {
             | WatchDebugControlResponse::Evaluate(_)
             | WatchDebugControlResponse::VariableSet(_)
             | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => {
+            | WatchDebugControlResponse::BreakpointsVerified { .. }
+            | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => {
                 Err(WatchDebugControlFailure::ResponseMismatch)
             }
         }
@@ -681,7 +714,8 @@ impl WatchDebugControlProxy {
             | WatchDebugControlResponse::Variables(_)
             | WatchDebugControlResponse::VariableSet(_)
             | WatchDebugControlResponse::ExpressionSet(_)
-            | WatchDebugControlResponse::BreakpointsVerified { .. } => {
+            | WatchDebugControlResponse::BreakpointsVerified { .. }
+            | WatchDebugControlResponse::FunctionBreakpointsVerified(_) => {
                 Err(WatchDebugControlFailure::ResponseMismatch)
             }
         }

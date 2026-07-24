@@ -11,7 +11,8 @@ use super::watch_supervisor::{
 use super::{spawn_node_inspector_descriptor_bound, DebugSessionFactoryStartup};
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEvaluateContext, DebugEvaluateFailure, DebugEvaluatePolicy,
-    DebugEventEmitter, DebugExceptionPauseMode, DebugJustMyCodePolicy, DebugScopeInfo,
+    DebugEventEmitter, DebugExceptionPauseMode, DebugFunctionBreakpoint,
+    DebugFunctionBreakpointVerification, DebugJustMyCodePolicy, DebugScopeInfo,
     DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
     DebugSetVariableResult, DebugStackFrame, DebugStartResponse, DebugVariableInfo,
     DebugVariablePage, DebugVariablePageRequest, StepKind,
@@ -310,6 +311,15 @@ impl DebugAdapter for NativeNodeWatchRegistryAdapter {
     fn set_breakpoints_active(&mut self, active: bool) -> Result<(), String> {
         self.control
             .set_breakpoints_active(active)
+            .map_err(Self::failure)
+    }
+
+    fn set_function_breakpoints(
+        &mut self,
+        breakpoints: &[DebugFunctionBreakpoint],
+    ) -> Result<Vec<DebugFunctionBreakpointVerification>, String> {
+        self.control
+            .set_function_breakpoints(breakpoints)
             .map_err(Self::failure)
     }
 

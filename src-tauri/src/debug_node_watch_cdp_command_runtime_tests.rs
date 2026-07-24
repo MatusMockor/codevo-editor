@@ -1,12 +1,14 @@
 use super::*;
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEvaluateContext, DebugEvaluateFailure, DebugEvaluatePolicy,
-    DebugEvent, DebugEventSink, DebugScopeInfo, DebugSetExpressionRequest,
-    DebugSetExpressionResult, DebugSetVariableRequest, DebugSetVariableResult, DebugStackFrame,
-    DebugVariableInfo, DebugVariablePage, DebugVariablePageRequest, StepKind,
+    DebugEvent, DebugEventSink, DebugFunctionBreakpoint, DebugFunctionBreakpointVerification,
+    DebugScopeInfo, DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
+    DebugSetVariableResult, DebugStackFrame, DebugVariableInfo, DebugVariablePage,
+    DebugVariablePageRequest, StepKind,
 };
 use crate::debug_cdp::transport::PauseGenerationFloor;
 use crate::debug_node_process::watch_cdp::watch_cdp_event_emitter;
+use crate::debug_node_process::watch_control_proxy::WatchSetFunctionBreakpointsRequest;
 use crate::debug_node_process::watch_event_gate::WatchDebugEventGate;
 use crate::debug_session_registry::DebugSessionRegistry;
 use serde_json::{json, Value};
@@ -71,6 +73,7 @@ struct FakeSocket {
 enum FakeSocketBehavior {
     Reply(bool),
     OverflowOnRun,
+    FunctionBreakpoint(&'static str),
 }
 
 impl FakeSocket {
@@ -118,10 +121,26 @@ impl FakeSocket {
                     }
                     continue;
                 }
-                if matches!(behavior, FakeSocketBehavior::Reply(true)) {
+                if matches!(
+                    behavior,
+                    FakeSocketBehavior::Reply(true) | FakeSocketBehavior::FunctionBreakpoint(_)
+                ) {
+                    let result = match (behavior, request.get("method").and_then(Value::as_str)) {
+                        (
+                            FakeSocketBehavior::FunctionBreakpoint(object_id),
+                            Some("Runtime.evaluate"),
+                        ) => {
+                            json!({"result":{"type":"function","objectId":object_id}})
+                        }
+                        (
+                            FakeSocketBehavior::FunctionBreakpoint(object_id),
+                            Some("Debugger.setBreakpointOnFunctionCall"),
+                        ) => json!({"breakpointId":format!("breakpoint-{object_id}")}),
+                        _ => json!({}),
+                    };
                     let response = json!({
                         "id": request.get("id").cloned().unwrap_or(json!(0)),
-                        "result": {}
+                        "result": result
                     });
                     if socket
                         .send(Message::Text(response.to_string().into()))
@@ -142,6 +161,65 @@ impl FakeSocket {
     fn methods(&self) -> Vec<String> {
         self.methods.lock().expect("methods").clone()
     }
+}
+
+fn function_request() -> WatchSetFunctionBreakpointsRequest {
+    WatchSetFunctionBreakpointsRequest::new(vec![DebugFunctionBreakpoint {
+        id: "fn-render".to_string(),
+        function_name: "app.render".to_string(),
+        enabled: true,
+    }])
+}
+
+#[test]
+fn fresh_watch_generations_resolve_and_install_function_breakpoints_again() {
+    for object_id in ["generation-one", "generation-two"] {
+        let socket = FakeSocket::start_with(FakeSocketBehavior::FunctionBreakpoint(object_id));
+        let (_registry, mut runtime) = runtime(&socket, Duration::from_millis(250));
+        let revoked = AtomicBool::new(false);
+
+        assert_eq!(
+            runtime.execute(
+                WatchDebugControlCommand::SetFunctionBreakpoints(function_request()),
+                Instant::now() + Duration::from_millis(500),
+                &revoked,
+            ),
+            Ok(WatchDebugControlResponse::FunctionBreakpointsVerified(
+                vec![DebugFunctionBreakpointVerification {
+                    id: "fn-render".to_string(),
+                    verified: true,
+                },]
+            ))
+        );
+        assert_eq!(
+            socket.methods(),
+            ["Runtime.evaluate", "Debugger.setBreakpointOnFunctionCall"]
+        );
+        runtime.shutdown(Instant::now() + Duration::from_millis(250), &revoked);
+    }
+}
+
+#[test]
+fn unresolved_function_name_is_unverified_without_rejecting_watch_generation() {
+    let socket = FakeSocket::start(true);
+    let (_registry, mut runtime) = runtime(&socket, Duration::from_millis(250));
+    let revoked = AtomicBool::new(false);
+
+    assert_eq!(
+        runtime.execute(
+            WatchDebugControlCommand::SetFunctionBreakpoints(function_request()),
+            Instant::now() + Duration::from_millis(500),
+            &revoked,
+        ),
+        Ok(WatchDebugControlResponse::FunctionBreakpointsVerified(
+            vec![DebugFunctionBreakpointVerification {
+                id: "fn-render".to_string(),
+                verified: false,
+            },]
+        ))
+    );
+    assert_eq!(socket.methods(), ["Runtime.evaluate"]);
+    runtime.shutdown(Instant::now() + Duration::from_millis(250), &revoked);
 }
 
 fn emitter() -> (

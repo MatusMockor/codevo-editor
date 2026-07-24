@@ -390,6 +390,9 @@ mod watch_controller;
 #[path = "debug_node_watch_cdp.rs"]
 mod watch_cdp;
 
+#[path = "debug_node_watch_cdp_activation.rs"]
+mod watch_cdp_activation;
+
 #[path = "debug_node_watch_replay.rs"]
 mod watch_replay;
 

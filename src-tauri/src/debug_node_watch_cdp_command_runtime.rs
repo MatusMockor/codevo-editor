@@ -112,6 +112,17 @@ impl WatchDebugCommandRuntime for NodeCdpCommandRuntime {
                     breakpoints: applied,
                 })
             }
+            WatchDebugControlCommand::SetFunctionBreakpoints(request) => {
+                ensure_current(deadline, revoked)?;
+                let verification = self
+                    .adapter
+                    .set_function_breakpoints(request.breakpoints())
+                    .map_err(|_| classify_failure(deadline, revoked))?;
+                ensure_current(deadline, revoked)?;
+                Ok(WatchDebugControlResponse::FunctionBreakpointsVerified(
+                    verification,
+                ))
+            }
         }
     }
 

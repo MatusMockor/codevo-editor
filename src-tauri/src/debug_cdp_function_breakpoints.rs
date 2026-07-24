@@ -475,6 +475,17 @@ mod tests {
             registrations.by_logical_id.get("fn-1").map(String::as_str),
             Some("cdp-fn-1")
         );
+
+        replace_function_breakpoints(&mut cdp, &mut registrations, &[], || true)
+            .expect("tracked stale install remains removable");
+        assert_eq!(
+            cdp.calls.last(),
+            Some(&(
+                "Debugger.removeBreakpoint".to_string(),
+                json!({"breakpointId":"cdp-fn-1"})
+            ))
+        );
+        assert!(registrations.by_logical_id.is_empty());
     }
 
     #[test]

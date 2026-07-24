@@ -4,8 +4,8 @@ use super::super::watch_inspection_contract::{
 };
 use super::*;
 use crate::debug_adapter::{
-    DebugSetExpressionResult, DebugSetVariableResult, DebugVariableInfo, DebugVariablePage,
-    StepKind,
+    DebugFunctionBreakpointVerification, DebugSetExpressionResult, DebugSetVariableResult,
+    DebugVariableInfo, DebugVariablePage, StepKind,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Barrier};
@@ -107,6 +107,18 @@ fn runtime_response(command: WatchDebugControlCommand) -> WatchDebugControlRespo
                 file_path: request.file_path().to_string(),
                 breakpoints: request.breakpoints().to_vec(),
             }
+        }
+        WatchDebugControlCommand::SetFunctionBreakpoints(request) => {
+            WatchDebugControlResponse::FunctionBreakpointsVerified(
+                request
+                    .breakpoints()
+                    .iter()
+                    .map(|breakpoint| DebugFunctionBreakpointVerification {
+                        id: breakpoint.id.clone(),
+                        verified: breakpoint.enabled,
+                    })
+                    .collect(),
+            )
         }
     }
 }

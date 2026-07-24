@@ -1,4 +1,6 @@
-use crate::debug_adapter::{DebugBreakpoint, DebugExceptionPauseMode, DebugJustMyCodePolicy};
+use crate::debug_adapter::{
+    DebugBreakpoint, DebugExceptionPauseMode, DebugFunctionBreakpoint, DebugJustMyCodePolicy,
+};
 use crate::debug_breakpoint_policy::{
     breakpoints_by_file, commit_live_breakpoints, prepare_live_breakpoints,
     validate_initial_breakpoints, DebugBreakpointAdapterKind,
@@ -19,6 +21,7 @@ pub(crate) struct DesiredDebuggerPolicySnapshot {
     exception_pause_mode: DebugExceptionPauseMode,
     breakpoints_active: bool,
     internal_step_filter: Option<DebugJustMyCodePolicy>,
+    function_breakpoints: Vec<DebugFunctionBreakpoint>,
 }
 
 impl fmt::Debug for DesiredDebuggerPolicySnapshot {
@@ -29,6 +32,10 @@ impl fmt::Debug for DesiredDebuggerPolicySnapshot {
             .field("exception_pause_mode", &self.exception_pause_mode)
             .field("breakpoints_active", &self.breakpoints_active)
             .field("internal_step_filter", &self.internal_step_filter)
+            .field(
+                "function_breakpoint_count",
+                &self.function_breakpoints.len(),
+            )
             .finish()
     }
 }
@@ -48,6 +55,7 @@ impl DesiredDebuggerPolicySnapshot {
             exception_pause_mode,
             breakpoints_active,
             internal_step_filter,
+            function_breakpoints: Vec::new(),
         })
     }
 }
@@ -64,6 +72,9 @@ pub(crate) enum DesiredDebuggerReplayStep {
     SetBreakpoints {
         file_path: String,
         breakpoints: Vec<DebugBreakpoint>,
+    },
+    SetFunctionBreakpoints {
+        breakpoints: Vec<DebugFunctionBreakpoint>,
     },
     RunIfWaitingForDebugger,
 }
@@ -87,6 +98,10 @@ impl fmt::Debug for DesiredDebuggerReplayStep {
                 .finish(),
             Self::SetBreakpoints { breakpoints, .. } => formatter
                 .debug_struct("SetBreakpoints")
+                .field("breakpoint_count", &breakpoints.len())
+                .finish(),
+            Self::SetFunctionBreakpoints { breakpoints } => formatter
+                .debug_struct("SetFunctionBreakpoints")
                 .field("breakpoint_count", &breakpoints.len())
                 .finish(),
             Self::RunIfWaitingForDebugger => formatter.write_str("RunIfWaitingForDebugger"),
@@ -301,6 +316,16 @@ impl DesiredDebuggerPolicy {
         self.prepare_policy_update(replacement)
     }
 
+    pub(crate) fn prepare_function_breakpoint_replacement(
+        &self,
+        breakpoints: &[DebugFunctionBreakpoint],
+    ) -> Result<PreparedDesiredPolicyUpdate, String> {
+        crate::debug_cdp_function_breakpoints::validate_function_breakpoints(breakpoints)?;
+        let mut replacement = self.snapshot.clone();
+        replacement.function_breakpoints = breakpoints.to_vec();
+        self.prepare_policy_update(replacement)
+    }
+
     pub(crate) fn commit_policy_update(
         &mut self,
         prepared: PreparedDesiredPolicyUpdate,
@@ -345,7 +370,7 @@ impl DesiredDebuggerPolicy {
         breakpoints_active: bool,
         internal_step_filter: Option<DebugJustMyCodePolicy>,
     ) -> Result<u64, String> {
-        let replacement = DesiredDebuggerPolicySnapshot::new(
+        let mut replacement = DesiredDebuggerPolicySnapshot::new(
             root,
             breakpoint_kind,
             breakpoints,
@@ -353,6 +378,7 @@ impl DesiredDebuggerPolicy {
             breakpoints_active,
             internal_step_filter,
         )?;
+        replacement.function_breakpoints = self.snapshot.function_breakpoints.clone();
         if replacement == self.snapshot {
             return Ok(self.revision);
         }
@@ -374,7 +400,7 @@ impl DesiredDebuggerPolicy {
                 .push(breakpoint.clone());
         }
 
-        let mut steps = Vec::with_capacity(grouped.len() + 6);
+        let mut steps = Vec::with_capacity(grouped.len() + 7);
         steps.push(DesiredDebuggerReplayStep::EnableRuntime);
         steps.push(DesiredDebuggerReplayStep::EnableDebugger);
         steps.push(DesiredDebuggerReplayStep::ApplyInternalStepFilter(
@@ -392,6 +418,9 @@ impl DesiredDebuggerPolicy {
                 breakpoints,
             }
         }));
+        steps.push(DesiredDebuggerReplayStep::SetFunctionBreakpoints {
+            breakpoints: self.snapshot.function_breakpoints.clone(),
+        });
         steps.push(DesiredDebuggerReplayStep::RunIfWaitingForDebugger);
         DesiredDebuggerReplayPlan {
             revision: self.revision,
@@ -649,6 +678,7 @@ mod tests {
                 DesiredDebuggerReplayStep::SetBreakpointsActive(true),
                 DesiredDebuggerReplayStep::SetBreakpoints { .. },
                 DesiredDebuggerReplayStep::SetBreakpoints { .. },
+                DesiredDebuggerReplayStep::SetFunctionBreakpoints { .. },
                 DesiredDebuggerReplayStep::RunIfWaitingForDebugger,
             ]
         ));

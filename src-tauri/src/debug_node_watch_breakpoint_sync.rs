@@ -1,11 +1,14 @@
 use super::watch_control_proxy::{
     WatchDebugControlCommand, WatchDebugControlFailure, WatchDebugControlProxy,
-    WatchDebugControlResponse, WatchSetBreakpointsRequest,
+    WatchDebugControlResponse, WatchSetBreakpointsRequest, WatchSetFunctionBreakpointsRequest,
 };
 use super::watch_desired_policy::{
     DesiredBreakpointReplacementCommitError, DesiredDebuggerPolicy, DesiredPolicyUpdateCommitError,
 };
-use crate::debug_adapter::{DebugBreakpoint, DebugExceptionPauseMode};
+use crate::debug_adapter::{
+    DebugBreakpoint, DebugExceptionPauseMode, DebugFunctionBreakpoint,
+    DebugFunctionBreakpointVerification,
+};
 use crate::debug_breakpoint_policy::DebugBreakpointAdapterKind;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -85,6 +88,35 @@ impl WatchBreakpointSynchronizer {
             |desired| desired.prepare_breakpoints_active(active),
             WatchDebugControlCommand::SetBreakpointsActive(active),
         )
+    }
+
+    pub(crate) fn set_function_breakpoints(
+        &self,
+        breakpoints: &[DebugFunctionBreakpoint],
+    ) -> Result<Vec<DebugFunctionBreakpointVerification>, WatchBreakpointSyncFailure> {
+        let _mutation = lock_recover(&self.mutation);
+        let prepared = lock_recover(&self.desired)
+            .prepare_function_breakpoint_replacement(breakpoints)
+            .map_err(|_| WatchBreakpointSyncFailure::InvalidPolicy)?;
+        let request = WatchSetFunctionBreakpointsRequest::new(breakpoints.to_vec());
+        self.control
+            .execute_and_commit(
+                WatchDebugControlCommand::SetFunctionBreakpoints(request),
+                |response| {
+                    let WatchDebugControlResponse::FunctionBreakpointsVerified(verification) =
+                        response
+                    else {
+                        return Err(WatchDebugControlFailure::ResponseMismatch);
+                    };
+                    lock_recover(&self.desired)
+                        .commit_policy_update(prepared)
+                        .map_err(|DesiredPolicyUpdateCommitError::Stale| {
+                            WatchDebugControlFailure::StaleAuthority
+                        })?;
+                    Ok(verification)
+                },
+            )
+            .map_err(Into::into)
     }
 
     pub(crate) fn set_exception_pause(

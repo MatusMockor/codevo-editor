@@ -1,6 +1,7 @@
 use super::watch_desired_policy::{DesiredDebuggerReplayPlan, DesiredDebuggerReplayStep};
 use crate::debug_adapter::{
-    DebugAdapter, DebugBreakpoint, DebugExceptionPauseMode, DebugJustMyCodePolicy,
+    DebugAdapter, DebugBreakpoint, DebugExceptionPauseMode, DebugFunctionBreakpoint,
+    DebugJustMyCodePolicy,
 };
 use crate::debug_cdp::transport::NodeCdpAdapter;
 use std::collections::HashSet;
@@ -18,6 +19,10 @@ pub(super) trait WatchCdpProtocol {
         &mut self,
         file_path: &str,
         breakpoints: &[DebugBreakpoint],
+    ) -> Result<(), ()>;
+    fn set_function_breakpoints(
+        &mut self,
+        breakpoints: &[DebugFunctionBreakpoint],
     ) -> Result<(), ()>;
 }
 
@@ -52,6 +57,15 @@ impl WatchCdpProtocol for NodeCdpAdapter {
         breakpoints: &[DebugBreakpoint],
     ) -> Result<(), ()> {
         DebugAdapter::set_breakpoints(self, file_path, breakpoints)
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn set_function_breakpoints(
+        &mut self,
+        breakpoints: &[DebugFunctionBreakpoint],
+    ) -> Result<(), ()> {
+        DebugAdapter::set_function_breakpoints(self, breakpoints)
             .map(|_| ())
             .map_err(|_| ())
     }
@@ -92,6 +106,9 @@ fn apply_replay_step(
             file_path,
             breakpoints,
         } => adapter.set_breakpoints(file_path, breakpoints),
+        DesiredDebuggerReplayStep::SetFunctionBreakpoints { breakpoints } => {
+            adapter.set_function_breakpoints(breakpoints)
+        }
         DesiredDebuggerReplayStep::RunIfWaitingForDebugger => Err(()),
     }
 }

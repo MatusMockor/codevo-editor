@@ -1,4 +1,5 @@
 use super::*;
+use crate::debug_adapter::DebugFunctionBreakpoint;
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -46,6 +47,14 @@ fn breakpoint(file_path: &str, id: &str, line_number: u32) -> DebugBreakpoint {
         log_message: None,
         enabled: true,
         verified: false,
+    }
+}
+
+fn function_breakpoint(id: &str, function_name: &str) -> DebugFunctionBreakpoint {
+    DebugFunctionBreakpoint {
+        id: id.to_string(),
+        function_name: function_name.to_string(),
+        enabled: true,
     }
 }
 
@@ -224,6 +233,51 @@ fn committed_transaction_produces_deterministic_complete_replay() {
         first.steps().last(),
         Some(DesiredDebuggerReplayStep::RunIfWaitingForDebugger)
     ));
+}
+
+#[test]
+fn function_breakpoint_transaction_replays_after_lines_and_before_resume() {
+    let fixture = Fixture::new();
+    let file = fixture.file("functions.ts");
+    let mut policy =
+        DesiredDebuggerPolicy::new(snapshot(&fixture, vec![breakpoint(&file, "line", 1)]));
+    let requested = vec![
+        function_breakpoint("fn-one", "app.one"),
+        function_breakpoint("fn-two", "app.two"),
+    ];
+    let prepared = policy
+        .prepare_function_breakpoint_replacement(&requested)
+        .expect("prepare function breakpoints");
+    policy
+        .commit_policy_update(prepared)
+        .expect("commit function breakpoints");
+
+    let steps = policy.replay_plan().steps().to_vec();
+    let line_index = steps
+        .iter()
+        .position(|step| matches!(step, DesiredDebuggerReplayStep::SetBreakpoints { .. }))
+        .expect("line breakpoint replay");
+    let function_index = steps
+        .iter()
+        .position(|step| {
+            matches!(
+                step,
+                DesiredDebuggerReplayStep::SetFunctionBreakpoints { .. }
+            )
+        })
+        .expect("function breakpoint replay");
+    let resume_index = steps
+        .iter()
+        .position(|step| matches!(step, DesiredDebuggerReplayStep::RunIfWaitingForDebugger))
+        .expect("resume replay");
+
+    assert!(line_index < function_index);
+    assert!(function_index < resume_index);
+    let DesiredDebuggerReplayStep::SetFunctionBreakpoints { breakpoints } = &steps[function_index]
+    else {
+        panic!("function replay step");
+    };
+    assert_eq!(breakpoints, &requested);
 }
 
 #[test]

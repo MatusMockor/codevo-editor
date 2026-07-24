@@ -1,8 +1,8 @@
 use super::*;
 use crate::debug_adapter::{
-    DebugEvaluateContext, DebugEvaluatePolicy, DebugScopeInfo, DebugSetExpressionResult,
-    DebugSetVariableResult, DebugStackFrame, DebugVariableInfo, DebugVariablePage,
-    DebugVariablePageRequest,
+    DebugEvaluateContext, DebugEvaluatePolicy, DebugFunctionBreakpointVerification, DebugScopeInfo,
+    DebugSetExpressionResult, DebugSetVariableResult, DebugStackFrame, DebugVariableInfo,
+    DebugVariablePage, DebugVariablePageRequest,
 };
 use crate::debug_node_process::watch_control_proxy::{
     WatchDebugCommandFailure, WatchDebugControlCommand, WatchDebugControlPort,
@@ -153,6 +153,18 @@ impl WatchDebugControlPort for RecordingPort {
                     file_path: request.file_path().to_string(),
                     breakpoints: request.breakpoints().to_vec(),
                 }
+            }
+            WatchDebugControlCommand::SetFunctionBreakpoints(request) => {
+                WatchDebugControlResponse::FunctionBreakpointsVerified(
+                    request
+                        .breakpoints()
+                        .iter()
+                        .map(|breakpoint| DebugFunctionBreakpointVerification {
+                            id: breakpoint.id.clone(),
+                            verified: breakpoint.enabled,
+                        })
+                        .collect(),
+                )
             }
         })
     }
