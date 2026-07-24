@@ -26,14 +26,20 @@ const RESULT_OWNER: DebugConsoleResultOwner = {
 };
 
 describe("debug render work bounds", () => {
-  it("caps a 10,000-node variable tree after 500 expansion decisions", () => {
-    const children = Array.from({ length: 9_999 }, (_value, index): DebugVariable => {
-      return {
-        name: `child-${index}`,
-        value: String(index),
-        variablesReference: index + 2,
-      };
-    });
+  it("caps a 10,000-node variable tree after 500 sibling entry visits", () => {
+    let childReads = 0;
+    const children = countedArray(
+      Array.from({ length: 9_999 }, (_value, index): DebugVariable => {
+        return {
+          name: `child-${index}`,
+          value: String(index),
+          variablesReference: index + 2,
+        };
+      }),
+      () => {
+        childReads += 1;
+      },
+    );
     let expansionChecks = 0;
     let referenceReads = 0;
     const expandedIds = countingReadonlySet(new Set(["root:adversarial"]), () => {
@@ -76,6 +82,7 @@ describe("debug render work bounds", () => {
     });
     expect(expansionChecks).toBeLessThanOrEqual(500);
     expect(referenceReads).toBeLessThanOrEqual(500);
+    expect(childReads).toBeLessThanOrEqual(500);
   });
 
   it("caps deep console expansion work across 1,000 entries", () => {

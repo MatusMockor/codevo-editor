@@ -140,7 +140,12 @@ export function buildRows({
     if (terminalExpansion) return;
     if (!expanded) return;
     const variables = "variables" in expansion ? expansion.variables : [];
-    variables.forEach((variable, index) => {
+    for (let index = 0; index < variables.length; index += 1) {
+      if (rows.length >= maxRows) {
+        overflowed = true;
+        break;
+      }
+      const variable = variables[index];
       const location = variablePages
         ? findPagedVariableLocation(variablePages, variablesReference, variable)
         : null;
@@ -169,7 +174,7 @@ export function buildRows({
         mutation,
         variable,
       );
-    });
+    }
     if (expansion.kind === "idle" || expansion.kind === "loading") {
       append(statusRow(id, depth + 1, "Loading…"));
     } else if (expansion.kind === "error") {
