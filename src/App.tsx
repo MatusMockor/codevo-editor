@@ -16,7 +16,7 @@ import {
 } from "./application/appClosedState";
 import { presentNodeRunWithoutDebugging } from "./application/nodeRunWithoutDebuggingPresentation";
 import { useAppFrameworkBottomPanels } from "./application/useAppFrameworkBottomPanels";
-import { useDirtyExpressRoutesDocumentSnapshots } from "./application/useDirtyExpressRoutesDocumentSnapshots";
+import { useAppExpressWorkspaceSignals } from "./application/useExpressWorkspaceManifestSignal";
 import { useNoticeToastRenderers } from "./components/useNoticeToastRenderers";
 import { useAppSyntaxHighlighterPreload, useAppWindowTitle } from "./application/useAppBootEffects";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
@@ -298,16 +298,14 @@ function App() {
     isOpen: workbench.bottomPanelVisible && (workbench.bottomPanelView as string) === "routes",
     rootPath: workbench.workspaceRoot,
   });
-  const dirtyExpressRoutesSnapshots = useDirtyExpressRoutesDocumentSnapshots(
-    workbench.openDocuments,
-    workbench.activeDocument,
-    workbench.workspaceRoot,
-  );
+  const [dirtyExpressRoutesSnapshots, expressWorkspaceManifestSignal] =
+    useAppExpressWorkspaceSignals(workbench, workspaceSourceDiscoveryGateway);
   const expressRoutesPanel = useWorkspaceExpressRoutesWorkbenchPanel({
     dirtySnapshots: dirtyExpressRoutesSnapshots,
     discoveryGateway: workspaceSourceDiscoveryGateway,
     discoveryVersion: workbench.expressRouteDiscoveryVersion,
-    isOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes",
+    // prettier-ignore
+    isOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes" || expressWorkspaceManifestSignal,
     onOpenLocation: workbench.openDebugLocation,
     rootPath: workbench.workspaceRoot,
     workspaceId,

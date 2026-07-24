@@ -428,7 +428,10 @@ describe("BottomPanel terminal links", () => {
       "/workspace",
       vi.fn(async () => true),
       undefined,
-      { hasExpressRoutes: true, onSelectView },
+      {
+        expressRoutesPanel: expressRoutesPanelProps([expressRoute()]),
+        onSelectView,
+      },
     );
 
     const expressRoutesTab = Array.from(
@@ -446,13 +449,13 @@ describe("BottomPanel terminal links", () => {
       "/workspace",
       vi.fn(async () => true),
       undefined,
-      { hasExpressRoutes: false },
+      {},
     );
 
     expect(host.textContent).not.toContain("Express Routes");
   });
 
-  it("renders Express Routes only for an available active view", async () => {
+  it("renders Express Routes for a signaled or explicitly active view", async () => {
     const onOpenExpressRoute = vi.fn();
     const expressRoutes = [
       {
@@ -486,7 +489,6 @@ describe("BottomPanel terminal links", () => {
           routes: expressRoutes,
           truncated: false,
         },
-        hasExpressRoutes: true,
       },
     );
 
@@ -520,13 +522,58 @@ describe("BottomPanel terminal links", () => {
           routes: expressRoutes,
           truncated: false,
         },
-        hasExpressRoutes: false,
       },
     );
 
-    expect(host.querySelector('[aria-label="Express routes"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Express routes"]')).not.toBeNull();
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      "Express Routes",
+    );
+  });
+
+  it("shows an honest empty state when the palette opens an unsignaled Express panel", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "expressRoutes",
+        expressRoutesPanel: {
+          error: null,
+          loading: false,
+          onOpenRoute: vi.fn(),
+          onQueryChange: vi.fn(),
+          onRefresh: vi.fn(),
+          query: "",
+          routes: [],
+          truncated: false,
+        },
+        hasExpressRoutes: true,
+        hasJsWorkspace: true,
+      },
+    );
+
+    expect(host.textContent).toContain("No Express routes found.");
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      "Express Routes",
+    );
+  });
+
+  it("rejects a persisted Express view outside a JS/TS workspace", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "expressRoutes",
+        expressRoutesPanel: expressRoutesPanelProps(),
+      },
+    );
+
+    expect(host.textContent).not.toContain("Express Routes");
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Problems");
-    expect(host.querySelector('[aria-label="Problems"]')).not.toBeNull();
   });
 
   it("renders only the JavaScript results block for a JS-only workspace", async () => {
@@ -784,6 +831,34 @@ function activeTerminalProps(): CapturedTerminalPanelProps {
     .find((candidate) => (candidate as CapturedTerminalPanelProps).isActive);
   if (!active) throw new Error("Missing active terminal");
   return active as CapturedTerminalPanelProps;
+}
+
+function expressRoute() {
+  return {
+    column: 1,
+    id: "src%2Froutes.ts:app:GET:%2Fusers:12:1:1",
+    line: 12,
+    method: "GET",
+    occurrence: 1,
+    path: "/users",
+    receiver: "app" as const,
+    relativeFilePath: "src/routes.ts",
+  };
+}
+
+function expressRoutesPanelProps(
+  routes: NonNullable<Parameters<typeof BottomPanel>[0]["expressRoutesPanel"]>["routes"] = [],
+): NonNullable<Parameters<typeof BottomPanel>[0]["expressRoutesPanel"]> {
+  return {
+    error: null,
+    loading: false,
+    onOpenRoute: vi.fn(),
+    onQueryChange: vi.fn(),
+    onRefresh: vi.fn(),
+    query: "",
+    routes,
+    truncated: false,
+  };
 }
 
 async function renderPanel(

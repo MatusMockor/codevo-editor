@@ -429,7 +429,7 @@ describe("App command routing", () => {
     );
   });
 
-  it("keeps Express eligibility cheap while its panel is not active", async () => {
+  it("keeps Express discovery reactive while its panel is not active", async () => {
     mocks.workbenchOverrides = {
       activeDocument: {
         content: 'router.get("/users", handler);',
@@ -453,7 +453,7 @@ describe("App command routing", () => {
 
     expect(mocks.bottomPanelProps?.hasExpressRoutes).toBe(true);
     expect(mocks.bottomPanelProps?.expressRoutesPanel).toBe(mocks.expressPanelProps);
-    expect(mocks.expressPanelOptions).toEqual(expect.objectContaining({ isOpen: false }));
+    expect(mocks.expressPanelOptions).toEqual(expect.objectContaining({ isOpen: true }));
   });
 
   it("binds the package dependency panel to the active workspace descriptor and navigator", async () => {

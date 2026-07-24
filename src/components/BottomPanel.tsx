@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { PointerEvent, ReactNode } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import { bottomPanelLabel } from "../domain/bottomPanel";
+import { hasExpressWorkspaceSignal } from "../domain/expressWorkspaceSignal";
 import type {
   ArtisanControllerAction,
   ArtisanRoute,
@@ -184,8 +185,11 @@ export function BottomPanel({
   phpTestCoverageSummary = null,
   phpTestCoverageUnavailable = null,
 }: BottomPanelProps) {
+  const showExpressRoutes =
+    hasExpressWorkspaceSignal({ routes: expressRoutesPanel?.routes ?? [] }) ||
+    (activeView === "expressRoutes" && hasExpressRoutes);
   const effectiveActiveView =
-    (activeView === "expressRoutes" && !hasExpressRoutes) ||
+    (activeView === "expressRoutes" && !showExpressRoutes) ||
     (activeView === "packages" && !hasJsWorkspace) ||
     (activeView === "nette" && !hasNette) ||
     (activeView === "symfony" && !hasSymfony)
@@ -261,7 +265,7 @@ export function BottomPanel({
     netteWorkspacePanel,
     symfonyWorkspacePanel,
     hasArtisan,
-    hasExpressRoutes,
+    hasExpressRoutes: showExpressRoutes,
     hasJsWorkspace,
     hasNette,
     hasPhpWorkspace,
@@ -314,7 +318,7 @@ export function BottomPanel({
           {[
             ...bottomPanelViews,
             ...(hasArtisan ? (["routes"] as const) : []),
-            ...(hasExpressRoutes ? (["expressRoutes"] as const) : []),
+            ...(showExpressRoutes ? (["expressRoutes"] as const) : []),
             ...(hasJsWorkspace ? (["packages"] as const) : []),
             ...(hasNette ? (["nette"] as const) : []),
             ...(hasSymfony ? (["symfony"] as const) : []),
