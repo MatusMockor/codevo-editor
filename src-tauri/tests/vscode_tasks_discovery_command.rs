@@ -73,6 +73,8 @@ fn registered_runtime_root(
         .unwrap_or_else(|_| PathBuf::from(root_path))
 }
 
+#[path = "../src/node_package_problem_matcher.rs"]
+mod node_package_problem_matcher;
 #[path = "../src/process_task_plan.rs"]
 mod process_task_plan;
 #[path = "../src/process_task_resolver.rs"]

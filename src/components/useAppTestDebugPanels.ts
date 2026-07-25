@@ -9,6 +9,7 @@ import {
 } from "../application/usePhpCloverCoverage";
 import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import type { JsTestCoverageGateway } from "../domain/jsTestCoverage";
+import type { JsTestWatchGateway } from "../domain/jsTestCommand";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { JsTestGateway } from "../domain/jsTestRunScope";
 import type { JsTestTaskGateway } from "../domain/jsTestTask";
@@ -58,6 +59,7 @@ export function useAppTestDebugPanels({
   jsTestCoverageGateway,
   jsTestExplorerScopeRunnerBind,
   jsTestGateway,
+  jsTestWatchGateway,
   phpTestGateway,
   phpCloverCoveragePort = unavailablePhpCoveragePort,
   workbench,
@@ -71,6 +73,7 @@ export function useAppTestDebugPanels({
   readonly jsTestCoverageGateway: JsTestCoverageGateway;
   readonly jsTestExplorerScopeRunnerBind?: JsTestExplorerScopeRunnerBridge["bind"];
   readonly jsTestGateway: JsTestGateway & JsTestTaskGateway;
+  readonly jsTestWatchGateway: JsTestWatchGateway;
   readonly phpTestGateway: PhpTestGateway;
   readonly phpCloverCoveragePort?: PhpCloverCoveragePort;
   readonly workbench: ReturnType<typeof useWorkbenchController>;
@@ -159,6 +162,7 @@ export function useAppTestDebugPanels({
       runGateway: jsTestGateway,
       runRequestVersion: workbench.jsTestRunRequestVersion,
       taskGateway: jsTestGateway,
+      watchGateway: jsTestWatchGateway,
       startDebug: workbench.debugSession.startDebug,
       workspaceId: workbench.workspaceIdentityDescriptor?.workspaceId ?? null,
       workspaceTrusted,

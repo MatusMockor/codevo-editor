@@ -92,6 +92,73 @@ describe("useVscodeProcessTasks", () => {
     harness.unmount();
   });
 
+  it("owns Problems by the exact configured-task run and clears them across A-B-A", async () => {
+    const gateway = gatewayHarness();
+    const harness = renderHook({ gateway: gateway.gateway });
+    await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
+    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    const owner = gateway.start.mock.calls[0]![0];
+    const problem = {
+      filePath: `${ROOT_A}/src/main.ts`,
+      lineNumber: 2,
+      column: 4,
+      severity: "error" as const,
+      message: "Type mismatch",
+      code: "TS2322",
+      source: "TypeScript" as const,
+    };
+
+    act(() => gateway.emit({ kind: "problems", owner, sequence: 1, state: "reset" }));
+    act(() =>
+      gateway.emit({
+        kind: "problems",
+        owner,
+        sequence: 2,
+        state: "append",
+        problems: [problem],
+        total: 1,
+        truncated: false,
+      }),
+    );
+    expect(harness.hook().problemNotices).toHaveLength(1);
+    expect(harness.hook().problemNotices[0]?.groupKey).toContain(
+      "node-package-task-problems:workspace-a:run-1:",
+    );
+
+    act(() =>
+      gateway.emit({
+        kind: "problems",
+        owner: { ...owner, configRevision: `sha256:${"f".repeat(64)}` },
+        sequence: 3,
+        state: "clear",
+      }),
+    );
+    act(() => gateway.emit({ kind: "problems", owner, sequence: 2, state: "clear" }));
+    expect(harness.hook().problemNotices).toHaveLength(1);
+
+    act(() =>
+      gateway.emit({
+        kind: "problems",
+        owner,
+        sequence: 3,
+        state: "complete",
+        problems: [problem],
+        total: 1,
+        truncated: false,
+      }),
+    );
+    act(() => gateway.emit({ kind: "status", owner, sequence: 4, status: "exited", exitCode: 0 }));
+    expect(harness.hook().problems).toMatchObject({ complete: true, total: 1 });
+    expect(harness.hook().problemNotices).toHaveLength(1);
+
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    harness.set({ rootPath: ROOT_A, workspaceId: "workspace-a" });
+    await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
+    expect(harness.hook().problems).toBeNull();
+    expect(harness.hook().problemNotices).toEqual([]);
+    harness.unmount();
+  });
+
   it("exposes an opaque cancellation capability that cannot retarget a later same-label run", async () => {
     const gateway = gatewayHarness();
     const harness = renderHook({ gateway: gateway.gateway });
@@ -541,6 +608,7 @@ function snapshot(configRevision: string): VscodeProcessTasksSnapshot {
         source: ".vscode/tasks.json",
         executable: true,
         dependsOn: [],
+        problemMatcher: "typescript" as const,
       }),
       Object.freeze({
         label: "Shell",
@@ -549,6 +617,7 @@ function snapshot(configRevision: string): VscodeProcessTasksSnapshot {
         source: ".vscode/tasks.json",
         executable: false,
         dependsOn: [],
+        problemMatcher: null,
       }),
     ]),
     diagnostics: Object.freeze([]),

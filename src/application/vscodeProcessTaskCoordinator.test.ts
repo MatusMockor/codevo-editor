@@ -137,6 +137,77 @@ describe("createVscodeProcessTaskCoordinator", () => {
     ]);
   });
 
+  it("enforces one sequence across event kinds and fails closed on reordered terminal Problems", async () => {
+    const harness = gatewayHarness();
+    const coordinator = createVscodeProcessTaskCoordinator({
+      getGateway: () => harness.gateway,
+      isCurrent: () => true,
+    });
+    await coordinator.start({ activation: 1, owner });
+    harness.emit({ kind: "status", owner, sequence: 1, status: "running" });
+    harness.emit(step(2, "Build", 1, 1));
+    harness.emit({
+      kind: "problems",
+      owner,
+      sequence: 5,
+      state: "append",
+      problems: [taskProblem()],
+      total: 1,
+      truncated: false,
+    });
+    harness.emit(output(4, "reordered"));
+
+    expect(coordinator.snapshot().task?.output).toEqual([
+      { kind: "step", label: "Build", index: 1, total: 1 },
+    ]);
+    expect(coordinator.snapshot().problems?.problems).toHaveLength(1);
+
+    harness.emit({ kind: "status", owner, sequence: 7, status: "exited", exitCode: 0 });
+    harness.emit({
+      kind: "problems",
+      owner,
+      sequence: 6,
+      state: "complete",
+      problems: [taskProblem()],
+      total: 1,
+      truncated: false,
+    });
+    expect(coordinator.snapshot()).toMatchObject({
+      problems: { complete: false, problems: [], total: 0 },
+      task: { status: "exited" },
+    });
+  });
+
+  it("clears complete Problems when a failed status arrives without clear", async () => {
+    const harness = gatewayHarness();
+    const coordinator = createVscodeProcessTaskCoordinator({
+      getGateway: () => harness.gateway,
+      isCurrent: () => true,
+    });
+    await coordinator.start({ activation: 1, owner });
+    harness.emit({
+      kind: "problems",
+      owner,
+      sequence: 1,
+      state: "complete",
+      problems: [taskProblem()],
+      total: 1,
+      truncated: false,
+    });
+    harness.emit({
+      kind: "status",
+      owner,
+      sequence: 2,
+      status: "failed",
+      message: "failed",
+    });
+
+    expect(coordinator.snapshot()).toMatchObject({
+      problems: { complete: false, problems: [], total: 0 },
+      task: { status: "failed" },
+    });
+  });
+
   it("cancels one exact owner once and keeps failed stop fail-closed", async () => {
     const harness = gatewayHarness({
       stop: vi.fn(async () => {
@@ -175,6 +246,40 @@ describe("createVscodeProcessTaskCoordinator", () => {
     expect(coordinator.snapshot()).toMatchObject({ owner, running: true, stopping: false });
   });
 
+  it("clears exact-owner Problems when a local stop settles before backend events", async () => {
+    const harness = gatewayHarness();
+    const coordinator = createVscodeProcessTaskCoordinator({
+      getGateway: () => harness.gateway,
+      isCurrent: () => true,
+    });
+    await coordinator.start({ activation: 1, owner });
+    harness.emit({
+      kind: "problems",
+      owner,
+      sequence: 1,
+      state: "append",
+      problems: [
+        {
+          filePath: "/workspace/src/main.ts",
+          lineNumber: 1,
+          column: 1,
+          severity: "error",
+          message: "Type mismatch",
+          code: "TS2322",
+          source: "TypeScript",
+        },
+      ],
+      total: 1,
+      truncated: false,
+    });
+
+    await expect(coordinator.cancel()).resolves.toBe(true);
+    expect(coordinator.snapshot()).toMatchObject({
+      problems: { problems: [], total: 0 },
+      task: { status: "stopped" },
+    });
+  });
+
   it("invalidates A-B-A during subscribe/start/ack without publishing stale state", async () => {
     const start = deferred<VscodeProcessTaskOwner>();
     const harness = gatewayHarness({ start: () => start.promise });
@@ -197,6 +302,7 @@ describe("createVscodeProcessTaskCoordinator", () => {
     expect(coordinator.snapshot()).toEqual({
       activation: null,
       owner: null,
+      problems: null,
       task: null,
       running: false,
       stopping: false,
@@ -316,6 +422,18 @@ function gatewayHarness(
 
 function output(sequence: number, data: string): VscodeProcessTaskEvent {
   return { kind: "output", owner, sequence, stream: "stdout", data, truncated: false };
+}
+
+function taskProblem() {
+  return {
+    filePath: "/workspace/src/main.ts",
+    lineNumber: 1,
+    column: 1,
+    severity: "error" as const,
+    message: "Type mismatch",
+    code: "TS2322",
+    source: "TypeScript" as const,
+  };
 }
 
 function step(

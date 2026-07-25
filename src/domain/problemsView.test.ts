@@ -32,6 +32,190 @@ function notice(
 }
 
 describe("buildProblemsView", () => {
+  it("an identical tsc error from the task matcher and the language server appears once, owned by the language server", () => {
+    const path = "/workspace/src/index.ts";
+    const taskMatcher = {
+      ...notice(
+        "task",
+        "\\workspace\\src\\index.ts",
+        4,
+        "error",
+        "Type 'string' is not assignable to type 'number'. (TS2322)",
+      ),
+      groupKey: "node-package-task-problems:workspace:run",
+      source: "TypeScript",
+    };
+    const languageServer = {
+      ...taskMatcher,
+      groupKey: `javascript-typescript-diagnostics:file://${path}`,
+      id: "language-server",
+      message:
+        "file:///workspace/src/index.ts 4:1 Type 'string' is not assignable to type 'number'.",
+      navigationTarget: {
+        path,
+        range: {
+          end: { column: 1, lineNumber: 4 },
+          start: { column: 1, lineNumber: 4 },
+        },
+      },
+      source: "typescript",
+    };
+
+    const view = buildProblemsView(
+      [taskMatcher, languageServer],
+      ROOT,
+      { errors: true, warnings: true },
+      "",
+    );
+
+    expect(view.files[0].entries).toEqual([languageServer]);
+    expect(view.totals).toEqual({ errors: 1, warnings: 0 });
+  });
+
+  it("keeps diagnostics with different codes, messages, or columns and never deduplicates overflow notices", () => {
+    const path = "/workspace/src/index.ts";
+    const notices = [
+      {
+        ...notice("task-code", path, 4, "error", "Assignment is invalid"),
+        code: "TS2322",
+        groupKey: "node-package-task-problems:workspace:run",
+      },
+      {
+        ...notice("language-server-code", path, 4, "error", "Assignment is invalid"),
+        code: "TS2345",
+      },
+      {
+        ...notice("task-message", path, 5, "error", "Argument is invalid"),
+        code: "TS2322",
+        groupKey: "node-package-task-problems:workspace:run",
+      },
+      {
+        ...notice("language-server-message", path, 5, "error", "Assignment is invalid"),
+        code: "TS2322",
+      },
+      {
+        ...notice("task-column", path, 6, "error", "Assignment is invalid"),
+        code: "TS2322",
+        groupKey: "node-package-task-problems:workspace:run",
+      },
+      {
+        ...notice("language-server-column", path, 6, "error", "Assignment is invalid"),
+        code: "TS2322",
+        navigationTarget: {
+          path,
+          range: {
+            end: { column: 2, lineNumber: 4 },
+            start: { column: 2, lineNumber: 6 },
+          },
+        },
+      },
+      {
+        ...notice("overflow-lsp", path, 0, "info", "More hidden", "overflow"),
+        navigationTarget: {
+          path,
+          range: {
+            end: { column: 1, lineNumber: 7 },
+            start: { column: 1, lineNumber: 7 },
+          },
+        },
+      },
+      {
+        ...notice("overflow-task", path, 0, "info", "More hidden", "overflow"),
+        groupKey: "node-package-task-problems:workspace:run",
+        navigationTarget: {
+          path,
+          range: {
+            end: { column: 1, lineNumber: 7 },
+            start: { column: 1, lineNumber: 7 },
+          },
+        },
+      },
+    ];
+
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "");
+
+    expect(view.files[0].entries.map((entry) => entry.id)).toEqual([
+      "language-server-code",
+      "task-code",
+      "language-server-message",
+      "task-message",
+      "language-server-column",
+      "task-column",
+      "overflow-lsp",
+      "overflow-task",
+    ]);
+    expect(view.general).toEqual([]);
+  });
+
+  it("uses the complete diagnostic source priority regardless of input order", () => {
+    const path = "/workspace/src/index.ts";
+    const priority = [
+      "javascript-typescript-diagnostics:file:///workspace/src/index.ts",
+      "language-server-diagnostics:file:///workspace/src/index.ts",
+      "php-local-diagnostics:file:///workspace/src/index.ts",
+      "js-test-problems:workspace:%2Fworkspace",
+      "node-package-task-problems:workspace:run",
+    ];
+
+    priority.forEach((_, expectedIndex) => {
+      const candidates = priority
+        .slice(expectedIndex)
+        .map((groupKey, index) => ({
+          ...notice(`priority-${expectedIndex + index}`, path, 8, "error", "Same diagnostic"),
+          groupKey,
+        }))
+        .reverse();
+      const view = buildProblemsView(candidates, ROOT, { errors: true, warnings: true }, "");
+
+      expect(view.files[0].entries.map((entry) => entry.id)).toEqual([`priority-${expectedIndex}`]);
+    });
+  });
+
+  it("js-test-problems notices group as a registered diagnostic source", () => {
+    const path = "/workspace/tests/math.test.ts";
+    const groupKey = "js-test-problems:workspace:%2Fworkspace";
+    const testFailure = {
+      ...notice("js-test-failure", path, 7, "error", "adds two numbers"),
+      groupKey,
+      source: "JavaScript Tests",
+    };
+    const taskFailure = {
+      ...testFailure,
+      groupKey: "node-package-task-problems:workspace:run",
+      id: "task-failure",
+      source: "Vitest",
+    };
+    const overflow: WorkbenchNotice = {
+      groupKey,
+      id: "js-test-overflow",
+      kind: "overflow",
+      message: "3 more test failures hidden",
+      severity: "info",
+      source: "JavaScript Tests",
+    };
+
+    const view = buildProblemsView(
+      [taskFailure, overflow, testFailure],
+      ROOT,
+      {
+        errors: true,
+        warnings: true,
+      },
+      "",
+    );
+
+    expect(view.general).toEqual([overflow]);
+    expect(view.files).toEqual([
+      {
+        path,
+        relativePath: "tests/math.test.ts",
+        errorCount: 1,
+        warningCount: 0,
+        entries: [testFailure],
+      },
+    ]);
+  });
+
   it("keeps notices without a real file path in a filtered general section", () => {
     const crashNotice: WorkbenchNotice = {
       id: "crash",
@@ -66,13 +250,7 @@ describe("buildProblemsView", () => {
       severity: "warning",
       source: "Notices",
     };
-    const warning = notice(
-      "warning",
-      "/workspace/src/A.php",
-      2,
-      "warning",
-      "warning",
-    );
+    const warning = notice("warning", "/workspace/src/A.php", 2, "warning", "warning");
 
     const view = buildProblemsView(
       [globalOverflow, warning],
@@ -99,12 +277,14 @@ describe("buildProblemsView", () => {
     );
 
     expect(view.totals).toEqual({ errors: 2, warnings: 1 });
-    expect(view.files.map(({ path, relativePath, errorCount, warningCount }) => ({
-      path,
-      relativePath,
-      errorCount,
-      warningCount,
-    }))).toEqual([
+    expect(
+      view.files.map(({ path, relativePath, errorCount, warningCount }) => ({
+        path,
+        relativePath,
+        errorCount,
+        warningCount,
+      })),
+    ).toEqual([
       {
         path: "/workspace/src/A.php",
         relativePath: "src/A.php",

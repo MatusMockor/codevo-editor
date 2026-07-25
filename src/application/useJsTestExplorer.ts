@@ -21,6 +21,11 @@ import {
   type JsTestRunScope,
 } from "../domain/jsTestRunScope";
 import type { JsTestRunnableScope } from "../domain/jsTestRunSelection";
+import type {
+  JsTestWatchCommand,
+  JsTestWatchGateway,
+  JsTestWatchOwner,
+} from "../domain/jsTestCommand";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { TestRunOk, TestRunResponse } from "../domain/testResults";
 import { jsTestFailedRunScopes, type JsTestFailedRunPlan } from "../domain/jsTestFailedRunScopes";
@@ -37,6 +42,7 @@ import {
   type JsTestContinuousRunLease,
   type JsTestContinuousRunOwner,
   type JsTestContinuousRunSnapshot,
+  type JsTestContinuousRunStrategy,
 } from "./jsTestContinuousRunCoordinator";
 
 const DISCOVERY_LIMITS = { maxFiles: 500, maxVisited: 50_000 } as const;
@@ -63,6 +69,7 @@ interface WorkspaceExplorerState {
 export interface UseJsTestExplorerOptions {
   readonly continuousRunBlocked?: boolean;
   readonly continuousRunVersion?: number;
+  readonly continuousRunWatchCommand?: JsTestWatchCommand | null;
   readonly discoveryVersion: number;
   readonly discoveryGateway: WorkspaceTestDiscoveryGateway;
   readonly isOpen: boolean;
@@ -71,6 +78,7 @@ export interface UseJsTestExplorerOptions {
   readonly runGateway: JsTestGateway;
   readonly runRequestVersion: number;
   readonly taskGateway?: JsTestTaskGateway | null;
+  readonly watchGateway?: JsTestWatchGateway | null;
   readonly createTaskRunId?: (() => string) | null;
   readonly workspaceId: string | null;
   readonly workspaceTrusted: boolean;
@@ -134,9 +142,26 @@ interface ActiveExplorerRun {
   singleCoordinator: ReturnType<typeof createJsTestSingleRunCoordinator> | null;
 }
 
+interface ActiveContinuousWatch {
+  cancelRequested: boolean;
+  readonly gateway: JsTestWatchGateway;
+  readonly lease: JsTestContinuousRunLease;
+  readonly owner: JsTestWatchOwner;
+  settlement: Promise<boolean> | null;
+  startDispatched: boolean;
+  started: boolean;
+}
+
+interface JsTestContinuousWatchCapability {
+  readonly command: JsTestWatchCommand | null;
+  readonly gateway: JsTestWatchGateway | null;
+}
+
 interface JsTestContinuousOwnerBoundary {
   readonly blocked: boolean;
+  readonly command: JsTestWatchCommand | null;
   readonly taskGateway: JsTestTaskGateway | null;
+  readonly watchGateway: JsTestWatchGateway | null;
   readonly workspaceKey: string | null;
   readonly workspaceTrusted: boolean;
 }
@@ -166,6 +191,7 @@ const EMPTY_STATE: WorkspaceExplorerState = {
 export function useJsTestExplorer({
   continuousRunBlocked = false,
   continuousRunVersion = 0,
+  continuousRunWatchCommand = null,
   discoveryVersion,
   discoveryGateway,
   isOpen,
@@ -174,6 +200,7 @@ export function useJsTestExplorer({
   runGateway,
   runRequestVersion,
   taskGateway = null,
+  watchGateway = null,
   createTaskRunId = null,
   workspaceId,
   workspaceTrusted,
@@ -196,6 +223,15 @@ export function useJsTestExplorer({
   const cancelContinuousRunRef = useRef<(lease: JsTestContinuousRunLease) => Promise<boolean>>(
     async () => false,
   );
+  const continuousWatchCapabilityRef = useRef<JsTestContinuousWatchCapability>({
+    command: continuousRunWatchCommand,
+    gateway: watchGateway,
+  });
+  continuousWatchCapabilityRef.current = {
+    command: continuousRunWatchCommand,
+    gateway: watchGateway,
+  };
+  const activeContinuousWatchRef = useRef<ActiveContinuousWatch | null>(null);
   const [continuousRunCoordinator] = useState(() =>
     createJsTestContinuousRunCoordinator({
       cancel: (lease) => cancelContinuousRunRef.current(lease),
@@ -207,6 +243,10 @@ export function useJsTestExplorer({
         if (mountedRef.current) setContinuousRunSnapshot(snapshot);
       },
       run: (lease) => executeContinuousRunRef.current(lease),
+      strategy: (): JsTestContinuousRunStrategy =>
+        continuousWatchCapabilityRef.current.command && continuousWatchCapabilityRef.current.gateway
+          ? "native-watch"
+          : "debounced-rescope",
     }),
   );
   const discoveryInvalidationTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -250,7 +290,9 @@ export function useJsTestExplorer({
   const continuousOwnerBoundaryRef = useRef<JsTestContinuousOwnerBoundary | null>(null);
   const continuousOwnerBoundary = {
     blocked: continuousRunBlocked,
+    command: continuousRunWatchCommand,
     taskGateway,
+    watchGateway,
     workspaceKey,
     workspaceTrusted,
   };
@@ -260,7 +302,7 @@ export function useJsTestExplorer({
   }
   const continuousOwner: JsTestContinuousRunOwner | null =
     !continuousRunBlocked &&
-    taskGateway &&
+    (taskGateway || (watchGateway && continuousRunWatchCommand)) &&
     workspaceKey &&
     workspaceId &&
     rootPath &&
@@ -981,12 +1023,104 @@ export function useJsTestExplorer({
     ) {
       return false;
     }
+    const watchCapability = continuousWatchCapabilityRef.current;
+    const watchCommand = watchCapability.command;
+    const watchGateway = watchCapability.gateway;
+    if (watchCommand && watchGateway) {
+      const watchOwner = Object.freeze({
+        epoch: lease.owner.epoch,
+        watchId: `watch-${lease.owner.epoch}-${lease.sequence}`,
+        workspaceId: lease.owner.workspaceId,
+      });
+      const ownership: ActiveContinuousWatch = {
+        cancelRequested: false,
+        gateway: watchGateway,
+        lease,
+        owner: watchOwner,
+        settlement: null,
+        startDispatched: false,
+        started: false,
+      };
+      activeContinuousWatchRef.current = ownership;
+      const settlement = (async (): Promise<boolean> => {
+        try {
+          ownership.startDispatched = true;
+          const result = await ownership.gateway.startWatch({
+            ...watchOwner,
+            command: watchCommand,
+          });
+          if (!watchOwnersEqual(result.owner, watchOwner)) {
+            await ownership.gateway.stopWatch(watchOwner);
+            if (activeContinuousWatchRef.current === ownership) {
+              activeContinuousWatchRef.current = null;
+            }
+            return false;
+          }
+          ownership.started = true;
+          await ownership.gateway.acknowledgeWatchStart(watchOwner);
+          const currentOwner = continuousOwnerRef.current;
+          const currentCapability = continuousWatchCapabilityRef.current;
+          if (
+            ownership.cancelRequested ||
+            activeContinuousWatchRef.current !== ownership ||
+            !currentOwner ||
+            !continuousOwnersEqual(currentOwner, lease.owner) ||
+            currentCapability.gateway !== ownership.gateway ||
+            currentCapability.command?.kind !== watchCommand.kind ||
+            currentCapability.command?.packageRootRelativePath !==
+              watchCommand.packageRootRelativePath
+          ) {
+            await ownership.gateway.stopWatch(watchOwner);
+            if (activeContinuousWatchRef.current === ownership) {
+              activeContinuousWatchRef.current = null;
+            }
+            return false;
+          }
+          return true;
+        } catch {
+          if (ownership.startDispatched) {
+            try {
+              await ownership.gateway.stopWatch(watchOwner);
+              if (activeContinuousWatchRef.current === ownership) {
+                activeContinuousWatchRef.current = null;
+              }
+              return false;
+            } catch {
+              return true;
+            }
+          }
+          if (activeContinuousWatchRef.current === ownership) {
+            activeContinuousWatchRef.current = null;
+          }
+          return false;
+        }
+      })();
+      ownership.settlement = settlement;
+      return settlement;
+    }
     const flight = executeRun({ kind: "all" }, lease);
     const admitted = activeExplorerRunRef.current?.continuousLease === lease;
     await flight;
     return admitted;
   };
   cancelContinuousRunRef.current = async (lease): Promise<boolean> => {
+    const watchOwnership = activeContinuousWatchRef.current;
+    if (watchOwnership?.lease === lease) {
+      watchOwnership.cancelRequested = true;
+      if (!watchOwnership.started) {
+        const admitted = (await watchOwnership.settlement) === true;
+        if (!admitted) return true;
+      }
+      try {
+        await watchOwnership.gateway.stopWatch(watchOwnership.owner);
+        if (activeContinuousWatchRef.current === watchOwnership) {
+          activeContinuousWatchRef.current = null;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    }
     const ownership = activeExplorerRunRef.current;
     if (!ownership || ownership.continuousLease !== lease) return false;
     ownership.cancelRequested = true;
@@ -1267,7 +1401,9 @@ function sameContinuousOwnerBoundary(
   return (
     previous !== null &&
     previous.blocked === next.blocked &&
+    previous.command === next.command &&
     previous.taskGateway === next.taskGateway &&
+    previous.watchGateway === next.watchGateway &&
     previous.workspaceKey === next.workspaceKey &&
     previous.workspaceTrusted === next.workspaceTrusted
   );
@@ -1282,6 +1418,14 @@ function continuousOwnersEqual(
     right !== null &&
     left.epoch === right.epoch &&
     left.rootKey === right.rootKey &&
+    left.workspaceId === right.workspaceId
+  );
+}
+
+function watchOwnersEqual(left: JsTestWatchOwner, right: JsTestWatchOwner): boolean {
+  return (
+    left.epoch === right.epoch &&
+    left.watchId === right.watchId &&
     left.workspaceId === right.workspaceId
   );
 }

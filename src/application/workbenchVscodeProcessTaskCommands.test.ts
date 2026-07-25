@@ -103,6 +103,7 @@ function task(label: string, executable: boolean): VscodeProcessTaskDisplay {
     executable,
     group: "none",
     label,
+    problemMatcher: null,
     source: ".vscode/tasks.json",
     dependsOn: [],
   };

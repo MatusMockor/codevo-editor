@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+#[path = "../src/node_package_problem_matcher.rs"]
+mod node_package_problem_matcher;
 #[path = "../src/terminal_task_admission.rs"]
 mod terminal_task_admission;
 #[path = "../src/terminal_task_process.rs"]
@@ -11,6 +13,11 @@ mod vscode_process_task_registry;
 
 mod workspace_registry {
     use serde::{Deserialize, Serialize};
+    use std::{
+        fs::File,
+        io,
+        path::{Path, PathBuf},
+    };
 
     #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
     #[serde(transparent)]
@@ -33,15 +40,60 @@ mod workspace_registry {
             }
         }
     }
+
+    pub(crate) fn open_file_relative_to(root: &File, relative_path: &Path) -> io::Result<File> {
+        File::open(opened_root_path(root)?.join(relative_path))
+    }
+
+    pub(crate) fn opened_regular_file_path(file: &File) -> io::Result<PathBuf> {
+        opened_path(file)
+    }
+
+    pub(crate) fn opened_root_path(file: &File) -> io::Result<PathBuf> {
+        opened_path(file)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn opened_path(file: &File) -> io::Result<PathBuf> {
+        std::fs::read_link(format!(
+            "/proc/self/fd/{}",
+            std::os::fd::AsRawFd::as_raw_fd(file)
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn opened_path(file: &File) -> io::Result<PathBuf> {
+        use std::os::{fd::AsRawFd, unix::ffi::OsStringExt};
+
+        let mut path = vec![0_u8; libc::PATH_MAX as usize];
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, path.as_mut_ptr()) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let end = path
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unterminated path"))?;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(
+            path[..end].to_vec(),
+        )))
+    }
 }
 
-use std::sync::{Arc, Mutex};
+use std::{
+    fs::{self, File},
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+};
 
+use node_package_problem_matcher::{NodePackageProblemMatcher, NodePackageProblemMatcherKind};
 use terminal_task_admission::TerminalTaskAdmissionRegistry;
 use terminal_task_process::TerminalTaskOwnership;
 use vscode_process_task_events::{
     VscodeProcessTaskEvent, VscodeProcessTaskEventSink, VscodeProcessTaskOutputStream,
-    VscodeProcessTaskOwner, VscodeProcessTaskStatus,
+    VscodeProcessTaskOwner, VscodeProcessTaskProblemsState, VscodeProcessTaskStatus,
 };
 use vscode_process_task_registry::{
     VscodeProcessTaskCompletion, VscodeProcessTaskRegistry, VscodeProcessTaskStep,
@@ -62,6 +114,523 @@ impl Sink {
     fn events(&self) -> Vec<VscodeProcessTaskEvent> {
         self.0.lock().expect("events").clone()
     }
+}
+
+struct MatcherFixture {
+    root: PathBuf,
+}
+
+impl MatcherFixture {
+    fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let root = std::env::temp_dir().join(format!(
+            "codevo-vscode-process-problems-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("src")).expect("create matcher fixture");
+        fs::write(root.join("src/app.ts"), "const value = 1;\n").expect("write source");
+        fs::write(root.join("src/other.ts"), "const other = 1;\n").expect("write source");
+        let root = fs::canonicalize(root).expect("canonical matcher fixture");
+        Self { root }
+    }
+
+    fn matcher(&self) -> NodePackageProblemMatcher {
+        let workspace = File::open(&self.root).expect("open workspace");
+        let working_directory = File::open(&self.root).expect("open working directory");
+        NodePackageProblemMatcher::new(
+            NodePackageProblemMatcherKind::TypeScript,
+            &workspace,
+            &self.root,
+            &working_directory,
+            &self.root,
+        )
+        .expect("create matcher")
+    }
+}
+
+impl Drop for MatcherFixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove matcher fixture");
+    }
+}
+
+#[test]
+fn matcher_events_are_ordered_and_reject_a_foreign_exact_owner() {
+    let fixture = MatcherFixture::new();
+    let registry = registry();
+    let sink = Sink::default();
+    let current_owner = owner("matcher-run", "workspace-a", 14);
+    registry.reserve(current_owner.clone()).expect("reserve");
+    registry
+        .activate_step(
+            &current_owner,
+            ownership(14, 41),
+            Some(fixture.matcher()),
+            VscodeProcessTaskStep {
+                label: "typecheck",
+                index: 1,
+                total: 1,
+            },
+        )
+        .expect("activate");
+
+    let mut foreign_owner = current_owner.clone();
+    foreign_owner.config_revision = format!("sha256:{}", "b".repeat(64));
+    assert!(registry
+        .record_output(
+            &foreign_owner,
+            VscodeProcessTaskOutputStream::Stdout,
+            b"src/app.ts(1,7): error TS2322: Wrong type\n",
+            &sink,
+        )
+        .is_err());
+    registry
+        .record_output(
+            &current_owner,
+            VscodeProcessTaskOutputStream::Stdout,
+            b"src/app.ts(1,7): error TS2322: Wrong type\n",
+            &sink,
+        )
+        .expect("record matcher output");
+    registry
+        .finish_output(&current_owner, VscodeProcessTaskOutputStream::Stdout, &sink)
+        .expect("finish output");
+    registry
+        .complete(
+            &current_owner,
+            VscodeProcessTaskCompletion::Exited { exit_code: Some(2) },
+            &sink,
+        )
+        .expect("complete");
+    registry
+        .acknowledge_start(&current_owner, &sink)
+        .expect("acknowledge");
+
+    let events = sink.events();
+    assert_eq!(events.len(), 7);
+    assert!(matches!(
+        &events[0],
+        VscodeProcessTaskEvent::Status {
+            sequence: 1,
+            state: VscodeProcessTaskStatus::Running,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &events[1],
+        VscodeProcessTaskEvent::Problems {
+            sequence: 2,
+            state: VscodeProcessTaskProblemsState::Reset,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &events[2],
+        VscodeProcessTaskEvent::Step { sequence: 3, .. }
+    ));
+    assert!(matches!(
+        &events[3],
+        VscodeProcessTaskEvent::Output { sequence: 4, .. }
+    ));
+    assert!(matches!(
+        &events[4],
+        VscodeProcessTaskEvent::Problems {
+            sequence: 5,
+            state: VscodeProcessTaskProblemsState::Append { total: 1, .. },
+            ..
+        }
+    ));
+    assert!(matches!(
+        &events[5],
+        VscodeProcessTaskEvent::Problems {
+            sequence: 6,
+            state: VscodeProcessTaskProblemsState::Complete { total: 1, .. },
+            ..
+        }
+    ));
+    assert!(matches!(
+        &events[6],
+        VscodeProcessTaskEvent::Status {
+            sequence: 7,
+            state: VscodeProcessTaskStatus::Exited { exit_code: Some(2) },
+            ..
+        }
+    ));
+    assert!(events.iter().all(|event| match event {
+        VscodeProcessTaskEvent::Output { owner, .. }
+        | VscodeProcessTaskEvent::Status { owner, .. }
+        | VscodeProcessTaskEvent::Step { owner, .. }
+        | VscodeProcessTaskEvent::Problems { owner, .. } => owner == &current_owner,
+    }));
+}
+
+#[test]
+fn failed_and_stopped_matcher_runs_clear_problems_before_terminal_status() {
+    for (index, completion, stop) in [
+        (
+            0,
+            VscodeProcessTaskCompletion::Failed {
+                message: "failed".to_string(),
+            },
+            false,
+        ),
+        (
+            1,
+            VscodeProcessTaskCompletion::Exited { exit_code: Some(0) },
+            true,
+        ),
+    ] {
+        let fixture = MatcherFixture::new();
+        let registry = registry();
+        let sink = Sink::default();
+        let current_owner = owner(
+            &format!("interrupted-matcher-run-{index}"),
+            "workspace-a",
+            15 + index,
+        );
+        registry.reserve(current_owner.clone()).expect("reserve");
+        registry
+            .activate_step(
+                &current_owner,
+                ownership(15 + index, 42 + index),
+                Some(fixture.matcher()),
+                VscodeProcessTaskStep {
+                    label: "typecheck",
+                    index: 1,
+                    total: 1,
+                },
+            )
+            .expect("activate");
+        registry
+            .record_output(
+                &current_owner,
+                VscodeProcessTaskOutputStream::Stdout,
+                b"src/app.ts(1,7): error TS2322: Wrong type\n",
+                &sink,
+            )
+            .expect("record matcher output");
+        if stop {
+            assert!(matches!(
+                registry.request_stop(&current_owner).expect("request stop"),
+                VscodeProcessTaskStopAction::Terminate(_)
+            ));
+        }
+        registry
+            .complete(&current_owner, completion, &sink)
+            .expect("complete");
+        registry
+            .acknowledge_start(&current_owner, &sink)
+            .expect("acknowledge");
+
+        let events = sink.events();
+        let clear = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    VscodeProcessTaskEvent::Problems {
+                        state: VscodeProcessTaskProblemsState::Clear,
+                        ..
+                    }
+                )
+            })
+            .expect("clear problems");
+        assert!(matches!(
+            &events[clear - 1],
+            VscodeProcessTaskEvent::Problems {
+                state: VscodeProcessTaskProblemsState::Append { total: 1, .. },
+                ..
+            }
+        ));
+        if stop {
+            assert!(matches!(
+                &events[clear + 1],
+                VscodeProcessTaskEvent::Status {
+                    state: VscodeProcessTaskStatus::Stopped,
+                    ..
+                }
+            ));
+        } else {
+            assert!(matches!(
+                &events[clear + 1],
+                VscodeProcessTaskEvent::Status {
+                    state: VscodeProcessTaskStatus::Failed { .. },
+                    ..
+                }
+            ));
+        }
+        assert!(!events.iter().any(|event| {
+            matches!(
+                event,
+                VscodeProcessTaskEvent::Problems {
+                    state: VscodeProcessTaskProblemsState::Complete { .. },
+                    ..
+                }
+            )
+        }));
+    }
+}
+
+#[test]
+fn matcher_problems_persist_across_a_later_step_without_a_matcher() {
+    let fixture = MatcherFixture::new();
+    let registry = registry();
+    let sink = Sink::default();
+    let current_owner = owner("matcher-then-no-matcher", "workspace-a", 17);
+    let first = ownership(17, 44);
+    registry.reserve(current_owner.clone()).expect("reserve");
+    registry
+        .activate_step(
+            &current_owner,
+            first.clone(),
+            Some(fixture.matcher()),
+            VscodeProcessTaskStep {
+                label: "typecheck",
+                index: 1,
+                total: 2,
+            },
+        )
+        .expect("activate");
+    registry
+        .acknowledge_start(&current_owner, &sink)
+        .expect("acknowledge");
+    registry
+        .record_output(
+            &current_owner,
+            VscodeProcessTaskOutputStream::Stdout,
+            b"src/app.ts(1,7): error TS2322: Wrong type\n",
+            &sink,
+        )
+        .expect("record matcher output");
+    registry
+        .replace_ownership_step(
+            &current_owner,
+            &first,
+            ownership(17, 45),
+            None,
+            VscodeProcessTaskStep {
+                label: "build",
+                index: 2,
+                total: 2,
+            },
+            &sink,
+        )
+        .expect("activate step without matcher");
+    registry
+        .complete(
+            &current_owner,
+            VscodeProcessTaskCompletion::Exited { exit_code: Some(0) },
+            &sink,
+        )
+        .expect("complete");
+
+    let events = sink.events();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    VscodeProcessTaskEvent::Problems {
+                        state: VscodeProcessTaskProblemsState::Reset,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1
+    );
+    let complete = events
+        .iter()
+        .find_map(|event| match event {
+            VscodeProcessTaskEvent::Problems {
+                state:
+                    VscodeProcessTaskProblemsState::Complete {
+                        problems,
+                        total,
+                        truncated,
+                    },
+                ..
+            } => Some((problems, total, truncated)),
+            _ => None,
+        })
+        .expect("complete problems");
+    assert_eq!(complete.0.len(), 1);
+    assert_eq!(*complete.1, 1);
+    assert!(!complete.2);
+}
+
+#[test]
+fn first_supported_matcher_on_a_later_step_emits_the_runs_only_reset() {
+    let fixture = MatcherFixture::new();
+    let registry = registry();
+    let sink = Sink::default();
+    let current_owner = owner("later-matcher", "workspace-a", 18);
+    let first = ownership(18, 46);
+    let second = ownership(18, 47);
+    registry.reserve(current_owner.clone()).expect("reserve");
+    registry
+        .activate_step(
+            &current_owner,
+            first.clone(),
+            None,
+            VscodeProcessTaskStep {
+                label: "prepare",
+                index: 1,
+                total: 3,
+            },
+        )
+        .expect("activate");
+    registry
+        .acknowledge_start(&current_owner, &sink)
+        .expect("acknowledge");
+    registry
+        .replace_ownership_step(
+            &current_owner,
+            &first,
+            second.clone(),
+            None,
+            VscodeProcessTaskStep {
+                label: "compile",
+                index: 2,
+                total: 3,
+            },
+            &sink,
+        )
+        .expect("activate second step");
+    assert!(!sink
+        .events()
+        .iter()
+        .any(|event| matches!(event, VscodeProcessTaskEvent::Problems { .. })));
+    registry
+        .replace_ownership_step(
+            &current_owner,
+            &second,
+            ownership(18, 48),
+            Some(fixture.matcher()),
+            VscodeProcessTaskStep {
+                label: "typecheck",
+                index: 3,
+                total: 3,
+            },
+            &sink,
+        )
+        .expect("activate matcher step");
+
+    let events = sink.events();
+    let reset = events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                VscodeProcessTaskEvent::Problems {
+                    state: VscodeProcessTaskProblemsState::Reset,
+                    ..
+                }
+            )
+        })
+        .expect("reset problems");
+    assert!(matches!(
+        &events[reset + 1],
+        VscodeProcessTaskEvent::Step {
+            label,
+            index: 3,
+            total: 3,
+            ..
+        } if label == "typecheck"
+    ));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, VscodeProcessTaskEvent::Problems { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn complete_snapshot_keeps_matcher_retained_problems_beyond_one_append_batch() {
+    let fixture = MatcherFixture::new();
+    let registry = registry();
+    let sink = Sink::default();
+    let current_owner = owner("batched-matcher-run", "workspace-a", 16);
+    registry.reserve(current_owner.clone()).expect("reserve");
+    registry
+        .activate_step(
+            &current_owner,
+            ownership(16, 43),
+            Some(fixture.matcher()),
+            VscodeProcessTaskStep {
+                label: "typecheck",
+                index: 1,
+                total: 1,
+            },
+        )
+        .expect("activate");
+    let output = (0..120)
+        .map(|index| {
+            let path = if index % 2 == 0 {
+                "src/app.ts"
+            } else {
+                "src/other.ts"
+            };
+            format!("{path}(1,1): error TS2322: Wrong type {index}\n")
+        })
+        .collect::<String>();
+    assert!(output.len() < 8 * 1_024);
+    registry
+        .record_output(
+            &current_owner,
+            VscodeProcessTaskOutputStream::Stdout,
+            output.as_bytes(),
+            &sink,
+        )
+        .expect("record matcher output");
+    registry
+        .finish_output(&current_owner, VscodeProcessTaskOutputStream::Stdout, &sink)
+        .expect("finish output");
+    registry
+        .complete(
+            &current_owner,
+            VscodeProcessTaskCompletion::Exited { exit_code: Some(2) },
+            &sink,
+        )
+        .expect("complete");
+    registry
+        .acknowledge_start(&current_owner, &sink)
+        .expect("acknowledge");
+
+    let events = sink.events();
+    let append = events
+        .iter()
+        .find_map(|event| match event {
+            VscodeProcessTaskEvent::Problems {
+                state: VscodeProcessTaskProblemsState::Append { problems, .. },
+                ..
+            } => Some(problems),
+            _ => None,
+        })
+        .expect("append event");
+    assert_eq!(append.len(), 32);
+    let complete = events
+        .iter()
+        .find_map(|event| match event {
+            VscodeProcessTaskEvent::Problems {
+                state:
+                    VscodeProcessTaskProblemsState::Complete {
+                        problems,
+                        total,
+                        truncated,
+                    },
+                ..
+            } => Some((problems, total, truncated)),
+            _ => None,
+        })
+        .expect("complete event");
+    assert_eq!(complete.0.len(), 120);
+    assert_eq!(*complete.1, 120);
+    assert!(!complete.2);
 }
 
 #[test]
@@ -327,6 +896,7 @@ fn atomic_step_activation_enforces_bounds_order_total_and_stop_latch() {
         .activate_step(
             &owner,
             first.clone(),
+            None,
             VscodeProcessTaskStep {
                 label: "   ",
                 index: 1,
@@ -338,6 +908,7 @@ fn atomic_step_activation_enforces_bounds_order_total_and_stop_latch() {
         .activate_step(
             &owner,
             first.clone(),
+            None,
             VscodeProcessTaskStep {
                 label: "dependency",
                 index: 1,
@@ -350,6 +921,7 @@ fn atomic_step_activation_enforces_bounds_order_total_and_stop_latch() {
             &owner,
             &first,
             ownership(91, 211),
+            None,
             VscodeProcessTaskStep {
                 label: "target",
                 index: 1,
@@ -363,6 +935,7 @@ fn atomic_step_activation_enforces_bounds_order_total_and_stop_latch() {
             &owner,
             &first,
             ownership(91, 212),
+            None,
             VscodeProcessTaskStep {
                 label: "target",
                 index: 2,
@@ -382,6 +955,7 @@ fn atomic_step_activation_enforces_bounds_order_total_and_stop_latch() {
                 &owner,
                 &first,
                 ownership(91, 213),
+                None,
                 VscodeProcessTaskStep {
                     label: "target",
                     index: 2,

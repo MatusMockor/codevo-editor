@@ -609,7 +609,7 @@ export function useWorkbenchController(
   } = usePhpFrameworkResolution({ workspaceDescriptor });
   const hasSymfonyFramework = phpFrameworkRuntimeContext.hasProvider("symfony");
   const [workspaceTrust, setWorkspaceTrust] = useState<WorkspaceTrustState | null>(null);
-  const workspaceTrusted: boolean = workspaceTrust?.trusted === true;
+  const workspaceTrusted = workspaceTrust?.trusted === true;
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
   const [languageServerPlan, setLanguageServerPlan] = useState<LanguageServerPlan | null>(null);
   const [installingManagedPhpactor, setInstallingManagedPhpactor] = useState(false);
@@ -6286,6 +6286,7 @@ export function useWorkbenchController(
     gateway: options.vscodeProcessTasksGateway,
     requestTerminalSession: requestActiveTerminalSession,
     rootPath: workspaceRoot,
+    setNotices,
     workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
     workspaceTrusted,
   });

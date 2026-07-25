@@ -44,6 +44,7 @@ mod js_test_commands;
 mod js_test_coverage_commands;
 mod js_test_run;
 mod js_test_tasks;
+mod js_test_watch;
 pub mod js_ts_file_watcher;
 pub mod js_ts_symbols;
 pub mod local_history;
@@ -5010,6 +5011,7 @@ pub fn run() {
             &terminal_task_admission,
         )))
         .manage(js_test_tasks::JsTestTaskRegistry::new())
+        .manage(Arc::new(js_test_watch::JsTestWatchRegistry::new()))
         .manage(terminal_task_admission)
         .manage(WorkspaceRegistry::new())
         .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
@@ -5047,6 +5049,9 @@ pub fn run() {
             node_package_tasks::workspace_start_node_package_task,
             node_package_tasks::workspace_acknowledge_node_package_task_start,
             node_package_tasks::workspace_stop_node_package_task,
+            js_test_watch::workspace_start_js_test_watch,
+            js_test_watch::workspace_acknowledge_js_test_watch_start,
+            js_test_watch::workspace_stop_js_test_watch,
             node_run_tasks::workspace_start_node_run_task,
             node_run_tasks::workspace_acknowledge_node_run_task_start,
             node_run_tasks::workspace_stop_node_run_task,
@@ -10012,27 +10017,6 @@ mod tests {
             event.payload,
             crate::debug_adapter::DebugEventPayload::Terminated { .. }
         )));
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn debug_evaluate_rechecks_workspace_trust() {
-        let root = temp_workspace("debug-evaluate-untrusted");
-        let trust = Mutex::new(
-            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
-        );
-
-        let error = tauri::async_runtime::block_on(debug_evaluate_with_trust(
-            path_string(&root),
-            1,
-            1,
-            "$value".to_string(),
-            Arc::new(DebugSessionRegistry::new()),
-            &trust,
-        ))
-        .expect_err("untrusted evaluation must fail");
-
-        assert!(error.contains("Trust this workspace"));
         fs::remove_dir_all(root).expect("cleanup");
     }
 

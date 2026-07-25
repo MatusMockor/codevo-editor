@@ -20,8 +20,8 @@
       "structuralTokens": 10277
     },
     "src-tauri/src/lib.rs": {
-      "rawLines": 10230,
-      "structuralTokens": 59234
+      "rawLines": 10214,
+      "structuralTokens": 59154
     },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 4503,

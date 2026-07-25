@@ -9,6 +9,10 @@ describe("parseLcovReport", () => {
         "SF:/workspace/src/b.ts",
         "DA:8,0",
         "DA:2,3",
+        "FN:2,covered",
+        "FNDA:3,covered",
+        "BRDA:2,0,0,3",
+        "BRDA:8,0,1,-",
         "LF:2",
         "LH:1",
         "end_of_record",
@@ -26,11 +30,16 @@ describe("parseLcovReport", () => {
 
     expect(report).toEqual({
       summary: { covered: 3, total: 4, percentage: 75 },
+      branches: { covered: 1, total: 2, percentage: 50 },
+      functions: { covered: 1, total: 1, percentage: 100 },
+      truncated: false,
       files: [
         {
           path: "src/a.ts",
           lines: [{ lineNumber: 1, hits: 1 }],
           summary: { covered: 1, total: 1, percentage: 100 },
+          branches: { covered: 0, total: 0, percentage: null },
+          functions: { covered: 0, total: 0, percentage: null },
           firstUncoveredLine: null,
         },
         {
@@ -41,6 +50,8 @@ describe("parseLcovReport", () => {
             { lineNumber: 10, hits: 0 },
           ],
           summary: { covered: 2, total: 3, percentage: (2 / 3) * 100 },
+          branches: { covered: 1, total: 2, percentage: 50 },
+          functions: { covered: 1, total: 1, percentage: 100 },
           firstUncoveredLine: 10,
         },
       ],
@@ -56,11 +67,16 @@ describe("parseLcovReport", () => {
   it("represents reports and files without executable lines", () => {
     expect(parseLcovReport("SF:src/types.ts\nend_of_record\n", "/workspace")).toEqual({
       summary: { covered: 0, total: 0, percentage: null },
+      branches: { covered: 0, total: 0, percentage: null },
+      functions: { covered: 0, total: 0, percentage: null },
+      truncated: false,
       files: [
         {
           path: "src/types.ts",
           lines: [],
           summary: { covered: 0, total: 0, percentage: null },
+          branches: { covered: 0, total: 0, percentage: null },
+          functions: { covered: 0, total: 0, percentage: null },
           firstUncoveredLine: null,
         },
       ],
@@ -73,6 +89,20 @@ describe("parseLcovReport", () => {
     ["missing terminator", "SF:src/a.ts\nDA:1,1\n", "unterminated"],
     ["bad line", "SF:src/a.ts\nDA:0,1\nend_of_record\n", "DA line is invalid"],
     ["bad hits", "SF:src/a.ts\nDA:1,-1\nend_of_record\n", "DA hits is invalid"],
+    ["BRDA before SF", "BRDA:1,0,0,1\n", "outside an SF record"],
+    ["bad BRDA", "SF:src/a.ts\nBRDA:1,0,0,bad\nend_of_record\n", "BRDA hits is invalid"],
+    ["signed BRDA", "SF:src/a.ts\nBRDA:+1,+0,+0,+1\nend_of_record\n", "BRDA line is invalid"],
+    [
+      "zero-padded BRDA line",
+      "SF:src/a.ts\nBRDA:01,0,0,1\nend_of_record\n",
+      "BRDA line is invalid",
+    ],
+    ["FN before SF", "FN:1,fn\n", "outside an SF record"],
+    ["bad FN", "SF:src/a.ts\nFN:1,\nend_of_record\n", "malformed FN record"],
+    ["signed FN line", "SF:src/a.ts\nFN:+1,fn\nend_of_record\n", "FN line is invalid"],
+    ["zero-padded FN line", "SF:src/a.ts\nFN:01,fn\nend_of_record\n", "FN line is invalid"],
+    ["bad FNDA", "SF:src/a.ts\nFNDA:bad,fn\nend_of_record\n", "FNDA hits is invalid"],
+    ["bad summary count", "SF:src/a.ts\nBRF:bad\nend_of_record\n", "summary count is invalid"],
     ["unsafe hits", `SF:src/a.ts\nDA:1,${Number.MAX_SAFE_INTEGER + 1}\nend_of_record\n`, "unsafe"],
     ["unknown record", "SF:src/a.ts\nXX:1\nend_of_record\n", "unsupported record"],
     ["garbage outside record", "garbage\n", "unsupported record"],
@@ -101,6 +131,38 @@ describe("parseLcovReport", () => {
         maxLineRecords: 1,
       }),
     ).toThrow("exceeds 1 line records");
+  });
+
+  it("truncates branch and function records at explicit deterministic bounds", () => {
+    expect(
+      parseLcovReport(
+        "SF:a.ts\nBRDA:1,0,0,1\nBRDA:1,0,1,1\nFN:1,kept\nFNDA:1,kept\nFN:1,discarded\nend_of_record\n",
+        "/workspace",
+        { maxBranchRecords: 1, maxFunctionRecords: 2 },
+      ),
+    ).toMatchObject({
+      branches: { covered: 1, total: 1 },
+      functions: { covered: 1, total: 1 },
+      truncated: true,
+    });
+  });
+
+  it("merges duplicate branch and function identities additively", () => {
+    expect(
+      parseLcovReport(
+        "SF:a.ts\nBRDA:1,0,0,-\nFN:1,fn\nend_of_record\nSF:a.ts\nBRDA:1,0,0,2\nFNDA:3,fn\nend_of_record\n",
+        "/workspace",
+      ),
+    ).toMatchObject({
+      branches: { covered: 1, total: 1 },
+      functions: { covered: 1, total: 1 },
+      files: [
+        {
+          branches: { covered: 1, total: 1 },
+          functions: { covered: 1, total: 1 },
+        },
+      ],
+    });
   });
 
   it("rejects unsafe accumulated duplicate hit counts", () => {

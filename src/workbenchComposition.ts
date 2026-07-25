@@ -10,6 +10,7 @@ import { TauriGitGateway, TauriGitHistoryGateway } from "./infrastructure/tauriG
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriJsTestGateway } from "./infrastructure/tauriJsTestGateway";
 import { TauriJsTestCoverageGateway } from "./infrastructure/tauriJsTestCoverageGateway";
+import { TauriJsTestWatchGateway } from "./infrastructure/tauriJsTestWatchGateway";
 import {
   JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
   TauriLanguageServerDiagnosticsGateway,
@@ -111,6 +112,7 @@ export function createWorkbenchComposition() {
       ),
     jsTestGateway: new TauriJsTestGateway(),
     jsTestCoverageGateway: new TauriJsTestCoverageGateway(),
+    jsTestWatchGateway: new TauriJsTestWatchGateway(),
     languageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(),
     languageServerDocumentSyncGateway: new TauriSessionBoundLanguageServerDocumentSyncGateway(),
     languageServerFeaturesGateway: new TauriLanguageServerFeaturesGateway(),

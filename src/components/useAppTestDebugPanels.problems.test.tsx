@@ -51,6 +51,7 @@ describe("useAppTestDebugPanels JavaScript test problem composition", () => {
       canWriteText: vi.fn(() => true),
       writeText: vi.fn(async (_text: string) => undefined),
     };
+    const jsTestWatchGateway = {} as never;
     mocks.problemSnapshot = snapshot(1, "first failure");
 
     function Harness() {
@@ -59,6 +60,7 @@ describe("useAppTestDebugPanels JavaScript test problem composition", () => {
         debugTextClipboard,
         jsTestCoverageGateway: {} as never,
         jsTestGateway: {} as never,
+        jsTestWatchGateway,
         phpTestGateway: {} as never,
         workbench: {
           bottomPanelView: "testResults",
@@ -120,18 +122,21 @@ describe("useAppTestDebugPanels JavaScript test problem composition", () => {
       source: "JavaScript Tests",
     });
     const controllerCall = mocks.useJsTestExplorerPanelController.mock.calls[0] as unknown as
-      [
-        {
-          readonly openedFilesSnapshot: unknown;
-          readonly outputClipboard: unknown;
-        },
-      ] | undefined;
+      | [
+          {
+            readonly openedFilesSnapshot: unknown;
+            readonly outputClipboard: unknown;
+            readonly watchGateway: unknown;
+          },
+        ]
+      | undefined;
     expect(controllerCall?.[0].openedFilesSnapshot).toMatchObject({
       hadEditorResources: true,
       identities: [{ relativeFilePath: "src/a.test.ts" }, { relativeFilePath: "src/b.test.ts" }],
       truncated: false,
     });
     expect(controllerCall?.[0].outputClipboard).toBe(debugTextClipboard);
+    expect(controllerCall?.[0].watchGateway).toBe(jsTestWatchGateway);
     expect(mocks.useDebugPanelProps).toHaveBeenCalledWith(
       expect.objectContaining({
         debugCopyStackTrace,

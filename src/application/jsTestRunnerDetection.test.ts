@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  detectJsTestRunner,
-  detectJsTestRunnerContext,
-} from "./jsTestRunnerDetection";
+import { detectJsTestRunner, detectJsTestRunnerContext } from "./jsTestRunnerDetection";
 
 const ROOT = "/workspace";
 
@@ -120,6 +117,7 @@ describe("detectJsTestRunner", () => {
     );
 
     expect(runner).toEqual({
+      continuousRunStrategy: "native-watch",
       executablePath: null,
       rootPath: `${ROOT}/packages/a`,
       runner: "vitest",
@@ -134,11 +132,7 @@ describe("detectJsTestRunner", () => {
     });
 
     await expect(
-      detectJsTestRunnerContext(
-        ROOT,
-        files,
-        `${ROOT}/packages/a/nested/src/example.test.ts`,
-      ),
+      detectJsTestRunnerContext(ROOT, files, `${ROOT}/packages/a/nested/src/example.test.ts`),
     ).resolves.toMatchObject({
       rootPath: `${ROOT}/packages/a/nested`,
       runner: "vitest",
@@ -190,11 +184,46 @@ describe("detectJsTestRunner", () => {
     );
 
     expect(runner).toEqual({
+      continuousRunStrategy: "native-watch",
       executablePath: "packages/a/node_modules/.bin/vitest",
       rootPath: ROOT,
       runner: "vitest",
       targetRelativePath: "packages/a/src/example.test.ts",
     });
+  });
+
+  it("selects native watch for Vitest without requiring source-control metadata", async () => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({ [`${ROOT}/vitest.config.ts`]: "export default {};" }),
+    );
+
+    expect(runner?.continuousRunStrategy).toBe("native-watch");
+  });
+
+  it.each([
+    [".git/HEAD", "ref: refs/heads/main"],
+    [".git", "gitdir: ../metadata/worktrees/workspace"],
+    [".hg/requires", "revlogv1"],
+  ])("selects native watch for Jest when %s is present", async (marker, content) => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({
+        [`${ROOT}/${marker}`]: content,
+        [`${ROOT}/jest.config.js`]: "module.exports = {};",
+      }),
+    );
+
+    expect(runner?.continuousRunStrategy).toBe("native-watch");
+  });
+
+  it("falls back to debounced rescope for Jest outside a Git or Mercurial repository", async () => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({ [`${ROOT}/jest.config.js`]: "module.exports = {};" }),
+    );
+
+    expect(runner?.continuousRunStrategy).toBe("debounced-rescope");
   });
 
   it("ignores a sibling binary and falls back from the active package to root", async () => {

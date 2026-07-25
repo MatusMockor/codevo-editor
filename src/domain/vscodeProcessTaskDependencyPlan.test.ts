@@ -75,6 +75,7 @@ function task(
     label,
     detail: null,
     group: "none",
+    problemMatcher: null,
     source: ".vscode/tasks.json",
     executable,
     dependsOn,

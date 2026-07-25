@@ -8,6 +8,9 @@ const validResponse = {
   status: "ok",
   report: {
     summary: { covered: 1, total: 2, percentage: 50 },
+    branches: { covered: 1, total: 2, percentage: 50 },
+    functions: { covered: 1, total: 1, percentage: 100 },
+    truncated: false,
     files: [
       {
         path: "src/math.ts",
@@ -16,6 +19,8 @@ const validResponse = {
           { lineNumber: 3, hits: 0 },
         ],
         summary: { covered: 1, total: 2, percentage: 50 },
+        branches: { covered: 1, total: 2, percentage: 50 },
+        functions: { covered: 1, total: 1, percentage: 100 },
         firstUncoveredLine: 3,
       },
     ],
@@ -114,6 +119,24 @@ describe("decodeJsTestCoverageResponse", () => {
       "matching",
     ],
     [
+      "wrong branch aggregate",
+      {
+        ...validResponse,
+        report: {
+          ...validResponse.report,
+          branches: { covered: 2, total: 2, percentage: 100 },
+        },
+      },
+      "matching",
+    ],
+    [
+      "nonboolean truncated",
+      { ...validResponse, report: { ...validResponse.report, truncated: 0 } },
+      "boolean",
+    ],
+    ["unknown file field", withFile({ extra: true }), ".extra"],
+    ["missing functions", withFile({ functions: undefined }), ".functions"],
+    [
       "wrong percentage",
       withFile({ summary: { covered: 1, total: 2, percentage: 49 } }),
       "derived",
@@ -136,22 +159,54 @@ describe("decodeJsTestCoverageResponse", () => {
       path: `src/${index}.ts`,
       lines: [],
       summary: { covered: 0, total: 0, percentage: null },
+      branches: { covered: 0, total: 0, percentage: null },
+      functions: { covered: 0, total: 0, percentage: null },
       firstUncoveredLine: null,
     }));
     expect(() =>
       decodeJsTestCoverageResponse({
         status: "ok",
-        report: { summary: { covered: 0, total: 0, percentage: null }, files: repeatedFiles },
+        report: {
+          summary: { covered: 0, total: 0, percentage: null },
+          branches: { covered: 0, total: 0, percentage: null },
+          functions: { covered: 0, total: 0, percentage: null },
+          files: repeatedFiles,
+          truncated: false,
+        },
       }),
     ).toThrow("at most 20000 files");
 
-    const tooManyLines = Array.from({ length: 1_000_001 }, (_, index) => ({
+    const tooManyLines = Array.from({ length: 500_001 }, (_, index) => ({
       lineNumber: index + 1,
       hits: 0,
     }));
     expect(() => decodeJsTestCoverageResponse(withFile({ lines: tooManyLines }))).toThrow(
-      "at most 1000000 line records",
+      "at most 500000 line records",
     );
+
+    const tooManyBranches = { covered: 0, total: 500_001, percentage: 0 };
+    expect(() =>
+      decodeJsTestCoverageResponse({
+        ...validResponse,
+        report: {
+          ...validResponse.report,
+          branches: tooManyBranches,
+          files: [{ ...validResponse.report.files[0], branches: tooManyBranches }],
+        },
+      }),
+    ).toThrow("at most 500000 branch records");
+
+    const tooManyFunctions = { covered: 0, total: 500_001, percentage: 0 };
+    expect(() =>
+      decodeJsTestCoverageResponse({
+        ...validResponse,
+        report: {
+          ...validResponse.report,
+          functions: tooManyFunctions,
+          files: [{ ...validResponse.report.files[0], functions: tooManyFunctions }],
+        },
+      }),
+    ).toThrow("at most 500000 function records");
   });
 });
 
@@ -170,5 +225,14 @@ function withFiles(files: readonly unknown[]) {
 }
 
 function emptyResponse(summary: Record<string, unknown>) {
-  return { status: "ok", report: { summary, files: [] } };
+  return {
+    status: "ok",
+    report: {
+      summary,
+      branches: { covered: 0, total: 0, percentage: null },
+      functions: { covered: 0, total: 0, percentage: null },
+      files: [],
+      truncated: false,
+    },
+  };
 }

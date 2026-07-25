@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  VscodeProcessTaskDiagnostic,
-  VscodeProcessTaskDisplay,
-  VscodeProcessTaskOutputEntry,
-  VscodeProcessTaskOwner,
-  VscodeProcessTaskState,
-  VscodeProcessTasksSnapshot,
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  vscodeProcessTaskProblemsToNotices,
+  type VscodeProcessTaskDiagnostic,
+  type VscodeProcessTaskDisplay,
+  type VscodeProcessTaskOutputEntry,
+  type VscodeProcessTaskOwner,
+  type VscodeProcessTaskProblemsState,
+  type VscodeProcessTaskState,
+  type VscodeProcessTasksSnapshot,
 } from "../domain/vscodeProcessTasks";
+import type { WorkbenchNotice } from "../domain/workbenchNotice";
 import type { VscodeProcessTasksGateway } from "../domain/vscodeProcessTasksGateway";
 import {
   createVscodeProcessTaskCoordinator,
@@ -33,6 +36,8 @@ export interface VscodeProcessTasksState {
   readonly error: string | null;
   readonly output: readonly VscodeProcessTaskOutputEntry[];
   readonly occupied: boolean;
+  readonly problemNotices: readonly WorkbenchNotice[];
+  readonly problems: VscodeProcessTaskProblemsState | null;
   readonly running: boolean;
   readonly status: VscodeProcessTaskState["status"] | null;
   readonly stopping: boolean;
@@ -78,6 +83,7 @@ const EMPTY_OUTPUT: readonly VscodeProcessTaskOutputEntry[] = Object.freeze([]);
 const EMPTY_COORDINATOR_SNAPSHOT: VscodeProcessTaskCoordinatorSnapshot = Object.freeze({
   activation: null,
   owner: null,
+  problems: null,
   task: null,
   running: false,
   stopping: false,
@@ -356,6 +362,11 @@ export function useVscodeProcessTasks({
     : !workspaceId || !rootPath
       ? "Open a workspace to discover configured tasks."
       : null;
+  const problems = currentExecution.problems;
+  const problemNotices = useMemo(
+    () => (rootPath ? vscodeProcessTaskProblemsToNotices(problems, rootPath) : []),
+    [problems, rootPath],
+  );
 
   return Object.freeze({
     activeLabel: currentPending?.label ?? currentExecution.owner?.label ?? null,
@@ -367,6 +378,8 @@ export function useVscodeProcessTasks({
     error,
     output: currentExecution.task?.output ?? EMPTY_OUTPUT,
     occupied: currentPending !== null || execution.running || execution.stopping,
+    problemNotices,
+    problems,
     running: currentPending !== null || currentExecution.running,
     start,
     startAndWait,

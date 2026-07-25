@@ -1,7 +1,17 @@
+import {
+  MAX_NODE_PACKAGE_TASK_PROBLEM_NOTICES,
+  MAX_NODE_PACKAGE_TASK_PROBLEMS,
+  NODE_PACKAGE_TASK_PROBLEM_GROUP_PREFIX,
+  type NodePackageTaskProblem,
+} from "./nodePackageTaskProblems";
+import { createWorkbenchNotice, type WorkbenchNotice } from "./workbenchNotice";
+import { workspaceRelativePath } from "./workspace";
+
 export const MAX_VSCODE_PROCESS_TASK_OUTPUT_EVENTS = 1_024;
 export const MAX_VSCODE_PROCESS_TASK_OUTPUT_TOTAL_BYTES = 1_048_576;
 
 export type VscodeProcessTaskGroup = "build" | "test" | "none";
+export type VscodeProcessTaskProblemMatcher = "eslint" | "typescript";
 export type VscodeProcessTaskDiagnosticSeverity = "error" | "warning";
 export type VscodeProcessTaskStream = "stdout" | "stderr";
 export type VscodeProcessTaskTerminalStatus = "exited" | "failed" | "stopped";
@@ -21,6 +31,7 @@ export interface VscodeProcessTaskDisplay {
   readonly source: string;
   readonly executable: boolean;
   readonly dependsOn: readonly string[];
+  readonly problemMatcher: VscodeProcessTaskProblemMatcher | null;
 }
 
 export interface VscodeProcessTaskDiagnostic {
@@ -57,6 +68,21 @@ export type VscodeProcessTaskEvent =
       readonly label: string;
       readonly index: number;
       readonly total: number;
+    }
+  | {
+      readonly kind: "problems";
+      readonly owner: VscodeProcessTaskOwner;
+      readonly sequence: number;
+      readonly state: "reset" | "clear";
+    }
+  | {
+      readonly kind: "problems";
+      readonly owner: VscodeProcessTaskOwner;
+      readonly sequence: number;
+      readonly state: "append" | "complete";
+      readonly problems: readonly NodePackageTaskProblem[];
+      readonly total: number;
+      readonly truncated: boolean;
     }
   | {
       readonly kind: "status";
@@ -111,6 +137,25 @@ export interface VscodeProcessTaskState {
   readonly outputEventCount: number;
   readonly outputTruncated: boolean;
 }
+
+export type VscodeProcessTaskProblem = NodePackageTaskProblem;
+
+export interface VscodeProcessTaskProblemsState {
+  readonly owner: VscodeProcessTaskOwner;
+  readonly sequence: number;
+  readonly problems: readonly VscodeProcessTaskProblem[];
+  readonly total: number;
+  readonly truncated: boolean;
+  readonly complete: boolean;
+}
+
+export type VscodeProcessTaskProblemsAction =
+  | { readonly type: "own"; readonly owner: VscodeProcessTaskOwner }
+  | {
+      readonly type: "event";
+      readonly event: Extract<VscodeProcessTaskEvent, { readonly kind: "problems" }>;
+    }
+  | { readonly type: "clear" };
 
 export type VscodeProcessTaskAction =
   | { readonly type: "own"; readonly owner: VscodeProcessTaskOwner }
@@ -193,6 +238,7 @@ export function reduceVscodeProcessTask(
     }
     return frozenState({ ...state, sequence: event.sequence, status: "stopped" });
   }
+  if (event.kind === "problems") return state;
 
   if (state.currentStep === null) return state;
   if (state.outputTruncated) {
@@ -213,6 +259,113 @@ export function reduceVscodeProcessTask(
     eventBytes,
     Object.freeze({ kind: "data" as const, stream: event.stream, data: event.data }),
   );
+}
+
+export function reduceVscodeProcessTaskProblems(
+  state: VscodeProcessTaskProblemsState | null,
+  action: VscodeProcessTaskProblemsAction,
+): VscodeProcessTaskProblemsState | null {
+  if (action.type === "clear") return null;
+  if (action.type === "own") {
+    return state && vscodeProcessTaskOwnersEqual(state.owner, action.owner)
+      ? state
+      : emptyProblemsState(action.owner);
+  }
+  if (
+    !state ||
+    !vscodeProcessTaskOwnersEqual(state.owner, action.event.owner) ||
+    action.event.sequence <= state.sequence
+  ) {
+    return state;
+  }
+
+  const event = action.event;
+  if (event.state === "reset" || event.state === "clear") {
+    return Object.freeze({ ...emptyProblemsState(state.owner), sequence: event.sequence });
+  }
+  if (!("problems" in event)) return state;
+  if (event.state === "complete") {
+    const problems = Object.freeze(event.problems.slice(0, MAX_NODE_PACKAGE_TASK_PROBLEMS));
+    return Object.freeze({
+      owner: state.owner,
+      sequence: event.sequence,
+      problems,
+      total: event.total,
+      truncated: event.truncated || event.problems.length > MAX_NODE_PACKAGE_TASK_PROBLEMS,
+      complete: true,
+    });
+  }
+  if (state.complete) return Object.freeze({ ...state, sequence: event.sequence });
+
+  const room = Math.max(0, MAX_NODE_PACKAGE_TASK_PROBLEMS - state.problems.length);
+  const problems = Object.freeze([...state.problems, ...event.problems.slice(0, room)]);
+  return Object.freeze({
+    owner: state.owner,
+    sequence: event.sequence,
+    problems,
+    total: event.total,
+    truncated:
+      state.truncated ||
+      event.truncated ||
+      event.total > problems.length ||
+      event.problems.length > room,
+    complete: false,
+  });
+}
+
+export function vscodeProcessTaskProblemGroupKey(owner: VscodeProcessTaskOwner): string {
+  const ownerKey = [
+    owner.workspaceId,
+    owner.runId,
+    String(owner.sessionId),
+    owner.label,
+    owner.configRevision,
+  ]
+    .map(encodeURIComponent)
+    .join(":");
+  return `${NODE_PACKAGE_TASK_PROBLEM_GROUP_PREFIX}${ownerKey}`;
+}
+
+export function vscodeProcessTaskProblemsToNotices(
+  state: VscodeProcessTaskProblemsState | null,
+  workspaceRoot: string,
+): WorkbenchNotice[] {
+  if (!state) return [];
+  const groupKey = vscodeProcessTaskProblemGroupKey(state.owner);
+  const retainedProblems = state.problems.filter(
+    (problem) => workspaceRelativePath(workspaceRoot, problem.filePath) !== null,
+  );
+  const notices = retainedProblems.slice(0, MAX_NODE_PACKAGE_TASK_PROBLEM_NOTICES).map((problem) =>
+    createWorkbenchNotice(
+      problem.severity,
+      problem.source,
+      problem.code ? `${problem.message} (${problem.code})` : problem.message,
+      groupKey,
+      {
+        path: problem.filePath,
+        range: {
+          start: { lineNumber: problem.lineNumber, column: problem.column },
+          end: { lineNumber: problem.lineNumber, column: problem.column },
+        },
+      },
+    ),
+  );
+  const hiddenCount =
+    (retainedProblems.length === state.problems.length ? state.total : retainedProblems.length) -
+    notices.length;
+  if (hiddenCount > 0) {
+    notices.push(
+      createWorkbenchNotice(
+        "info",
+        "Configured Task",
+        `${hiddenCount} more task problems hidden. Open the file to see complete diagnostics.`,
+        groupKey,
+        undefined,
+        "overflow",
+      ),
+    );
+  }
+  return notices;
 }
 
 function appendBoundedOutput(
@@ -267,6 +420,17 @@ function emptyState(owner: VscodeProcessTaskOwner): VscodeProcessTaskState {
     outputBytes: 0,
     outputEventCount: 0,
     outputTruncated: false,
+  });
+}
+
+function emptyProblemsState(owner: VscodeProcessTaskOwner): VscodeProcessTaskProblemsState {
+  return Object.freeze({
+    owner: Object.freeze({ ...owner }),
+    sequence: 0,
+    problems: Object.freeze([]),
+    total: 0,
+    truncated: false,
+    complete: false,
   });
 }
 

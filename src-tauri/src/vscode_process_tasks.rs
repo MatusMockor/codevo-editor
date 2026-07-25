@@ -13,7 +13,6 @@ pub const MAX_VSCODE_TASKS_CONFIG_BYTES: usize = 256 * 1024;
 const MAX_TASKS: usize = 128;
 const MAX_ARGS: usize = 128;
 const MAX_ENV: usize = 128;
-const MAX_PROBLEM_MATCHERS: usize = 16;
 const MAX_TASK_DEPENDENCIES: usize = 32;
 const MAX_TASK_DEPENDENCY_EDGES: usize = 512;
 
@@ -48,7 +47,14 @@ pub struct ValidatedProcessTask {
     pub args: Vec<String>,
     pub options: ProcessTaskOptions,
     pub group: Option<ProcessTaskGroup>,
-    pub problem_matchers: Vec<String>,
+    pub problem_matcher: ProcessTaskProblemMatcher,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessTaskProblemMatcher {
+    None,
+    Named(String),
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -217,7 +223,7 @@ fn parse_task(value: &Value) -> Result<ValidatedProcessTask, TaskError> {
     let args = optional_string_array(object.get("args"), "args", MAX_ARGS, 4_096, &label)?;
     let options = parse_options(object.get("options"), &label)?;
     let group = parse_group(object.get("group"), &label)?;
-    let problem_matchers = parse_problem_matchers(object.get("problemMatcher"), &label)?;
+    let problem_matcher = parse_problem_matcher(object.get("problemMatcher"));
     Ok(ValidatedProcessTask {
         label,
         depends_on,
@@ -225,7 +231,7 @@ fn parse_task(value: &Value) -> Result<ValidatedProcessTask, TaskError> {
         args,
         options,
         group,
-        problem_matchers,
+        problem_matcher,
     })
 }
 
@@ -373,36 +379,27 @@ fn parse_group(value: Option<&Value>, label: &str) -> Result<Option<ProcessTaskG
     }))
 }
 
-fn parse_problem_matchers(value: Option<&Value>, label: &str) -> Result<Vec<String>, TaskError> {
+fn parse_problem_matcher(value: Option<&Value>) -> ProcessTaskProblemMatcher {
     let Some(value) = value else {
-        return Ok(Vec::new());
+        return ProcessTaskProblemMatcher::None;
     };
     if let Some(matcher) = value.as_str() {
-        if bounded_text(matcher, 256, false) && matcher.starts_with('$') {
-            return Ok(vec![matcher.to_string()]);
+        if bounded_text(matcher, 256, false) {
+            return ProcessTaskProblemMatcher::Named(matcher.to_string());
         }
-        return Err(invalid(
-            Some(label.to_string()),
-            "problemMatcher must reference a named matcher",
-        ));
+        return ProcessTaskProblemMatcher::Unsupported;
     }
-    optional_string_array(
-        Some(value),
-        "problemMatcher",
-        MAX_PROBLEM_MATCHERS,
-        256,
-        label,
-    )
-    .and_then(|matchers| {
-        if matchers.iter().all(|matcher| matcher.starts_with('$')) {
-            Ok(matchers)
-        } else {
-            Err(invalid(
-                Some(label.to_string()),
-                "problemMatcher entries must reference named matchers",
-            ))
-        }
-    })
+    let Some(values) = value.as_array() else {
+        return ProcessTaskProblemMatcher::Unsupported;
+    };
+    let [matcher] = values.as_slice() else {
+        return ProcessTaskProblemMatcher::Unsupported;
+    };
+    matcher
+        .as_str()
+        .filter(|matcher| bounded_text(matcher, 256, false))
+        .map(|matcher| ProcessTaskProblemMatcher::Named(matcher.to_string()))
+        .unwrap_or(ProcessTaskProblemMatcher::Unsupported)
 }
 
 fn optional_string_array(

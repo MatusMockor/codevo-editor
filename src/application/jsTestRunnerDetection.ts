@@ -1,10 +1,12 @@
 import type { JsTestRunner } from "../domain/jsTestCommand";
 import { packageToolSearchContexts } from "../domain/packageToolContext";
 import { joinWorkspacePath } from "../domain/workspace";
+import type { JsTestContinuousRunStrategy } from "./jsTestContinuousRunCoordinator";
 
 export type WorkspaceFileReader = (path: string) => Promise<string | null>;
 
 export interface JsTestRunnerContext {
+  continuousRunStrategy: JsTestContinuousRunStrategy;
   executablePath: string | null;
   rootPath: string;
   runner: JsTestRunner;
@@ -56,17 +58,38 @@ export async function detectJsTestRunnerContext(
     if (runner) {
       return {
         ...context,
-        executablePath: await nearestRunnerExecutable(
-          contexts,
-          index,
+        continuousRunStrategy: await detectContinuousRunStrategy(
+          contexts.slice(index),
           runner,
           readFileIfExists,
         ),
+        executablePath: await nearestRunnerExecutable(contexts, index, runner, readFileIfExists),
         runner,
       };
     }
   }
   return null;
+}
+
+async function detectContinuousRunStrategy(
+  contexts: readonly { rootPath: string }[],
+  runner: JsTestRunner,
+  readFileIfExists: WorkspaceFileReader,
+): Promise<JsTestContinuousRunStrategy> {
+  if (runner === "vitest") {
+    return "native-watch";
+  }
+  for (const { rootPath } of contexts) {
+    const markers = await Promise.all([
+      readFileIfExists(joinWorkspacePath(rootPath, ".git")),
+      readFileIfExists(joinWorkspacePath(rootPath, ".git/HEAD")),
+      readFileIfExists(joinWorkspacePath(rootPath, ".hg/requires")),
+    ]);
+    if (markers.some((marker) => marker !== null)) {
+      return "native-watch";
+    }
+  }
+  return "debounced-rescope";
 }
 
 async function nearestRunnerExecutable(
@@ -121,17 +144,10 @@ function executableRelativeTo(
   ) {
     shared += 1;
   }
-  const parentSegments = Array.from(
-    { length: configuredSegments.length - shared },
-    () => "..",
+  const parentSegments = Array.from({ length: configuredSegments.length - shared }, () => "..");
+  return [...parentSegments, ...binarySegments.slice(shared), "node_modules", ".bin", runner].join(
+    "/",
   );
-  return [
-    ...parentSegments,
-    ...binarySegments.slice(shared),
-    "node_modules",
-    ".bin",
-    runner,
-  ].join("/");
 }
 
 async function detectRunnerAtRoot(
@@ -198,10 +214,7 @@ function parsePackageJson(content: string | null): Record<string, unknown> | nul
   }
 }
 
-function hasDependency(
-  packageJson: Record<string, unknown> | null,
-  name: string,
-): boolean {
+function hasDependency(packageJson: Record<string, unknown> | null, name: string): boolean {
   if (!packageJson) {
     return false;
   }

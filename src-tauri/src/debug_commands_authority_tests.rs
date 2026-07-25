@@ -226,3 +226,33 @@ fn debug_commands_with_unknown_session_id_return_err() {
     assert_eq!(frames, Err("No debug session with id 43.".to_string()));
     assert_eq!(evaluated, Err("No debug session with id 44.".to_string()));
 }
+
+#[test]
+fn debug_evaluate_rechecks_workspace_trust() {
+    let root = std::env::temp_dir().join(format!(
+        "debug-evaluate-untrusted-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("temp workspace");
+    let root = root.canonicalize().expect("canonical workspace");
+    let trust = Mutex::new(
+        WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+    );
+
+    let error = tauri::async_runtime::block_on(debug_evaluate_with_trust(
+        root.to_string_lossy().to_string(),
+        1,
+        1,
+        "$value".to_string(),
+        Arc::new(DebugSessionRegistry::new()),
+        &trust,
+    ))
+    .expect_err("untrusted evaluation must fail");
+
+    assert!(error.contains("Trust this workspace"));
+    std::fs::remove_dir_all(root).expect("cleanup");
+}

@@ -99,6 +99,7 @@ describe("useJsTestExplorerPanelController problem integration", () => {
     expect(mocks.useJsTestExplorer).toHaveBeenCalledWith({
       continuousRunBlocked: false,
       continuousRunVersion: 0,
+      continuousRunWatchCommand: null,
       discoveryGateway: expect.anything(),
       discoveryVersion: 3,
       isOpen: false,
@@ -107,6 +108,7 @@ describe("useJsTestExplorerPanelController problem integration", () => {
       runGateway: expect.anything(),
       runRequestVersion: 5,
       taskGateway: null,
+      watchGateway: null,
       workspaceId: "workspace-id",
       workspaceTrusted: true,
     });

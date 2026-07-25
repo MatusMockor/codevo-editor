@@ -127,6 +127,7 @@ const {
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
   jsTestGateway,
   jsTestCoverageGateway,
+  jsTestWatchGateway,
   languageServerDiagnosticsGateway,
   languageServerDocumentSyncGateway,
   languageServerFeaturesGateway,
@@ -327,6 +328,7 @@ function App() {
       debugTextClipboard,
       jsTestCoverageGateway,
       jsTestGateway,
+      jsTestWatchGateway,
       phpCloverCoveragePort,
       phpTestGateway,
       workbench,
@@ -528,9 +530,7 @@ function App() {
   const activeBookmarkedLineNumbers = useMemo(() => {
     const activePath = workbench.activeDocument?.path;
 
-    if (!activePath) {
-      return [];
-    }
+    if (!activePath) return [];
 
     return workbench.bookmarks
       .filter((bookmark) => bookmark.path === activePath)
@@ -1629,9 +1629,7 @@ function smartModeSummary(
   plan: LanguageServerPlan | null,
   trusted: boolean,
 ): string {
-  if (!workspaceRoot) {
-    return "No workspace";
-  }
+  if (!workspaceRoot) return "No workspace";
 
   if (mode === "basic") {
     return "Lightweight";

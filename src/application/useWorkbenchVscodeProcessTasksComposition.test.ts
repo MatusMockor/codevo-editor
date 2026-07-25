@@ -21,9 +21,13 @@ describe("VS Code process-task workbench composition", () => {
     );
     expect(controller).toContain("workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,");
     expect(controller).toContain("requestTerminalSession: requestActiveTerminalSession,");
+    expect(controller).toContain("setNotices,");
     expect(controller).toContain("vscodeProcessTasks: vscodeProcessTaskComposition.state,");
     expect(taskComposition).toContain("new Promise<number | null>");
     expect(taskComposition).toContain("requestTerminalSession(resolve);");
+    expect(taskComposition).toContain(
+      "useNodePackageTaskProblemNoticeComposition(state.problemNotices, setNotices);",
+    );
     expect(sidebar).toContain("vscodeProcessTasks={workbench.vscodeProcessTasks}");
     expect(controller).not.toContain("VscodeProcessTasksPanel");
   });

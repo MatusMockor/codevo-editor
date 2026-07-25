@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::{
+    node_package_problem_matcher::NodePackageProblemMatcher,
     terminal::{TerminalEventSink, TerminalOutputEvent},
     terminal_task_process::TerminalTaskOwnership,
     vscode_process_task_events::{
@@ -129,10 +130,12 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
             .take()
             .map(|reader| Box::new(reader) as Box<dyn Read + Send>);
         let ownership = spawned.ownership.clone();
+        let problem_matcher = spawned.problem_matcher.take();
         let terminal_sink = Arc::clone(&spawned.sink);
         let app = self.0.clone();
         Ok(PreparedProcessTask {
             ownership,
+            problem_matcher,
             terminal_sink,
             stdout,
             stderr,
@@ -161,6 +164,7 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
 
 pub(crate) struct PreparedProcessTask {
     pub(crate) ownership: TerminalTaskOwnership,
+    pub(crate) problem_matcher: Option<NodePackageProblemMatcher>,
     pub(crate) terminal_sink: Arc<dyn TerminalEventSink>,
     pub(crate) stdout: Option<Box<dyn Read + Send>>,
     pub(crate) stderr: Option<Box<dyn Read + Send>>,
@@ -207,7 +211,7 @@ impl VscodeProcessTaskCommandService {
         };
         let total = u16::try_from(chain.len())
             .map_err(|_| "Unable to resolve the process task chain safely.".to_string())?;
-        let prepared = match self.runtime.prepare_and_spawn_step(&request, &chain[0]) {
+        let mut prepared = match self.runtime.prepare_and_spawn_step(&request, &chain[0]) {
             Ok(prepared) => prepared,
             Err(_) => {
                 let _ = self.registry.complete(
@@ -223,6 +227,7 @@ impl VscodeProcessTaskCommandService {
         let stop_requested = match self.registry.activate_step(
             &request,
             prepared.ownership.clone(),
+            prepared.problem_matcher.take(),
             VscodeProcessTaskStep {
                 label: &chain[0],
                 index: 1,
@@ -313,7 +318,7 @@ impl VscodeProcessTaskCommandService {
                                 };
                             }
                         }
-                        let next = match runtime.prepare_and_spawn_step(&owner, &next_label) {
+                        let mut next = match runtime.prepare_and_spawn_step(&owner, &next_label) {
                             Ok(next) => next,
                             Err(_) => {
                                 break VscodeProcessTaskCompletion::Failed {
@@ -327,6 +332,7 @@ impl VscodeProcessTaskCommandService {
                             &owner,
                             &previous_ownership,
                             next.ownership.clone(),
+                            next.problem_matcher.take(),
                             VscodeProcessTaskStep {
                                 label: &next_label,
                                 index: step_index,

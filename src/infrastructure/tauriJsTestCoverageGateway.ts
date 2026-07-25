@@ -44,7 +44,7 @@ export function decodeJsTestCoverageResponse(value: unknown): JsTestCoverageResp
 
 function decodeReport(value: unknown): JsTestCoverageReport {
   const report = record(value, "response.report");
-  exactKeys(report, ["summary", "files"], "response.report");
+  exactKeys(report, ["summary", "branches", "functions", "files", "truncated"], "response.report");
   if (!Array.isArray(report.files) || report.files.length > JS_TEST_COVERAGE_LIMITS.maxFiles) {
     return invalid(
       "response.report.files",
@@ -56,10 +56,18 @@ function decodeReport(value: unknown): JsTestCoverageReport {
   let lineRecords = 0;
   let covered = 0;
   let total = 0;
+  let branchesCovered = 0;
+  let branchesTotal = 0;
+  let functionsCovered = 0;
+  let functionsTotal = 0;
   const files = report.files.map((value, index) => {
     const path = `response.report.files[${index}]`;
     const file = record(value, path);
-    exactKeys(file, ["path", "lines", "summary", "firstUncoveredLine"], path);
+    exactKeys(
+      file,
+      ["path", "lines", "summary", "branches", "functions", "firstUncoveredLine"],
+      path,
+    );
     const filePath = workspaceRelativePath(file.path, `${path}.path`);
     if (seenPaths.has(filePath)) invalid(`${path}.path`, "a unique file path");
     seenPaths.add(filePath);
@@ -84,23 +92,58 @@ function decodeReport(value: unknown): JsTestCoverageReport {
     const computedCovered = lines.filter((line) => line.hits > 0).length;
     const summary = decodeMetric(file.summary, `${path}.summary`);
     assertMetricEquals(summary, computedCovered, lines.length, `${path}.summary`);
+    const branches = decodeMetric(file.branches, `${path}.branches`);
+    const functions = decodeMetric(file.functions, `${path}.functions`);
     const computedFirstUncovered = lines.find((line) => line.hits === 0)?.lineNumber ?? null;
     if (file.firstUncoveredLine !== computedFirstUncovered) {
       invalid(`${path}.firstUncoveredLine`, `the derived value ${String(computedFirstUncovered)}`);
     }
     covered = safeSum(covered, computedCovered, "response.report.summary.covered");
     total = safeSum(total, lines.length, "response.report.summary.total");
+    branchesCovered = safeSum(
+      branchesCovered,
+      branches.covered,
+      "response.report.branches.covered",
+    );
+    branchesTotal = safeSum(branchesTotal, branches.total, "response.report.branches.total");
+    functionsCovered = safeSum(
+      functionsCovered,
+      functions.covered,
+      "response.report.functions.covered",
+    );
+    functionsTotal = safeSum(functionsTotal, functions.total, "response.report.functions.total");
     return {
       path: filePath,
       lines,
       summary,
+      branches,
+      functions,
       firstUncoveredLine: computedFirstUncovered,
     };
   });
 
   const summary = decodeMetric(report.summary, "response.report.summary");
   assertMetricEquals(summary, covered, total, "response.report.summary");
-  return { summary, files };
+  const branches = decodeMetric(report.branches, "response.report.branches");
+  assertMetricEquals(branches, branchesCovered, branchesTotal, "response.report.branches");
+  if (branchesTotal > JS_TEST_COVERAGE_LIMITS.maxBranchRecords) {
+    invalid(
+      "response.report.branches.total",
+      `at most ${JS_TEST_COVERAGE_LIMITS.maxBranchRecords} branch records`,
+    );
+  }
+  const functions = decodeMetric(report.functions, "response.report.functions");
+  assertMetricEquals(functions, functionsCovered, functionsTotal, "response.report.functions");
+  if (functionsTotal > JS_TEST_COVERAGE_LIMITS.maxFunctionRecords) {
+    invalid(
+      "response.report.functions.total",
+      `at most ${JS_TEST_COVERAGE_LIMITS.maxFunctionRecords} function records`,
+    );
+  }
+  if (typeof report.truncated !== "boolean") {
+    invalid("response.report.truncated", "a boolean");
+  }
+  return { summary, branches, functions, files, truncated: report.truncated };
 }
 
 function decodeLine(value: unknown, path: string): JsTestCoverageLine {
@@ -140,7 +183,7 @@ function assertMetricEquals(
   path: string,
 ): void {
   if (metric.covered !== covered || metric.total !== total) {
-    invalid(path, `counts matching the decoded line records (${covered}/${total})`);
+    invalid(path, `counts matching the decoded records (${covered}/${total})`);
   }
 }
 

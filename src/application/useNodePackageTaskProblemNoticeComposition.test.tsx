@@ -33,13 +33,37 @@ describe("useNodePackageTaskProblemNoticeComposition", () => {
     expect(current.map(({ message }) => message)).toEqual(["second"]);
     act(() => root.unmount());
   });
+
+  it("keeps independent task-owner groups from separate composers isolated", () => {
+    const root = createRoot(document.createElement("div"));
+    let first: readonly WorkbenchNotice[] = [notice("npm", "npm-run")];
+    let second: readonly WorkbenchNotice[] = [notice("vscode", "vscode-run")];
+    let current: WorkbenchNotice[] = [];
+    function Harness() {
+      const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
+      current = notices;
+      useNodePackageTaskProblemNoticeComposition(first, setNotices);
+      useNodePackageTaskProblemNoticeComposition(second, setNotices);
+      return null;
+    }
+
+    act(() => root.render(<Harness />));
+    expect(current.map(({ message }) => message).sort()).toEqual(["npm", "vscode"]);
+    first = [];
+    act(() => root.render(<Harness />));
+    expect(current.map(({ message }) => message)).toEqual(["vscode"]);
+    second = [notice("vscode-next", "vscode-next-run")];
+    act(() => root.render(<Harness />));
+    expect(current.map(({ message }) => message)).toEqual(["vscode-next"]);
+    act(() => root.unmount());
+  });
 });
 
-function notice(message: string): WorkbenchNotice {
+function notice(message: string, owner = "run"): WorkbenchNotice {
   return createWorkbenchNotice(
     "error",
     "TypeScript",
     message,
-    "node-package-task-problems:ws:run",
+    `node-package-task-problems:ws:${owner}`,
   );
 }

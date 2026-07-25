@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsTestCoverageGateway } from "../domain/jsTestCoverage";
+import type { JsTestWatchGateway } from "../domain/jsTestCommand";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { JsTestGateway } from "../domain/jsTestRunScope";
 import type { DebugLaunchTarget } from "../domain/debug";
@@ -18,6 +19,17 @@ import {
   jsTestExplorerActiveDocumentIdentity,
   jsTestExplorerOpenedDocumentIdentitySnapshot,
 } from "./jsTestExplorerActiveDocumentOwnership";
+
+const mocks = vi.hoisted(() => ({
+  useJsTestExplorer: vi.fn(),
+}));
+
+vi.mock("../application/useJsTestExplorer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../application/useJsTestExplorer")>();
+  mocks.useJsTestExplorer.mockImplementation(actual.useJsTestExplorer);
+  return { ...actual, useJsTestExplorer: mocks.useJsTestExplorer };
+});
+
 import { useJsTestExplorerPanelController } from "./useJsTestExplorerPanelController";
 
 describe("useJsTestExplorerPanelController coverage integration", () => {
@@ -132,10 +144,85 @@ describe("useJsTestExplorerPanelController coverage integration", () => {
     expect(latest.openedFilesSnapshot?.truncated).toBe(false);
   });
 
+  it("passes watch gateway and derived watch command to the explorer when the runner supports native watch", async () => {
+    const watchGateway = {} as JsTestWatchGateway;
+
+    await render(createCoverageGateway(), null, undefined, watchGateway);
+
+    await vi.waitFor(() =>
+      expect(mocks.useJsTestExplorer).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          continuousRunWatchCommand: {
+            kind: "vitest-watch",
+            packageRootRelativePath: "",
+            scope: { kind: "all" },
+          },
+          watchGateway,
+        }),
+      ),
+    );
+  });
+
+  it("passes a null watch command to the explorer for the debounced-rescope fallback", async () => {
+    const watchGateway = {} as JsTestWatchGateway;
+    const testDiscoveryGateway = jestDiscoveryGateway();
+
+    await render(
+      createCoverageGateway(),
+      null,
+      undefined,
+      watchGateway,
+      true,
+      testDiscoveryGateway,
+    );
+
+    await vi.waitFor(() =>
+      expect(testDiscoveryGateway.readTextFileBounded).toHaveBeenCalledWith(
+        "/workspace",
+        "node_modules/.bin/jest",
+        1_048_576,
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(mocks.useJsTestExplorer).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          continuousRunWatchCommand: null,
+          watchGateway,
+        }),
+      ),
+    );
+  });
+
+  it("does not expose watch capability for an untrusted workspace", async () => {
+    const watchGateway = {} as JsTestWatchGateway;
+    const testDiscoveryGateway = discoveryGateway();
+
+    await render(
+      createCoverageGateway(),
+      null,
+      undefined,
+      watchGateway,
+      false,
+      testDiscoveryGateway,
+    );
+
+    expect(mocks.useJsTestExplorer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        continuousRunWatchCommand: null,
+        watchGateway: null,
+        workspaceTrusted: false,
+      }),
+    );
+    expect(testDiscoveryGateway.readTextFileBounded).not.toHaveBeenCalled();
+  });
+
   async function render(
     coverageGateway: JsTestCoverageGateway,
     activeDocumentRelativePath: string | null = null,
     openedFilesSnapshot?: JsTestExplorerOpenedFilesSnapshot,
+    watchGateway?: JsTestWatchGateway,
+    workspaceTrusted = true,
+    testDiscoveryGateway = discoveryGateway(),
   ) {
     await act(async () => {
       root.render(
@@ -146,6 +233,9 @@ describe("useJsTestExplorerPanelController coverage integration", () => {
           openedFilesSnapshot={openedFilesSnapshot}
           openDebugPanel={openDebugPanel}
           startDebug={startDebug}
+          testDiscoveryGateway={testDiscoveryGateway}
+          watchGateway={watchGateway}
+          workspaceTrusted={workspaceTrusted}
           onReady={(model) => {
             latest = model;
           }}
@@ -162,6 +252,9 @@ function Harness({
   openedFilesSnapshot,
   openDebugPanel,
   startDebug,
+  testDiscoveryGateway,
+  watchGateway,
+  workspaceTrusted,
   onReady,
 }: {
   activeDocumentIdentity: JsTestExplorerCurrentFileIdentity | null;
@@ -170,13 +263,20 @@ function Harness({
   openedFilesSnapshot?: JsTestExplorerOpenedFilesSnapshot;
   openDebugPanel: () => void;
   startDebug: (launch: DebugLaunchTarget) => Promise<void>;
+  testDiscoveryGateway?: WorkspaceTestDiscoveryGateway;
+  watchGateway?: JsTestWatchGateway;
+  workspaceTrusted?: boolean;
   onReady: (model: ReturnType<typeof useJsTestExplorerPanelController>) => void;
 }) {
+  const stableDiscoveryGateway = useMemo(
+    () => testDiscoveryGateway ?? discoveryGateway(),
+    [testDiscoveryGateway],
+  );
   const model = useJsTestExplorerPanelController({
     activeDocumentIdentity,
     coverageGateway,
     coverageInvalidationVersion: 0,
-    discoveryGateway: discoveryGateway(),
+    discoveryGateway: stableDiscoveryGateway,
     discoveryVersion: 0,
     debugStartBlocked: false,
     isDebugStartBlocked: () => false,
@@ -188,8 +288,9 @@ function Harness({
     runGateway: runGateway(),
     runRequestVersion: 0,
     workspaceId: "workspace-id",
-    workspaceTrusted: true,
+    workspaceTrusted: workspaceTrusted ?? true,
     startDebug,
+    watchGateway,
   });
   onReady(model);
   return null;
@@ -232,9 +333,14 @@ function coverageResponse() {
           lines: [{ hits: 0, lineNumber: 9 }],
           path: "src/example.ts",
           summary: { covered: 0, percentage: 0, total: 1 },
+          branches: { covered: 0, percentage: null, total: 0 },
+          functions: { covered: 0, percentage: null, total: 0 },
         },
       ],
       summary: { covered: 0, percentage: 0, total: 1 },
+      branches: { covered: 0, percentage: null, total: 0 },
+      functions: { covered: 0, percentage: null, total: 0 },
+      truncated: false,
     },
   };
 }
@@ -244,6 +350,17 @@ function discoveryGateway(): WorkspaceTestDiscoveryGateway {
     enumerateJsTestFiles: vi.fn(async () => ({ files: [], truncated: false, visited: 0 })),
     readTextFileBounded: vi.fn(async (_root, relativePath) =>
       relativePath === "vitest.config.ts"
+        ? { content: "export default {}", status: "ok" as const }
+        : { status: "tooLarge" as const },
+    ),
+  };
+}
+
+function jestDiscoveryGateway() {
+  return {
+    enumerateJsTestFiles: vi.fn(async () => ({ files: [], truncated: false, visited: 0 })),
+    readTextFileBounded: vi.fn(async (_root, relativePath) =>
+      relativePath === "jest.config.ts"
         ? { content: "export default {}", status: "ok" as const }
         : { status: "tooLarge" as const },
     ),

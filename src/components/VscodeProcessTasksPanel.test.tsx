@@ -37,7 +37,12 @@ describe("VscodeProcessTasksPanel", () => {
     expect(host.textContent).toContain("Compile TypeScript");
     expect(host.textContent).toContain("Runs after: Generate, Typecheck");
     expect(host.textContent).toContain("build · .vscode/tasks.json");
+    expect(host.textContent).toContain("Problem matcher: $tsc");
+    expect(host.textContent).toContain("Problem matcher: $eslint-stylish");
     expect(host.textContent).toContain("Unsupported shell");
+    expect(host.textContent).toContain(
+      "Task has an unsupported problemMatcher; output will not create Problems.",
+    );
     expect(host.textContent).toContain("No group · .vscode/tasks.json");
     expect(buttons(/^Run configured task /)).toHaveLength(1);
     expect(button("Run configured task Build").type).toBe("button");
@@ -55,6 +60,7 @@ describe("VscodeProcessTasksPanel", () => {
           source: ".vscode/tasks.json",
           executable: true,
           dependsOn: ["<script>safe</script>", "B", "C", "hidden command", "hidden env"],
+          problemMatcher: null,
         },
       ],
     });
@@ -207,6 +213,8 @@ describe("VscodeProcessTasksPanel", () => {
     rerender({
       activeLabel: "Build",
       occupied: false,
+      problemNotices: [],
+      problems: null,
       running: false,
       status: "stopped",
       stopping: false,
@@ -259,6 +267,7 @@ describe("VscodeProcessTasksPanel", () => {
           source: ".vscode/tasks.json",
           executable: true,
           dependsOn: [],
+          problemMatcher: null,
         },
       ],
     });
@@ -304,6 +313,8 @@ describe("VscodeProcessTasksPanel", () => {
       error: null,
       output: [],
       occupied: false,
+      problemNotices: [],
+      problems: null,
       running: false,
       start,
       startAndWait: vi.fn(async () => ({ status: "exited" as const, exitCode: 0 })),
@@ -318,14 +329,25 @@ describe("VscodeProcessTasksPanel", () => {
           source: ".vscode/tasks.json",
           executable: true,
           dependsOn: ["Generate", "Typecheck"],
+          problemMatcher: "typescript",
         },
         {
-          label: "Unsupported shell",
+          label: "Lint",
           detail: null,
           group: "none",
           source: ".vscode/tasks.json",
           executable: false,
           dependsOn: [],
+          problemMatcher: "eslint",
+        },
+        {
+          label: "Unsupported shell",
+          detail: "Task has an unsupported problemMatcher; output will not create Problems.",
+          group: "none",
+          source: ".vscode/tasks.json",
+          executable: false,
+          dependsOn: [],
+          problemMatcher: null,
         },
       ],
       truncated: false,

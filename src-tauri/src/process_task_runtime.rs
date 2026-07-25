@@ -2,6 +2,7 @@
 
 use crate::{
     managed_javascript_typescript::node_executable_path,
+    node_package_problem_matcher::{NodePackageProblemMatcher, NodePackageProblemMatcherKind},
     process_task_plan::{
         ProcessTaskDefinition, ProcessTaskEnvironmentPolicy, ProcessTaskExecutionPlan,
     },
@@ -13,7 +14,8 @@ use crate::{
     terminal_task_process::TerminalTaskOwnership,
     trust::WorkspaceTrustService,
     vscode_process_tasks::{
-        ValidatedProcessTask, VscodeTasksParser, MAX_VSCODE_TASKS_CONFIG_BYTES,
+        ProcessTaskProblemMatcher, ValidatedProcessTask, VscodeTasksParser,
+        MAX_VSCODE_TASKS_CONFIG_BYTES,
     },
     workspace_registry::{
         opened_regular_file_path, opened_root_path, ManagedWorkspaceDescriptor, WorkspaceId,
@@ -49,6 +51,7 @@ pub(crate) struct SpawnProcessTaskRequest {
 
 pub(crate) struct SpawnedProcessTask {
     pub child: Child,
+    pub problem_matcher: Option<NodePackageProblemMatcher>,
     pub ownership: TerminalTaskOwnership,
     pub sink: Arc<dyn TerminalEventSink>,
     pub stdout: Option<ChildStdout>,
@@ -149,6 +152,25 @@ impl<'a> ProcessTaskRuntime<'a> {
             .map_err(format_plan_error)?;
 
         let trust = validate_workspace_trust(self.trust, &descriptor)?;
+        let problem_matcher = match problem_matcher_kind(&task.problem_matcher) {
+            Some(kind) => {
+                let workspace_root = self
+                    .registry
+                    .clone_root(&request.owner.workspace_id)
+                    .map_err(|_| "Unable to retain the process task workspace.".to_string())?;
+                let working_directory = resolver
+                    .open_retained(plan.cwd())
+                    .map_err(format_plan_error)?;
+                Some(NodePackageProblemMatcher::new(
+                    kind,
+                    &workspace_root,
+                    &descriptor.canonical_root_path,
+                    &working_directory,
+                    plan.cwd(),
+                )?)
+            }
+            None => None,
+        };
 
         let sink = self.terminals.task_sink(
             request.owner.terminal_session_id,
@@ -179,11 +201,28 @@ impl<'a> ProcessTaskRuntime<'a> {
         drop(_operation);
         Ok(SpawnedProcessTask {
             child,
+            problem_matcher,
             ownership,
             sink,
             stdout,
             stderr,
         })
+    }
+}
+
+fn problem_matcher_kind(
+    problem_matcher: &ProcessTaskProblemMatcher,
+) -> Option<NodePackageProblemMatcherKind> {
+    match problem_matcher {
+        ProcessTaskProblemMatcher::Named(matcher) if matcher == "$tsc" => {
+            Some(NodePackageProblemMatcherKind::TypeScript)
+        }
+        ProcessTaskProblemMatcher::Named(matcher) if matcher == "$eslint-stylish" => {
+            Some(NodePackageProblemMatcherKind::EslintStylish)
+        }
+        ProcessTaskProblemMatcher::None
+        | ProcessTaskProblemMatcher::Named(_)
+        | ProcessTaskProblemMatcher::Unsupported => None,
     }
 }
 

@@ -109,9 +109,15 @@ const styles: Record<string, CSSProperties> = {
   },
   children: { listStyle: "none", margin: 0, padding: 0 },
   coverage: { borderBottom: "1px solid var(--border-subtle)", padding: "7px 8px" },
-  coverageFile: { alignItems: "center", display: "flex", gap: 8, padding: "3px 0" },
+  coverageFile: {
+    alignItems: "center",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    padding: "3px 0",
+  },
   coverageFiles: { listStyle: "none", margin: "5px 0 0", padding: 0 },
-  coverageSummary: { display: "flex", gap: 10 },
+  coverageSummary: { display: "flex", flexWrap: "wrap", gap: 10 },
   input: { background: "transparent", border: 0, color: "inherit", flex: 1, minWidth: 100 },
   label: {
     background: "transparent",
@@ -573,7 +579,24 @@ function CoverageReport({
         <span aria-label="Line coverage percentage">
           {coveragePercentage(report.summary.percentage)}
         </span>
+        <span aria-label="Covered branches">
+          {report.branches.covered}/{report.branches.total} branches
+        </span>
+        <span aria-label="Branch coverage percentage">
+          {coveragePercentage(report.branches.percentage)}
+        </span>
+        <span aria-label="Covered functions">
+          {report.functions.covered}/{report.functions.total} functions
+        </span>
+        <span aria-label="Function coverage percentage">
+          {coveragePercentage(report.functions.percentage)}
+        </span>
       </div>
+      {report.truncated ? (
+        <span aria-label="Coverage truncation status" role="status">
+          Coverage details are truncated.
+        </span>
+      ) : null}
       {report.files.length > 0 ? (
         <ul aria-label="JavaScript coverage files" style={styles.coverageFiles}>
           {report.files.map((file) => (
@@ -591,8 +614,11 @@ function CoverageReport({
                 {file.path}
               </button>
               <span style={styles.muted}>
-                {file.summary.covered}/{file.summary.total} ·{" "}
-                {coveragePercentage(file.summary.percentage)}
+                Lines {file.summary.covered}/{file.summary.total} ·{" "}
+                {coveragePercentage(file.summary.percentage)} · Branches {file.branches.covered}/
+                {file.branches.total} · {coveragePercentage(file.branches.percentage)} · Functions{" "}
+                {file.functions.covered}/{file.functions.total} ·{" "}
+                {coveragePercentage(file.functions.percentage)}
               </span>
             </li>
           ))}

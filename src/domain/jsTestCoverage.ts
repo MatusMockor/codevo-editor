@@ -3,7 +3,9 @@ import { workspaceRelativePath } from "./workspace";
 export const JS_TEST_COVERAGE_LIMITS = {
   maxFiles: 20_000,
   maxLcovBytes: 8 * 1024 * 1024,
-  maxLineRecords: 1_000_000,
+  maxLineRecords: 500_000,
+  maxBranchRecords: 500_000,
+  maxFunctionRecords: 500_000,
   maxPathBytes: 16 * 1024,
 } as const;
 
@@ -22,12 +24,17 @@ export interface JsTestFileCoverage {
   readonly path: string;
   readonly lines: readonly JsTestCoverageLine[];
   readonly summary: JsTestCoverageMetric;
+  readonly branches: JsTestCoverageMetric;
+  readonly functions: JsTestCoverageMetric;
   readonly firstUncoveredLine: number | null;
 }
 
 export interface JsTestCoverageReport {
   readonly summary: JsTestCoverageMetric;
+  readonly branches: JsTestCoverageMetric;
+  readonly functions: JsTestCoverageMetric;
   readonly files: readonly JsTestFileCoverage[];
+  readonly truncated: boolean;
 }
 
 export type JsTestCoverageResponse =
@@ -42,10 +49,11 @@ export interface LcovParseLimits {
   readonly maxFiles?: number;
   readonly maxLcovBytes?: number;
   readonly maxLineRecords?: number;
+  readonly maxBranchRecords?: number;
+  readonly maxFunctionRecords?: number;
   readonly maxPathBytes?: number;
 }
 
-/** Parses line coverage only. Malformed, oversized, or out-of-workspace data is rejected. */
 export function parseLcovReport(
   source: string,
   workspaceRoot: string,
@@ -63,6 +71,16 @@ export function parseLcovReport(
       JS_TEST_COVERAGE_LIMITS.maxLineRecords,
       "maxLineRecords",
     ),
+    maxBranchRecords: positiveLimit(
+      limits.maxBranchRecords,
+      JS_TEST_COVERAGE_LIMITS.maxBranchRecords,
+      "maxBranchRecords",
+    ),
+    maxFunctionRecords: positiveLimit(
+      limits.maxFunctionRecords,
+      JS_TEST_COVERAGE_LIMITS.maxFunctionRecords,
+      "maxFunctionRecords",
+    ),
     maxPathBytes: positiveLimit(
       limits.maxPathBytes,
       JS_TEST_COVERAGE_LIMITS.maxPathBytes,
@@ -73,11 +91,14 @@ export function parseLcovReport(
     throw invalidLcov(`input exceeds ${resolvedLimits.maxLcovBytes} UTF-8 bytes`);
   }
 
-  const files = new Map<string, Map<number, number>>();
+  const files = new Map<string, MutableFileCoverage>();
   let currentPath: string | null = null;
-  let currentLines: Map<number, number> | null = null;
+  let currentFile: MutableFileCoverage | null = null;
   let recordOpen = false;
   let lineRecords = 0;
+  let branchRecords = 0;
+  let functionRecords = 0;
+  let truncated = false;
 
   for (const [index, rawLine] of source.split(/\r?\n/).entries()) {
     const lineNumber = index + 1;
@@ -92,19 +113,23 @@ export function parseLcovReport(
         resolvedLimits.maxPathBytes,
         `line ${lineNumber}`,
       );
-      currentLines = files.get(currentPath) ?? new Map<number, number>();
+      currentFile = files.get(currentPath) ?? {
+        branches: new Map<string, number>(),
+        functions: new Map<string, number>(),
+        lines: new Map<number, number>(),
+      };
       if (!files.has(currentPath)) {
         if (files.size >= resolvedLimits.maxFiles) {
           throw invalidLcov(`report exceeds ${resolvedLimits.maxFiles} files`);
         }
-        files.set(currentPath, currentLines);
+        files.set(currentPath, currentFile);
       }
       recordOpen = true;
       continue;
     }
 
     if (line.startsWith("DA:")) {
-      if (!recordOpen || !currentLines) {
+      if (!recordOpen || !currentFile) {
         throw invalidLcov(`line ${lineNumber}: DA appears outside an SF record`);
       }
       if (++lineRecords > resolvedLimits.maxLineRecords) {
@@ -116,23 +141,75 @@ export function parseLcovReport(
       }
       const coveredLine = positiveSafeInteger(fields[0], `line ${lineNumber}: DA line`);
       const hits = nonNegativeSafeInteger(fields[1], `line ${lineNumber}: DA hits`);
-      const previousHits = currentLines.get(coveredLine) ?? 0;
-      if (previousHits > Number.MAX_SAFE_INTEGER - hits) {
-        throw invalidLcov(`line ${lineNumber}: accumulated hit count is unsafe`);
+      addHits(currentFile.lines, coveredLine, hits, `line ${lineNumber}`);
+      continue;
+    }
+
+    if (line.startsWith("BRDA:")) {
+      if (!recordOpen || !currentFile) {
+        throw invalidLcov(`line ${lineNumber}: BRDA appears outside an SF record`);
       }
-      currentLines.set(coveredLine, previousHits + hits);
+      if (++branchRecords > resolvedLimits.maxBranchRecords) {
+        truncated = true;
+        continue;
+      }
+      const fields = line.slice(5).split(",");
+      if (fields.length !== 4) throw invalidLcov(`line ${lineNumber}: malformed BRDA record`);
+      const coveredLine = positiveSafeInteger(fields[0], `line ${lineNumber}: BRDA line`);
+      const block = nonNegativeSafeInteger(fields[1], `line ${lineNumber}: BRDA block`);
+      const branch = nonNegativeSafeInteger(fields[2], `line ${lineNumber}: BRDA branch`);
+      const hits =
+        fields[3] === "-" ? 0 : nonNegativeSafeInteger(fields[3], `line ${lineNumber}: BRDA hits`);
+      addHits(
+        currentFile.branches,
+        `${coveredLine}:${block}:${branch}`,
+        hits,
+        `line ${lineNumber}`,
+      );
+      continue;
+    }
+
+    if (line.startsWith("FN:")) {
+      if (!recordOpen || !currentFile) {
+        throw invalidLcov(`line ${lineNumber}: FN appears outside an SF record`);
+      }
+      if (++functionRecords > resolvedLimits.maxFunctionRecords) {
+        truncated = true;
+        continue;
+      }
+      const fields = splitOnce(line.slice(3));
+      positiveSafeInteger(fields?.[0], `line ${lineNumber}: FN line`);
+      const name = fields?.[1];
+      if (!name) throw invalidLcov(`line ${lineNumber}: malformed FN record`);
+      currentFile.functions.set(name, currentFile.functions.get(name) ?? 0);
+      continue;
+    }
+
+    if (line.startsWith("FNDA:")) {
+      if (!recordOpen || !currentFile) {
+        throw invalidLcov(`line ${lineNumber}: FNDA appears outside an SF record`);
+      }
+      if (++functionRecords > resolvedLimits.maxFunctionRecords) {
+        truncated = true;
+        continue;
+      }
+      const fields = splitOnce(line.slice(5));
+      const hits = nonNegativeSafeInteger(fields?.[0], `line ${lineNumber}: FNDA hits`);
+      const name = fields?.[1];
+      if (!name) throw invalidLcov(`line ${lineNumber}: malformed FNDA record`);
+      addHits(currentFile.functions, name, hits, `line ${lineNumber}`);
       continue;
     }
 
     if (line === "end_of_record") {
       if (!recordOpen) throw invalidLcov(`line ${lineNumber}: unexpected end_of_record`);
       currentPath = null;
-      currentLines = null;
+      currentFile = null;
       recordOpen = false;
       continue;
     }
 
-    if (!recordOpen || !isIgnoredLcovRecord(line)) {
+    if (!recordOpen || !isSummaryLcovRecord(line, lineNumber)) {
       throw invalidLcov(`line ${lineNumber}: unsupported record`);
     }
   }
@@ -140,13 +217,16 @@ export function parseLcovReport(
 
   const resultFiles = [...files.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([path, byLine]) => fileCoverage(path, byLine));
+    .map(([path, file]) => fileCoverage(path, file));
   return {
     files: resultFiles,
     summary: coverageMetric(
       resultFiles.reduce((sum, file) => sum + file.summary.covered, 0),
       resultFiles.reduce((sum, file) => sum + file.summary.total, 0),
     ),
+    branches: aggregateMetric(resultFiles, "branches"),
+    functions: aggregateMetric(resultFiles, "functions"),
+    truncated,
   };
 }
 
@@ -158,8 +238,8 @@ export function coverageMetric(covered: number, total: number): JsTestCoverageMe
   return { covered, total, percentage: total === 0 ? null : (covered / total) * 100 };
 }
 
-function fileCoverage(path: string, byLine: Map<number, number>): JsTestFileCoverage {
-  const lines = [...byLine.entries()]
+function fileCoverage(path: string, file: MutableFileCoverage): JsTestFileCoverage {
+  const lines = [...file.lines.entries()]
     .sort(([left], [right]) => left - right)
     .map(([lineNumber, hits]) => ({ lineNumber, hits }));
   const covered = lines.filter((line) => line.hits > 0).length;
@@ -167,8 +247,24 @@ function fileCoverage(path: string, byLine: Map<number, number>): JsTestFileCove
     path,
     lines,
     summary: coverageMetric(covered, lines.length),
+    branches: mapMetric(file.branches),
+    functions: mapMetric(file.functions),
     firstUncoveredLine: lines.find((line) => line.hits === 0)?.lineNumber ?? null,
   };
+}
+
+function aggregateMetric(
+  files: readonly JsTestFileCoverage[],
+  key: "branches" | "functions",
+): JsTestCoverageMetric {
+  return coverageMetric(
+    files.reduce((sum, file) => sum + file[key].covered, 0),
+    files.reduce((sum, file) => sum + file[key].total, 0),
+  );
+}
+
+function mapMetric<K>(entries: Map<K, number>): JsTestCoverageMetric {
+  return coverageMetric([...entries.values()].filter((hits) => hits > 0).length, entries.size);
 }
 
 function normalizedCoveragePath(
@@ -196,8 +292,24 @@ function normalizedCoveragePath(
   return relative;
 }
 
-function isIgnoredLcovRecord(line: string): boolean {
-  return /^(?:FN|FNDA|FNF|FNH|BRDA|BRF|BRH|LF|LH):/.test(line);
+function isSummaryLcovRecord(line: string, lineNumber: number): boolean {
+  const match = /^(?:FNF|FNH|BRF|BRH|LF|LH):(.*)$/.exec(line);
+  if (!match) return false;
+  nonNegativeSafeInteger(match[1], `line ${lineNumber}: summary count`);
+  return true;
+}
+
+function addHits<K>(entries: Map<K, number>, key: K, hits: number, location: string): void {
+  const previousHits = entries.get(key) ?? 0;
+  if (previousHits > Number.MAX_SAFE_INTEGER - hits) {
+    throw invalidLcov(`${location}: accumulated hit count is unsafe`);
+  }
+  entries.set(key, previousHits + hits);
+}
+
+function splitOnce(value: string): readonly [string, string] | null {
+  const separator = value.indexOf(",");
+  return separator < 0 ? null : [value.slice(0, separator), value.slice(separator + 1)];
 }
 
 function positiveLimit(value: number | undefined, fallback: number, name: string): number {
@@ -236,4 +348,10 @@ function utf8ByteLength(value: string): number {
 
 function invalidLcov(message: string): TypeError {
   return new TypeError(`Invalid LCOV report: ${message}.`);
+}
+
+interface MutableFileCoverage {
+  readonly branches: Map<string, number>;
+  readonly functions: Map<string, number>;
+  readonly lines: Map<number, number>;
 }

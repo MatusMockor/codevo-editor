@@ -189,6 +189,8 @@ function defaultProps(): WorkbenchScriptsTasksPanelProps {
       error: null,
       output: [],
       occupied: false,
+      problemNotices: [],
+      problems: null,
       running: false,
       start: vi.fn(async () => true),
       startAndWait: vi.fn(async () => ({ status: "exited" as const, exitCode: 0 })),

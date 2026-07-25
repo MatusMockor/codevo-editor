@@ -6,7 +6,10 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::{Child, ExitStatus},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 
 mod managed_javascript_typescript {
@@ -15,6 +18,8 @@ mod managed_javascript_typescript {
     }
 }
 
+#[path = "../src/node_package_problem_matcher.rs"]
+mod node_package_problem_matcher;
 #[path = "../src/process_task_plan.rs"]
 mod process_task_plan;
 #[path = "../src/process_task_resolver.rs"]
@@ -59,6 +64,8 @@ mod workspace_registry {
     pub struct WorkspaceRegistry {
         descriptor: ManagedWorkspaceDescriptor,
         operations: Mutex<()>,
+        remove_root_on_clone: Option<usize>,
+        root_clone_count: AtomicUsize,
     }
 
     impl WorkspaceRegistry {
@@ -70,6 +77,15 @@ mod workspace_registry {
                     canonical_root_path: root,
                 },
                 operations: Mutex::new(()),
+                remove_root_on_clone: None,
+                root_clone_count: AtomicUsize::new(0),
+            }
+        }
+
+        pub fn removing_root_on_clone(root: PathBuf, clone_number: usize) -> Self {
+            Self {
+                remove_root_on_clone: Some(clone_number),
+                ..Self::new(root)
             }
         }
 
@@ -106,7 +122,12 @@ mod workspace_registry {
 
         pub(crate) fn clone_root(&self, workspace_id: &WorkspaceId) -> io::Result<File> {
             self.descriptor(workspace_id)?;
-            File::open(&self.descriptor.canonical_root_path)
+            let root = File::open(&self.descriptor.canonical_root_path)?;
+            let clone_number = self.root_clone_count.fetch_add(1, Ordering::Relaxed) + 1;
+            if self.remove_root_on_clone == Some(clone_number) {
+                fs::remove_dir_all(&self.descriptor.canonical_root_path)?;
+            }
+            Ok(root)
         }
     }
 
@@ -140,6 +161,10 @@ mod workspace_registry {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a file"));
         }
         Ok(path)
+    }
+
+    pub(crate) fn open_file_relative_to(root: &File, relative_path: &Path) -> io::Result<File> {
+        File::open(opened_root_path(root)?.join(relative_path))
     }
 
     #[cfg(target_os = "macos")]
@@ -254,6 +279,90 @@ fn tasks_bytes(command: &str) -> Vec<u8> {
         r#"{{"version":"2.0.0","tasks":[{{"label":"test","type":"process","command":"{command}"}}]}}"#
     )
     .into_bytes()
+}
+
+#[test]
+fn authoritative_task_revision_attaches_only_a_supported_problem_matcher() {
+    let root = fixture_root("problem-matcher");
+    let executable = root.join("task");
+    fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    let mut permissions = fs::metadata(&executable).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o700);
+    fs::set_permissions(&executable, permissions).unwrap();
+    let bytes = br#"{"version":"2.0.0","tasks":[{"label":"test","type":"process","command":"./task","problemMatcher":"$tsc"}]}"#;
+    fs::write(root.join(".vscode/tasks.json"), bytes).unwrap();
+
+    let registry = WorkspaceRegistry::new(root.clone());
+    let terminals = TerminalSupervisor {
+        expected_session: 7,
+        expected_root: root.clone(),
+    };
+    let trust = Mutex::new(WorkspaceTrustService { trusted: true });
+    let request = SpawnProcessTaskRequest {
+        owner: ProcessTaskOwner {
+            workspace_id: registry
+                .descriptor(&workspace_registry::WorkspaceId("workspace".into()))
+                .unwrap()
+                .workspace_id,
+            workspace_root: root.clone(),
+            terminal_session_id: 7,
+        },
+        config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
+        label: "test".to_string(),
+    };
+    let mut spawned = ProcessTaskRuntime::new(&registry, &trust, &terminals)
+        .prepare_and_spawn(&request)
+        .expect("spawn supported matcher task");
+    assert!(spawned.problem_matcher.is_some());
+    assert!(finish_process_task(&terminals, &mut spawned)
+        .expect("finish matcher task")
+        .success());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn supported_matcher_fails_closed_when_retained_root_disappears_before_construction() {
+    let root = fixture_root("problem-matcher-retained-root");
+    let executable = root.join("task");
+    let marker = root.join("spawned");
+    fs::write(
+        &executable,
+        format!("#!/bin/sh\n/usr/bin/touch '{}'\n", marker.display()),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&executable).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o700);
+    fs::set_permissions(&executable, permissions).unwrap();
+    let bytes = br#"{"version":"2.0.0","tasks":[{"label":"test","type":"process","command":"./task","problemMatcher":"$tsc"}]}"#;
+    fs::write(root.join(".vscode/tasks.json"), bytes).unwrap();
+
+    let registry = WorkspaceRegistry::removing_root_on_clone(root.clone(), 3);
+    let terminals = TerminalSupervisor {
+        expected_session: 7,
+        expected_root: root.clone(),
+    };
+    let trust = Mutex::new(WorkspaceTrustService { trusted: true });
+    let request = SpawnProcessTaskRequest {
+        owner: ProcessTaskOwner {
+            workspace_id: registry
+                .descriptor(&workspace_registry::WorkspaceId("workspace".into()))
+                .unwrap()
+                .workspace_id,
+            workspace_root: root,
+            terminal_session_id: 7,
+        },
+        config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
+        label: "test".to_string(),
+    };
+
+    let error =
+        match ProcessTaskRuntime::new(&registry, &trust, &terminals).prepare_and_spawn(&request) {
+            Ok(_) => panic!("supported matcher must fail closed"),
+            Err(error) => error,
+        };
+    assert!(error.contains("InvalidPath(\"workspace root\")"));
+    assert!(!marker.exists());
 }
 
 #[test]

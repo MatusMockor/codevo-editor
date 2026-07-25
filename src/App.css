@@ -2518,6 +2518,14 @@ button {
   background: color-mix(in srgb, #e05d68 9%, transparent);
 }
 
+.monaco-editor .js-test-coverage-hit-count {
+  margin-left: 1.25ch;
+  color: var(--color-text-muted);
+  font-style: italic;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
 .monaco-editor .coverage-gutter {
   width: 3px !important;
   margin-left: 4px;

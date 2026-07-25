@@ -1,4 +1,9 @@
-use crate::workspace_registry::WorkspaceId;
+use crate::{
+    node_package_problem_matcher::{
+        NodePackageProblem, NodePackageProblemSeverity, NodePackageProblemSource,
+    },
+    workspace_registry::WorkspaceId,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -37,6 +42,12 @@ pub(crate) enum VscodeProcessTaskEvent {
         index: u16,
         total: u16,
     },
+    Problems {
+        owner: VscodeProcessTaskOwner,
+        sequence: u32,
+        #[serde(flatten)]
+        state: VscodeProcessTaskProblemsState,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -58,6 +69,53 @@ pub(crate) enum VscodeProcessTaskStatus {
         message: String,
     },
     Stopped,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VscodeProcessTaskProblemWire {
+    pub(crate) file_path: String,
+    pub(crate) line_number: u32,
+    pub(crate) column: u32,
+    pub(crate) severity: &'static str,
+    pub(crate) message: String,
+    pub(crate) code: Option<String>,
+    pub(crate) source: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub(crate) enum VscodeProcessTaskProblemsState {
+    Reset,
+    Append {
+        problems: Vec<VscodeProcessTaskProblemWire>,
+        total: u32,
+        truncated: bool,
+    },
+    Complete {
+        problems: Vec<VscodeProcessTaskProblemWire>,
+        total: u32,
+        truncated: bool,
+    },
+    Clear,
+}
+
+pub(crate) fn problem_wire(problem: NodePackageProblem) -> VscodeProcessTaskProblemWire {
+    VscodeProcessTaskProblemWire {
+        file_path: problem.file_path,
+        line_number: problem.line_number,
+        column: problem.column,
+        severity: match problem.severity {
+            NodePackageProblemSeverity::Error => "error",
+            NodePackageProblemSeverity::Warning => "warning",
+        },
+        message: problem.message,
+        code: problem.code,
+        source: match problem.source {
+            NodePackageProblemSource::TypeScript => "TypeScript",
+            NodePackageProblemSource::Eslint => "ESLint",
+        },
+    }
 }
 
 pub(crate) trait VscodeProcessTaskEventSink: Send + Sync {
@@ -176,5 +234,75 @@ mod tests {
                 "total": 2,
             })
         );
+    }
+
+    #[test]
+    fn problem_states_have_exact_flattened_shapes() {
+        let reset = serde_json::to_value(VscodeProcessTaskEvent::Problems {
+            owner: owner(),
+            sequence: 1,
+            state: VscodeProcessTaskProblemsState::Reset,
+        })
+        .expect("serialize reset event");
+        assert_eq!(
+            reset,
+            json!({
+                "kind": "problems",
+                "owner": {
+                    "runId": "run-1",
+                    "workspaceId": "workspace-1",
+                    "sessionId": 7,
+                    "label": "typecheck",
+                    "configRevision": format!("sha256:{}", "a".repeat(64)),
+                },
+                "sequence": 1,
+                "state": "reset",
+            })
+        );
+
+        let complete = serde_json::to_value(VscodeProcessTaskEvent::Problems {
+            owner: owner(),
+            sequence: 4,
+            state: VscodeProcessTaskProblemsState::Complete {
+                problems: vec![VscodeProcessTaskProblemWire {
+                    file_path: "/workspace/src/main.ts".to_string(),
+                    line_number: 2,
+                    column: 4,
+                    severity: "error",
+                    message: "Type mismatch".to_string(),
+                    code: Some("TS2322".to_string()),
+                    source: "TypeScript",
+                }],
+                total: 1,
+                truncated: false,
+            },
+        })
+        .expect("serialize complete event");
+        assert_eq!(complete["kind"], "problems");
+        assert_eq!(complete["state"], "complete");
+        assert_eq!(
+            complete["problems"][0]["filePath"],
+            "/workspace/src/main.ts"
+        );
+        assert_eq!(complete["problems"][0]["source"], "TypeScript");
+        assert_eq!(complete["total"], 1);
+        assert_eq!(complete["truncated"], false);
+
+        for state in [
+            VscodeProcessTaskProblemsState::Append {
+                problems: Vec::new(),
+                total: 0,
+                truncated: false,
+            },
+            VscodeProcessTaskProblemsState::Clear,
+        ] {
+            let value = serde_json::to_value(VscodeProcessTaskEvent::Problems {
+                owner: owner(),
+                sequence: 2,
+                state,
+            })
+            .expect("serialize problems event");
+            assert_eq!(value["kind"], "problems");
+        }
     }
 }

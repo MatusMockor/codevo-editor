@@ -2,8 +2,9 @@
 mod vscode_process_tasks;
 
 use vscode_process_tasks::{
-    vscode_tasks_config_revision, ProcessTaskGroup, VscodeTaskDiagnosticCode,
-    VscodeTasksConfigError, VscodeTasksParser, MAX_VSCODE_TASKS_CONFIG_BYTES,
+    vscode_tasks_config_revision, ProcessTaskGroup, ProcessTaskProblemMatcher,
+    VscodeTaskDiagnosticCode, VscodeTasksConfigError, VscodeTasksParser,
+    MAX_VSCODE_TASKS_CONFIG_BYTES,
 };
 
 #[test]
@@ -92,9 +93,14 @@ fn reports_unsupported_and_invalid_tasks_without_rejecting_valid_siblings() {
       ]
     }"#;
     let parsed = VscodeTasksParser::parse(source).expect("root remains valid");
-    assert_eq!(parsed.tasks.len(), 1);
+    assert_eq!(parsed.tasks.len(), 2);
     assert_eq!(parsed.tasks[0].label, "ok");
-    assert_eq!(parsed.diagnostics.len(), 5);
+    assert_eq!(parsed.tasks[1].label, "custom");
+    assert_eq!(
+        parsed.tasks[1].problem_matcher,
+        ProcessTaskProblemMatcher::Unsupported
+    );
+    assert_eq!(parsed.diagnostics.len(), 4);
     assert_eq!(
         parsed.diagnostics[0].code,
         VscodeTaskDiagnosticCode::UnsupportedTask

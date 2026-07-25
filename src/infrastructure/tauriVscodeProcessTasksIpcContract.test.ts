@@ -38,6 +38,7 @@ const snapshot = {
       source: ".vscode/tasks.json",
       executable: true,
       dependsOn: ["Generate"],
+      problemMatcher: "typescript",
     },
     {
       label: "Unsupported shell",
@@ -46,6 +47,7 @@ const snapshot = {
       source: ".vscode/tasks.json",
       executable: false,
       dependsOn: [],
+      problemMatcher: null,
     },
     {
       label: "Generate",
@@ -54,6 +56,7 @@ const snapshot = {
       source: ".vscode/tasks.json",
       executable: true,
       dependsOn: [],
+      problemMatcher: "eslint",
     },
   ],
   diagnostics: [{ severity: "warning", message: "Shell tasks are not executable." }],
@@ -106,6 +109,9 @@ describe("VS Code process tasks IPC contract", () => {
     { ...snapshot, tasks: "bad" },
     { ...snapshot, tasks: [...snapshot.tasks, { ...snapshot.tasks[0] }] },
     { ...snapshot, tasks: [{ ...snapshot.tasks[0], command: "tsc" }] },
+    { ...snapshot, tasks: [{ ...snapshot.tasks[0], problemMatcher: "$tsc" }] },
+    { ...snapshot, tasks: [{ ...snapshot.tasks[0], problemMatcher: "unknown" }] },
+    { ...snapshot, tasks: [{ ...snapshot.tasks[0], problemMatcher: undefined }] },
     {
       ...snapshot,
       tasks: [{ ...snapshot.tasks[0], dependsOn: undefined }],
@@ -290,6 +296,127 @@ describe("VS Code process tasks IPC contract", () => {
     expect(Object.isFrozen(output.owner)).toBe(true);
     expect(Object.isFrozen(step)).toBe(true);
     expect(Object.isFrozen(step.owner)).toBe(true);
+  });
+
+  it("decodes strict bounded problems events", () => {
+    const problem = {
+      filePath: "/workspace/src/index.ts",
+      lineNumber: 3,
+      column: 5,
+      severity: "error",
+      message: "No overload",
+      code: "TS2769",
+      source: "TypeScript",
+    };
+    const reset = decodeVscodeProcessTaskEvent({
+      kind: "problems",
+      owner,
+      sequence: 1,
+      state: "reset",
+    });
+    const append = decodeVscodeProcessTaskEvent({
+      kind: "problems",
+      owner,
+      sequence: 2,
+      state: "append",
+      problems: [problem],
+      total: 1,
+      truncated: false,
+    });
+
+    expect(reset).toEqual({ kind: "problems", owner, sequence: 1, state: "reset" });
+    expect(append).toEqual({
+      kind: "problems",
+      owner,
+      sequence: 2,
+      state: "append",
+      problems: [problem],
+      total: 1,
+      truncated: false,
+    });
+    expect(Object.isFrozen(append)).toBe(true);
+    expect(Object.isFrozen("problems" in append ? append.problems : null)).toBe(true);
+  });
+
+  it.each([
+    { kind: "problems", owner, sequence: 1, state: "unknown" },
+    { kind: "problems", owner, sequence: 1, state: "reset", problems: [] },
+    {
+      kind: "problems",
+      owner,
+      sequence: 1,
+      state: "append",
+      problems: [
+        {
+          filePath: "/workspace/index.ts",
+          lineNumber: 1,
+          column: 1,
+          severity: "error",
+          message: "bad",
+          code: null,
+          source: "TypeScript",
+        },
+      ],
+      total: 0,
+      truncated: false,
+    },
+    {
+      kind: "problems",
+      owner,
+      sequence: 1,
+      state: "complete",
+      problems: [
+        {
+          filePath: "relative.ts",
+          lineNumber: 1,
+          column: 1,
+          severity: "error",
+          message: "bad",
+          code: null,
+          source: "TypeScript",
+        },
+      ],
+      total: 1,
+      truncated: false,
+    },
+    {
+      kind: "problems",
+      owner,
+      sequence: 1,
+      state: "append",
+      problems: Array.from({ length: 33 }, () => ({
+        filePath: "/workspace/index.ts",
+        lineNumber: 1,
+        column: 1,
+        severity: "error",
+        message: "bad",
+        code: null,
+        source: "TypeScript",
+      })),
+      total: 33,
+      truncated: false,
+    },
+    {
+      kind: "problems",
+      owner,
+      sequence: 1,
+      state: "complete",
+      problems: [
+        {
+          filePath: "/workspace/index.ts",
+          lineNumber: 1,
+          column: 1,
+          severity: "error",
+          message: "x".repeat(2_049),
+          code: null,
+          source: "TypeScript",
+        },
+      ],
+      total: 1,
+      truncated: false,
+    },
+  ])("rejects malformed problems events", (event) => {
+    expect(() => decodeVscodeProcessTaskEvent(event)).toThrow(TypeError);
   });
 
   it.each([

@@ -14,6 +14,122 @@ const ownerA: JsTestContinuousRunOwner = {
 };
 
 describe("createJsTestContinuousRunCoordinator", () => {
+  it("with strategy native-watch, enable starts exactly one watch lease and subsequent file changes do not spawn additional runs", async () => {
+    const clock = createClock();
+    const run = vi.fn<(lease: JsTestContinuousRunLease) => Promise<boolean>>(async () => true);
+    const coordinator = createJsTestContinuousRunCoordinator({
+      cancel: vi.fn(async () => true),
+      run,
+      scheduler: clock.scheduler,
+      strategy: "native-watch",
+    });
+
+    expect(coordinator.enable(ownerA, 0)).toBe(true);
+    clock.advance(0);
+    await flush();
+    expect(run).toHaveBeenCalledOnce();
+
+    expect(coordinator.observeChange(ownerA, 1)).toBe(true);
+    expect(coordinator.observeChange(ownerA, 2)).toBe(true);
+    clock.advance(JS_TEST_CONTINUOUS_RUN_DEBOUNCE_MS * 4);
+    await flush();
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(coordinator.snapshot()).toMatchObject({
+      changeVersion: 2,
+      enabled: true,
+      pending: false,
+      running: false,
+    });
+  });
+
+  it("with strategy native-watch, disable cancels the retained exact watch lease", async () => {
+    const clock = createClock();
+    const cancel = vi.fn<(lease: JsTestContinuousRunLease) => Promise<boolean>>(async () => true);
+    const coordinator = createJsTestContinuousRunCoordinator({
+      cancel,
+      run: vi.fn(async () => true),
+      scheduler: clock.scheduler,
+      strategy: "native-watch",
+    });
+
+    expect(coordinator.enable(ownerA, 0)).toBe(true);
+    clock.advance(0);
+    await flush();
+
+    await expect(coordinator.disable(ownerA)).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      owner: ownerA,
+      sequence: 1,
+    });
+    expect(coordinator.snapshot()).toEqual({
+      changeVersion: null,
+      enabled: false,
+      owner: null,
+      pending: false,
+      running: false,
+      stopping: false,
+    });
+  });
+
+  it("with strategy native-watch, a failed stop retains the lease for an exact retry", async () => {
+    const clock = createClock();
+    const cancel = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const coordinator = createJsTestContinuousRunCoordinator({
+      cancel,
+      run: vi.fn(async () => true),
+      scheduler: clock.scheduler,
+      strategy: "native-watch",
+    });
+
+    coordinator.enable(ownerA, 0);
+    clock.advance(0);
+    await flush();
+
+    await expect(coordinator.disable(ownerA)).resolves.toBe(false);
+    expect(coordinator.snapshot()).toMatchObject({
+      enabled: false,
+      owner: ownerA,
+      stopping: true,
+    });
+    await expect(coordinator.disable(ownerA)).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(coordinator.snapshot()).toEqual({
+      changeVersion: null,
+      enabled: false,
+      owner: null,
+      pending: false,
+      running: false,
+      stopping: false,
+    });
+  });
+
+  it("with strategy native-watch, a failed stop during start retains the active lease", async () => {
+    const clock = createClock();
+    const running = deferred<boolean>();
+    const cancel = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const coordinator = createJsTestContinuousRunCoordinator({
+      cancel,
+      run: vi.fn(() => running.promise),
+      scheduler: clock.scheduler,
+      strategy: "native-watch",
+    });
+
+    coordinator.enable(ownerA, 0);
+    clock.advance(0);
+    await expect(coordinator.disable(ownerA)).resolves.toBe(false);
+    running.resolve(true);
+    await flush();
+
+    expect(coordinator.snapshot()).toMatchObject({
+      enabled: false,
+      owner: ownerA,
+      stopping: true,
+    });
+    await expect(coordinator.disable(ownerA)).resolves.toBe(true);
+    expect(cancel).toHaveBeenCalledTimes(2);
+  });
+
   it("starts immediately and keeps an immutable exact lease", async () => {
     const clock = createClock();
     const run = vi.fn<(lease: JsTestContinuousRunLease) => Promise<boolean>>(async () => true);

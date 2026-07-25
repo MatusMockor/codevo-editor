@@ -15,9 +15,14 @@ const report: JsTestCoverageReport = {
       ],
       path: "src/example.ts",
       summary: { covered: 1, percentage: 50, total: 2 },
+      branches: { covered: 0, percentage: null, total: 0 },
+      functions: { covered: 0, percentage: null, total: 0 },
     },
   ],
   summary: { covered: 1, percentage: 50, total: 2 },
+  branches: { covered: 0, percentage: null, total: 0 },
+  functions: { covered: 0, percentage: null, total: 0 },
+  truncated: false,
 };
 
 const selection: ActiveJsTestCoverageDecorationSelection = {

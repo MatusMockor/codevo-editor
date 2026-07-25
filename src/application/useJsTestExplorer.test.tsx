@@ -7,6 +7,7 @@ import type { JsTestGateway, JsTestRunScope } from "../domain/jsTestRunScope";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { TestRunResponse } from "../domain/testResults";
 import type { JsTestTaskGateway } from "../domain/jsTestTask";
+import type { JsTestWatchCommand, JsTestWatchGateway } from "../domain/jsTestCommand";
 import { waitForReact } from "../test/reactTestLifecycle";
 import { useJsTestExplorer, type JsTestExplorerState } from "./useJsTestExplorer";
 
@@ -132,6 +133,166 @@ describe("useJsTestExplorer", () => {
     });
 
     await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    harness.unmount();
+  });
+
+  it("uses one native watch lease and stops its exact owner", async () => {
+    const startWatch = vi.fn<JsTestWatchGateway["startWatch"]>(async (request) => ({
+      owner: {
+        epoch: request.epoch,
+        watchId: request.watchId,
+        workspaceId: request.workspaceId,
+      },
+      structuredResults: "unavailable-in-watch-mode",
+    }));
+    const acknowledgeWatchStart = vi.fn<JsTestWatchGateway["acknowledgeWatchStart"]>(
+      async () => undefined,
+    );
+    const stopWatch = vi.fn<JsTestWatchGateway["stopWatch"]>(async () => undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart,
+      startWatch,
+      stopWatch,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const command: JsTestWatchCommand = {
+      kind: "vitest-watch",
+      packageRootRelativePath: "",
+      scope: { kind: "all" },
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: command,
+      taskGateway: null,
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(startWatch).toHaveBeenCalledOnce());
+    await waitForReact(() => expect(acknowledgeWatchStart).toHaveBeenCalledOnce());
+    harness.set({ continuousRunVersion: 1 });
+    harness.set({ continuousRunVersion: 2 });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+
+    expect(startWatch).toHaveBeenCalledExactlyOnceWith({
+      command,
+      epoch: 1,
+      watchId: "watch-1-1",
+      workspaceId: "workspace-a",
+    });
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    expect(stopWatch).toHaveBeenCalledExactlyOnceWith({
+      epoch: 1,
+      watchId: "watch-1-1",
+      workspaceId: "workspace-a",
+    });
+    harness.unmount();
+  });
+
+  it("keeps a native watch owner fail-closed until stop succeeds", async () => {
+    const stopWatch = vi
+      .fn<JsTestWatchGateway["stopWatch"]>()
+      .mockRejectedValueOnce(new Error("busy"))
+      .mockResolvedValueOnce(undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+      stopWatch,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(harness.hook().continuousRunPending).toBe(false));
+
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(false));
+    expect(harness.hook()).toMatchObject({
+      continuousRunEnabled: false,
+      continuousRunStopping: true,
+    });
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    expect(stopWatch).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("retains an uncertain native watch start until compensation succeeds", async () => {
+    const stopWatch = vi
+      .fn<JsTestWatchGateway["stopWatch"]>()
+      .mockRejectedValueOnce(new Error("transport unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: async () => {
+        throw new Error("uncertain settlement");
+      },
+      stopWatch,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(stopWatch).toHaveBeenCalledTimes(1));
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    expect(stopWatch).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("waits for a pending native start before confirming cancellation", async () => {
+    const start = deferred<Awaited<ReturnType<JsTestWatchGateway["startWatch"]>>>();
+    const stopWatch = vi.fn<JsTestWatchGateway["stopWatch"]>(async () => undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: () => start.promise,
+      stopWatch,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(harness.hook().continuousRunRunning).toBe(true));
+    let stopping!: Promise<boolean>;
+    act(() => {
+      stopping = harness.hook().stopContinuousRun();
+    });
+    await act(async () =>
+      start.resolve({
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+    );
+
+    await expect(stopping).resolves.toBe(true);
+    expect(stopWatch).toHaveBeenCalledExactlyOnceWith({
+      epoch: 1,
+      watchId: "watch-1-1",
+      workspaceId: "workspace-a",
+    });
     harness.unmount();
   });
 
@@ -1393,6 +1554,7 @@ test("same", () => {});`,
 interface ExplorerProps {
   continuousRunBlocked: boolean;
   continuousRunVersion: number;
+  continuousRunWatchCommand: JsTestWatchCommand | null;
   createTaskRunId: (() => string) | null;
   discoveryVersion: number;
   discoveryGateway: WorkspaceTestDiscoveryGateway;
@@ -1402,6 +1564,7 @@ interface ExplorerProps {
   runGateway: JsTestGateway;
   runRequestVersion: number;
   taskGateway: JsTestTaskGateway | null;
+  watchGateway: JsTestWatchGateway | null;
   workspaceId: string | null;
   workspaceTrusted: boolean;
 }
@@ -1412,6 +1575,7 @@ function renderExplorer(overrides: Partial<ExplorerProps> = {}) {
   let props: ExplorerProps = {
     continuousRunBlocked: false,
     continuousRunVersion: 0,
+    continuousRunWatchCommand: null,
     discoveryVersion: 0,
     createTaskRunId: (() => {
       let next = 0;
@@ -1424,6 +1588,7 @@ function renderExplorer(overrides: Partial<ExplorerProps> = {}) {
     runGateway: { run: vi.fn(async () => ok([])) },
     runRequestVersion: 0,
     taskGateway: null,
+    watchGateway: null,
     workspaceId: "workspace-a",
     workspaceTrusted: true,
     ...overrides,

@@ -7,6 +7,13 @@ import type {
 } from "../domain/vscodeProcessTasks";
 import { vscodeProcessTaskOwnersEqual } from "../domain/vscodeProcessTasks";
 import { vscodeProcessTaskDependencyPlan } from "../domain/vscodeProcessTaskDependencyPlan";
+import {
+  MAX_NODE_PACKAGE_TASK_PROBLEM_CODE_BYTES,
+  MAX_NODE_PACKAGE_TASK_PROBLEM_MESSAGE_BYTES,
+  MAX_NODE_PACKAGE_TASK_PROBLEMS,
+  MAX_NODE_PACKAGE_TASK_PROBLEMS_PER_EVENT,
+  type NodePackageTaskProblem,
+} from "../domain/nodePackageTaskProblems";
 
 export const DISCOVER_VSCODE_PROCESS_TASKS_IPC_COMMAND =
   "workspace_discover_vscode_process_tasks" as const;
@@ -92,8 +99,9 @@ export function decodeVscodeProcessTaskEvent(value: unknown): VscodeProcessTaskE
   const event = record(value, "event");
   if (event.kind === "output") return parseOutputEvent(event);
   if (event.kind === "step") return parseStepEvent(event);
+  if (event.kind === "problems") return parseProblemsEvent(event);
   if (event.kind === "status") return parseStatusEvent(event);
-  return invalid("event.kind", "output, step, or status");
+  return invalid("event.kind", "output, step, problems, or status");
 }
 
 export function parseVscodeProcessTasksSnapshot(value: unknown): VscodeProcessTasksSnapshot {
@@ -141,7 +149,11 @@ export function parseVscodeProcessTasksSnapshot(value: unknown): VscodeProcessTa
 
 function parseTask(value: unknown, path: string): VscodeProcessTaskDisplay {
   const task = record(value, path);
-  exactKeys(task, ["label", "detail", "group", "source", "executable", "dependsOn"], path);
+  exactKeys(
+    task,
+    ["label", "detail", "group", "source", "executable", "dependsOn", "problemMatcher"],
+    path,
+  );
   if (task.group !== "build" && task.group !== "test" && task.group !== "none") {
     invalid(`${path}.group`, "build, test, or none");
   }
@@ -167,6 +179,7 @@ function parseTask(value: unknown, path: string): VscodeProcessTaskDisplay {
     source: displayText(task.source, `${path}.source`, 256, false),
     executable: strictBoolean(task.executable, `${path}.executable`),
     dependsOn: Object.freeze(dependsOn),
+    problemMatcher: problemMatcher(task.problemMatcher, `${path}.problemMatcher`),
   });
 }
 
@@ -212,6 +225,85 @@ function parseStepEvent(event: Record<string, unknown>): VscodeProcessTaskEvent 
     label: label(event.label, "event.label"),
     index,
     total,
+  });
+}
+
+function parseProblemsEvent(event: Record<string, unknown>): VscodeProcessTaskEvent {
+  const state = event.state;
+  if (state !== "reset" && state !== "append" && state !== "complete" && state !== "clear") {
+    invalid("event.state", "reset, append, complete, or clear");
+  }
+  const withProblems = state === "append" || state === "complete";
+  exactKeys(
+    event,
+    withProblems
+      ? ["kind", "owner", "sequence", "state", "problems", "total", "truncated"]
+      : ["kind", "owner", "sequence", "state"],
+    "event",
+  );
+  const base = {
+    kind: "problems" as const,
+    owner: validateOwner(event.owner, "event.owner"),
+    sequence: eventSequence(event.sequence, "event.sequence"),
+  };
+  if (state === "reset" || state === "clear") return Object.freeze({ ...base, state });
+  if (!Array.isArray(event.problems)) invalid("event.problems", "an array");
+  const maximum =
+    state === "complete"
+      ? MAX_NODE_PACKAGE_TASK_PROBLEMS
+      : MAX_NODE_PACKAGE_TASK_PROBLEMS_PER_EVENT;
+  if (event.problems.length > maximum) {
+    invalid("event.problems", `at most ${maximum} entries`);
+  }
+  const problems = Object.freeze(
+    event.problems.map((problem, index) => parseProblem(problem, `event.problems[${index}]`)),
+  );
+  const total = unsignedU32(event.total, "event.total");
+  const truncated = strictBoolean(event.truncated, "event.truncated");
+  if (total < problems.length) {
+    invalid("event.total", "a count at least as large as the event problem count");
+  }
+  if (state === "complete" && !truncated && total !== problems.length) {
+    invalid("event.total", "the complete snapshot size, or a larger truncated total");
+  }
+  return Object.freeze({ ...base, state, problems, total, truncated });
+}
+
+function parseProblem(value: unknown, path: string): NodePackageTaskProblem {
+  const problem = record(value, path);
+  exactKeys(
+    problem,
+    ["filePath", "lineNumber", "column", "severity", "message", "code", "source"],
+    path,
+  );
+  if (problem.severity !== "warning" && problem.severity !== "error") {
+    invalid(`${path}.severity`, "warning or error");
+  }
+  if (problem.source !== "TypeScript" && problem.source !== "ESLint") {
+    invalid(`${path}.source`, "TypeScript or ESLint");
+  }
+  return Object.freeze({
+    filePath: absoluteFilePath(problem.filePath, `${path}.filePath`),
+    lineNumber: positiveU32(problem.lineNumber, `${path}.lineNumber`),
+    column: positiveU32(problem.column, `${path}.column`),
+    severity: problem.severity,
+    message: displayText(
+      problem.message,
+      `${path}.message`,
+      MAX_NODE_PACKAGE_TASK_PROBLEM_MESSAGE_BYTES,
+      false,
+      true,
+    ),
+    code:
+      problem.code === null
+        ? null
+        : displayText(
+            problem.code,
+            `${path}.code`,
+            MAX_NODE_PACKAGE_TASK_PROBLEM_CODE_BYTES,
+            false,
+          ),
+    source: problem.source,
   });
 }
 
@@ -284,6 +376,11 @@ async function invokeUnit(
 
 function label(value: unknown, path: string): string {
   return displayText(value, path, 256, false);
+}
+
+function problemMatcher(value: unknown, path: string): "eslint" | "typescript" | null {
+  if (value === null || value === "eslint" || value === "typescript") return value;
+  invalid(path, "eslint, typescript, or null");
 }
 
 function configRevision(value: unknown, path: string): string {
@@ -389,6 +486,26 @@ function signedI32(value: unknown, path: string): number {
     invalid(path, "a signed i32 integer");
   }
   return value as number;
+}
+
+function positiveU32(value: unknown, path: string): number {
+  const result = unsignedU32(value, path);
+  if (result === 0) invalid(path, "a positive u32 integer");
+  return result;
+}
+
+function absoluteFilePath(value: unknown, path: string): string {
+  const candidate = displayText(value, path, 4_096, false);
+  const parts = candidate.replace(/^[A-Za-z]:/, "").split(/[\\/]/);
+  if (
+    (!candidate.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(candidate)) ||
+    candidate.endsWith("/") ||
+    candidate.endsWith("\\") ||
+    parts.some((part, index) => index > 0 && (part === "" || part === "." || part === ".."))
+  ) {
+    invalid(path, "a normalized absolute file path");
+  }
+  return candidate;
 }
 
 function assertEncodedSize(value: unknown, path: string, maximumBytes: number): void {

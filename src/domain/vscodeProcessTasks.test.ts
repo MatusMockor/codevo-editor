@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_VSCODE_PROCESS_TASK_OUTPUT_TOTAL_BYTES,
   reduceVscodeProcessTask,
+  reduceVscodeProcessTaskProblems,
+  vscodeProcessTaskProblemGroupKey,
+  vscodeProcessTaskProblemsToNotices,
   type VscodeProcessTaskEvent,
   type VscodeProcessTaskOwner,
 } from "./vscodeProcessTasks";
@@ -188,6 +191,142 @@ describe("reduceVscodeProcessTask", () => {
     expect(aAgain?.owner).toMatchObject({ runId: "run-2", sessionId: 7 });
     expect(aAgain?.sequence).toBe(0);
     expect(reduceVscodeProcessTask(aAgain, { type: "clear" })).toBeNull();
+  });
+});
+
+describe("VS Code process task problems", () => {
+  const problem = {
+    filePath: "/workspace/src/index.ts",
+    lineNumber: 3,
+    column: 5,
+    severity: "error",
+    message: "No overload",
+    code: "TS2769",
+    source: "TypeScript",
+  } as const;
+
+  it("accepts only monotonic events from the full exact owner", () => {
+    const initial = reduceVscodeProcessTaskProblems(null, { type: "own", owner })!;
+    const appended = reduceVscodeProcessTaskProblems(initial, {
+      type: "event",
+      event: {
+        kind: "problems",
+        owner,
+        sequence: 2,
+        state: "append",
+        problems: [problem],
+        total: 1,
+        truncated: false,
+      },
+    })!;
+
+    expect(appended.problems).toEqual([problem]);
+    expect(
+      reduceVscodeProcessTaskProblems(appended, {
+        type: "event",
+        event: { kind: "problems", owner, sequence: 2, state: "clear" },
+      }),
+    ).toBe(appended);
+    for (const foreignOwner of [
+      { ...owner, runId: "run-2" },
+      { ...owner, workspaceId: "workspace-2" },
+      { ...owner, sessionId: 8 },
+      { ...owner, label: "Test" },
+      { ...owner, configRevision: "revision-2" },
+    ]) {
+      expect(
+        reduceVscodeProcessTaskProblems(appended, {
+          type: "event",
+          event: {
+            kind: "problems",
+            owner: foreignOwner,
+            sequence: 3,
+            state: "clear",
+          },
+        }),
+      ).toBe(appended);
+    }
+  });
+
+  it("uses complete as an authoritative bounded snapshot", () => {
+    const initial = reduceVscodeProcessTaskProblems(null, { type: "own", owner })!;
+    const complete = reduceVscodeProcessTaskProblems(initial, {
+      type: "event",
+      event: {
+        kind: "problems",
+        owner,
+        sequence: 9,
+        state: "complete",
+        problems: [problem],
+        total: 1,
+        truncated: false,
+      },
+    })!;
+
+    expect(complete).toMatchObject({ sequence: 9, complete: true, problems: [problem] });
+    expect(
+      reduceVscodeProcessTaskProblems(complete, {
+        type: "event",
+        event: {
+          kind: "problems",
+          owner,
+          sequence: 10,
+          state: "append",
+          problems: [problem],
+          total: 2,
+          truncated: false,
+        },
+      }),
+    ).toMatchObject({ sequence: 10, complete: true, problems: [problem] });
+  });
+
+  it("projects only retained-root paths under a collision-resistant exact-owner group", () => {
+    const state = {
+      owner,
+      sequence: 2,
+      problems: [problem, { ...problem, filePath: "/outside/index.ts" }],
+      total: 2,
+      truncated: false,
+      complete: true,
+    } as const;
+
+    const notices = vscodeProcessTaskProblemsToNotices(state, "/workspace");
+
+    expect(vscodeProcessTaskProblemGroupKey(owner)).toContain(
+      "node-package-task-problems:workspace-1:run-1:7:Build:revision-1",
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      groupKey: vscodeProcessTaskProblemGroupKey(owner),
+      source: "TypeScript",
+      navigationTarget: { path: problem.filePath, range: { start: { lineNumber: 3, column: 5 } } },
+    });
+  });
+
+  it("caps retained state and projected notices truthfully", () => {
+    const initial = reduceVscodeProcessTaskProblems(null, { type: "own", owner })!;
+    const problems = Array.from({ length: 257 }, (_, index) => ({
+      ...problem,
+      filePath: `/workspace/src/file-${index}.ts`,
+    }));
+    const complete = reduceVscodeProcessTaskProblems(initial, {
+      type: "event",
+      event: {
+        kind: "problems",
+        owner,
+        sequence: 1,
+        state: "complete",
+        problems,
+        total: problems.length,
+        truncated: false,
+      },
+    })!;
+    const notices = vscodeProcessTaskProblemsToNotices(complete, "/workspace");
+
+    expect(complete.problems).toHaveLength(256);
+    expect(complete.truncated).toBe(true);
+    expect(notices).toHaveLength(101);
+    expect(notices[notices.length - 1]).toMatchObject({ kind: "overflow", severity: "info" });
   });
 });
 

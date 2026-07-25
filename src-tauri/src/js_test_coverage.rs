@@ -17,6 +17,8 @@ const COVERAGE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_LCOV_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_COVERAGE_FILES: usize = 20_000;
 const MAX_COVERAGE_LINES: usize = 500_000;
+const MAX_BRANCH_RECORDS: usize = 500_000;
+const MAX_FUNCTION_RECORDS: usize = 500_000;
 const MAX_WIRE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_PATH_BYTES: usize = 16 * 1024;
 const COVERAGE_SUBDIRECTORY: &str = "js-test-coverage";
@@ -34,7 +36,10 @@ pub enum JsTestCoverageResponse {
 #[serde(rename_all = "camelCase")]
 pub struct JsTestCoverageReport {
     pub summary: JsTestCoverageMetric,
+    pub branches: JsTestCoverageMetric,
+    pub functions: JsTestCoverageMetric,
     pub files: Vec<JsTestCoverageFile>,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -51,6 +56,8 @@ pub struct JsTestCoverageFile {
     pub path: String,
     pub lines: Vec<JsTestCoverageLine>,
     pub summary: JsTestCoverageMetric,
+    pub branches: JsTestCoverageMetric,
+    pub functions: JsTestCoverageMetric,
     pub first_uncovered_line: Option<u64>,
 }
 
@@ -218,10 +225,22 @@ fn parse_lcov_file(root: &Path, path: &Path) -> Result<JsTestCoverageReport, Str
 }
 
 fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String> {
+    parse_lcov_with_record_limits(root, source, MAX_BRANCH_RECORDS, MAX_FUNCTION_RECORDS)
+}
+
+fn parse_lcov_with_record_limits(
+    root: &Path,
+    source: &str,
+    max_branch_records: usize,
+    max_function_records: usize,
+) -> Result<JsTestCoverageReport, String> {
     let mut files = BTreeMap::<String, FileCounts>::new();
     let mut current_path: Option<String> = None;
     let mut current = FileCounts::default();
     let mut line_entries = 0usize;
+    let mut branch_records = 0usize;
+    let mut function_records = 0usize;
+    let mut truncated = false;
     for line in source.lines() {
         if line.is_empty() || line.starts_with("TN:") {
             continue;
@@ -251,11 +270,8 @@ fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String>
             {
                 return Err("JavaScript coverage report has an invalid DA record.".to_string());
             }
-            let line_number = count(fields[0], "DA line")?;
+            let line_number = positive_count(fields[0], "DA line")?;
             let hits = count(fields[1], "DA hits")?;
-            if line_number == 0 {
-                return Err("JavaScript coverage report contains line number zero.".to_string());
-            }
             line_entries = line_entries.saturating_add(1);
             if line_entries > MAX_COVERAGE_LINES {
                 return Err(format!(
@@ -263,6 +279,79 @@ fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String>
                 ));
             }
             add_line_hits(&mut current.lines, line_number, hits)?;
+        } else if let Some(value) = line.strip_prefix("BRDA:") {
+            if current_path.is_none() {
+                return Err(
+                    "JavaScript coverage report contains a BRDA record outside a source record."
+                        .to_string(),
+                );
+            }
+            branch_records = branch_records.saturating_add(1);
+            if branch_records > max_branch_records {
+                truncated = true;
+                continue;
+            }
+            let fields = value.split(',').collect::<Vec<_>>();
+            if fields.len() != 4 {
+                return Err("JavaScript coverage report has an invalid BRDA record.".to_string());
+            }
+            let line_number = positive_count(fields[0], "BRDA line")?;
+            let block = count(fields[1], "BRDA block")?;
+            let branch = count(fields[2], "BRDA branch")?;
+            let hits = if fields[3] == "-" {
+                0
+            } else {
+                count(fields[3], "BRDA hits")?
+            };
+            add_hits(
+                &mut current.branches,
+                (line_number, block, branch),
+                hits,
+                "branch",
+            )?;
+        } else if let Some(value) = line.strip_prefix("FN:") {
+            if current_path.is_none() {
+                return Err(
+                    "JavaScript coverage report contains an FN record outside a source record."
+                        .to_string(),
+                );
+            }
+            function_records = function_records.saturating_add(1);
+            if function_records > max_function_records {
+                truncated = true;
+                continue;
+            }
+            let (line_number, name) = value.split_once(',').ok_or_else(|| {
+                "JavaScript coverage report has an invalid FN record.".to_string()
+            })?;
+            if positive_count(line_number, "FN line").is_err() || name.is_empty() {
+                return Err("JavaScript coverage report has an invalid FN record.".to_string());
+            }
+            current.functions.entry(name.to_string()).or_insert(0);
+        } else if let Some(value) = line.strip_prefix("FNDA:") {
+            if current_path.is_none() {
+                return Err(
+                    "JavaScript coverage report contains an FNDA record outside a source record."
+                        .to_string(),
+                );
+            }
+            function_records = function_records.saturating_add(1);
+            if function_records > max_function_records {
+                truncated = true;
+                continue;
+            }
+            let (hits, name) = value.split_once(',').ok_or_else(|| {
+                "JavaScript coverage report has an invalid FNDA record.".to_string()
+            })?;
+            if name.is_empty() {
+                return Err("JavaScript coverage report has an invalid FNDA record.".to_string());
+            }
+            add_hits(
+                &mut current.functions,
+                name.to_string(),
+                count(hits, "FNDA hits")?,
+                "function",
+            )?;
         } else if let Some(value) = line.strip_prefix("LF:") {
             let _ = count(value, "LF")?;
         } else if let Some(value) = line.strip_prefix("LH:") {
@@ -275,9 +364,6 @@ fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String>
             let _ = count(value, "BRF")?;
         } else if let Some(value) = line.strip_prefix("BRH:") {
             let _ = count(value, "BRH")?;
-        } else if line.starts_with("FN:") || line.starts_with("FNDA:") || line.starts_with("BRDA:")
-        {
-            continue;
         } else {
             return Err("JavaScript coverage report contains an unsupported record.".to_string());
         }
@@ -294,6 +380,10 @@ fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String>
             let counts = Counts {
                 lines_total: line_total,
                 lines_covered: line_covered,
+                branches_total: file.branches.len() as u64,
+                branches_covered: file.branches.values().filter(|hits| **hits > 0).count() as u64,
+                functions_total: file.functions.len() as u64,
+                functions_covered: file.functions.values().filter(|hits| **hits > 0).count() as u64,
             };
             validate_counts(&counts)?;
             summary.add(&counts)?;
@@ -309,6 +399,8 @@ fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String>
                     .map(|(line_number, hits)| JsTestCoverageLine { line_number, hits })
                     .collect(),
                 summary: metric(counts.lines_covered, counts.lines_total),
+                branches: metric(counts.branches_covered, counts.branches_total),
+                functions: metric(counts.functions_covered, counts.functions_total),
                 first_uncovered_line,
             })
         })
@@ -316,7 +408,10 @@ fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String>
     validate_counts(&summary)?;
     Ok(JsTestCoverageReport {
         summary: metric(summary.lines_covered, summary.lines_total),
+        branches: metric(summary.branches_covered, summary.branches_total),
+        functions: metric(summary.functions_covered, summary.functions_total),
         files,
+        truncated,
     })
 }
 
@@ -354,6 +449,11 @@ fn coverage_relative_path(root: &Path, value: &str) -> Result<String, String> {
 }
 
 fn count(value: &str, field: &str) -> Result<u64, String> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!(
+            "JavaScript coverage report has an invalid {field} count."
+        ));
+    }
     let value = value
         .parse()
         .map_err(|_| format!("JavaScript coverage report has an invalid {field} count."))?;
@@ -363,6 +463,19 @@ fn count(value: &str, field: &str) -> Result<u64, String> {
         ));
     }
     Ok(value)
+}
+
+fn positive_count(value: &str, field: &str) -> Result<u64, String> {
+    if !value
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_digit() && *byte != b'0')
+    {
+        return Err(format!(
+            "JavaScript coverage report has an invalid {field} count."
+        ));
+    }
+    count(value, field)
 }
 
 fn metric(covered: u64, total: u64) -> JsTestCoverageMetric {
@@ -378,7 +491,10 @@ fn metric(covered: u64, total: u64) -> JsTestCoverageMetric {
 }
 
 fn validate_counts(counts: &Counts) -> Result<(), String> {
-    if counts.lines_covered > counts.lines_total {
+    if counts.lines_covered > counts.lines_total
+        || counts.branches_covered > counts.branches_total
+        || counts.functions_covered > counts.functions_total
+    {
         return Err("JavaScript coverage covered count exceeds its total.".to_string());
     }
     Ok(())
@@ -388,12 +504,20 @@ fn validate_counts(counts: &Counts) -> Result<(), String> {
 struct Counts {
     lines_total: u64,
     lines_covered: u64,
+    branches_total: u64,
+    branches_covered: u64,
+    functions_total: u64,
+    functions_covered: u64,
 }
 
 impl Counts {
     fn add(&mut self, other: &Self) -> Result<(), String> {
         self.lines_total = checked_add(self.lines_total, other.lines_total)?;
         self.lines_covered = checked_add(self.lines_covered, other.lines_covered)?;
+        self.branches_total = checked_add(self.branches_total, other.branches_total)?;
+        self.branches_covered = checked_add(self.branches_covered, other.branches_covered)?;
+        self.functions_total = checked_add(self.functions_total, other.functions_total)?;
+        self.functions_covered = checked_add(self.functions_covered, other.functions_covered)?;
         Ok(())
     }
 }
@@ -401,6 +525,8 @@ impl Counts {
 #[derive(Clone, Default)]
 struct FileCounts {
     lines: BTreeMap<u64, u64>,
+    branches: BTreeMap<(u64, u64, u64), u64>,
+    functions: BTreeMap<String, u64>,
 }
 
 impl FileCounts {
@@ -408,8 +534,31 @@ impl FileCounts {
         for (line, hits) in &other.lines {
             add_line_hits(&mut self.lines, *line, *hits)?;
         }
+        for (branch, hits) in &other.branches {
+            add_hits(&mut self.branches, *branch, *hits, "branch")?;
+        }
+        for (function, hits) in &other.functions {
+            add_hits(&mut self.functions, function.clone(), *hits, "function")?;
+        }
         Ok(())
     }
+}
+
+fn add_hits<K: Ord>(
+    entries: &mut BTreeMap<K, u64>,
+    key: K,
+    hits: u64,
+    kind: &str,
+) -> Result<(), String> {
+    let sum = entries
+        .get(&key)
+        .copied()
+        .unwrap_or(0)
+        .checked_add(hits)
+        .filter(|sum| *sum <= MAX_WIRE_INTEGER)
+        .ok_or_else(|| format!("JavaScript coverage {kind} hits overflowed their safety range."))?;
+    entries.insert(key, sum);
+    Ok(())
 }
 
 fn add_line_hits(lines: &mut BTreeMap<u64, u64>, line: u64, hits: u64) -> Result<(), String> {
@@ -506,6 +655,71 @@ mod tests {
         assert_eq!(file.first_uncovered_line, None);
         assert_eq!(file.summary, metric(2, 2));
         assert_eq!(report.summary, metric(2, 2));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn brda_records_populate_branches_covered_total_and_fnda_populate_functions() {
+        let root = fixture("branch-function");
+        fs::write(root.join("safe.ts"), "safe").unwrap();
+        let report = parse_lcov(
+            &root,
+            "SF:safe.ts\nFN:1,covered\nFN:1,uncovered\nFNDA:2,covered\nFNDA:0,uncovered\nBRDA:1,0,0,3\nBRDA:1,0,1,-\nend_of_record\n",
+        )
+        .unwrap();
+        let value = serde_json::to_value(report).unwrap();
+        assert_eq!(
+            value["files"][0]["branches"],
+            serde_json::json!({ "covered": 1, "total": 2, "percentage": 50.0 })
+        );
+        assert_eq!(
+            value["files"][0]["functions"],
+            serde_json::json!({ "covered": 1, "total": 2, "percentage": 50.0 })
+        );
+        assert_eq!(value["branches"], value["files"][0]["branches"]);
+        assert_eq!(value["functions"], value["files"][0]["functions"]);
+        assert_eq!(value["truncated"], false);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn branch_and_function_record_caps_set_a_deterministic_truncated_flag() {
+        let root = fixture("branch-function-cap");
+        fs::write(root.join("safe.ts"), "safe").unwrap();
+        let report = parse_lcov_with_record_limits(
+            &root,
+            "SF:safe.ts\nBRDA:1,0,0,1\nBRDA:1,0,1,1\nFN:1,kept\nFNDA:1,kept\nFN:1,discarded\nend_of_record\n",
+            1,
+            2,
+        )
+        .unwrap();
+        assert!(report.truncated);
+        assert_eq!(report.branches, metric(1, 1));
+        assert_eq!(report.functions, metric(1, 1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_branch_and_function_records_within_the_caps() {
+        let root = fixture("branch-function-invalid");
+        fs::write(root.join("safe.ts"), "safe").unwrap();
+        for source in [
+            "SF:safe.ts\nBRDA:1,0,0\nend_of_record\n",
+            "SF:safe.ts\nBRDA:0,0,0,1\nend_of_record\n",
+            "SF:safe.ts\nBRDA:1,0,0,bad\nend_of_record\n",
+            "SF:safe.ts\nFN:0,fn\nend_of_record\n",
+            "SF:safe.ts\nFN:1,\nend_of_record\n",
+            "SF:safe.ts\nFNDA:bad,fn\nend_of_record\n",
+            "SF:safe.ts\nBRDA:+1,+0,+0,+1\nend_of_record\n",
+            "SF:safe.ts\nBRDA:01,0,0,1\nend_of_record\n",
+            "SF:safe.ts\nFN:+1,fn\nend_of_record\n",
+            "SF:safe.ts\nFN:01,fn\nend_of_record\n",
+            "BRDA:1,0,0,1\n",
+            "FN:1,fn\n",
+            "FNDA:1,fn\n",
+        ] {
+            assert!(parse_lcov(&root, source).is_err(), "{source}");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

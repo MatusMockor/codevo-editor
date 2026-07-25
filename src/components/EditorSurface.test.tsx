@@ -4916,9 +4916,14 @@ class InvoiceServiceTest extends TestCase
           ],
           path: "src/coverage.ts",
           summary: { covered: 1, percentage: 100 / 3, total: 3 },
+          branches: { covered: 0, percentage: null, total: 0 },
+          functions: { covered: 0, percentage: null, total: 0 },
         },
       ],
       summary: { covered: 1, percentage: 100 / 3, total: 3 },
+      branches: { covered: 0, percentage: null, total: 0 },
+      functions: { covered: 0, percentage: null, total: 0 },
+      truncated: false,
     };
     const renderCoverage = async (
       activeDocument: EditorDocument,

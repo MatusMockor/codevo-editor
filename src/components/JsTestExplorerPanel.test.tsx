@@ -786,6 +786,17 @@ describe("JsTestExplorerPanel", () => {
     expect(host.querySelector('[aria-label="Line coverage percentage"]')?.textContent).toBe(
       "60.0%",
     );
+    expect(host.querySelector('[aria-label="Covered branches"]')?.textContent).toContain("3/5");
+    expect(host.querySelector('[aria-label="Branch coverage percentage"]')?.textContent).toBe(
+      "60.0%",
+    );
+    expect(host.querySelector('[aria-label="Covered functions"]')?.textContent).toContain("2/4");
+    expect(host.querySelector('[aria-label="Function coverage percentage"]')?.textContent).toBe(
+      "50.0%",
+    );
+    expect(host.textContent).toContain("Lines 1/2 · 50.0%");
+    expect(host.textContent).toContain("Branches 1/3 · 33.3%");
+    expect(host.textContent).toContain("Functions 1/2 · 50.0%");
     await click("Run JavaScript test coverage");
     await click("Clear JavaScript test coverage");
     await click("Open first uncovered line in src/payment.ts");
@@ -795,6 +806,11 @@ describe("JsTestExplorerPanel", () => {
       expect.objectContaining({ firstUncoveredLine: 7, path: "src/payment.ts" }),
     );
     expect(button("Open first uncovered line in src/covered.ts").disabled).toBe(true);
+
+    await render({ coverageReport: { ...coverageReport, truncated: true } });
+    expect(host.querySelector('[aria-label="Coverage truncation status"]')?.textContent).toContain(
+      "Coverage details are truncated",
+    );
   });
 
   it("announces coverage running, unavailable and error states", async () => {
@@ -1021,15 +1037,22 @@ const coverageReport = {
       ],
       path: "src/payment.ts",
       summary: { covered: 1, percentage: 50, total: 2 },
+      branches: { covered: 1, percentage: 100 / 3, total: 3 },
+      functions: { covered: 1, percentage: 50, total: 2 },
     },
     {
       firstUncoveredLine: null,
       lines: [{ hits: 1, lineNumber: 1 }],
       path: "src/covered.ts",
       summary: { covered: 1, percentage: 100, total: 1 },
+      branches: { covered: 2, percentage: 100, total: 2 },
+      functions: { covered: 1, percentage: 50, total: 2 },
     },
   ],
   summary: { covered: 3, percentage: 60, total: 5 },
+  branches: { covered: 3, percentage: 60, total: 5 },
+  functions: { covered: 2, percentage: 50, total: 4 },
+  truncated: false,
 };
 
 function testOutput(): JsTestTaskOutput {

@@ -5,7 +5,9 @@ use crate::terminal_session::TerminalSupervisor;
 use crate::trust::{WorkspaceTrustService, WorkspaceTrustState};
 use crate::vscode_process_task_commands::VscodeProcessTaskCommandService;
 use crate::workspace_registry::WorkspaceRegistry;
-use crate::{js_test_tasks, node_package_tasks, node_run_tasks, registered_runtime_root};
+use crate::{
+    js_test_tasks, js_test_watch, node_package_tasks, node_run_tasks, registered_runtime_root,
+};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
@@ -42,6 +44,7 @@ pub(crate) fn set_workspace_trust(
         node_package_tasks::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
         node_run_tasks::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
         js_test_tasks::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
+        js_test_watch::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
         if let Some(service) = app.try_state::<VscodeProcessTaskCommandService>() {
             service.request_stop_workspace(&descriptor.workspace_id);
         }

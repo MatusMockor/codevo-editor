@@ -330,9 +330,14 @@ function okResponse() {
           lines: [{ hits: 0, lineNumber: 8 }],
           path: "src/a.ts",
           summary: { covered: 3, percentage: 75, total: 4 },
+          branches: { covered: 0, percentage: null, total: 0 },
+          functions: { covered: 0, percentage: null, total: 0 },
         },
       ],
       summary: { covered: 3, percentage: 75, total: 4 },
+      branches: { covered: 0, percentage: null, total: 0 },
+      functions: { covered: 0, percentage: null, total: 0 },
+      truncated: false,
     },
   };
 }

@@ -1,5 +1,7 @@
 export const JS_TEST_CONTINUOUS_RUN_DEBOUNCE_MS = 250;
 
+export type JsTestContinuousRunStrategy = "debounced-rescope" | "native-watch";
+
 export interface JsTestContinuousRunOwner {
   /** Monotonic owner epoch; the same workspace after A-B-A receives a new epoch. */
   readonly epoch: number;
@@ -44,6 +46,7 @@ export interface JsTestContinuousRunCoordinatorOptions {
    */
   readonly run: (lease: JsTestContinuousRunLease) => Promise<boolean>;
   readonly scheduler?: JsTestContinuousRunScheduler;
+  readonly strategy?: JsTestContinuousRunStrategy | (() => JsTestContinuousRunStrategy);
   /** Test/recovery seam; the next lease always remains a safe integer. */
   readonly initialSequence?: number;
 }
@@ -54,6 +57,7 @@ interface Selection {
   changeVersion: number;
   dirty: boolean;
   notBefore: number;
+  readonly strategy: JsTestContinuousRunStrategy;
 }
 
 interface ActiveRun {
@@ -86,10 +90,12 @@ export function createJsTestContinuousRunCoordinator({
   onSnapshot,
   run,
   scheduler = defaultScheduler,
+  strategy = "debounced-rescope",
   initialSequence = 0,
 }: JsTestContinuousRunCoordinatorOptions): JsTestContinuousRunCoordinator {
   let selection: Selection | null = null;
   let active: ActiveRun | null = null;
+  let retainedNativeRun: ActiveRun | null = null;
   let timer: ScheduledRun | null = null;
   let timerGeneration = 0;
   let sequence =
@@ -158,6 +164,9 @@ export function createJsTestContinuousRunCoordinator({
             active = null;
             const current = selection;
             if (current && current.identity === flight.selectionIdentity) {
+              if (candidate.strategy === "native-watch" && admitted) {
+                retainedNativeRun = flight;
+              }
               if (!admitted) {
                 // A temporarily busy admission remains armed but retries only
                 // after a newer file-change version, never in an endless loop.
@@ -186,27 +195,67 @@ export function createJsTestContinuousRunCoordinator({
     expectedOwner: JsTestContinuousRunOwner | null,
   ): Promise<boolean> => {
     const candidate = selection;
-    if (!candidate || (expectedOwner && !ownersEqual(candidate.owner, expectedOwner))) return false;
+    if (!candidate) {
+      const retained = retainedNativeRun;
+      if (!retained || (expectedOwner && !ownersEqual(retained.lease.owner, expectedOwner))) {
+        return false;
+      }
+      if (!retained.cancelFlight) {
+        retained.cancelFlight = safelyCancel(cancel, retained.lease).then((stopped) => {
+          retained.cancelFlight = null;
+          if (stopped && retainedNativeRun === retained) {
+            retainedNativeRun = null;
+            publish();
+          }
+          return stopped;
+        });
+      }
+      return retained.cancelFlight;
+    }
+    if (expectedOwner && !ownersEqual(candidate.owner, expectedOwner)) return false;
     highestInvalidatedEpoch = Math.max(highestInvalidatedEpoch, candidate.owner.epoch);
     selection = null;
     clearTimer();
     const flight = active;
+    const retained = retainedNativeRun;
     publish();
-    if (!flight || flight.selectionIdentity !== candidate.identity) return true;
-    if (!flight.cancelFlight) flight.cancelFlight = safelyCancel(cancel, flight.lease);
-    return flight.cancelFlight;
+    if (flight && flight.selectionIdentity === candidate.identity) {
+      if (!flight.cancelFlight) {
+        flight.cancelFlight = safelyCancel(cancel, flight.lease).then((stopped) => {
+          flight.cancelFlight = null;
+          if (!stopped && candidate.strategy === "native-watch" && retainedNativeRun === null) {
+            retainedNativeRun = flight;
+            publish();
+          }
+          return stopped;
+        });
+      }
+      return flight.cancelFlight;
+    }
+    if (!retained || retained.selectionIdentity !== candidate.identity) return true;
+    if (!retained.cancelFlight) {
+      retained.cancelFlight = safelyCancel(cancel, retained.lease).then((stopped) => {
+        retained.cancelFlight = null;
+        if (stopped && retainedNativeRun === retained) {
+          retainedNativeRun = null;
+          publish();
+        }
+        return stopped;
+      });
+    }
+    return retained.cancelFlight;
   };
 
   const snapshot = (): JsTestContinuousRunSnapshot => {
     const current = selection;
     const currentRun = current && active?.selectionIdentity === current.identity ? active : null;
-    const stopping = current === null && active !== null;
+    const stopping = current === null && (active !== null || retainedNativeRun !== null);
     if (!current) {
       return stopping
         ? Object.freeze({
             changeVersion: null,
             enabled: false,
-            owner: active!.lease.owner,
+            owner: (active ?? retainedNativeRun)!.lease.owner,
             pending: false,
             running: false,
             stopping: true,
@@ -232,7 +281,8 @@ export function createJsTestContinuousRunCoordinator({
         !validVersion(changeVersion) ||
         immutableOwner.epoch <= highestInvalidatedEpoch ||
         selection !== null ||
-        active !== null
+        active !== null ||
+        retainedNativeRun !== null
       ) {
         return false;
       }
@@ -242,6 +292,7 @@ export function createJsTestContinuousRunCoordinator({
         identity: Object.freeze({}),
         notBefore: safeNow(scheduler) ?? 0,
         owner: immutableOwner,
+        strategy: resolvedStrategy(strategy),
       };
       selection = candidate;
       if (!schedule(candidate, 0)) {
@@ -253,7 +304,7 @@ export function createJsTestContinuousRunCoordinator({
       return true;
     },
     invalidate: async () => {
-      const owner = selection?.owner ?? null;
+      const owner = selection?.owner ?? retainedNativeRun?.lease.owner ?? null;
       if (owner) highestInvalidatedEpoch = Math.max(highestInvalidatedEpoch, owner.epoch);
       return stopSelection(null);
     },
@@ -268,6 +319,11 @@ export function createJsTestContinuousRunCoordinator({
         return false;
       }
       const previousVersion = current.changeVersion;
+      if (current.strategy === "native-watch") {
+        current.changeVersion = changeVersion;
+        publish();
+        return true;
+      }
       const previousDirty = current.dirty;
       const previousNotBefore = current.notBefore;
       current.changeVersion = changeVersion;
@@ -339,6 +395,17 @@ function safeNow(scheduler: JsTestContinuousRunScheduler): number | null {
     return Number.isFinite(value) && value >= 0 ? value : null;
   } catch {
     return null;
+  }
+}
+
+function resolvedStrategy(
+  strategy: JsTestContinuousRunCoordinatorOptions["strategy"],
+): JsTestContinuousRunStrategy {
+  try {
+    const resolved = typeof strategy === "function" ? strategy() : strategy;
+    return resolved === "native-watch" ? "native-watch" : "debounced-rescope";
+  } catch {
+    return "debounced-rescope";
   }
 }
 

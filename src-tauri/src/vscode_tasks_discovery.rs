@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use crate::vscode_process_tasks::{
-    vscode_tasks_config_revision, ProcessTaskGroup, ValidatedProcessTask,
-    ValidatedVscodeTasksConfig, VscodeTasksConfigError, VscodeTasksParser,
+    vscode_tasks_config_revision, ProcessTaskGroup, ProcessTaskProblemMatcher,
+    ValidatedProcessTask, ValidatedVscodeTasksConfig, VscodeTasksConfigError, VscodeTasksParser,
     MAX_VSCODE_TASKS_CONFIG_BYTES,
 };
 
@@ -36,8 +36,16 @@ pub struct VscodeTaskDisplay {
     pub depends_on: Vec<String>,
     pub detail: Option<String>,
     pub group: VscodeTaskDisplayGroup,
+    pub problem_matcher: Option<VscodeTaskProblemMatcherKind>,
     pub source: String,
     pub executable: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VscodeTaskProblemMatcherKind {
+    TypeScript,
+    Eslint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -204,6 +212,7 @@ where
                             depends_on: Vec::new(),
                             detail: Some(bounded_wire_message(&diagnostic.message)),
                             group: VscodeTaskDisplayGroup::None,
+                            problem_matcher: None,
                             source: TASK_SOURCE.to_string(),
                             executable: false,
                         });
@@ -222,22 +231,39 @@ where
             .cloned()
             .map(|task| {
                 let group = display_group(task.group.as_ref());
+                let resolved_matcher = resolve_problem_matcher(&task.problem_matcher);
+                let problem_matcher = resolved_matcher.as_ref().ok().copied().flatten();
+                let unsupported_matcher = resolved_matcher.err().map(|()| {
+                    "Task has an unsupported problemMatcher; output will not create Problems."
+                });
                 let resolution =
                     self.resolver
                         .resolve(&request.workspace_id, &config.revision, &task);
-                (task, group, resolution)
+                (
+                    task,
+                    group,
+                    problem_matcher,
+                    unsupported_matcher,
+                    resolution,
+                )
             })
             .collect::<Vec<_>>();
         let mut rejected_labels = resolved
             .iter()
-            .filter(|(_, _, resolution)| {
+            .filter(|(_, _, _, _, resolution)| {
                 matches!(resolution, ProcessTaskPlanResolution::Rejected(_))
             })
-            .map(|(task, _, _)| task.label.clone())
+            .map(|(task, _, _, _, _)| task.label.clone())
             .collect::<BTreeSet<_>>();
         propagate_rejected_dependencies(&config, &mut rejected_labels);
 
-        for (task, group, resolution) in resolved {
+        for (task, group, problem_matcher, unsupported_matcher, resolution) in resolved {
+            if let Some(message) = unsupported_matcher {
+                diagnostics.push(VscodeTaskDiscoveryDiagnostic {
+                    severity: VscodeTaskDiagnosticSeverity::Warning,
+                    message: message.to_string(),
+                });
+            }
             match resolution {
                 ProcessTaskPlanResolution::Executable if rejected_labels.contains(&task.label) => {
                     let message =
@@ -251,6 +277,7 @@ where
                         depends_on: task.depends_on,
                         detail: Some(message),
                         group,
+                        problem_matcher,
                         source: TASK_SOURCE.to_string(),
                         executable: false,
                     });
@@ -258,8 +285,9 @@ where
                 ProcessTaskPlanResolution::Executable => tasks.push(VscodeTaskDisplay {
                     label: task.label,
                     depends_on: task.depends_on,
-                    detail: None,
+                    detail: unsupported_matcher.map(str::to_string),
                     group,
+                    problem_matcher,
                     source: TASK_SOURCE.to_string(),
                     executable: true,
                 }),
@@ -275,6 +303,7 @@ where
                         depends_on: task.depends_on,
                         detail: Some(message),
                         group,
+                        problem_matcher,
                         source: TASK_SOURCE.to_string(),
                         executable: false,
                     });
@@ -384,6 +413,21 @@ fn display_group(group: Option<&ProcessTaskGroup>) -> VscodeTaskDisplayGroup {
     }
 }
 
+fn resolve_problem_matcher(
+    problem_matcher: &ProcessTaskProblemMatcher,
+) -> Result<Option<VscodeTaskProblemMatcherKind>, ()> {
+    match problem_matcher {
+        ProcessTaskProblemMatcher::None => Ok(None),
+        ProcessTaskProblemMatcher::Named(matcher) if matcher == "$tsc" => {
+            Ok(Some(VscodeTaskProblemMatcherKind::TypeScript))
+        }
+        ProcessTaskProblemMatcher::Named(matcher) if matcher == "$eslint-stylish" => {
+            Ok(Some(VscodeTaskProblemMatcherKind::Eslint))
+        }
+        ProcessTaskProblemMatcher::Named(_) | ProcessTaskProblemMatcher::Unsupported => Err(()),
+    }
+}
+
 fn bounded_wire_message(value: &str) -> String {
     let clean = value
         .chars()
@@ -413,4 +457,83 @@ fn bounded_safe_text(value: &str, maximum_bytes: usize, allow_empty: bool) -> bo
     (allow_empty || !value.trim().is_empty())
         && value.len() <= maximum_bytes
         && !value.chars().any(char::is_control)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    struct Reader {
+        bytes: RefCell<Option<Vec<u8>>>,
+    }
+
+    impl RetainedWorkspaceFileReader for Reader {
+        fn read_registered_workspace_file(
+            &self,
+            _workspace_id: &str,
+            _relative_path: &str,
+            _maximum_bytes: usize,
+        ) -> RetainedWorkspaceFileRead {
+            RetainedWorkspaceFileRead::Content(self.bytes.borrow_mut().take().expect("one read"))
+        }
+    }
+
+    struct Resolver;
+
+    impl VscodeProcessTaskPlanResolver for Resolver {
+        fn resolve(
+            &self,
+            _workspace_id: &str,
+            _config_revision: &str,
+            _task: &ValidatedProcessTask,
+        ) -> ProcessTaskPlanResolution {
+            ProcessTaskPlanResolution::Executable
+        }
+    }
+
+    #[test]
+    fn supported_problem_matchers_resolve_and_unsupported_forms_fail_closed_per_task() {
+        let reader = Reader {
+            bytes: RefCell::new(Some(
+                br#"{
+                  "version":"2.0.0",
+                  "tasks":[
+                    {"label":"tsc","type":"process","command":"tsc","problemMatcher":"$tsc"},
+                    {"label":"eslint","type":"process","command":"eslint","problemMatcher":["$eslint-stylish"]},
+                    {"label":"unknown","type":"process","command":"tool","problemMatcher":"$unknown"},
+                    {"label":"many","type":"process","command":"tool","problemMatcher":["$tsc","$eslint-stylish"]},
+                    {"label":"object","type":"process","command":"tool","problemMatcher":{"owner":"custom"}},
+                    {"label":"empty","type":"process","command":"tool","problemMatcher":[]},
+                    {"label":"mixed","type":"process","command":"tool","problemMatcher":[42]}
+                  ]
+                }"#
+                .to_vec(),
+            )),
+        };
+
+        let response = VscodeTasksDiscoveryService::new(&reader, &Resolver).discover(
+            VscodeTasksDiscoveryRequest {
+                workspace_id: "workspace-a".to_string(),
+            },
+        );
+
+        assert_eq!(
+            response.tasks[0].problem_matcher,
+            Some(VscodeTaskProblemMatcherKind::TypeScript)
+        );
+        assert_eq!(
+            response.tasks[1].problem_matcher,
+            Some(VscodeTaskProblemMatcherKind::Eslint)
+        );
+        for task in &response.tasks[2..] {
+            assert_eq!(task.problem_matcher, None);
+            assert!(task.executable);
+            assert_eq!(
+                task.detail.as_deref(),
+                Some("Task has an unsupported problemMatcher; output will not create Problems.")
+            );
+        }
+        assert_eq!(response.diagnostics.len(), 5);
+    }
 }

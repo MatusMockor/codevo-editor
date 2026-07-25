@@ -1,8 +1,10 @@
 import {
   reduceVscodeProcessTask,
+  reduceVscodeProcessTaskProblems,
   vscodeProcessTaskOwnersEqual,
   type VscodeProcessTaskEvent,
   type VscodeProcessTaskOwner,
+  type VscodeProcessTaskProblemsState,
   type VscodeProcessTaskState,
 } from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTasksGateway } from "../domain/vscodeProcessTasksGateway";
@@ -19,6 +21,7 @@ export type VscodeProcessTaskCompletion =
 export interface VscodeProcessTaskCoordinatorSnapshot {
   readonly activation: number | null;
   readonly owner: VscodeProcessTaskOwner | null;
+  readonly problems: VscodeProcessTaskProblemsState | null;
   readonly task: VscodeProcessTaskState | null;
   readonly running: boolean;
   readonly stopping: boolean;
@@ -40,8 +43,10 @@ interface ActiveTask {
   readonly activation: number;
   disposed: boolean;
   invalidated: boolean;
+  lastSequence: number;
   readonly owner: VscodeProcessTaskOwner;
   readonly gateway: VscodeProcessTasksGateway;
+  problems: VscodeProcessTaskProblemsState;
   state: VscodeProcessTaskState;
   stopFlight: Promise<boolean> | null;
   stopping: boolean;
@@ -53,6 +58,7 @@ interface ActiveTask {
 const EMPTY_SNAPSHOT: VscodeProcessTaskCoordinatorSnapshot = Object.freeze({
   activation: null,
   owner: null,
+  problems: null,
   task: null,
   running: false,
   stopping: false,
@@ -64,8 +70,11 @@ export function createVscodeProcessTaskCoordinator(options: {
   readonly onSnapshot?: (snapshot: VscodeProcessTaskCoordinatorSnapshot) => void;
 }): VscodeProcessTaskCoordinator {
   let active: ActiveTask | null = null;
-  let retained: { readonly activation: number; readonly state: VscodeProcessTaskState } | null =
-    null;
+  let retained: {
+    readonly activation: number;
+    readonly problems: VscodeProcessTaskProblemsState;
+    readonly state: VscodeProcessTaskState;
+  } | null = null;
 
   const current = (candidate: ActiveTask): boolean => {
     try {
@@ -82,6 +91,7 @@ export function createVscodeProcessTaskCoordinator(options: {
       return Object.freeze({
         activation: active.activation,
         owner: active.owner,
+        problems: active.invalidated ? null : active.problems,
         task: active.invalidated ? null : active.state,
         running: !active.stopping,
         stopping: active.stopping,
@@ -91,6 +101,7 @@ export function createVscodeProcessTaskCoordinator(options: {
       return Object.freeze({
         activation: retained.activation,
         owner: retained.state.owner,
+        problems: retained.problems,
         task: retained.state,
         running: false,
         stopping: false,
@@ -128,14 +139,33 @@ export function createVscodeProcessTaskCoordinator(options: {
     active = null;
     retained =
       keepState && !candidate.invalidated
-        ? Object.freeze({ activation: candidate.activation, state: candidate.state })
+        ? Object.freeze({
+            activation: candidate.activation,
+            problems: candidate.problems,
+            state: candidate.state,
+          })
         : null;
     candidate.resolveCompletion(completionFromState(candidate.state));
     publish();
   };
 
   const receive = (candidate: ActiveTask, event: VscodeProcessTaskEvent): void => {
-    if (active !== candidate || !vscodeProcessTaskOwnersEqual(candidate.owner, event.owner)) {
+    if (
+      active !== candidate ||
+      !vscodeProcessTaskOwnersEqual(candidate.owner, event.owner) ||
+      event.sequence <= candidate.lastSequence
+    ) {
+      return;
+    }
+    candidate.lastSequence = event.sequence;
+    if (event.kind === "problems") {
+      const problems = reduceVscodeProcessTaskProblems(candidate.problems, {
+        type: "event",
+        event,
+      });
+      if (!problems || problems === candidate.problems) return;
+      candidate.problems = problems;
+      if (!candidate.invalidated) publish();
       return;
     }
     const next = reduceVscodeProcessTask(candidate.state, { type: "event", event });
@@ -143,6 +173,13 @@ export function createVscodeProcessTaskCoordinator(options: {
     candidate.state = next;
     const terminal =
       next.status === "exited" || next.status === "failed" || next.status === "stopped";
+    if (terminal && (next.status !== "exited" || !candidate.problems.complete)) {
+      const problems = reduceVscodeProcessTaskProblems(null, {
+        type: "own",
+        owner: candidate.owner,
+      });
+      if (problems) candidate.problems = problems;
+    }
     if (!candidate.invalidated) publish();
     if (terminal) settle(candidate, true);
   };
@@ -174,6 +211,11 @@ export function createVscodeProcessTaskCoordinator(options: {
         if (stopped && active === candidate) {
           if (!candidate.invalidated) {
             candidate.state = Object.freeze({ ...candidate.state, status: "stopped" });
+            const problems = reduceVscodeProcessTaskProblems(null, {
+              type: "own",
+              owner: candidate.owner,
+            });
+            if (problems) candidate.problems = problems;
           }
           settle(candidate, true);
         }
@@ -205,13 +247,16 @@ export function createVscodeProcessTaskCoordinator(options: {
       }
       retained = null;
       const initial = reduceVscodeProcessTask(null, { type: "own", owner });
-      if (!initial) return outcome("rejected");
+      const initialProblems = reduceVscodeProcessTaskProblems(null, { type: "own", owner });
+      if (!initial || !initialProblems) return outcome("rejected");
       const candidate: ActiveTask = {
         activation,
         disposed: false,
         gateway: options.getGateway(),
         invalidated: false,
+        lastSequence: 0,
         owner: initial.owner,
+        problems: initialProblems,
         state: initial,
         stopFlight: null,
         stopping: false,

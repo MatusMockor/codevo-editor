@@ -183,6 +183,9 @@ export function VscodeProcessTasksPanel({
                   {dependencySummary && (
                     <small style={styles.taskDependency}>{dependencySummary}</small>
                   )}
+                  {task.problemMatcher && (
+                    <small>Problem matcher: {problemMatcherLabel(task.problemMatcher)}</small>
+                  )}
                   <small>
                     {task.group === "none" ? "No group" : task.group} · {task.source}
                   </small>
@@ -215,6 +218,10 @@ export function VscodeProcessTasksPanel({
       )}
     </section>
   );
+}
+
+function problemMatcherLabel(matcher: "eslint" | "typescript"): string {
+  return matcher === "typescript" ? "$tsc" : "$eslint-stylish";
 }
 
 function OutputStream({ label, text }: { readonly label: string; readonly text: string }) {

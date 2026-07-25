@@ -1,5 +1,5 @@
 use crate::{
-    js_test_tasks, node_package_tasks, node_run_tasks,
+    js_test_tasks, js_test_watch, node_package_tasks, node_run_tasks,
     vscode_process_task_commands::VscodeProcessTaskCommandService, workspace_registry::WorkspaceId,
 };
 use tauri::{AppHandle, Manager};
@@ -14,6 +14,7 @@ impl RuntimeTaskLifecycleExt for AppHandle {
         node_package_tasks::request_stop_all_in_app(self);
         node_run_tasks::request_stop_all_in_app(self);
         js_test_tasks::request_stop_all_in_app(self);
+        js_test_watch::request_stop_all_in_app(self);
         if let Some(service) = self.try_state::<VscodeProcessTaskCommandService>() {
             service.request_stop_all();
         }
@@ -23,6 +24,7 @@ impl RuntimeTaskLifecycleExt for AppHandle {
         node_package_tasks::request_stop_workspace_in_app(self, workspace_id);
         node_run_tasks::request_stop_workspace_in_app(self, workspace_id);
         js_test_tasks::request_stop_workspace_in_app(self, workspace_id);
+        js_test_watch::request_stop_workspace_in_app(self, workspace_id);
         if let Some(service) = self.try_state::<VscodeProcessTaskCommandService>() {
             service.request_stop_workspace(workspace_id);
         }

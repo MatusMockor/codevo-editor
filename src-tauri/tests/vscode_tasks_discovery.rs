@@ -398,6 +398,7 @@ fn request_and_response_use_an_exact_camel_case_serde_contract() {
             "executable",
             "group",
             "label",
+            "problemMatcher",
             "source"
         ]
     );

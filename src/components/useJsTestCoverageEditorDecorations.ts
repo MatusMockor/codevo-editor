@@ -55,7 +55,7 @@ export function useJsTestCoverageEditorDecorations({
 
     decorationIdsRef.current = editor.deltaDecorations(
       decorationIdsRef.current,
-      visibleDecorations.map((decoration) => toJsTestCoverageDecoration(monaco, decoration)),
+      visibleDecorations.map((decoration) => toJsTestCoverageDecoration(monaco, model, decoration)),
     );
     return () => {
       decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, []);

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+#[path = "../src/node_package_problem_matcher.rs"]
+mod node_package_problem_matcher;
 #[path = "../src/terminal_task_admission.rs"]
 mod terminal_task_admission;
 #[path = "../src/vscode_process_task_commands.rs"]
@@ -11,6 +13,11 @@ mod vscode_process_task_registry;
 
 mod workspace_registry {
     use serde::{Deserialize, Serialize};
+    use std::{
+        fs::File,
+        io,
+        path::{Path, PathBuf},
+    };
 
     #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
     #[serde(transparent)]
@@ -20,6 +27,43 @@ mod workspace_registry {
         pub(crate) fn as_str(&self) -> &str {
             &self.0
         }
+    }
+
+    pub(crate) fn open_file_relative_to(root: &File, relative_path: &Path) -> io::Result<File> {
+        File::open(opened_root_path(root)?.join(relative_path))
+    }
+
+    pub(crate) fn opened_regular_file_path(file: &File) -> io::Result<PathBuf> {
+        opened_path(file)
+    }
+
+    pub(crate) fn opened_root_path(file: &File) -> io::Result<PathBuf> {
+        opened_path(file)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn opened_path(file: &File) -> io::Result<PathBuf> {
+        std::fs::read_link(format!(
+            "/proc/self/fd/{}",
+            std::os::fd::AsRawFd::as_raw_fd(file)
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn opened_path(file: &File) -> io::Result<PathBuf> {
+        use std::os::{fd::AsRawFd, unix::ffi::OsStringExt};
+
+        let mut path = vec![0_u8; libc::PATH_MAX as usize];
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, path.as_mut_ptr()) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let end = path
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unterminated path"))?;
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(
+            path[..end].to_vec(),
+        )))
     }
 }
 
@@ -257,6 +301,7 @@ fn dependency_chain_keeps_one_owner_gate_and_flushes_one_terminal_status() {
         prepared_closed(71, 101, b"dependency".to_vec(), Some(0)),
         PreparedProcessTask {
             ownership: TerminalTaskOwnership::new(71, 102),
+            problem_matcher: None,
             terminal_sink: Arc::new(RawTerminalSink::default()),
             stdout: Some(Box::new(Cursor::new(b"target".to_vec()))),
             stderr: None,
@@ -369,7 +414,8 @@ fn dependency_chain_keeps_one_owner_gate_and_flushes_one_terminal_status() {
     assert!(emitted.iter().all(|event| match event {
         VscodeProcessTaskEvent::Status { owner, .. }
         | VscodeProcessTaskEvent::Output { owner, .. }
-        | VscodeProcessTaskEvent::Step { owner, .. } => owner == &task_owner,
+        | VscodeProcessTaskEvent::Step { owner, .. }
+        | VscodeProcessTaskEvent::Problems { owner, .. } => owner == &task_owner,
     }));
 }
 
@@ -850,6 +896,7 @@ fn prepared(
 ) -> PreparedProcessTask {
     PreparedProcessTask {
         ownership,
+        problem_matcher: None,
         terminal_sink,
         stdout: stdout.map(|bytes| Box::new(Cursor::new(bytes)) as Box<_>),
         stderr: stderr.map(|bytes| Box::new(Cursor::new(bytes)) as Box<_>),

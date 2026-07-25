@@ -4,11 +4,16 @@ use std::{
 };
 
 use crate::{
+    node_package_problem_matcher::{
+        NodePackageProblemMatcher, NodePackageProblemSnapshot, NodePackageTaskOutputStream,
+        MAX_TASK_PROBLEMS,
+    },
     terminal_task_admission::{TerminalTaskAdmission, TerminalTaskAdmissionRegistry},
     terminal_task_process::TerminalTaskOwnership,
     vscode_process_task_events::{
-        VscodeProcessTaskEvent, VscodeProcessTaskEventSink, VscodeProcessTaskOutputStream,
-        VscodeProcessTaskOwner, VscodeProcessTaskStatus,
+        problem_wire, VscodeProcessTaskEvent, VscodeProcessTaskEventSink,
+        VscodeProcessTaskOutputStream, VscodeProcessTaskOwner, VscodeProcessTaskProblemWire,
+        VscodeProcessTaskProblemsState, VscodeProcessTaskStatus,
     },
     workspace_registry::WorkspaceId,
 };
@@ -56,6 +61,7 @@ struct TaskEntry {
     owner: VscodeProcessTaskOwner,
     pending_events: VecDeque<VscodeProcessTaskEvent>,
     phase: TaskPhase,
+    problems: Arc<Mutex<RunProblemMatcher>>,
 }
 
 #[derive(Default)]
@@ -156,6 +162,7 @@ impl VscodeProcessTaskRegistry {
                 phase: TaskPhase::Starting {
                     stop_requested: false,
                 },
+                problems: Arc::new(Mutex::new(RunProblemMatcher::default())),
             },
         );
         Ok(())
@@ -167,26 +174,33 @@ impl VscodeProcessTaskRegistry {
         owner: &VscodeProcessTaskOwner,
         ownership: TerminalTaskOwnership,
     ) -> Result<bool, String> {
-        self.activate_ownership(owner, ownership, None)
+        self.activate_ownership(owner, ownership, None, None)
     }
 
     pub(crate) fn activate_step(
         &self,
         owner: &VscodeProcessTaskOwner,
         ownership: TerminalTaskOwnership,
+        problem_matcher: Option<NodePackageProblemMatcher>,
         step: VscodeProcessTaskStep<'_>,
     ) -> Result<bool, String> {
         validate_step(step.label, step.index, step.total)?;
         if step.index != 1 {
             return Err("The first process task step index must be one.".to_string());
         }
-        self.activate_ownership(owner, ownership, Some((step.label, step.index, step.total)))
+        self.activate_ownership(
+            owner,
+            ownership,
+            problem_matcher,
+            Some((step.label, step.index, step.total)),
+        )
     }
 
     fn activate_ownership(
         &self,
         owner: &VscodeProcessTaskOwner,
         ownership: TerminalTaskOwnership,
+        problem_matcher: Option<NodePackageProblemMatcher>,
         step: Option<(&str, u16, u16)>,
     ) -> Result<bool, String> {
         let mut state = self.state();
@@ -204,6 +218,11 @@ impl VscodeProcessTaskRegistry {
                 ownership,
                 stop_requested,
             };
+            let reset_problems = entry
+                .problems
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .install(problem_matcher);
             if let Some(sequence) = take_sequence(entry) {
                 entry
                     .pending_events
@@ -216,6 +235,9 @@ impl VscodeProcessTaskRegistry {
                 fail_closed(entry);
                 exhausted = true;
             };
+            if !exhausted && reset_problems {
+                exhausted = queue_problem_state(entry, VscodeProcessTaskProblemsState::Reset);
+            }
             if !exhausted {
                 if let Some((label, index, total)) = step {
                     exhausted = queue_step(entry, label, index, total).is_err();
@@ -240,7 +262,7 @@ impl VscodeProcessTaskRegistry {
         previous: &TerminalTaskOwnership,
         replacement: TerminalTaskOwnership,
     ) -> Result<bool, String> {
-        self.replace_ownership_inner(owner, previous, replacement, None)
+        self.replace_ownership_inner(owner, previous, replacement, None, None)
             .map(|activation| matches!(activation, VscodeProcessTaskStepActivation::StopRequested))
     }
 
@@ -249,6 +271,7 @@ impl VscodeProcessTaskRegistry {
         owner: &VscodeProcessTaskOwner,
         previous: &TerminalTaskOwnership,
         replacement: TerminalTaskOwnership,
+        problem_matcher: Option<NodePackageProblemMatcher>,
         step: VscodeProcessTaskStep<'_>,
         sink: &dyn VscodeProcessTaskEventSink,
     ) -> Result<VscodeProcessTaskStepActivation, String> {
@@ -257,6 +280,7 @@ impl VscodeProcessTaskRegistry {
             owner,
             previous,
             replacement,
+            problem_matcher,
             Some((step.label, step.index, step.total)),
         )?;
         if activation == VscodeProcessTaskStepActivation::Activated {
@@ -277,6 +301,7 @@ impl VscodeProcessTaskRegistry {
         owner: &VscodeProcessTaskOwner,
         previous: &TerminalTaskOwnership,
         replacement: TerminalTaskOwnership,
+        problem_matcher: Option<NodePackageProblemMatcher>,
         step: Option<(&str, u16, u16)>,
     ) -> Result<VscodeProcessTaskStepActivation, String> {
         let mut state = self.state();
@@ -303,6 +328,14 @@ impl VscodeProcessTaskRegistry {
             return Ok(VscodeProcessTaskStepActivation::StopRequested);
         }
         *ownership = replacement;
+        let reset_problems = entry
+            .problems
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .install(problem_matcher);
+        if reset_problems && queue_problem_state(entry, VscodeProcessTaskProblemsState::Reset) {
+            return Err("The process task event sequence is exhausted.".to_string());
+        }
         if let Some((label, index, total)) = step {
             queue_step(entry, label, index, total)?;
         }
@@ -362,12 +395,19 @@ impl VscodeProcessTaskRegistry {
         sink: &dyn VscodeProcessTaskEventSink,
     ) -> Result<(), String> {
         for bytes in bytes.chunks(OUTPUT_CHUNK_BYTES_LIMIT) {
-            let decoded = {
+            let (decoded, problems) = {
                 let mut state = self.state();
                 let entry = exact_active_entry_mut(&mut state, owner)?;
-                entry.decoders.push(stream, bytes)
+                (
+                    entry.decoders.push(stream, bytes),
+                    Arc::clone(&entry.problems),
+                )
             };
-            self.record_output_text(owner, stream, &decoded, sink)?;
+            let problem_update = problems
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(stream, bytes);
+            self.record_output_text(owner, stream, &decoded, problem_update, sink)?;
         }
         Ok(())
     }
@@ -378,12 +418,16 @@ impl VscodeProcessTaskRegistry {
         stream: VscodeProcessTaskOutputStream,
         sink: &dyn VscodeProcessTaskEventSink,
     ) -> Result<(), String> {
-        let decoded = {
+        let (decoded, problems) = {
             let mut state = self.state();
             let entry = exact_active_entry_mut(&mut state, owner)?;
-            entry.decoders.finish(stream)
+            (entry.decoders.finish(stream), Arc::clone(&entry.problems))
         };
-        self.record_output_text(owner, stream, &decoded, sink)
+        let problem_update = problems
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .finish(stream);
+        self.record_output_text(owner, stream, &decoded, problem_update, sink)
     }
 
     pub(crate) fn complete(
@@ -414,26 +458,41 @@ impl VscodeProcessTaskRegistry {
                 }
                 if exhausted {
                     (false, true)
-                } else if let Some(sequence) = take_sequence(entry) {
+                } else {
                     let terminal_status = if stop_requested {
                         VscodeProcessTaskStatus::Stopped
                     } else {
                         completion_status(completion)
                     };
-                    entry
-                        .pending_events
-                        .push_back(VscodeProcessTaskEvent::Status {
-                            owner: entry.owner.clone(),
-                            sequence,
-                            state: terminal_status,
-                        });
-                    entry.phase = TaskPhase::Terminal;
-                    entry.events_open = false;
-                    entry.admission.take();
-                    (open_gate_for_queued_event(entry), false)
-                } else {
-                    fail_closed(entry);
-                    (false, true)
+                    let problem_state = entry
+                        .problems
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .terminal_state(matches!(
+                            terminal_status,
+                            VscodeProcessTaskStatus::Exited { .. }
+                        ));
+                    let problem_exhausted =
+                        problem_state.is_some_and(|state| queue_problem_state(entry, state));
+                    if problem_exhausted {
+                        fail_closed(entry);
+                        (false, true)
+                    } else if let Some(sequence) = take_sequence(entry) {
+                        entry
+                            .pending_events
+                            .push_back(VscodeProcessTaskEvent::Status {
+                                owner: entry.owner.clone(),
+                                sequence,
+                                state: terminal_status,
+                            });
+                        entry.phase = TaskPhase::Terminal;
+                        entry.events_open = false;
+                        entry.admission.take();
+                        (open_gate_for_queued_event(entry), false)
+                    } else {
+                        fail_closed(entry);
+                        (false, true)
+                    }
                 }
             };
             retain_terminal(&mut state, &owner.run_id);
@@ -501,13 +560,24 @@ impl VscodeProcessTaskRegistry {
         owner: &VscodeProcessTaskOwner,
         stream: VscodeProcessTaskOutputStream,
         text: &str,
+        problem_update: Option<ProblemUpdate>,
         sink: &dyn VscodeProcessTaskEventSink,
     ) -> Result<(), String> {
         let (should_drain, exhausted) = {
             let mut state = self.state();
             let (should_drain, exhausted) = {
                 let entry = exact_active_entry_mut(&mut state, owner)?;
-                let exhausted = queue_output_text(entry, stream, text);
+                let mut exhausted = queue_output_text(entry, stream, text);
+                if let Some(update) = problem_update {
+                    exhausted |= queue_problem_state(
+                        entry,
+                        VscodeProcessTaskProblemsState::Append {
+                            problems: update.problems,
+                            total: update.total,
+                            truncated: update.truncated,
+                        },
+                    );
+                }
                 (open_gate_for_queued_event(entry), exhausted)
             };
             if exhausted {
@@ -634,6 +704,21 @@ fn queue_step(entry: &mut TaskEntry, label: &str, index: u16, total: u16) -> Res
             total,
         });
     Ok(())
+}
+
+fn queue_problem_state(entry: &mut TaskEntry, state: VscodeProcessTaskProblemsState) -> bool {
+    let Some(sequence) = take_sequence(entry) else {
+        fail_closed(entry);
+        return true;
+    };
+    entry
+        .pending_events
+        .push_back(VscodeProcessTaskEvent::Problems {
+            owner: entry.owner.clone(),
+            sequence,
+            state,
+        });
+    false
 }
 
 fn validate_next_step(entry: &TaskEntry, index: u16, total: u16) -> Result<(), String> {
@@ -829,6 +914,110 @@ fn bounded_message(value: &str) -> String {
         end -= 1;
     }
     format!("{}…", &clean[..end])
+}
+
+#[derive(Default)]
+struct RunProblemMatcher {
+    current: Option<NodePackageProblemMatcher>,
+    current_retained: usize,
+    current_total: u64,
+    enabled: bool,
+    problems: Vec<VscodeProcessTaskProblemWire>,
+    total: u64,
+    truncated: bool,
+}
+
+struct ProblemUpdate {
+    problems: Vec<VscodeProcessTaskProblemWire>,
+    total: u32,
+    truncated: bool,
+}
+
+impl RunProblemMatcher {
+    fn install(&mut self, matcher: Option<NodePackageProblemMatcher>) -> bool {
+        self.current = matcher;
+        self.current_retained = 0;
+        self.current_total = 0;
+        if self.current.is_none() || self.enabled {
+            return false;
+        }
+        self.enabled = true;
+        true
+    }
+
+    fn push(
+        &mut self,
+        stream: VscodeProcessTaskOutputStream,
+        bytes: &[u8],
+    ) -> Option<ProblemUpdate> {
+        let matcher = self.current.as_mut()?;
+        let problems = matcher.push_bytes(problem_stream(stream), bytes);
+        let snapshot = matcher.snapshot();
+        self.update(problems, &snapshot)
+    }
+
+    fn finish(&mut self, stream: VscodeProcessTaskOutputStream) -> Option<ProblemUpdate> {
+        let matcher = self.current.as_mut()?;
+        let problems = matcher.finish_stream(problem_stream(stream));
+        let snapshot = matcher.snapshot();
+        self.update(problems, &snapshot)
+    }
+
+    fn update(
+        &mut self,
+        problems: Vec<crate::node_package_problem_matcher::NodePackageProblem>,
+        snapshot: &NodePackageProblemSnapshot,
+    ) -> Option<ProblemUpdate> {
+        let delta = snapshot.total.saturating_sub(self.current_total);
+        self.current_total = snapshot.total;
+        self.total = self.total.saturating_add(delta);
+        self.truncated |= snapshot.truncated;
+        let retained = snapshot
+            .problems
+            .iter()
+            .skip(self.current_retained)
+            .cloned()
+            .map(problem_wire)
+            .collect::<Vec<_>>();
+        self.current_retained = snapshot.problems.len();
+        let room = MAX_TASK_PROBLEMS.saturating_sub(self.problems.len());
+        self.problems.extend(retained.iter().take(room).cloned());
+        self.truncated |= retained.len() > room || self.total > self.problems.len() as u64;
+        if problems.is_empty() {
+            return None;
+        }
+        let problem_wires = problems.into_iter().map(problem_wire).collect::<Vec<_>>();
+        Some(ProblemUpdate {
+            problems: problem_wires,
+            total: bounded_problem_total(self.total),
+            truncated: self.truncated,
+        })
+    }
+
+    fn terminal_state(&self, preserve: bool) -> Option<VscodeProcessTaskProblemsState> {
+        if !self.enabled {
+            return None;
+        }
+        if !preserve {
+            return Some(VscodeProcessTaskProblemsState::Clear);
+        }
+        Some(VscodeProcessTaskProblemsState::Complete {
+            problems: self.problems.clone(),
+            total: bounded_problem_total(self.total),
+            truncated: self.truncated,
+        })
+    }
+}
+
+fn problem_stream(stream: VscodeProcessTaskOutputStream) -> NodePackageTaskOutputStream {
+    match stream {
+        VscodeProcessTaskOutputStream::Stdout => NodePackageTaskOutputStream::Stdout,
+        VscodeProcessTaskOutputStream::Stderr => NodePackageTaskOutputStream::Stderr,
+    }
+}
+
+fn bounded_problem_total(total: u64) -> u32 {
+    u32::try_from(total).unwrap_or(u32::MAX)
 }
 
 #[derive(Default)]
