@@ -31,6 +31,13 @@ function themeBlocks(css: string): Array<{ selector: string; body: string }> {
   let match: RegExpExecArray | null;
   while ((match = themeSelector.exec(css)) !== null) {
     const selector = match[2].trim();
+    let precedingIndex = match.index - 1;
+    while (precedingIndex >= 0 && /\s/.test(css[precedingIndex] ?? "")) {
+      precedingIndex -= 1;
+    }
+    if (css[precedingIndex] === ",") {
+      continue;
+    }
     const bodyStart = css.indexOf("{", match.index);
     const bodyEnd = css.indexOf("}", bodyStart);
     if (bodyStart < 0 || bodyEnd < 0) {
