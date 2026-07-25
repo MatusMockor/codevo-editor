@@ -574,6 +574,58 @@
   color-scheme: light;
 }
 
+:root,
+.app-shell[data-theme="light"],
+.app-shell[data-theme="system"],
+.app-shell[data-theme="ayuMirage"],
+.app-shell[data-theme="materialDeepOcean"],
+.app-shell[data-theme="oneDarkPro"],
+.app-shell[data-theme="dracula"],
+.app-shell[data-theme="catppuccinMocha"],
+.app-shell[data-theme="darkPlus"],
+.app-shell[data-theme="catppuccinLatte"],
+.app-shell[data-theme="oneLight"] {
+  --accent: var(--color-accent);
+  --background-active: var(--color-accent-soft);
+  --background-primary: var(--color-panel);
+  --border-color: var(--color-border);
+  --border-strong: var(--color-border-strong);
+  --border-subtle: var(--color-border);
+  --button-primary-bg: var(--color-accent);
+  --color-bg: var(--color-app);
+  --color-border-subtle: var(--color-border);
+  --color-danger: var(--color-error);
+  --color-editor: var(--color-app);
+  --color-focus: var(--color-accent);
+  --color-info: var(--color-accent);
+  --color-input-background: var(--color-control);
+  --color-panel-soft: var(--color-hover);
+  --color-surface-hover: var(--color-hover);
+  --color-surface-raised: var(--color-modal);
+  --color-surface-strong: var(--color-panel-deep);
+  --danger-border: var(--color-error);
+  --danger-surface: var(--change-deleted-soft);
+  --danger-text: var(--color-error);
+  --editor-background: var(--color-app);
+  --editor-bg: var(--color-app);
+  --input-background: var(--color-control);
+  --panel-background: var(--color-panel);
+  --panel-bg: var(--color-modal);
+  --selection-background: var(--color-accent-soft);
+  --selection-bg: var(--color-accent-soft);
+  --status-error: var(--color-error);
+  --status-success: var(--color-success);
+  --success: var(--color-success);
+  --surface-control: var(--color-control);
+  --surface-input: var(--color-control);
+  --surface-raised: var(--color-modal);
+  --text-danger: var(--color-error);
+  --text-muted: var(--color-text-muted);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-muted);
+  --warning: var(--color-warning);
+}
+
 @media (prefers-color-scheme: light) {
   .app-shell[data-theme="system"] {
     --color-accent: #3d7c8a;

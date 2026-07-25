@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   terminalThemeForAppTheme,
@@ -17,8 +18,63 @@ const themeSelectors: Array<[string, string]> = [
   ["oneDarkPro", '.app-shell[data-theme="oneDarkPro"]'],
   ["dracula", '.app-shell[data-theme="dracula"]'],
   ["catppuccinMocha", '.app-shell[data-theme="catppuccinMocha"]'],
+  ["darkPlus", '.app-shell[data-theme="darkPlus"]'],
   ["catppuccinLatte", '.app-shell[data-theme="catppuccinLatte"]'],
   ["oneLight", '.app-shell[data-theme="oneLight"]'],
+];
+const themeAliasSelectors = themeSelectors.map(([, selector]) => selector).join(",\n");
+const themeTokenAliases = [
+  ["--accent", "--color-accent"],
+  ["--background-active", "--color-accent-soft"],
+  ["--background-primary", "--color-panel"],
+  ["--border-color", "--color-border"],
+  ["--border-strong", "--color-border-strong"],
+  ["--border-subtle", "--color-border"],
+  ["--button-primary-bg", "--color-accent"],
+  ["--color-bg", "--color-app"],
+  ["--color-border-subtle", "--color-border"],
+  ["--color-danger", "--color-error"],
+  ["--color-editor", "--color-app"],
+  ["--color-focus", "--color-accent"],
+  ["--color-info", "--color-accent"],
+  ["--color-input-background", "--color-control"],
+  ["--color-panel-soft", "--color-hover"],
+  ["--color-surface-hover", "--color-hover"],
+  ["--color-surface-raised", "--color-modal"],
+  ["--color-surface-strong", "--color-panel-deep"],
+  ["--danger-border", "--color-error"],
+  ["--danger-surface", "--change-deleted-soft"],
+  ["--danger-text", "--color-error"],
+  ["--editor-background", "--color-app"],
+  ["--editor-bg", "--color-app"],
+  ["--input-background", "--color-control"],
+  ["--panel-background", "--color-panel"],
+  ["--panel-bg", "--color-modal"],
+  ["--selection-background", "--color-accent-soft"],
+  ["--selection-bg", "--color-accent-soft"],
+  ["--status-error", "--color-error"],
+  ["--status-success", "--color-success"],
+  ["--success", "--color-success"],
+  ["--surface-control", "--color-control"],
+  ["--surface-input", "--color-control"],
+  ["--surface-raised", "--color-modal"],
+  ["--text-danger", "--color-error"],
+  ["--text-muted", "--color-text-muted"],
+  ["--text-primary", "--color-text"],
+  ["--text-secondary", "--color-text-muted"],
+  ["--warning", "--color-warning"],
+] as const;
+const runtimeStyleTokens = new Set([
+  "--bottom-panel-height",
+  "--git-history-file-depth",
+  "--sidebar-width",
+  "--structure-indent",
+  "--tree-level",
+]);
+const unmappedThemeTokens = [
+  "--button-primary-text",
+  "--color-shadow",
+  "--font-mono",
 ];
 const terminalTextColorKeys = [
   "black",
@@ -179,6 +235,38 @@ describe("contrastRatio", () => {
 
 describe("calm design tokens", () => {
   const appCss = readFileSync("src/App.css", "utf8");
+
+  it("defines compatibility token aliases for every app theme", () => {
+    const aliases = cssBlock(appCss, themeAliasSelectors);
+
+    for (const [, selector] of themeSelectors) {
+      expect(aliases, selector).toContain(selector);
+    }
+
+    for (const [alias, canonical] of themeTokenAliases) {
+      expect(cssDeclaration(aliases, alias), alias).toBe(`var(${canonical})`);
+    }
+  });
+
+  it("limits undeclared theme tokens to documented unmapped tokens", () => {
+    const definedTokens = new Set(
+      Array.from(appCss.matchAll(/^\s*(--[\w-]+)\s*:/gm), (match) => match[1]),
+    );
+    const usedTokens = new Set<string>();
+
+    for (const file of sourceFiles("src")) {
+      const source = readFileSync(file, "utf8");
+      for (const match of source.matchAll(/var\(\s*(--[\w-]+)/g)) {
+        usedTokens.add(match[1]);
+      }
+    }
+
+    expect(
+      Array.from(usedTokens)
+        .filter((token) => !definedTokens.has(token) && !runtimeStyleTokens.has(token))
+        .sort(),
+    ).toEqual(unmappedThemeTokens);
+  });
 
   it("declares the shared radius, motion and accent tokens in :root", () => {
     const root = cssBlock(appCss, ":root");
@@ -477,6 +565,17 @@ function cssBlock(css: string, selector: string): string {
   }
 
   return css.slice(start, end);
+}
+
+function sourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return sourceFiles(path);
+    }
+
+    return [".css", ".ts", ".tsx"].includes(extname(entry.name)) ? [path] : [];
+  });
 }
 
 function cssBlockContainingSelector(css: string, selector: string): string {
