@@ -64,6 +64,45 @@ describe("Express route discovery invalidation", () => {
     ).toBe(true);
   });
 
+  it("invalidates root tsconfig.json edits and renames on either side", () => {
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({ kind: "modified", relativePath: "tsconfig.json" }),
+      ),
+    ).toBe(true);
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({
+          kind: "renamed",
+          previousRelativePath: "tsconfig.json",
+          relativePath: "tsconfig.old.json",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({
+          kind: "renamed",
+          previousRelativePath: "tsconfig.old.json",
+          relativePath: "tsconfig.json",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("limits tsconfig invalidation to the workspace root across separators", () => {
+    for (const relativePath of [
+      "apps/api/tsconfig.json",
+      "apps\\api\\tsconfig.json",
+      "node_modules/dependency/tsconfig.json",
+      "node_modules\\dependency\\tsconfig.json",
+    ]) {
+      expect(workspaceFileChangeInvalidatesExpressRouteDiscovery(event({ relativePath }))).toBe(
+        false,
+      );
+    }
+  });
+
   it.each([
     "node_modules/package.json",
     "apps/api/node_modules/dependency/package.json",

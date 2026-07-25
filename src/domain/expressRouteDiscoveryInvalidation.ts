@@ -9,7 +9,12 @@ export function workspaceFileChangeInvalidatesExpressRouteDiscovery(
     return event.kind === "created" || event.kind === "deleted" || event.kind === "renamed";
   }
   return [event.relativePath, event.previousRelativePath].some((path) =>
-    Boolean(path && (isJsSourceRelativePath(path) || isPackageJsonRelativePath(path))),
+    Boolean(
+      path &&
+      (isJsSourceRelativePath(path) ||
+        isPackageJsonRelativePath(path) ||
+        isRootTsconfigRelativePath(path)),
+    ),
   );
 }
 
@@ -17,4 +22,10 @@ function isPackageJsonRelativePath(relativePath: string): boolean {
   const normalized = relativePath.split("\\").join("/");
   if (normalized.split("/").includes("node_modules")) return false;
   return normalized === "package.json" || normalized.endsWith("/package.json");
+}
+
+function isRootTsconfigRelativePath(relativePath: string): boolean {
+  const normalized = relativePath.split("\\").join("/");
+  if (normalized.split("/").includes("node_modules")) return false;
+  return normalized === "tsconfig.json";
 }

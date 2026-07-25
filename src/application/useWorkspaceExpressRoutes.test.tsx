@@ -108,12 +108,12 @@ describe("useWorkspaceExpressRoutes", () => {
       ],
     });
 
-    expect(
-      harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path })),
-    ).toEqual([
-      { packageLabel: "@acme/api", path: "/dirty-api" },
-      { packageLabel: undefined, path: "/root" },
-    ]);
+    expect(harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path }))).toEqual(
+      [
+        { packageLabel: "@acme/api", path: "/dirty-api" },
+        { packageLabel: undefined, path: "/root" },
+      ],
+    );
     harness.unmount();
   });
 
@@ -428,6 +428,195 @@ describe("useWorkspaceExpressRoutes", () => {
     harness.unmount();
   });
 
+  it("resolves aliased mount paths from a comment-laden root tsconfig for disk and dirty routes", async () => {
+    const excludedPaths = Array.from({ length: 4_096 }, (_, index) => `generated/${index}`);
+    const sources: Record<string, string> = {
+      "src/server.ts": [
+        "import express from 'express';",
+        "import users from '@/routes/users';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "src/routes/users.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/saved', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => ({
+        status: "ok" as const,
+        content:
+          path === "tsconfig.json"
+            ? `{
+                // Root aliases drive Express import resolution.
+                "exclude": ${JSON.stringify(excludedPaths)},
+                "compilerOptions": {
+                  "baseUrl": ".",
+                  "paths": { "@/routes/*": ["src/routes/*"], },
+                },
+              }`
+            : (sources[path] ?? ""),
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/api/saved"));
+
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(ROOT_A, "tsconfig.json", 262_144);
+
+    harness.set({
+      dirtySnapshots: [
+        {
+          relativeFilePath: "src/routes/users.ts",
+          source: [
+            "import express from 'express';",
+            "const users = express.Router();",
+            "users.post('/dirty', handler);",
+            "export default users;",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(harness.hook().routes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ method: "POST", path: "/api/dirty" })]),
+    );
+    harness.unmount();
+  });
+
+  it("ignores malformed root tsconfig without failing discovery", async () => {
+    const gateway = discovery({
+      readSourceTextBounded: vi.fn(async (_root, path) => ({
+        status: "ok" as const,
+        content: path === "tsconfig.json" ? "{ malformed" : ROUTE_A,
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/a"));
+
+    expect(harness.hook().error).toBeNull();
+    expect(harness.hook().truncated).toBe(false);
+    harness.unmount();
+  });
+
+  it("surfaces truncated root alias configuration", async () => {
+    const paths = Object.fromEntries(
+      Array.from({ length: 257 }, (_, index) => [`@alias-${index}`, [`src/alias-${index}`]]),
+    );
+    const gateway = discovery({
+      readSourceTextBounded: vi.fn(async (_root, path) => ({
+        status: "ok" as const,
+        content:
+          path === "tsconfig.json" ? JSON.stringify({ compilerOptions: { paths } }) : ROUTE_A,
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(harness.hook().routes[0]?.path).toBe("/a");
+    expect(harness.hook().truncated).toBe(true);
+    harness.unmount();
+  });
+
+  it("rescans root aliases after tsconfig invalidation", async () => {
+    vi.useFakeTimers();
+    try {
+      let aliasTarget = "src/routes/users";
+      const sources: Record<string, string> = {
+        "src/server.ts": [
+          "import express from 'express';",
+          "import users from '@routes';",
+          "const app = express();",
+          "app.use('/api', users);",
+        ].join("\n"),
+        "src/routes/users.ts": [
+          "import express from 'express';",
+          "const users = express.Router();",
+          "users.get('/users', handler);",
+          "export default users;",
+        ].join("\n"),
+        "src/routes/admin.ts": [
+          "import express from 'express';",
+          "const admin = express.Router();",
+          "admin.get('/admin', handler);",
+          "export default admin;",
+        ].join("\n"),
+      };
+      const gateway = discovery({
+        enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+          files: Object.keys(sources),
+          truncated: false,
+          visited: 4,
+        })),
+        readSourceTextBounded: vi.fn(async (_root, path) => ({
+          status: "ok" as const,
+          content:
+            path === "tsconfig.json"
+              ? JSON.stringify({
+                  compilerOptions: { paths: { "@routes": [aliasTarget] } },
+                })
+              : (sources[path] ?? ""),
+        })),
+      });
+      const harness = renderRoutes({ gateway, isOpen: true });
+      await act(async () => vi.runAllTimersAsync());
+      await waitForReact(() =>
+        expect(harness.hook().routes.some((route) => route.path === "/api/users")).toBe(true),
+      );
+
+      aliasTarget = "src/routes/admin";
+      harness.set({ discoveryVersion: 1 });
+      await act(async () => vi.advanceTimersByTimeAsync(75));
+      await waitForReact(() =>
+        expect(harness.hook().routes.some((route) => route.path === "/api/admin")).toBe(true),
+      );
+
+      expect(gateway.readSourceTextBounded).toHaveBeenCalledTimes(8);
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a stale root tsconfig read before reading stale-owner sources", async () => {
+    const pendingConfig = deferred<BoundedWorkspaceSourceRead>();
+    const gateway = discovery({
+      readSourceTextBounded: vi.fn(async (rootPath, path): Promise<BoundedWorkspaceSourceRead> => {
+        if (rootPath === ROOT_A && path === "tsconfig.json") return pendingConfig.promise;
+        if (path === "tsconfig.json") return { status: "tooLarge" };
+        return {
+          status: "ok",
+          content: rootPath === ROOT_A ? ROUTE_A : "app.get('/b', handler);",
+        };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+    await waitForReact(() =>
+      expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(ROOT_A, "tsconfig.json", 262_144),
+    );
+
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/b"));
+    await act(async () => pendingConfig.resolve({ status: "changed" }));
+
+    expect(gateway.readSourceTextBounded).not.toHaveBeenCalledWith(
+      ROOT_A,
+      "src/a.ts",
+      expect.anything(),
+    );
+    expect(harness.hook().routes.map((route) => route.path)).toEqual(["/b"]);
+    harness.unmount();
+  });
+
   it("removes stale disk routes when a dirty replacement exceeds the source bound", async () => {
     const gateway = discovery();
     const harness = renderRoutes({ gateway, isOpen: true });
@@ -455,6 +644,7 @@ describe("useWorkspaceExpressRoutes", () => {
         .mockResolvedValueOnce({ files: ["routes.ts"], truncated: false, visited: 2 })
         .mockResolvedValueOnce({ files, truncated: false, visited: 17 }),
       readSourceTextBounded: vi.fn(async (_root, path): Promise<BoundedWorkspaceSourceRead> => {
+        if (path === "tsconfig.json") return { status: "tooLarge" };
         if (path === "routes.ts") return { status: "ok", content: routeHeavy };
         activeReads += 1;
         peakReads = Math.max(peakReads, activeReads);
