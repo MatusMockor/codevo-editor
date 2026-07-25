@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DebugVariable } from "../domain/debug";
@@ -188,6 +188,60 @@ describe("DebugVariableTree", () => {
       count: 1,
       last: 4,
     });
+
+    const simultaneousTracker = createLatencyTracker();
+    render({
+      latencyTracker: simultaneousTracker,
+      variablePages: pages([
+        { name: "user", value: "Object", variablesReference: 11 },
+        { name: "count", value: "5", type: "number", variablesReference: 0 },
+      ]),
+    });
+
+    expect(replacementTracker.statsFor("debug-variables-render")?.count).toBe(1);
+    expect(simultaneousTracker.statsFor("debug-variables-render")).toMatchObject({
+      count: 1,
+      last: 4,
+    });
+  });
+
+  it("records one committed recompute under StrictMode", () => {
+    const tracker = createLatencyTracker();
+    let now = 0;
+    const latencyClock = () => {
+      now += 4;
+      return now;
+    };
+
+    act(() =>
+      root.render(
+        <StrictMode>
+          <DebugVariableTree {...props} latencyClock={latencyClock} latencyTracker={tracker} />
+        </StrictMode>,
+      ),
+    );
+
+    expect(tracker.statsFor("debug-variables-render")).toMatchObject({
+      count: 1,
+      last: 4,
+    });
+
+    props = {
+      ...props,
+      variablePages: pages([
+        { name: "user", value: "Object", variablesReference: 11 },
+        { name: "count", value: "5", type: "number", variablesReference: 0 },
+      ]),
+    };
+    act(() =>
+      root.render(
+        <StrictMode>
+          <DebugVariableTree {...props} latencyClock={latencyClock} latencyTracker={tracker} />
+        </StrictMode>,
+      ),
+    );
+
+    expect(tracker.statsFor("debug-variables-render")?.count).toBe(2);
   });
 
   it("renders without latency instrumentation by default", () => {

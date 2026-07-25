@@ -316,7 +316,7 @@ import {
   renderMarkdownPreview,
   type MarkdownPreviewTab,
 } from "../domain/markdownPreview";
-import { summarizeDiagnosticsByPath, type DiagnosticsSummary } from "../domain/diagnosticsSummary";
+import { summarizeDiagnosticsByPath } from "../domain/diagnosticsSummary";
 import { applyEditorChangeRevert, type EditorChangeHunk } from "../domain/editorChangeMarkers";
 import {
   isLanguageServerActive,
@@ -609,7 +609,7 @@ export function useWorkbenchController(
   } = usePhpFrameworkResolution({ workspaceDescriptor });
   const hasSymfonyFramework = phpFrameworkRuntimeContext.hasProvider("symfony");
   const [workspaceTrust, setWorkspaceTrust] = useState<WorkspaceTrustState | null>(null);
-  const workspaceTrusted = workspaceTrust?.trusted === true;
+  const workspaceTrusted: boolean = workspaceTrust?.trusted === true;
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
   const [languageServerPlan, setLanguageServerPlan] = useState<LanguageServerPlan | null>(null);
   const [installingManagedPhpactor, setInstallingManagedPhpactor] = useState(false);
@@ -6197,14 +6197,15 @@ export function useWorkbenchController(
       editorSurfaceCommandRunner,
     ],
   );
-  const commandContext = useMemo(() => {
-    return {
+  const commandContext = useMemo(
+    () => ({
       hasWorkspace: !!workspaceRoot,
       hasActiveDocument: !!activeDocument,
       activeDocumentDirty: !!activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
       editorSurfaceScope: captureNavigationCommandScope(),
-    };
-  }, [activeDocument, captureNavigationCommandScope, workspaceRoot]);
+    }),
+    [activeDocument, captureNavigationCommandScope, workspaceRoot],
+  );
   const commandContextRef = useRef(commandContext);
   commandContextRef.current = commandContext;
 
@@ -9184,9 +9185,8 @@ export function useWorkbenchController(
       (fileStructureScope === "inherited" &&
         loadingInheritedPhpFileOutlinePaths.has(activeDocument.path))),
   );
-  const fileStructureCanIncludeInheritedMembers = Boolean(
-    activeDocument && isLanguageServerDocument(activeDocument),
-  );
+  const fileStructureCanIncludeInheritedMembers =
+    !!activeDocument && isLanguageServerDocument(activeDocument);
   const activeDotenvDiagnosticsByPath = useMemo(() => {
     if (!activeDocument || activeDocument.language !== "dotenv") {
       return {};
@@ -9264,28 +9264,34 @@ export function useWorkbenchController(
     delete next[activeDocument.path];
     return next;
   }, [activeDocument, activePhpLocalDiagnosticsByPath, phpLocalDiagnosticsByPath]);
-  const activePhpLocalDiagnosticNotices = useMemo(() => {
-    return buildActivePhpLocalDiagnosticNotices(activeDocument, activePhpLocalDiagnosticsByPath);
-  }, [activeDocument, activePhpLocalDiagnosticsByPath]);
-  const activeDotenvDiagnosticNotices = useMemo(() => {
-    return buildActiveDotenvLocalDiagnosticNotices(activeDocument, activeDotenvDiagnosticsByPath);
-  }, [activeDocument, activeDotenvDiagnosticsByPath]);
-  const effectiveNotices = useMemo(() => {
-    return composeEffectiveDiagnosticNotices({
-      activeDocument,
-      activeDotenvDiagnosticNotices,
-      activePhpLocalDiagnosticNotices,
-      notices,
-    });
-  }, [activeDocument, activeDotenvDiagnosticNotices, activePhpLocalDiagnosticNotices, notices]);
-  const diagnosticsSummary = useMemo<DiagnosticsSummary>(() => {
-    return summarizeDiagnosticsByPath(
-      mergeDiagnosticsByPath(
-        mergedLanguageServerDiagnosticsByPath,
-        effectivePhpLocalDiagnosticsByPath,
+  const activePhpLocalDiagnosticNotices = useMemo(
+    () => buildActivePhpLocalDiagnosticNotices(activeDocument, activePhpLocalDiagnosticsByPath),
+    [activeDocument, activePhpLocalDiagnosticsByPath],
+  );
+  const activeDotenvDiagnosticNotices = useMemo(
+    () => buildActiveDotenvLocalDiagnosticNotices(activeDocument, activeDotenvDiagnosticsByPath),
+    [activeDocument, activeDotenvDiagnosticsByPath],
+  );
+  const effectiveNotices = useMemo(
+    () =>
+      composeEffectiveDiagnosticNotices({
+        activeDocument,
+        activeDotenvDiagnosticNotices,
+        activePhpLocalDiagnosticNotices,
+        notices,
+      }),
+    [activeDocument, activeDotenvDiagnosticNotices, activePhpLocalDiagnosticNotices, notices],
+  );
+  const diagnosticsSummary = useMemo(
+    () =>
+      summarizeDiagnosticsByPath(
+        mergeDiagnosticsByPath(
+          mergedLanguageServerDiagnosticsByPath,
+          effectivePhpLocalDiagnosticsByPath,
+        ),
       ),
-    );
-  }, [effectivePhpLocalDiagnosticsByPath, mergedLanguageServerDiagnosticsByPath]);
+    [effectivePhpLocalDiagnosticsByPath, mergedLanguageServerDiagnosticsByPath],
+  );
   const reportCommandError = useCallback(
     (error: unknown) => reportErrorForActiveWorkspaceRoot(workspaceRoot, "Command", error),
     [reportErrorForActiveWorkspaceRoot, workspaceRoot],
@@ -9379,7 +9385,10 @@ export function useWorkbenchController(
     goToPreviousProblem,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
-    debugSession,
+    debugSession: {
+      ...debugSession,
+      latencyTracker: workspaceRoot ? latencyTrackerForRoot(workspaceRoot) : undefined,
+    },
     debugInlineBreakpoint,
     debugCopyStackTrace,
     debugRestartFrame,

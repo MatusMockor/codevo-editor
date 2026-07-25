@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UseDebugConsoleResult } from "../application/useDebugConsole";
 import type { DebugCopyValueCandidate } from "../application/debugCopyValue";
-import type { DebugConsoleEntry, DebugConsoleState } from "../domain/debugConsoleState";
+import {
+  MAX_DEBUG_CONSOLE_ENTRIES,
+  createDebugConsoleState,
+  reduceDebugConsoleState,
+  type DebugConsoleEntry,
+  type DebugConsoleState,
+} from "../domain/debugConsoleState";
 import type { DebugInspectionOwner, DebugVariablePagesState } from "../domain/debugVariablePages";
+import { createLatencyTracker, type LatencyClock } from "../domain/latencyTracker";
 import { DebugConsolePanel } from "./DebugConsolePanel";
 import type { DebugCopyDisplayedValueSurface } from "./debugCopyValueSurface";
 
@@ -76,6 +83,116 @@ describe("DebugConsolePanel virtualization", () => {
     render([...entries, outputEntry(100, "line-100")]);
 
     expect(body.scrollTop).toBe(360);
+  });
+
+  it("records entry growth once and ignores scroll-only updates", () => {
+    const tracker = createLatencyTracker();
+    let now = 0;
+    const latencyClock = () => {
+      now += 3;
+      return now;
+    };
+    const entries = outputEntries(100);
+    render(entries, { latencyClock, latencyTracker: tracker });
+    expect(tracker.statsFor("debug-console-append")).toBeNull();
+
+    render([...entries, outputEntry(100, "line-100")], {
+      latencyClock,
+      latencyTracker: tracker,
+    });
+    expect(tracker.statsFor("debug-console-append")).toMatchObject({
+      count: 1,
+      last: 3,
+    });
+
+    const body = consoleBody();
+    body.scrollTop = 360;
+    dispatchScroll(body);
+    expect(tracker.statsFor("debug-console-append")?.count).toBe(1);
+
+    render([...entries, outputEntry(100, "line-100")], {
+      latencyClock,
+      latencyTracker: tracker,
+    });
+    expect(tracker.statsFor("debug-console-append")?.count).toBe(1);
+
+    const replacementTracker = createLatencyTracker();
+    render([...entries, outputEntry(100, "line-100"), outputEntry(101, "line-101")], {
+      latencyClock,
+      latencyTracker: replacementTracker,
+    });
+    expect(tracker.statsFor("debug-console-append")?.count).toBe(1);
+    expect(replacementTracker.statsFor("debug-console-append")?.count).toBe(1);
+  });
+
+  it("records an append after the bounded entry ring is saturated", () => {
+    const tracker = createLatencyTracker();
+    let now = 0;
+    const latencyClock = () => {
+      now += 3;
+      return now;
+    };
+    let state = createDebugConsoleState(OWNER);
+    for (let index = 0; index <= MAX_DEBUG_CONSOLE_ENTRIES; index += 1) {
+      state = reduceDebugConsoleState(state, {
+        owner: OWNER,
+        stream: "stdout",
+        text: `line-${index}`,
+        type: "output",
+      });
+    }
+    render(state.entries, { latencyClock, latencyTracker: tracker });
+
+    state = reduceDebugConsoleState(state, {
+      owner: OWNER,
+      stream: "stdout",
+      text: `line-${MAX_DEBUG_CONSOLE_ENTRIES + 1}`,
+      type: "output",
+    });
+    render(state.entries, {
+      latencyClock,
+      latencyTracker: tracker,
+    });
+
+    expect(tracker.statsFor("debug-console-append")).toMatchObject({
+      count: 1,
+      last: 3,
+    });
+
+    render([truncatedEntry(3), ...state.entries.slice(1)], {
+      latencyClock,
+      latencyTracker: tracker,
+    });
+    expect(tracker.statsFor("debug-console-append")?.count).toBe(1);
+  });
+
+  it("records one committed append under StrictMode", () => {
+    const tracker = createLatencyTracker();
+    let now = 0;
+    const latencyClock = () => {
+      now += 3;
+      return now;
+    };
+    const entries = outputEntries(100);
+    renderStrict(entries, { latencyClock, latencyTracker: tracker });
+
+    renderStrict([...entries, outputEntry(100, "line-100")], {
+      latencyClock,
+      latencyTracker: tracker,
+    });
+
+    expect(tracker.statsFor("debug-console-append")).toMatchObject({
+      count: 1,
+      last: 3,
+    });
+  });
+
+  it("does not read the latency clock without a tracker", () => {
+    const latencyClock = vi.fn(() => 0);
+
+    render(outputEntries(100), { latencyClock });
+
+    expect(latencyClock).not.toHaveBeenCalled();
   });
 
   it("preserves the visible row position when capped output evicts leading entries", () => {
@@ -195,6 +312,8 @@ describe("DebugConsolePanel virtualization", () => {
     entries: readonly DebugConsoleEntry[],
     overrides: {
       readonly copyDisplayedValueSurface?: DebugCopyDisplayedValueSurface;
+      readonly latencyClock?: LatencyClock;
+      readonly latencyTracker?: ReturnType<typeof createLatencyTracker>;
       readonly variablePages?: DebugVariablePagesState;
     } = {},
   ) {
@@ -205,10 +324,37 @@ describe("DebugConsolePanel virtualization", () => {
           copyDisplayedValueSurface={overrides.copyDisplayedValueSurface}
           enabled
           inspectionOwner={INSPECTION_OWNER}
+          latencyClock={overrides.latencyClock}
+          latencyTracker={overrides.latencyTracker}
           onLoadVariablePage={vi.fn()}
           variablePages={overrides.variablePages}
           workspaceOwnerKey="workspace-owner"
         />,
+      );
+      geometry.flushAnimationFrames();
+    });
+  }
+
+  function renderStrict(
+    entries: readonly DebugConsoleEntry[],
+    overrides: {
+      readonly latencyClock?: LatencyClock;
+      readonly latencyTracker?: ReturnType<typeof createLatencyTracker>;
+    } = {},
+  ) {
+    act(() => {
+      root.render(
+        <StrictMode>
+          <DebugConsolePanel
+            console={consoleResult(entries)}
+            enabled
+            inspectionOwner={INSPECTION_OWNER}
+            latencyClock={overrides.latencyClock}
+            latencyTracker={overrides.latencyTracker}
+            onLoadVariablePage={vi.fn()}
+            workspaceOwnerKey="workspace-owner"
+          />
+        </StrictMode>,
       );
       geometry.flushAnimationFrames();
     });

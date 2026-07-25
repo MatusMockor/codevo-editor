@@ -87,18 +87,9 @@ describe("RuntimeObservabilityPanel", () => {
     vi.clearAllMocks();
   });
 
-  function renderPanel(
-    gateway: RuntimeObservabilityGateway,
-    rootPath: string | null,
-  ) {
+  function renderPanel(gateway: RuntimeObservabilityGateway, rootPath: string | null) {
     act(() => {
-      root.render(
-        <RuntimeObservabilityPanel
-          gateway={gateway}
-          isActive
-          rootPath={rootPath}
-        />,
-      );
+      root.render(<RuntimeObservabilityPanel gateway={gateway} isActive rootPath={rootPath} />);
     });
   }
 
@@ -116,14 +107,10 @@ describe("RuntimeObservabilityPanel", () => {
     expect(host.textContent).toContain("tsserver exited unexpectedly.");
 
     expect(
-      host
-        .querySelector('[data-testid="runtime-indicator-phpactor"]')
-        ?.getAttribute("data-tone"),
+      host.querySelector('[data-testid="runtime-indicator-phpactor"]')?.getAttribute("data-tone"),
     ).toBe("ok");
     expect(
-      host
-        .querySelector('[data-testid="runtime-indicator-tsserver"]')
-        ?.getAttribute("data-tone"),
+      host.querySelector('[data-testid="runtime-indicator-tsserver"]')?.getAttribute("data-tone"),
     ).toBe("error");
   });
 
@@ -133,12 +120,8 @@ describe("RuntimeObservabilityPanel", () => {
     renderPanel(gateway, "/workspace");
     await flush();
 
-    const restartButton = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Restart PHPactor"]',
-    );
-    const stopButton = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Stop PHPactor"]',
-    );
+    const restartButton = host.querySelector<HTMLButtonElement>('[aria-label="Restart PHPactor"]');
+    const stopButton = host.querySelector<HTMLButtonElement>('[aria-label="Stop PHPactor"]');
 
     expect(restartButton).not.toBeNull();
     expect(stopButton).not.toBeNull();
@@ -167,9 +150,7 @@ describe("RuntimeObservabilityPanel", () => {
     renderPanel(gateway, "/workspace");
     await flush();
 
-    const phpLogButton = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Open PHPactor log"]',
-    );
+    const phpLogButton = host.querySelector<HTMLButtonElement>('[aria-label="Open PHPactor log"]');
     const tsLogButton = host.querySelector<HTMLButtonElement>(
       '[aria-label="Open TypeScript language server log"]',
     );
@@ -199,9 +180,7 @@ describe("RuntimeObservabilityPanel", () => {
     renderPanel(gateway, "/workspace");
     await flush();
 
-    const stopButton = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Stop PHPactor"]',
-    );
+    const stopButton = host.querySelector<HTMLButtonElement>('[aria-label="Stop PHPactor"]');
 
     await act(async () => {
       stopButton?.click();
@@ -234,9 +213,7 @@ describe("RuntimeObservabilityPanel", () => {
     renderPanel(gateway, "/workspace");
     await flush();
 
-    const stopButton = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Stop PHPactor"]',
-    );
+    const stopButton = host.querySelector<HTMLButtonElement>('[aria-label="Stop PHPactor"]');
 
     await act(async () => {
       stopButton?.click();
@@ -249,9 +226,7 @@ describe("RuntimeObservabilityPanel", () => {
       await Promise.resolve();
     });
 
-    const copyButton = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Copy debug bundle"]',
-    );
+    const copyButton = host.querySelector<HTMLButtonElement>('[aria-label="Copy debug bundle"]');
 
     await act(async () => {
       copyButton?.click();
@@ -273,9 +248,7 @@ describe("RuntimeObservabilityPanel", () => {
     renderPanel(gateway, null);
 
     expect(gateway.getObservability).not.toHaveBeenCalled();
-    expect(host.textContent).toContain(
-      "Open a project to inspect its language runtimes.",
-    );
+    expect(host.textContent).toContain("Open a project to inspect its language runtimes.");
   });
 
   it("drops stale runtime reports after switching project roots", async () => {
@@ -360,9 +333,7 @@ describe("RuntimeObservabilityPanel", () => {
     renderPanel(gateway, "/workspace");
     await flush();
 
-    const copyButton = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Copy debug bundle"]',
-    );
+    const copyButton = host.querySelector<HTMLButtonElement>('[aria-label="Copy debug bundle"]');
     expect(copyButton).not.toBeNull();
 
     await act(async () => {
@@ -384,9 +355,7 @@ describe("RuntimeObservabilityPanel", () => {
     renderPanel(gateway, "/workspace");
     await flush();
 
-    expect(
-      host.querySelector('[aria-label="Copy debug bundle"]'),
-    ).toBeNull();
+    expect(host.querySelector('[aria-label="Copy debug bundle"]')).toBeNull();
   });
 
   it("renders recorded operation latencies from the snapshot accessor", async () => {
@@ -395,6 +364,8 @@ describe("RuntimeObservabilityPanel", () => {
     tracker.record("quickOpen", 12);
     tracker.record("quickOpen", 18);
     tracker.record("definition", 300);
+    tracker.record("debug-variables-render", 8);
+    tracker.record("debug-console-append", 4);
 
     act(() => {
       root.render(
@@ -411,19 +382,23 @@ describe("RuntimeObservabilityPanel", () => {
     expect(host.textContent).toContain("Operation latency");
     expect(host.textContent).toContain("Quick Open");
     expect(host.textContent).toContain("Go to Definition");
+    expect(host.textContent).toContain("Debug Variables Render");
+    expect(host.textContent).toContain("Debug Console Append");
+    expect(host.querySelector('[data-testid="latency-row-debug-variables-render"]')).not.toBeNull();
+    expect(
+      host
+        .querySelector('[data-testid="latency-row-debug-console-append"]')
+        ?.getAttribute("data-tone"),
+    ).toBe("ok");
 
     // Quick Open median (15ms) is within budget -> ok tone.
     expect(
-      host
-        .querySelector('[data-testid="latency-row-quickOpen"]')
-        ?.getAttribute("data-tone"),
+      host.querySelector('[data-testid="latency-row-quickOpen"]')?.getAttribute("data-tone"),
     ).toBe("ok");
 
     // Definition median (300ms) blows the 200ms error budget -> error tone.
     expect(
-      host
-        .querySelector('[data-testid="latency-row-definition"]')
-        ?.getAttribute("data-tone"),
+      host.querySelector('[data-testid="latency-row-definition"]')?.getAttribute("data-tone"),
     ).toBe("error");
   });
 

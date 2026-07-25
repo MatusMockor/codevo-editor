@@ -13,6 +13,7 @@ import type { UseDebugConsoleResult } from "../application/useDebugConsole";
 import type { DebugConsoleFocusRequest } from "../application/useDebugConsoleSurfaceCommands";
 import type { DebugCopyValueCandidate } from "../application/debugCopyValue";
 import type { DebugVariable } from "../domain/debug";
+import type { LatencyClock, LatencyTracker } from "../domain/latencyTracker";
 import {
   selectDebugVariableExpansion,
   type DebugInspectionOwner,
@@ -156,6 +157,8 @@ export function DebugConsolePanel({
   onLoadVariablePage,
   onRequest,
   inspectionOwner = null,
+  latencyClock = readLatencyClock,
+  latencyTracker,
   variablePages,
   workspaceOwnerKey = null,
 }: {
@@ -174,6 +177,8 @@ export function DebugConsolePanel({
   onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
   onRequest?(request: DebugConsoleCompletionRequest): void;
   inspectionOwner?: DebugInspectionOwner | null;
+  latencyClock?: LatencyClock;
+  latencyTracker?: LatencyTracker;
   variablePages?: DebugVariablePagesState;
   workspaceOwnerKey?: string | null;
 }) {
@@ -200,6 +205,15 @@ export function DebugConsolePanel({
   copyDisplayedValueSurfaceRef.current = copyDisplayedValueSurface;
   const focusedResultCandidateRef = useRef<DebugCopyValueCandidate | null>(null);
   const focusedResultIdRef = useRef<string | null>(null);
+  const latencyInstrumentationRef = useRef({
+    clock: latencyClock,
+    tracker: latencyTracker,
+  });
+  latencyInstrumentationRef.current = {
+    clock: latencyClock,
+    tracker: latencyTracker,
+  };
+  const committedEntriesRef = useRef(console.state.entries);
   const visibleCompletionItems = completion?.items.slice(0, MAX_VISIBLE_COMPLETION_ITEMS) ?? [];
   const completionVisible = completionOpen && completion !== null;
   const activeCompletionItem = completionVisible
@@ -213,27 +227,55 @@ export function DebugConsolePanel({
       : completionVisible && completion?.incomplete
         ? "More suggestions available — keep typing."
         : null;
-  const renderItems = useMemo(
-    () =>
-      buildDebugConsoleRenderItems({
-        currentResultOwner: console.resultOwner ?? null,
-        entries: console.state.entries,
-        expandedResultIds,
-        inspectionOwner,
-        resultTreeEnabled: Boolean(onLoadVariablePage),
-        variablePages,
-        workspaceOwnerKey,
-      }),
-    [
-      console.resultOwner,
-      console.state.entries,
+  const renderModel = useMemo(() => {
+    const entries = console.state.entries;
+    const { clock, tracker } = latencyInstrumentationRef.current;
+    const lastEntry = entries[entries.length - 1];
+    const committedEntries = committedEntriesRef.current;
+    const committedLastEntryId = committedEntries[committedEntries.length - 1]?.id ?? null;
+    const appendStart =
+      tracker &&
+      lastEntry &&
+      lastEntry.kind !== "truncated" &&
+      lastEntry.id !== committedLastEntryId
+        ? clock()
+        : null;
+    const items = buildDebugConsoleRenderItems({
+      currentResultOwner: console.resultOwner ?? null,
+      entries,
       expandedResultIds,
       inspectionOwner,
-      onLoadVariablePage,
+      resultTreeEnabled: Boolean(onLoadVariablePage),
       variablePages,
       workspaceOwnerKey,
-    ],
-  );
+    });
+    return {
+      entries,
+      items,
+      latencySample:
+        tracker && appendStart !== null ? { durationMs: clock() - appendStart, tracker } : null,
+    };
+  }, [
+    console.resultOwner,
+    console.state.entries,
+    expandedResultIds,
+    inspectionOwner,
+    onLoadVariablePage,
+    variablePages,
+    workspaceOwnerKey,
+  ]);
+  const lastPublishedRenderModelRef = useRef<typeof renderModel | null>(null);
+  useEffect(() => {
+    committedEntriesRef.current = renderModel.entries;
+    const sample = renderModel.latencySample;
+    if (!sample || lastPublishedRenderModelRef.current === renderModel) {
+      return;
+    }
+
+    lastPublishedRenderModelRef.current = renderModel;
+    sample.tracker.record("debug-console-append", sample.durationMs);
+  }, [renderModel]);
+  const renderItems = renderModel.items;
   const keyForIndex = useCallback(
     (index: number) => renderItems[index]?.id ?? `missing-${index}`,
     [renderItems],
@@ -1206,4 +1248,8 @@ function consoleResultOwnersEqual(
 
 function formatVariableValue(variable: DebugVariable): string {
   return variable.type ? `${variable.value} (${variable.type})` : variable.value;
+}
+
+function readLatencyClock(): number {
+  return performance.now();
 }

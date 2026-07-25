@@ -14,6 +14,7 @@ import type {
   DebugRestartFrameCommand,
 } from "./DebugPanel";
 import type { NodeRunWithoutDebuggingPickerCommand } from "./NodeRunWithoutDebuggingPickerAction";
+import type { LatencyTracker } from "../domain/latencyTracker";
 
 export type PublicDebugPanelProps = Omit<
   DebugPanelProps,
@@ -28,6 +29,7 @@ interface UseDebugPanelPropsOptions {
     readonly consoleSurface?: UseDebugConsoleSurfaceCommandsResult;
     readonly consoleCompletions?: UseDebugConsoleCompletionsResult;
     readonly configurationLauncher?: NodeDebugConfigurationLauncher;
+    readonly latencyTracker?: LatencyTracker;
     readonly watches: UseDebugWatchExpressionsResult & {
       readonly expressionMutations: DebugWatchExpressionMutations;
     };
@@ -83,6 +85,7 @@ export function useDebugPanelProps({
     exceptionPausePending,
     exceptionTypeFilter,
     lastStartError,
+    latencyTracker,
     inspectionOwner,
     loadVariables,
     loadVariablePage,
@@ -139,6 +142,7 @@ export function useDebugPanelProps({
       exceptionTypeFilter,
       hasJavaScriptTypeScriptWorkspace,
       lastStartError,
+      latencyTracker,
       inspectionOwner,
       nodeLaunchConfigurations: configurationLauncher
         ? {
@@ -275,6 +279,7 @@ export function useDebugPanelProps({
       exceptionTypeFilter,
       hasJavaScriptTypeScriptWorkspace,
       lastStartError,
+      latencyTracker,
       inspectionOwner,
       loadVariables,
       loadVariablePage,

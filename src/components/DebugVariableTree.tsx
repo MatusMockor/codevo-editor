@@ -175,12 +175,10 @@ export function DebugVariableTree({
     clock: latencyClock,
     tracker: latencyTracker,
   });
-  useEffect(() => {
-    latencyInstrumentationRef.current = {
-      clock: latencyClock,
-      tracker: latencyTracker,
-    };
-  }, [latencyClock, latencyTracker]);
+  latencyInstrumentationRef.current = {
+    clock: latencyClock,
+    tracker: latencyTracker,
+  };
   const mutationCacheRef = useRef<{
     readonly provider: DebugVariableMutationRows | undefined;
     readonly rows: WeakMap<object, DebugVariableRowMutation>;
@@ -188,7 +186,7 @@ export function DebugVariableTree({
   if (mutationCacheRef.current.provider !== variableMutationRows) {
     mutationCacheRef.current = { provider: variableMutationRows, rows: new WeakMap() };
   }
-  const rows = useMemo(() => {
+  const renderModel = useMemo(() => {
     const { clock, tracker } = latencyInstrumentationRef.current;
     const renderModelStart = tracker ? clock() : null;
     const built = buildRows({
@@ -201,11 +199,25 @@ export function DebugVariableTree({
       maxRows: Math.max(0, Math.min(MAX_DEBUG_VARIABLE_TREE_ROWS, Math.floor(maxRows))),
     });
     const stabilized = stabilizeRowMutations(built, mutationCacheRef.current.rows);
-    if (tracker && renderModelStart !== null) {
-      tracker.record("debug-variables-render", clock() - renderModelStart);
-    }
-    return stabilized;
+    return {
+      latencySample:
+        tracker && renderModelStart !== null
+          ? { durationMs: clock() - renderModelStart, tracker }
+          : null,
+      rows: stabilized,
+    };
   }, [expandedIds, maxRows, roots, variableMutationRows, variablePages, variablesByReference]);
+  const lastPublishedRenderModelRef = useRef<typeof renderModel | null>(null);
+  useEffect(() => {
+    const sample = renderModel.latencySample;
+    if (!sample || lastPublishedRenderModelRef.current === renderModel) {
+      return;
+    }
+
+    lastPublishedRenderModelRef.current = renderModel;
+    sample.tracker.record("debug-variables-render", sample.durationMs);
+  }, [renderModel]);
+  const rows = renderModel.rows;
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const previousRowsRef = useRef<readonly TreeRow[]>([]);

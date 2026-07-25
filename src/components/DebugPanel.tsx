@@ -34,6 +34,7 @@ import type {
   FunctionBreakpoint,
 } from "../domain/debug";
 import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
+import type { LatencyTracker } from "../domain/latencyTracker";
 import type { ActiveDebugAdapterKind } from "../application/useDebugSession";
 import type { DebugVariableMutationRows } from "../application/debugSessionContracts";
 import type { UseDebugConsoleResult } from "../application/useDebugConsole";
@@ -136,6 +137,7 @@ export interface DebugPanelProps {
   debugStopPending?: boolean;
   debugSessionAttached?: boolean;
   lastStartError: string | null;
+  latencyTracker?: LatencyTracker;
   exceptionPauseError: string | null;
   exceptionPauseMode: DebugExceptionPauseMode;
   exceptionPausePending: boolean;
@@ -342,6 +344,7 @@ export function DebugPanel({
   exceptionTypeFilter = EMPTY_EXCEPTION_TYPE_FILTER,
   hasJavaScriptTypeScriptWorkspace,
   lastStartError,
+  latencyTracker,
   nodeLaunchConfigurations,
   nodeRunWithoutDebuggingPicker,
   onOpenNodeLaunchConfigurations,
@@ -556,6 +559,7 @@ export function DebugPanel({
             addToWatchSurface={debugAddToWatch}
             copyValueSurface={debugCopyValue?.variables}
             inspectionOwner={inspectionOwner}
+            latencyTracker={latencyTracker}
             onLoadVariablePage={onLoadVariablePage}
             onLoadVariables={onLoadVariables}
             scopes={scopes}
@@ -745,6 +749,7 @@ export function DebugPanel({
           onLoadVariablePage={onLoadVariablePage}
           onRequest={onConsoleCompletionRequest}
           inspectionOwner={inspectionOwner}
+          latencyTracker={latencyTracker}
           variablePages={variablePages}
           workspaceOwnerKey={consoleWorkspaceOwnerKey}
         />
@@ -1050,6 +1055,7 @@ function Variables({
   addToWatchSurface,
   copyValueSurface,
   inspectionOwner,
+  latencyTracker,
   onLoadVariablePage,
   onLoadVariables,
   scopes,
@@ -1062,6 +1068,7 @@ function Variables({
   addToWatchSurface?: DebugAddToWatchVariableSurface;
   copyValueSurface?: DebugCopyValueSurface;
   inspectionOwner?: DebugInspectionOwner | null;
+  latencyTracker?: LatencyTracker;
   onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
   onLoadVariables(variablesReference: number): void;
   scopes: DebugScope[];
@@ -1091,6 +1098,7 @@ function Variables({
       addToWatchSurface={addToWatchSurface}
       ariaLabel="Variables"
       copyValueSurface={copyValueSurface}
+      latencyTracker={latencyTracker}
       onLoadPage={onLoadVariablePage}
       onLoadVariables={onLoadVariables}
       roots={roots}

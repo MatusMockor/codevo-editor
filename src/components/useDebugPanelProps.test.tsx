@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { createLatencyTracker } from "../domain/latencyTracker";
 import type { DebugPanelProps } from "./DebugPanel";
 import { useDebugPanelProps } from "./useDebugPanelProps";
 
@@ -42,6 +43,7 @@ describe("useDebugPanelProps", () => {
       variables: { source: "variables" },
       watch: { source: "watch" },
     };
+    const latencyTracker = createLatencyTracker();
     const debugSession = {
       breakpointBulkMutationPending: false,
       breakpointCounts: { disabled: 2, enabled: 1 },
@@ -104,6 +106,7 @@ describe("useDebugPanelProps", () => {
       exceptionPausePending: false,
       exceptionTypeFilter: ["TypeError"],
       lastStartError: null,
+      latencyTracker,
       loadVariables,
       output: [],
       pauseDebug: vi.fn().mockResolvedValue(undefined),
@@ -159,6 +162,7 @@ describe("useDebugPanelProps", () => {
     act(() => root.render(<Harness />));
     const panel = captured.current as DebugPanelProps | null;
     expect(panel).not.toBeNull();
+    expect(panel?.latencyTracker).toBe(latencyTracker);
     panel?.onLoadVariables(21);
     expect(panel?.debugCopyStackTrace?.copyStackTrace()).toBe(true);
     panel?.onClearConsole?.();
