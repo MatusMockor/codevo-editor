@@ -1,5 +1,7 @@
 use crate::package_tool_context::PackageToolContext;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::sync::Condvar;
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
@@ -26,6 +28,8 @@ const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 pub struct EslintProcessRegistry {
     next_id: AtomicU64,
     roots: Mutex<HashMap<String, EslintRootLifecycle>>,
+    #[cfg(test)]
+    activity_changed: Condvar,
 }
 
 #[derive(Default)]
@@ -120,6 +124,8 @@ impl EslintProcessRegistry {
                 canceled: Arc::clone(&canceled),
             },
         );
+        #[cfg(test)]
+        self.activity_changed.notify_all();
         Ok(EslintProcessRegistration {
             registry: Arc::clone(self),
             root_key: permit.root_key.clone(),
@@ -134,6 +140,29 @@ impl EslintProcessRegistry {
             .lock()
             .map(|roots| roots.values().map(|root| root.processes.len()).sum())
             .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    fn wait_for_active_count(&self, expected: usize, timeout: Duration) {
+        let roots = self.roots.lock().expect("ESLint registry");
+        let (roots, result) = self
+            .activity_changed
+            .wait_timeout_while(roots, timeout, |roots| {
+                roots
+                    .values()
+                    .map(|root| root.processes.len())
+                    .sum::<usize>()
+                    != expected
+            })
+            .expect("ESLint registry wait");
+        let active = roots
+            .values()
+            .map(|root| root.processes.len())
+            .sum::<usize>();
+        assert!(
+            !result.timed_out() || active == expected,
+            "expected {expected} active ESLint processes, found {active}"
+        );
     }
 }
 
@@ -721,16 +750,24 @@ mod tests {
     use serde_json::json;
     use std::{
         fs,
+        io::Read,
         path::{Path, PathBuf},
         process::Command,
-        sync::Arc,
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            mpsc, Arc,
+        },
+        time::Duration,
     };
     #[cfg(unix)]
     use std::{
         io::Write,
         os::unix::{fs::PermissionsExt, process::CommandExt, process::ExitStatusExt},
     };
+
+    const PROCESS_HANG_GUARD: Duration = Duration::from_secs(30);
+    const FIXTURE_PROCESS_LIFETIME_SECS: u64 = 300;
+    static NEXT_TEMP_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn parses_messages_with_ranges_severities_and_uncapped_totals() {
@@ -845,7 +882,7 @@ mod tests {
             root.to_str().expect("root"),
             None,
             &test_registry(),
-            Duration::from_secs(2),
+            PROCESS_HANG_GUARD,
         );
         assert_eq!(
             response,
@@ -862,7 +899,7 @@ mod tests {
             root.to_str().expect("root"),
             Some(configured.to_str().expect("binary")),
             &test_registry(),
-            Duration::from_secs(2),
+            PROCESS_HANG_GUARD,
         );
 
         match response {
@@ -900,7 +937,7 @@ mod tests {
             root.to_str().expect("root"),
             Some(exit_one.to_str().expect("binary")),
             &test_registry(),
-            Duration::from_secs(2),
+            PROCESS_HANG_GUARD,
         );
         assert_eq!(ok_parts(ok).0.len(), 1);
         assert_eq!(
@@ -908,7 +945,7 @@ mod tests {
                 root.to_str().expect("root"),
                 Some(exit_two.to_str().expect("binary")),
                 &test_registry(),
-                Duration::from_secs(2),
+                PROCESS_HANG_GUARD,
             ),
             EslintAnalysisResponse::Error {
                 message: "Could not find config file.\n".to_string(),
@@ -919,7 +956,7 @@ mod tests {
                 root.to_str().expect("root"),
                 Some(bad_json.to_str().expect("binary")),
                 &test_registry(),
-                Duration::from_secs(2),
+                PROCESS_HANG_GUARD,
             ),
             EslintAnalysisResponse::Error {
                 message: "bad JSON context\n".to_string(),
@@ -1004,7 +1041,7 @@ mod tests {
             "dirty current content",
             Some(script.to_str().expect("binary")),
             &test_registry(),
-            Duration::from_secs(2),
+            PROCESS_HANG_GUARD,
         );
         let (diagnostics, _) = ok_parts(response);
         assert_eq!(
@@ -1020,7 +1057,7 @@ mod tests {
                 "content",
                 Some(script.to_str().expect("binary")),
                 &test_registry(),
-                Duration::from_secs(2),
+                PROCESS_HANG_GUARD,
             ),
             EslintAnalysisResponse::Error { message } if message.contains("workspace root")
         ));
@@ -1054,7 +1091,7 @@ mod tests {
             "const value = 2",
             None,
             &test_registry(),
-            Duration::from_secs(2),
+            PROCESS_HANG_GUARD,
         );
 
         assert!(matches!(response, EslintAnalysisResponse::Ok { .. }));
@@ -1070,7 +1107,7 @@ mod tests {
         let script = executable_script(
             &root,
             "hanging-eslint",
-            "#!/bin/sh\ncat >/dev/null\nsleep 30\n",
+            &format!("#!/bin/sh\ncat >/dev/null\nsleep {FIXTURE_PROCESS_LIFETIME_SECS}\n"),
         );
         let registry = test_registry();
 
@@ -1097,17 +1134,20 @@ mod tests {
         let root_a = temp_workspace("eslint-close-a");
         let root_b = temp_workspace("eslint-close-b");
         let registry = test_registry();
-        let thread_a = spawn_hanging_document_analysis(&root_a, Arc::clone(&registry));
-        let thread_b = spawn_hanging_document_analysis(&root_b, Arc::clone(&registry));
-        wait_until(Duration::from_secs(2), || registry.active_count() == 2);
-        wait_until(Duration::from_secs(2), || {
-            root_a.join("descendant.pid").exists()
-        });
-        let descendant_pid: i32 = fs::read_to_string(root_a.join("descendant.pid"))
-            .expect("descendant pid")
+        let (thread_a, descendant_a) =
+            spawn_hanging_document_analysis(&root_a, Arc::clone(&registry));
+        let (thread_b, descendant_b) =
+            spawn_hanging_document_analysis(&root_b, Arc::clone(&registry));
+        let descendant_pid: i32 = descendant_a
+            .recv_timeout(PROCESS_HANG_GUARD)
+            .expect("descendant start signal")
             .trim()
             .parse()
             .expect("numeric pid");
+        descendant_b
+            .recv_timeout(PROCESS_HANG_GUARD)
+            .expect("root B descendant start signal");
+        registry.wait_for_active_count(2, PROCESS_HANG_GUARD);
 
         registry.stop_root(&root_a);
         let response_a = thread_a.join().expect("root A analysis thread");
@@ -1138,13 +1178,19 @@ mod tests {
         let root = temp_workspace("eslint-close-startup");
         let registry = test_registry();
         let permit = registry.begin_run(&root).expect("startup permit");
-        let script = executable_script(&root, "late-eslint", "#!/bin/sh\nexec sleep 5\n");
+        let script = executable_script(
+            &root,
+            "late-eslint",
+            &format!("#!/bin/sh\nexec sleep {FIXTURE_PROCESS_LIFETIME_SECS}\n"),
+        );
         let mut command = Command::new(script);
         configure_process_group(&mut command);
         let mut child = command.spawn().expect("spawn late ESLint");
         let process_group: i32 = child.id().try_into().expect("process group id");
         let mut descendant_command = Command::new("sleep");
-        descendant_command.arg("5").process_group(process_group);
+        descendant_command
+            .arg(FIXTURE_PROCESS_LIFETIME_SECS.to_string())
+            .process_group(process_group);
         let mut descendant = descendant_command
             .spawn()
             .expect("spawn owned ESLint process-group member");
@@ -1176,7 +1222,11 @@ mod tests {
         let root = temp_workspace("eslint-revoke-startup");
         let registry = test_registry();
         let stale_permit = registry.begin_run(&root).expect("startup permit");
-        let script = executable_script(&root, "late-eslint", "#!/bin/sh\nsleep 30\n");
+        let script = executable_script(
+            &root,
+            "late-eslint",
+            &format!("#!/bin/sh\nsleep {FIXTURE_PROCESS_LIFETIME_SECS}\n"),
+        );
         let mut command = Command::new(&script);
         configure_process_group(&mut command);
         let mut child = command.spawn().expect("spawn late ESLint");
@@ -1224,11 +1274,8 @@ mod tests {
     }
 
     fn temp_workspace(label: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("{label}-{nanos}"));
+        let id = NEXT_TEMP_WORKSPACE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("{label}-{}-{id}", std::process::id()));
         fs::create_dir_all(&path).expect("temp workspace");
         path.canonicalize().expect("canonical workspace")
     }
@@ -1241,36 +1288,54 @@ mod tests {
     fn spawn_hanging_document_analysis(
         root: &Path,
         registry: Arc<EslintProcessRegistry>,
-    ) -> std::thread::JoinHandle<EslintAnalysisResponse> {
+    ) -> (
+        std::thread::JoinHandle<EslintAnalysisResponse>,
+        mpsc::Receiver<String>,
+    ) {
         let source = root.join("current.ts");
         fs::write(&source, "const value = 1").expect("source fixture");
+        let (descendant_signal, descendant_receiver) = fifo_signal(root, "descendant-started");
         let script = executable_script(
             root,
             "hanging-eslint",
             &format!(
-                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\ncat >/dev/null\nwait\n",
-                root.join("descendant.pid").display()
+                "#!/bin/sh\nsleep {FIXTURE_PROCESS_LIFETIME_SECS} &\nprintf '%s\\n' \"$!\" > '{}'\ncat >/dev/null\nwait\n",
+                descendant_signal.display()
             ),
         );
         let root = root.to_path_buf();
-        std::thread::spawn(move || {
-            run_eslint_document_analysis_blocking(
-                root.to_str().expect("root"),
-                source.to_str().expect("source"),
-                "const value = 2",
-                Some(script.to_str().expect("binary")),
-                &registry,
-                Duration::from_secs(10),
-            )
-        })
+        (
+            std::thread::spawn(move || {
+                run_eslint_document_analysis_blocking(
+                    root.to_str().expect("root"),
+                    source.to_str().expect("source"),
+                    "const value = 2",
+                    Some(script.to_str().expect("binary")),
+                    &registry,
+                    PROCESS_HANG_GUARD,
+                )
+            }),
+            descendant_receiver,
+        )
     }
 
-    fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
-        let deadline = std::time::Instant::now() + timeout;
-        while !predicate() {
-            assert!(std::time::Instant::now() < deadline, "condition timed out");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+    #[cfg(unix)]
+    fn fifo_signal(root: &Path, name: &str) -> (PathBuf, mpsc::Receiver<String>) {
+        let path = root.join(name);
+        let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+            .expect("FIFO path without null bytes");
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let reader_path = path.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut signal = String::new();
+            fs::File::open(reader_path)
+                .expect("open FIFO signal")
+                .read_to_string(&mut signal)
+                .expect("read FIFO signal");
+            sender.send(signal).expect("send FIFO signal");
+        });
+        (path, receiver)
     }
 
     #[cfg(unix)]
