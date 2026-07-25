@@ -8,6 +8,7 @@ import type { EditorDocument } from "./domain/workspace";
 import { buildJsTestExplorerTree, type JsTestExplorerTestNode } from "./domain/jsTestExplorerTree";
 import type { TestGutterTarget } from "./domain/testGutterTargets";
 import { createEmptyDebugWatches } from "./test/debugWatchMocks";
+import { workbenchComposition } from "./workbenchComposition";
 
 const mocks = vi.hoisted(() => ({
   artisanClear: vi.fn(),
@@ -315,6 +316,13 @@ describe("App command routing", () => {
     mocks.phpClear.mockReset();
     mocks.setPaletteOpen.mockReset();
     mocks.showBottomPanelView.mockReset();
+    vi.spyOn(
+      workbenchComposition.workspaceSourceDiscoveryGateway,
+      "readSourceTextBounded",
+    ).mockResolvedValue({
+      content: JSON.stringify({ dependencies: { express: "^5.1.0" } }),
+      status: "ok",
+    });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -439,6 +447,8 @@ describe("App command routing", () => {
         savedContent: 'router.get("/users", handler);',
       },
       bottomPanelView: "problems",
+      expressRouteDiscoveryVersion: 0,
+      workspaceIdentityDescriptor: { workspaceId: "workspace-1" },
       workspaceDescriptor: {
         javaScriptTypeScript: { frameworks: ["Express"] },
         php: null,

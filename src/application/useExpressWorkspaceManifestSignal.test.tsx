@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,6 +60,87 @@ describe("useExpressWorkspaceManifestSignal", () => {
     const harness = await renderHook(root, { gateway: sourceGateway(read) });
 
     expect(harness.current).toBe(false);
+  });
+
+  it.each([
+    ["undefined", () => undefined as never],
+    [
+      "synchronous throw",
+      () => {
+        throw new Error("unreadable");
+      },
+    ],
+    ["rejection", async () => Promise.reject(new Error("unreadable"))],
+    ["malformed result", async () => ({ status: "ok" }) as never],
+  ])("settles false for a hostile %s gateway result", async (_, read) => {
+    const gateway = sourceGateway(read);
+    const harness = await renderHook(root, { gateway });
+
+    expect(harness.current).toBe(false);
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledOnce();
+  });
+
+  it("attempts a triple once when the gateway identity changes", async () => {
+    const firstGateway = sourceGateway(() => undefined as never);
+    const secondGateway = sourceGateway(async () => ({
+      content: JSON.stringify({ dependencies: { express: "^5.1.0" } }),
+      status: "ok",
+    }));
+    const harness = await renderHook(root, { gateway: firstGateway });
+
+    await harness.set({ gateway: secondGateway });
+    await harness.set({ gateway: sourceGateway(async () => ({ content: "{}", status: "ok" })) });
+
+    expect(harness.current).toBe(false);
+    expect(firstGateway.readSourceTextBounded).toHaveBeenCalledOnce();
+    expect(secondGateway.readSourceTextBounded).not.toHaveBeenCalled();
+  });
+
+  it("publishes one attempt through StrictMode effect replay", async () => {
+    const gateway = sourceGateway(async () => ({
+      content: JSON.stringify({ dependencies: { express: "^5.1.0" } }),
+      status: "ok",
+    }));
+    const harness = await renderHook(root, { gateway }, true);
+
+    expect(harness.current).toBe(true);
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledOnce();
+  });
+
+  it("does not read for an arbitrary Proxy-supplied discovery version", async () => {
+    const gateway = sourceGateway(() => undefined as never);
+    const harness = await renderHook(root, {
+      discoveryVersion: vi.fn() as never,
+      gateway,
+    });
+
+    await harness.set({ discoveryVersion: vi.fn() as never });
+
+    expect(harness.current).toBe(false);
+    expect(gateway.readSourceTextBounded).not.toHaveBeenCalled();
+  });
+
+  it("leaves a never-settling attempt false and stale after unmount", async () => {
+    const pending = deferred<{
+      readonly content: string;
+      readonly status: "ok";
+    }>();
+    const gateway = sourceGateway(() => pending.promise);
+    const harness = await renderHook(root, { gateway });
+
+    expect(harness.current).toBe(false);
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledOnce();
+
+    await act(async () => root.unmount());
+    pending.resolve({
+      content: JSON.stringify({ dependencies: { express: "^5.1.0" } }),
+      status: "ok",
+    });
+    await act(async () => {
+      await pending.promise;
+    });
+
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledOnce();
   });
 
   it("reacts to discovery version changes without remounting", async () => {
@@ -142,6 +223,35 @@ describe("useExpressWorkspaceManifestSignal", () => {
     expect(harness.current).toBe(false);
   });
 
+  it("drops a result captured before an A to no workspace to A replacement", async () => {
+    const firstWorkspaceA = deferred<{
+      readonly content: string;
+      readonly status: "ok";
+    }>();
+    let workspaceAReads = 0;
+    const gateway = sourceGateway(async () => {
+      if (workspaceAReads++ === 0) return firstWorkspaceA.promise;
+      return {
+        content: JSON.stringify({ dependencies: { fastify: "^5.0.0" } }),
+        status: "ok",
+      };
+    });
+    const harness = await renderHook(root, { gateway });
+
+    await harness.set({ rootPath: null });
+    await harness.set({ rootPath: "/workspace" });
+    firstWorkspaceA.resolve({
+      content: JSON.stringify({ dependencies: { express: "^5.1.0" } }),
+      status: "ok",
+    });
+    await act(async () => {
+      await firstWorkspaceA.promise;
+    });
+
+    expect(harness.current).toBe(false);
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps route discovery lazy without manifest evidence until Express is opened", async () => {
     const gateway = sourceGateway(async () => ({
       content: JSON.stringify({ dependencies: { fastify: "^5.0.0" } }),
@@ -192,7 +302,11 @@ interface GateHookOptions extends HookOptions {
   readonly expressViewOpen: boolean;
 }
 
-async function renderHook(root: Root, overrides: Partial<HookOptions> = {}): Promise<HookHarness> {
+async function renderHook(
+  root: Root,
+  overrides: Partial<HookOptions> = {},
+  strictMode = false,
+): Promise<HookHarness> {
   let options: HookOptions = {
     discoveryVersion: 0,
     gateway: sourceGateway(async () => ({ content: "{}", status: "ok" })),
@@ -214,7 +328,15 @@ async function renderHook(root: Root, overrides: Partial<HookOptions> = {}): Pro
 
   const render = async () => {
     await act(async () => {
-      root.render(<Harness />);
+      root.render(
+        strictMode ? (
+          <StrictMode>
+            <Harness />
+          </StrictMode>
+        ) : (
+          <Harness />
+        ),
+      );
       await Promise.resolve();
     });
   };

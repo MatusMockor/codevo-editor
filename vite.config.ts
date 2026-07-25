@@ -10,9 +10,12 @@ export default defineConfig(async () => ({
   base: "./",
 
   test: {
-    execArgv: process.allowedNodeEnvironmentFlags.has("--no-experimental-webstorage")
-      ? ["--no-experimental-webstorage"]
-      : [],
+    execArgv: [
+      "--max-old-space-size=6144",
+      ...(process.allowedNodeEnvironmentFlags.has("--no-experimental-webstorage")
+        ? ["--no-experimental-webstorage"]
+        : []),
+    ],
     setupFiles: ["./src/test/setup.ts"],
   },
 

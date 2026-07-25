@@ -6,8 +6,7 @@ import { useDirtyExpressRoutesDocumentSnapshots } from "./useDirtyExpressRoutesD
 const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
 
 interface ExpressWorkspaceManifestSignal {
-  readonly discoveryVersion: number;
-  readonly workspaceKey: string;
+  readonly attemptKey: string;
   readonly value: boolean;
 }
 
@@ -55,51 +54,88 @@ export function useExpressWorkspaceManifestSignal(
   discoveryVersion: number,
 ): boolean {
   const [signal, setSignal] = useState<ExpressWorkspaceManifestSignal | null>(null);
-  const workspaceKey = workspaceId && rootPath ? `${workspaceId}\u0000${rootPath}` : null;
-  const currentKeyRef = useRef(workspaceKey);
-  const requestSequenceRef = useRef(0);
-  currentKeyRef.current = workspaceKey;
+  const attemptKey = manifestAttemptKey(workspaceId, rootPath, discoveryVersion);
+  const attemptSequenceRef = useRef(0);
+  const currentAttemptKeyRef = useRef(attemptKey);
+  const effectActiveRef = useRef(false);
+  const gatewayRef = useRef(gateway);
+  const lastAttemptedKeyRef = useRef<string | null>(null);
+  currentAttemptKeyRef.current = attemptKey;
+  gatewayRef.current = gateway;
 
   useEffect(() => {
+    effectActiveRef.current = true;
+    const capturedAttemptKey = attemptKey;
+    const capturedGateway = gatewayRef.current;
     const capturedRoot = rootPath;
-    const capturedWorkspaceKey = workspaceKey;
-    const requestSequence = requestSequenceRef.current + 1;
-    requestSequenceRef.current = requestSequence;
-    if (!capturedRoot || !capturedWorkspaceKey) return;
+    const deactivate = () => {
+      effectActiveRef.current = false;
+    };
+    if (!capturedAttemptKey || !capturedRoot) {
+      if (lastAttemptedKeyRef.current !== null) {
+        lastAttemptedKeyRef.current = null;
+        attemptSequenceRef.current += 1;
+      }
+      return deactivate;
+    }
+    if (lastAttemptedKeyRef.current === capturedAttemptKey) return deactivate;
+    lastAttemptedKeyRef.current = capturedAttemptKey;
+    const capturedAttemptSequence = attemptSequenceRef.current + 1;
+    attemptSequenceRef.current = capturedAttemptSequence;
     const isCurrent = () =>
-      currentKeyRef.current === capturedWorkspaceKey &&
-      requestSequenceRef.current === requestSequence;
+      effectActiveRef.current &&
+      currentAttemptKeyRef.current === capturedAttemptKey &&
+      attemptSequenceRef.current === capturedAttemptSequence;
+    const settle = (value: boolean) => {
+      if (!isCurrent()) return;
+      setSignal((current) => {
+        const currentValue = current?.attemptKey === capturedAttemptKey ? current.value : false;
+        if (currentValue === value) return current;
+        return { attemptKey: capturedAttemptKey, value };
+      });
+    };
 
     const readManifest = async () => {
-      let value = false;
       try {
-        const read = await gateway.readSourceTextBounded(
+        const read: unknown = await capturedGateway.readSourceTextBounded(
           capturedRoot,
           "package.json",
           MAX_PACKAGE_JSON_BYTES,
         );
         if (!isCurrent()) return;
-        if (read.status === "ok") {
-          value = hasExpressWorkspaceSignal({
+        if (!isManifestRead(read)) return settle(false);
+        settle(
+          hasExpressWorkspaceSignal({
             manifest: JSON.parse(read.content) as unknown,
             routes: [],
-          });
-        }
+          }),
+        );
       } catch {
-        value = false;
+        settle(false);
       }
-      if (!isCurrent()) return;
-      setSignal({ discoveryVersion, value, workspaceKey: capturedWorkspaceKey });
     };
 
     void readManifest();
-    return () => {
-      if (requestSequenceRef.current !== requestSequence) return;
-      requestSequenceRef.current += 1;
-    };
-  }, [discoveryVersion, gateway, rootPath, workspaceKey]);
+    return deactivate;
+  }, [attemptKey, rootPath]);
 
-  if (signal?.workspaceKey !== workspaceKey) return false;
-  if (signal.discoveryVersion !== discoveryVersion) return false;
+  if (signal?.attemptKey !== attemptKey) return false;
   return signal.value;
+}
+
+function manifestAttemptKey(
+  workspaceId: string | null,
+  rootPath: string | null,
+  discoveryVersion: number,
+): string | null {
+  if (typeof workspaceId !== "string" || workspaceId.length === 0) return null;
+  if (typeof rootPath !== "string" || rootPath.length === 0) return null;
+  if (!Number.isSafeInteger(discoveryVersion) || discoveryVersion < 0) return null;
+  return JSON.stringify([workspaceId, rootPath, discoveryVersion]);
+}
+
+function isManifestRead(read: unknown): read is { readonly content: string } {
+  if (!read || typeof read !== "object" || Array.isArray(read)) return false;
+  const candidate = read as Record<string, unknown>;
+  return candidate.status === "ok" && typeof candidate.content === "string";
 }
