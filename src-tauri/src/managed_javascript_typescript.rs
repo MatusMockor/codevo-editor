@@ -296,7 +296,9 @@ fn tsserver_paths_for_active_cleanup(
     tsserver_paths_for_cleanup(command, initialize_request, root_path)
         .into_iter()
         .filter(|path| {
-            can_cleanup_shared_processes || is_workspace_typescript_server_path(path, root_path)
+            !path_lies_under_other_active_root(path, root_path, active_root_paths)
+                && (can_cleanup_shared_processes
+                    || is_root_workspace_typescript_server_path(path, root_path))
         })
         .collect()
 }
@@ -318,7 +320,7 @@ fn inferred_tsserver_paths(command: &LanguageServerCommand, root_path: &str) -> 
     let mut paths = Vec::new();
 
     paths.push(
-        Path::new(root_path)
+        canonical_workspace_root_path(root_path)
             .join("node_modules")
             .join("typescript")
             .join("lib")
@@ -357,11 +359,10 @@ fn should_cleanup_tsserver_path(
         return false;
     }
 
-    let normalized = normalize_path(path);
-    let root = normalized_workspace_root_key(root_path);
-    if normalized.starts_with(&format!("{root}/node_modules/typescript/lib/")) {
+    if is_typescript_server_path_within_workspace(path, root_path) {
         return true;
     }
+    let normalized = normalize_path(path);
 
     if let Some(server_path) = typescript_language_server_path_in_command(command, root_path) {
         if let Some(node_modules) =
@@ -384,15 +385,64 @@ fn should_cleanup_tsserver_path(
 }
 
 #[cfg(unix)]
-fn is_workspace_typescript_server_path(path: &str, root_path: &str) -> bool {
+fn is_typescript_server_path_within_workspace(path: &str, root_path: &str) -> bool {
     if !path.ends_with("/tsserver.js") && !path.ends_with("\\tsserver.js") {
         return false;
     }
 
     let normalized = normalize_path(path);
-    let root = normalized_workspace_root_key(root_path);
+    let root =
+        normalized_workspace_root_key(&canonical_workspace_root_path(root_path).to_string_lossy());
+    if Path::new(&normalized).components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    }) {
+        return false;
+    }
 
-    normalized.starts_with(&format!("{root}/node_modules/typescript/lib/"))
+    let canonical = normalize_path(&canonical_or_raw_path(path).to_string_lossy());
+    canonical.starts_with(&format!("{root}/"))
+        && canonical.ends_with("/node_modules/typescript/lib/tsserver.js")
+}
+
+#[cfg(unix)]
+fn is_root_workspace_typescript_server_path(path: &str, root_path: &str) -> bool {
+    let expected = canonical_workspace_root_path(root_path)
+        .join("node_modules/typescript/lib/tsserver.js")
+        .to_string_lossy()
+        .to_string();
+    normalize_path(&canonical_or_raw_path(path).to_string_lossy())
+        == normalize_path(&canonical_or_raw_path(&expected).to_string_lossy())
+}
+
+#[cfg(unix)]
+fn path_lies_under_other_active_root(
+    path: &str,
+    root_path: &str,
+    active_root_paths: &[String],
+) -> bool {
+    let candidate = canonical_or_raw_path(path);
+    active_root_paths.iter().any(|active_root_path| {
+        if workspace_root_keys_equal(active_root_path, root_path) {
+            return false;
+        }
+        let active_root = canonical_workspace_root_path(active_root_path);
+        candidate.starts_with(active_root)
+    })
+}
+
+#[cfg(unix)]
+fn canonical_workspace_root_path(root_path: &str) -> PathBuf {
+    canonical_or_raw_path(root_path)
+}
+
+#[cfg(unix)]
+fn canonical_or_raw_path(path: &str) -> PathBuf {
+    Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(path))
 }
 
 #[cfg(unix)]
@@ -431,7 +481,8 @@ fn is_typescript_language_server_binary_name(name: &str) -> bool {
 
 #[cfg(unix)]
 fn workspace_root_keys_equal(left: &str, right: &str) -> bool {
-    normalized_workspace_root_key(left) == normalized_workspace_root_key(right)
+    normalized_workspace_root_key(&canonical_workspace_root_path(left).to_string_lossy())
+        == normalized_workspace_root_key(&canonical_workspace_root_path(right).to_string_lossy())
 }
 
 #[cfg(unix)]
@@ -604,6 +655,36 @@ mod tests {
     }
 
     #[test]
+    fn tsserver_cleanup_accepts_package_local_workspace_path() {
+        let command = workspace_command("/workspace-a");
+        let path = "/workspace-a/packages/api/node_modules/typescript/lib/tsserver.js";
+        let request = initialize_request_with_tsserver_path(path);
+
+        assert_eq!(
+            tsserver_paths_for_cleanup(&command, &request, "/workspace-a"),
+            vec![
+                "/workspace-a/node_modules/typescript/lib/tsserver.js".to_string(),
+                path.to_string()
+            ],
+        );
+    }
+
+    #[test]
+    fn tsserver_cleanup_accepts_canonical_pnpm_workspace_path() {
+        let command = workspace_command("/workspace-a");
+        let path = "/workspace-a/node_modules/.pnpm/typescript@5.8.3/node_modules/typescript/lib/tsserver.js";
+        let request = initialize_request_with_tsserver_path(path);
+
+        assert_eq!(
+            tsserver_paths_for_cleanup(&command, &request, "/workspace-a"),
+            vec![
+                path.to_string(),
+                "/workspace-a/node_modules/typescript/lib/tsserver.js".to_string()
+            ],
+        );
+    }
+
+    #[test]
     fn active_sibling_workspace_still_allows_workspace_local_tsserver_cleanup() {
         let command = workspace_command("/workspace-a");
         let request = initialize_request_with_tsserver_path(
@@ -619,6 +700,110 @@ mod tests {
             ),
             vec!["/workspace-a/node_modules/typescript/lib/tsserver.js".to_string()],
         );
+    }
+
+    #[test]
+    fn parent_workspace_cannot_cleanup_nested_active_workspace_tsserver() {
+        let command = workspace_command("/w/repo");
+        let nested_root = "/w/repo/packages/api";
+        let nested_server = "/w/repo/packages/api/node_modules/typescript/lib/tsserver.js";
+        let request = initialize_request_with_tsserver_path(nested_server);
+
+        assert!(!tsserver_paths_for_active_cleanup(
+            &command,
+            &request,
+            "/w/repo",
+            &[nested_root.to_string()],
+        )
+        .contains(&nested_server.to_string()));
+    }
+
+    #[test]
+    fn active_workspace_path_excludes_candidate_when_shared_cleanup_is_blocked() {
+        let command = workspace_command("/w/repo");
+        let nested_root = "/w/repo/packages/api";
+        let nested_server = "/w/repo/packages/api/node_modules/typescript/lib/tsserver.js";
+        let request = initialize_request_with_tsserver_path(nested_server);
+
+        assert!(!tsserver_paths_for_active_cleanup(
+            &command,
+            &request,
+            "/w/repo",
+            &["/w/repo".to_string(), nested_root.to_string()],
+        )
+        .contains(&nested_server.to_string()));
+    }
+
+    #[test]
+    fn nested_start_cannot_cleanup_ancestor_workspace_tsserver_at_its_own_root_path() {
+        let root_path = "/w/repo/packages/api";
+        let candidate = "/w/repo/packages/api/node_modules/typescript/lib/tsserver.js";
+        let command = workspace_command(root_path);
+        let request = initialize_request_with_tsserver_path(candidate);
+
+        assert!(!tsserver_paths_for_active_cleanup(
+            &command,
+            &request,
+            root_path,
+            &["/w/repo".to_string()],
+        )
+        .contains(&candidate.to_string()));
+    }
+
+    #[test]
+    fn symlinked_workspace_root_infers_canonical_tsserver_path() {
+        use std::os::unix::fs::symlink;
+        use std::time::SystemTime;
+
+        let suffix = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!("codevo-cleanup-root-{suffix}"));
+        let canonical_root = parent.join("canonical");
+        let linked_root = parent.join("linked");
+        fs::create_dir_all(&canonical_root).expect("create canonical root");
+        symlink(&canonical_root, &linked_root).expect("create root symlink");
+        let command = workspace_command(&linked_root.to_string_lossy());
+        let inferred = inferred_tsserver_paths(&command, &linked_root.to_string_lossy());
+        let expected = canonical_root
+            .canonicalize()
+            .expect("canonical root")
+            .join("node_modules/typescript/lib/tsserver.js")
+            .to_string_lossy()
+            .to_string();
+
+        assert!(inferred.contains(&expected));
+        fs::remove_dir_all(parent).expect("cleanup");
+    }
+
+    #[test]
+    fn pnpm_store_target_is_treated_as_root_exclusive_tsserver() {
+        use std::os::unix::fs::symlink;
+        use std::time::SystemTime;
+
+        let suffix = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("codevo-pnpm-cleanup-{suffix}"));
+        let store_server = root
+            .join("node_modules/.pnpm/typescript@5.8.3/node_modules/typescript/lib/tsserver.js");
+        fs::create_dir_all(store_server.parent().expect("store server parent"))
+            .expect("create store server parent");
+        fs::write(&store_server, "").expect("write store server");
+        symlink(
+            ".pnpm/typescript@5.8.3/node_modules/typescript",
+            root.join("node_modules/typescript"),
+        )
+        .expect("link root TypeScript");
+        let candidate = root.join("node_modules/typescript/lib/tsserver.js");
+
+        assert!(is_root_workspace_typescript_server_path(
+            &candidate.to_string_lossy(),
+            &root.to_string_lossy(),
+        ));
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

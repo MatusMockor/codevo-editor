@@ -26,6 +26,7 @@ mod diagnostic_authority;
 mod request_dispatch;
 mod runtime_telemetry;
 mod server_configuration;
+mod start_cleanup;
 mod transport_failure;
 
 use capabilities::parse_capabilities;
@@ -916,6 +917,7 @@ impl Clone for JavaScriptTypeScriptLaunchContext {
 pub struct JavaScriptTypeScriptLanguageServerRegistry {
     registry: LanguageServerRegistry,
     launch_contexts: Mutex<HashMap<String, JavaScriptTypeScriptLaunchContext>>,
+    cleanup_gate: Mutex<()>,
 }
 
 impl JavaScriptTypeScriptLanguageServerRegistry {
@@ -923,6 +925,7 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
         Self {
             registry: LanguageServerRegistry::new_with_label("TypeScript language server"),
             launch_contexts: Mutex::new(HashMap::new()),
+            cleanup_gate: Mutex::new(()),
         }
     }
 
@@ -961,21 +964,17 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
         refresh_sink: Arc<dyn RefreshSink>,
         restart_controller: Arc<RestartController>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        let status = self.registry.start_with_auto_restart(
-            root_path,
-            command,
-            initialize_request,
-            spawner,
-            LanguageServerEventSinks::new(
+        self.reserve_start_cleanup(root_path)?
+            .start_with_auto_restart(
+                command,
+                initialize_request,
+                spawner,
                 status_sink,
                 diagnostics_sink,
                 workspace_edit_sink,
                 refresh_sink,
-            ),
-            restart_controller,
-        )?;
-        self.store_launch_context_if_active(root_path, command, initialize_request, &status);
-        Ok(status)
+                restart_controller,
+            )
     }
 
     pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
@@ -1112,6 +1111,10 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
 
         #[cfg(unix)]
         if let Some(context) = context {
+            let _cleanup_gate = self
+                .cleanup_gate
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             managed_javascript_typescript::cleanup_orphaned_javascript_typescript_processes(
                 &context.command,
                 &context.initialize_request,
@@ -1618,33 +1621,12 @@ impl LanguageServerSupervisor {
         event_sinks: LanguageServerEventSinks,
         restart_controller: Arc<RestartController>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        let LanguageServerEventSinks {
-            status,
-            diagnostics,
-            workspace_edit,
-            refresh,
-        } = event_sinks;
-        let restart_context = RestartContext {
-            supervisor: Arc::downgrade(self),
-            command: clone_command(command),
-            initialize_request: clone_initialize_request(initialize_request),
-            spawner: Arc::clone(&spawner),
-            status_sink: Arc::clone(&status),
-            diagnostics_sink: Arc::clone(&diagnostics),
-            workspace_edit_sink: Arc::clone(&workspace_edit),
-            refresh_sink: Arc::clone(&refresh),
-            controller: restart_controller,
-        };
-
-        self.start_core(
+        self.start_with_auto_restart_kind(
             command,
             initialize_request,
-            spawner.as_ref(),
-            status,
-            diagnostics,
-            workspace_edit,
-            refresh,
-            Some(Arc::new(restart_context)),
+            spawner,
+            event_sinks,
+            restart_controller,
             StartKind::Fresh,
         )
     }
@@ -1927,7 +1909,15 @@ impl LanguageServerSupervisor {
     ) -> Result<(), String> {
         let mut status = self.status.lock().map_err(|error| error.to_string())?;
 
-        if is_active_status(&status) {
+        if is_active_status(&status)
+            && !matches!(
+                (&*status, start_kind),
+                (
+                    LanguageServerRuntimeStatus::Starting { session_id: 0 },
+                    StartKind::ReservedFresh
+                )
+            )
+        {
             return Err("Language server already running.".to_string());
         }
 
@@ -2401,6 +2391,7 @@ impl Default for RestartController {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartKind {
     Fresh,
+    ReservedFresh,
     Restart,
 }
 
@@ -2954,6 +2945,7 @@ fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
 mod tests {
     mod diagnostics_projection_tests;
     mod request_cancellation_tests;
+    mod start_cleanup_tests;
     mod transport_failure_tests;
 
     #[cfg(unix)]

@@ -4,6 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::workspace_typescript;
+use crate::workspace_typescript::WorkspaceTypeScriptResolution;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PhpToolAvailability {
@@ -51,16 +54,12 @@ pub trait PhpToolDetector {
     fn detect(&self, workspace_root: Option<&Path>) -> io::Result<PhpToolAvailability>;
 }
 
-pub trait JavaScriptTypeScriptToolDetector {
-    fn detect(
-        &self,
-        workspace_root: Option<&Path>,
-        preference: JavaScriptTypeScriptToolPreference,
-    ) -> io::Result<JavaScriptTypeScriptToolAvailability>;
-}
-
 pub struct LocalPhpToolDetector;
-pub struct LocalJavaScriptTypeScriptToolDetector;
+
+pub(crate) struct JavaScriptTypeScriptToolDetection {
+    pub tools: JavaScriptTypeScriptToolAvailability,
+    pub workspace_typescript_message: Option<String>,
+}
 
 const CODEVO_EDITOR_PHP_PATH: &str = "CODEVO_EDITOR_PHP_PATH";
 const LEGACY_MOCKOR_EDITOR_PHP_PATH: &str = "MOCKOR_EDITOR_PHP_PATH";
@@ -93,22 +92,27 @@ impl PhpToolDetector for LocalPhpToolDetector {
     }
 }
 
-impl JavaScriptTypeScriptToolDetector for LocalJavaScriptTypeScriptToolDetector {
-    fn detect(
-        &self,
-        workspace_root: Option<&Path>,
-        preference: JavaScriptTypeScriptToolPreference,
-    ) -> io::Result<JavaScriptTypeScriptToolAvailability> {
-        Ok(JavaScriptTypeScriptToolAvailability {
+pub(crate) fn detect_javascript_typescript_tools(
+    workspace_root: Option<&Path>,
+    preference: JavaScriptTypeScriptToolPreference,
+) -> io::Result<JavaScriptTypeScriptToolDetection> {
+    let (typescript_server, workspace_typescript_message) = find_typescript_server_with_message(
+        workspace_root,
+        preference,
+        find_bundled_typescript_server,
+    );
+    Ok(JavaScriptTypeScriptToolDetection {
+        tools: JavaScriptTypeScriptToolAvailability {
             typescript_language_server: find_javascript_typescript_tool(
                 "typescript-language-server",
                 workspace_root,
                 preference,
             ),
-            typescript_server: find_typescript_server(workspace_root, preference),
+            typescript_server,
             vue_typescript_plugin: find_vue_typescript_plugin(workspace_root),
-        })
-    }
+        },
+        workspace_typescript_message,
+    })
 }
 
 fn find_tool(name: &str, workspace_root: Option<&Path>) -> Option<ToolLocation> {
@@ -206,17 +210,102 @@ fn find_vue_typescript_plugin_in_node_modules(
         })
 }
 
+#[cfg(test)]
 fn find_typescript_server(
     workspace_root: Option<&Path>,
     preference: JavaScriptTypeScriptToolPreference,
 ) -> Option<ToolLocation> {
-    match preference {
-        JavaScriptTypeScriptToolPreference::Workspace => workspace_root
-            .and_then(find_workspace_typescript_server)
-            .or_else(find_bundled_typescript_server),
-        JavaScriptTypeScriptToolPreference::Bundled => find_bundled_typescript_server()
-            .or_else(|| workspace_root.and_then(find_workspace_typescript_server)),
+    find_typescript_server_with_message(workspace_root, preference, find_bundled_typescript_server)
+        .0
+}
+
+#[cfg(test)]
+fn find_typescript_server_with_fallback<F>(
+    workspace_root: Option<&Path>,
+    preference: JavaScriptTypeScriptToolPreference,
+    bundled: F,
+) -> Option<ToolLocation>
+where
+    F: FnOnce() -> Option<ToolLocation>,
+{
+    find_typescript_server_with_message(workspace_root, preference, bundled).0
+}
+
+fn find_typescript_server_with_message<F>(
+    workspace_root: Option<&Path>,
+    preference: JavaScriptTypeScriptToolPreference,
+    bundled: F,
+) -> (Option<ToolLocation>, Option<String>)
+where
+    F: FnOnce() -> Option<ToolLocation>,
+{
+    if matches!(preference, JavaScriptTypeScriptToolPreference::Bundled) {
+        if let Some(location) = bundled() {
+            return (Some(location), None);
+        }
+        let Some(root) = workspace_root else {
+            return (None, None);
+        };
+        return typescript_server_from_workspace_resolution(
+            workspace_typescript::resolve_workspace_typescript(root),
+            None,
+        );
     }
+    let Some(root) = workspace_root else {
+        return (bundled(), None);
+    };
+    let resolution = workspace_typescript::resolve_workspace_typescript(root);
+    let fallback = if matches!(&resolution, WorkspaceTypeScriptResolution::Found(_)) {
+        None
+    } else {
+        bundled()
+    };
+    typescript_server_from_workspace_resolution(resolution, fallback)
+}
+
+fn typescript_server_from_workspace_resolution(
+    resolution: WorkspaceTypeScriptResolution,
+    bundled: Option<ToolLocation>,
+) -> (Option<ToolLocation>, Option<String>) {
+    let bundled_available = bundled.is_some();
+    match resolution {
+        WorkspaceTypeScriptResolution::Found(path) => (
+            Some(tool_location(
+                "tsserver.js",
+                path,
+                ToolSource::WorkspaceNodeModulesBin,
+            )),
+            None,
+        ),
+        WorkspaceTypeScriptResolution::Absent => (
+            bundled,
+            Some(workspace_typescript_fallback_message(
+                "Workspace TypeScript was not found",
+                bundled_available,
+            )),
+        ),
+        WorkspaceTypeScriptResolution::Truncated => (
+            bundled,
+            Some(workspace_typescript_fallback_message(
+                "Workspace TypeScript discovery reached its bounded search limit",
+                bundled_available,
+            )),
+        ),
+        WorkspaceTypeScriptResolution::OutsideRoot => (
+            bundled,
+            Some(workspace_typescript_fallback_message(
+                "Workspace TypeScript resolves outside the opened workspace root",
+                bundled_available,
+            )),
+        ),
+    }
+}
+
+fn workspace_typescript_fallback_message(reason: &str, bundled_available: bool) -> String {
+    if bundled_available {
+        return format!("{reason}; bundled TypeScript is used.");
+    }
+    format!("{reason}, and bundled TypeScript is unavailable.")
 }
 
 fn find_tool_with_managed_locations(
@@ -402,13 +491,6 @@ fn find_bundled_typescript_server() -> Option<ToolLocation> {
     })
 }
 
-fn find_workspace_typescript_server(root: &Path) -> Option<ToolLocation> {
-    find_typescript_server_in_node_modules(
-        &root.join("node_modules"),
-        ToolSource::WorkspaceNodeModulesBin,
-    )
-}
-
 fn find_typescript_server_in_node_modules(
     node_modules_root: &Path,
     source: ToolSource,
@@ -543,11 +625,14 @@ fn is_executable_metadata(_metadata: &fs::Metadata) -> bool {
 mod tests {
     use super::{
         find_javascript_typescript_tool, find_tool_with_managed_locations, find_typescript_server,
+        find_typescript_server_with_fallback, find_typescript_server_with_message,
         find_vue_typescript_plugin, find_vue_typescript_plugin_in_node_modules,
         javascript_typescript_managed_tool_roots, managed_home_dirs, managed_tool_override,
-        managed_tool_roots, php_executable_path, JavaScriptTypeScriptToolPreference, ToolSource,
-        CODEVO_EDITOR_PHP_PATH, LEGACY_MOCKOR_EDITOR_PHP_PATH,
+        managed_tool_roots, php_executable_path, typescript_server_from_workspace_resolution,
+        JavaScriptTypeScriptToolPreference, ToolLocation, ToolSource, CODEVO_EDITOR_PHP_PATH,
+        LEGACY_MOCKOR_EDITOR_PHP_PATH,
     };
+    use crate::workspace_typescript::WorkspaceTypeScriptResolution;
     use std::{env, fs, sync::Mutex, time::SystemTime};
 
     static ENV_VAR_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -726,9 +811,122 @@ mod tests {
             find_typescript_server(Some(&root), JavaScriptTypeScriptToolPreference::Workspace)
                 .expect("typescript server location");
 
-        assert_eq!(server.path, server_path.to_string_lossy().to_string());
+        assert_eq!(
+            server.path,
+            server_path
+                .canonicalize()
+                .expect("canonical TypeScript server")
+                .to_string_lossy()
+                .to_string()
+        );
         assert!(matches!(server.source, ToolSource::WorkspaceNodeModulesBin));
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn no_workspace_typescript_keeps_managed_fallback_source_truthful() {
+        let root = create_temp_dir("workspace-without-typescript-server");
+        let managed_path = "/managed/node_modules/typescript/lib/tsserver.js";
+
+        let server = find_typescript_server_with_fallback(
+            Some(&root),
+            JavaScriptTypeScriptToolPreference::Workspace,
+            || {
+                Some(ToolLocation {
+                    executable: "tsserver.js".to_string(),
+                    path: managed_path.to_string(),
+                    source: ToolSource::Managed,
+                })
+            },
+        )
+        .expect("managed TypeScript fallback");
+
+        assert_eq!(server.path, managed_path);
+        assert!(matches!(server.source, ToolSource::Managed));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn absent_workspace_typescript_reports_bundled_fallback_reason() {
+        let root = create_temp_dir("workspace-typescript-absent-reason");
+        let managed_path = "/managed/node_modules/typescript/lib/tsserver.js";
+
+        let (server, message) = find_typescript_server_with_message(
+            Some(&root),
+            JavaScriptTypeScriptToolPreference::Workspace,
+            || {
+                Some(ToolLocation {
+                    executable: "tsserver.js".to_string(),
+                    path: managed_path.to_string(),
+                    source: ToolSource::Managed,
+                })
+            },
+        );
+
+        assert_eq!(server.expect("managed fallback").path, managed_path);
+        assert_eq!(
+            message.as_deref(),
+            Some("Workspace TypeScript was not found; bundled TypeScript is used.")
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn truncated_workspace_typescript_reports_bundled_fallback_reason() {
+        let managed_path = "/managed/node_modules/typescript/lib/tsserver.js";
+        let (server, message) = typescript_server_from_workspace_resolution(
+            WorkspaceTypeScriptResolution::Truncated,
+            Some(ToolLocation {
+                executable: "tsserver.js".to_string(),
+                path: managed_path.to_string(),
+                source: ToolSource::Managed,
+            }),
+        );
+
+        assert_eq!(server.expect("managed fallback").path, managed_path);
+        assert_eq!(
+            message.as_deref(),
+            Some(
+                "Workspace TypeScript discovery reached its bounded search limit; bundled TypeScript is used."
+            )
+        );
+    }
+
+    #[test]
+    fn outside_root_workspace_typescript_reports_bundled_fallback_reason() {
+        let managed_path = "/managed/node_modules/typescript/lib/tsserver.js";
+        let (server, message) = typescript_server_from_workspace_resolution(
+            WorkspaceTypeScriptResolution::OutsideRoot,
+            Some(ToolLocation {
+                executable: "tsserver.js".to_string(),
+                path: managed_path.to_string(),
+                source: ToolSource::Managed,
+            }),
+        );
+
+        assert_eq!(server.expect("managed fallback").path, managed_path);
+        assert_eq!(
+            message.as_deref(),
+            Some(
+                "Workspace TypeScript resolves outside the opened workspace root; bundled TypeScript is used."
+            )
+        );
+    }
+
+    #[test]
+    fn bounded_workspace_failure_reports_when_bundled_typescript_is_unavailable() {
+        let (server, message) = typescript_server_from_workspace_resolution(
+            WorkspaceTypeScriptResolution::Truncated,
+            None,
+        );
+
+        assert!(server.is_none());
+        assert_eq!(
+            message.as_deref(),
+            Some(
+                "Workspace TypeScript discovery reached its bounded search limit, and bundled TypeScript is unavailable."
+            )
+        );
     }
 
     #[test]

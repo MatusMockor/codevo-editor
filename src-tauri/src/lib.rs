@@ -125,6 +125,7 @@ mod workspace_runtime;
 mod workspace_source_discovery;
 mod workspace_test_discovery;
 mod workspace_trust_commands;
+mod workspace_typescript;
 
 #[cfg(target_os = "macos")]
 use application_menu::application_menu;
@@ -172,11 +173,9 @@ use js_test_run::batch::JsTestBatchRegistry;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use local_history::{LocalHistoryStore, LocalHistoryVersion};
 use lsp::{
-    JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
-    LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
-    PhpLanguageServerSettings, PhpactorLanguageServerPlanner,
-    TypeScriptImportModuleSpecifierEnding, TypeScriptImportModuleSpecifierPreference,
-    TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
+    JsonRpcNotification, JsonRpcRequest, LanguageServerCommand, LanguageServerPlan,
+    LanguageServerPlanStatus, LanguageServerPlanner, PhpLanguageServerSettings,
+    PhpactorLanguageServerPlanner,
 };
 use lsp_capability_support::{
     supports_code_action_resolve as lsp_status_supports_code_action_resolve,
@@ -243,10 +242,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use terminal_session::TerminalSupervisor;
-use tools::{
-    JavaScriptTypeScriptToolDetector, JavaScriptTypeScriptToolPreference,
-    LocalJavaScriptTypeScriptToolDetector, LocalPhpToolDetector, PhpToolDetector,
-};
+use tools::{LocalPhpToolDetector, PhpToolDetector};
 use trust::WorkspaceTrustService;
 use workspace::{
     FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
@@ -272,6 +268,13 @@ use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
 use workspace_runtime::{
     dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
+};
+#[cfg(test)]
+use workspace_typescript::build_javascript_typescript_language_server_plan;
+use workspace_typescript::{
+    build_javascript_typescript_language_server_plan_with_trust,
+    capture_javascript_typescript_workspace_trust,
+    revalidate_javascript_typescript_workspace_trust,
 };
 
 #[cfg(target_os = "macos")]
@@ -1504,53 +1507,6 @@ impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R>
     }
 }
 
-fn build_javascript_typescript_language_server_plan(
-    trust: &Mutex<WorkspaceTrustService>,
-    options: &JavaScriptTypeScriptLanguageServerOptions,
-) -> Result<LanguageServerPlan, String> {
-    let root_path = &options.root_path;
-    let root = PathBuf::from(root_path);
-    let trusted = {
-        let service = trust.lock().map_err(|error| error.to_string())?;
-        service.get(root_path).trusted
-    };
-    let preference = javascript_typescript_tool_preference_from_setting(
-        options.type_script_version_preference.as_deref(),
-    );
-    let settings = TypeScriptLanguageServerSettings {
-        auto_imports: options.auto_imports_enabled.unwrap_or(true),
-        automatic_type_acquisition: options.automatic_type_acquisition_enabled.unwrap_or(false),
-        code_lens: options.code_lens_enabled.unwrap_or(false),
-        complete_function_calls: options.complete_function_calls.unwrap_or(false),
-        import_module_specifier_ending: TypeScriptImportModuleSpecifierEnding::from_setting(
-            options.import_module_specifier_ending.as_deref(),
-        ),
-        import_module_specifier_preference: TypeScriptImportModuleSpecifierPreference::from_setting(
-            options.import_module_specifier_preference.as_deref(),
-        ),
-        inlay_hints: options.inlay_hints_enabled.unwrap_or(true),
-        prefer_type_only_auto_imports: options.prefer_type_only_auto_imports.unwrap_or(false),
-        quote_preference: TypeScriptQuotePreference::from_setting(
-            options.quote_preference.as_deref(),
-        ),
-        validation: options.validation_enabled.unwrap_or(true),
-    };
-    let tools = LocalJavaScriptTypeScriptToolDetector
-        .detect(Some(&root), preference)
-        .map_err(|error| error.to_string())?;
-
-    Ok(TypeScriptLanguageServerPlanner::new().plan(&root, trusted, &tools, settings))
-}
-
-fn javascript_typescript_tool_preference_from_setting(
-    value: Option<&str>,
-) -> JavaScriptTypeScriptToolPreference {
-    match value {
-        Some("workspace") => JavaScriptTypeScriptToolPreference::Workspace,
-        _ => JavaScriptTypeScriptToolPreference::Bundled,
-    }
-}
-
 #[tauri::command]
 fn plan_php_language_server(
     root_path: String,
@@ -1569,11 +1525,20 @@ fn plan_php_language_server(
 }
 
 #[tauri::command]
-fn plan_javascript_typescript_language_server(
+async fn plan_javascript_typescript_language_server(
     request: JavaScriptTypeScriptLanguageServerRequest,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<LanguageServerPlan, String> {
-    build_javascript_typescript_language_server_plan(&trust, &request.0)
+    let options = request.0;
+    let root_path = options.root_path.clone();
+    let trust_authority = capture_javascript_typescript_workspace_trust(&trust, &root_path)?;
+    let trusted = trust_authority.trusted;
+    let plan = run_blocking_command(move || {
+        build_javascript_typescript_language_server_plan_with_trust(trusted, &options)
+    })
+    .await?;
+    revalidate_javascript_typescript_workspace_trust(&trust, &trust_authority)?;
+    Ok(plan)
 }
 
 #[tauri::command]
@@ -2568,7 +2533,7 @@ fn start_php_language_server(
 }
 
 #[tauri::command]
-fn start_javascript_typescript_language_server(
+async fn start_javascript_typescript_language_server(
     request: JavaScriptTypeScriptLanguageServerRequest,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
@@ -2577,7 +2542,13 @@ fn start_javascript_typescript_language_server(
 ) -> Result<Value, String> {
     let options = request.0;
     let root_path = options.root_path.clone();
-    let plan = build_javascript_typescript_language_server_plan(&trust, &options)?;
+    let trust_authority = capture_javascript_typescript_workspace_trust(&trust, &root_path)?;
+    let trusted = trust_authority.trusted;
+    let plan = run_blocking_command(move || {
+        build_javascript_typescript_language_server_plan_with_trust(trusted, &options)
+    })
+    .await?;
+    revalidate_javascript_typescript_workspace_trust(&trust, &trust_authority)?;
 
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
         return Err(plan.message);
@@ -2585,47 +2556,58 @@ fn start_javascript_typescript_language_server(
 
     let command: LanguageServerCommand = plan
         .command
-        .ok_or_else(|| "Language server plan is missing a launch command.".to_string())?;
+        .ok_or("Language server plan is missing a launch command.".to_string())?;
     let initialize_request: JsonRpcRequest = plan
         .initialize_request
-        .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
-    #[cfg(unix)]
-    if !matches!(
-        registry.status(&root_path),
-        LanguageServerRuntimeStatus::Starting { .. } | LanguageServerRuntimeStatus::Running { .. }
-    ) {
-        managed_javascript_typescript::cleanup_orphaned_javascript_typescript_processes(
+        .ok_or("Language server plan is missing an initialize request.".to_string())?;
+    let watch_app = app.clone();
+    let blocking_root_path = root_path.clone();
+    let blocking_trust_authority = trust_authority.clone();
+    let status = run_blocking_command(move || {
+        let trust = app.state::<Mutex<WorkspaceTrustService>>();
+        revalidate_javascript_typescript_workspace_trust(&trust, &blocking_trust_authority)?;
+        let registry = app.state::<JavaScriptTypeScriptLanguageServerRegistry>();
+        let start_cleanup_lease = registry.reserve_start_cleanup(&blocking_root_path)?;
+        #[cfg(unix)]
+        {
+            let running_roots = start_cleanup_lease.running_roots()?;
+            revalidate_javascript_typescript_workspace_trust(&trust, &blocking_trust_authority)?;
+            managed_javascript_typescript::cleanup_orphaned_javascript_typescript_processes(
+                &command,
+                &initialize_request,
+                &blocking_root_path,
+                &running_roots,
+            );
+        }
+        let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
+            app.clone(),
+            blocking_root_path.clone(),
+        ));
+        let status_sink: Arc<dyn StatusSink> = event_sink.clone();
+        let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
+        let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
+        let refresh_sink: Arc<dyn RefreshSink> = event_sink;
+        revalidate_javascript_typescript_workspace_trust(&trust, &blocking_trust_authority)?;
+        start_cleanup_lease.start_with_auto_restart(
             &command,
             &initialize_request,
-            &root_path,
-            &registry.running_roots(),
-        );
-    }
-
-    let watch_app = app.clone();
-    let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
-        app,
-        root_path.clone(),
-    ));
-
-    let status_sink: Arc<dyn StatusSink> = event_sink.clone();
-    let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
-    let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
-    let refresh_sink: Arc<dyn RefreshSink> = event_sink;
-
-    let status = registry.start_with_auto_restart(
-        &root_path,
-        &command,
-        &initialize_request,
-        Arc::new(ChildServerProcessSpawner),
-        status_sink,
-        diagnostics_sink,
-        workspace_edit_sink,
-        refresh_sink,
-        Arc::new(RestartController::default()),
-    )?;
+            Arc::new(ChildServerProcessSpawner),
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            Arc::new(RestartController::default()),
+        )
+    })
+    .await?;
 
     if matches!(status, LanguageServerRuntimeStatus::Running { .. }) {
+        if let Err(error) =
+            revalidate_javascript_typescript_workspace_trust(&trust, &trust_authority)
+        {
+            registry.stop(&root_path);
+            return Err(error);
+        }
         let _ = watch_registry.start(&root_path, watch_app);
     }
 
