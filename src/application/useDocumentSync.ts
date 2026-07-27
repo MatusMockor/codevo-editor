@@ -20,6 +20,7 @@ import {
   closePhpDocumentsForRoot,
 } from "./documentSyncCloseLifecycle";
 import { clearDocumentSyncVersionState } from "./documentSyncVersionBookkeeping";
+import { useJavaScriptTypeScriptDocumentRetirement } from "./useJavaScriptTypeScriptDocumentRetirement";
 
 export type {
   DocumentSync,
@@ -159,6 +160,31 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       javaScriptTypeScriptSyncedDocumentPathsRef,
     ],
   );
+  const {
+    canOpen: canOpenJavaScriptTypeScriptDocument,
+    retire: retireJavaScriptTypeScriptDocument,
+  } = useJavaScriptTypeScriptDocumentRetirement({
+    currentWorkspaceRootRef,
+    syncedPathsRef: javaScriptTypeScriptSyncedDocumentPathsRef,
+    syncedContentRef: javaScriptTypeScriptSyncedDocumentContentRef,
+    pendingChangesRef: javaScriptTypeScriptPendingDocumentChangesRef,
+    pendingOpenAttemptsRef: javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
+    lifecycleIdentitiesRef: javaScriptTypeScriptDocumentLifecycleIdentitiesRef,
+    authorityVersionsRef: javaScriptTypeScriptDocumentAuthorityVersionsRef,
+    diagnosticVersionsByUriRef: javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
+    documentVersionsByUriRef: javaScriptTypeScriptDocumentVersionsByUriRef,
+    documentVersionsRef: javaScriptTypeScriptDocumentVersionsRef,
+    syncGenerationRef: javaScriptTypeScriptDocumentSyncGenerationRef,
+    runtimeStatusRef: javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+    runtimeStatusRootRef: javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+    clearChangeTimer: clearJavaScriptTypeScriptDocumentChangeTimer,
+    enqueueSync: enqueueJavaScriptTypeScriptDocumentSync,
+    gateway: javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+    isRunningForWorkspace: isRunningLanguageServerForWorkspace,
+    isSessionCurrent: isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
+    reportError: (rootPath, error) =>
+      reportErrorForActiveWorkspaceRoot(rootPath, "JavaScript/TypeScript", error),
+  });
 
   const syncOpenDocument = useCallback(
     async (document: EditorDocument) => {
@@ -324,6 +350,10 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
         return;
       }
 
+      if (!canOpenJavaScriptTypeScriptDocument(rootPath, document.path)) {
+        return;
+      }
+
       const syncKey = languageServerDocumentSyncKey(rootPath, document.path);
 
       if (javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
@@ -382,7 +412,11 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
           if (
             javaScriptTypeScriptDocumentSyncGenerationRef.current !== requestedSyncGeneration ||
             !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
-            !isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
+            !isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
+              rootPath,
+              requestedSessionId,
+            ) ||
+            !canOpenJavaScriptTypeScriptDocument(rootPath, document.path)
           ) {
             clearPendingOpenSyncState();
             return;
@@ -420,6 +454,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       }
     },
     [
+      canOpenJavaScriptTypeScriptDocument,
       currentWorkspaceRootRef,
       enqueueJavaScriptTypeScriptDocumentSync,
       isJavaScriptTypeScriptDocumentSyncableForRoot,
@@ -619,15 +654,18 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       if (
         !rootPath ||
         !syncKey ||
-        !isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document) ||
-        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
+        !isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document)
       ) {
         return;
       }
 
       if (isLargeSmartDocument(document, largeSmartDocumentPolicy)) {
-        clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
-        delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
+        void retireJavaScriptTypeScriptDocument(rootPath, document.path);
+        return;
+      }
+
+      if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
+        void syncOpenJavaScriptTypeScriptDocument(document);
         return;
       }
 
@@ -780,6 +818,8 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       javaScriptTypeScriptSyncedDocumentPathsRef,
       issueJavaScriptTypeScriptDocumentVersion,
       reportErrorForActiveWorkspaceRoot,
+      retireJavaScriptTypeScriptDocument,
+      syncOpenJavaScriptTypeScriptDocument,
     ],
   );
 
@@ -1094,15 +1134,26 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
         javaScriptTypeScriptDocumentSyncGenerationRef.current === requestedSyncGeneration &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
         isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId);
+      const currentDocument =
+        activeDocumentRef.current?.path === path
+          ? activeDocumentRef.current
+          : documentsRef.current[path];
+
+      if (
+        currentDocument &&
+        isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, currentDocument) &&
+        isLargeSmartDocument(currentDocument, largeSmartDocumentPolicy)
+      ) {
+        await retireJavaScriptTypeScriptDocument(rootPath, path);
+        return;
+      }
 
       if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
-        const document =
-          activeDocumentRef.current?.path === path
-            ? activeDocumentRef.current
-            : documentsRef.current[path];
-
-        if (document && isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document)) {
-          await syncOpenJavaScriptTypeScriptDocument(document);
+        if (
+          currentDocument &&
+          isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, currentDocument)
+        ) {
+          await syncOpenJavaScriptTypeScriptDocument(currentDocument);
         }
 
         if (!isRequestedSessionCurrent()) {
@@ -1221,6 +1272,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
       isRunningLanguageServerForWorkspace,
       isSessionPathInWorkspace,
+      largeSmartDocumentPolicy,
       javaScriptTypeScriptDocumentSyncGenerationRef,
       javaScriptTypeScriptDocumentSyncQueuesRef,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
@@ -1230,6 +1282,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       javaScriptTypeScriptSyncedDocumentContentRef,
       javaScriptTypeScriptSyncedDocumentPathsRef,
       issueJavaScriptTypeScriptDocumentVersion,
+      retireJavaScriptTypeScriptDocument,
       syncOpenJavaScriptTypeScriptDocument,
     ],
   );
@@ -1414,8 +1467,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       }
 
       if (isLargeSmartDocument(document, largeSmartDocumentPolicy)) {
-        clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
-        delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
+        await retireJavaScriptTypeScriptDocument(rootPath, document.path);
         return;
       }
 
@@ -1529,7 +1581,6 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       }
     },
     [
-      clearJavaScriptTypeScriptDocumentChangeTimer,
       currentWorkspaceRootRef,
       enqueueJavaScriptTypeScriptDocumentSync,
       flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
@@ -1548,6 +1599,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       javaScriptTypeScriptSyncedDocumentPathsRef,
       issueJavaScriptTypeScriptDocumentVersion,
       reportErrorForActiveWorkspaceRoot,
+      retireJavaScriptTypeScriptDocument,
     ],
   );
 
@@ -1633,78 +1685,16 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
   );
 
   const syncClosedJavaScriptTypeScriptDocument = useCallback(
-    async (document: EditorDocument) => {
+    (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
-      const syncKey = rootPath ? languageServerDocumentSyncKey(rootPath, document.path) : null;
 
-      if (
-        !rootPath ||
-        !syncKey ||
-        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
-      ) {
-        return;
+      if (!rootPath) {
+        return Promise.resolve();
       }
 
-      const currentRuntimeStatus = javaScriptTypeScriptLanguageServerRuntimeStatusRef.current;
-      const requestedSessionId = isRunningLanguageServerForWorkspace(
-        currentRuntimeStatus,
-        javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
-        rootPath,
-      )
-        ? currentRuntimeStatus.sessionId
-        : null;
-
-      clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
-      javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(syncKey);
-      delete javaScriptTypeScriptDocumentLifecycleIdentitiesRef.current[syncKey];
-      delete javaScriptTypeScriptDocumentAuthorityVersionsRef.current[syncKey];
-      delete javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey];
-      delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
-      delete javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef.current[syncKey];
-      clearDocumentSyncVersionState(
-        {
-          diagnosticVersionsByUriRef: javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
-          documentVersionsByUriRef: javaScriptTypeScriptDocumentVersionsByUriRef,
-          documentVersionsRef: javaScriptTypeScriptDocumentVersionsRef,
-        },
-        rootPath,
-        document.path,
-        syncKey,
-      );
-
-      try {
-        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
-          javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose(rootPath, document.path),
-        );
-      } catch (error) {
-        if (
-          requestedSessionId !== null &&
-          !isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
-        ) {
-          return;
-        }
-
-        reportErrorForActiveWorkspaceRoot(rootPath, "JavaScript/TypeScript", error);
-      }
+      return retireJavaScriptTypeScriptDocument(rootPath, document.path);
     },
-    [
-      clearJavaScriptTypeScriptDocumentChangeTimer,
-      currentWorkspaceRootRef,
-      enqueueJavaScriptTypeScriptDocumentSync,
-      isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-      isRunningLanguageServerForWorkspace,
-      javaScriptTypeScriptDocumentVersionsByUriRef,
-      javaScriptTypeScriptDocumentVersionsRef,
-      javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRef,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-      javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
-      javaScriptTypeScriptPendingDocumentChangesRef,
-      javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
-      javaScriptTypeScriptSyncedDocumentContentRef,
-      javaScriptTypeScriptSyncedDocumentPathsRef,
-      reportErrorForActiveWorkspaceRoot,
-    ],
+    [currentWorkspaceRootRef, retireJavaScriptTypeScriptDocument],
   );
 
   const closeSyncedLanguageServerDocumentsForRoot = useCallback(

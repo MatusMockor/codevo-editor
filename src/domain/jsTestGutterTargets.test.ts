@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  jsTestGutterTargets,
-  runAllJsTestsTarget,
-} from "./jsTestGutterTargets";
+import { jsTestGutterTargets, runAllJsTestsTarget } from "./jsTestGutterTargets";
 
 describe("jsTestGutterTargets", () => {
   it("emits a class target per describe and a method target per it/test", () => {
@@ -46,9 +43,7 @@ describe("jsTestGutterTargets", () => {
 });
 `);
 
-    expect(
-      targets.map((target) => [target.kind, target.filter]),
-    ).toEqual([
+    expect(targets.map((target) => [target.kind, target.filter])).toEqual([
       ["class", "outer"],
       ["class", "inner"],
       ["method", "works"],
@@ -107,9 +102,7 @@ describe.sequential("ordered", () => {});
 });
 `);
 
-    expect(
-      targets.map((target) => [target.kind, target.filter]),
-    ).toEqual([
+    expect(targets.map((target) => [target.kind, target.filter])).toEqual([
       ["class", "group"],
       ["method", "case"],
     ]);
@@ -117,7 +110,7 @@ describe.sequential("ordered", () => {});
 
   it("supports the tagged template table form of .each", () => {
     const targets = jsTestGutterTargets(
-      "it.each`\n  a | b\n  ${1} | ${2}\n`(\"adds $a\", () => {});\n",
+      'it.each`\n  a | b\n  ${1} | ${2}\n`("adds $a", () => {});\n',
     );
 
     expect(targets.map((target) => target.filter)).toEqual(["adds"]);
@@ -146,9 +139,7 @@ describe.sequential("ordered", () => {});
   });
 
   it("skips template literal titles with interpolation", () => {
-    expect(
-      jsTestGutterTargets("it(`works ${name}`, () => {});\n"),
-    ).toEqual([]);
+    expect(jsTestGutterTargets("it(`works ${name}`, () => {});\n")).toEqual([]);
   });
 
   it("unescapes quotes inside titles", () => {
@@ -156,10 +147,7 @@ describe.sequential("ordered", () => {});
 test("say \\"hi\\"", () => {});
 `);
 
-    expect(targets.map((target) => target.filter)).toEqual([
-      "it's fine",
-      'say "hi"',
-    ]);
+    expect(targets.map((target) => target.filter)).toEqual(["it's fine", 'say "hi"']);
   });
 
   it("ignores describe/it/test occurrences inside comments", () => {
@@ -206,11 +194,14 @@ it("classic", function () {});
 it("async", async () => {});
 `);
 
-    expect(targets.map((target) => target.filter)).toEqual([
-      "arrow",
-      "classic",
-      "async",
-    ]);
+    expect(targets.map((target) => target.filter)).toEqual(["arrow", "classic", "async"]);
+  });
+
+  it("fails closed without publishing partial targets beyond the ancestry budget", () => {
+    const depth = 363;
+    const source = `${'describe("s",()=>{'.repeat(depth)}it("leaf",()=>{});${"});".repeat(depth)}`;
+
+    expect(jsTestGutterTargets(source)).toEqual([]);
   });
 });
 

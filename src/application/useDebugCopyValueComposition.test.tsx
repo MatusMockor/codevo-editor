@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { DebugEvaluationResult } from "../domain/debugEvaluationPolicy";
 import type { TextClipboardGateway } from "../domain/textClipboard";
+import type { DebugCopyValueCandidate } from "./debugCopyValue";
 import {
   useDebugCopyValueComposition,
   type DebugCopyValueComposition,
@@ -64,6 +65,102 @@ function renderHook({
 }
 
 describe("useDebugCopyValueComposition", () => {
+  it("retains only the bounded immutable console snapshot across Continue", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const ui = renderHook({
+      clipboard: { canWriteText: () => true, writeText },
+      evaluateClipboard: vi.fn(),
+    });
+    const pausedSurface = ui.hook().console;
+    act(() =>
+      pausedSurface.onCandidateChange({
+        source: "console",
+        identity: "console-retained",
+        ...owner,
+        generation: pausedSurface.generation,
+        epoch: pausedSurface.epoch,
+        adapterEvaluateName: 'root["retained"]',
+        displayedValue: "immutable text",
+      }),
+    );
+    expect(ui.hook().console.canCopyDisplayedValue()).toBe(true);
+    expect(ui.hook().console.canCopyEvaluatePath()).toBe(true);
+
+    ui.setOwner(null);
+
+    expect(ui.hook().console.workspaceOwnerKey).toBe(owner.workspaceOwnerKey);
+    expect(ui.hook().console.canCopyDisplayedValue()).toBe(true);
+    expect(ui.hook().console.canCopyEvaluatePath()).toBe(false);
+    await expect(ui.hook().console.copyDisplayedValue()).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("immutable text");
+    const retainedSurface = ui.hook().console;
+    ui.unmount();
+    await expect(retainedSurface.copyDisplayedValue()).resolves.toBe(false);
+    expect(writeText).toHaveBeenCalledOnce();
+  });
+
+  it("rejects stale and malformed console activations without replacing the retained row", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const ui = renderHook({
+      clipboard: { canWriteText: () => true, writeText },
+      evaluateClipboard: vi.fn(),
+    });
+    const surface = ui.hook().console;
+    const retained = {
+      source: "console" as const,
+      identity: "console-b",
+      ...owner,
+      generation: surface.generation,
+      epoch: surface.epoch,
+      displayedValue: "row-b",
+    };
+    expect(surface.onCandidateChange(retained)).toBe(true);
+
+    expect(
+      surface.onCandidateChange({
+        ...retained,
+        identity: "console-a",
+        displayedValue: "row-a",
+      }),
+    ).toBe(false);
+    expect(
+      surface.onCandidateChange({
+        ...retained,
+        unexpected: true,
+      } as unknown as DebugCopyValueCandidate),
+    ).toBe(false);
+
+    expect(surface.onCandidateChange(retained)).toBe(true);
+    await expect(surface.copyDisplayedValue()).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("row-b");
+    ui.unmount();
+  });
+
+  it("rejects a stale console menu candidate after workspace A-B-A", () => {
+    const ui = renderHook({
+      clipboard: { canWriteText: () => true, writeText: vi.fn() },
+      evaluateClipboard: vi.fn(),
+    });
+    const oldSurface = ui.hook().console;
+    const oldCandidate = {
+      source: "console" as const,
+      identity: "console-old-menu",
+      ...owner,
+      generation: oldSurface.generation,
+      epoch: oldSurface.epoch,
+      displayedValue: "old",
+    };
+    act(() => oldSurface.onCandidateChange(oldCandidate));
+    ui.setOwner({ ...owner, workspaceOwnerKey: "owner-b" });
+    ui.setOwner(owner);
+
+    act(() => oldSurface.onCandidateChange(oldCandidate));
+
+    expect(ui.hook().console.canCopyDisplayedValue()).toBe(false);
+    expect(ui.hook().console.canCopyEvaluatePath()).toBe(false);
+    ui.unmount();
+  });
+
   it("copies an immutable console result without evaluation and fences frame and owner ABA", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const evaluateClipboard = vi.fn();

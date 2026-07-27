@@ -638,7 +638,116 @@ describe("VS Code Node launch configuration import", () => {
   });
 
   it.each([
-    ["missing watch flag", []],
+    { runtimeExecutable: "node", runtimeArgs: undefined },
+    { runtimeExecutable: "node", runtimeArgs: [] },
+    { runtimeExecutable: undefined, runtimeArgs: [] },
+  ] as const)(
+    "accepts default Node compatibility with runtimeExecutable=$runtimeExecutable runtimeArgs=$runtimeArgs",
+    ({ runtimeExecutable, runtimeArgs }) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Explicit Node",
+              program: "src/server.js",
+              ...(runtimeExecutable ? { runtimeExecutable } : {}),
+              ...(runtimeArgs ? { runtimeArgs } : {}),
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [
+          {
+            configuration: {
+              name: "Explicit Node",
+              target: { kind: "script", path: "src/server.js" },
+            },
+          },
+        ],
+        diagnostics: [],
+      });
+      if (parsed.kind !== "ok") return;
+      expect(parsed.configurations[0]).not.toHaveProperty("runtimeExecutable");
+      expect(parsed.configurations[0]).not.toHaveProperty("runtimeArgs");
+      expect(parsed.configurations[0]).not.toHaveProperty("nativeWatch");
+    },
+  );
+
+  it.each([
+    { runtimeArgs: ["--watch"] as const },
+    { runtimeArgs: ["--watch", "--watch-preserve-output"] as const },
+  ])(
+    "maps explicit runtimeExecutable node with runtimeArgs=$runtimeArgs to the existing native-watch intent",
+    ({ runtimeArgs }) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Explicit Node watch",
+              program: "src/server.js",
+              runtimeExecutable: "node",
+              runtimeArgs,
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [
+          {
+            nativeWatch: {
+              kind: "native-node-watch",
+              watch: true,
+              ...(runtimeArgs.length === 2 ? { preserveOutput: true } : {}),
+            },
+          },
+        ],
+        diagnostics: [],
+      });
+    },
+  );
+
+  it.each([
+    ["node.exe", undefined],
+    ["Node", undefined],
+    ["node", ["--enable-source-maps"]],
+    ["node", ["--watch-preserve-output", "--watch"]],
+    ["node", "[]"],
+  ])("rejects unsupported explicit Node runtime form %j %j", (runtimeExecutable, runtimeArgs) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Unsupported Node runtime",
+            program: "src/server.js",
+            runtimeExecutable,
+            ...(runtimeArgs === undefined ? {} : { runtimeArgs }),
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ configurationIndex: 0, message: expect.stringMatching(/runtime/) }],
+    });
+  });
+
+  it.each([
     ["preserve only", ["--watch-preserve-output"]],
     ["reordered", ["--watch-preserve-output", "--watch"]],
     ["duplicate watch", ["--watch", "--watch"]],
@@ -1351,6 +1460,81 @@ describe("VS Code Node launch configuration import", () => {
     expect(parsed.configurations[0]?.configuration).not.toHaveProperty("internalConsoleOptions");
   });
 
+  it("accepts exact std output capture without retaining compatibility metadata", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Piped output",
+            program: "src/server.js",
+            outputCapture: "std",
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [{ configuration: { name: "Piped output" } }],
+      diagnostics: [],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.configurations[0]).not.toHaveProperty("outputCapture");
+    expect(parsed.configurations[0]?.configuration).not.toHaveProperty("outputCapture");
+  });
+
+  it.each(["console", "STD", false, null])(
+    "rejects unsupported outputCapture=%j",
+    (outputCapture) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Unsupported output",
+              program: "src/server.js",
+              outputCapture,
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [{ configurationIndex: 0, message: expect.stringContaining("outputCapture") }],
+      });
+    },
+  );
+
+  it("rejects std outputCapture for attach because Codevo owns no attached-process stdio", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "attach",
+              name: "Attach output",
+              port: 9229,
+              outputCapture: "std",
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ configurationIndex: 0, message: expect.stringContaining("launch") }],
+    });
+  });
+
   it.each([
     ["console", "integratedTerminal", 'console must be exactly "internalConsole"'],
     ["console", "externalTerminal", 'console must be exactly "internalConsole"'],
@@ -1447,6 +1631,81 @@ describe("VS Code Node launch configuration import", () => {
           message: `configurations[0].${field} must be exactly false.`,
         },
       ],
+    });
+  });
+
+  it("accepts only the backend-owned numeric IPv4 loopback attach address as a no-op", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "attach",
+            name: "Loopback",
+            port: 9229,
+            address: "127.0.0.1",
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [{ configuration: { target: { kind: "attach", port: 9229 } } }],
+      diagnostics: [],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.configurations[0]).not.toHaveProperty("address");
+    expect(parsed.configurations[0]?.configuration).not.toHaveProperty("address");
+  });
+
+  it.each(["localhost", "::1", "0.0.0.0", "example.com", 2130706433, null])(
+    "rejects attach address that does not exactly match the owned IPv4 loopback endpoint: %j",
+    (address) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "attach",
+              name: "Unsupported address",
+              port: 9229,
+              address,
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [{ configurationIndex: 0, message: expect.stringContaining("address") }],
+      });
+    },
+  );
+
+  it("rejects attach-only address metadata on a launch", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Launch address",
+              program: "src/server.js",
+              address: "127.0.0.1",
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ configurationIndex: 0, message: expect.stringContaining("attach") }],
     });
   });
 
@@ -1548,6 +1807,46 @@ describe("VS Code Node launch configuration import", () => {
     });
     expect(JSON.stringify(parsed)).not.toContain(secret);
   });
+
+  it.each([
+    ["script", {}],
+    ["tsx", { runtimeExecutable: "tsx" }],
+    ["ts-node", { runtimeExecutable: "ts-node" }],
+  ])(
+    "rejects protected environment names at the parser boundary for a %s launch",
+    (_case, runtimeFields) => {
+      for (const name of ["PATH", "path", "NODE_OPTIONS", "npm_config_registry"]) {
+        const secret = `PRIVATE_${name}_VALUE`;
+        const parsed = parseVscodeNodeLaunchConfigurations(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "Protected environment",
+                program: "src/server.ts",
+                ...runtimeFields,
+                env: { SAFE: "visible", [name]: secret },
+              },
+            ],
+          }),
+        );
+
+        expect(parsed).toMatchObject({
+          kind: "ok",
+          configurations: [],
+          diagnostics: [
+            {
+              configurationIndex: 0,
+              message: expect.stringContaining("protected environment name"),
+            },
+          ],
+        });
+        expect(JSON.stringify(parsed)).not.toContain(secret);
+      }
+    },
+  );
 
   it("rejects dynamic substitutions, absolute paths, attach env, and launch ports", () => {
     const parsed = parseVscodeNodeLaunchConfigurations(
@@ -1907,10 +2206,167 @@ describe("VS Code Node launch configuration import", () => {
   });
 
   it("rejects ignored VS Code root capability inputs", () => {
-    expect(
-      parseVscodeNodeLaunchConfigurations(
-        JSON.stringify({ version: "0.2.0", configurations: [], inputs: [] }),
-      ),
-    ).toMatchObject({ kind: "error", message: expect.stringContaining("inputs") });
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({ version: "0.2.0", configurations: [], inputs: [] }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("unsupported field"),
+    });
+    expect(JSON.stringify(parsed)).not.toContain("inputs");
+  });
+
+  it.each(["root", "configuration", "compound"] as const)(
+    "never retains an attacker-controlled unknown %s field name in diagnostics",
+    (location) => {
+      const privateField = `PRIVATE_TOKEN_\u202e${"x".repeat(64)}`;
+      const source =
+        location === "root"
+          ? {
+              version: "0.2.0",
+              configurations: [],
+              [privateField]: true,
+            }
+          : location === "configuration"
+            ? {
+                version: "0.2.0",
+                configurations: [
+                  {
+                    type: "node",
+                    request: "launch",
+                    name: "Private field",
+                    program: "src/server.js",
+                    [privateField]: true,
+                  },
+                ],
+              }
+            : {
+                version: "0.2.0",
+                configurations: [
+                  {
+                    type: "node",
+                    request: "launch",
+                    name: "One",
+                    program: "src/one.js",
+                  },
+                  {
+                    type: "node",
+                    request: "launch",
+                    name: "Two",
+                    program: "src/two.js",
+                  },
+                ],
+                compounds: [
+                  {
+                    name: "Private compound field",
+                    configurations: ["One", "Two"],
+                    stopAll: true,
+                    [privateField]: true,
+                  },
+                ],
+              };
+
+      const parsed = parseVscodeNodeLaunchConfigurations(JSON.stringify(source));
+      expect(JSON.stringify(parsed)).not.toContain(privateField);
+      expect(parsed).toMatchObject(
+        location === "root"
+          ? { kind: "error", message: expect.stringContaining("unsupported field") }
+          : {
+              kind: "ok",
+              diagnostics: [
+                {
+                  message: expect.stringContaining("unsupported field"),
+                  ...(location === "configuration"
+                    ? { configurationIndex: 0 }
+                    : { compoundIndex: 0 }),
+                },
+              ],
+            },
+      );
+    },
+  );
+
+  it.each([
+    {
+      location: "root",
+      source: {
+        version: "0.2.0",
+        configurations: [],
+        "": true,
+      },
+    },
+    {
+      location: "configuration",
+      source: {
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Empty field",
+            program: "src/server.js",
+            "": true,
+          },
+        ],
+      },
+    },
+    {
+      location: "compound",
+      source: {
+        version: "0.2.0",
+        configurations: [
+          { type: "node", request: "launch", name: "One", program: "src/one.js" },
+          { type: "node", request: "launch", name: "Two", program: "src/two.js" },
+        ],
+        compounds: [
+          {
+            name: "Empty compound field",
+            configurations: ["One", "Two"],
+            stopAll: true,
+            "": true,
+          },
+        ],
+      },
+    },
+    {
+      location: "serverReadyAction",
+      source: {
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Empty action field",
+            program: "src/server.js",
+            serverReadyAction: {
+              action: "openExternally",
+              pattern: "port ([0-9]+)",
+              uriFormat: "http://127.0.0.1:%s",
+              "": true,
+            },
+          },
+        ],
+      },
+    },
+  ])("rejects an empty unknown field name at the $location boundary", ({ source }) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(JSON.stringify(source));
+    if ("compounds" in source) {
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        compounds: [],
+        diagnostics: [{ compoundIndex: 0, message: expect.stringContaining("field") }],
+      });
+    } else if (source.configurations.length > 0) {
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [{ configurationIndex: 0, message: expect.stringContaining("field") }],
+      });
+    } else {
+      expect(parsed).toMatchObject({
+        kind: "error",
+        message: expect.stringContaining("field"),
+      });
+    }
   });
 });

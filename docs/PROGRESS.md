@@ -325,6 +325,21 @@ Completed:
 - Completed and independently audited the public native-watch command, registration, real intent path and TypeScript application seam. The command performs only cheap closed-intent validation before moving runtime discovery, state lookup, filesystem/trust checks and process/session startup to the blocking pool. Flat camelCase wire fields match the strict gateway, existing `DebugStartResponse` and `debug://event` contracts remain intact, and the real macOS start/reap proof passes.
 - Hardened workspace-wide Express route intelligence with bounded four-owner LRU caching, read-hit recency, monotonic async ABA fencing and fixed source/route budgets. Package-aware JSON tuple identities prevent dirty-overlay collisions, empty package labels canonicalize consistently, and malformed delimiter structure removes derived mount authority rather than publishing speculative paths. The focused Express checkpoint passes 65/65 tests.
 
+Completed JavaScript/TypeScript integration batch:
+
+- Hardened LSP framing with a pre-allocation body ceiling, bounded header bytes/lines, exact ASCII `Content-Length` parsing and fail-closed process teardown on protocol errors. Clean EOF now reaps the exact process before a bounded restart, and a successful handshake does not replenish an exhausted restart budget.
+- Added exact large-file document retirement for JavaScript/TypeScript LSP sync. A small-to-large transition sends one owned close and clears pending document/diagnostic/request authority; returning to an eligible size starts a fresh open/version lifecycle. Uncertain close settlement remains isolated to the affected session, and PHP document sync remains independent of the JS/TS runtime.
+- Replaced quadratic JavaScript test-declaration projection with a stable indexed pass and explicit candidate, ancestry and full-name budgets. Flat 20,000-declaration and adversarial deep-nesting cases are covered.
+- Added manual Watch Expression refresh for the exact paused Node workspace/session/pause/frame owner. Duplicate requests coalesce, evaluation is capped at 100 watches and 16 global in-flight requests, and disabled, pending and focus states are explicit.
+- Extended strict VS Code launch compatibility with exact no-op handling for `runtimeExecutable: "node"` and `outputCapture: "std"`, consistent protected-environment validation, exact loopback attach-address handling and fail-closed unknown-field diagnostics.
+- Replaced Configured Task transcript rebuilding with persistent bounded chunks, coalesced publication and a 128 KiB rendered tail per stream. Terminal settlement and Stop flush the batch under exact owner/sequence authority.
+- Added exact initial top-frame selection and explicit Variables unavailable/loading/ready/error/retry lifecycle while preserving deliberate manual frame selection. Scope payloads are strictly bounded and validated before publication.
+- Hardened Express parsing and navigation for typed Router aliases, multiline imports, lexical shadowing, cross-package mount composition and exact mounted-route leaf anchors. Domain projection keeps a bounded 20,000-route prefix; interactive discovery degrades truthfully above a 256 KiB per-file/aggregate budget and publishes at most 2,000 rows.
+- Completed Debug Console retained-row copy receipts, exact live-owner fencing, unique virtualized keys and panel-local roving tree focus with Right/Left parent-child navigation.
+- Bound native Jest/Vitest watch execution to retained runner/package/manifest/process authority. Vitest uses `--watch`, Jest uses `--watchAll`; full-package continuous watch is supported on macOS/Linux, while scoped continuous requests fail before spawn and remain available as one-shot runs.
+- The integrated checkpoint passes 1,065/1,065 frontend test files and 16,247/16,247 frontend tests. Rust tests, all-target check, Clippy with denied warnings, formatting, TypeScript, ESLint, exhaustive-deps (0/0), production build, hotspot ratchets and changed-file formatting all pass.
+- Fresh-build desktop QA confirms automatic top-frame Variables, paused/running Watch states and manual refresh, expandable Debug Console tree navigation, retained `Copy Value` after Continue, exact clipboard output, strict VS Code launch compatibility and Express route navigation. No debuggee orphan remained after Stop. Continuous Test Explorer watch was not visually exercised because the throwaway fixture has no installed Vitest/Jest runner; focused frontend and Rust process-authority tests remain green.
+
 Current VS Code JavaScript/TypeScript/Node/Express checkpoint:
 
 - Practical editor-core coverage is approximately 80–85% for daily JavaScript/TypeScript/Node/Express work and approximately 85–90% for common single-process Node debugging. This excludes VS Code's extension ecosystem and does not claim parity for child/multi-process, remote/container, universal DAP or Windows native-watch workflows.
@@ -374,7 +389,7 @@ Known issues:
 
 Next parity implementation slice:
 
-1. Prioritize the remaining practical VS Code JavaScript/TypeScript/Node/Express gaps: child/multi-process debug ownership, high-value Variables/Watches actions and the next audit-ranked daily-workflow gaps.
+1. Prioritize the remaining practical VS Code JavaScript/TypeScript/Node/Express gaps: child/multi-process debug ownership and the next audit-ranked daily-workflow gaps.
 2. Extend watch/debug parity only with separately proven ownership models: Windows native watch, `tsx --watch`, nodemon, npm watch and generic `restart: true` remain unsupported.
 3. Resume the deferred Nette quick-fix only after the JS/TS/Node phase; its first safe version must use a synchronous renderer-owned template/owner Monaco mutation lease rather than claiming cross-process disk atomicity.
 

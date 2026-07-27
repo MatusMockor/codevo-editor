@@ -12,9 +12,15 @@ import {
   useWorkspaceExpressRouteOpener,
   type UseWorkspaceExpressRouteOpenerOptions,
 } from "./useWorkspaceExpressRouteOpener";
+import {
+  bindExpressRouteNavigationReceipts,
+  createExpressRouteNavigationGeneration,
+  type ExpressRouteNavigationGeneration,
+} from "./expressRouteNavigationReceipt";
 
 const ROOT_A = "/workspace/a";
 const SOURCE = "\n  router.post('/users', handler);";
+const GENERATION = createExpressRouteNavigationGeneration();
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -40,6 +46,87 @@ describe("useWorkspaceExpressRouteOpener", () => {
       expect.any(Function),
     );
     expect(harness.onStale).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("opens a mounted runtime row by revalidating its exact leaf declaration", async () => {
+    const appSource = [
+      "import express from 'express';",
+      "import users from './users';",
+      "const app = express();",
+      "app.use('/api', users);",
+    ].join("\n");
+    const usersSource = [
+      "import express from 'express';",
+      "const users = express.Router();",
+      "users.get('/users/:id', handler);",
+      "export default users;",
+    ].join("\n");
+    const snapshots = [
+      { relativeFilePath: "src/app.ts", source: appSource },
+      { relativeFilePath: "src/users.ts", source: usersSource },
+    ];
+    const mounted = navigableRoutes(snapshots).find(({ path }) => path === "/api/users/:id");
+    if (!mounted) throw new Error("mounted route did not resolve");
+    const harness = renderOpener({
+      gateway: discovery(async (_root, path) => ({
+        status: "ok",
+        content: path === "src/users.ts" ? usersSource : appSource,
+      })),
+    });
+
+    await expect(harness.open(mounted)).resolves.toBe(true);
+
+    expect(harness.onOpenLocation).toHaveBeenCalledWith(
+      "/workspace/a/src/users.ts",
+      3,
+      1,
+      expect.any(Function),
+    );
+    expect(harness.onStale).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("opens an aliased cross-package runtime row without trusting its derived runtime path", async () => {
+    const leafSource = "router.get('/users', handler);";
+    const local = workspaceExpressRoutesFromSnapshots([
+      {
+        packageLabel: "@acme/shared",
+        relativeFilePath: "packages/shared/routes.ts",
+        source: leafSource,
+      },
+    ])[0];
+    if (!local) throw new Error("leaf route did not parse");
+    const aliased = bindExpressRouteNavigationReceipts(
+      [
+        {
+          ...local,
+          id: `${local.id}:mounted-alias`,
+          path: "/api/users",
+        },
+      ],
+      [
+        {
+          packageLabel: "@acme/shared",
+          relativeFilePath: "packages/shared/routes.ts",
+          source: leafSource,
+        },
+      ],
+      { generation: GENERATION, rootPath: ROOT_A, workspaceId: "workspace-a" },
+    ).routes[0];
+    if (!aliased) throw new Error("aliased route did not bind");
+    const harness = renderOpener({
+      gateway: discovery(async () => ({ status: "ok", content: leafSource })),
+    });
+
+    await expect(harness.open(aliased)).resolves.toBe(true);
+
+    expect(harness.onOpenLocation).toHaveBeenCalledWith(
+      "/workspace/a/packages/shared/routes.ts",
+      1,
+      1,
+      expect.any(Function),
+    );
     harness.unmount();
   });
 
@@ -131,6 +218,20 @@ describe("useWorkspaceExpressRouteOpener", () => {
     harness.unmount();
   });
 
+  it("does not refresh B for an invalid route passed to a retained A callback", async () => {
+    const harness = renderOpener();
+    const openFromA = harness.currentOpener();
+    const invalidRoute = { ...route(SOURCE), relativeFilePath: "../outside.ts" };
+
+    harness.set({ rootPath: "/workspace/b", workspaceId: "workspace-b" });
+
+    await expect(openFromA(invalidRoute)).resolves.toBe(false);
+    expect(harness.gateway.readSourceTextBounded).not.toHaveBeenCalled();
+    expect(harness.onOpenLocation).not.toHaveBeenCalled();
+    expect(harness.onStale).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("drops an A read that completes after switching to workspace B", async () => {
     const pending = deferred<{ readonly status: "ok"; readonly content: string }>();
     const harness = renderOpener({ gateway: discovery(async () => pending.promise) });
@@ -168,14 +269,81 @@ describe("useWorkspaceExpressRouteOpener", () => {
     expect(harness.onStale).not.toHaveBeenCalled();
     harness.unmount();
   });
+
+  it("rejects a replaced rendered row before reading its leaf", async () => {
+    const nextGeneration = createExpressRouteNavigationGeneration();
+    const harness = renderOpener({
+      currentNavigationGeneration: () => nextGeneration,
+    });
+
+    await expect(harness.open(route(SOURCE))).resolves.toBe(false);
+
+    expect(harness.gateway.readSourceTextBounded).not.toHaveBeenCalled();
+    expect(harness.onOpenLocation).not.toHaveBeenCalled();
+    expect(harness.onStale).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("rejects an old A row after A to B to A returns with a fresh projection generation", async () => {
+    let currentGeneration: ExpressRouteNavigationGeneration = GENERATION;
+    const harness = renderOpener({
+      currentNavigationGeneration: () => currentGeneration,
+    });
+    const retained = route(SOURCE);
+
+    currentGeneration = createExpressRouteNavigationGeneration();
+    harness.set({ rootPath: "/workspace/b", workspaceId: "workspace-b" });
+    harness.set({ rootPath: ROOT_A, workspaceId: "workspace-a" });
+
+    await expect(harness.open(retained)).resolves.toBe(false);
+    expect(harness.gateway.readSourceTextBounded).not.toHaveBeenCalled();
+    expect(harness.onOpenLocation).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("uses the source location to disambiguate duplicate route declarations", async () => {
+    const duplicateSource = ["router.get('/same', first);", "router.get('/same', second);"].join(
+      "\n",
+    );
+    const selected = navigableRoutes([
+      { relativeFilePath: "src/routes.ts", source: duplicateSource },
+    ]).find(({ line }) => line === 2);
+    if (!selected) throw new Error("second duplicate route did not bind");
+    const harness = renderOpener({
+      gateway: discovery(async () => ({ status: "ok", content: duplicateSource })),
+    });
+
+    await expect(harness.open(selected)).resolves.toBe(true);
+
+    expect(harness.onOpenLocation).toHaveBeenCalledWith(
+      "/workspace/a/src/routes.ts",
+      2,
+      1,
+      expect.any(Function),
+    );
+    harness.unmount();
+  });
 });
 
 function route(source: string): WorkspaceExpressRoute {
-  const candidate = workspaceExpressRoutesFromSnapshots([
-    { relativeFilePath: "src/routes.ts", source },
-  ])[0];
+  const candidate = navigableRoutes([{ relativeFilePath: "src/routes.ts", source }])[0];
   if (!candidate) throw new Error("test route source did not parse");
   return candidate;
+}
+
+function navigableRoutes(
+  snapshots: readonly {
+    readonly packageLabel?: string;
+    readonly relativeFilePath: string;
+    readonly source: string;
+  }[],
+) {
+  const routes = workspaceExpressRoutesFromSnapshots(snapshots);
+  return bindExpressRouteNavigationReceipts(routes, snapshots, {
+    generation: GENERATION,
+    rootPath: ROOT_A,
+    workspaceId: "workspace-a",
+  }).routes;
 }
 
 function renderOpener(overrides: Partial<UseWorkspaceExpressRouteOpenerOptions> = {}) {
@@ -186,6 +354,7 @@ function renderOpener(overrides: Partial<UseWorkspaceExpressRouteOpenerOptions> 
   const onOpenLocation = overrides.onOpenLocation ?? vi.fn(async () => true);
   const onStale = overrides.onStale ?? vi.fn();
   let options: UseWorkspaceExpressRouteOpenerOptions = {
+    currentNavigationGeneration: () => GENERATION,
     dirtySnapshots: [],
     gateway,
     onOpenLocation,

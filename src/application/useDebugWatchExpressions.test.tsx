@@ -8,6 +8,7 @@ import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import type { DebugWatchStorage } from "../domain/debugWatchPersistence";
 import { MAX_DEBUG_WATCH_EXPRESSIONS } from "../domain/debugWatchExpressions";
 import {
+  MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS,
   useDebugWatchExpressions,
   type UseDebugWatchExpressionsOptions,
   type UseDebugWatchExpressionsResult,
@@ -53,6 +54,18 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+const scheduleTestPublication: NonNullable<
+  UseDebugWatchExpressionsOptions["scheduleEvaluationPublication"]
+> = (publish) => {
+  let active = true;
+  queueMicrotask(() => {
+    if (active) publish();
+  });
+  return () => {
+    active = false;
+  };
+};
+
 type HookOptions = Omit<UseDebugWatchExpressionsOptions, "inspectionOwner"> & {
   inspectionOwner?: UseDebugWatchExpressionsOptions["inspectionOwner"];
   pauseGeneration?: number;
@@ -61,7 +74,10 @@ type HookOptions = Omit<UseDebugWatchExpressionsOptions, "inspectionOwner"> & {
 function renderHook(options: HookOptions) {
   const host = document.createElement("div");
   const root = createRoot(host);
-  const captured: { value: UseDebugWatchExpressionsResult | null } = { value: null };
+  const captured: { renders: number; value: UseDebugWatchExpressionsResult | null } = {
+    renders: 0,
+    value: null,
+  };
   const deriveOwner = (candidate: HookOptions) =>
     candidate.inspectionOwner !== undefined
       ? candidate.inspectionOwner
@@ -77,8 +93,11 @@ function renderHook(options: HookOptions) {
   let props: UseDebugWatchExpressionsOptions = {
     ...sourceOptions,
     inspectionOwner: deriveOwner(sourceOptions),
+    scheduleEvaluationPublication:
+      sourceOptions.scheduleEvaluationPublication ?? scheduleTestPublication,
   };
   function Harness() {
+    captured.renders += 1;
     captured.value = useDebugWatchExpressions(props);
     return null;
   }
@@ -86,9 +105,15 @@ function renderHook(options: HookOptions) {
   render();
   return {
     hook: () => captured.value as UseDebugWatchExpressionsResult,
+    renders: () => captured.renders,
     set: (next: Partial<HookOptions>) => {
       sourceOptions = { ...sourceOptions, ...next };
-      props = { ...sourceOptions, inspectionOwner: deriveOwner(sourceOptions) };
+      props = {
+        ...sourceOptions,
+        inspectionOwner: deriveOwner(sourceOptions),
+        scheduleEvaluationPublication:
+          sourceOptions.scheduleEvaluationPublication ?? scheduleTestPublication,
+      };
       render();
     },
     unmount: () => act(() => root.unmount()),
@@ -206,11 +231,331 @@ describe("useDebugWatchExpressions", () => {
     });
     await act(async () => Promise.resolve());
     evaluateWatch.mockClear();
+    const staleRefresh = ui.hook().invalidateEvaluations;
     ui.set({ refreshVersion: 1 });
+    expect(staleRefresh()).toBe(false);
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
     await act(async () => Promise.resolve());
     expect(evaluateWatch).toHaveBeenCalledTimes(2);
     expect(evaluateWatch).toHaveBeenCalledWith("first");
     expect(evaluateWatch).toHaveBeenCalledWith("second");
+    ui.unmount();
+  });
+
+  it("refreshes one exact settled Watch batch and coalesces duplicate requests", async () => {
+    const evaluateWatch = vi
+      .fn()
+      .mockResolvedValue({ status: "ok", value: "3", variablesReference: 0 });
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      selectedFrameId: null,
+      snapshot: stopped,
+      storage: new MemoryStorage(),
+      workspaceRoot: "/workspace",
+    });
+    act(() => {
+      for (let index = 0; index < MAX_DEBUG_WATCH_EXPRESSIONS; index += 1) {
+        ui.hook().add(`value${index}`);
+      }
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(evaluateWatch).toHaveBeenCalledTimes(MAX_DEBUG_WATCH_EXPRESSIONS);
+    expect(ui.hook().canInvalidateEvaluations()).toBe(true);
+    evaluateWatch.mockClear();
+
+    let first = false;
+    let duplicate = true;
+    act(() => {
+      first = ui.hook().invalidateEvaluations();
+      duplicate = ui.hook().invalidateEvaluations();
+    });
+    expect(first).toBe(true);
+    expect(duplicate).toBe(false);
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    expect(ui.hook().refreshPending).toBe(true);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(evaluateWatch).toHaveBeenCalledTimes(MAX_DEBUG_WATCH_EXPRESSIONS);
+    expect(ui.hook().pendingIds).toEqual([]);
+    expect(ui.hook().refreshPending).toBe(false);
+    expect(ui.hook().canInvalidateEvaluations()).toBe(true);
+    ui.unmount();
+  });
+
+  it("bounds Watch evaluation concurrency and publishes one settled wave together", async () => {
+    const evaluations = Array.from({ length: MAX_DEBUG_WATCH_EXPRESSIONS }, () =>
+      deferred<DebugEvaluationResult | null>(),
+    );
+    const evaluateWatch = vi.fn(
+      (_expression: string) => evaluations[evaluateWatch.mock.calls.length - 1]!.promise,
+    );
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      selectedFrameId: null,
+      snapshot: stopped,
+      storage: new MemoryStorage(),
+      workspaceRoot: "/workspace",
+    });
+    act(() => {
+      for (let index = 0; index < MAX_DEBUG_WATCH_EXPRESSIONS; index += 1) {
+        ui.hook().add(`value${index}`);
+      }
+    });
+    await act(async () => Promise.resolve());
+
+    expect(evaluateWatch).toHaveBeenCalledTimes(MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS);
+    expect(ui.hook().pendingIds).toHaveLength(MAX_DEBUG_WATCH_EXPRESSIONS);
+    const rendersBeforeWave = ui.renders();
+
+    await act(async () => {
+      for (let index = 0; index < MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS; index += 1) {
+        evaluations[index]!.resolve({ status: "ok", value: String(index) });
+      }
+      await Promise.resolve();
+    });
+
+    expect(evaluateWatch).toHaveBeenCalledTimes(MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS * 2);
+    expect(Object.keys(ui.hook().evaluations)).toHaveLength(MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS);
+    expect(ui.hook().pendingIds).toHaveLength(
+      MAX_DEBUG_WATCH_EXPRESSIONS - MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS,
+    );
+    expect(ui.renders() - rendersBeforeWave).toBeLessThanOrEqual(3);
+    ui.unmount();
+  });
+
+  it("keeps one concurrency budget across superseded evaluation generations", async () => {
+    const evaluations = Array.from({ length: MAX_DEBUG_WATCH_EXPRESSIONS * 2 }, () =>
+      deferred<DebugEvaluationResult | null>(),
+    );
+    const evaluateWatch = vi.fn(
+      (_expression: string) => evaluations[evaluateWatch.mock.calls.length - 1]!.promise,
+    );
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      selectedFrameId: null,
+      snapshot: stopped,
+      storage: new MemoryStorage(),
+      workspaceRoot: "/workspace",
+    });
+    act(() => {
+      for (let index = 0; index < MAX_DEBUG_WATCH_EXPRESSIONS; index += 1) {
+        ui.hook().add(`value${index}`);
+      }
+    });
+    await act(async () => Promise.resolve());
+    expect(evaluateWatch).toHaveBeenCalledTimes(MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS);
+
+    ui.set({
+      pauseGeneration: 3,
+      snapshot: {
+        ...stopped,
+        lastSeq: 3,
+      },
+    });
+    await act(async () => Promise.resolve());
+    expect(evaluateWatch).toHaveBeenCalledTimes(MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS);
+
+    await act(async () => {
+      for (let index = 0; index < MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS; index += 1) {
+        evaluations[index]!.resolve({ status: "ok", value: "stale" });
+      }
+      await Promise.resolve();
+    });
+    expect(evaluateWatch).toHaveBeenCalledTimes(MAX_CONCURRENT_DEBUG_WATCH_EVALUATIONS * 2);
+    expect(Object.values(ui.hook().evaluations)).not.toContainEqual(
+      expect.objectContaining({ result: expect.objectContaining({ value: "stale" }) }),
+    );
+    ui.unmount();
+  });
+
+  it("coalesces staggered settlements behind one owned publication boundary", async () => {
+    const evaluations = Array.from({ length: MAX_DEBUG_WATCH_EXPRESSIONS }, () =>
+      deferred<DebugEvaluationResult | null>(),
+    );
+    const publications: Array<() => void> = [];
+    const evaluateWatch = vi.fn(
+      (_expression: string) => evaluations[evaluateWatch.mock.calls.length - 1]!.promise,
+    );
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      scheduleEvaluationPublication: (publish) => {
+        publications.push(publish);
+        return () => {
+          const index = publications.indexOf(publish);
+          if (index >= 0) publications.splice(index, 1);
+        };
+      },
+      selectedFrameId: null,
+      snapshot: stopped,
+      storage: new MemoryStorage(),
+      workspaceRoot: "/workspace",
+    });
+    act(() => {
+      for (let index = 0; index < MAX_DEBUG_WATCH_EXPRESSIONS; index += 1) {
+        ui.hook().add(`value${index}`);
+      }
+    });
+    await act(async () => Promise.resolve());
+
+    for (let index = 0; index < 4; index += 1) {
+      await act(async () => {
+        evaluations[index]!.resolve({ status: "ok", value: String(index) });
+        await Promise.resolve();
+      });
+    }
+    expect(publications).toHaveLength(1);
+    expect(Object.keys(ui.hook().evaluations)).toHaveLength(0);
+
+    act(() => publications.shift()?.());
+    expect(Object.keys(ui.hook().evaluations)).toHaveLength(4);
+    expect(ui.hook().pendingIds).toHaveLength(MAX_DEBUG_WATCH_EXPRESSIONS - 4);
+    ui.unmount();
+  });
+
+  it("retires a manual refresh generation that settles during transient trust revocation", async () => {
+    let trusted = true;
+    const refresh = deferred<DebugEvaluationResult | null>();
+    const evaluateWatch = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "ok", value: "initial" })
+      .mockReturnValueOnce(refresh.promise)
+      .mockResolvedValue({ status: "ok", value: "restored" });
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      isWorkspaceTrusted: () => trusted,
+      selectedFrameId: null,
+      snapshot: stopped,
+      storage: new MemoryStorage(),
+      workspaceRoot: "/workspace",
+    });
+    act(() => {
+      ui.hook().add("value");
+    });
+    await act(async () => Promise.resolve());
+    expect(ui.hook().canInvalidateEvaluations()).toBe(true);
+
+    act(() => {
+      expect(ui.hook().invalidateEvaluations()).toBe(true);
+    });
+    await act(async () => Promise.resolve());
+    trusted = false;
+    await act(async () => {
+      refresh.resolve({ status: "ok", value: "stale" });
+      await refresh.promise;
+    });
+    expect(ui.hook().refreshPending).toBe(false);
+    expect(ui.hook().pendingIds).toEqual([]);
+
+    trusted = true;
+    ui.set({});
+    await act(async () => Promise.resolve());
+    expect(ui.hook().evaluations["watch-1"]?.result).toMatchObject({ value: "restored" });
+    expect(ui.hook().canInvalidateEvaluations()).toBe(true);
+    ui.unmount();
+  });
+
+  it("fails refresh closed unless the exact trusted stopped owner has settled enabled watches", async () => {
+    let trusted = true;
+    const pendingRefresh = deferred<DebugEvaluationResult | null>();
+    const evaluateWatch = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "ok", value: "1" })
+      .mockReturnValueOnce(pendingRefresh.promise);
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      isWorkspaceTrusted: () => trusted,
+      selectedFrameId: null,
+      snapshot: stopped,
+      storage: new MemoryStorage(),
+      workspaceRoot: "/workspace",
+    });
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    expect(ui.hook().invalidateEvaluations()).toBe(false);
+    act(() => ui.hook().add("count"));
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    await act(async () => Promise.resolve());
+    expect(ui.hook().canInvalidateEvaluations()).toBe(true);
+
+    let refreshAccepted = false;
+    act(() => {
+      refreshAccepted = ui.hook().invalidateEvaluations();
+    });
+    expect(refreshAccepted).toBe(true);
+    expect(ui.hook().invalidateEvaluations()).toBe(false);
+    trusted = false;
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    await act(async () => {
+      pendingRefresh.resolve({ status: "ok", value: "stale" });
+      await pendingRefresh.promise;
+    });
+    expect(ui.hook().evaluations).toEqual({});
+
+    trusted = true;
+    ui.set({ snapshot: { lastSeq: 3, state: { kind: "running", sessionId: 4 } } });
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    expect(ui.hook().invalidateEvaluations()).toBe(false);
+    ui.set({ debugAdapterKind: "php", snapshot: stopped });
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    expect(ui.hook().invalidateEvaluations()).toBe(false);
+    ui.set({
+      debugAdapterKind: "node",
+      inspectionOwner: {
+        rootKey: "/workspace",
+        sessionId: 4,
+        pauseGeneration: 2,
+        frameId: 99,
+      },
+    });
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    expect(ui.hook().invalidateEvaluations()).toBe(false);
+    ui.set({
+      isWorkspaceTrusted: () => {
+        throw new Error("trust unavailable");
+      },
+    });
+    expect(ui.hook().canInvalidateEvaluations()).toBe(false);
+    expect(ui.hook().invalidateEvaluations()).toBe(false);
+    ui.unmount();
+  });
+
+  it("rejects a captured refresh command after workspace A to B to A replacement", async () => {
+    const evaluateWatch = vi.fn().mockResolvedValue({ status: "ok", value: "1" });
+    const storage = new MemoryStorage();
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      selectedFrameId: null,
+      snapshot: stopped,
+      storage,
+      workspaceRoot: "/workspace/a",
+    });
+    act(() => ui.hook().add("count"));
+    await act(async () => Promise.resolve());
+    const staleRefresh = ui.hook().invalidateEvaluations;
+    expect(ui.hook().canInvalidateEvaluations()).toBe(true);
+
+    ui.set({ workspaceRoot: "/workspace/b" });
+    ui.set({ workspaceRoot: "/workspace/a" });
+    await act(async () => Promise.resolve());
+
+    expect(staleRefresh()).toBe(false);
+    expect(ui.hook().canInvalidateEvaluations()).toBe(true);
+    let currentRefreshAccepted = false;
+    act(() => {
+      currentRefreshAccepted = ui.hook().invalidateEvaluations();
+    });
+    expect(currentRefreshAccepted).toBe(true);
     ui.unmount();
   });
 
@@ -270,12 +615,16 @@ describe("useDebugWatchExpressions", () => {
     await act(async () => Promise.resolve());
     expect(evaluateWatch).toHaveBeenCalledTimes(1);
 
+    const staleFrameRefresh = ui.hook().invalidateEvaluations;
     ui.set({ selectedFrameId: 12 });
+    expect(staleFrameRefresh()).toBe(false);
     await act(async () => Promise.resolve());
     expect(evaluateWatch).toHaveBeenCalledTimes(2);
     expect(ui.hook().evaluations["watch-1"]?.frameId).toBe(12);
 
+    const stalePauseRefresh = ui.hook().invalidateEvaluations;
     ui.set({ pauseGeneration: 3 });
+    expect(stalePauseRefresh()).toBe(false);
     await act(async () => Promise.resolve());
     expect(evaluateWatch).toHaveBeenCalledTimes(3);
     expect(ui.hook().evaluations["watch-1"]?.owner.pauseGeneration).toBe(3);

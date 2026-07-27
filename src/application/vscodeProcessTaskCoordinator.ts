@@ -39,6 +39,8 @@ export interface VscodeProcessTaskCoordinator {
   waitForTerminal(owner: VscodeProcessTaskOwner): Promise<VscodeProcessTaskCompletion>;
 }
 
+export type VscodeProcessTaskPublicationScheduler = (publish: () => void) => () => void;
+
 interface ActiveTask {
   readonly activation: number;
   disposed: boolean;
@@ -68,6 +70,7 @@ export function createVscodeProcessTaskCoordinator(options: {
   readonly getGateway: () => VscodeProcessTasksGateway;
   readonly isCurrent: (activation: number, owner: VscodeProcessTaskOwner) => boolean;
   readonly onSnapshot?: (snapshot: VscodeProcessTaskCoordinatorSnapshot) => void;
+  readonly schedulePublication?: VscodeProcessTaskPublicationScheduler;
 }): VscodeProcessTaskCoordinator {
   let active: ActiveTask | null = null;
   let retained: {
@@ -75,6 +78,8 @@ export function createVscodeProcessTaskCoordinator(options: {
     readonly problems: VscodeProcessTaskProblemsState;
     readonly state: VscodeProcessTaskState;
   } | null = null;
+  let cancelScheduledPublication: (() => void) | null = null;
+  const schedulePublication = options.schedulePublication ?? defaultPublicationScheduler;
 
   const current = (candidate: ActiveTask): boolean => {
     try {
@@ -110,11 +115,40 @@ export function createVscodeProcessTaskCoordinator(options: {
     return EMPTY_SNAPSHOT;
   };
 
-  const publish = (): void => {
+  const notify = (): void => {
     try {
       options.onSnapshot?.(snapshot());
     } catch {
       // Presentation observers do not own the process lifecycle.
+    }
+  };
+
+  const publishNow = (): void => {
+    cancelScheduledPublication?.();
+    cancelScheduledPublication = null;
+    notify();
+  };
+
+  const publishSoon = (): void => {
+    if (cancelScheduledPublication) return;
+    let pending = true;
+    try {
+      const cancel = schedulePublication(() => {
+        if (!pending) return;
+        pending = false;
+        cancelScheduledPublication = null;
+        notify();
+      });
+      if (pending) {
+        cancelScheduledPublication = () => {
+          if (!pending) return;
+          pending = false;
+          cancel();
+        };
+      }
+    } catch {
+      pending = false;
+      notify();
     }
   };
 
@@ -146,7 +180,7 @@ export function createVscodeProcessTaskCoordinator(options: {
           })
         : null;
     candidate.resolveCompletion(completionFromState(candidate.state));
-    publish();
+    publishNow();
   };
 
   const receive = (candidate: ActiveTask, event: VscodeProcessTaskEvent): void => {
@@ -165,7 +199,7 @@ export function createVscodeProcessTaskCoordinator(options: {
       });
       if (!problems || problems === candidate.problems) return;
       candidate.problems = problems;
-      if (!candidate.invalidated) publish();
+      if (!candidate.invalidated) publishSoon();
       return;
     }
     const next = reduceVscodeProcessTask(candidate.state, { type: "event", event });
@@ -180,8 +214,11 @@ export function createVscodeProcessTaskCoordinator(options: {
       });
       if (problems) candidate.problems = problems;
     }
-    if (!candidate.invalidated) publish();
-    if (terminal) settle(candidate, true);
+    if (terminal) {
+      settle(candidate, true);
+    } else if (!candidate.invalidated) {
+      publishSoon();
+    }
   };
 
   const stop = async (
@@ -198,14 +235,14 @@ export function createVscodeProcessTaskCoordinator(options: {
     if (!candidate) {
       if (invalidated) {
         retained = null;
-        publish();
+        publishNow();
       }
       return false;
     }
     candidate.invalidated ||= invalidated;
     candidate.stopping = true;
     if (invalidated) retained = null;
-    publish();
+    publishNow();
     if (!candidate.stopFlight) {
       candidate.stopFlight = safelyStop(candidate.gateway, candidate.owner).then((stopped) => {
         if (stopped && active === candidate) {
@@ -264,7 +301,7 @@ export function createVscodeProcessTaskCoordinator(options: {
         ...completionDeferred(),
       };
       active = candidate;
-      publish();
+      publishNow();
       try {
         try {
           const unsubscribe = await candidate.gateway.subscribeVscodeProcessTaskEvents((event) =>
@@ -357,6 +394,18 @@ function completion<T extends VscodeProcessTaskCompletion["status"]>(
   status: T,
 ): Extract<VscodeProcessTaskCompletion, { status: T }> {
   return Object.freeze({ status }) as Extract<VscodeProcessTaskCompletion, { status: T }>;
+}
+
+function defaultPublicationScheduler(publish: () => void): () => void {
+  if (
+    typeof globalThis.requestAnimationFrame === "function" &&
+    typeof globalThis.cancelAnimationFrame === "function"
+  ) {
+    const frame = globalThis.requestAnimationFrame(publish);
+    return () => globalThis.cancelAnimationFrame(frame);
+  }
+  const timer = globalThis.setTimeout(publish, 0);
+  return () => globalThis.clearTimeout(timer);
 }
 
 async function safelyStop(

@@ -3,6 +3,7 @@ import {
   MAX_VSCODE_PROCESS_TASK_OUTPUT_TOTAL_BYTES,
   reduceVscodeProcessTask,
   reduceVscodeProcessTaskProblems,
+  vscodeProcessTaskOutputStreamTail,
   vscodeProcessTaskProblemGroupKey,
   vscodeProcessTaskProblemsToNotices,
   type VscodeProcessTaskEvent,
@@ -42,14 +43,13 @@ describe("reduceVscodeProcessTask", () => {
       status: "exited",
       exitCode: 0,
       currentStep: { label: "Compile", index: 1, total: 1 },
-      output: [
-        { kind: "step", label: "Compile", index: 1, total: 1 },
-        { kind: "data", stream: "stdout", data: "built" },
-      ],
+      output: { truncated: false },
     });
+    expect(outputText(exited, "stdout")).toBe("\n--- Step 1 of 1: Compile ---\nbuilt");
+    expect(outputText(exited, "stderr")).toBe("\n--- Step 1 of 1: Compile ---\n");
     expect(Object.isFrozen(exited)).toBe(true);
     expect(Object.isFrozen(exited?.output)).toBe(true);
-    expect(Object.isFrozen(exited?.output[0])).toBe(true);
+    expect(outputText(exited, "stdout")).toContain("built");
   });
 
   it("fails closed for foreign, stale, duplicate, and post-terminal events", () => {
@@ -81,7 +81,8 @@ describe("reduceVscodeProcessTask", () => {
     expect(foreign).toBe(accepted);
     expect(stale).toBe(accepted);
     expect(late).toBe(terminal);
-    expect(late?.output).toHaveLength(2);
+    expect(outputText(late, "stdout")).toContain("accepted");
+    expect(outputText(late, "stdout")).not.toContain("Late");
   });
 
   it("emits one truncation marker and ignores later output content", () => {
@@ -97,11 +98,13 @@ describe("reduceVscodeProcessTask", () => {
 
     expect(later).toMatchObject({
       sequence: 4,
-      output: [{ kind: "step", label: "Build", index: 1, total: 2 }, { kind: "truncated" }],
+      output: { truncated: true },
       outputBytes: 0,
       outputEventCount: 0,
       outputTruncated: true,
     });
+    expect(outputText(later, "stdout")).toBe("\n--- Step 1 of 2: Build ---\n");
+    expect(outputText(later, "stderr")).toBe("\n--- Step 1 of 2: Build ---\n");
   });
 
   it("uses the same single marker for the cumulative byte cap", () => {
@@ -112,15 +115,40 @@ describe("reduceVscodeProcessTask", () => {
     });
     const overflow = reduceVscodeProcessTask(full, {
       type: "event",
-      event: outputEvent(4, "stdout", "x"),
+      event: outputEvent(4, "stdout", "discarded-tail"),
     });
     const later = reduceVscodeProcessTask(overflow, {
       type: "event",
       event: outputEvent(5, "stdout", "x"),
     });
 
-    expect(later?.output.filter(({ kind }) => kind === "truncated")).toHaveLength(1);
+    expect(later?.output.truncated).toBe(true);
+    expect(outputText(later, "stdout")).not.toContain("discarded-tail");
     expect(later?.sequence).toBe(5);
+  });
+
+  it("appends output as a persistent O(1) chunk chain and materializes only a bounded tail", () => {
+    let state = runningAtFirstStep();
+    const firstStream = state!.output.stdout;
+    state = reduceVscodeProcessTask(state, {
+      type: "event",
+      event: outputEvent(3, "stdout", "x"),
+    });
+    expect(state?.output.stdout.tail?.previous).toBe(firstStream.tail);
+    for (let sequence = 4; sequence < 1_027; sequence += 1) {
+      state = reduceVscodeProcessTask(state, {
+        type: "event",
+        event: outputEvent(sequence, "stdout", sequence === 1_026 ? "🙂" : "x"),
+      });
+    }
+
+    expect(state?.output.stdout.chunkCount).toBe(1_025);
+    expect(state?.output.stdout.tail?.previous).not.toBeNull();
+    expect(firstStream.codeUnits).toBe("\n--- Step 1 of 2: Build ---\n".length);
+    const tail = vscodeProcessTaskOutputStreamTail(state!.output.stdout, 17);
+    expect(tail.omitted).toBe(true);
+    expect(tail.text).toBe(`${"x".repeat(15)}🙂`);
+    expect(tail.text.charCodeAt(0)).not.toBeGreaterThanOrEqual(0xdc00);
   });
 
   it("accepts exact contiguous steps only while running and keeps boundaries outside output caps", () => {
@@ -168,13 +196,16 @@ describe("reduceVscodeProcessTask", () => {
       currentStep: { label: "Test", index: 2, total: 3 },
       outputBytes: 0,
       outputEventCount: 0,
-      output: [
-        { kind: "step", label: "Build", index: 1, total: 3 },
-        { kind: "step", label: "Test", index: 2, total: 3 },
-      ],
+      output: { truncated: false },
     });
+    expect(outputText(second, "stdout")).toBe(
+      "\n--- Step 1 of 3: Build ---\n\n--- Step 2 of 3: Test ---\n",
+    );
+    expect(outputText(second, "stderr")).toBe(
+      "\n--- Step 1 of 3: Build ---\n\n--- Step 2 of 3: Test ---\n",
+    );
     expect(Object.isFrozen(second?.currentStep)).toBe(true);
-    expect(Object.isFrozen(second?.output[1])).toBe(true);
+    expect(Object.isFrozen(second?.output)).toBe(true);
   });
 
   it("replaces an A-B-A owner by exact identity and clears explicitly", () => {
@@ -364,4 +395,11 @@ function runningAtFirstStep() {
     type: "event",
     event: stepEvent(2, "Build", 1, 2),
   });
+}
+
+function outputText(
+  state: ReturnType<typeof reduceVscodeProcessTask>,
+  stream: "stdout" | "stderr",
+): string {
+  return state ? vscodeProcessTaskOutputStreamTail(state.output[stream]).text : "";
 }

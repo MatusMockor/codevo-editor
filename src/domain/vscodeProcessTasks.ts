@@ -9,6 +9,7 @@ import { workspaceRelativePath } from "./workspace";
 
 export const MAX_VSCODE_PROCESS_TASK_OUTPUT_EVENTS = 1_024;
 export const MAX_VSCODE_PROCESS_TASK_OUTPUT_TOTAL_BYTES = 1_048_576;
+export const MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS = 128 * 1_024;
 
 export type VscodeProcessTaskGroup = "build" | "test" | "none";
 export type VscodeProcessTaskProblemMatcher = "eslint" | "typescript";
@@ -111,19 +112,29 @@ export type VscodeProcessTaskEvent =
       readonly status: "stopped";
     };
 
-export type VscodeProcessTaskOutputEntry =
-  | {
-      readonly kind: "data";
-      readonly stream: VscodeProcessTaskStream;
-      readonly data: string;
-    }
-  | {
-      readonly kind: "step";
-      readonly label: string;
-      readonly index: number;
-      readonly total: number;
-    }
-  | { readonly kind: "truncated" };
+export interface VscodeProcessTaskOutputChunk {
+  readonly previous: VscodeProcessTaskOutputChunk | null;
+  readonly text: string;
+}
+
+export interface VscodeProcessTaskOutputStream {
+  readonly chunkCount: number;
+  readonly codeUnits: number;
+  readonly tail: VscodeProcessTaskOutputChunk | null;
+}
+
+export interface VscodeProcessTaskOutput {
+  /** Opaque owner-scoped reset boundary for incremental presenters. */
+  readonly identity?: object;
+  readonly stdout: VscodeProcessTaskOutputStream;
+  readonly stderr: VscodeProcessTaskOutputStream;
+  readonly truncated: boolean;
+}
+
+export interface VscodeProcessTaskOutputTail {
+  readonly omitted: boolean;
+  readonly text: string;
+}
 
 export interface VscodeProcessTaskState {
   readonly owner: VscodeProcessTaskOwner;
@@ -132,7 +143,7 @@ export interface VscodeProcessTaskState {
   readonly exitCode: number | null;
   readonly failure: string | null;
   readonly currentStep: VscodeProcessTaskStep | null;
-  readonly output: readonly VscodeProcessTaskOutputEntry[];
+  readonly output: VscodeProcessTaskOutput;
   readonly outputBytes: number;
   readonly outputEventCount: number;
   readonly outputTruncated: boolean;
@@ -205,15 +216,7 @@ export function reduceVscodeProcessTask(
       ...state,
       sequence: event.sequence,
       currentStep,
-      output: Object.freeze([
-        ...state.output,
-        Object.freeze({
-          kind: "step" as const,
-          label: event.label,
-          index: event.index,
-          total: event.total,
-        }),
-      ]),
+      output: appendStepBoundary(state.output, currentStep),
     });
   }
   if (event.kind === "status") {
@@ -248,17 +251,12 @@ export function reduceVscodeProcessTask(
     return frozenState({
       ...state,
       sequence: event.sequence,
-      output: Object.freeze([...state.output, Object.freeze({ kind: "truncated" as const })]),
+      output: truncatedOutput(state.output),
       outputTruncated: true,
     });
   }
   const eventBytes = UTF8_ENCODER.encode(event.data).byteLength;
-  return appendBoundedOutput(
-    state,
-    event.sequence,
-    eventBytes,
-    Object.freeze({ kind: "data" as const, stream: event.stream, data: event.data }),
-  );
+  return appendBoundedOutput(state, event.sequence, eventBytes, event.stream, event.data);
 }
 
 export function reduceVscodeProcessTaskProblems(
@@ -372,7 +370,8 @@ function appendBoundedOutput(
   state: VscodeProcessTaskState,
   sequence: number,
   eventBytes: number,
-  entry: VscodeProcessTaskOutputEntry,
+  stream: VscodeProcessTaskStream,
+  data: string,
 ): VscodeProcessTaskState {
   const exceedsCap =
     state.outputEventCount >= MAX_VSCODE_PROCESS_TASK_OUTPUT_EVENTS ||
@@ -381,14 +380,14 @@ function appendBoundedOutput(
     return frozenState({
       ...state,
       sequence,
-      output: Object.freeze([...state.output, Object.freeze({ kind: "truncated" as const })]),
+      output: truncatedOutput(state.output),
       outputTruncated: true,
     });
   }
   return frozenState({
     ...state,
     sequence,
-    output: Object.freeze([...state.output, entry]),
+    output: appendStreamData(state.output, stream, data),
     outputBytes: state.outputBytes + eventBytes,
     outputEventCount: state.outputEventCount + 1,
   });
@@ -416,11 +415,132 @@ function emptyState(owner: VscodeProcessTaskOwner): VscodeProcessTaskState {
     exitCode: null,
     failure: null,
     currentStep: null,
-    output: Object.freeze([]),
+    output: createVscodeProcessTaskOutput(),
     outputBytes: 0,
     outputEventCount: 0,
     outputTruncated: false,
   });
+}
+
+function appendStepBoundary(
+  output: VscodeProcessTaskOutput,
+  step: VscodeProcessTaskStep,
+): VscodeProcessTaskOutput {
+  const boundary = `\n--- Step ${step.index} of ${step.total}: ${step.label} ---\n`;
+  return outputProjection(
+    appendOutputChunk(output.stdout, boundary),
+    appendOutputChunk(output.stderr, boundary),
+    output.truncated,
+    output.identity,
+  );
+}
+
+function appendStreamData(
+  output: VscodeProcessTaskOutput,
+  stream: VscodeProcessTaskStream,
+  data: string,
+): VscodeProcessTaskOutput {
+  return outputProjection(
+    stream === "stdout" ? appendOutputChunk(output.stdout, data) : output.stdout,
+    stream === "stderr" ? appendOutputChunk(output.stderr, data) : output.stderr,
+    output.truncated,
+    output.identity,
+  );
+}
+
+function truncatedOutput(output: VscodeProcessTaskOutput): VscodeProcessTaskOutput {
+  if (output.truncated) return output;
+  return outputProjection(output.stdout, output.stderr, true, output.identity);
+}
+
+function outputProjection(
+  stdout: VscodeProcessTaskOutputStream,
+  stderr: VscodeProcessTaskOutputStream,
+  truncated: boolean,
+  identity?: object,
+): VscodeProcessTaskOutput {
+  const output: {
+    identity?: object;
+    stderr: VscodeProcessTaskOutputStream;
+    stdout: VscodeProcessTaskOutputStream;
+    truncated: boolean;
+  } = { stdout, stderr, truncated };
+  if (identity) {
+    Object.defineProperty(output, "identity", {
+      configurable: false,
+      enumerable: false,
+      value: identity,
+      writable: false,
+    });
+  }
+  return Object.freeze(output);
+}
+
+export function createVscodeProcessTaskOutput(): VscodeProcessTaskOutput {
+  const emptyStream = Object.freeze({
+    chunkCount: 0,
+    codeUnits: 0,
+    tail: null,
+  });
+  return outputProjection(emptyStream, emptyStream, false, Object.freeze({}));
+}
+
+export function vscodeProcessTaskOutputStreamTail(
+  stream: VscodeProcessTaskOutputStream,
+  maxCodeUnits = MAX_VSCODE_PROCESS_TASK_OUTPUT_TOTAL_BYTES,
+): VscodeProcessTaskOutputTail {
+  if (!Number.isSafeInteger(maxCodeUnits) || maxCodeUnits < 0) {
+    return Object.freeze({ omitted: stream.codeUnits > 0, text: "" });
+  }
+  if (maxCodeUnits === 0 || stream.tail === null) {
+    return Object.freeze({ omitted: stream.codeUnits > 0, text: "" });
+  }
+
+  const chunks: string[] = [];
+  let remaining = maxCodeUnits;
+  let cursor: VscodeProcessTaskOutputChunk | null = stream.tail;
+  while (cursor && remaining > 0) {
+    if (cursor.text.length <= remaining) {
+      chunks.push(cursor.text);
+      remaining -= cursor.text.length;
+    } else {
+      let start = cursor.text.length - remaining;
+      if (
+        start > 0 &&
+        isLowSurrogate(cursor.text.charCodeAt(start)) &&
+        isHighSurrogate(cursor.text.charCodeAt(start - 1))
+      ) {
+        start += 1;
+      }
+      chunks.push(cursor.text.slice(start));
+      remaining = 0;
+    }
+    cursor = cursor.previous;
+  }
+  chunks.reverse();
+  const text = chunks.join("");
+  return Object.freeze({ omitted: text.length < stream.codeUnits, text });
+}
+
+function appendOutputChunk(
+  stream: VscodeProcessTaskOutputStream,
+  text: string,
+): VscodeProcessTaskOutputStream {
+  if (text.length === 0) return stream;
+  const tail = Object.freeze({ previous: stream.tail, text });
+  return Object.freeze({
+    chunkCount: stream.chunkCount + 1,
+    codeUnits: stream.codeUnits + text.length,
+    tail,
+  });
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
 }
 
 function emptyProblemsState(owner: VscodeProcessTaskOwner): VscodeProcessTaskProblemsState {

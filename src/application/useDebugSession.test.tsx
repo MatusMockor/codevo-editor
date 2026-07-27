@@ -24,7 +24,13 @@ import type {
   DebugRestartFrameCandidate,
   NodeDebugAttachCandidateStartPort,
 } from "./debugSessionContracts";
+import { DebugCompoundSessionProjection } from "./debugCompoundSessionProjection";
+import { NodeDebugCompoundSessionCoordinator } from "./nodeDebugCompoundSessionCoordinator";
 import { useWorkbenchDebugSession } from "./useDebugSession";
+import {
+  useDebugSessionEventProjection,
+  type DebugSessionEventProjectionBindings,
+} from "./useDebugSessionEventProjection";
 
 const launch = {
   kind: "node-script",
@@ -315,6 +321,14 @@ describe("useDebugSession", () => {
       topFrame: frame,
     });
     expect(ui.hook().pauseGeneration).toBe(1);
+    expect(ui.hook().selectedFrameId).toBe(11);
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "ready" });
+    expect(harness.scopesAtPause).toHaveBeenCalledWith({
+      rootPath: "/workspace/one",
+      sessionId: 42,
+      pauseGeneration: 1,
+      frameId: 11,
+    });
     expect(ui.hook().canRunToLocation()).toBe(true);
     expect(harness.startCompound).toHaveBeenCalledWith({
       rootPath: "/workspace/one",
@@ -3298,6 +3312,14 @@ describe("useDebugSession", () => {
       lastSeq: 2,
     });
     expect(ui.hook().pauseGeneration).toBe(7);
+    expect(ui.hook().selectedFrameId).toBe(11);
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "ready" });
+    expect(harness.scopesAtPause).toHaveBeenCalledWith({
+      rootPath: "/workspace/one",
+      sessionId: 19,
+      pauseGeneration: 7,
+      frameId: 11,
+    });
     expect(harness.stop).not.toHaveBeenCalled();
     ui.unmount();
   });
@@ -5656,9 +5678,7 @@ describe("useDebugSession", () => {
       });
     });
 
-    await act(async () => {
-      await ui.hook().selectFrame(11);
-    });
+    await act(async () => Promise.resolve());
     expect(harness.scopesAtPause).toHaveBeenCalledWith({
       rootPath: "/workspace/one",
       sessionId: 4,
@@ -5741,6 +5761,709 @@ describe("useDebugSession", () => {
     });
     expect(harness.scopesAtPause).toHaveBeenCalledTimes(1);
     expect(harness.variablesPage).toHaveBeenCalledTimes(2);
+    ui.unmount();
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["a malformed scope", [{ name: "Local", variablesReference: "21", expensive: false }]],
+    ["an empty scope name", [{ name: "", variablesReference: 21, expensive: false }]],
+    [
+      "a control-bearing scope name",
+      [{ name: "Local\n", variablesReference: 21, expensive: false }],
+    ],
+    [
+      "an oversized scope name",
+      [{ name: "a".repeat(1_025), variablesReference: 21, expensive: false }],
+    ],
+    [
+      "an adversarially large scope name",
+      [{ name: "a".repeat(1_000_000), variablesReference: 21, expensive: false }],
+    ],
+  ])("fails closed when the scopes gateway returns %s", async (_label, response) => {
+    const harness = createGateway();
+    harness.scopesAtPause.mockImplementationOnce(async () => response as never);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+
+    await act(async () => Promise.resolve());
+
+    expect(ui.hook().selectedFrameId).toBe(11);
+    expect(ui.hook().scopes).toEqual([]);
+    expect(ui.hook().scopeLoadState).toEqual({
+      frameId: 11,
+      kind: "error",
+      message: "Unable to load variables for the selected frame.",
+    });
+    ui.unmount();
+  });
+
+  it("preserves a valid maximum-size scope name without changing the gateway result", async () => {
+    const harness = createGateway();
+    const validScopes = [{ name: "a".repeat(1_024), variablesReference: 21, expensive: false }];
+    harness.scopesAtPause.mockResolvedValueOnce(validScopes);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+
+    await act(async () => Promise.resolve());
+
+    expect(ui.hook().scopes).toBe(validScopes);
+    ui.unmount();
+  });
+
+  it("does not load scopes through a retained frame selector after unmount", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+    await act(async () => Promise.resolve());
+    const selectFrame = ui.hook().selectFrame;
+    harness.scopesAtPause.mockClear();
+    ui.unmount();
+
+    await selectFrame(11);
+
+    expect(harness.scopesAtPause).not.toHaveBeenCalled();
+  });
+
+  it("adopts the top frame synchronously and exposes delayed scope loading", async () => {
+    const harness = createGateway();
+    const pendingScopes = deferred<DebugScope[]>();
+    harness.scopesAtPause.mockReturnValueOnce(pendingScopes.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+
+    expect(ui.hook().selectedFrameId).toBe(11);
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "loading" });
+    expect(ui.hook().scopes).toEqual([]);
+
+    const scopes = [{ expensive: false, name: "Local", variablesReference: 21 }];
+    await act(async () => {
+      pendingScopes.resolve(scopes);
+      await pendingScopes.promise;
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "ready" });
+    expect(ui.hook().scopes).toEqual(scopes);
+    ui.unmount();
+  });
+
+  it("does not let a background stopped event select an overlapping frame in the current workspace", async () => {
+    const harness = createGateway();
+    const backgroundRoot = "/workspace/two";
+    const ui = renderHook(harness.gateway, backgroundRoot);
+    const backgroundLaunch = {
+      kind: "node-script",
+      scriptPath: `${backgroundRoot}/index.js`,
+    } as const;
+    const backgroundFrame = {
+      ...frame,
+      filePath: `${backgroundRoot}/index.js`,
+      name: "background",
+    };
+    const nextBackgroundFrame = {
+      ...backgroundFrame,
+      frameId: 12,
+      name: "background-next-pause",
+    };
+
+    await act(async () => ui.hook().startDebug(backgroundLaunch));
+    await act(async () => {
+      harness.emit({
+        rootPath: backgroundRoot,
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: backgroundRoot,
+        sessionId: 4,
+        seq: 2,
+        payload: {
+          kind: "stopped",
+          reason: "breakpoint",
+          frames: [backgroundFrame],
+          pauseGeneration: 1,
+        },
+      });
+      await Promise.resolve();
+    });
+
+    ui.set({ workspaceRoot: "/workspace/one" });
+    await act(async () => ui.hook().startDebug(launch));
+    await act(async () => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+      await Promise.resolve();
+    });
+
+    expect(ui.hook().selectedFrameId).toBe(frame.frameId);
+    harness.scopesAtPause.mockClear();
+
+    act(() => {
+      harness.emit({
+        rootPath: backgroundRoot,
+        sessionId: 4,
+        seq: 3,
+        payload: {
+          kind: "stopped",
+          reason: "breakpoint",
+          frames: [nextBackgroundFrame],
+          pauseGeneration: 2,
+        },
+      });
+    });
+
+    expect(harness.scopesAtPause).not.toHaveBeenCalled();
+    expect(ui.hook().selectedFrameId).toBe(frame.frameId);
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: frame.frameId, kind: "ready" });
+
+    ui.set({ workspaceRoot: backgroundRoot });
+    expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().scopes).toEqual([]);
+    ui.unmount();
+  });
+
+  it("clears the background root's prior frame selection when a newer pause cannot auto-select", () => {
+    const harness = createGateway();
+    const backgroundRoot = "/workspace/two";
+    const backgroundKey = backgroundRoot;
+    const backgroundFrame = {
+      ...frame,
+      filePath: `${backgroundRoot}/index.js`,
+      name: "background",
+    };
+    const nextBackgroundFrame = {
+      ...backgroundFrame,
+      frameId: 12,
+      name: "background-next-pause",
+    };
+    const snapshotsRef: DebugSessionEventProjectionBindings["snapshotsRef"] = {
+      current: {
+        [backgroundKey]: {
+          lastSeq: 2,
+          state: {
+            frames: [backgroundFrame],
+            kind: "stopped",
+            reason: "breakpoint",
+            sessionId: 4,
+            topFrame: backgroundFrame,
+          },
+        },
+      },
+    };
+    const frameSelectionByRootRef: DebugSessionEventProjectionBindings["frameSelectionByRootRef"] =
+      {
+        current: {
+          [backgroundKey]: {
+            frameId: backgroundFrame.frameId,
+            loadState: { kind: "ready" },
+            scopes: [{ expensive: false, name: "Prior pause", variablesReference: 21 }],
+          },
+        },
+      };
+    const mountedRef = { current: true };
+    const bindings: DebugSessionEventProjectionBindings = {
+      activeCompoundRef: { current: null },
+      adapterKindForSession: () => "node",
+      applyBreakpointsVerifiedEvent: vi.fn(),
+      adoptBreakpointsActivation: vi.fn(),
+      adoptExceptionPauseSession: vi.fn(),
+      clearBreakpointsActivation: vi.fn(),
+      compoundCoordinatorRef: { current: new NodeDebugCompoundSessionCoordinator() },
+      compoundProjectionRef: { current: new DebugCompoundSessionProjection() },
+      currentWorkspaceIdRef: { current: null },
+      finalizeExactSession: vi.fn(),
+      frameSelectionByRootRef,
+      gateway: harness.gateway,
+      isExactWorkspaceOwnerCurrent: (rootPath) => rootPath === "/workspace/one",
+      isWorkspaceTrusted: () => true,
+      mountedRef,
+      observeRestartFrameEvent: vi.fn(),
+      outputOwnersBySessionRef: { current: new Map() },
+      pendingConfirmedStartEventsRef: { current: new Map() },
+      pendingConfirmedStartKeysRef: { current: new Set() },
+      pendingRestartsRef: { current: new Map() },
+      pendingStartKeysRef: { current: new Set() },
+      restartCoordinatorsRef: { current: new Map() },
+      selectFrame: vi.fn(async () => undefined),
+      sessionOwnersRef: {
+        current: new Map([
+          [
+            backgroundKey,
+            {
+              sessionId: 4,
+              targetKind: "node-script",
+              workspaceEpoch: 0,
+              workspaceId: null,
+            },
+          ],
+        ]),
+      },
+      setDebugCompoundActive: vi.fn(),
+      setFrameSelectionByRoot: vi.fn(),
+      setOutputBySession: vi.fn(),
+      setPauseGeneration: vi.fn(),
+      setSnapshots: vi.fn(),
+      snapshotsRef,
+      workspaceOwnerEpochRef: { current: { epoch: 1 } },
+    };
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    function EventProjectionHarness() {
+      useDebugSessionEventProjection(bindings);
+      return null;
+    }
+
+    act(() => root.render(<EventProjectionHarness />));
+    act(() => {
+      harness.emit({
+        rootPath: backgroundRoot,
+        sessionId: 4,
+        seq: 3,
+        payload: {
+          frames: [nextBackgroundFrame],
+          kind: "stopped",
+          pauseGeneration: 2,
+          reason: "breakpoint",
+        },
+      });
+    });
+
+    expect(bindings.selectFrame).not.toHaveBeenCalled();
+    expect(frameSelectionByRootRef.current[backgroundKey]).toBeNull();
+    act(() => {
+      mountedRef.current = false;
+      root.unmount();
+    });
+  });
+
+  it("lets a newer pause replace an older pending top-frame scope request", async () => {
+    const harness = createGateway();
+    const oldScopes = deferred<DebugScope[]>();
+    const newScopes = deferred<DebugScope[]>();
+    harness.scopesAtPause
+      .mockReturnValueOnce(oldScopes.promise)
+      .mockReturnValueOnce(newScopes.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    const newerFrame = { ...frame, frameId: 12 };
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 3,
+        payload: {
+          kind: "stopped",
+          reason: "breakpoint",
+          frames: [newerFrame],
+          pauseGeneration: 2,
+        },
+      });
+    });
+
+    expect(ui.hook().selectedFrameId).toBe(12);
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 12, kind: "loading" });
+    await act(async () => {
+      oldScopes.resolve([{ expensive: false, name: "Old", variablesReference: 1 }]);
+      await oldScopes.promise;
+    });
+    expect(ui.hook().selectedFrameId).toBe(12);
+    expect(ui.hook().scopes).toEqual([]);
+
+    const latest = [{ expensive: false, name: "Latest", variablesReference: 2 }];
+    await act(async () => {
+      newScopes.resolve(latest);
+      await newScopes.promise;
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 12, kind: "ready" });
+    expect(ui.hook().scopes).toEqual(latest);
+    ui.unmount();
+  });
+
+  it("rejects old scopes after an exact session A-B-A identity reuse", async () => {
+    const harness = createGateway();
+    const staleScopes = deferred<DebugScope[]>();
+    const currentScopes = deferred<DebugScope[]>();
+    harness.start
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 4 })
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 5 })
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 4 });
+    harness.scopesAtPause
+      .mockReturnValueOnce(staleScopes.promise)
+      .mockResolvedValueOnce([])
+      .mockReturnValueOnce(currentScopes.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "terminated", exitCode: 0 },
+      });
+    });
+
+    await act(async () => ui.hook().startDebug(launch));
+    await act(async () => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 5,
+        seq: 1,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+      await Promise.resolve();
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 5,
+        seq: 2,
+        payload: { kind: "terminated", exitCode: 0 },
+      });
+    });
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "loading" });
+
+    await act(async () => {
+      staleScopes.resolve([{ expensive: false, name: "Stale", variablesReference: 1 }]);
+      await staleScopes.promise;
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "loading" });
+    expect(ui.hook().scopes).toEqual([]);
+
+    const current = [{ expensive: false, name: "Current", variablesReference: 2 }];
+    await act(async () => {
+      currentScopes.resolve(current);
+      await currentScopes.promise;
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "ready" });
+    expect(ui.hook().scopes).toEqual(current);
+    ui.unmount();
+  });
+
+  it("preserves a manual frame selection while automatic top-frame scopes are pending", async () => {
+    const harness = createGateway();
+    const automaticScopes = deferred<DebugScope[]>();
+    const manualScopes = deferred<DebugScope[]>();
+    harness.scopesAtPause
+      .mockReturnValueOnce(automaticScopes.promise)
+      .mockReturnValueOnce(manualScopes.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    const manualFrame = { ...frame, frameId: 12 };
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: {
+          kind: "stopped",
+          reason: "breakpoint",
+          frames: [frame, manualFrame],
+          pauseGeneration: 1,
+        },
+      });
+      void ui.hook().selectFrame(12);
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 12, kind: "loading" });
+
+    await act(async () => {
+      automaticScopes.resolve([{ expensive: false, name: "Top", variablesReference: 1 }]);
+      await automaticScopes.promise;
+    });
+    expect(ui.hook().selectedFrameId).toBe(12);
+    expect(ui.hook().scopes).toEqual([]);
+
+    const manual = [{ expensive: false, name: "Manual", variablesReference: 2 }];
+    await act(async () => {
+      manualScopes.resolve(manual);
+      await manualScopes.promise;
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 12, kind: "ready" });
+    expect(ui.hook().scopes).toEqual(manual);
+    ui.unmount();
+  });
+
+  it("drops old automatic scopes across a same-root workspace A-B-A owner cycle", async () => {
+    const harness = createGateway();
+    const staleScopes = deferred<DebugScope[]>();
+    harness.scopesAtPause.mockReturnValueOnce(staleScopes.promise);
+    let currentWorkspaceId = "workspace-a";
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      currentWorkspaceId,
+      (rootPath, workspaceId) =>
+        rootPath === "/workspace/one" && workspaceId === currentWorkspaceId,
+    );
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "loading" });
+
+    currentWorkspaceId = "workspace-b";
+    ui.set({ workspaceId: currentWorkspaceId });
+    currentWorkspaceId = "workspace-a";
+    ui.set({ workspaceId: currentWorkspaceId });
+    await act(async () => ui.hook().selectFrame(11));
+    expect(harness.scopesAtPause).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      staleScopes.resolve([{ expensive: false, name: "Stale", variablesReference: 1 }]);
+      await staleScopes.promise;
+    });
+
+    expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().scopeLoadState).toEqual({ kind: "inactive" });
+    expect(ui.hook().scopes).toEqual([]);
+    ui.unmount();
+  });
+
+  it("hides scopes when exact workspace authority is revoked and reacquires them on restore", async () => {
+    const harness = createGateway();
+    const first = [{ expensive: false, name: "First", variablesReference: 1 }];
+    const restored = [{ expensive: false, name: "Restored", variablesReference: 2 }];
+    harness.scopesAtPause.mockResolvedValueOnce(first).mockResolvedValueOnce(restored);
+    let ownerCurrent = true;
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "workspace-a",
+      () => ownerCurrent,
+    );
+
+    await act(async () => ui.hook().startDebug(launch));
+    await act(async () => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+      await Promise.resolve();
+    });
+    expect(ui.hook().scopes).toEqual(first);
+
+    ownerCurrent = false;
+    ui.set({ workspaceId: "workspace-a" });
+    expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().scopeLoadState).toEqual({ kind: "inactive" });
+    expect(ui.hook().scopes).toEqual([]);
+
+    ownerCurrent = true;
+    ui.set({ workspaceId: "workspace-a" });
+    await act(async () => Promise.resolve());
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "ready" });
+    expect(ui.hook().scopes).toEqual(restored);
+    ui.unmount();
+  });
+
+  it("reports a stopped pause without frames as unavailable", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "entry", frames: [], pauseGeneration: 1 },
+      });
+    });
+
+    expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().scopeLoadState).toEqual({ kind: "unavailable" });
+    expect(harness.scopesAtPause).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
+  it("fails scope loading closed and retries the exact current frame", async () => {
+    const harness = createGateway();
+    const retryScopes = deferred<DebugScope[]>();
+    harness.scopesAtPause
+      .mockRejectedValueOnce(new Error("sensitive adapter failure"))
+      .mockReturnValueOnce(retryScopes.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => ui.hook().startDebug(launch));
+    await act(async () => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+      });
+      await Promise.resolve();
+    });
+
+    expect(ui.hook().scopeLoadState).toEqual({
+      frameId: 11,
+      kind: "error",
+      message: "Unable to load variables for the selected frame.",
+    });
+    expect(ui.hook().scopes).toEqual([]);
+
+    let retry!: Promise<void>;
+    act(() => {
+      retry = ui.hook().selectFrame(11);
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "loading" });
+    const recovered = [{ expensive: false, name: "Recovered", variablesReference: 3 }];
+    await act(async () => {
+      retryScopes.resolve(recovered);
+      await retry;
+    });
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "ready" });
+    expect(ui.hook().scopes).toEqual(recovered);
     ui.unmount();
   });
 
@@ -5842,6 +6565,7 @@ describe("useDebugSession", () => {
     });
 
     expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().scopeLoadState).toEqual({ kind: "inactive" });
     expect(ui.hook().scopes).toEqual([]);
     trusted = true;
     ui.set({ workspaceRoot: "/workspace/one" });
@@ -6622,7 +7346,8 @@ describe("useDebugSession", () => {
     });
     expect(ui.hook().debugControlPending).toBe(false);
     expect(ui.hook().pauseGeneration).toBe(2);
-    expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().selectedFrameId).toBe(11);
+    expect(ui.hook().scopeLoadState).toEqual({ frameId: 11, kind: "ready" });
     expect(ui.hook().scopes).toEqual([]);
     ui.unmount();
   });

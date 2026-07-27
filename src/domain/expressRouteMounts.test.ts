@@ -867,7 +867,7 @@ describe("resolveExpressRouteMountsBounded", () => {
     expect(result.routes.find((route) => route.method === "GET")?.path).toBe("/real");
   });
 
-  it("does not treat a commented import from-clause as module authority", () => {
+  it("does not treat a commented from-clause as specifier authority", () => {
     const result = resolveExpressRouteMountsBounded(
       [
         {
@@ -903,7 +903,7 @@ describe("resolveExpressRouteMountsBounded", () => {
 
     expect(
       result.routes.filter((route) => route.method === "GET").map((route) => route.path),
-    ).toEqual(["/evil", "/real"]);
+    ).toEqual(["/evil", "/api/real"]);
   });
 
   it("keeps conventional app/router names non-authoritative for mount resolution", () => {
@@ -1402,7 +1402,9 @@ describe("resolveExpressRouteMountsBounded", () => {
       100,
     );
 
-    expect(result.routes.map((route) => route.path)).toEqual(["/api/users"]);
+    expect(
+      result.routes.filter((route) => route.method === "GET").map((route) => route.path),
+    ).toEqual(["/api/users"]);
     expect(result.truncated).toBe(false);
   });
 
@@ -1513,5 +1515,423 @@ describe("resolveExpressRouteMountsBounded", () => {
     expect(
       result.routes.filter((route) => route.method === "GET").map((route) => route.path),
     ).toEqual(["/api/direct", "/conflict"]);
+  });
+
+  it("resolves multiline commented imports and typed exported router declarations", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import {",
+            "  users /* stable binding */,",
+            "} from './users';",
+            "const app = express();",
+            "app.use('/api', users);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/users.ts",
+          source: [
+            "import {",
+            "  Router as ExpressRouter,",
+            "} from 'express';",
+            "export const users: ReturnType<typeof ExpressRouter> = ExpressRouter();",
+            "users.get('/users', handler);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(
+      result.routes.filter((route) => route.method === "GET").map((route) => route.path),
+    ).toEqual(["/api/users"]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("does not treat type-only multiline imports as runtime Express authority", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/not-express.ts",
+          source: [
+            "import type {",
+            "  Router,",
+            "} from 'express';",
+            "const users: Router = Router();",
+            "users.get('/ghost', handler);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes).toEqual([]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("ignores from text inside import comments and keeps the real mount specifier", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import { users /* from 'bogus' */ } from './users';",
+            "const app = express();",
+            "app.use('/api', users);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/users.ts",
+          source: [
+            "import { Router } from 'express';",
+            "export const users: Router = Router();",
+            "users.get('/users', handler);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(
+      result.routes.filter((route) => route.method === "GET").map((route) => route.path),
+    ).toEqual(["/api/users"]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("does not grant runtime Router authority to a mixed type-only specifier", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/not-express.ts",
+          source: [
+            "import { type Router } from 'express';",
+            "const users = Router();",
+            "users.get('/ghost', handler);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes).toEqual([]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("accepts an import whose from keyword ends at the static clause boundary", () => {
+    const boundaryComment = `/*${"x".repeat(4_081)}*/`;
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import express from 'express';",
+            `import users${boundaryComment} from './users';`,
+            "const app = express();",
+            "app.use('/api', users);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/users.ts",
+          source: [
+            "import { Router } from 'express';",
+            "const users: Router = Router();",
+            "users.get('/users', handler);",
+            "export default users;",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(
+      result.routes.filter((route) => route.method === "GET").map((route) => route.path),
+    ).toEqual(["/api/users"]);
+    expect(result.capacityTruncated).toBe(false);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("truthfully truncates an import clause beyond the static analysis boundary", () => {
+    const padding = Array.from({ length: 700 }, (_, index) => `unused${index}`).join(", ");
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import express from 'express';",
+            `import { ${padding}, users } from './users';`,
+            "const app = express();",
+            "app.use('/api', users);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/users.ts",
+          source: [
+            "import { Router } from 'express';",
+            "export const users = Router();",
+            "users.get('/users', handler);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes.some((route) => route.path === "/api/users")).toBe(false);
+    expect(result.routes.some((route) => route.path === "/users")).toBe(true);
+    expect(result.capacityTruncated).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("bounds adversarial repeated import keywords without scanning overlapping clauses", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/adversarial.ts",
+          source: `app.get('/hidden', handler);${"import ".repeat(300_000)}`,
+        },
+      ],
+      100,
+    );
+
+    expect(result.capacityTruncated).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("fails closed before deeply parenthesized static prefixes exhaust the call stack", () => {
+    const depth = 5_000;
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/deep-prefix.ts",
+          source: [
+            "import express from 'express';",
+            "const app = express();",
+            "const router = express.Router();",
+            `const prefix = ${"(".repeat(depth)}'/api'${")".repeat(depth)};`,
+            "app.use(prefix, router);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes).toEqual([]);
+    expect(result.capacityTruncated).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("truthfully truncates static prefix expressions beyond the parser work budget", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/oversized-prefix.ts",
+          source: [
+            "import express from 'express';",
+            "const app = express();",
+            "const router = express.Router();",
+            `const prefix = '${"x".repeat(20_000)}';`,
+            "app.use(prefix, router);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes).toEqual([]);
+    expect(result.capacityTruncated).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("classifies adversarial same-line declarations in linear time", () => {
+    const source = Array.from(
+      { length: 8_000 },
+      (_, index) => `export const receiver${index}=express() `,
+    ).join("");
+
+    const startedAt = performance.now();
+    const result = resolveExpressRouteMountsBounded(
+      [{ relativeFilePath: "src/partial.ts", source }],
+      100,
+    );
+
+    expect(result.routes).toEqual([]);
+    expect(result.truncated).toBe(false);
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("retains the bounded route prefix when a flat file exceeds the result limit", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/routes.ts",
+          source: "app.get('', handler);\n".repeat(100_000),
+        },
+      ],
+      20_000,
+    );
+
+    expect(result.routes).toHaveLength(20_000);
+    expect(result.routes[19_999]).toMatchObject({ line: 20_000, method: "GET", path: "" });
+    expect(result.capacityTruncated).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("does not let a dynamic import consume the following static import", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "import('./lazy');",
+            "import express from 'express';",
+            "import users from './users';",
+            "const app = express();",
+            "app.use('/api', users);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/users.ts",
+          source: [
+            "import { Router } from 'express';",
+            "const users = Router();",
+            "users.get('/users', handler);",
+            "export default users;",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(
+      result.routes.filter((route) => route.method === "GET").map((route) => route.path),
+    ).toEqual(["/api/users"]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("does not let import.meta consume the following static import", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: [
+            "const here = import.meta.url;",
+            "import express from 'express';",
+            "import users from './users';",
+            "const app = express();",
+            "app.use('/api', users);",
+          ].join("\n"),
+        },
+        {
+          relativeFilePath: "src/users.ts",
+          source: [
+            "import { Router } from 'express';",
+            "const users = Router();",
+            "users.get('/users', handler);",
+            "export default users;",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(
+      result.routes.filter((route) => route.method === "GET").map((route) => route.path),
+    ).toEqual(["/api/users"]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it.each([
+    "const holder = { import: 1 };",
+    "export { value as import };",
+    "const { import: value } = holder;",
+  ])("does not let an identifier named import consume a later static import: %s", (prefix) => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/routes.ts",
+          source: [
+            prefix,
+            "import { Router } from 'express';",
+            "const routes = Router();",
+            "routes.get('/real', handler);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes).toEqual([
+      expect.objectContaining({ method: "GET", path: "/real", receiver: "routes" }),
+    ]);
+    expect(result.capacityTruncated).toBe(false);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("does not classify an import property access as a truncated static import", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/property.ts",
+          source: `obj.import; app.get('/real', handler);${"x".repeat(4_097)}`,
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes.some((route) => route.path === "/real")).toBe(true);
+    expect(result.capacityTruncated).toBe(false);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("truthfully truncates oversized trivia after an import from keyword", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/app.ts",
+          source: `import users from /*${"x".repeat(4_097)}*/ './users';`,
+        },
+      ],
+      100,
+    );
+
+    expect(result.capacityTruncated).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("preserves target package identity for a relative cross-package mount", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          packageLabel: "api",
+          relativeFilePath: "packages/api/src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import shared from '../../shared/src/router';",
+            "const app = express();",
+            "app.use('/api', shared);",
+          ].join("\n"),
+        },
+        {
+          packageLabel: "shared",
+          relativeFilePath: "packages/shared/src/router.ts",
+          source: [
+            "import { Router } from 'express';",
+            "const shared = Router();",
+            "shared.get('/shared', handler);",
+            "export default shared;",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(
+      result.routes
+        .filter((route) => route.method === "GET")
+        .map(({ packageLabel, path }) => ({ packageLabel, path })),
+    ).toEqual([{ packageLabel: "shared", path: "/api/shared" }]);
   });
 });

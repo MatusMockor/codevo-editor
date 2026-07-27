@@ -67,6 +67,13 @@ export interface DebugOutputLine {
   readonly truncated: boolean;
 }
 
+export type DebugScopeLoadState =
+  | { readonly kind: "inactive" }
+  | { readonly kind: "unavailable" }
+  | { readonly frameId: number; readonly kind: "loading" }
+  | { readonly frameId: number; readonly kind: "ready" }
+  | { readonly frameId: number; readonly kind: "error"; readonly message: string };
+
 export type ActiveDebugAdapterKind = "node" | "php" | null;
 
 export interface DebugPauseOwner {
@@ -155,6 +162,7 @@ export interface UseDebugSessionResult {
   output: DebugOutputLine[];
   lastStartError: string | null;
   selectedFrameId: number | null;
+  scopeLoadState: DebugScopeLoadState;
   scopes: DebugScope[];
   variablesByReference: Record<number, DebugVariable[]>;
   inspectionOwner: DebugInspectionOwner | null;

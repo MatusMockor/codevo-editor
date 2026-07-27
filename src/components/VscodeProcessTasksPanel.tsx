@@ -1,5 +1,9 @@
-import { useEffect, useRef, type CSSProperties } from "react";
-import type { VscodeProcessTaskOutputEntry } from "../domain/vscodeProcessTasks";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
+import {
+  MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS,
+  vscodeProcessTaskOutputStreamTail,
+  type VscodeProcessTaskOutput,
+} from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTasksState } from "../application/useVscodeProcessTasks";
 import type { VscodeProcessTasksConfigurationAction } from "../application/configureVscodeProcessTasks";
 import { vscodeProcessTaskDependencySummary } from "./vscodeProcessTaskDependencySummary";
@@ -79,9 +83,6 @@ export function VscodeProcessTasksPanel({
   const statusRef = useRef<HTMLParagraphElement | null>(null);
   const stopRef = useRef<HTMLButtonElement | null>(null);
   const busy = configuring || discovering || occupied || running || stopping;
-  const stdout = streamText(output, "stdout");
-  const stderr = streamText(output, "stderr");
-  const outputTruncated = output.some(({ kind }) => kind === "truncated");
   const statusText = taskStatusText({
     activeLabel,
     configurationAction,
@@ -240,14 +241,19 @@ export function VscodeProcessTasksPanel({
         </ul>
       )}
 
-      {(activeLabel || output.length > 0 || status !== null) && (
+      {(activeLabel ||
+        output.stdout.codeUnits > 0 ||
+        output.stderr.codeUnits > 0 ||
+        status !== null) && (
         <section aria-label="Active configured task" style={styles.section}>
           <strong>{activeLabel ?? "Configured task"}</strong>
           <div style={styles.outputGrid}>
-            <OutputStream label="stdout" text={stdout} />
-            <OutputStream label="stderr" text={stderr} />
+            <OutputStream label="stdout" output={output} />
+            <OutputStream label="stderr" output={output} />
           </div>
-          {outputTruncated && <p style={styles.truncation}>Earlier task output was truncated.</p>}
+          {output.truncated && (
+            <p style={styles.truncation}>Additional task output was truncated.</p>
+          )}
         </section>
       )}
     </section>
@@ -258,33 +264,60 @@ function problemMatcherLabel(matcher: "eslint" | "typescript"): string {
   return matcher === "typescript" ? "$tsc" : "$eslint-stylish";
 }
 
-function OutputStream({ label, text }: { readonly label: string; readonly text: string }) {
+const OutputStream = memo(function OutputStream({
+  label,
+  output,
+}: {
+  readonly label: "stdout" | "stderr";
+  readonly output: VscodeProcessTaskOutput;
+}) {
+  const elementRef = useRef<HTMLPreElement | null>(null);
+  const identityRef = useRef<object | null>(null);
+  const renderedTextRef = useRef("");
+  const stream = output[label];
+  const projection = useMemo(
+    () =>
+      vscodeProcessTaskOutputStreamTail(stream, MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS),
+    [stream],
+  );
+  const text = projection.text;
+  const identity = output.identity ?? output;
+
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    if (!element) return;
+    const existingChild = element.firstChild;
+    let textNode: Text;
+    if (existingChild instanceof Text) {
+      textNode = existingChild;
+    } else {
+      textNode = document.createTextNode("");
+      element.replaceChildren(textNode);
+    }
+    const previousText = renderedTextRef.current;
+    const reset = identityRef.current !== identity || !text.startsWith(previousText);
+    if (reset) {
+      textNode.data = text || "No output.";
+    } else if (text.length > previousText.length) {
+      if (previousText.length === 0) textNode.data = "";
+      textNode.appendData(text.slice(previousText.length));
+    } else if (text.length === 0 && textNode.data === "") {
+      textNode.data = "No output.";
+    }
+    identityRef.current = identity;
+    renderedTextRef.current = text;
+  }, [identity, text]);
+
   return (
     <section aria-label={`${label} stream`}>
       <small>{label}</small>
-      <pre aria-label={`${label} output`} style={styles.output}>
-        {text || "No output."}
-      </pre>
+      {projection.omitted && (
+        <small>Earlier {label} output is hidden to keep the task panel responsive.</small>
+      )}
+      <pre aria-label={`${label} output`} ref={elementRef} style={styles.output} />
     </section>
   );
-}
-
-function streamText(
-  output: readonly VscodeProcessTaskOutputEntry[],
-  stream: "stdout" | "stderr",
-): string {
-  return output
-    .filter(
-      (entry): entry is Extract<VscodeProcessTaskOutputEntry, { readonly kind: "data" | "step" }> =>
-        entry.kind === "step" || (entry.kind === "data" && entry.stream === stream),
-    )
-    .map((entry) =>
-      entry.kind === "step"
-        ? `\n--- Step ${entry.index} of ${entry.total}: ${entry.label} ---\n`
-        : entry.data,
-    )
-    .join("");
-}
+});
 
 function taskStatusText({
   activeLabel,

@@ -38,6 +38,7 @@ describe("ExpressRoutesPanel", () => {
   });
 
   it("renders and filters a statically resolved mounted runtime path", async () => {
+    const onOpenRoute = vi.fn();
     const mounted = workspaceExpressRoutesFromSnapshots([
       {
         relativeFilePath: "src/server.ts",
@@ -59,11 +60,15 @@ describe("ExpressRoutesPanel", () => {
       },
     ]);
 
-    await render({ query: "/api/users", routes: mounted });
+    await render({ onOpenRoute, query: "/api/users", routes: mounted });
 
     expect(routeOptions()).toHaveLength(1);
     expect(host.textContent).toContain("/api/users/:id");
     expect(host.textContent).toContain("src/users.ts:3");
+    await clickOption(0);
+    expect(onOpenRoute).toHaveBeenCalledExactlyOnceWith(
+      mounted.find(({ path }) => path === "/api/users/:id"),
+    );
   });
 
   it("filters the controlled query through every workspace field", async () => {

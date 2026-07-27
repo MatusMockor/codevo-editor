@@ -723,6 +723,7 @@ describe("BottomPanel terminal links", () => {
               onStep,
               onStop: vi.fn(),
               rootPath: "/workspace",
+              scopeLoadState: { kind: "unavailable" },
               scopes: [],
               selectedFrameId: null,
               snapshot: {

@@ -1,4 +1,14 @@
 use crate::js_test_run::JsTestRunScope;
+#[cfg(unix)]
+#[path = "js_test_path_snapshot.rs"]
+mod path_snapshot;
+#[cfg(unix)]
+use path_snapshot::{RetainedPathSnapshot, RetainedUnixIdentity};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "js_test_node_loader.rs"]
+mod node_loader;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use node_loader::{retained_node_loader_registration, RetainedNodeModuleKind};
 use std::{
     fs, io,
     path::{Component, Path, PathBuf},
@@ -13,22 +23,46 @@ pub(crate) struct JsTestExecutionContext {
     pub(crate) scope: JsTestRunScope,
     workspace_root_path: PathBuf,
     #[cfg(unix)]
+    workspace_root_descriptor: fs::File,
+    #[cfg(unix)]
     execution_root_descriptor: fs::File,
+    #[cfg(unix)]
+    workspace_path_snapshot: RetainedPathSnapshot,
+    #[cfg(unix)]
+    execution_path_snapshot: RetainedPathSnapshot,
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) struct RetainedJsTestProcessAuthority {
     binary_descriptor: fs::File,
     binary_file_name: String,
+    binary_path: PathBuf,
+    binary_requested_path: PathBuf,
     runner_parent_descriptor: fs::File,
+    runner_parent_path: PathBuf,
     runner_parent_authority_path: String,
     execution_root_descriptor: fs::File,
+    execution_root_path: PathBuf,
     execution_root_authority_path: String,
+    workspace_root_descriptor: fs::File,
+    workspace_root_path: PathBuf,
+    binary_path_snapshot: RetainedPathSnapshot,
+    binary_requested_path_snapshot: RetainedPathSnapshot,
+    package_manifest_authority: Option<RetainedNodePackageAuthority>,
     node_interpreter: Option<(fs::File, String)>,
     launcher: RetainedJsTestLauncher,
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct RetainedNodePackageAuthority {
+    descriptor: fs::File,
+    path: PathBuf,
+    snapshot: RetainedPathSnapshot,
+    c_path: std::ffi::CString,
+    identity: RetainedUnixIdentity,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Clone, Copy)]
 enum RetainedJsTestLauncher {
     Shell,
@@ -38,20 +72,13 @@ enum RetainedJsTestLauncher {
     },
 }
 
-#[cfg(unix)]
-#[derive(Clone, Copy)]
-enum RetainedNodeModuleKind {
-    CommonJs,
-    EsModule,
-}
-
 #[derive(Clone, Copy)]
 pub(crate) enum RetainedJsTestRunnerKind {
     Vitest,
     Jest,
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) struct RetainedJsTestProcessAuthority;
 
 pub(crate) fn resolve_js_test_execution_context(
@@ -74,7 +101,16 @@ pub(crate) fn resolve_js_test_execution_context(
     }
     reject_symlinked_execution_path(&canonical_workspace_root, &package_root)?;
     #[cfg(unix)]
+    let workspace_root_descriptor = retained_execution_root(&canonical_workspace_root)
+        .map_err(|error| error.replace("package root", "workspace root"))?;
+    #[cfg(unix)]
     let execution_root_descriptor = retained_execution_root(&canonical_execution_root)?;
+    #[cfg(unix)]
+    let workspace_path_snapshot =
+        RetainedPathSnapshot::capture(&canonical_workspace_root, &canonical_workspace_root, false)?;
+    #[cfg(unix)]
+    let execution_path_snapshot =
+        RetainedPathSnapshot::capture(&canonical_workspace_root, &canonical_execution_root, false)?;
     let scope = scope_relative_to_package(scope, &package_root)?;
     Ok(JsTestExecutionContext {
         execution_root: canonical_execution_root.clone(),
@@ -82,7 +118,13 @@ pub(crate) fn resolve_js_test_execution_context(
         scope,
         workspace_root_path: canonical_workspace_root,
         #[cfg(unix)]
+        workspace_root_descriptor,
+        #[cfg(unix)]
         execution_root_descriptor,
+        #[cfg(unix)]
+        workspace_path_snapshot,
+        #[cfg(unix)]
+        execution_path_snapshot,
     })
 }
 
@@ -102,26 +144,22 @@ fn retained_execution_root(path: &Path) -> Result<fs::File, String> {
 pub(crate) fn ensure_js_test_execution_context_identity(
     context: &JsTestExecutionContext,
 ) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-
-    let retained = context
-        .execution_root_descriptor
-        .metadata()
-        .map_err(|error| {
-            format!("Failed to inspect retained JavaScript test package root: {error}")
-        })?;
-    let current = fs::symlink_metadata(&context.execution_root)
-        .map_err(|error| format!("JavaScript test package root is unavailable: {error}"))?;
-    if current.file_type().is_symlink()
-        || retained.dev() != current.dev()
-        || retained.ino() != current.ino()
-    {
-        return Err("JavaScript test package root identity changed.".to_string());
-    }
+    context.workspace_path_snapshot.ensure_identity()?;
+    context.execution_path_snapshot.ensure_identity()?;
+    ensure_same_directory(
+        &context.workspace_root_descriptor,
+        &context.workspace_root_path,
+        "JavaScript test workspace root",
+    )?;
+    ensure_same_directory(
+        &context.execution_root_descriptor,
+        &context.execution_root,
+        "JavaScript test package root",
+    )?;
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn retain_js_test_process_authority(
     context: &JsTestExecutionContext,
     binary_path: &Path,
@@ -130,18 +168,56 @@ pub(crate) fn retain_js_test_process_authority(
     use std::os::unix::fs::{FileExt, OpenOptionsExt};
 
     ensure_js_test_execution_context_identity(context)?;
+    let binary_requested_path = fs::canonicalize(
+        binary_path
+            .parent()
+            .ok_or_else(|| "JavaScript test runner must have a parent directory.".to_string())?,
+    )
+    .map_err(|error| format!("Failed to resolve JavaScript test runner parent: {error}"))?
+    .join(
+        binary_path
+            .file_name()
+            .ok_or_else(|| "JavaScript test runner must name a file.".to_string())?,
+    );
+    let binary_path = fs::canonicalize(binary_path)
+        .map_err(|error| format!("Failed to resolve JavaScript test runner: {error}"))?;
+    if !binary_path.starts_with(&context.workspace_root_path) || !binary_path.is_file() {
+        return Err(
+            "JavaScript test runner must remain a workspace-confined regular file.".to_string(),
+        );
+    }
+    let binary_requested_path_snapshot =
+        RetainedPathSnapshot::capture(&context.workspace_root_path, &binary_requested_path, true)?;
+    let binary_path_snapshot =
+        RetainedPathSnapshot::capture(&context.workspace_root_path, &binary_path, false)?;
     let binary_descriptor = fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(binary_path)
+        .open(&binary_path)
         .map_err(|error| format!("Failed to retain JavaScript test runner: {error}"))?;
-    ensure_same_file(&binary_descriptor, binary_path, "JavaScript test runner")?;
+    ensure_same_file(&binary_descriptor, &binary_path, "JavaScript test runner")?;
+    ensure_requested_file_identity(
+        &binary_descriptor,
+        &binary_requested_path,
+        &context.workspace_root_path,
+        "JavaScript test runner",
+    )?;
+    ensure_opened_descriptor_confined(
+        &binary_descriptor,
+        &context.workspace_root_path,
+        "JavaScript test runner",
+    )?;
     let mut header = [0_u8; 128];
     let header_length = binary_descriptor
         .read_at(&mut header, 0)
         .map_err(|error| format!("Failed to inspect retained JavaScript test runner: {error}"))?;
     let header = &header[..header_length];
-    let launcher = retained_launcher(header, binary_path, runner_kind)?;
+    let (launcher, package_manifest_authority) = retained_launcher(
+        header,
+        &binary_path,
+        &context.workspace_root_path,
+        runner_kind,
+    )?;
     let binary_file_name = binary_path
         .file_name()
         .ok_or_else(|| "JavaScript test runner must name a file.".to_string())?
@@ -151,9 +227,20 @@ pub(crate) fn retain_js_test_process_authority(
     let runner_parent = binary_path
         .parent()
         .ok_or_else(|| "JavaScript test runner must have a parent directory.".to_string())?;
+    let runner_parent_path = runner_parent.to_path_buf();
     let runner_parent_descriptor = retained_execution_root(runner_parent)
         .map_err(|error| error.replace("package root", "runner parent"))?;
-    ensure_same_file(&binary_descriptor, binary_path, "JavaScript test runner")?;
+    ensure_same_file(&binary_descriptor, &binary_path, "JavaScript test runner")?;
+    ensure_same_directory(
+        &runner_parent_descriptor,
+        runner_parent,
+        "JavaScript test runner parent",
+    )?;
+    ensure_opened_descriptor_confined(
+        &runner_parent_descriptor,
+        &context.workspace_root_path,
+        "JavaScript test runner parent",
+    )?;
     clear_close_on_exec(&binary_descriptor, "JavaScript test runner")?;
     clear_close_on_exec(&runner_parent_descriptor, "JavaScript test runner parent")?;
     let execution_root_descriptor = context
@@ -161,6 +248,10 @@ pub(crate) fn retain_js_test_process_authority(
         .try_clone()
         .map_err(|error| format!("Failed to retain JavaScript test package root: {error}"))?;
     clear_close_on_exec(&execution_root_descriptor, "JavaScript test package root")?;
+    let workspace_root_descriptor = context
+        .workspace_root_descriptor
+        .try_clone()
+        .map_err(|error| format!("Failed to retain JavaScript test workspace root: {error}"))?;
     let runner_parent_authority_path =
         retained_directory_authority_path(&runner_parent_descriptor)?;
     let execution_root_authority_path =
@@ -173,16 +264,25 @@ pub(crate) fn retain_js_test_process_authority(
     Ok(RetainedJsTestProcessAuthority {
         binary_descriptor,
         binary_file_name,
+        binary_path,
+        binary_requested_path,
         runner_parent_descriptor,
+        runner_parent_path,
         runner_parent_authority_path,
         execution_root_descriptor,
+        execution_root_path: context.execution_root.clone(),
         execution_root_authority_path,
+        workspace_root_descriptor,
+        workspace_root_path: context.workspace_root_path.clone(),
+        binary_path_snapshot,
+        binary_requested_path_snapshot,
+        package_manifest_authority,
         node_interpreter,
         launcher,
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn retain_node_interpreter(workspace_root: &Path) -> Result<(fs::File, String), String> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
@@ -260,14 +360,15 @@ fn retained_file_authority_path(_file: &fs::File) -> Result<String, String> {
     Err("Secure retained file paths are unavailable on this platform.".to_string())
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn retained_launcher(
     header: &[u8],
     binary_path: &Path,
+    workspace_root: &Path,
     runner_kind: RetainedJsTestRunnerKind,
-) -> Result<RetainedJsTestLauncher, String> {
+) -> Result<(RetainedJsTestLauncher, Option<RetainedNodePackageAuthority>), String> {
     if header.starts_with(b"#!/bin/sh\n") || header.starts_with(b"#!/bin/sh\r\n") {
-        return Ok(RetainedJsTestLauncher::Shell);
+        return Ok((RetainedJsTestLauncher::Shell, None));
     }
     if !header.starts_with(b"#!/usr/bin/env node\n")
         && !header.starts_with(b"#!/usr/bin/env node\r\n")
@@ -279,12 +380,13 @@ fn retained_launcher(
                 .to_string(),
         );
     }
-    let module_kind = match binary_path
+    let (module_kind, package_manifest_authority) = match binary_path
         .extension()
         .and_then(|extension| extension.to_str())
     {
-        Some("mjs") => RetainedNodeModuleKind::EsModule,
-        Some("js" | "cjs") => RetainedNodeModuleKind::CommonJs,
+        Some("mjs") => (RetainedNodeModuleKind::EsModule, None),
+        Some("cjs") => (RetainedNodeModuleKind::CommonJs, None),
+        Some("js") => nearest_node_package_module_kind(binary_path, workspace_root)?,
         _ => {
             return Err(
                 "Secure retained Node test launch requires a .js, .cjs, or .mjs entry.".to_string(),
@@ -295,13 +397,80 @@ fn retained_launcher(
         RetainedJsTestRunnerKind::Vitest => "--root",
         RetainedJsTestRunnerKind::Jest => "--rootDir",
     };
-    Ok(RetainedJsTestLauncher::Node {
-        module_kind,
-        root_option,
-    })
+    Ok((
+        RetainedJsTestLauncher::Node {
+            module_kind,
+            root_option,
+        },
+        package_manifest_authority,
+    ))
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn nearest_node_package_module_kind(
+    binary_path: &Path,
+    workspace_root: &Path,
+) -> Result<(RetainedNodeModuleKind, Option<RetainedNodePackageAuthority>), String> {
+    use std::io::Read;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut directory = binary_path.parent();
+    for _ in 0..64 {
+        let Some(current) = directory else {
+            break;
+        };
+        if !current.starts_with(workspace_root) {
+            break;
+        }
+        let manifest = current.join("package.json");
+        if manifest.is_file() {
+            let snapshot = RetainedPathSnapshot::capture(workspace_root, &manifest, false)?;
+            let mut descriptor = retained_regular_file(&manifest, "Node package manifest")?;
+            let length = descriptor
+                .metadata()
+                .map_err(|error| format!("Failed to inspect Node package type: {error}"))?
+                .len();
+            if length > 1024 * 1024 {
+                return Err("Node package manifest exceeds its safety limit.".to_string());
+            }
+            let mut bytes = Vec::with_capacity(length as usize);
+            descriptor
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("Failed to inspect Node package type: {error}"))?;
+            snapshot.ensure_identity()?;
+            ensure_same_file(&descriptor, &manifest, "Node package manifest")?;
+            let identity = RetainedUnixIdentity::from_metadata(
+                &descriptor
+                    .metadata()
+                    .map_err(|error| format!("Failed to inspect Node package type: {error}"))?,
+            );
+            let c_path = std::ffi::CString::new(manifest.as_os_str().as_bytes())
+                .map_err(|_| "Node package manifest path contains a NUL byte.".to_string())?;
+            let value: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("Failed to parse Node package type: {error}"))?;
+            let module_kind =
+                if value.get("type").and_then(serde_json::Value::as_str) == Some("module") {
+                    RetainedNodeModuleKind::EsModule
+                } else {
+                    RetainedNodeModuleKind::CommonJs
+                };
+            return Ok((
+                module_kind,
+                Some(RetainedNodePackageAuthority {
+                    descriptor,
+                    path: manifest,
+                    snapshot,
+                    c_path,
+                    identity,
+                }),
+            ));
+        }
+        directory = current.parent();
+    }
+    Ok((RetainedNodeModuleKind::CommonJs, None))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn clear_close_on_exec(file: &fs::File, label: &str) -> Result<(), String> {
     use std::os::fd::AsRawFd;
 
@@ -323,9 +492,50 @@ fn clear_close_on_exec(file: &fs::File, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl RetainedJsTestProcessAuthority {
+    pub(crate) fn ensure_spawn_identity(&self) -> Result<(), String> {
+        self.binary_requested_path_snapshot.ensure_identity()?;
+        self.binary_path_snapshot.ensure_identity()?;
+        ensure_same_directory(
+            &self.workspace_root_descriptor,
+            &self.workspace_root_path,
+            "JavaScript test workspace root",
+        )?;
+        ensure_same_directory(
+            &self.execution_root_descriptor,
+            &self.execution_root_path,
+            "JavaScript test package root",
+        )?;
+        ensure_same_directory(
+            &self.runner_parent_descriptor,
+            &self.runner_parent_path,
+            "JavaScript test runner parent",
+        )?;
+        ensure_same_file(
+            &self.binary_descriptor,
+            &self.binary_path,
+            "JavaScript test runner",
+        )?;
+        ensure_requested_file_identity(
+            &self.binary_descriptor,
+            &self.binary_requested_path,
+            &self.workspace_root_path,
+            "JavaScript test runner",
+        )?;
+        ensure_opened_descriptor_confined(
+            &self.binary_descriptor,
+            &self.workspace_root_path,
+            "JavaScript test runner",
+        )?;
+        if let Some(authority) = &self.package_manifest_authority {
+            authority.ensure_identity()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn into_command(self, args: Vec<String>) -> Command {
+        use std::os::unix::ffi::OsStrExt;
         use std::os::{fd::AsRawFd, unix::process::CommandExt};
 
         let package_root = self.execution_root_descriptor;
@@ -333,17 +543,34 @@ impl RetainedJsTestProcessAuthority {
         let runner_parent = self.runner_parent_descriptor;
         let launcher_kind = self.launcher;
         let node_interpreter = self.node_interpreter;
-        let retained_launcher_path = format!(
+        let package_manifest_authority = self.package_manifest_authority;
+        let runner_parent_identity = RetainedUnixIdentity::from_metadata(
+            &runner_parent
+                .metadata()
+                .expect("retained JavaScript test runner parent metadata must remain available"),
+        );
+        let runner_parent_c_path =
+            std::ffi::CString::new(self.runner_parent_path.as_os_str().as_bytes())
+                .expect("retained JavaScript test runner parent path cannot contain NUL");
+        let binary_identity = RetainedUnixIdentity::from_metadata(
+            &launcher
+                .metadata()
+                .expect("retained JavaScript test runner metadata must remain available"),
+        );
+        let binary_c_path = std::ffi::CString::new(self.binary_path.as_os_str().as_bytes())
+            .expect("retained JavaScript test runner path cannot contain NUL");
+        let retained_shell_launcher_path = format!(
             "{}/{}",
             self.runner_parent_authority_path, self.binary_file_name
         );
+        let retained_node_entry_path = self.binary_path.to_string_lossy().into_owned();
         let mut command = match launcher_kind {
             RetainedJsTestLauncher::Shell => {
                 let mut command = Command::new("/bin/sh");
                 command
                     .arg("-c")
                     .arg(format!(". /dev/fd/{}", launcher.as_raw_fd()))
-                    .arg(&retained_launcher_path)
+                    .arg(&retained_shell_launcher_path)
                     .args(args);
                 command
             }
@@ -357,29 +584,14 @@ impl RetainedJsTestProcessAuthority {
                     .1
                     .as_str();
                 let mut command = Command::new(interpreter_path);
-                match module_kind {
-                    RetainedNodeModuleKind::EsModule => {
-                        command.args(["--input-type=module", "-"]);
-                    }
-                    RetainedNodeModuleKind::CommonJs => {
-                        let bootstrap = format!(
-                            "const fs=require('node:fs');\
-                             const Module=require('node:module');\
-                             const path=require('node:path');\
-                             const file={retained_launcher_path:?};\
-                             const source=fs.readFileSync('/dev/fd/{}','utf8');\
-                             const entry=new Module(file);\
-                             entry.filename=file;\
-                             entry.paths=Module._nodeModulePaths(path.dirname(file));\
-                             process.argv[1]=file;\
-                             entry._compile(source,file);",
-                            launcher.as_raw_fd()
-                        );
-                        command
-                            .args(["-e", &bootstrap])
-                            .arg(&retained_launcher_path);
-                    }
-                }
+                let loader_registration = retained_node_loader_registration(
+                    &retained_node_entry_path,
+                    launcher.as_raw_fd(),
+                    module_kind,
+                );
+                command
+                    .args(["--import", &loader_registration])
+                    .arg(&retained_node_entry_path);
                 command
                     .arg(root_option)
                     .arg(&self.execution_root_authority_path)
@@ -390,6 +602,8 @@ impl RetainedJsTestProcessAuthority {
         let use_runner_parent_as_cwd = matches!(launcher_kind, RetainedJsTestLauncher::Node { .. });
         unsafe {
             command.pre_exec(move || {
+                ensure_path_identity_before_exec(&runner_parent_c_path, runner_parent_identity)?;
+                ensure_path_identity_before_exec(&binary_c_path, binary_identity)?;
                 let cwd = if use_runner_parent_as_cwd {
                     runner_parent.as_raw_fd()
                 } else {
@@ -398,21 +612,15 @@ impl RetainedJsTestProcessAuthority {
                 if libc::fchdir(cwd) != 0 {
                     return Err(io::Error::last_os_error());
                 }
-                if matches!(
-                    launcher_kind,
-                    RetainedJsTestLauncher::Node {
-                        module_kind: RetainedNodeModuleKind::EsModule,
-                        ..
-                    }
-                ) && libc::dup2(launcher.as_raw_fd(), libc::STDIN_FILENO) < 0
-                {
-                    return Err(io::Error::last_os_error());
-                }
                 let _ = launcher.as_raw_fd();
                 let _ = package_root.as_raw_fd();
                 let _ = runner_parent.as_raw_fd();
                 if let Some((interpreter, _)) = &node_interpreter {
                     let _ = interpreter.as_raw_fd();
+                }
+                if let Some(authority) = &package_manifest_authority {
+                    authority.ensure_identity_before_exec()?;
+                    let _ = authority.descriptor.as_raw_fd();
                 }
                 Ok(())
             });
@@ -421,7 +629,7 @@ impl RetainedJsTestProcessAuthority {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn retain_js_test_process_authority(
     _context: &JsTestExecutionContext,
     _binary_path: &Path,
@@ -430,8 +638,12 @@ pub(crate) fn retain_js_test_process_authority(
     Err("Secure JavaScript test runner launch is unavailable on this platform.".to_string())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 impl RetainedJsTestProcessAuthority {
+    pub(crate) fn ensure_spawn_identity(&self) -> Result<(), String> {
+        Err("Secure JavaScript test runner launch is unavailable on this platform.".to_string())
+    }
+
     pub(crate) fn into_command(self, _args: Vec<String>) -> Command {
         unreachable!("unsupported retained JavaScript test process authority")
     }
@@ -453,6 +665,186 @@ fn ensure_same_file(file: &fs::File, path: &Path, label: &str) -> Result<(), Str
         return Err(format!("{label} identity changed."));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn retained_regular_file(path: &Path, label: &str) -> Result<fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|error| format!("Failed to retain {label}: {error}"))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl RetainedNodePackageAuthority {
+    fn ensure_identity(&self) -> Result<(), String> {
+        self.snapshot.ensure_identity()?;
+        ensure_same_file(
+            &self.descriptor,
+            &self.path,
+            "JavaScript test Node package manifest",
+        )
+    }
+
+    fn ensure_identity_before_exec(&self) -> io::Result<()> {
+        let current =
+            unsafe { libc::open(self.c_path.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW) };
+        if current < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let matches = raw_file_identity_matches(current, self.identity);
+        unsafe {
+            libc::close(current);
+        }
+        if matches {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(libc::ESTALE))
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn raw_file_identity_matches(descriptor: libc::c_int, expected: RetainedUnixIdentity) -> bool {
+    use std::mem::MaybeUninit;
+
+    let mut metadata = MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(descriptor, metadata.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    let metadata = unsafe { metadata.assume_init() };
+    metadata.st_dev as u64 == expected.device
+        && metadata.st_ino == expected.inode
+        && metadata.st_mode as u32 == expected.mode
+        && raw_change_time_matches(&metadata, expected)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn ensure_path_identity_before_exec(
+    path: &std::ffi::CStr,
+    expected: RetainedUnixIdentity,
+) -> io::Result<()> {
+    let current = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW) };
+    if current < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let matches = raw_file_identity_matches(current, expected);
+    unsafe {
+        libc::close(current);
+    }
+    if matches {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(libc::ESTALE))
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+fn raw_change_time_matches(metadata: &libc::stat, expected: RetainedUnixIdentity) -> bool {
+    metadata.st_ctime == expected.changed_seconds
+        && metadata.st_ctime_nsec == expected.changed_nanoseconds
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "linux", target_os = "android"))
+))]
+fn raw_change_time_matches(_metadata: &libc::stat, _expected: RetainedUnixIdentity) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn ensure_same_directory(file: &fs::File, path: &Path, label: &str) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let retained = file
+        .metadata()
+        .map_err(|error| format!("{label} identity changed: {error}"))?;
+    let current =
+        fs::symlink_metadata(path).map_err(|error| format!("{label} identity changed: {error}"))?;
+    if current.file_type().is_symlink()
+        || !current.is_dir()
+        || retained.dev() != current.dev()
+        || retained.ino() != current.ino()
+    {
+        return Err(format!("{label} identity changed."));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn ensure_requested_file_identity(
+    file: &fs::File,
+    requested_path: &Path,
+    workspace_root: &Path,
+    label: &str,
+) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let resolved = fs::canonicalize(requested_path)
+        .map_err(|error| format!("{label} identity changed: {error}"))?;
+    if !resolved.starts_with(workspace_root) {
+        return Err(format!("{label} escaped its workspace."));
+    }
+    let retained = file
+        .metadata()
+        .map_err(|error| format!("{label} identity changed: {error}"))?;
+    let current = fs::metadata(requested_path)
+        .map_err(|error| format!("{label} identity changed: {error}"))?;
+    if !current.is_file() || retained.dev() != current.dev() || retained.ino() != current.ino() {
+        return Err(format!("{label} identity changed."));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn ensure_opened_descriptor_confined(
+    file: &fs::File,
+    workspace_root: &Path,
+    label: &str,
+) -> Result<(), String> {
+    let opened = opened_descriptor_path(file)
+        .map_err(|error| format!("Failed to inspect retained {label}: {error}"))?;
+    if !opened.starts_with(workspace_root) {
+        return Err(format!("{label} escaped its workspace."));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn opened_descriptor_path(file: &fs::File) -> io::Result<PathBuf> {
+    use std::os::fd::AsRawFd;
+
+    fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+}
+
+#[cfg(target_os = "macos")]
+fn opened_descriptor_path(file: &fs::File) -> io::Result<PathBuf> {
+    use std::{ffi::CStr, os::fd::AsRawFd};
+
+    let mut buffer = [0_i8; libc::PATH_MAX as usize];
+    let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buffer.as_mut_ptr()) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let path = unsafe { CStr::from_ptr(buffer.as_ptr()) }
+        .to_str()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "path is not UTF-8"))?;
+    Ok(PathBuf::from(path))
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "linux", target_os = "android"))
+))]
+fn opened_descriptor_path(_file: &fs::File) -> io::Result<PathBuf> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "descriptor paths are unavailable",
+    ))
 }
 
 #[cfg(not(unix))]
@@ -667,7 +1059,7 @@ mod tests {
         fs::remove_dir_all(outside).expect("cleanup outside");
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn retained_process_authority_rejects_check_to_spawn_cwd_and_binary_swap() {
         use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};
@@ -719,14 +1111,14 @@ mod tests {
         symlink(&outside, &package).expect("foreign package replacement");
 
         let mut command = authority.into_command(Vec::new());
-        assert!(command.status().expect("execute retained runner").success());
+        assert!(command.status().is_err());
         assert!(!marker.exists());
 
         fs::remove_dir_all(root).expect("cleanup root");
         fs::remove_dir_all(outside).expect("cleanup outside");
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn retained_node_mjs_symlink_entry_uses_fd_backed_script_parent_and_package_root() {
         use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};
@@ -791,24 +1183,173 @@ mod tests {
         fs::rename(&package, root.join("packages/original")).expect("swap package");
         symlink(&outside, &package).expect("foreign package replacement");
 
-        let output = authority
-            .into_command(Vec::new())
-            .output()
-            .expect("execute retained node launcher");
-
-        assert!(output.status.success(), "{:?}", output.stderr);
-        assert_eq!(
-            String::from_utf8(output.stdout).expect("utf8 cwd").trim(),
-            fs::canonicalize(root.join("packages/original"))
-                .expect("canonical original package")
-                .to_string_lossy()
-        );
+        assert!(authority.into_command(Vec::new()).output().is_err());
         assert!(!marker.exists());
         fs::remove_dir_all(root).expect("cleanup root");
         fs::remove_dir_all(outside).expect("cleanup outside");
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn retained_node_launch_preserves_commonjs_and_esm_entry_semantics() {
+        use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};
+        use std::os::unix::fs::PermissionsExt;
+
+        for (label, manifest, entry_name, dependency_name, dependency, source, expected) in [
+            (
+                "commonjs",
+                r#"{"type":"commonjs"}"#,
+                "runner.js",
+                "dependency.cjs",
+                "module.exports='commonjs-relative';",
+                "#!/usr/bin/env node\nconst marker=require('./dependency.cjs');\
+                 console.log(JSON.stringify({marker,argv:process.argv[1],filename:__filename}));",
+                "commonjs-relative",
+            ),
+            (
+                "module-js",
+                r#"{"type":"module"}"#,
+                "runner.js",
+                "dependency.mjs",
+                "export default 'module-js-relative';",
+                "#!/usr/bin/env node\nimport marker from './dependency.mjs';\
+                 console.log(JSON.stringify({marker,argv:process.argv[1],url:import.meta.url}));",
+                "module-js-relative",
+            ),
+            (
+                "module-mjs",
+                r#"{"type":"commonjs"}"#,
+                "runner.mjs",
+                "dependency.mjs",
+                "export default 'module-mjs-relative';",
+                "#!/usr/bin/env node\nimport marker from './dependency.mjs';\
+                 console.log(JSON.stringify({marker,argv:process.argv[1],url:import.meta.url}));",
+                "module-mjs-relative",
+            ),
+        ] {
+            let root = fixture();
+            let package = root.join("packages/web");
+            let runner_package = package.join(format!("node_modules/{label}"));
+            fs::create_dir_all(&runner_package).expect("runner package");
+            fs::write(runner_package.join("package.json"), manifest).expect("manifest");
+            fs::write(runner_package.join(dependency_name), dependency).expect("dependency");
+            let runner = runner_package.join(entry_name);
+            fs::write(&runner, source).expect("runner");
+            fs::set_permissions(&runner, fs::Permissions::from_mode(0o755))
+                .expect("runner permissions");
+            let context =
+                resolve_js_test_execution_context(&root, "packages/web", JsTestRunScope::All)
+                    .expect("context");
+            let authority = retain_js_test_process_authority(
+                &context,
+                &runner,
+                RetainedJsTestRunnerKind::Vitest,
+            )
+            .expect("authority");
+
+            let output = authority
+                .into_command(Vec::new())
+                .output()
+                .expect("execute retained Node entry");
+            assert!(output.status.success(), "{:?}", output.stderr);
+            let value: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("JSON output");
+            assert_eq!(value["marker"], expected);
+            let argv = value["argv"].as_str().expect("argv");
+            assert!(argv.ends_with(entry_name), "{argv}");
+            assert_ne!(argv, "-");
+            if let Some(url) = value.get("url").and_then(serde_json::Value::as_str) {
+                assert!(url.ends_with(entry_name), "{url}");
+                assert!(!url.starts_with("file:///eval"), "{url}");
+            }
+            if let Some(filename) = value.get("filename").and_then(serde_json::Value::as_str) {
+                assert!(filename.ends_with(entry_name), "{filename}");
+            }
+            fs::remove_dir_all(root).expect("cleanup");
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn retained_node_entry_rejects_leaf_replacement_after_final_check() {
+        use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = fixture();
+        let package = root.join("packages/web");
+        let runner_package = package.join("node_modules/vitest");
+        fs::create_dir_all(&runner_package).expect("runner package");
+        fs::write(runner_package.join("package.json"), r#"{"type":"module"}"#).expect("manifest");
+        fs::write(
+            runner_package.join("dependency.mjs"),
+            "export default 'original-dependency';",
+        )
+        .expect("dependency");
+        let runner = runner_package.join("runner.mjs");
+        fs::write(
+            &runner,
+            "#!/usr/bin/env node\nimport marker from './dependency.mjs';\
+             console.log(JSON.stringify({marker,argv:process.argv[1],url:import.meta.url}));",
+        )
+        .expect("runner");
+        fs::set_permissions(&runner, fs::Permissions::from_mode(0o755))
+            .expect("runner permissions");
+        let context = resolve_js_test_execution_context(&root, "packages/web", JsTestRunScope::All)
+            .expect("context");
+        let authority =
+            retain_js_test_process_authority(&context, &runner, RetainedJsTestRunnerKind::Vitest)
+                .expect("authority");
+        authority.ensure_spawn_identity().expect("final check");
+        let mut command = authority.into_command(Vec::new());
+
+        fs::rename(&runner, runner_package.join("original.mjs")).expect("retain original");
+        fs::write(&runner, "#!/usr/bin/env node\nthrow new Error('foreign');")
+            .expect("replacement");
+        assert!(command.output().is_err());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn retained_node_package_manifest_rejects_mutation_and_a_b_a_before_exec() {
+        use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};
+
+        for label in ["mutation", "aba"] {
+            let root = fixture();
+            let package = root.join("packages/web");
+            let runner_package = package.join(format!("node_modules/{label}"));
+            fs::create_dir_all(&runner_package).expect("runner package");
+            let manifest = runner_package.join("package.json");
+            fs::write(&manifest, r#"{"type":"module"}"#).expect("manifest");
+            let runner = runner_package.join("runner.js");
+            fs::write(&runner, "#!/usr/bin/env node\nconsole.log('original');").expect("runner");
+            let context =
+                resolve_js_test_execution_context(&root, "packages/web", JsTestRunScope::All)
+                    .expect("context");
+            let authority = retain_js_test_process_authority(
+                &context,
+                &runner,
+                RetainedJsTestRunnerKind::Vitest,
+            )
+            .expect("authority");
+            authority.ensure_spawn_identity().expect("final check");
+            let mut command = authority.into_command(Vec::new());
+
+            if label == "mutation" {
+                fs::write(&manifest, r#"{"type":"commonjs"}"#).expect("mutate manifest");
+            } else {
+                let original = runner_package.join("package-original.json");
+                fs::rename(&manifest, &original).expect("move A");
+                fs::write(&manifest, r#"{"type":"commonjs"}"#).expect("write B");
+                fs::remove_file(&manifest).expect("remove B");
+                fs::rename(&original, &manifest).expect("restore A");
+            }
+            assert!(command.output().is_err(), "{label}");
+            fs::remove_dir_all(root).expect("cleanup");
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn retained_authority_executes_repository_vitest_mjs_when_installed() {
         use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};
@@ -839,7 +1380,7 @@ mod tests {
             .starts_with("vitest/"));
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn retained_process_authority_executes_in_descriptor_owned_package_root() {
         use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};

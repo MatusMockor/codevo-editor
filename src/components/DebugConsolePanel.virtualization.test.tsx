@@ -272,6 +272,115 @@ describe("DebugConsolePanel virtualization", () => {
     ).toBe(tree);
   });
 
+  it("moves the roving focus to a virtualized End target without mounting the full tree", async () => {
+    const variables = Array.from({ length: 100 }, (_value, index) => ({
+      name: `child-${index}`,
+      value: String(index),
+      variablesReference: 0,
+    }));
+    render([resultEntry("result-1", 41)], {
+      variablePages: variablePages(41, variables),
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')?.click(),
+    );
+    const first = host.querySelector<HTMLElement>('[data-testid="debug-console-variable"]')!;
+
+    await act(async () => {
+      first.focus();
+      first.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "End" }),
+      );
+      geometry.flushAnimationFrames();
+      await Promise.resolve();
+    });
+
+    const mounted = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'),
+    );
+    expect(mounted.length).toBeLessThan(100);
+    expect(mounted.filter((row) => row.tabIndex === 0)).toHaveLength(1);
+    expect(document.activeElement?.textContent).toContain("child-99:");
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowLeft" }),
+      );
+      geometry.flushAnimationFrames();
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(
+      host.querySelector<HTMLElement>('[data-entry-id="result-1"]'),
+    );
+  });
+
+  it("uses unique stable segment keys when a focused tree row is pinned outside the window", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const variables = Array.from({ length: 100 }, (_value, index) => ({
+      name: `child-${index}`,
+      value: String(index),
+      variablesReference: 0,
+    }));
+    render([resultEntry("result-1", 41)], {
+      variablePages: variablePages(41, variables),
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')?.click(),
+    );
+    const body = consoleBody();
+    body.scrollTop = 0;
+    dispatchScroll(body);
+    const first = host.querySelector<HTMLElement>('[data-testid="debug-console-variable"]')!;
+    expect(first.textContent).toContain("child-0:");
+    act(() => first.focus());
+
+    body.scrollTop = 1_200;
+    dispatchScroll(body);
+
+    expect(document.activeElement).toBe(
+      Array.from(host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]')).find(
+        (row) => row.textContent?.includes("child-0:"),
+      ),
+    );
+    expect(host.textContent).toContain("child-70:");
+    expect(
+      consoleError.mock.calls.some((call) =>
+        call.some((value) => String(value).includes("same key")),
+      ),
+    ).toBe(false);
+
+    body.scrollTop = 0;
+    dispatchScroll(body);
+    expect(document.activeElement).toBe(
+      Array.from(host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]')).find(
+        (row) => row.textContent?.includes("child-0:"),
+      ),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("restores the exact result root when the focused sole child is removed", async () => {
+    const entries = [resultEntry("result-1", 41)];
+    render(entries, {
+      variablePages: variablePages(41, [{ name: "only-child", value: "1", variablesReference: 0 }]),
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')?.click(),
+    );
+    const onlyChild = host.querySelector<HTMLElement>('[data-testid="debug-console-variable"]')!;
+    act(() => onlyChild.focus());
+
+    await act(async () => {
+      render(entries, { variablePages: variablePages(41, []) });
+      geometry.flushAnimationFrames();
+      await Promise.resolve();
+    });
+
+    expect(document.activeElement).toBe(
+      host.querySelector<HTMLElement>('[data-entry-id="result-1"]'),
+    );
+  });
+
   it("keeps a focused result entry mounted for copy shortcuts outside the window", () => {
     const copy = displayedValueSurface();
     const resultEntryValue = resultEntry("result-1", 0);
@@ -484,6 +593,7 @@ function displayedValueSurface() {
     isOwnerCurrent: () => true,
     onCandidateChange: (next) => {
       candidate = next;
+      return true;
     },
     source: "console",
     workspaceOwnerKey: "workspace-owner",

@@ -30,8 +30,8 @@
       "structuralTokens": 25032
     },
     "src-tauri/src/lsp_session.rs": {
-      "rawLines": 8346,
-      "structuralTokens": 42415
+      "rawLines": 8168,
+      "structuralTokens": 41662
     },
     "src-tauri/src/lsp.rs": {
       "rawLines": 2364,
@@ -46,8 +46,8 @@
       "structuralTokens": 8496
     },
     "src/application/useDocumentSync.ts": {
-      "rawLines": 1831,
-      "structuralTokens": 6358
+      "rawLines": 1830,
+      "structuralTokens": 6340
     },
     "src/application/useLanguageServerRuntimeLifecycle.ts": {
       "rawLines": 2455,

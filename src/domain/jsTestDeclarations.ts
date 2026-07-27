@@ -35,6 +35,84 @@ interface TitleLocation {
   readonly hasEach: boolean;
 }
 
+interface DeclarationCallHead {
+  readonly argOpenOffset: number;
+  readonly callName: string;
+  readonly hasEach: boolean;
+  readonly headOffset: number;
+  readonly modifiers: string;
+}
+
+interface IndexedDeclarationCandidate {
+  readonly candidate: DeclarationCandidate;
+  readonly suitePath: readonly DeclarationCandidate[];
+}
+
+interface DeclarationIndexOperationCounter {
+  candidateVisits: number;
+  containmentChecks: number;
+  suitePops: number;
+  suitePathEntries: number;
+}
+
+interface ActiveSuite {
+  readonly candidate: DeclarationCandidate;
+  readonly fullNameUnits: number;
+}
+
+interface RelevantParenthesisIndex {
+  readonly hasUnmatchedClosingParenthesis: boolean;
+  readonly matches: ReadonlyMap<number, number>;
+}
+
+export interface JsTestDeclarationIndexMetrics {
+  readonly candidateCount: number;
+  readonly indexOperations: number;
+  readonly retainedParenthesisMatches: number;
+  readonly suitePathEntries: number;
+}
+
+export const MAX_JS_TEST_DECLARATION_SUITE_PATH_ENTRIES = 65_536;
+export const MAX_JS_TEST_DECLARATION_FULL_NAME_UNITS = 1_048_576;
+export const MAX_JS_TEST_DECLARATION_RETAINED_PARENTHESIS_MATCHES = 65_536;
+export const MAX_JS_TEST_DECLARATION_CANDIDATES = 65_536;
+
+export class JsTestDeclarationBudgetError extends Error {
+  readonly candidateCount: number;
+  readonly fullNameUnits: number;
+  readonly indexOperations: number;
+  readonly limitKind: "ancestry" | "candidates" | "parentheses";
+  readonly retainedParenthesisMatches: number;
+  readonly suitePathEntries: number;
+
+  constructor({
+    candidateCount,
+    fullNameUnits,
+    indexOperations,
+    limitKind,
+    retainedParenthesisMatches,
+    suitePathEntries,
+  }: {
+    readonly candidateCount: number;
+    readonly fullNameUnits: number;
+    readonly indexOperations: number;
+    readonly limitKind: "ancestry" | "candidates" | "parentheses";
+    readonly retainedParenthesisMatches: number;
+    readonly suitePathEntries: number;
+  }) {
+    super(
+      `JavaScript test discovery exceeded its bounded ${limitKind} budget; no partial results were published.`,
+    );
+    this.name = "JsTestDeclarationBudgetError";
+    this.candidateCount = candidateCount;
+    this.fullNameUnits = fullNameUnits;
+    this.indexOperations = indexOperations;
+    this.limitKind = limitKind;
+    this.retainedParenthesisMatches = retainedParenthesisMatches;
+    this.suitePathEntries = suitePathEntries;
+  }
+}
+
 const callHeadPattern =
   /(^|[^.\w$])(describe|it|test)((?:\s*\.\s*(?:only|skip|todo|fails|concurrent|sequential|each))*)\s*\(/g;
 
@@ -48,78 +126,203 @@ const eachPlaceholderPattern = /%[psdifjoO#%]|\$[A-Za-z_#{]/;
  * template while `title`/`filter`/`suitePath` use its stable prefix before the first placeholder.
  */
 export function jsTestDeclarations(source: string): JsTestDeclaration[] {
-  const masked = maskJavaScriptSource(source);
-  const lineStartOffsets = computeLineStartOffsets(source);
-  const candidates = declarationCandidates(source, masked);
-  const invalidSuites = candidates.filter(
-    (candidate) => candidate.callName === "describe" && !candidate.filter,
-  );
-  const validCandidates = candidates.filter(
-    (candidate) =>
-      candidate.filter &&
-      candidate.title !== null &&
-      !invalidSuites.some(
-        (suite) =>
-          suite.headOffset < candidate.headOffset &&
-          candidate.headOffset < suite.containmentEndOffset,
-      ),
-  );
-
-  return validCandidates.map((candidate) => {
-    const filter = candidate.filter ?? "";
-    const suitePath = validCandidates
-      .filter(
-        (suite) =>
-          suite.callName === "describe" &&
-          suite.headOffset < candidate.headOffset &&
-          candidate.headOffset < suite.containmentEndOffset,
-      )
-      .sort((left, right) => left.headOffset - right.headOffset)
-      .map((suite) => suite.filter ?? "");
-    const kind = candidate.callName === "describe" ? "suite" : "test";
-
-    return {
-      callSpan: candidate.callSpan,
-      filter,
-      fullName: [...suitePath, filter].join(" "),
-      kind,
-      parameterized: candidate.parameterized,
-      staticTitle: candidate.title ?? "",
-      suitePath,
-      target: {
-        filter,
-        kind: kind === "suite" ? "class" : "method",
-        label: `Run ${filter}`,
-        match: "description",
-        position: lineColumnAt(lineStartOffsets, candidate.headOffset),
-      },
-      title: filter,
-    };
-  });
+  return collectJsTestDeclarations(source).declarations;
 }
 
-function declarationCandidates(source: string, masked: string): DeclarationCandidate[] {
+/**
+ * Deterministic test support for the candidate index. `indexOperations` excludes the unavoidable
+ * work of materializing suite paths, which is reported separately as `suitePathEntries`.
+ */
+export function jsTestDeclarationsWithIndexMetricsForTest(source: string): {
+  readonly declarations: readonly JsTestDeclaration[];
+  readonly metrics: JsTestDeclarationIndexMetrics;
+} {
+  const counter: DeclarationIndexOperationCounter = {
+    candidateVisits: 0,
+    containmentChecks: 0,
+    suitePops: 0,
+    suitePathEntries: 0,
+  };
+  const result = collectJsTestDeclarations(source, counter);
+  return {
+    declarations: result.declarations,
+    metrics: {
+      candidateCount: result.candidateCount,
+      indexOperations: counter.candidateVisits + counter.containmentChecks + counter.suitePops,
+      retainedParenthesisMatches: result.retainedParenthesisMatches,
+      suitePathEntries: counter.suitePathEntries,
+    },
+  };
+}
+
+function collectJsTestDeclarations(
+  source: string,
+  counter?: DeclarationIndexOperationCounter,
+): {
+  readonly candidateCount: number;
+  readonly declarations: JsTestDeclaration[];
+  readonly retainedParenthesisMatches: number;
+} {
+  const masked = maskJavaScriptSource(source);
+  const lineStartOffsets = computeLineStartOffsets(source);
+  const callHeads = declarationCallHeads(masked);
+  const parenthesisIndex =
+    callHeads.length === 0
+      ? {
+          hasUnmatchedClosingParenthesis: false,
+          matches: new Map<number, number>(),
+        }
+      : relevantParenthesisIndex(masked, callHeads);
+  const candidates = declarationCandidates(
+    source,
+    masked,
+    callHeads,
+    parenthesisIndex.matches,
+    parenthesisIndex.hasUnmatchedClosingParenthesis,
+  );
+  const indexedCandidates = indexDeclarationCandidates(
+    candidates,
+    parenthesisIndex.matches.size,
+    counter,
+  );
+
+  const declarations = indexedCandidates.map(
+    ({ candidate, suitePath: suiteCandidates }): JsTestDeclaration => {
+      const filter = candidate.filter ?? "";
+      const suitePath = suiteCandidates.map((suite) => suite.filter ?? "");
+      const kind = candidate.callName === "describe" ? "suite" : "test";
+
+      return {
+        callSpan: candidate.callSpan,
+        filter,
+        fullName: [...suitePath, filter].join(" "),
+        kind,
+        parameterized: candidate.parameterized,
+        staticTitle: candidate.title ?? "",
+        suitePath,
+        target: {
+          filter,
+          kind: kind === "suite" ? "class" : "method",
+          label: `Run ${filter}`,
+          match: "description",
+          position: lineColumnAt(lineStartOffsets, candidate.headOffset),
+        },
+        title: filter,
+      };
+    },
+  );
+
+  return {
+    candidateCount: candidates.length,
+    declarations,
+    retainedParenthesisMatches: parenthesisIndex.matches.size,
+  };
+}
+
+/**
+ * Declaration call spans are laminar because they are derived from balanced parenthesis pairs:
+ * two calls are either disjoint or one is nested in the other. That lets valid suite ancestry use
+ * a stack. Invalid suites only need the greatest prior end offset to answer the exact interval
+ * stabbing query used by the previous quadratic implementation.
+ */
+function indexDeclarationCandidates(
+  candidates: readonly DeclarationCandidate[],
+  retainedParenthesisMatches: number,
+  counter?: DeclarationIndexOperationCounter,
+): IndexedDeclarationCandidate[] {
+  const indexed: IndexedDeclarationCandidate[] = [];
+  const activeValidSuites: ActiveSuite[] = [];
+  const operations = counter ?? {
+    candidateVisits: 0,
+    containmentChecks: 0,
+    suitePops: 0,
+    suitePathEntries: 0,
+  };
+  let fullNameUnits = 0;
+  let greatestInvalidSuiteEndOffset = -1;
+
+  for (const candidate of candidates) {
+    operations.candidateVisits += 1;
+    while (
+      activeValidSuites.length > 0 &&
+      (activeValidSuites[activeValidSuites.length - 1]?.candidate.containmentEndOffset ?? -1) <=
+        candidate.headOffset
+    ) {
+      activeValidSuites.pop();
+      operations.suitePops += 1;
+    }
+
+    operations.containmentChecks += 1;
+    const containedByInvalidSuite = candidate.headOffset < greatestInvalidSuiteEndOffset;
+    const valid = candidate.filter !== null && candidate.title !== null && !containedByInvalidSuite;
+
+    if (valid) {
+      const suitePathEntries = operations.suitePathEntries + activeValidSuites.length;
+      const activeFullNameUnits =
+        activeValidSuites[activeValidSuites.length - 1]?.fullNameUnits ?? 0;
+      const candidateFullNameUnits =
+        activeFullNameUnits + (activeValidSuites.length > 0 ? 1 : 0) + candidate.filter.length;
+      const nextFullNameUnits = fullNameUnits + candidateFullNameUnits;
+      if (
+        suitePathEntries > MAX_JS_TEST_DECLARATION_SUITE_PATH_ENTRIES ||
+        nextFullNameUnits > MAX_JS_TEST_DECLARATION_FULL_NAME_UNITS
+      ) {
+        throw new JsTestDeclarationBudgetError({
+          candidateCount: candidates.length,
+          fullNameUnits: nextFullNameUnits,
+          indexOperations:
+            operations.candidateVisits + operations.containmentChecks + operations.suitePops,
+          limitKind: "ancestry",
+          retainedParenthesisMatches,
+          suitePathEntries,
+        });
+      }
+      operations.suitePathEntries = suitePathEntries;
+      fullNameUnits = nextFullNameUnits;
+      const suitePath = activeValidSuites.map(({ candidate: suite }) => suite);
+      indexed.push({ candidate, suitePath });
+      if (candidate.callName === "describe") {
+        activeValidSuites.push({ candidate, fullNameUnits: candidateFullNameUnits });
+      }
+    }
+
+    if (candidate.callName === "describe" && candidate.filter === null) {
+      greatestInvalidSuiteEndOffset = Math.max(
+        greatestInvalidSuiteEndOffset,
+        candidate.containmentEndOffset,
+      );
+    }
+  }
+
+  return indexed;
+}
+
+function declarationCandidates(
+  source: string,
+  masked: string,
+  callHeads: readonly DeclarationCallHead[],
+  matchingParentheses: ReadonlyMap<number, number>,
+  hasUnmatchedClosingParenthesis: boolean,
+): DeclarationCandidate[] {
   const candidates: DeclarationCandidate[] = [];
 
-  for (const head of masked.matchAll(callHeadPattern)) {
-    const callName = head[2] ?? "";
-    const modifiers = head[3] ?? "";
-    const headOffset = (head.index ?? 0) + (head[1] ?? "").length;
-    const argOpenOffset = (head.index ?? 0) + head[0].length - 1;
-    const hasEach = eachModifierPattern.test(modifiers);
-    const titleOffset = titleStartOffset(source, masked, {
+  for (const { argOpenOffset, callName, hasEach, headOffset, modifiers } of callHeads) {
+    const titleOffset = titleStartOffset(source, masked, matchingParentheses, {
       afterModifiersOffset: headOffset + callName.length + modifiers.length,
       argOpenOffset,
       hasEach,
     });
     const title = titleOffset === null ? null : titleAt(source, titleOffset);
     const filter = title === null ? null : hasEach ? eachTitleFilter(title) : title || null;
-    const callSpan = callSpanAt(masked, headOffset);
+    const callSpan = callSpanAt(masked, matchingParentheses, headOffset);
 
     candidates.push({
       callName,
       callSpan,
-      containmentEndOffset: callSpan?.endOffset ?? source.length,
+      containmentEndOffset:
+        callName === "describe" && filter === null && hasUnmatchedClosingParenthesis
+          ? source.length
+          : (callSpan?.endOffset ?? source.length),
       filter,
       headOffset,
       parameterized: hasEach,
@@ -130,7 +333,37 @@ function declarationCandidates(source: string, masked: string): DeclarationCandi
   return candidates;
 }
 
-function titleStartOffset(source: string, masked: string, location: TitleLocation): number | null {
+function declarationCallHeads(masked: string): DeclarationCallHead[] {
+  const callHeads: DeclarationCallHead[] = [];
+  for (const head of masked.matchAll(callHeadPattern)) {
+    const modifiers = head[3] ?? "";
+    callHeads.push({
+      argOpenOffset: (head.index ?? 0) + head[0].length - 1,
+      callName: head[2] ?? "",
+      hasEach: eachModifierPattern.test(modifiers),
+      headOffset: (head.index ?? 0) + (head[1] ?? "").length,
+      modifiers,
+    });
+    if (callHeads.length > MAX_JS_TEST_DECLARATION_CANDIDATES) {
+      throw new JsTestDeclarationBudgetError({
+        candidateCount: callHeads.length,
+        fullNameUnits: 0,
+        indexOperations: 0,
+        limitKind: "candidates",
+        retainedParenthesisMatches: 0,
+        suitePathEntries: 0,
+      });
+    }
+  }
+  return callHeads;
+}
+
+function titleStartOffset(
+  source: string,
+  masked: string,
+  matchingParentheses: ReadonlyMap<number, number>,
+  location: TitleLocation,
+): number | null {
   if (!location.hasEach) {
     return firstNonWhitespace(source, location.argOpenOffset + 1);
   }
@@ -140,7 +373,7 @@ function titleStartOffset(source: string, masked: string, location: TitleLocatio
     return firstNonWhitespace(source, location.argOpenOffset + 1);
   }
 
-  const tableClose = matchingParenOffset(masked, location.argOpenOffset);
+  const tableClose = matchingParenOffset(matchingParentheses, location.argOpenOffset);
   if (tableClose === null) {
     return null;
   }
@@ -219,20 +452,24 @@ function eachTitleFilter(title: string): string | null {
   return title.slice(0, placeholder.index).trimEnd() || null;
 }
 
-function callSpanAt(masked: string, callOffset: number): JsTestCallSpan | null {
+function callSpanAt(
+  masked: string,
+  matchingParentheses: ReadonlyMap<number, number>,
+  callOffset: number,
+): JsTestCallSpan | null {
   const startOffset = masked.indexOf("(", callOffset);
   if (startOffset === -1) {
     return null;
   }
 
-  let endOffset = matchingParenOffset(masked, startOffset);
+  let endOffset = matchingParenOffset(matchingParentheses, startOffset);
   if (endOffset === null) {
     return null;
   }
 
   let next = firstNonWhitespace(masked, endOffset + 1);
   while (next !== null && masked[next] === "(") {
-    endOffset = matchingParenOffset(masked, next);
+    endOffset = matchingParenOffset(matchingParentheses, next);
     if (endOffset === null) {
       return null;
     }
@@ -242,17 +479,59 @@ function callSpanAt(masked: string, callOffset: number): JsTestCallSpan | null {
   return { endOffset, startOffset };
 }
 
-function matchingParenOffset(masked: string, openOffset: number): number | null {
+function relevantParenthesisIndex(
+  masked: string,
+  callHeads: readonly DeclarationCallHead[],
+): RelevantParenthesisIndex {
+  const relevantOpenings = new Set(callHeads.map(({ argOpenOffset }) => argOpenOffset));
+  const activeRelevantOpenings = new Map<number, number>();
+  const matches = new Map<number, number>();
+  let canChainFromRelevantClose = false;
   let depth = 0;
-  for (let index = openOffset; index < masked.length; index += 1) {
-    const character = masked[index];
+  let hasUnmatchedClosingParenthesis = false;
+
+  for (let index = 0; index < masked.length; index += 1) {
+    const character = masked[index] ?? "";
     if (character === "(") {
       depth += 1;
-    } else if (character === ")" && --depth === 0) {
-      return index;
+      if (relevantOpenings.has(index) || canChainFromRelevantClose) {
+        activeRelevantOpenings.set(depth, index);
+      }
+      canChainFromRelevantClose = false;
+    } else if (character === ")") {
+      if (depth === 0) hasUnmatchedClosingParenthesis = true;
+      const opening = activeRelevantOpenings.get(depth);
+      if (opening !== undefined) {
+        const retainedParenthesisMatches = matches.size + 1;
+        if (retainedParenthesisMatches > MAX_JS_TEST_DECLARATION_RETAINED_PARENTHESIS_MATCHES) {
+          throw new JsTestDeclarationBudgetError({
+            candidateCount: callHeads.length,
+            fullNameUnits: 0,
+            indexOperations: 0,
+            limitKind: "parentheses",
+            retainedParenthesisMatches,
+            suitePathEntries: 0,
+          });
+        }
+        matches.set(opening, index);
+        activeRelevantOpenings.delete(depth);
+        canChainFromRelevantClose = true;
+      } else {
+        canChainFromRelevantClose = false;
+      }
+      depth = Math.max(0, depth - 1);
+    } else if (!/\s/.test(character)) {
+      canChainFromRelevantClose = false;
     }
   }
-  return null;
+  return { hasUnmatchedClosingParenthesis, matches };
+}
+
+function matchingParenOffset(
+  matchingParentheses: ReadonlyMap<number, number>,
+  openOffset: number,
+): number | null {
+  return matchingParentheses.get(openOffset) ?? null;
 }
 
 function firstNonWhitespace(text: string, offset: number): number | null {

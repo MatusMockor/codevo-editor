@@ -1,4 +1,4 @@
-import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -53,8 +53,11 @@ export interface DebugWatchesPanelProps {
   readonly copyValueSurface?: DebugCopyValueSurface;
   readonly setVariableSurface?: DebugSetVariableSurface;
   readonly expressionMutations?: DebugWatchExpressionMutations;
+  readonly canRefresh?: boolean;
+  readonly refreshPending?: boolean;
   onAdd(expression: string, enabled?: boolean): void;
   onClear(): void;
+  onRefresh?(): void;
   onRemove(id: string): void;
   onSetEnabled(id: string, enabled: boolean): void;
   onUpdate(id: string, expression: string): void;
@@ -129,6 +132,7 @@ const styles: Record<string, CSSProperties> = {
 };
 
 export function DebugWatchesPanel({
+  canRefresh = false,
   copyValueSurface,
   debugAdapterKind,
   definitions,
@@ -136,11 +140,13 @@ export function DebugWatchesPanel({
   expressionMutations,
   onAdd,
   onClear,
+  onRefresh,
   onRemove,
   onSetEnabled,
   onUpdate,
   onLoadVariablePage,
   pendingIds,
+  refreshPending = false,
   setVariableSurface,
   sessionState,
   variableMutationRows,
@@ -478,6 +484,17 @@ export function DebugWatchesPanel({
             type="button"
           >
             <Plus aria-hidden="true" size={13} />
+          </button>
+          <button
+            aria-busy={refreshPending || undefined}
+            aria-label="Refresh watches"
+            disabled={refreshPending || !canRefresh || !onRefresh}
+            onClick={() => onRefresh?.()}
+            style={styles.action}
+            title="Refresh watch expressions"
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" size={13} />
           </button>
           <button
             aria-label="Clear watches"

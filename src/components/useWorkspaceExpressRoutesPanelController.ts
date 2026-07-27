@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import type { ExpressRouteNavigationGeneration } from "../application/expressRouteNavigationReceipt";
 import { useWorkspaceExpressRoutes } from "../application/useWorkspaceExpressRoutes";
 import type { WorkspaceSourceDiscoveryGateway } from "../domain/workspaceSourceDiscovery";
 import type {
@@ -17,6 +18,10 @@ export interface UseWorkspaceExpressRoutesPanelControllerOptions {
   readonly workspaceId: string | null;
 }
 
+export interface WorkspaceExpressRoutesPanelController extends ExpressRoutesPanelProps {
+  readonly navigationGeneration: ExpressRouteNavigationGeneration | null;
+}
+
 export function useWorkspaceExpressRoutesPanelController({
   dirtySnapshots = [],
   discoveryGateway,
@@ -25,17 +30,18 @@ export function useWorkspaceExpressRoutesPanelController({
   onOpenRoute,
   rootPath,
   workspaceId,
-}: UseWorkspaceExpressRoutesPanelControllerOptions): ExpressRoutesPanelProps {
+}: UseWorkspaceExpressRoutesPanelControllerOptions): WorkspaceExpressRoutesPanelController {
   const [queries, setQueries] = useState<Record<string, string>>({});
   const workspaceKey = workspaceId && rootPath ? `${workspaceId}\u0000${rootPath}` : null;
-  const { error, loading, refresh, routes, truncated } = useWorkspaceExpressRoutes({
-    dirtySnapshots,
-    discoveryVersion,
-    gateway: discoveryGateway,
-    isOpen,
-    rootPath,
-    workspaceId,
-  });
+  const { error, loading, navigationGeneration, refresh, routes, truncated } =
+    useWorkspaceExpressRoutes({
+      dirtySnapshots,
+      discoveryVersion,
+      gateway: discoveryGateway,
+      isOpen,
+      rootPath,
+      workspaceId,
+    });
   const onQueryChange = useCallback(
     (query: string) => {
       if (!workspaceKey) return;
@@ -52,6 +58,7 @@ export function useWorkspaceExpressRoutesPanelController({
   return {
     error,
     loading,
+    navigationGeneration,
     onOpenRoute,
     onQueryChange,
     onRefresh,

@@ -3,6 +3,7 @@ import type { DebugEvaluationResult } from "../domain/debugEvaluationPolicy";
 import type { TextClipboardGateway } from "../domain/textClipboard";
 import type { DebugInspectionOwner } from "../domain/debugVariablePages";
 import {
+  captureDebugCopyValueCandidate,
   debugCopyValueCandidatesEqual,
   type DebugCopyValueCandidate,
   type DebugCopyValueSource,
@@ -54,7 +55,7 @@ export interface DebugCopyDisplayedValueSurfaceAdapter
   copyDisplayedValueFromMenu(): Promise<boolean>;
   copyEvaluatePathFromMenu(): Promise<boolean>;
   isOwnerCurrent(owner: DebugInspectionOwner): boolean;
-  onCandidateChange(candidate: DebugCopyValueCandidate | null): void;
+  onCandidateChange(candidate: DebugCopyValueCandidate | null): boolean;
 }
 
 export interface DebugCopyEvaluatePathTarget {
@@ -81,6 +82,18 @@ interface UseDebugCopyValueCompositionOptions {
   evaluateClipboard(expression: string): Promise<DebugEvaluationResult | null>;
 }
 
+type ImmutableConsoleCandidateAuthority =
+  | { readonly kind: "empty" }
+  | {
+      readonly kind: "immutable-console";
+      readonly authorityEpoch: number;
+      readonly candidate: DebugCopyValueCandidate;
+    };
+
+const EMPTY_IMMUTABLE_CONSOLE_AUTHORITY: ImmutableConsoleCandidateAuthority = Object.freeze({
+  kind: "empty",
+});
+
 export function useDebugCopyValueComposition({
   clipboard,
   evaluateClipboard,
@@ -93,12 +106,28 @@ export function useDebugCopyValueComposition({
   const clipboardRef = useRef(clipboard);
   clipboardRef.current = clipboard;
   const focusedRef = useRef<DebugCopyValueCandidate | null>(null);
+  const immutableConsoleCandidateRef = useRef<ImmutableConsoleCandidateAuthority>(
+    EMPTY_IMMUTABLE_CONSOLE_AUTHORITY,
+  );
+  const immutableConsoleAuthorityEpochRef = useRef(1);
+  const consolePresentationGenerationRef = useRef(1);
   const ownerRef = useRef({ epoch: owner ? 1 : 0, owner: snapshotOwner(owner) });
+  const consoleWorkspaceOwnerKeyRef = useRef(owner?.workspaceOwnerKey ?? "");
   const nextOwner = snapshotOwner(owner);
   if (!ownersEqual(ownerRef.current.owner, nextOwner)) {
+    const previousOwner = ownerRef.current.owner;
+    const previousWorkspaceOwnerKey = consoleWorkspaceOwnerKeyRef.current;
     generationRef.current += 1;
     focusedRef.current = null;
     ownerRef.current = { epoch: ownerRef.current.epoch + 1, owner: nextOwner };
+    if (nextOwner) {
+      consolePresentationGenerationRef.current += 1;
+      consoleWorkspaceOwnerKeyRef.current = nextOwner.workspaceOwnerKey;
+      if (previousOwner !== null || previousWorkspaceOwnerKey !== nextOwner.workspaceOwnerKey) {
+        immutableConsoleAuthorityEpochRef.current += 1;
+        immutableConsoleCandidateRef.current = EMPTY_IMMUTABLE_CONSOLE_AUTHORITY;
+      }
+    }
   }
 
   useEffect(() => {
@@ -107,6 +136,8 @@ export function useDebugCopyValueComposition({
     return () => {
       mountedRef.current = false;
       focusedRef.current = null;
+      immutableConsoleAuthorityEpochRef.current += 1;
+      immutableConsoleCandidateRef.current = EMPTY_IMMUTABLE_CONSOLE_AUTHORITY;
     };
   }, []);
 
@@ -114,33 +145,78 @@ export function useDebugCopyValueComposition({
     if (!mountedRef.current) return;
     generationRef.current += 1;
     focusedRef.current = null;
+    immutableConsoleAuthorityEpochRef.current += 1;
+    immutableConsoleCandidateRef.current = EMPTY_IMMUTABLE_CONSOLE_AUTHORITY;
   }, []);
 
   const setFocusedCandidate = useCallback(
-    (candidate: DebugCopyValueFocusCandidate | DebugCopyValueCandidate | null): void => {
-      if (!mountedRef.current) return;
+    (candidate: DebugCopyValueFocusCandidate | DebugCopyValueCandidate | null): boolean => {
+      if (!mountedRef.current) return false;
       if (!candidate) {
         generationRef.current += 1;
         focusedRef.current = null;
-        return;
+        immutableConsoleAuthorityEpochRef.current += 1;
+        immutableConsoleCandidateRef.current = EMPTY_IMMUTABLE_CONSOLE_AUTHORITY;
+        return true;
       }
       const currentOwner = ownerRef.current.owner;
-      if (!currentOwner) return;
-      if (
-        "rootKey" in candidate &&
-        (!ownersEqual(candidate, currentOwner) || candidate.epoch !== ownerRef.current.epoch)
-      ) {
-        return;
+      if (!("rootKey" in candidate)) {
+        if (!currentOwner) return false;
+        generationRef.current += 1;
+        focusedRef.current = {
+          source: candidate.source,
+          identity: candidate.identity,
+          rootKey: currentOwner.rootKey,
+          workspaceOwnerKey: currentOwner.workspaceOwnerKey,
+          sessionId: currentOwner.sessionId,
+          pauseGeneration: currentOwner.pauseGeneration,
+          frameId: currentOwner.frameId,
+          generation: generationRef.current,
+          epoch: ownerRef.current.epoch,
+          ...(candidate.evaluateName === undefined ? {} : { evaluateName: candidate.evaluateName }),
+          ...(candidate.adapterEvaluateName === undefined
+            ? {}
+            : { adapterEvaluateName: candidate.adapterEvaluateName }),
+          displayedValue: candidate.displayedValue,
+        };
+        return true;
       }
-      const source = candidate.source;
-      const identity = candidate.identity;
-      const evaluateName = candidate.evaluateName;
-      const adapterEvaluateName = candidate.adapterEvaluateName;
-      const displayedValue = candidate.displayedValue;
+      const captured = captureDebugCopyValueCandidate({
+        readDebugCopyValueCandidate: () => candidate,
+      });
+      if (!captured) return false;
+      if (captured.source === "console") {
+        if (
+          captured.workspaceOwnerKey !== consoleWorkspaceOwnerKeyRef.current ||
+          captured.generation !== consolePresentationGenerationRef.current
+        ) {
+          return false;
+        }
+        const retained = immutableConsoleCandidateRef.current;
+        if (
+          retained.kind === "immutable-console" &&
+          !debugCopyValueCandidatesEqual(captured, retained.candidate)
+        ) {
+          return immutableConsolePresentationCandidatesEqual(captured, retained.candidate);
+        }
+        immutableConsoleCandidateRef.current = {
+          kind: "immutable-console",
+          authorityEpoch: immutableConsoleAuthorityEpochRef.current,
+          candidate: captured,
+        };
+      }
+      if (!currentOwner) {
+        focusedRef.current = null;
+        return captured.source === "console";
+      }
+      if (!ownersEqual(captured, currentOwner) || captured.epoch !== ownerRef.current.epoch) {
+        focusedRef.current = null;
+        return captured.source === "console";
+      }
       generationRef.current += 1;
       focusedRef.current = {
-        source,
-        identity,
+        source: captured.source,
+        identity: captured.identity,
         rootKey: currentOwner.rootKey,
         workspaceOwnerKey: currentOwner.workspaceOwnerKey,
         sessionId: currentOwner.sessionId,
@@ -148,10 +224,13 @@ export function useDebugCopyValueComposition({
         frameId: currentOwner.frameId,
         generation: generationRef.current,
         epoch: ownerRef.current.epoch,
-        ...(evaluateName === undefined ? {} : { evaluateName }),
-        ...(adapterEvaluateName === undefined ? {} : { adapterEvaluateName }),
-        displayedValue,
+        ...(captured.evaluateName === undefined ? {} : { evaluateName: captured.evaluateName }),
+        ...(captured.adapterEvaluateName === undefined
+          ? {}
+          : { adapterEvaluateName: captured.adapterEvaluateName }),
+        displayedValue: captured.displayedValue,
       };
+      return true;
     },
     [],
   );
@@ -180,15 +259,22 @@ export function useDebugCopyValueComposition({
       debugCopyValueCandidatesEqual(candidate, focusedRef.current),
   });
   const copyDisplayedValue = useDebugCopyDisplayedValue({
-    candidateReader: { readDebugCopyValueCandidate: () => focusedRef.current },
+    candidateReader: {
+      readDebugCopyValueCandidate: () =>
+        immutableConsoleCandidateRef.current.kind === "immutable-console"
+          ? immutableConsoleCandidateRef.current.candidate
+          : null,
+    },
     clipboard,
     flight: clipboardFlightRef,
     isCandidateCurrent: (candidate) =>
       mountedRef.current &&
-      candidate.epoch === ownerRef.current.epoch &&
-      ownersEqual(candidate, ownerRef.current.owner) &&
-      focusedRef.current !== null &&
-      debugCopyValueCandidatesEqual(candidate, focusedRef.current),
+      candidate.source === "console" &&
+      candidate.workspaceOwnerKey === consoleWorkspaceOwnerKeyRef.current &&
+      immutableConsoleCandidateRef.current.kind === "immutable-console" &&
+      immutableConsoleCandidateRef.current.authorityEpoch ===
+        immutableConsoleAuthorityEpochRef.current &&
+      debugCopyValueCandidatesEqual(candidate, immutableConsoleCandidateRef.current.candidate),
   });
   const copyFocusedValue = copyValue.copyValue;
   const copyFocusedEvaluatePath = copyEvaluatePath.copyEvaluatePath;
@@ -273,18 +359,29 @@ export function useDebugCopyValueComposition({
   }, [copyFocusedEvaluatePath]);
 
   const copyDisplayedValueFromMenu = useCallback(async (): Promise<boolean> => {
-    const captured = focusedRef.current;
-    if (!mountedRef.current || captured === null) return false;
+    const captured = immutableConsoleCandidateRef.current;
+    if (!mountedRef.current || captured.kind !== "immutable-console") return false;
     try {
       return await copyDisplayedValue.copyDisplayedValue();
     } finally {
       if (
         mountedRef.current &&
-        focusedRef.current !== null &&
-        debugCopyValueCandidatesEqual(captured, focusedRef.current)
+        immutableConsoleCandidateRef.current.kind === "immutable-console" &&
+        captured.authorityEpoch === immutableConsoleCandidateRef.current.authorityEpoch &&
+        debugCopyValueCandidatesEqual(
+          captured.candidate,
+          immutableConsoleCandidateRef.current.candidate,
+        )
       ) {
         generationRef.current += 1;
-        focusedRef.current = null;
+        immutableConsoleAuthorityEpochRef.current += 1;
+        immutableConsoleCandidateRef.current = EMPTY_IMMUTABLE_CONSOLE_AUTHORITY;
+        if (
+          focusedRef.current &&
+          debugCopyValueCandidatesEqual(captured.candidate, focusedRef.current)
+        ) {
+          focusedRef.current = null;
+        }
       }
     }
   }, [copyDisplayedValue]);
@@ -316,14 +413,14 @@ export function useDebugCopyValueComposition({
       copyEvaluatePathFromMenu,
       copyDisplayedValueFromMenu,
       source: "console",
-      workspaceOwnerKey: ownerRef.current.owner?.workspaceOwnerKey ?? "",
-      generation: Math.max(1, generationRef.current),
+      workspaceOwnerKey: consoleWorkspaceOwnerKeyRef.current,
+      generation: consolePresentationGenerationRef.current,
       epoch: Math.max(1, ownerRef.current.epoch),
       isOwnerCurrent: (candidateOwner) =>
         mountedRef.current && inspectionOwnersEqual(candidateOwner, ownerRef.current.owner),
       onCandidateChange: (candidate) => {
-        if (candidate !== null && candidate.source !== "console") return;
-        setFocusedCandidate(candidate);
+        if (candidate !== null && candidate.source !== "console") return false;
+        return setFocusedCandidate(candidate);
       },
     },
     copyEvaluatePathOnce,
@@ -350,6 +447,25 @@ function ownersEqual(
       left.sessionId === right.sessionId &&
       left.pauseGeneration === right.pauseGeneration &&
       left.frameId === right.frameId)
+  );
+}
+
+function immutableConsolePresentationCandidatesEqual(
+  left: DebugCopyValueCandidate,
+  right: DebugCopyValueCandidate,
+): boolean {
+  return (
+    left.source === "console" &&
+    right.source === "console" &&
+    left.identity === right.identity &&
+    left.rootKey === right.rootKey &&
+    left.workspaceOwnerKey === right.workspaceOwnerKey &&
+    left.sessionId === right.sessionId &&
+    left.pauseGeneration === right.pauseGeneration &&
+    left.frameId === right.frameId &&
+    left.generation === right.generation &&
+    left.epoch === right.epoch &&
+    left.displayedValue === right.displayedValue
   );
 }
 

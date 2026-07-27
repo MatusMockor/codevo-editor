@@ -3,16 +3,20 @@ import { joinWorkspacePath } from "../domain/workspace";
 import type { WorkspaceSourceDiscoveryGateway } from "../domain/workspaceSourceDiscovery";
 import {
   normalizeWorkspaceExpressRouteFilePath,
-  workspaceExpressRoutesFromSnapshots,
   type WorkspaceExpressRoute,
   type WorkspaceExpressRouteSourceSnapshot,
 } from "../domain/workspaceExpressRoutes";
+import {
+  expressRouteNavigationReceipt,
+  type ExpressRouteNavigationGeneration,
+} from "./expressRouteNavigationReceipt";
 
 const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024;
 
 export interface UseWorkspaceExpressRouteOpenerOptions {
   readonly dirtySnapshots?: readonly WorkspaceExpressRouteSourceSnapshot[];
   readonly gateway: WorkspaceSourceDiscoveryGateway;
+  readonly currentNavigationGeneration: () => ExpressRouteNavigationGeneration | null;
   readonly onOpenLocation: (
     path: string,
     line: number,
@@ -25,6 +29,7 @@ export interface UseWorkspaceExpressRouteOpenerOptions {
 }
 
 export function useWorkspaceExpressRouteOpener({
+  currentNavigationGeneration,
   dirtySnapshots = [],
   gateway,
   onOpenLocation,
@@ -39,17 +44,29 @@ export function useWorkspaceExpressRouteOpener({
     async (route: WorkspaceExpressRoute): Promise<boolean> => {
       const requestedRootPath = rootPath;
       const requestedWorkspaceId = workspaceId;
-      const relativeFilePath = normalizeWorkspaceExpressRouteFilePath(route.relativeFilePath);
       const stale = () => {
         onStale(route);
         return false;
       };
-      if (!requestedRootPath || !requestedWorkspaceId || !relativeFilePath) {
+      if (!requestedRootPath || !requestedWorkspaceId) return stale();
+      const exactWorkspaceCurrent = () =>
+        isCurrentWorkspace(currentWorkspaceRef.current, requestedRootPath, requestedWorkspaceId);
+      if (!exactWorkspaceCurrent()) return false;
+      const relativeFilePath = normalizeWorkspaceExpressRouteFilePath(route.relativeFilePath);
+      const receipt = expressRouteNavigationReceipt(route);
+      if (
+        !relativeFilePath ||
+        !receipt ||
+        receipt.rootPath !== requestedRootPath ||
+        receipt.workspaceId !== requestedWorkspaceId ||
+        receipt.relativeFilePath !== relativeFilePath
+      ) {
         return stale();
       }
       const isCurrent = () =>
-        isCurrentWorkspace(currentWorkspaceRef.current, requestedRootPath, requestedWorkspaceId);
-      if (!isCurrent()) return false;
+        exactWorkspaceCurrent() &&
+        safelyCurrentNavigationGeneration(currentNavigationGeneration) === receipt.generation;
+      if (!isCurrent()) return stale();
 
       let source: string;
       let dirtySnapshot: WorkspaceExpressRouteSourceSnapshot | undefined;
@@ -80,20 +97,13 @@ export function useWorkspaceExpressRouteOpener({
       }
 
       if (!isCurrent()) return false;
-      const currentRoute = workspaceExpressRoutesFromSnapshots([
-        {
-          ...(route.packageLabel ? { packageLabel: route.packageLabel } : {}),
-          relativeFilePath,
-          source,
-        },
-      ]).find((candidate) => candidate.id === route.id);
-      if (!currentRoute) return stale();
+      if (source !== receipt.source) return stale();
 
       try {
         const opened = await onOpenLocation(
           joinWorkspacePath(requestedRootPath, relativeFilePath),
-          currentRoute.line,
-          currentRoute.column,
+          receipt.line,
+          receipt.column,
           isCurrent,
         );
         if (!isCurrent()) return false;
@@ -103,8 +113,26 @@ export function useWorkspaceExpressRouteOpener({
         return stale();
       }
     },
-    [dirtySnapshots, gateway, onOpenLocation, onStale, rootPath, workspaceId],
+    [
+      currentNavigationGeneration,
+      dirtySnapshots,
+      gateway,
+      onOpenLocation,
+      onStale,
+      rootPath,
+      workspaceId,
+    ],
   );
+}
+
+function safelyCurrentNavigationGeneration(
+  current: () => ExpressRouteNavigationGeneration | null,
+): ExpressRouteNavigationGeneration | null {
+  try {
+    return current();
+  } catch {
+    return null;
+  }
 }
 
 function isCurrentWorkspace(

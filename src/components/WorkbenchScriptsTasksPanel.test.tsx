@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createVscodeProcessTaskOutput } from "../domain/vscodeProcessTasks";
 import {
   WorkbenchScriptsTasksPanel,
   type WorkbenchScriptsTasksPanelProps,
@@ -190,7 +191,7 @@ function defaultProps(): WorkbenchScriptsTasksPanelProps {
       discover: vi.fn(async () => true),
       discovering: false,
       error: null,
-      output: [],
+      output: createVscodeProcessTaskOutput(),
       occupied: false,
       problemNotices: [],
       problems: null,

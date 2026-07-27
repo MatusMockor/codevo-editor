@@ -51,10 +51,12 @@ describe("useWorkspaceExpressRoutesPanelController", () => {
       ],
     });
 
-    expect(harness.props().routes.map(({ method, path }) => ({ method, path }))).toEqual([
-      { method: "PUT", path: "/inactive" },
-      { method: "PATCH", path: "/dirty" },
-    ]);
+    await waitForReact(() =>
+      expect(harness.props().routes.map(({ method, path }) => ({ method, path }))).toEqual([
+        { method: "PUT", path: "/inactive" },
+        { method: "PATCH", path: "/dirty" },
+      ]),
+    );
     harness.unmount();
   });
 

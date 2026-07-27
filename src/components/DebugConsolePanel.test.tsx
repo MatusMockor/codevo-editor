@@ -12,6 +12,7 @@ import {
   reduceDebugConsoleState,
   type DebugConsoleState,
 } from "../domain/debugConsoleState";
+import type { DebugVariable } from "../domain/debug";
 import {
   createDebugVariablePagesState,
   reduceDebugVariablePages,
@@ -92,8 +93,40 @@ function settledConsole(
   return consoleResult(state);
 }
 
+function settledConsoleResults(
+  results: readonly {
+    readonly requestId: string;
+    readonly value: string;
+    readonly variablesReference: number;
+  }[],
+): UseDebugConsoleResult {
+  let state = createDebugConsoleState(OWNER);
+  for (const result of results) {
+    state = reduceDebugConsoleState(state, {
+      expression: result.requestId,
+      owner: OWNER,
+      requestId: result.requestId,
+      resultOwner: { ...INSPECTION_OWNER, epoch: 1, workspaceOwnerKey: "workspace-owner" },
+      type: "evaluation-pending",
+    });
+    state = reduceDebugConsoleState(state, {
+      owner: OWNER,
+      requestId: result.requestId,
+      result: {
+        status: "ok",
+        value: result.value,
+        variablesReference: result.variablesReference,
+      },
+      type: "evaluation-settled",
+    });
+  }
+  return consoleResult(state);
+}
+
 function displayedValueSurface() {
   let candidate: DebugCopyValueCandidate | null = null;
+  let candidateAcceptance = true;
+  let evaluatePathEnabled = true;
   const copyDisplayedValue = vi.fn(async () => candidate !== null);
   const copyDisplayedValueFromMenu = vi.fn(async () => candidate !== null);
   const copyEvaluatePath = vi.fn(async () => candidate?.adapterEvaluateName !== undefined);
@@ -109,10 +142,12 @@ function displayedValueSurface() {
       owner.pauseGeneration === INSPECTION_OWNER.pauseGeneration &&
       owner.frameId === INSPECTION_OWNER.frameId,
     onCandidateChange: vi.fn((next) => {
+      if (!candidateAcceptance) return false;
       candidate = next;
+      return true;
     }),
     canCopyDisplayedValue: () => candidate !== null,
-    canCopyEvaluatePath: () => candidate?.adapterEvaluateName !== undefined,
+    canCopyEvaluatePath: () => evaluatePathEnabled && candidate?.adapterEvaluateName !== undefined,
     copyDisplayedValue,
     copyDisplayedValueFromMenu,
     copyEvaluatePath,
@@ -123,8 +158,37 @@ function displayedValueSurface() {
     copyDisplayedValueFromMenu,
     copyEvaluatePathFromMenu,
     read: () => candidate,
+    setCandidateAcceptance: (accepted: boolean) => {
+      candidateAcceptance = accepted;
+    },
+    setEvaluatePathEnabled: (enabled: boolean) => {
+      evaluatePathEnabled = enabled;
+    },
     surface,
   };
+}
+
+function resolvedVariablePages(
+  variablesReference: number,
+  variables: readonly DebugVariable[],
+  nextStart: number | null = null,
+): DebugVariablePagesState {
+  let state = createDebugVariablePagesState(INSPECTION_OWNER);
+  state = reduceDebugVariablePages(state, {
+    type: "request",
+    owner: INSPECTION_OWNER,
+    variablesReference,
+    start: 0,
+    requestId: "resolved-page",
+  });
+  return reduceDebugVariablePages(state, {
+    type: "resolve",
+    owner: INSPECTION_OWNER,
+    variablesReference,
+    start: 0,
+    requestId: "resolved-page",
+    result: { variablesReference, start: 0, variables, nextStart },
+  });
 }
 
 describe("DebugConsolePanel completions", () => {
@@ -193,6 +257,15 @@ describe("DebugConsolePanel completions", () => {
 
   function input(): HTMLTextAreaElement {
     return host.querySelector<HTMLTextAreaElement>('[aria-label="Debug expression"]')!;
+  }
+
+  function contextMenuLabels(): string[] {
+    return Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+      (item) => item.textContent ?? "",
+    );
   }
 
   it("copies only the immutable console result through keyboard and accessible context actions", () => {
@@ -291,6 +364,72 @@ describe("DebugConsolePanel completions", () => {
       ),
     );
     expect(menuItems.map((item) => item.textContent)).toEqual(["Copy Value"]);
+  });
+
+  it("does not copy a retained row when the selected menu candidate activation is rejected", () => {
+    const copy = displayedValueSurface();
+    render({
+      console: settledConsole("selected-row"),
+      copyDisplayedValueSurface: copy.surface,
+      inspectionOwner: INSPECTION_OWNER,
+    });
+    const result = host.querySelector<HTMLElement>('[data-kind="result"]')!;
+    act(() => result.focus());
+    expect(copy.read()?.displayedValue).toBe("selected-row");
+
+    copy.setCandidateAcceptance(false);
+    act(() =>
+      result.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+        )
+        ?.click();
+    });
+    expect(copy.copyDisplayedValueFromMenu).not.toHaveBeenCalled();
+    expect(copy.read()?.displayedValue).toBe("selected-row");
+
+    copy.setCandidateAcceptance(true);
+    act(() =>
+      result.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>(
+          '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+        )
+        ?.click(),
+    );
+    expect(copy.copyDisplayedValueFromMenu).toHaveBeenCalledOnce();
+  });
+
+  it("shows and executes Copy as Expression only while the exact live capability remains", () => {
+    const copy = displayedValueSurface();
+    render({
+      console: settledConsole("User", 0, 'root["user"]'),
+      copyDisplayedValueSurface: copy.surface,
+      inspectionOwner: INSPECTION_OWNER,
+    });
+    const result = host.querySelector<HTMLElement>('[data-kind="result"]')!;
+    act(() =>
+      result.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    const expressionAction = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+    ).find((item) => item.textContent === "Copy as Expression")!;
+
+    copy.setEvaluatePathEnabled(false);
+    act(() => expressionAction.click());
+
+    expect(copy.copyEvaluatePathFromMenu).not.toHaveBeenCalled();
+    act(() =>
+      result.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    expect(contextMenuLabels()).toEqual(["Copy Value"]);
   });
 
   it("lazily expands paged result children, nested references, and load-more rows", () => {
@@ -633,6 +772,384 @@ describe("DebugConsolePanel completions", () => {
     expect(copy.copyDisplayedValue).toHaveBeenCalledOnce();
   });
 
+  it("uses one roving tree tab stop and preserves focus across duplicate and removed rows", () => {
+    const debugConsole = settledConsole("Object", 41);
+    const variables = [
+      { name: "duplicate", value: "first", variablesReference: 0 },
+      { name: "duplicate", value: "second", variablesReference: 0 },
+      { name: "last", value: "third", variablesReference: 0 },
+    ];
+    render({
+      console: debugConsole,
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage: vi.fn(),
+      variablePages: resolvedVariablePages(41, variables),
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    let rows = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'),
+    );
+    expect(rows.map((row) => row.tabIndex)).toEqual([0, -1, -1]);
+
+    act(() => {
+      rows[0]!.focus();
+      rows[0]!.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowDown" }),
+      );
+    });
+    rows = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'));
+    expect(document.activeElement).toBe(rows[1]);
+    expect(rows.map((row) => row.tabIndex)).toEqual([-1, 0, -1]);
+
+    act(() =>
+      rows[1]!.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "End" }),
+      ),
+    );
+    expect(document.activeElement).toBe(rows[2]);
+    act(() =>
+      rows[2]!.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Home" }),
+      ),
+    );
+    expect(document.activeElement).toBe(rows[0]);
+
+    act(() => {
+      rows[1]!.focus();
+    });
+    render({
+      console: debugConsole,
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage: vi.fn(),
+      variablePages: resolvedVariablePages(41, variables.slice(0, 1)),
+    });
+    rows = Array.from(host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.tabIndex).toBe(0);
+    expect(document.activeElement).toBe(rows[0]);
+  });
+
+  it("owns one independent roving tab stop for every expanded result tree", () => {
+    let variablePages = resolvedVariablePages(41, [
+      { name: "first-child", value: "1", variablesReference: 0 },
+    ]);
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "request",
+      owner: INSPECTION_OWNER,
+      variablesReference: 42,
+      start: 0,
+      requestId: "second-page",
+    });
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "resolve",
+      owner: INSPECTION_OWNER,
+      variablesReference: 42,
+      start: 0,
+      requestId: "second-page",
+      result: {
+        variablesReference: 42,
+        start: 0,
+        variables: [{ name: "second-child", value: "2", variablesReference: 0 }],
+        nextStart: null,
+      },
+    });
+    render({
+      console: settledConsoleResults([
+        { requestId: "first", value: "First", variablesReference: 41 },
+        { requestId: "second", value: "Second", variablesReference: 42 },
+      ]),
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage: vi.fn(),
+      variablePages,
+    });
+    act(() => {
+      for (const button of host.querySelectorAll<HTMLButtonElement>(
+        '[aria-label="Expand debug console result"]',
+      )) {
+        button.click();
+      }
+    });
+
+    const trees = Array.from(host.querySelectorAll<HTMLElement>('[role="tree"]'));
+    expect(trees).toHaveLength(2);
+    expect(
+      trees.map(
+        (tree) =>
+          Array.from(tree.querySelectorAll<HTMLElement>('[role="treeitem"]')).filter(
+            (row) => row.tabIndex === 0,
+          ).length,
+      ),
+    ).toEqual([1, 1]);
+  });
+
+  it("releases a focused Load more row before later layouts can restore stale focus", async () => {
+    const debugConsole = settledConsole("Object", 41);
+    const variables = [{ name: "first", value: "1", variablesReference: 0 }];
+    const renderPanel = () =>
+      render({
+        console: debugConsole,
+        inspectionOwner: INSPECTION_OWNER,
+        onLoadVariablePage: vi.fn(),
+        variablePages: resolvedVariablePages(41, variables, 1),
+      });
+    renderPanel();
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    const loadRow = Array.from(host.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (row) => row.textContent === "Load more",
+    )!;
+    const outside = document.createElement("button");
+    document.body.append(outside);
+
+    await act(async () => {
+      loadRow.focus();
+      outside.focus();
+      await Promise.resolve();
+    });
+    outside.remove();
+    renderPanel();
+
+    expect(document.activeElement).toBe(document.body);
+    expect(document.activeElement).not.toBe(
+      Array.from(host.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+        (row) => row.textContent === "Load more",
+      ),
+    );
+  });
+
+  it("keeps duplicate entry and tree focus ownership inside the originating panel", async () => {
+    const debugConsole = settledConsole("Object", 41);
+    const variablePages = resolvedVariablePages(41, [
+      { name: "child", value: "1", variablesReference: 0 },
+    ]);
+    act(() => {
+      root.render(
+        <>
+          {(["first", "second"] as const).map((panel) => (
+            <section data-panel={panel} key={panel}>
+              <DebugConsolePanel
+                console={debugConsole}
+                enabled
+                inspectionOwner={INSPECTION_OWNER}
+                onLoadVariablePage={vi.fn()}
+                variablePages={variablePages}
+                workspaceOwnerKey="workspace-owner"
+              />
+            </section>
+          ))}
+        </>,
+      );
+    });
+    act(() => {
+      for (const button of host.querySelectorAll<HTMLButtonElement>(
+        '[aria-label="Expand debug console result"]',
+      )) {
+        button.click();
+      }
+    });
+    const secondPanel = host.querySelector<HTMLElement>('[data-panel="second"]')!;
+    const firstPanel = host.querySelector<HTMLElement>('[data-panel="first"]')!;
+    const firstChild = firstPanel.querySelector<HTMLElement>(
+      '[data-testid="debug-console-variable"]',
+    )!;
+    const secondChild = secondPanel.querySelector<HTMLElement>(
+      '[data-testid="debug-console-variable"]',
+    )!;
+
+    act(() => {
+      secondChild.focus();
+      secondChild.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowLeft" }),
+      );
+    });
+
+    expect(document.activeElement).toBe(
+      secondPanel.querySelector<HTMLElement>('[data-kind="result"]'),
+    );
+    expect(document.activeElement).not.toBe(
+      host.querySelector<HTMLElement>('[data-panel="first"] [data-kind="result"]'),
+    );
+
+    await act(async () => {
+      firstChild.focus();
+      secondChild.focus();
+      await Promise.resolve();
+    });
+    act(() => {
+      root.render(
+        <>
+          <section data-panel="first" key="first">
+            <DebugConsolePanel
+              console={debugConsole}
+              enabled
+              inspectionOwner={INSPECTION_OWNER}
+              onLoadVariablePage={vi.fn()}
+              variablePages={resolvedVariablePages(41, [
+                { name: "child", value: "1", variablesReference: 0 },
+              ])}
+              workspaceOwnerKey="workspace-owner"
+            />
+          </section>
+          <section data-panel="second" key="second" />
+        </>,
+      );
+    });
+
+    expect(document.activeElement).toBe(document.body);
+    expect(document.activeElement).not.toBe(
+      host.querySelector<HTMLElement>(
+        '[data-panel="first"] [data-testid="debug-console-variable"]',
+      ),
+    );
+  });
+
+  it("preserves the roving item while Left and Right toggle a nested variable", () => {
+    let variablePages = resolvedVariablePages(41, [
+      { name: "nested", value: "Object", variablesReference: 42 },
+    ]);
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "request",
+      owner: INSPECTION_OWNER,
+      variablesReference: 42,
+      start: 0,
+      requestId: "nested-page",
+    });
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "resolve",
+      owner: INSPECTION_OWNER,
+      variablesReference: 42,
+      start: 0,
+      requestId: "nested-page",
+      result: {
+        variablesReference: 42,
+        start: 0,
+        variables: [{ name: "child", value: "1", variablesReference: 0 }],
+        nextStart: null,
+      },
+    });
+    render({
+      console: settledConsole("Object", 41),
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage: vi.fn(),
+      variablePages,
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    const nested = host.querySelector<HTMLElement>('[data-testid="debug-console-variable"]')!;
+    act(() => {
+      nested.focus();
+      nested.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowRight" }),
+      );
+    });
+    expect(document.activeElement).toBe(nested);
+    expect(host.textContent).toContain("child:");
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'),
+      ).filter((row) => row.tabIndex === 0),
+    ).toEqual([nested]);
+
+    act(() =>
+      nested.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowRight" }),
+      ),
+    );
+    const child = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'),
+    ).find((row) => row.textContent?.includes("child:"))!;
+    expect(document.activeElement).toBe(child);
+
+    act(() =>
+      child.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowLeft" }),
+      ),
+    );
+    expect(document.activeElement).toBe(nested);
+
+    act(() =>
+      nested.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowLeft" }),
+      ),
+    );
+    expect(document.activeElement).toBe(nested);
+    expect(host.textContent).not.toContain("child:");
+
+    act(() =>
+      nested.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowLeft" }),
+      ),
+    );
+    expect(document.activeElement).toBe(host.querySelector('[data-kind="result"]'));
+  });
+
+  it("does not move Right into a later sibling subtree when an expanded node is empty", () => {
+    let variablePages = resolvedVariablePages(41, [
+      { name: "empty", value: "Object", variablesReference: 42 },
+      { name: "sibling", value: "Object", variablesReference: 43 },
+    ]);
+    for (const [variablesReference, variables] of [
+      [42, []],
+      [43, [{ name: "sibling-child", value: "1", variablesReference: 0 }]],
+    ] as const) {
+      const requestId = `page-${variablesReference}`;
+      variablePages = reduceDebugVariablePages(variablePages, {
+        type: "request",
+        owner: INSPECTION_OWNER,
+        variablesReference,
+        start: 0,
+        requestId,
+      });
+      variablePages = reduceDebugVariablePages(variablePages, {
+        type: "resolve",
+        owner: INSPECTION_OWNER,
+        variablesReference,
+        start: 0,
+        requestId,
+        result: {
+          variablesReference,
+          start: 0,
+          variables,
+          nextStart: null,
+        },
+      });
+    }
+    render({
+      console: settledConsole("Object", 41),
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage: vi.fn(),
+      variablePages,
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Expand debug console variable empty"]')
+        ?.click();
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Expand debug console variable sibling"]')
+        ?.click();
+    });
+    const empty = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'),
+    ).find((row) => row.textContent?.includes("empty:"))!;
+    expect(host.textContent).toContain("sibling-child:");
+
+    act(() => {
+      empty.focus();
+      empty.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowRight" }),
+      );
+    });
+
+    expect(document.activeElement).toBe(empty);
+  });
+
   it.each(["mouse", "keyboard"] as const)(
     "copies through the real composition from the %s context path without evaluation",
     async (path) => {
@@ -655,6 +1172,7 @@ describe("DebugConsolePanel completions", () => {
             copyDisplayedValueSurface={composition.console}
             enabled
             inspectionOwner={INSPECTION_OWNER}
+            workspaceOwnerKey="workspace-owner"
           />
         );
       }
@@ -711,7 +1229,89 @@ describe("DebugConsolePanel completions", () => {
     },
   );
 
-  it("leaves selected text to native Copy and clears stale entry and frame capabilities", () => {
+  it("keeps Copy Value after Continue but removes live Copy as Expression", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const state = settledConsole("captured-value", 0, 'root["user"]');
+    function Harness({ paused }: { readonly paused: boolean }) {
+      const composition = useDebugCopyValueComposition({
+        clipboard: { canWriteText: () => true, writeText },
+        evaluateClipboard: vi.fn(),
+        owner: paused
+          ? {
+              ...INSPECTION_OWNER,
+              workspaceOwnerKey: "workspace-owner",
+            }
+          : null,
+      });
+      return (
+        <DebugConsolePanel
+          console={state}
+          copyDisplayedValueSurface={composition.console}
+          enabled={paused}
+          inspectionOwner={paused ? INSPECTION_OWNER : null}
+          workspaceOwnerKey="workspace-owner"
+        />
+      );
+    }
+    act(() => root.render(<Harness paused />));
+    const result = host.querySelector<HTMLElement>('[data-kind="result"]')!;
+    act(() =>
+      result.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    expect(contextMenuLabels()).toEqual(["Copy Value", "Copy as Expression"]);
+
+    act(() => root.render(<Harness paused={false} />));
+
+    expect(contextMenuLabels()).toEqual(["Copy Value"]);
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+        )
+        ?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("captured-value");
+  });
+
+  it("clears the exact displayed-value candidate when workspace ownership changes", () => {
+    const copy = displayedValueSurface();
+    const state = settledConsole();
+    const renderForWorkspace = (workspaceOwnerKey: string) => {
+      act(() =>
+        root.render(
+          <DebugConsolePanel
+            console={state}
+            copyDisplayedValueSurface={copy.surface}
+            enabled
+            inspectionOwner={INSPECTION_OWNER}
+            workspaceOwnerKey={workspaceOwnerKey}
+          />,
+        ),
+      );
+    };
+
+    renderForWorkspace("workspace-owner");
+    const result = host.querySelector<HTMLElement>('[data-kind="result"]')!;
+    act(() => result.focus());
+    expect(copy.read()).toMatchObject({
+      displayedValue: "captured-value",
+      identity: "console-2",
+    });
+
+    renderForWorkspace("replacement-workspace-owner");
+
+    expect(copy.read()).toBeNull();
+    expect(host.querySelector<HTMLElement>('[data-kind="result"]')?.hasAttribute("tabindex")).toBe(
+      false,
+    );
+    expect(
+      host.querySelector<HTMLElement>('[data-kind="result"]')?.getAttribute("aria-haspopup"),
+    ).toBeNull();
+  });
+
+  it("leaves selected text native and retains only immutable copy after the live frame changes", () => {
     const copy = displayedValueSurface();
     const state = settledConsole();
     render({
@@ -742,8 +1342,12 @@ describe("DebugConsolePanel completions", () => {
       copyDisplayedValueSurface: copy.surface,
       inspectionOwner: { ...INSPECTION_OWNER, frameId: INSPECTION_OWNER.frameId + 1 },
     });
-    expect(copy.read()).toBeNull();
-    expect(host.querySelector<HTMLElement>('[data-kind="result"]')?.tabIndex).toBe(-1);
+    expect(copy.read()).toMatchObject({
+      displayedValue: "captured-value",
+      identity: "console-2",
+    });
+    expect(copy.read()?.adapterEvaluateName).toBeUndefined();
+    expect(host.querySelector<HTMLElement>('[data-kind="result"]')?.tabIndex).toBe(0);
 
     render({
       console: consoleResult(reduceDebugConsoleState(state.state, { type: "clear", owner: OWNER })),

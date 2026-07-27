@@ -1,10 +1,15 @@
 import type { EditorPosition } from "./languageServerFeatures";
-import { jsTestDeclarations } from "./jsTestDeclarations";
+import { JsTestDeclarationBudgetError, jsTestDeclarations } from "./jsTestDeclarations";
 import { computeLineStartOffsets } from "./sourceLineOffsets";
 import type { TestGutterTarget } from "./testGutterTargets";
 
 export function jsTestGutterTargets(source: string): TestGutterTarget[] {
-  return jsTestDeclarations(source).map(({ target }) => target);
+  try {
+    return jsTestDeclarations(source).map(({ target }) => target);
+  } catch (error) {
+    if (error instanceof JsTestDeclarationBudgetError) return [];
+    throw error;
+  }
 }
 
 export function runAllJsTestsTarget(

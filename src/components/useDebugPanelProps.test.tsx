@@ -12,6 +12,7 @@ describe("useDebugPanelProps", () => {
     const loadVariables = vi.fn().mockResolvedValue(undefined);
     const stepDebug = vi.fn().mockResolvedValue(undefined);
     const add = vi.fn();
+    const invalidateEvaluations = vi.fn(() => true);
     const expressionMutations = { forWatch: vi.fn(() => null) };
     const openDebugLocation = vi.fn();
     const loadConfigurations = vi.fn().mockResolvedValue(undefined);
@@ -115,6 +116,7 @@ describe("useDebugPanelProps", () => {
       restartDebug,
       removeAllBreakpoints,
       removeBreakpoint: vi.fn().mockResolvedValue(undefined),
+      scopeLoadState: { kind: "inactive" },
       scopes: [],
       selectFrame: vi.fn().mockResolvedValue(undefined),
       selectedFrameId: null,
@@ -129,12 +131,15 @@ describe("useDebugPanelProps", () => {
       stopDebug: vi.fn().mockResolvedValue(undefined),
       variablesByReference: {},
       watches: {
+        canInvalidateEvaluations: vi.fn(() => true),
         definitions: [],
         evaluations: {},
         expressionMutations,
         pendingIds: [],
+        refreshPending: false,
         add,
         clear: vi.fn(),
+        invalidateEvaluations,
         remove: vi.fn(),
         setEnabled: vi.fn(),
         update: vi.fn(),
@@ -183,6 +188,7 @@ describe("useDebugPanelProps", () => {
       lineNumber: 7,
     });
     panel?.watches.onAdd("count");
+    panel?.watches.onRefresh?.();
     const launchConfigurations = panel?.nodeLaunchConfigurations;
     expect(launchConfigurations?.onLoad()).toBeUndefined();
     expect(launchConfigurations?.onClosePicker?.()).toBeUndefined();
@@ -208,6 +214,9 @@ describe("useDebugPanelProps", () => {
     expect(openDebugLocation).toHaveBeenCalledWith("/workspace/app.ts", 4);
     expect(openDebugLocation).toHaveBeenCalledWith("/workspace/app.ts", 7, 9);
     expect(add).toHaveBeenCalledWith("count");
+    expect(panel?.watches.canRefresh).toBe(true);
+    expect(panel?.watches.refreshPending).toBe(false);
+    expect(invalidateEvaluations).toHaveBeenCalledOnce();
     expect(loadConfigurations).toHaveBeenCalledOnce();
     expect(closeConfigurationPicker).toHaveBeenCalledOnce();
     expect(refreshConfigurations).toHaveBeenCalledOnce();
@@ -523,6 +532,7 @@ function debugSessionStub(overrides: Record<string, unknown> = {}) {
     restartDebug: vi.fn().mockResolvedValue(undefined),
     removeAllBreakpoints: vi.fn().mockResolvedValue(undefined),
     removeBreakpoint: vi.fn().mockResolvedValue(undefined),
+    scopeLoadState: { kind: "inactive" },
     scopes: [],
     selectFrame: vi.fn().mockResolvedValue(undefined),
     selectedFrameId: null,

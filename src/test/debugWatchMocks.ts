@@ -5,12 +5,14 @@ export function createEmptyDebugWatches(): UseDebugWatchExpressionsResult {
     definitions: [],
     evaluations: {},
     pendingIds: [],
+    refreshPending: false,
+    canInvalidateEvaluations: () => false,
     add: () => true,
     canAdd: () => true,
     clear: () => undefined,
     remove: () => undefined,
     setEnabled: () => undefined,
     update: () => undefined,
-    invalidateEvaluations: () => undefined,
+    invalidateEvaluations: () => false,
   };
 }

@@ -1,10 +1,7 @@
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import type { WorkbenchComposition } from "../workbenchComposition";
 import { DirtyCloseDecisionDialogHost } from "./DirtyCloseDecisionDialogHost";
-import {
-  NoticeToastHost,
-  type NoticeToastRenderer,
-} from "./NoticeToastHost";
+import { NoticeToastHost, type NoticeToastRenderer } from "./NoticeToastHost";
 import { QuickInputDialogHost } from "./QuickInputDialogHost";
 
 interface WorkbenchOverlayHostsProps {
@@ -30,18 +27,12 @@ export function WorkbenchOverlayHosts({
 }: WorkbenchOverlayHostsProps) {
   return (
     <>
-      <NoticeToastHost
-        notices={workbench.notices}
-        renderNotice={renderNotice}
-      />
-      <DirtyCloseDecisionDialogHost
-        coordinator={composition.dirtyCloseDecisionCoordinator}
-      />
+      <NoticeToastHost notices={workbench.notices} renderNotice={renderNotice} />
+      <DirtyCloseDecisionDialogHost coordinator={composition.dirtyCloseDecisionCoordinator} />
       <QuickInputDialogHost
         coordinator={composition.quickInputCoordinator}
         workspaceScope={
-          workbench.workspaceIdentityDescriptor?.workspaceId ??
-          workbench.workspaceRoot
+          workbench.workspaceIdentityDescriptor?.workspaceId ?? workbench.workspaceRoot
         }
       />
     </>

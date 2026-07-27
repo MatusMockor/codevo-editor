@@ -13,6 +13,10 @@ const MAX_STATIC_PREFIX_BYTES = 4_096;
 const MAX_MOUNT_DEPTH = 64;
 const MAX_EXPORT_DEPTH = 64;
 const MAX_IMPORT_PATH_CANDIDATES = 4;
+const MAX_STATIC_IMPORT_CLAUSE_CHARACTERS = 4_096;
+const MAX_STATIC_IMPORT_SPECIFIER_CHARACTERS = 4_096;
+const MAX_STATIC_EXPRESSION_DEPTH = 64;
+const MAX_STATIC_EXPRESSION_WORK = 16_384;
 
 export interface ExpressImportPathImporter {
   readonly packageLabel?: string;
@@ -99,7 +103,10 @@ interface SymbolResolutionContext {
 interface StaticStringParser {
   readonly constants: ReadonlyMap<string, string>;
   readonly source: string;
+  depth: number;
+  exhausted: boolean;
   offset: number;
+  work: number;
 }
 
 interface BindingBudget {
@@ -127,7 +134,7 @@ export function resolveExpressRouteMountsBounded(
   importPathResolver?: ExpressImportPathResolver,
 ): BoundedResolvedExpressRoutes {
   const limit = boundedLimit(maxRoutes);
-  const analyses = snapshots.map((snapshot) => analyzeFile(snapshot, importPathResolver));
+  const analyses = snapshots.map((snapshot) => analyzeFile(snapshot, importPathResolver, limit));
   const analysesByPath = uniqueAnalysesByModule(analyses);
   const mountEdges = new Map<string, MountEdge[]>();
   const symbolResolution: SymbolResolutionContext = { exhausted: false, traversals: 0 };
@@ -213,6 +220,7 @@ export function resolveExpressRouteMountsBounded(
 function analyzeFile(
   snapshot: ExpressRouteMountSnapshot,
   importPathResolver: ExpressImportPathResolver | undefined,
+  maxRoutes: number,
 ): FileAnalysis {
   const { source } = snapshot;
   const packageLabel = normalizeExpressPackageLabel(snapshot.packageLabel);
@@ -235,7 +243,7 @@ function analyzeFile(
     };
   }
   const masked = maskJavaScriptSource(source);
-  const topLevelScan = collectTopLevelOffsets(masked);
+  const topLevelScan = collectTopLevelOffsets(source, masked);
   const topLevelOffsets = topLevelScan.offsets;
   const bindingBudget: BindingBudget = { truncated: false, used: 0 };
   const expressFactories = new Set<string>();
@@ -274,11 +282,7 @@ function analyzeFile(
   // Conventional names remain useful for local route discovery, but they are
   // not symbol authority for mount resolution without an Express declaration.
   const receivers = [...new Set(["app", "router", ...appReceivers, ...routerReceivers])];
-  const parsed = expressRoutesForReceiversInSourceBounded(
-    source,
-    receivers,
-    Number.POSITIVE_INFINITY,
-  );
+  const parsed = expressRoutesForReceiversInSourceBounded(source, receivers, maxRoutes);
   const exports = collectExports(source, masked, topLevelOffsets, bindingBudget);
   const mounts = collectMounts(
     source,
@@ -298,7 +302,7 @@ function analyzeFile(
 
   return {
     appReceivers,
-    capacityTruncated: bindingBudget.truncated,
+    capacityTruncated: bindingBudget.truncated || parsed.truncated,
     exports,
     filePath: snapshot.relativeFilePath,
     imports,
@@ -307,7 +311,7 @@ function analyzeFile(
     routes: parsed.routes,
     reExports,
     routerReceivers,
-    truncated: topLevelScan.malformed || bindingBudget.truncated,
+    truncated: topLevelScan.malformed || bindingBudget.truncated || parsed.truncated,
   };
 }
 
@@ -322,18 +326,81 @@ function collectExpressImports(
   imports: Map<string, { imported: string; specifier: string }>,
   importPathResolver: ExpressImportPathResolver | undefined,
 ): void {
-  const importPattern = /\bimport\s+([^;\n]+?)\s+from\s+(['"])([^'"\r\n]+)\2/g;
-  for (const match of source.matchAll(importPattern)) {
-    const offset = match.index ?? 0;
+  const importPattern = /\bimport\b/g;
+  let importMatch: RegExpExecArray | null;
+  while ((importMatch = importPattern.exec(masked)) !== null) {
+    const offset = importMatch.index;
+    if (!isCodeKeywordAt(masked, offset, "import")) continue;
+    if (masked[previousNonWhitespace(masked, offset - 1)] === ".") continue;
+    if (!isUnconditionalModuleStatementAt(source, masked, topLevelOffsets, offset)) continue;
+    const clauseOffset = offset + "import".length;
+    const firstClauseOffset = skipWhitespaceBounded(masked, clauseOffset, masked.length);
     if (
-      !isUnconditionalModuleStatementAt(source, masked, topLevelOffsets, offset) ||
-      !isCodeKeywordAt(masked, offset, "import") ||
-      codeKeywordCount(masked, offset, match[0].length, "from") !== 1
+      masked[firstClauseOffset] === "(" ||
+      masked[firstClauseOffset] === "." ||
+      source[firstClauseOffset] === "'" ||
+      source[firstClauseOffset] === '"'
     ) {
+      importPattern.lastIndex = firstClauseOffset + 1;
       continue;
     }
-    const clause = (match[1] ?? "").trim();
-    const specifier = match[3] ?? "";
+    const scanEnd = Math.min(masked.length, clauseOffset + MAX_STATIC_IMPORT_CLAUSE_CHARACTERS);
+    const boundedClause = masked.slice(clauseOffset, scanEnd);
+    const fromMatch = /\bfrom\b/.exec(boundedClause);
+    if (!fromMatch) {
+      if (scanEnd < masked.length) budget.truncated = true;
+      importPattern.lastIndex = scanEnd;
+      continue;
+    }
+    const fromOffset = clauseOffset + fromMatch.index;
+    const clause = masked.slice(clauseOffset, fromOffset).trim();
+    if (
+      !isSupportedStaticImportClause(clause) ||
+      /[;]/.test(clause) ||
+      /\b(?:import|export|from)\b/.test(clause) ||
+      /^type\b/.test(clause)
+    ) {
+      importPattern.lastIndex = fromOffset + "from".length;
+      continue;
+    }
+    const postFromEnd = Math.min(
+      source.length,
+      fromOffset + "from".length + MAX_STATIC_IMPORT_SPECIFIER_CHARACTERS,
+    );
+    const specifierOffset = skipTriviaBounded(source, fromOffset + "from".length, postFromEnd);
+    if (specifierOffset === null) {
+      budget.truncated = true;
+      importPattern.lastIndex = postFromEnd;
+      continue;
+    }
+    const quote = source[specifierOffset];
+    if (quote !== "'" && quote !== '"') {
+      importPattern.lastIndex = specifierOffset + 1;
+      continue;
+    }
+    const specifierEnd = boundedModuleSpecifierEnd(
+      source,
+      specifierOffset,
+      Math.min(source.length, specifierOffset + MAX_STATIC_IMPORT_SPECIFIER_CHARACTERS),
+    );
+    if (specifierEnd === null) {
+      if (
+        specifierOffset + MAX_STATIC_IMPORT_SPECIFIER_CHARACTERS < source.length &&
+        !/[\r\n]/.test(
+          source.slice(
+            specifierOffset + 1,
+            specifierOffset + MAX_STATIC_IMPORT_SPECIFIER_CHARACTERS,
+          ),
+        )
+      ) {
+        budget.truncated = true;
+      }
+      importPattern.lastIndex = specifierOffset + 1;
+      continue;
+    }
+    importPattern.lastIndex = specifierEnd + 1;
+    const specifier = source.slice(specifierOffset + 1, specifierEnd);
+    if (specifier.includes("\\")) continue;
     if (specifier === "express") {
       const defaultImport = clause.match(/^([A-Za-z_$][\w$]*)/);
       if (defaultImport?.[1] && consumeBinding(budget)) expressFactories.add(defaultImport[1]);
@@ -341,8 +408,11 @@ function collectExpressImports(
       if (namespaceImport?.[1] && consumeBinding(budget)) {
         expressFactories.add(namespaceImport[1]);
       }
-      for (const named of clause.matchAll(/\bRouter\s*(?:as\s+([A-Za-z_$][\w$]*))?/g)) {
-        if (consumeBinding(budget)) routerFactories.add(named[1] ?? "Router");
+      const braces = clause.match(/\{([^}]*)\}/)?.[1];
+      for (const item of braces?.split(",") ?? []) {
+        if (/^\s*type\b/.test(item)) continue;
+        const named = item.trim().match(/^Router(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+        if (named && consumeBinding(budget)) routerFactories.add(named[1] ?? "Router");
       }
       continue;
     }
@@ -353,6 +423,7 @@ function collectExpressImports(
     }
     const braces = clause.match(/\{([^}]*)\}/)?.[1];
     for (const item of braces?.split(",") ?? []) {
+      if (/^\s*type\b/.test(item)) continue;
       const named = item.trim().match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
       if (named?.[1] && consumeBinding(budget)) {
         imports.set(named[2] ?? named[1], { imported: named[1], specifier });
@@ -430,6 +501,58 @@ function collectExpressImports(
   }
 }
 
+function isSupportedStaticImportClause(clause: string): boolean {
+  const identifier = "[A-Za-z_$][\\w$]*";
+  const namedItem = `(?:type\\s+)?${identifier}(?:\\s+as\\s+${identifier})?`;
+  const namedBindings = `\\{\\s*(?:${namedItem}(?:\\s*,\\s*${namedItem})*\\s*,?)?\\s*\\}`;
+  const namespaceBinding = `\\*\\s+as\\s+${identifier}`;
+  return new RegExp(
+    `^(?:${identifier}|(?:${identifier}\\s*,\\s*)?(?:${namedBindings}|${namespaceBinding}))$`,
+  ).test(clause);
+}
+
+function skipWhitespaceBounded(source: string, from: number, end: number): number {
+  let offset = from;
+  while (offset < end && /\s/.test(source[offset] ?? "")) offset += 1;
+  return offset;
+}
+
+function skipTriviaBounded(source: string, from: number, end: number): number | null {
+  let offset = from;
+  while (offset < end) {
+    if (/\s/.test(source[offset] ?? "")) {
+      offset += 1;
+    } else if (source.slice(offset, offset + 2) === "//") {
+      offset += 2;
+      while (offset < end && source[offset] !== "\n") offset += 1;
+      if (offset >= end) return null;
+      offset += 1;
+    } else if (source.slice(offset, offset + 2) === "/*") {
+      offset += 2;
+      while (offset + 1 < end && source.slice(offset, offset + 2) !== "*/") offset += 1;
+      if (offset + 1 >= end) return null;
+      offset += 2;
+    } else {
+      return offset;
+    }
+  }
+  return null;
+}
+
+function boundedModuleSpecifierEnd(
+  source: string,
+  quoteOffset: number,
+  end: number,
+): number | null {
+  const quote = source[quoteOffset];
+  for (let offset = quoteOffset + 1; offset < end; offset += 1) {
+    const character = source[offset];
+    if (character === "\r" || character === "\n" || character === "\\") return null;
+    if (character === quote) return offset;
+  }
+  return null;
+}
+
 function collectReceiverDeclarations(
   source: string,
   masked: string,
@@ -441,7 +564,7 @@ function collectReceiverDeclarations(
   routerReceivers: Set<string>,
 ): void {
   const declaration =
-    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)(?:\s*\.\s*(Router))?\s*\(/g;
+    /\b(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=;\r\n]{1,1024})?\s*=\s*([A-Za-z_$][\w$]*)(?:\s*\.\s*(Router))?\s*\(/g;
   for (const match of masked.matchAll(declaration)) {
     if (!isUnconditionalModuleStatementAt(source, masked, topLevelOffsets, match.index ?? 0)) {
       continue;
@@ -465,6 +588,12 @@ function collectExports(
   budget: BindingBudget,
 ): Map<string, string> {
   const exports = new Map<string, string>();
+  for (const match of masked.matchAll(/\bexport\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\b/g)) {
+    if (!isUnconditionalModuleStatementAt(source, masked, topLevelOffsets, match.index ?? 0)) {
+      continue;
+    }
+    if (consumeBinding(budget)) exports.set(match[1] ?? "", match[1] ?? "");
+  }
   for (const match of masked.matchAll(/\bexport\s+default\s+([A-Za-z_$][\w$]*)\s*;?/g)) {
     if (!isUnconditionalModuleStatementAt(source, masked, topLevelOffsets, match.index ?? 0)) {
       continue;
@@ -598,9 +727,14 @@ function collectStaticStringConstants(
     if (depth > MAX_CONSTANT_DEPTH || seen.has(name) || ambiguous.has(name)) return null;
     const expression = expressions.get(name);
     if (expression === undefined) return null;
-    const value = parseStaticStringExpression(expression, resolved, (nestedName) =>
+    const parsed = parseStaticStringExpression(expression, resolved, (nestedName) =>
       resolve(nestedName, new Set(seen).add(name), depth + 1),
     );
+    if (parsed.exhausted) {
+      budget.truncated = true;
+      return null;
+    }
+    const value = parsed.value;
     if (value === null || staticStringByteLength(value) > MAX_STATIC_PREFIX_BYTES) return null;
     resolved.set(name, value);
     return value;
@@ -614,11 +748,13 @@ function staticMountPrefixArgumentAt(
   source: string,
   from: number,
   constants: ReadonlyMap<string, string>,
+  budget: BindingBudget,
 ): { readonly endOffset: number; readonly value: string } | null {
-  const parser: StaticStringParser = { constants, offset: skipTrivia(source, from), source };
+  const parser = staticStringParser(source, constants, from);
   const value = parseStaticStringSum(parser, () => null);
+  if (parser.exhausted) budget.truncated = true;
   if (value === null || staticStringByteLength(value) > MAX_STATIC_PREFIX_BYTES) return null;
-  parser.offset = skipTrivia(source, parser.offset);
+  skipStaticExpressionTrivia(parser);
   return source[parser.offset] === "," ? { endOffset: parser.offset, value } : null;
 }
 
@@ -626,23 +762,27 @@ function parseStaticStringExpression(
   source: string,
   constants: ReadonlyMap<string, string>,
   resolveUnknown: (name: string) => string | null,
-): string | null {
-  const parser: StaticStringParser = { constants, offset: skipTrivia(source, 0), source };
+): { readonly exhausted: boolean; readonly value: string | null } {
+  const parser = staticStringParser(source, constants, 0);
   const value = parseStaticStringSum(parser, resolveUnknown);
-  parser.offset = skipTrivia(source, parser.offset);
-  return value !== null && parser.offset === source.length ? value : null;
+  skipStaticExpressionTrivia(parser);
+  return {
+    exhausted: parser.exhausted,
+    value: value !== null && parser.offset === source.length ? value : null,
+  };
 }
 
 function parseStaticStringSum(
   parser: StaticStringParser,
   resolveUnknown: (name: string) => string | null,
 ): string | null {
+  if (!consumeStaticExpressionWork(parser)) return null;
   let value = parseStaticStringTerm(parser, resolveUnknown);
   if (value === null) return null;
   while (true) {
-    parser.offset = skipTrivia(parser.source, parser.offset);
+    if (!skipStaticExpressionTrivia(parser)) return null;
     if (parser.source[parser.offset] !== "+") return value;
-    parser.offset = skipTrivia(parser.source, parser.offset + 1);
+    parser.offset += 1;
     const next = parseStaticStringTerm(parser, resolveUnknown);
     if (next === null) return null;
     value += next;
@@ -654,26 +794,35 @@ function parseStaticStringTerm(
   parser: StaticStringParser,
   resolveUnknown: (name: string) => string | null,
 ): string | null {
-  parser.offset = skipTrivia(parser.source, parser.offset);
+  if (!consumeStaticExpressionWork(parser)) return null;
+  if (!skipStaticExpressionTrivia(parser)) return null;
   const character = parser.source[parser.offset];
   if (character === "'" || character === '"') {
-    const literal = staticJavaScriptStringArgumentAt(`${parser.source},`, parser.offset);
-    if (!literal) return null;
-    parser.offset = literal.endOffset;
-    return literal.value;
+    return parseStaticQuotedString(parser);
   }
   if (character === "`") return parseStaticTemplate(parser, resolveUnknown);
   if (character === "(") {
+    if (parser.depth >= MAX_STATIC_EXPRESSION_DEPTH) {
+      parser.exhausted = true;
+      return null;
+    }
     parser.offset += 1;
+    parser.depth += 1;
     const value = parseStaticStringSum(parser, resolveUnknown);
-    parser.offset = skipTrivia(parser.source, parser.offset);
+    parser.depth -= 1;
+    if (!skipStaticExpressionTrivia(parser)) return null;
     if (value === null || parser.source[parser.offset] !== ")") return null;
     parser.offset += 1;
     return value;
   }
-  const identifier = parser.source.slice(parser.offset).match(/^([A-Za-z_$][\w$]*)/)?.[1];
-  if (!identifier) return null;
-  parser.offset += identifier.length;
+  const identifierStart = parser.offset;
+  if (!/[A-Za-z_$]/.test(parser.source[identifierStart] ?? "")) return null;
+  parser.offset += 1;
+  while (/[\w$]/.test(parser.source[parser.offset] ?? "")) {
+    if (!consumeStaticExpressionWork(parser)) return null;
+    parser.offset += 1;
+  }
+  const identifier = parser.source.slice(identifierStart, parser.offset);
   return parser.constants.get(identifier) ?? resolveUnknown(identifier);
 }
 
@@ -684,6 +833,7 @@ function parseStaticTemplate(
   let value = "";
   parser.offset += 1;
   while (parser.offset < parser.source.length) {
+    if (!consumeStaticExpressionWork(parser)) return null;
     const character = parser.source[parser.offset] ?? "";
     if (character === "`") {
       parser.offset += 1;
@@ -703,14 +853,11 @@ function parseStaticTemplate(
       continue;
     }
     if (character === "$" && parser.source[parser.offset + 1] === "{") {
-      const interpolation = parser.source
-        .slice(parser.offset + 2)
-        .match(/^\s*([A-Za-z_$][\w$]*)\s*\}/);
-      if (!interpolation?.[1]) return null;
-      const nested = parser.constants.get(interpolation[1]) ?? resolveUnknown(interpolation[1]);
+      const interpolation = parseStaticTemplateInterpolation(parser);
+      if (interpolation === null) return null;
+      const nested = parser.constants.get(interpolation) ?? resolveUnknown(interpolation);
       if (nested === null) return null;
       value += nested;
-      parser.offset += 2 + interpolation[0].length;
       continue;
     }
     value += character;
@@ -718,6 +865,83 @@ function parseStaticTemplate(
     if (staticStringByteLength(value) > MAX_STATIC_PREFIX_BYTES) return null;
   }
   return null;
+}
+
+function parseStaticQuotedString(parser: StaticStringParser): string | null {
+  const start = parser.offset;
+  const quote = parser.source[start];
+  let offset = start + 1;
+  while (offset < parser.source.length) {
+    if (!consumeStaticExpressionWork(parser)) return null;
+    const character = parser.source[offset] ?? "";
+    if (character === "\n" || character === "\r") return null;
+    if (character === "\\") {
+      offset += 2;
+      continue;
+    }
+    if (character === quote) {
+      const boundedLiteral = `${parser.source.slice(start, offset + 1)},`;
+      const parsed = staticJavaScriptStringArgumentAt(boundedLiteral, 0);
+      if (!parsed) return null;
+      parser.offset = offset + 1;
+      return parsed.value;
+    }
+    offset += 1;
+  }
+  return null;
+}
+
+function parseStaticTemplateInterpolation(parser: StaticStringParser): string | null {
+  parser.offset += 2;
+  if (!skipStaticExpressionTrivia(parser)) return null;
+  const start = parser.offset;
+  if (!/[A-Za-z_$]/.test(parser.source[start] ?? "")) return null;
+  parser.offset += 1;
+  while (/[\w$]/.test(parser.source[parser.offset] ?? "")) {
+    if (!consumeStaticExpressionWork(parser)) return null;
+    parser.offset += 1;
+  }
+  const identifier = parser.source.slice(start, parser.offset);
+  if (!skipStaticExpressionTrivia(parser) || parser.source[parser.offset] !== "}") return null;
+  parser.offset += 1;
+  return identifier;
+}
+
+function staticStringParser(
+  source: string,
+  constants: ReadonlyMap<string, string>,
+  offset: number,
+): StaticStringParser {
+  return { constants, depth: 0, exhausted: false, offset, source, work: 0 };
+}
+
+function consumeStaticExpressionWork(parser: StaticStringParser, amount = 1): boolean {
+  parser.work += amount;
+  if (parser.work <= MAX_STATIC_EXPRESSION_WORK) return true;
+  parser.exhausted = true;
+  return false;
+}
+
+function skipStaticExpressionTrivia(parser: StaticStringParser): boolean {
+  while (parser.offset < parser.source.length) {
+    if (!consumeStaticExpressionWork(parser)) return false;
+    if (/\s/.test(parser.source[parser.offset] ?? "")) {
+      parser.offset += 1;
+    } else if (parser.source.slice(parser.offset, parser.offset + 2) === "//") {
+      const newline = parser.source.indexOf("\n", parser.offset + 2);
+      const nextOffset = newline < 0 ? parser.source.length : newline + 1;
+      if (!consumeStaticExpressionWork(parser, nextOffset - parser.offset - 1)) return false;
+      parser.offset = nextOffset;
+    } else if (parser.source.slice(parser.offset, parser.offset + 2) === "/*") {
+      const close = parser.source.indexOf("*/", parser.offset + 2);
+      const nextOffset = close < 0 ? parser.source.length : close + 2;
+      if (!consumeStaticExpressionWork(parser, nextOffset - parser.offset - 1)) return false;
+      parser.offset = nextOffset;
+    } else {
+      return true;
+    }
+  }
+  return true;
 }
 
 function decodeSimpleStringEscape(character: string | undefined): string | null {
@@ -767,6 +991,7 @@ function collectMounts(
       openOffset + 1,
       stringConstants,
       Math.max(0, MAX_BINDINGS - budget.used),
+      budget,
     );
     if (!parsed) continue;
     if (parsed.truncated) {
@@ -786,10 +1011,11 @@ function staticMountArgumentsAt(
   from: number,
   stringConstants: ReadonlyMap<string, string>,
   maxTargets: number,
+  budget: BindingBudget,
 ): StaticMountArguments | null {
   const literal =
     staticJavaScriptStringArgumentAt(source, from) ??
-    staticMountPrefixArgumentAt(source, from, stringConstants);
+    staticMountPrefixArgumentAt(source, from, stringConstants, budget);
   const prefix = literal?.value ?? "";
   let offset = skipTrivia(source, literal ? literal.endOffset + 1 : from);
   const targets: string[] = [];
@@ -949,13 +1175,13 @@ function resolveModuleAnalysis(
     }
   }
   const matches = [...candidates]
-    .map((candidate) =>
-      files.get(
-        specifier.startsWith(".")
-          ? moduleKey(from.packageLabel, candidate)
-          : workspacePathModuleKey(candidate),
-      ),
-    )
+    .map((candidate) => {
+      if (!specifier.startsWith(".")) return files.get(workspacePathModuleKey(candidate));
+      return (
+        files.get(moduleKey(from.packageLabel, candidate)) ??
+        files.get(workspacePathModuleKey(candidate))
+      );
+    })
     .filter((candidate): candidate is FileAnalysis => candidate !== undefined);
   return matches.length === 1 ? (matches[0] ?? null) : null;
 }
@@ -1133,16 +1359,11 @@ function isCodeKeywordAt(masked: string, offset: number, keyword: string): boole
   return masked.slice(offset, offset + keyword.length) === keyword;
 }
 
-function codeKeywordCount(masked: string, offset: number, length: number, keyword: string): number {
-  return [...masked.slice(offset, offset + length).matchAll(new RegExp(`\\b${keyword}\\b`, "g"))]
-    .length;
-}
-
 function isCodeDeclarationAt(masked: string, offset: number): boolean {
   return /^(?:const|let|var)\b/.test(masked.slice(offset));
 }
 
-function collectTopLevelOffsets(masked: string): TopLevelOffsetScan {
+function collectTopLevelOffsets(source: string, masked: string): TopLevelOffsetScan {
   const offsets = new Uint8Array(masked.length);
   let braceDepth = 0;
   let bracketDepth = 0;
@@ -1202,17 +1423,17 @@ function collectTopLevelOffsets(masked: string): TopLevelOffsetScan {
     return { malformed: true, offsets: new Uint8Array(masked.length) };
   }
   maskControlledSingleStatementBodies(masked, offsets);
+  retainDirectModuleStatementStarts(source, offsets, masked);
   return { malformed: false, offsets };
 }
 
 function isUnconditionalModuleStatementAt(
-  source: string,
+  _source: string,
   masked: string,
   topLevelOffsets: Uint8Array,
   offset: number,
 ): boolean {
   if (topLevelOffsets[offset] !== 1) return false;
-  if (!isDirectModuleStatementStart(source, masked, offset)) return false;
   let cursor = previousNonWhitespace(masked, offset - 1);
   if (cursor < 0) return true;
 
@@ -1234,29 +1455,69 @@ function isUnconditionalModuleStatementAt(
   return !control || !["for", "if", "while", "with"].includes(control.value);
 }
 
-function isDirectModuleStatementStart(source: string, masked: string, offset: number): boolean {
-  let boundary = offset - 1;
-  while (boundary >= 0 && !["\n", ";", "}"].includes(masked[boundary] ?? "")) boundary -= 1;
-  if (masked.slice(boundary + 1, offset).trim() !== "") return false;
-  if (boundary < 0 || masked[boundary] !== "\n") return true;
+function retainDirectModuleStatementStarts(
+  source: string,
+  offsets: Uint8Array,
+  masked: string,
+): void {
+  const previousWordDecision = new Map<number, boolean>();
+  let boundaryAllowsStatement = true;
+  let currentLineStart = 0;
+  let lastNonWhitespace = -1;
+  let whitespaceSinceBoundary = true;
 
-  const lineStart = boundary + 1;
-  const previousOffset = previousNonWhitespace(masked, boundary - 1);
+  for (let offset = 0; offset < masked.length; offset += 1) {
+    const wasTopLevel = offsets[offset] === 1;
+    offsets[offset] = wasTopLevel && whitespaceSinceBoundary && boundaryAllowsStatement ? 1 : 0;
+    const character = masked[offset] ?? "";
+    if (character === "\n") {
+      boundaryAllowsStatement = lineBreakAllowsDirectStatement(
+        source,
+        masked,
+        currentLineStart,
+        offset,
+        lastNonWhitespace,
+        previousWordDecision,
+      );
+      whitespaceSinceBoundary = true;
+      currentLineStart = offset + 1;
+    } else if (character === ";" || character === "}") {
+      boundaryAllowsStatement = true;
+      whitespaceSinceBoundary = true;
+      lastNonWhitespace = offset;
+    } else if (!/\s/.test(character)) {
+      whitespaceSinceBoundary = false;
+      lastNonWhitespace = offset;
+    }
+  }
+}
+
+function lineBreakAllowsDirectStatement(
+  source: string,
+  masked: string,
+  lineStart: number,
+  newlineOffset: number,
+  previousOffset: number,
+  previousWordDecision: Map<number, boolean>,
+): boolean {
   if (previousOffset < 0) return true;
   const previous = masked[previousOffset] ?? "";
   if ("([{,:.?=<>!&|+-*%^~\\/".includes(previous)) {
     // A masked string/template literal leaves its assignment operator as the last visible
     // character. The raw line must actually end in its closing delimiter; whitespace alone after
     // an assignment remains an ambiguous continuation and therefore fails closed.
-    const rawPreviousLine = source.slice(source.lastIndexOf("\n", lineStart - 2) + 1, lineStart);
-    if (previous === "=" && /['"`]\s*$/.test(rawPreviousLine)) return true;
-    return false;
+    return previous === "=" && /['"`]\s*$/.test(source.slice(lineStart, newlineOffset));
   }
+  const cached = previousWordDecision.get(previousOffset);
+  if (cached !== undefined) return cached;
   const previousWord = identifierEndingAt(masked, previousOffset)?.value;
-  return (
+  const allowed =
     !previousWord ||
-    !["await", "delete", "new", "return", "throw", "typeof", "void", "yield"].includes(previousWord)
-  );
+    !["await", "delete", "new", "return", "throw", "typeof", "void", "yield"].includes(
+      previousWord,
+    );
+  previousWordDecision.set(previousOffset, allowed);
+  return allowed;
 }
 
 function maskControlledSingleStatementBodies(masked: string, offsets: Uint8Array): void {

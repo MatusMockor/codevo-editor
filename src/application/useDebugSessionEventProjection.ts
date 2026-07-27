@@ -52,6 +52,7 @@ export interface DebugSessionEventProjectionBindings {
   readonly compoundCoordinatorRef: MutableRefObject<NodeDebugCompoundSessionCoordinator>;
   readonly compoundProjectionRef: MutableRefObject<DebugCompoundSessionProjection>;
   readonly currentWorkspaceIdRef: MutableRefObject<string | null>;
+  readonly frameSelectionByRootRef: MutableRefObject<Record<string, DebugFrameSelection | null>>;
   readonly finalizeExactSession: (key: string, sessionId: number) => void;
   readonly gateway: DebugGateway;
   readonly isExactWorkspaceOwnerCurrent: (rootPath: string, workspaceId: string | null) => boolean;
@@ -64,6 +65,7 @@ export interface DebugSessionEventProjectionBindings {
   readonly pendingRestartsRef: MutableRefObject<Map<string, PendingRestartProjection>>;
   readonly pendingStartKeysRef: MutableRefObject<Set<string>>;
   readonly restartCoordinatorsRef: MutableRefObject<Map<string, DebugRestartCoordinator>>;
+  readonly selectFrame: (frameId: number) => Promise<void>;
   readonly sessionOwnersRef: MutableRefObject<Map<string, DebugSessionOwner>>;
   readonly setDebugCompoundActive: Dispatch<SetStateAction<boolean>>;
   readonly setFrameSelectionByRoot: Dispatch<
@@ -267,7 +269,18 @@ export function useDebugSessionEventProjection(
           bindings.adoptExceptionPauseSession(event.rootPath, selectedSessionId, "node");
         }
         if (isLifecycleEvent) {
-          bindings.setFrameSelectionByRoot((current) => ({ ...current, [key]: null }));
+          if (selectedSnapshot !== existing) {
+            if (selectedSnapshot?.state.kind === "stopped" && selectedSnapshot.state.frames[0]) {
+              void bindings.selectFrame(selectedSnapshot.state.frames[0].frameId);
+            } else {
+              const cleared = {
+                ...bindings.frameSelectionByRootRef.current,
+                [key]: null,
+              };
+              bindings.frameSelectionByRootRef.current = cleared;
+              bindings.setFrameSelectionByRoot(cleared);
+            }
+          }
           return;
         }
         if (event.sessionId !== selectedSessionId) return;
@@ -338,6 +351,17 @@ export function useDebugSessionEventProjection(
 
       if (payload.kind === "stopped") {
         bindings.setPauseGeneration(key, payload.pauseGeneration);
+        const topFrame = payload.frames[0];
+        if (topFrame && exactEventOwnerIsCurrent(bindings, key, event)) {
+          void bindings.selectFrame(topFrame.frameId);
+        } else {
+          const cleared = {
+            ...bindings.frameSelectionByRootRef.current,
+            [key]: null,
+          };
+          bindings.frameSelectionByRootRef.current = cleared;
+          bindings.setFrameSelectionByRoot(cleared);
+        }
       }
       if (payload.kind === "resumed" || payload.kind === "terminated") {
         bindings.setPauseGeneration(key, 0);
@@ -360,12 +384,13 @@ export function useDebugSessionEventProjection(
         return;
       }
 
-      if (
-        payload.kind === "stopped" ||
-        payload.kind === "resumed" ||
-        payload.kind === "terminated"
-      ) {
-        bindings.setFrameSelectionByRoot((current) => ({ ...current, [key]: null }));
+      if (payload.kind === "resumed" || payload.kind === "terminated") {
+        const cleared = {
+          ...bindings.frameSelectionByRootRef.current,
+          [key]: null,
+        };
+        bindings.frameSelectionByRootRef.current = cleared;
+        bindings.setFrameSelectionByRoot(cleared);
       }
     });
 
@@ -374,4 +399,26 @@ export function useDebugSessionEventProjection(
       unsubscribe();
     };
   }, [gateway]);
+}
+
+function exactEventOwnerIsCurrent(
+  bindings: DebugSessionEventProjectionBindings,
+  key: string,
+  event: DebugEvent,
+): boolean {
+  const owner = bindings.sessionOwnersRef.current.get(key);
+  if (
+    !bindings.mountedRef.current ||
+    owner?.sessionId !== event.sessionId ||
+    owner.workspaceEpoch !== bindings.workspaceOwnerEpochRef.current.epoch ||
+    owner.workspaceId !== bindings.currentWorkspaceIdRef.current ||
+    !trustedWorkspace(bindings.isWorkspaceTrusted)
+  ) {
+    return false;
+  }
+  try {
+    return bindings.isExactWorkspaceOwnerCurrent(event.rootPath, owner.workspaceId);
+  } catch {
+    return false;
+  }
 }

@@ -3,6 +3,11 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS,
+  type VscodeProcessTaskOutput,
+  type VscodeProcessTaskOutputStream,
+} from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTasksPanelProps } from "./VscodeProcessTasksPanel";
 import { VscodeProcessTasksPanel } from "./VscodeProcessTasksPanel";
 
@@ -128,7 +133,7 @@ describe("VscodeProcessTasksPanel", () => {
     rerender({
       activeLabel: "Build",
       diagnostics: [{ severity: "warning", message: "Check task configuration." }],
-      output: [{ kind: "data", stream: "stdout", data: "progress" }],
+      output: taskOutput("progress"),
       running: true,
       status: "running",
     });
@@ -147,11 +152,7 @@ describe("VscodeProcessTasksPanel", () => {
         { severity: "error", message: "Task label is duplicated." },
       ],
       error: "Tasks could not be refreshed.",
-      output: [
-        { kind: "data", stream: "stdout", data: "<script>safe stdout</script>\n" },
-        { kind: "data", stream: "stderr", data: "plain stderr\n" },
-        { kind: "truncated" },
-      ],
+      output: taskOutput("<script>safe stdout</script>\n", "plain stderr\n", true),
       running: true,
       status: "running",
       truncated: true,
@@ -175,21 +176,70 @@ describe("VscodeProcessTasksPanel", () => {
     expect(stdout?.style.background).toBe("var(--color-surface)");
     expect(stdout?.closest("div")?.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
     const truncation = [...host.querySelectorAll("p")].find((element) =>
-      element.textContent?.includes("Earlier task output was truncated."),
+      element.textContent?.includes("Additional task output was truncated."),
     );
     expect(truncation?.style.color).toBe("var(--color-warning)");
     expect(host.textContent).toContain("Additional configured tasks or diagnostics");
     expect(host.textContent).toContain("Tasks could not be refreshed.");
   });
 
+  it("appends only the new owner-scoped stream suffix into one stable text node", () => {
+    const identity = Object.freeze({});
+    rerender({
+      activeLabel: "Build",
+      output: taskOutput("prefix", "", false, identity),
+      running: true,
+      status: "running",
+    });
+    const stdout = host.querySelector('pre[aria-label="stdout output"]')!;
+    const textNode = stdout.firstChild;
+
+    rerender({
+      output: taskOutput("prefix-tail", "", false, identity),
+    });
+
+    expect(stdout.firstChild).toBe(textNode);
+    expect(stdout.childNodes).toHaveLength(1);
+    expect(stdout.textContent).toBe("prefix-tail");
+
+    rerender({
+      output: taskOutput("replacement", "", false, Object.freeze({})),
+    });
+    expect(stdout.firstChild).toBe(textNode);
+    expect(stdout.textContent).toBe("replacement");
+  });
+
+  it("renders only the bounded stream tail instead of placing the retained megabyte in the DOM", () => {
+    const hiddenMarker = "hidden-prefix";
+    const marker = "visible-tail";
+    const retained =
+      hiddenMarker +
+      "x".repeat(MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS + 64 * 1_024) +
+      marker;
+    rerender({
+      activeLabel: "Build",
+      output: taskOutput(retained),
+      running: true,
+      status: "running",
+    });
+
+    const stdout = host.querySelector('pre[aria-label="stdout output"]')!;
+    expect(stdout.textContent?.length).toBe(MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS);
+    expect(stdout.textContent?.endsWith(marker)).toBe(true);
+    expect(stdout.textContent).not.toContain(hiddenMarker);
+    expect(host.textContent).toContain(
+      "Earlier stdout output is hidden to keep the task panel responsive.",
+    );
+  });
+
   it("announces the current owner-safe step and renders escaped output boundaries", () => {
     rerender({
       activeLabel: "All",
       currentStep: { label: "<script>Build</script>", index: 2, total: 3 },
-      output: [
-        { kind: "step", label: "<script>Build</script>", index: 2, total: 3 },
-        { kind: "data", stream: "stdout", data: "built\n" },
-      ],
+      output: taskOutput(
+        "\n--- Step 2 of 3: <script>Build</script> ---\nbuilt\n",
+        "\n--- Step 2 of 3: <script>Build</script> ---\n",
+      ),
       running: true,
       status: "running",
     });
@@ -222,7 +272,7 @@ describe("VscodeProcessTasksPanel", () => {
     rerender({
       activeLabel: "Build",
       occupied: true,
-      output: [{ kind: "data", stream: "stdout", data: "pending" }],
+      output: taskOutput("pending"),
       running: true,
       status: "pending",
     });
@@ -283,14 +333,14 @@ describe("VscodeProcessTasksPanel", () => {
   it("never retains an active label across an owner-filtered workspace switch", () => {
     rerender({
       activeLabel: "Private task from workspace A",
-      output: [{ kind: "data", stream: "stdout", data: "workspace A output" }],
+      output: taskOutput("workspace A output"),
       status: "exited",
     });
     expect(host.textContent).toContain("Private task from workspace A");
 
     rerender({
       activeLabel: null,
-      output: [],
+      output: taskOutput(),
       status: null,
       tasks: [
         {
@@ -347,7 +397,7 @@ describe("VscodeProcessTasksPanel", () => {
       discover,
       discovering: false,
       error: null,
-      output: [],
+      output: taskOutput(),
       occupied: false,
       problemNotices: [],
       problems: null,
@@ -391,3 +441,25 @@ describe("VscodeProcessTasksPanel", () => {
     };
   }
 });
+
+function taskOutput(
+  stdout = "",
+  stderr = "",
+  truncated = false,
+  identity: object = Object.freeze({}),
+): VscodeProcessTaskOutput {
+  return Object.freeze({
+    identity,
+    stdout: taskOutputStream(stdout),
+    stderr: taskOutputStream(stderr),
+    truncated,
+  });
+}
+
+function taskOutputStream(text: string): VscodeProcessTaskOutputStream {
+  return Object.freeze({
+    chunkCount: text.length === 0 ? 0 : 1,
+    codeUnits: text.length,
+    tail: text.length === 0 ? null : Object.freeze({ previous: null, text }),
+  });
+}

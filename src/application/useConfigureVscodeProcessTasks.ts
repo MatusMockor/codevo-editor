@@ -45,49 +45,31 @@ export function useConfigureVscodeProcessTasks({
   workspaceTrustedRef,
 }: UseConfigureVscodeProcessTasksOptions) {
   return useCallback(
-    async (
-      action: VscodeProcessTasksConfigurationAction,
-    ): Promise<boolean> => {
-      if (
-        !workspaceRoot ||
-        !workspaceIdentity ||
-        !workspaceRuntimeOwner ||
-        !workspaceOwnerFiles
-      ) {
+    async (action: VscodeProcessTasksConfigurationAction): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceIdentity || !workspaceRuntimeOwner || !workspaceOwnerFiles) {
         return false;
       }
-      const claimGeneration =
-        workspaceRuntimeOwnerClaimsRef.current.generationFor(
-          workspaceRuntimeOwner.ownerKey,
-        );
+      const claimGeneration = workspaceRuntimeOwnerClaimsRef.current.generationFor(
+        workspaceRuntimeOwner.ownerKey,
+      );
       const isCurrent = () =>
         workspaceTrustedRef.current &&
-        workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          workspaceRoot,
-        ) &&
-        workspaceRuntimeOwnerRef.current?.ownerKey ===
-          workspaceRuntimeOwner.ownerKey &&
-        workspaceRuntimeOwnerClaimsRef.current.generationFor(
-          workspaceRuntimeOwner.ownerKey,
-        ) === claimGeneration;
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot) &&
+        workspaceRuntimeOwnerRef.current?.ownerKey === workspaceRuntimeOwner.ownerKey &&
+        workspaceRuntimeOwnerClaimsRef.current.generationFor(workspaceRuntimeOwner.ownerKey) ===
+          claimGeneration;
 
       return configureVscodeProcessTasks({
         action,
         files: {
           createDirectoryForWorkspace:
-            workspaceOwnerFiles.createDirectoryForWorkspace.bind(
-              workspaceOwnerFiles,
-            ),
+            workspaceOwnerFiles.createDirectoryForWorkspace.bind(workspaceOwnerFiles),
           createTextFileWithContentForWorkspace:
-            workspaceOwnerFiles.createTextFileWithContentForWorkspace.bind(
-              workspaceOwnerFiles,
-            ),
+            workspaceOwnerFiles.createTextFileWithContentForWorkspace.bind(workspaceOwnerFiles),
           readDirectory: workspaceFiles.readDirectory.bind(workspaceFiles),
         },
         isCurrent,
-        openFile: (entry) =>
-          openFile(entry, { pin: true, shouldCommit: isCurrent }),
+        openFile: (entry) => openFile(entry, { pin: true, shouldCommit: isCurrent }),
         rootPath: workspaceRoot,
         workspaceId: workspaceIdentity.workspaceId,
       });

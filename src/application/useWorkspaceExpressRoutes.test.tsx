@@ -13,6 +13,7 @@ import {
   type UseWorkspaceExpressRoutesOptions,
   type WorkspaceExpressRoutesState,
 } from "./useWorkspaceExpressRoutes";
+import { expressRouteNavigationReceipt } from "./expressRouteNavigationReceipt";
 
 const ROOT_A = "/workspace/a";
 const ROOT_B = "/workspace/b";
@@ -52,7 +53,7 @@ describe("useWorkspaceExpressRoutes", () => {
       maxFiles: 2_000,
       maxVisited: 50_000,
     });
-    expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(ROOT_A, "src/a.ts", 2_097_152);
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(ROOT_A, "src/a.ts", 262_144);
     expect(harness.hook().loading).toBe(false);
     expect(harness.hook().error).toBeNull();
     harness.unmount();
@@ -108,11 +109,13 @@ describe("useWorkspaceExpressRoutes", () => {
       ],
     });
 
-    expect(harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path }))).toEqual(
-      [
+    await waitForReact(() =>
+      expect(
+        harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path })),
+      ).toEqual([
         { packageLabel: "@acme/api", path: "/dirty-api" },
         { packageLabel: "workspace", path: "/root" },
-      ],
+      ]),
     );
     harness.unmount();
   });
@@ -311,7 +314,7 @@ describe("useWorkspaceExpressRoutes", () => {
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(4);
 
     harness.set({ rootPath: ROOT_A, workspaceId: "workspace-a" });
-    expect(harness.hook().routes[0]?.path).toBe(ROOT_A);
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe(ROOT_A));
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(4);
 
     harness.set({ rootPath: "/workspace/e", workspaceId: "workspace-e" });
@@ -319,7 +322,7 @@ describe("useWorkspaceExpressRoutes", () => {
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(5);
 
     harness.set({ rootPath: ROOT_A, workspaceId: "workspace-a" });
-    expect(harness.hook().routes[0]?.path).toBe(ROOT_A);
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe(ROOT_A));
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(5);
 
     harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
@@ -360,7 +363,31 @@ describe("useWorkspaceExpressRoutes", () => {
     }
   });
 
-  it("updates all dirty overlays instantly without mutating cached disk routes or rediscovering", async () => {
+  it("rotates exact navigation authority for route snapshots and discovery revisions", async () => {
+    const harness = renderRoutes({ gateway: discovery(), isOpen: true });
+    await waitForReact(() => expect(harness.hook().navigationGeneration).not.toBeNull());
+    const initialGeneration = harness.hook().navigationGeneration;
+
+    harness.set({ isOpen: true });
+    expect(harness.hook().navigationGeneration).toBe(initialGeneration);
+
+    await act(async () => harness.hook().refresh());
+    await waitForReact(() => {
+      expect(harness.hook().navigationGeneration).not.toBeNull();
+      expect(harness.hook().navigationGeneration).not.toBe(initialGeneration);
+    });
+    const refreshedGeneration = harness.hook().navigationGeneration;
+
+    harness.set({ discoveryVersion: 1 });
+    expect(harness.hook().navigationGeneration).toBeNull();
+    await waitForReact(() => {
+      expect(harness.hook().navigationGeneration).not.toBeNull();
+      expect(harness.hook().navigationGeneration).not.toBe(refreshedGeneration);
+    });
+    harness.unmount();
+  });
+
+  it("updates coalesced dirty overlays without mutating cached disk routes or rediscovering", async () => {
     const gateway = discovery();
     const harness = renderRoutes({ gateway, isOpen: true });
     await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/a"));
@@ -373,14 +400,167 @@ describe("useWorkspaceExpressRoutes", () => {
       ],
     });
 
-    expect(harness.hook().routes.map((route) => route.path)).toEqual(["/dirty-a", "/dirty-b"]);
+    await waitForReact(() =>
+      expect(harness.hook().routes.map((route) => route.path)).toEqual(["/dirty-a", "/dirty-b"]),
+    );
     expect(diskRoutes.map((route) => route.path)).toEqual(["/a"]);
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(1);
 
     harness.set({ dirtySnapshots: [] });
-    expect(harness.hook().routes).toEqual(diskRoutes);
+    await waitForReact(() => expect(harness.hook().routes).toEqual(diskRoutes));
     harness.unmount();
   });
+
+  it("coalesces rapid max-source edits and preserves unchanged row identity", async () => {
+    const sources: Record<string, string> = {
+      "src/a.ts": "app.get('/a', handler);",
+      "src/b.ts": "app.get('/b', handler);",
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => ({
+        status: "ok" as const,
+        content: sources[path] ?? "",
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+    await waitForReact(() => expect(harness.hook().routes).toHaveLength(2));
+    const originalA = harness.hook().routes.find(({ path }) => path === "/a");
+    const originalB = harness.hook().routes.find(({ path }) => path === "/b");
+    expect(originalA).toBeDefined();
+    expect(originalB).toBeDefined();
+    await waitForReact(() => expect(harness.hook().navigationGeneration).not.toBeNull());
+
+    vi.useFakeTimers();
+    try {
+      const sourcePrefix = "app.get('/final', handler);\n";
+      const maxSource = sourcePrefix + "x".repeat(128 * 1024 - sourcePrefix.length);
+      for (let edit = 0; edit < 32; edit += 1) {
+        harness.set({
+          dirtySnapshots: [
+            {
+              relativeFilePath: "src/a.ts",
+              source: edit === 31 ? maxSource : `app.get('/edit-${String(edit)}', handler);`,
+            },
+          ],
+        });
+      }
+
+      expect(vi.getTimerCount()).toBe(1);
+      expect(harness.hook().routes.find(({ path }) => path === "/a")).toBe(originalA);
+      await act(async () => vi.advanceTimersByTimeAsync(74));
+      expect(harness.hook().routes.find(({ path }) => path === "/a")).toBe(originalA);
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+
+      expect(harness.hook().routes.find(({ path }) => path === "/final")).toBeDefined();
+      expect(harness.hook().routes.find(({ path }) => path === "/b")).toBe(originalB);
+      expect(expressRouteNavigationReceipt(originalA!)).toBeNull();
+      expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.unmount();
+      expect(expressRouteNavigationReceipt(originalB!)).toBeNull();
+      vi.useRealTimers();
+    }
+  }, 10_000);
+
+  it("reuses equal dirty inputs without timer loops or projection postponement", async () => {
+    const harness = renderRoutes({ gateway: discovery(), isOpen: true });
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/a"));
+
+    vi.useFakeTimers();
+    try {
+      for (let render = 0; render < 32; render += 1) {
+        harness.set({ dirtySnapshots: [] });
+      }
+      expect(vi.getTimerCount()).toBe(0);
+
+      for (let render = 0; render < 32; render += 1) {
+        harness.set({
+          dirtySnapshots: [
+            {
+              relativeFilePath: "src/a.ts",
+              source: "app.get('/stable-dirty', handler);",
+            },
+          ],
+        });
+      }
+      expect(vi.getTimerCount()).toBe(1);
+      await act(async () => vi.advanceTimersByTimeAsync(75));
+      expect(harness.hook().routes[0]?.path).toBe("/stable-dirty");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("scans and reparses only the changed file among sixteen bounded dirty snapshots", async () => {
+    const onProjectionWork = vi.fn();
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: [],
+        truncated: false,
+        visited: 1,
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true, onProjectionWork });
+    await waitForReact(() => expect(harness.hook().navigationGeneration).not.toBeNull());
+    const boundedSourceBytes = 16 * 1024;
+    const sourceFor = (path: string) => {
+      const prefix = [
+        "import { Router } from 'express';",
+        "const router = Router();",
+        `router.get('${path}', handler);`,
+        "",
+      ].join("\n");
+      return prefix + "x".repeat(boundedSourceBytes - prefix.length);
+    };
+    const dirtySnapshots = Array.from({ length: 16 }, (_, index) => ({
+      relativeFilePath: `src/dirty-${String(index)}.ts`,
+      source: sourceFor(`/initial-${String(index)}`),
+    }));
+
+    vi.useFakeTimers();
+    try {
+      harness.set({ dirtySnapshots });
+      await act(async () => vi.advanceTimersByTimeAsync(75));
+      expect(
+        onProjectionWork.mock.calls.filter(([work]) => work.kind === "source-scan"),
+      ).toHaveLength(16);
+      expect(onProjectionWork.mock.calls.filter(([work]) => work.kind === "parse")).toHaveLength(
+        16,
+      );
+
+      onProjectionWork.mockClear();
+      harness.set({
+        dirtySnapshots: dirtySnapshots.map((snapshot, index) =>
+          index === 15 ? { ...snapshot, source: sourceFor("/changed") } : snapshot,
+        ),
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(75));
+
+      expect(onProjectionWork.mock.calls).toEqual([
+        [
+          {
+            inspectedCodeUnits: boundedSourceBytes,
+            kind: "source-scan",
+            relativeFilePath: "src/dirty-15.ts",
+          },
+        ],
+        [{ kind: "parse", relativeFilePath: "src/dirty-15.ts" }],
+      ]);
+      expect(harness.hook().routes).toHaveLength(16);
+      expect(harness.hook().routes.map(({ path }) => path)).toContain("/changed");
+      expect(harness.hook().routes.map(({ path }) => path)).not.toContain("/initial-15");
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  }, 10_000);
 
   it("does not collapse dirty snapshots from different packages at the same path", async () => {
     const gateway = discovery({
@@ -408,11 +588,13 @@ describe("useWorkspaceExpressRoutes", () => {
       ],
     });
 
-    expect(harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path }))).toEqual(
-      [
+    await waitForReact(() =>
+      expect(
+        harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path })),
+      ).toEqual([
         { packageLabel: "api-a", path: "/a" },
         { packageLabel: "api-b", path: "/b" },
-      ],
+      ]),
     );
     harness.unmount();
   });
@@ -462,11 +644,119 @@ describe("useWorkspaceExpressRoutes", () => {
       ],
     });
 
-    expect(harness.hook().routes.some((route) => route.path === "/api/old")).toBe(false);
+    await waitForReact(() =>
+      expect(harness.hook().routes.some((route) => route.path === "/api/old")).toBe(false),
+    );
     expect(harness.hook().routes).toEqual(
       expect.arrayContaining([expect.objectContaining({ method: "POST", path: "/api/new" })]),
     );
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("fails closed from the incremental path when a local import precedes an Express import", async () => {
+    const onProjectionWork = vi.fn();
+    const sources: Record<string, string> = {
+      "src/app.ts": [
+        "import express from 'express';",
+        "import router from './router';",
+        "const app = express();",
+        "app.use('/api', router);",
+      ].join("\n"),
+      "src/augment.ts": [
+        "import router from './router';",
+        "import express from 'express';",
+        "router.get('/old', handler);",
+      ].join("\n"),
+      "src/router.ts": [
+        "import express from 'express';",
+        "const router = express.Router();",
+        "export default router;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 4,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => ({
+        status: "ok" as const,
+        content: sources[path] ?? "",
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true, onProjectionWork });
+    await waitForReact(() =>
+      expect(harness.hook().routes.some(({ path }) => path === "/old")).toBe(true),
+    );
+    onProjectionWork.mockClear();
+
+    harness.set({
+      dirtySnapshots: [
+        {
+          relativeFilePath: "src/augment.ts",
+          source: [
+            "import router from './router';",
+            "import express from 'express';",
+            "router.get('/new', handler);",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    await waitForReact(() =>
+      expect(harness.hook().routes.some(({ path }) => path === "/new")).toBe(true),
+    );
+    expect(onProjectionWork.mock.calls.some(([work]) => work.kind === "parse")).toBe(false);
+    expect(onProjectionWork.mock.calls).toContainEqual([
+      expect.objectContaining({
+        kind: "workspace-parse",
+        snapshotCount: 3,
+      }),
+    ]);
+    harness.unmount();
+  });
+
+  it("stops dirty admission after the aggregate prefix across two thousand large files", async () => {
+    const onProjectionWork = vi.fn();
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: [],
+        truncated: false,
+        visited: 1,
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true, onProjectionWork });
+    await waitForReact(() => expect(harness.hook().navigationGeneration).not.toBeNull());
+    const prefix = "app.get('/bounded', handler);\n";
+    const source = prefix + "x".repeat(256 * 1024 - prefix.length);
+
+    harness.set({
+      dirtySnapshots: Array.from({ length: 2_000 }, (_, index) => ({
+        relativeFilePath: `src/${String(index).padStart(4, "0")}.ts`,
+        source,
+      })),
+    });
+
+    await waitForReact(() => expect(harness.hook().truncated).toBe(true));
+    expect(onProjectionWork.mock.calls).toContainEqual([
+      {
+        kind: "workspace-parse",
+        snapshotCount: 1,
+        sourceBytes: 256 * 1024,
+      },
+    ]);
+    const scans = onProjectionWork.mock.calls
+      .map(([work]) => work)
+      .filter(({ kind }) => kind === "source-scan");
+    expect(scans).toHaveLength(2);
+    expect(
+      scans.reduce(
+        (total, work) => total + (work.kind === "source-scan" ? work.inspectedCodeUnits : 0),
+        0,
+      ),
+    ).toBe(512 * 1024);
+    expect(harness.hook().routes).toHaveLength(1);
     harness.unmount();
   });
 
@@ -527,8 +817,10 @@ describe("useWorkspaceExpressRoutes", () => {
       ],
     });
 
-    expect(harness.hook().routes).toEqual(
-      expect.arrayContaining([expect.objectContaining({ method: "POST", path: "/api/dirty" })]),
+    await waitForReact(() =>
+      expect(harness.hook().routes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ method: "POST", path: "/api/dirty" })]),
+      ),
     );
     harness.unmount();
   });
@@ -631,19 +923,21 @@ describe("useWorkspaceExpressRoutes", () => {
       ],
     });
 
-    expect(
-      harness
-        .hook()
-        .routes.filter(({ method }) => method === "GET" || method === "POST")
-        .map(({ packageLabel, method, path }) => ({
-          packageLabel,
-          method,
-          path,
-        })),
-    ).toEqual([
-      { packageLabel: "admin", method: "GET", path: "/admin/saved" },
-      { packageLabel: "api", method: "POST", path: "/api/dirty" },
-    ]);
+    await waitForReact(() =>
+      expect(
+        harness
+          .hook()
+          .routes.filter(({ method }) => method === "GET" || method === "POST")
+          .map(({ packageLabel, method, path }) => ({
+            packageLabel,
+            method,
+            path,
+          })),
+      ).toEqual([
+        { packageLabel: "admin", method: "GET", path: "/admin/saved" },
+        { packageLabel: "api", method: "POST", path: "/api/dirty" },
+      ]),
+    );
     expect(harness.hook().routes.some(({ path }) => path === "/admin/dirty")).toBe(false);
     harness.unmount();
   });
@@ -1176,7 +1470,7 @@ describe("useWorkspaceExpressRoutes", () => {
     await act(async () => pendingManifest.resolve({ status: "ok", content: '{"name":"stale"}' }));
     await waitForReact(() => expect(harness.hook().routes.map(({ path }) => path)).toEqual(["/b"]));
 
-    expect(gateway.readSourceTextBounded).not.toHaveBeenCalledWith(ROOT_A, "a.ts", 2_097_152);
+    expect(gateway.readSourceTextBounded).not.toHaveBeenCalledWith(ROOT_A, "a.ts", 262_144);
     harness.unmount();
   });
 
@@ -1586,23 +1880,98 @@ describe("useWorkspaceExpressRoutes", () => {
     harness.unmount();
   });
 
-  it("removes stale disk routes when a dirty replacement exceeds the source bound", async () => {
+  it("degrades at exactly 256 KiB plus one without parsing the stale dirty route", async () => {
+    const onProjectionWork = vi.fn();
     const gateway = discovery();
-    const harness = renderRoutes({ gateway, isOpen: true });
+    const harness = renderRoutes({ gateway, isOpen: true, onProjectionWork });
     await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/a"));
+    onProjectionWork.mockClear();
 
     harness.set({
-      dirtySnapshots: [{ relativeFilePath: "src/a.ts", source: "x".repeat(2_097_153) }],
+      dirtySnapshots: [{ relativeFilePath: "src/a.ts", source: "x".repeat(262_145) }],
     });
 
-    expect(harness.hook().routes).toEqual([]);
+    await waitForReact(() => {
+      expect(harness.hook().routes).toEqual([]);
+      expect(harness.hook().truncated).toBe(true);
+    });
     expect(harness.hook().truncated).toBe(true);
+    expect(onProjectionWork).toHaveBeenCalledExactlyOnceWith({
+      inspectedCodeUnits: 262_145,
+      kind: "source-scan",
+      relativeFilePath: "src/a.ts",
+    });
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 
-  it("caps routes, rejects oversized wire content, and limits read concurrency to eight", async () => {
-    const routeHeavy = "app.get('',x);\n".repeat(100_000);
+  it("analyzes an exact 256 KiB dirty source at the interactive boundary", async () => {
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: [],
+        truncated: false,
+        visited: 1,
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+    await waitForReact(() => expect(harness.hook().navigationGeneration).not.toBeNull());
+    const prefix = "app.get('/boundary', handler);\n";
+
+    harness.set({
+      dirtySnapshots: [
+        {
+          relativeFilePath: "src/boundary.ts",
+          source: prefix + "x".repeat(256 * 1024 - prefix.length),
+        },
+      ],
+    });
+
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/boundary"));
+    expect(harness.hook().truncated).toBe(false);
+    harness.unmount();
+  });
+
+  it("keeps an oversized dirty route revoked across workspace A-B-A", async () => {
+    const gateway = discovery({
+      readSourceTextBounded: vi.fn(async (rootPath, path) => ({
+        status: "ok" as const,
+        content:
+          path === "tsconfig.json"
+            ? ""
+            : `app.get('${rootPath === ROOT_A ? "/a" : "/b"}', handler);`,
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/a"));
+    const staleA = harness.hook().routes[0];
+
+    harness.set({
+      dirtySnapshots: [{ relativeFilePath: "src/a.ts", source: "x".repeat(262_145) }],
+    });
+    await waitForReact(() => {
+      expect(harness.hook().routes).toEqual([]);
+      expect(harness.hook().truncated).toBe(true);
+    });
+    expect(expressRouteNavigationReceipt(staleA!)).toBeNull();
+
+    harness.set({ dirtySnapshots: [], rootPath: ROOT_B, workspaceId: "workspace-b" });
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/b"));
+    harness.set({
+      dirtySnapshots: [{ relativeFilePath: "src/a.ts", source: "x".repeat(262_145) }],
+      rootPath: ROOT_A,
+      workspaceId: "workspace-a",
+    });
+    await waitForReact(() => {
+      expect(harness.hook().routes).toEqual([]);
+      expect(harness.hook().truncated).toBe(true);
+    });
+    expect(harness.hook().truncated).toBe(true);
+    expect(expressRouteNavigationReceipt(staleA!)).toBeNull();
+    harness.unmount();
+  });
+
+  it("caps presented routes, rejects oversized analysis, and limits read concurrency to eight", async () => {
+    const routeHeavy = "app.get('',x);\n".repeat(3_000);
     let activeReads = 0;
     let peakReads = 0;
     const release = deferred<void>();
@@ -1623,9 +1992,12 @@ describe("useWorkspaceExpressRoutes", () => {
       }),
     });
     const harness = renderRoutes({ gateway, isOpen: true });
-    await waitForReact(() => expect(harness.hook().loading).toBe(false));
-    expect(harness.hook().routes).toHaveLength(20_000);
-    expect(harness.hook().routes[19_999]?.occurrence).toBe(20_000);
+    await waitForReact(() =>
+      expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(ROOT_A, "routes.ts", 262_144),
+    );
+    await waitForReact(() => expect(harness.hook().navigationGeneration).not.toBeNull());
+    expect(harness.hook().routes).toHaveLength(2_000);
+    expect(harness.hook().routes[1_999]?.occurrence).toBe(2_000);
     expect(harness.hook().truncated).toBe(true);
 
     let refresh!: Promise<void>;
@@ -1637,10 +2009,10 @@ describe("useWorkspaceExpressRoutes", () => {
     await refresh;
     expect(peakReads).toBe(8);
     harness.unmount();
-  });
+  }, 15_000);
 
-  it("stops parsing at the aggregate 32 MiB source budget", async () => {
-    const fullBudgetSource = "😀".repeat((2 * 1024 * 1024) / 4);
+  it("stops parsing at the aggregate 256 KiB interactive source budget", async () => {
+    const fullBudgetSource = "x".repeat(16 * 1024);
     const files = [
       ...Array.from({ length: 16 }, (_, index) => `src/large-${index}.ts`),
       "src/after-budget.ts",
@@ -1699,7 +2071,8 @@ describe("useWorkspaceExpressRoutes", () => {
     await waitForReact(() => expect(harness.hook().loading).toBe(false));
 
     expect(completed[0]).not.toBe(files[0]);
-    expect(harness.hook().routes.map((route) => route.path)).toEqual(["/first"]);
+    await waitForReact(() => expect(harness.hook().truncated).toBe(true));
+    expect(harness.hook().routes).toEqual([]);
     expect(harness.hook().truncated).toBe(true);
     harness.unmount();
   }, 10_000);

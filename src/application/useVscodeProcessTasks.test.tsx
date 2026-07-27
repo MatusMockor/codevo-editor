@@ -8,6 +8,7 @@ import type {
   VscodeProcessTaskOwner,
   VscodeProcessTasksSnapshot,
 } from "../domain/vscodeProcessTasks";
+import { vscodeProcessTaskOutputStreamTail } from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTasksGateway } from "../domain/vscodeProcessTasksGateway";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
@@ -56,11 +57,16 @@ describe("useVscodeProcessTasks", () => {
       }),
     );
     act(() => gateway.emit(output(owner!, 3, "compiled")));
-    expect(harness.hook().currentStep).toEqual({ label: "Build", index: 1, total: 1 });
-    expect(harness.hook().output).toEqual([
-      { kind: "step", label: "Build", index: 1, total: 1 },
-      { kind: "data", stream: "stdout", data: "compiled" },
-    ]);
+    await waitForReact(() =>
+      expect(harness.hook().currentStep).toEqual({ label: "Build", index: 1, total: 1 }),
+    );
+    expect(harness.hook().output.truncated).toBe(false);
+    expect(vscodeProcessTaskOutputStreamTail(harness.hook().output.stdout).text).toBe(
+      "\n--- Step 1 of 1: Build ---\ncompiled",
+    );
+    expect(vscodeProcessTaskOutputStreamTail(harness.hook().output.stderr).text).toBe(
+      "\n--- Step 1 of 1: Build ---\n",
+    );
     act(() =>
       gateway.emit({
         kind: "status",
@@ -120,7 +126,7 @@ describe("useVscodeProcessTasks", () => {
         truncated: false,
       }),
     );
-    expect(harness.hook().problemNotices).toHaveLength(1);
+    await waitForReact(() => expect(harness.hook().problemNotices).toHaveLength(1));
     expect(harness.hook().problemNotices[0]?.groupKey).toContain(
       "node-package-task-problems:workspace-a:run-1:",
     );
@@ -251,7 +257,11 @@ describe("useVscodeProcessTasks", () => {
     await waitForReact(() => expect(gateway.stop).toHaveBeenCalledExactlyOnceWith(oldOwner));
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
     act(() => oldEmit(output(oldOwner, 1, "late")));
-    expect(harness.hook().output).toEqual([]);
+    expect(harness.hook().output).toMatchObject({
+      stdout: { codeUnits: 0 },
+      stderr: { codeUnits: 0 },
+      truncated: false,
+    });
 
     await act(async () => expect(await harness.hook().start("Build")).toBe(true));
     expect(gateway.start.mock.calls[1]?.[0]).toMatchObject({
@@ -348,7 +358,11 @@ describe("useVscodeProcessTasks", () => {
     expect(harness.hook()).toMatchObject({
       activeLabel: null,
       occupied: true,
-      output: [],
+      output: {
+        stdout: { codeUnits: 0 },
+        stderr: { codeUnits: 0 },
+        truncated: false,
+      },
       running: false,
       status: null,
     });

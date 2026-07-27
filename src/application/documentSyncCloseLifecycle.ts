@@ -1,5 +1,6 @@
 import type { MutableRefObject } from "react";
 import {
+  languageServerDocumentSyncKey,
   languageServerPathFromDocumentSyncKey,
   type LanguageServerDocumentSyncGateway,
   type LanguageServerTextDocument,
@@ -25,6 +26,73 @@ interface CloseLifecycleState {
   readonly pendingOpenAttemptsRef: MutableRefObject<Record<string, number>>;
   readonly lifecycleIdentitiesRef: MutableRefObject<Record<string, number>>;
   readonly versionState: DocumentSyncVersionState;
+}
+
+interface RetireJavaScriptTypeScriptDocumentOptions {
+  readonly rootPath: string;
+  readonly path: string;
+  readonly expectedLifecycleIdentity: number;
+  readonly state: CloseLifecycleState & {
+    readonly authorityVersionsRef: MutableRefObject<Record<string, number>>;
+    readonly closingLifecycleReceiptsRef: MutableRefObject<Set<string>>;
+    readonly uncertainCloseSessionIdsRef: MutableRefObject<Record<string, number>>;
+  };
+  readonly sessionId: number | null;
+  readonly clearChangeTimer: (key: string) => void;
+  readonly enqueueSync: (key: string, operation: () => Promise<void>) => Promise<void>;
+  readonly gateway: LanguageServerDocumentSyncGateway;
+  readonly isOwnerCurrent: () => boolean;
+  readonly reportError: (rootPath: string, error: unknown) => void;
+}
+
+export async function retireJavaScriptTypeScriptDocument({
+  rootPath,
+  path,
+  expectedLifecycleIdentity,
+  state,
+  sessionId,
+  clearChangeTimer,
+  enqueueSync,
+  gateway,
+  isOwnerCurrent,
+  reportError,
+}: RetireJavaScriptTypeScriptDocumentOptions): Promise<void> {
+  const key = languageServerDocumentSyncKey(rootPath, path);
+  if (
+    !state.syncedPathsRef.current.has(key) ||
+    state.lifecycleIdentitiesRef.current[key] !== expectedLifecycleIdentity
+  ) {
+    return;
+  }
+
+  const closingReceipt = `${key}\u0000${expectedLifecycleIdentity}`;
+  state.closingLifecycleReceiptsRef.current.add(closingReceipt);
+  clearChangeTimer(key);
+  clearDocumentLifecycle(state, rootPath, { key, path });
+  delete state.authorityVersionsRef.current[key];
+
+  const canSend = () =>
+    state.closingLifecycleReceiptsRef.current.has(closingReceipt) && isOwnerCurrent();
+  let didSend = false;
+
+  try {
+    await enqueueSync(key, async () => {
+      if (!canSend()) {
+        return;
+      }
+      didSend = true;
+      await gateway.didClose(rootPath, path);
+    });
+  } catch (error) {
+    if (didSend && sessionId !== null) {
+      state.uncertainCloseSessionIdsRef.current[key] = sessionId;
+    }
+    if (canSend()) {
+      reportError(rootPath, error);
+    }
+  } finally {
+    state.closingLifecycleReceiptsRef.current.delete(closingReceipt);
+  }
 }
 
 interface RuntimeAuthority {

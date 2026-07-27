@@ -27,7 +27,7 @@ const MAX_NAME_BYTES = 256;
 const MAX_NPM_SCRIPT_NAME_BYTES = 128;
 const MAX_PATH_BYTES = 4 * 1024;
 const MAX_VALUE_BYTES = 16 * 1024;
-const BLOCKED_NPM_ENVIRONMENT_NAMES = new Set([
+const BLOCKED_NODE_ENVIRONMENT_NAMES = new Set([
   "PATH",
   "NODE_OPTIONS",
   "SHELL",
@@ -174,7 +174,7 @@ export function parseVscodeNodeLaunchConfigurations(
     return invalid('must contain { "version": "0.2.0", "configurations": [...] }');
   }
   const rootUnknown = unknownKey(value, ["version", "configurations", "compounds"]);
-  if (rootUnknown) return invalid(`root contains unknown field "${rootUnknown}"`);
+  if (rootUnknown !== undefined) return invalid("root contains an unsupported field");
   if (value.configurations.length > MAX_CONFIGURATIONS) {
     return invalid(`may contain at most ${MAX_CONFIGURATIONS} configurations`);
   }
@@ -327,7 +327,7 @@ function parseCompound(
   const path = `compounds[${index}]`;
   if (!isRecord(value)) return rejected(`${path} must be an object`);
   const unknown = unknownKey(value, ["name", "configurations", "stopAll", "preLaunchTask"]);
-  if (unknown) return rejected(`${path} contains unsupported field "${unknown}"`);
+  if (unknown !== undefined) return rejected(`${path} contains an unsupported field`);
   if (!displaySafe(value.name, MAX_NAME_BYTES)) {
     return rejected(`${path}.name must be a bounded display-safe string`);
   }
@@ -393,12 +393,14 @@ function parseConfiguration(
     "stopOnEntry",
     "console",
     "internalConsoleOptions",
+    "outputCapture",
     "autoAttachChildProcesses",
     "smartStep",
     "restart",
+    "address",
     "serverReadyAction",
   ]);
-  if (unknown) return rejected(`${path} contains unsupported field "${unknown}"`);
+  if (unknown !== undefined) return rejected(`${path} contains an unsupported field`);
   const compatibility = validateNoopLaunchCompatibility(value, path);
   if (compatibility.kind === "error") return compatibility;
   if (value.sourceMaps !== undefined && typeof value.sourceMaps !== "boolean") {
@@ -440,6 +442,9 @@ function parseConfiguration(
     if (serverReadyAction.value !== undefined) {
       return rejected(`${path}.serverReadyAction is supported only for launch`);
     }
+    if (value.outputCapture !== undefined) {
+      return rejected(`${path}.outputCapture is supported only for launch`);
+    }
     const justMyCode = attachJustMyCodePolicy(
       value.skipFiles,
       value.justMyCode,
@@ -449,6 +454,9 @@ function parseConfiguration(
     if (justMyCode.kind === "error") return justMyCode;
     if (!isNodeDebugPort(value.port)) {
       return rejected(`${path}.port must be an integer between 1 and 65535`);
+    }
+    if (value.address !== undefined && value.address !== "127.0.0.1") {
+      return rejected(`${path}.address must be exactly "127.0.0.1"`);
     }
     if (
       value.program !== undefined ||
@@ -479,6 +487,9 @@ function parseConfiguration(
   if (value.request !== "launch") {
     return rejected(`${path}.request must be "launch" or "attach"`);
   }
+  if (value.address !== undefined) {
+    return rejected(`${path}.address is supported only for attach`);
+  }
   if (value.port !== undefined)
     return rejected(`${path} launch configuration contains attach port`);
   const justMyCode = launchJustMyCodePolicy(
@@ -488,8 +499,22 @@ function parseConfiguration(
     `${path}.justMyCode`,
   );
   if (justMyCode.kind === "error") return justMyCode;
-  if (value.runtimeExecutable === undefined && value.runtimeArgs !== undefined) {
+  if (
+    (value.runtimeExecutable === undefined || value.runtimeExecutable === "node") &&
+    value.runtimeArgs !== undefined &&
+    !(Array.isArray(value.runtimeArgs) && value.runtimeArgs.length === 0)
+  ) {
     return parseNativeNodeWatchConfiguration(
+      value,
+      path,
+      preLaunchTask.value,
+      postDebugTask.value,
+      justMyCode.value,
+      serverReadyAction.value,
+    );
+  }
+  if (value.runtimeExecutable === "node") {
+    return parseScriptLaunchConfiguration(
       value,
       path,
       preLaunchTask.value,
@@ -549,6 +574,9 @@ function validateNoopLaunchCompatibility(
     value.internalConsoleOptions !== "openOnSessionStart"
   ) {
     return rejected(`${path}.internalConsoleOptions must be exactly "openOnSessionStart"`);
+  }
+  if (value.outputCapture !== undefined && value.outputCapture !== "std") {
+    return rejected(`${path}.outputCapture must be exactly "std"`);
   }
   for (const field of ["autoAttachChildProcesses", "smartStep", "restart"] as const) {
     if (value[field] !== undefined && value[field] !== false) {
@@ -699,9 +727,9 @@ function parseNativeNodeWatchConfiguration(
   };
 }
 
-function blockedNpmEnvironmentName(name: string): boolean {
+function blockedNodeEnvironmentName(name: string): boolean {
   const normalized = name.toUpperCase();
-  return BLOCKED_NPM_ENVIRONMENT_NAMES.has(normalized) || normalized.startsWith("NPM_CONFIG_");
+  return BLOCKED_NODE_ENVIRONMENT_NAMES.has(normalized) || normalized.startsWith("NPM_CONFIG_");
 }
 
 function parseNpmLaunchConfiguration(
@@ -742,9 +770,6 @@ function parseNpmLaunchConfiguration(
   }
   const env = environment(value.env, `${path}.env`);
   if (env.kind === "error") return env;
-  if (Object.keys(env.value).some(blockedNpmEnvironmentName)) {
-    return rejected(`${path}.env contains a protected environment name`);
-  }
   return {
     kind: "ok",
     value: {
@@ -779,7 +804,7 @@ function parseServerReadyAction(value: unknown, path: string) {
   }
   if (!isRecord(value)) return rejected(`${path} must be an object`);
   const unknown = unknownKey(value, ["action", "pattern", "uriFormat"]);
-  if (unknown) return rejected(`${path} contains an unsupported field`);
+  if (unknown !== undefined) return rejected(`${path} contains an unsupported field`);
   if (value.action !== "openExternally") {
     return rejected(`${path}.action must be exactly "openExternally"`);
   }
@@ -1017,6 +1042,9 @@ function environment(value: unknown, path: string) {
       return rejected(`${path} must contain bounded literal string environment values`);
     }
     entries.push([key, entry]);
+  }
+  if (entries.some(([key]) => blockedNodeEnvironmentName(key))) {
+    return rejected(`${path} contains a protected environment name`);
   }
   // `Object.fromEntries` defines own data properties even for names such as
   // `__proto__`; indexed assignment into `{}` would invoke the legacy setter.

@@ -4,6 +4,7 @@ import type {
   VscodeProcessTaskOwner,
   VscodeProcessTasksSnapshot,
 } from "../domain/vscodeProcessTasks";
+import { vscodeProcessTaskOutputStreamTail } from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTasksGateway } from "../domain/vscodeProcessTasksGateway";
 import { createVscodeProcessTaskCoordinator } from "./vscodeProcessTaskCoordinator";
 
@@ -16,6 +17,138 @@ const owner: VscodeProcessTaskOwner = Object.freeze({
 });
 
 describe("createVscodeProcessTaskCoordinator", () => {
+  it("coalesces 50k tiny output events and flushes the exact terminal snapshot once", async () => {
+    const harness = gatewayHarness();
+    const publication = publicationHarness();
+    const snapshots: unknown[] = [];
+    const coordinator = createVscodeProcessTaskCoordinator({
+      getGateway: () => harness.gateway,
+      isCurrent: () => true,
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      schedulePublication: publication.schedule,
+    });
+    await coordinator.start({ activation: 1, owner });
+    harness.emit({ kind: "status", owner, sequence: 1, status: "running" });
+    harness.emit(step(2, "Build", 1, 1));
+    for (let sequence = 3; sequence < 50_003; sequence += 1) {
+      harness.emit(output(sequence, "x"));
+    }
+
+    expect(publication.scheduled).toBe(1);
+    expect(snapshots).toHaveLength(1);
+
+    harness.emit({
+      kind: "status",
+      owner,
+      sequence: 50_003,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    expect(snapshots).toHaveLength(2);
+    expect(coordinator.snapshot().task).toMatchObject({
+      sequence: 50_003,
+      status: "exited",
+      outputEventCount: 1_024,
+      outputTruncated: true,
+      output: { truncated: true },
+    });
+    expect(taskOutput(coordinator, "stdout").endsWith("x".repeat(1_024))).toBe(true);
+    publication.flush();
+    expect(snapshots).toHaveLength(2);
+  });
+
+  it("bounds 1024 8-KiB chunks by bytes without extra frame publications", async () => {
+    const harness = gatewayHarness();
+    const publication = publicationHarness();
+    const snapshots: unknown[] = [];
+    const coordinator = createVscodeProcessTaskCoordinator({
+      getGateway: () => harness.gateway,
+      isCurrent: () => true,
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      schedulePublication: publication.schedule,
+    });
+    await coordinator.start({ activation: 1, owner });
+    harness.emit({ kind: "status", owner, sequence: 1, status: "running" });
+    harness.emit(step(2, "Build", 1, 1));
+    const chunk = "z".repeat(8 * 1_024);
+    for (let sequence = 3; sequence < 1_027; sequence += 1) {
+      harness.emit(output(sequence, chunk));
+    }
+    harness.emit({
+      kind: "status",
+      owner,
+      sequence: 1_027,
+      status: "exited",
+      exitCode: 0,
+    });
+
+    const task = coordinator.snapshot().task;
+    expect(publication.scheduled).toBe(1);
+    expect(snapshots).toHaveLength(2);
+    expect(task).toMatchObject({
+      outputBytes: 1_048_576,
+      outputEventCount: 128,
+      outputTruncated: true,
+      output: { truncated: true },
+    });
+    expect(taskOutput(coordinator, "stdout").endsWith(chunk.repeat(128))).toBe(true);
+    publication.flush();
+    expect(snapshots).toHaveLength(2);
+  });
+
+  it("ignores a best-effort scheduled callback after Stop flushes the exact output", async () => {
+    const harness = gatewayHarness();
+    const publication = publicationHarness();
+    const snapshots: unknown[] = [];
+    const coordinator = createVscodeProcessTaskCoordinator({
+      getGateway: () => harness.gateway,
+      isCurrent: () => true,
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      schedulePublication: publication.schedule,
+    });
+    await coordinator.start({ activation: 1, owner });
+    harness.emit({ kind: "status", owner, sequence: 1, status: "running" });
+    harness.emit(step(2, "Build", 1, 1));
+    harness.emit(output(3, "pending output"));
+
+    await expect(coordinator.cancel()).resolves.toBe(true);
+    const publishedAfterStop = snapshots.length;
+    expect(coordinator.snapshot().task).toMatchObject({
+      status: "stopped",
+    });
+    expect(taskOutput(coordinator, "stdout")).toContain("pending output");
+
+    publication.fireCanceled();
+    expect(snapshots).toHaveLength(publishedAfterStop);
+  });
+
+  it("does not strand publication state with a synchronous reentrant scheduler", async () => {
+    const harness = gatewayHarness();
+    const snapshots: unknown[] = [];
+    const coordinator = createVscodeProcessTaskCoordinator({
+      getGateway: () => harness.gateway,
+      isCurrent: () => true,
+      onSnapshot: (snapshot) => snapshots.push(snapshot),
+      schedulePublication: (publish) => {
+        publish();
+        return () => undefined;
+      },
+    });
+    await coordinator.start({ activation: 1, owner });
+    harness.emit({ kind: "status", owner, sequence: 1, status: "running" });
+    harness.emit(step(2, "Build", 1, 1));
+    harness.emit(output(3, "one"));
+    harness.emit(output(4, "two"));
+    harness.emit({ kind: "status", owner, sequence: 5, status: "exited", exitCode: 0 });
+
+    expect(snapshots).toHaveLength(6);
+    expect(coordinator.snapshot().task).toMatchObject({
+      status: "exited",
+    });
+    expect(taskOutput(coordinator, "stdout")).toContain("onetwo");
+  });
+
   it("subscribes before start, acknowledges the exact owner, and reduces events", async () => {
     const calls: string[] = [];
     const harness = gatewayHarness({
@@ -52,12 +185,11 @@ describe("createVscodeProcessTaskCoordinator", () => {
       stopping: false,
       task: {
         status: "exited",
-        output: [
-          { kind: "step", label: "Build", index: 1, total: 1 },
-          { kind: "data", stream: "stdout", data: "built" },
-        ],
+        output: { truncated: false },
       },
     });
+    expect(taskOutput(coordinator, "stdout")).toBe("\n--- Step 1 of 1: Build ---\nbuilt");
+    expect(taskOutput(coordinator, "stderr")).toBe("\n--- Step 1 of 1: Build ---\n");
     expect(calls).toEqual(["subscribe", "start", "ack", "unsubscribe"]);
   });
 
@@ -109,11 +241,10 @@ describe("createVscodeProcessTaskCoordinator", () => {
     });
     expect(coordinator.snapshot().task).toMatchObject({
       currentStep: { label: "Build", index: 1, total: 1 },
-      output: [
-        { kind: "step", label: "Build", index: 1, total: 1 },
-        { kind: "data", stream: "stdout", data: "fast output" },
-      ],
+      output: { truncated: false },
     });
+    expect(taskOutput(coordinator, "stdout")).toBe("\n--- Step 1 of 1: Build ---\nfast output");
+    expect(taskOutput(coordinator, "stderr")).toBe("\n--- Step 1 of 1: Build ---\n");
   });
 
   it("drops foreign, stale, and post-terminal events", async () => {
@@ -131,10 +262,9 @@ describe("createVscodeProcessTaskCoordinator", () => {
     harness.emit({ kind: "status", owner, sequence: 5, status: "stopped" });
     harness.emit(output(6, "late"));
 
-    expect(coordinator.snapshot().task?.output).toEqual([
-      { kind: "step", label: "Build", index: 1, total: 1 },
-      { kind: "data", stream: "stdout", data: "accepted" },
-    ]);
+    expect(coordinator.snapshot().task?.output.truncated).toBe(false);
+    expect(taskOutput(coordinator, "stdout")).toBe("\n--- Step 1 of 1: Build ---\naccepted");
+    expect(taskOutput(coordinator, "stderr")).toBe("\n--- Step 1 of 1: Build ---\n");
   });
 
   it("enforces one sequence across event kinds and fails closed on reordered terminal Problems", async () => {
@@ -157,9 +287,9 @@ describe("createVscodeProcessTaskCoordinator", () => {
     });
     harness.emit(output(4, "reordered"));
 
-    expect(coordinator.snapshot().task?.output).toEqual([
-      { kind: "step", label: "Build", index: 1, total: 1 },
-    ]);
+    expect(coordinator.snapshot().task?.output.truncated).toBe(false);
+    expect(taskOutput(coordinator, "stdout")).toBe("\n--- Step 1 of 1: Build ---\n");
+    expect(taskOutput(coordinator, "stderr")).toBe("\n--- Step 1 of 1: Build ---\n");
     expect(coordinator.snapshot().problems?.problems).toHaveLength(1);
 
     harness.emit({ kind: "status", owner, sequence: 7, status: "exited", exitCode: 0 });
@@ -387,6 +517,14 @@ describe("createVscodeProcessTaskCoordinator", () => {
   });
 });
 
+function taskOutput(
+  coordinator: ReturnType<typeof createVscodeProcessTaskCoordinator>,
+  stream: "stdout" | "stderr",
+): string {
+  const output = coordinator.snapshot().task?.output[stream];
+  return output ? vscodeProcessTaskOutputStreamTail(output).text : "";
+}
+
 function gatewayHarness(
   overrides: {
     acknowledge?: VscodeProcessTasksGateway["acknowledgeVscodeProcessTaskStart"];
@@ -465,4 +603,35 @@ function deferred<T>() {
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function publicationHarness() {
+  let pending: (() => void) | null = null;
+  let canceled: (() => void) | null = null;
+  let scheduled = 0;
+  return {
+    schedule(callback: () => void) {
+      scheduled += 1;
+      pending = callback;
+      return () => {
+        if (pending === callback) {
+          pending = null;
+          canceled = callback;
+        }
+      };
+    },
+    flush() {
+      const callback = pending;
+      pending = null;
+      callback?.();
+    },
+    fireCanceled() {
+      const callback = canceled;
+      canceled = null;
+      callback?.();
+    },
+    get scheduled() {
+      return scheduled;
+    },
+  };
 }

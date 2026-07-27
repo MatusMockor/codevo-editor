@@ -92,6 +92,7 @@ function defaultProps(): DebugPanelProps {
     onStep: vi.fn(),
     onStop: vi.fn(),
     rootPath: "/workspace",
+    scopeLoadState: { frameId: FRAME_A.frameId, kind: "ready" },
     scopes: [],
     selectedFrameId: null,
     snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
@@ -1348,6 +1349,37 @@ describe("DebugPanel", () => {
     expect(variables[0]?.textContent).toContain("count");
     expect(variables[0]?.textContent).toContain("3");
     expect(variables[0]?.textContent).toContain("number");
+  });
+
+  it("renders closed loading, unavailable, empty, and retryable Variables states", () => {
+    render({
+      scopeLoadState: { frameId: 1, kind: "loading" },
+      snapshot: stoppedSnapshot(),
+    });
+    expect(host.querySelector('[role="status"]')?.textContent).toContain("Loading variables");
+    expect(host.textContent).not.toContain("Select a frame");
+
+    const errorProps = render({
+      scopeLoadState: {
+        frameId: 1,
+        kind: "error",
+        message: "Unable to load variables for the selected frame.",
+      },
+      snapshot: stoppedSnapshot(),
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Unable to load variables");
+    act(() => button("Retry").click());
+    expect(errorProps.onSelectFrame).toHaveBeenCalledWith(1);
+
+    render({ scopeLoadState: { kind: "unavailable" }, snapshot: stoppedSnapshot() });
+    expect(host.textContent).toContain("No stack frame available");
+
+    render({
+      scopeLoadState: { frameId: 1, kind: "ready" },
+      scopes: [],
+      snapshot: stoppedSnapshot(),
+    });
+    expect(host.textContent).toContain("No variables in selected frame");
   });
 
   it("keeps the virtualized variable tree as the bounded scroll owner", () => {

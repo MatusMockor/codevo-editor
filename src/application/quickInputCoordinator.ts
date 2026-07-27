@@ -91,9 +91,7 @@ export class QuickInputCoordinator {
     }
 
     this.active = this.queued.shift() ?? null;
-    completed.resolve(
-      completed.scopeGeneration === this.scopeGeneration ? value : null,
-    );
+    completed.resolve(completed.scopeGeneration === this.scopeGeneration ? value : null);
     this.emit();
   }
 

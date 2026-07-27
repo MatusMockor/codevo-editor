@@ -200,6 +200,32 @@ describe("DebugWatchesPanel", () => {
     expect(button("Add watch").disabled).toBe(true);
   });
 
+  it("exposes one accessible refresh action and preserves toolbar focus", () => {
+    const onRefresh = vi.fn();
+    render({ canRefresh: true, onRefresh });
+    const refresh = button("Refresh watches");
+    expect(refresh.disabled).toBe(false);
+    expect(refresh.title).toBe("Refresh watch expressions");
+    expect(refresh.getAttribute("aria-busy")).toBeNull();
+
+    refresh.focus();
+    act(() => refresh.click());
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(refresh);
+
+    render({ canRefresh: true, onRefresh, refreshPending: true });
+    const pendingRefresh = button("Refresh watches");
+    expect(pendingRefresh.disabled).toBe(true);
+    expect(pendingRefresh.getAttribute("aria-busy")).toBe("true");
+    act(() => pendingRefresh.click());
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("keeps refresh disabled without a live application command", () => {
+    render({ canRefresh: true, onRefresh: undefined });
+    expect(button("Refresh watches").disabled).toBe(true);
+  });
+
   it("shows loading, values, errors, disabled, and running states", () => {
     render({ pendingIds: ["watch-1"] });
     expect(host.textContent).toContain("Loading…");

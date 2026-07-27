@@ -15,7 +15,11 @@ import {
   functionBreakpointVerificationsMatch,
   validateFunctionBreakpointCommandArgs,
 } from "../domain/debugFunctionBreakpoints";
-import { isNodeDebugPort } from "../domain/debug";
+import {
+  isNodeDebugPort,
+  MAX_DEBUG_SCOPE_COUNT,
+  MAX_DEBUG_SCOPE_NAME_BYTES,
+} from "../domain/debug";
 import {
   MAX_DEBUG_EVALUATION_ERROR_BYTES,
   MAX_DEBUG_EVALUATION_EXPRESSION_BYTES,
@@ -76,7 +80,7 @@ export {
 
 const DEBUG_IDENTIFIER_PATTERN = /^(?:[$_]|\p{ID_Start})(?:[$_\u200c\u200d]|\p{ID_Continue})*$/u;
 
-export const MAX_DEBUG_VARIABLE_NAME_BYTES = 1_024;
+export const MAX_DEBUG_VARIABLE_NAME_BYTES = MAX_DEBUG_SCOPE_NAME_BYTES;
 export const MAX_DEBUG_VARIABLE_EVALUATE_NAME_BYTES = MAX_DEBUG_EVALUATION_EXPRESSION_BYTES;
 export const MAX_DEBUG_EVALUATION_MESSAGE_BYTES = MAX_DEBUG_EVALUATION_ERROR_BYTES;
 export const MAX_DEBUG_VARIABLE_TYPE_BYTES = MAX_DEBUG_EVALUATION_TYPE_BYTES;
@@ -84,7 +88,7 @@ export const MAX_DEBUG_VARIABLE_VALUE_BYTES = MAX_DEBUG_EVALUATION_VALUE_BYTES;
 export const MAX_DEBUG_VARIABLE_PAGE_BYTES = 1_024 * 1_024;
 export const MAX_DEBUG_VARIABLE_PAGE_COUNT = 100;
 export const MAX_DEBUG_VARIABLE_PAGE_START = 1_000_000;
-export const MAX_DEBUG_SCOPES = 256;
+export const MAX_DEBUG_SCOPES = MAX_DEBUG_SCOPE_COUNT;
 export const MAX_DEBUG_VARIABLES = 10_000;
 export const MAX_DEBUG_STACK_FRAMES = 1_000;
 const MAX_DEBUG_ROOT_PATH_BYTES = 4_096;

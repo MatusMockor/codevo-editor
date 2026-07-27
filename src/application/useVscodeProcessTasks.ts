@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  createVscodeProcessTaskOutput,
   vscodeProcessTaskProblemsToNotices,
   type VscodeProcessTaskDiagnostic,
   type VscodeProcessTaskDisplay,
-  type VscodeProcessTaskOutputEntry,
+  type VscodeProcessTaskOutput,
   type VscodeProcessTaskOwner,
   type VscodeProcessTaskProblemsState,
   type VscodeProcessTaskState,
@@ -34,7 +35,7 @@ export interface VscodeProcessTasksState {
   readonly diagnostics: readonly VscodeProcessTaskDiagnostic[];
   readonly discovering: boolean;
   readonly error: string | null;
-  readonly output: readonly VscodeProcessTaskOutputEntry[];
+  readonly output: VscodeProcessTaskOutput;
   readonly occupied: boolean;
   readonly problemNotices: readonly WorkbenchNotice[];
   readonly problems: VscodeProcessTaskProblemsState | null;
@@ -79,7 +80,7 @@ interface PendingTerminalAdmission {
 
 const EMPTY_TASKS: readonly VscodeProcessTaskDisplay[] = Object.freeze([]);
 const EMPTY_DIAGNOSTICS: readonly VscodeProcessTaskDiagnostic[] = Object.freeze([]);
-const EMPTY_OUTPUT: readonly VscodeProcessTaskOutputEntry[] = Object.freeze([]);
+const EMPTY_OUTPUT: VscodeProcessTaskOutput = createVscodeProcessTaskOutput();
 const EMPTY_COORDINATOR_SNAPSHOT: VscodeProcessTaskCoordinatorSnapshot = Object.freeze({
   activation: null,
   owner: null,

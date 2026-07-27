@@ -10,6 +10,8 @@ import type {
   DebugConsoleCompletionResponse,
 } from "./debugConsoleCompletions";
 import type { DebugExceptionTypeFilter } from "./debugExceptionTypeFilter";
+import { utf8ByteLength } from "./debugBreakpointPolicy";
+import { isWellFormedUnicode } from "./unicodeText";
 export type { BreakpointHitCondition } from "./debugBreakpointHitCondition";
 export type { DebugExceptionTypeFilter } from "./debugExceptionTypeFilter";
 
@@ -71,6 +73,43 @@ export interface DebugScope {
   name: string;
   variablesReference: number;
   expensive: boolean;
+}
+
+export const MAX_DEBUG_SCOPE_COUNT = 256;
+export const MAX_DEBUG_SCOPE_NAME_BYTES = 1_024;
+
+export function isDebugScopeList(value: unknown): value is DebugScope[] {
+  if (!Array.isArray(value) || value.length > MAX_DEBUG_SCOPE_COUNT) return false;
+  return value.every((scope) => {
+    if (scope === null || typeof scope !== "object" || Array.isArray(scope)) return false;
+    const record = scope as Record<string, unknown>;
+    let keyCount = 0;
+    for (const key in record) {
+      if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+      keyCount += 1;
+      if (keyCount > 3 || (key !== "name" && key !== "variablesReference" && key !== "expensive")) {
+        return false;
+      }
+    }
+    const name = record.name;
+    if (
+      keyCount !== 3 ||
+      typeof name !== "string" ||
+      name.length === 0 ||
+      name.length > MAX_DEBUG_SCOPE_NAME_BYTES
+    ) {
+      return false;
+    }
+    return (
+      name.trim() !== "" &&
+      !/\p{Cc}/u.test(name) &&
+      isWellFormedUnicode(name) &&
+      utf8ByteLength(name) <= MAX_DEBUG_SCOPE_NAME_BYTES &&
+      typeof record.expensive === "boolean" &&
+      Number.isSafeInteger(record.variablesReference) &&
+      (record.variablesReference as number) > 0
+    );
+  });
 }
 
 export interface DebugVariable {

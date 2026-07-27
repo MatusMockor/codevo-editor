@@ -171,4 +171,11 @@ describe("group other", () => {
       }),
     ).toBeNull();
   });
+
+  it("returns null rather than leaking the bounded ancestry error", () => {
+    const depth = 363;
+    const source = `${'describe("s",()=>{'.repeat(depth)}it("leaf",()=>{});${"});".repeat(depth)}`;
+
+    expect(jsTestDebugSelectionAtCursor(source, { column: 1, lineNumber: 1 })).toBeNull();
+  });
 });

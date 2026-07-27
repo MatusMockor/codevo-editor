@@ -33,7 +33,8 @@ import {
   formatDebugConsoleEntry,
   type DebugConsoleRenderItem,
 } from "./debugConsoleRenderItems";
-import { useWindowedRows, type WindowedRow } from "./useWindowedRows";
+import { segmentDebugConsoleRenderedRows } from "./debugConsoleRenderedSegments";
+import { useWindowedRows } from "./useWindowedRows";
 
 const MAX_VISIBLE_COMPLETION_ITEMS = 100;
 const CONSOLE_LINE_HEIGHT = 18;
@@ -188,6 +189,10 @@ export function DebugConsolePanel({
   const [completionOpen, setCompletionOpen] = useState(false);
   const [activeCompletionIndex, setActiveCompletionIndex] = useState(0);
   const [expandedResultIds, setExpandedResultIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [activeResultTreeItemIds, setActiveResultTreeItemIds] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+  const [pinnedResultTreeItemId, setPinnedResultTreeItemId] = useState<string | null>(null);
   const [pinnedResultEntryId, setPinnedResultEntryId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     readonly candidate: DebugCopyValueCandidate;
@@ -206,6 +211,12 @@ export function DebugConsolePanel({
   copyDisplayedValueSurfaceRef.current = copyDisplayedValueSurface;
   const focusedResultCandidateRef = useRef<DebugCopyValueCandidate | null>(null);
   const focusedResultIdRef = useRef<string | null>(null);
+  const focusedResultTreeItemIdRef = useRef<string | null>(null);
+  const focusedResultTreeEntryIdRef = useRef<string | null>(null);
+  const pendingResultTreeFocusIdRef = useRef<string | null>(null);
+  const pendingResultEntryFocusIdRef = useRef<string | null>(null);
+  const resultTreeItemElementsRef = useRef(new Map<string, HTMLElement>());
+  const previousResultTreeActiveIndexRef = useRef(new Map<string, number>());
   const latencyInstrumentationRef = useRef({
     clock: latencyClock,
     tracker: latencyTracker,
@@ -277,6 +288,37 @@ export function DebugConsolePanel({
     sample.tracker.record("debug-console-append", sample.durationMs);
   }, [renderModel]);
   const renderItems = renderModel.items;
+  const resultTreeItems = useMemo(
+    () =>
+      renderItems.flatMap((item, index) =>
+        item.kind !== "entry"
+          ? [{ depth: item.depth, entryId: item.entryId, id: item.id, renderIndex: index }]
+          : [],
+      ),
+    [renderItems],
+  );
+  const resultTreeItemsByEntry = useMemo(() => {
+    const itemsByEntry = new Map<string, typeof resultTreeItems>();
+    for (const item of resultTreeItems) {
+      const items = itemsByEntry.get(item.entryId);
+      if (items) items.push(item);
+      else itemsByEntry.set(item.entryId, [item]);
+    }
+    return itemsByEntry;
+  }, [resultTreeItems]);
+  const effectiveResultTreeItemIds = useMemo(() => {
+    const effective = new Map<string, string>();
+    for (const [entryId, items] of resultTreeItemsByEntry) {
+      const requestedId = activeResultTreeItemIds.get(entryId);
+      const requestedIndex = items.findIndex(({ id }) => id === requestedId);
+      const fallbackIndex = Math.min(
+        previousResultTreeActiveIndexRef.current.get(entryId) ?? 0,
+        items.length - 1,
+      );
+      effective.set(entryId, items[requestedIndex >= 0 ? requestedIndex : fallbackIndex]!.id);
+    }
+    return effective;
+  }, [activeResultTreeItemIds, resultTreeItemsByEntry]);
   const keyForIndex = useCallback(
     (index: number) => renderItems[index]?.id ?? `missing-${index}`,
     [renderItems],
@@ -292,6 +334,9 @@ export function DebugConsolePanel({
   );
   const pinnedIndices = useMemo(() => {
     const entryIds = new Set<string>();
+    const resultTreeIndex = resultTreeItems.find(
+      ({ id }) => id === pinnedResultTreeItemId,
+    )?.renderIndex;
 
     if (pinnedResultEntryId) {
       entryIds.add(pinnedResultEntryId);
@@ -301,20 +346,23 @@ export function DebugConsolePanel({
       entryIds.add(contextMenu.entryId);
     }
 
-    if (entryIds.size === 0) {
+    if (entryIds.size === 0 && resultTreeIndex === undefined) {
       return [];
     }
 
-    return renderItems.flatMap((item, index) =>
+    const indices = renderItems.flatMap((item, index) =>
       item.kind === "entry" && entryIds.has(item.entryId) ? [index] : [],
     );
-  }, [contextMenu, pinnedResultEntryId, renderItems]);
+    if (resultTreeIndex !== undefined) indices.push(resultTreeIndex);
+    return indices;
+  }, [contextMenu, pinnedResultEntryId, pinnedResultTreeItemId, renderItems, resultTreeItems]);
   const {
     containerRef: windowedContainerRef,
     measureRow: measureWindowedRow,
     onScroll: onWindowedScroll,
     rows: windowedRows,
     scrollToBottom: scrollWindowToBottom,
+    scrollToIndex: scrollWindowToIndex,
     totalHeight: windowedTotalHeight,
     windowOffsetTop,
   } = useWindowedRows({
@@ -325,6 +373,162 @@ export function DebugConsolePanel({
     pinnedIndices,
     preserveScrollAnchor: !stickRef.current,
   });
+  useLayoutEffect(() => {
+    let changed = activeResultTreeItemIds.size !== effectiveResultTreeItemIds.size;
+    for (const [entryId, effectiveId] of effectiveResultTreeItemIds) {
+      if (activeResultTreeItemIds.get(entryId) !== effectiveId) changed = true;
+      const items = resultTreeItemsByEntry.get(entryId) ?? [];
+      previousResultTreeActiveIndexRef.current.set(
+        entryId,
+        Math.max(
+          0,
+          items.findIndex(({ id }) => id === effectiveId),
+        ),
+      );
+    }
+    if (changed) setActiveResultTreeItemIds(new Map(effectiveResultTreeItemIds));
+    const focusedId = focusedResultTreeItemIdRef.current;
+    const focusedEntryId = focusedResultTreeEntryIdRef.current;
+    if (
+      focusedId !== null &&
+      focusedEntryId !== null &&
+      !resultTreeItems.some(({ id }) => id === focusedId)
+    ) {
+      const replacementId = effectiveResultTreeItemIds.get(focusedEntryId) ?? null;
+      pendingResultTreeFocusIdRef.current = replacementId;
+      setPinnedResultTreeItemId(replacementId);
+      if (replacementId === null) {
+        pendingResultEntryFocusIdRef.current = focusedEntryId;
+        setPinnedResultEntryId(focusedEntryId);
+      }
+    }
+    const pendingFocusId = pendingResultTreeFocusIdRef.current;
+    const pendingElement =
+      pendingFocusId === null ? null : resultTreeItemElementsRef.current.get(pendingFocusId);
+    if (pendingElement) {
+      pendingResultTreeFocusIdRef.current = null;
+      pendingElement.focus();
+    }
+    const pendingEntryId = pendingResultEntryFocusIdRef.current;
+    const pendingEntry =
+      pendingEntryId === null
+        ? null
+        : Array.from(bodyRef.current?.querySelectorAll<HTMLElement>("[data-entry-id]") ?? []).find(
+            (element) => element.dataset.entryId === pendingEntryId,
+          );
+    if (pendingEntry) {
+      pendingResultEntryFocusIdRef.current = null;
+      pendingEntry.focus();
+    }
+    const retainedFocusedId = focusedResultTreeItemIdRef.current;
+    const retainedFocusedElement =
+      retainedFocusedId === null ? null : resultTreeItemElementsRef.current.get(retainedFocusedId);
+    if (
+      retainedFocusedElement &&
+      document.activeElement !== retainedFocusedElement &&
+      (document.activeElement === document.body || document.activeElement === null)
+    ) {
+      retainedFocusedElement.focus();
+    }
+  }, [
+    activeResultTreeItemIds,
+    effectiveResultTreeItemIds,
+    resultTreeItems,
+    resultTreeItemsByEntry,
+    windowedRows,
+  ]);
+  const focusResultTreeItem = (entryId: string, id: string, align: "nearest" | "start" | "end") => {
+    const target = resultTreeItems.find((item) => item.id === id);
+    if (!target || target.entryId !== entryId) return;
+    pendingResultTreeFocusIdRef.current = id;
+    setPinnedResultTreeItemId(id);
+    setActiveResultTreeItemIds((current) => {
+      const next = new Map(current);
+      next.set(entryId, id);
+      return next;
+    });
+    scrollWindowToIndex(target.renderIndex, align);
+    queueMicrotask(() => {
+      const element = resultTreeItemElementsRef.current.get(id);
+      if (!element || pendingResultTreeFocusIdRef.current !== id) return;
+      pendingResultTreeFocusIdRef.current = null;
+      element.focus();
+    });
+  };
+  const handleResultTreeNavigation = (
+    event: KeyboardEvent<HTMLElement>,
+    entryId: string,
+    currentId: string,
+  ): boolean => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+    const items = resultTreeItemsByEntry.get(entryId) ?? [];
+    const currentIndex = items.findIndex(({ id }) => id === currentId);
+    if (currentIndex < 0) return false;
+    let nextIndex = currentIndex;
+    let align: "nearest" | "start" | "end" = "nearest";
+    if (event.key === "ArrowDown") nextIndex = Math.min(currentIndex + 1, items.length - 1);
+    else if (event.key === "ArrowUp") nextIndex = Math.max(currentIndex - 1, 0);
+    else if (event.key === "Home") {
+      nextIndex = 0;
+      align = "start";
+    } else if (event.key === "End") {
+      nextIndex = items.length - 1;
+      align = "end";
+    } else {
+      return false;
+    }
+    event.preventDefault();
+    focusResultTreeItem(entryId, items[nextIndex]!.id, align);
+    return true;
+  };
+  const focusFirstResultTreeChild = (entryId: string, parentDepth: number) => {
+    const child = (resultTreeItemsByEntry.get(entryId) ?? []).find(
+      ({ depth }) => depth === parentDepth + 1,
+    );
+    if (child) focusResultTreeItem(entryId, child.id, "nearest");
+  };
+  const focusResultTreeParent = (entryId: string, currentId: string, currentDepth: number) => {
+    const items = resultTreeItemsByEntry.get(entryId) ?? [];
+    const currentIndex = items.findIndex(({ id }) => id === currentId);
+    const parent = items
+      .slice(0, currentIndex)
+      .reverse()
+      .find(({ depth }) => depth === currentDepth - 1);
+    if (parent) {
+      focusResultTreeItem(entryId, parent.id, "nearest");
+      return;
+    }
+    setPinnedResultTreeItemId(null);
+    pendingResultEntryFocusIdRef.current = entryId;
+    setPinnedResultEntryId(entryId);
+    const rootIndex = renderItems.findIndex(
+      (item) => item.kind === "entry" && item.entryId === entryId,
+    );
+    if (rootIndex >= 0) scrollWindowToIndex(rootIndex, "nearest");
+    queueMicrotask(() => {
+      const root = Array.from(
+        bodyRef.current?.querySelectorAll<HTMLElement>("[data-entry-id]") ?? [],
+      ).find((element) => element.dataset.entryId === entryId);
+      if (!root || pendingResultEntryFocusIdRef.current !== entryId) return;
+      pendingResultEntryFocusIdRef.current = null;
+      root.focus();
+    });
+  };
+  const releaseResultTreeFocusAfterBlur = () => {
+    queueMicrotask(() => {
+      const activeElement = document.activeElement;
+      if (
+        activeElement instanceof HTMLElement &&
+        activeElement.dataset.resultTreeItemId !== undefined &&
+        bodyRef.current?.contains(activeElement)
+      ) {
+        return;
+      }
+      focusedResultTreeItemIdRef.current = null;
+      focusedResultTreeEntryIdRef.current = null;
+      setPinnedResultTreeItemId(null);
+    });
+  };
   const setBodyElement = useCallback(
     (element: HTMLDivElement | null) => {
       bodyRef.current = element;
@@ -351,6 +555,12 @@ export function DebugConsolePanel({
   const inspectionPauseGeneration = inspectionOwner?.pauseGeneration ?? null;
   useEffect(() => {
     setExpandedResultIds(new Set());
+    setActiveResultTreeItemIds(new Map());
+    setPinnedResultTreeItemId(null);
+    focusedResultTreeItemIdRef.current = null;
+    focusedResultTreeEntryIdRef.current = null;
+    pendingResultTreeFocusIdRef.current = null;
+    pendingResultEntryFocusIdRef.current = null;
   }, [inspectionPauseGeneration, resultOwnerEpoch, sessionId, workspaceOwnerKey]);
   useEffect(() => {
     setActiveCompletionIndex((current) =>
@@ -393,12 +603,14 @@ export function DebugConsolePanel({
         : console.state.entries.find((entry) => entry.kind === "result" && entry.id === focusedId);
     const focusedCandidate =
       focusedEntry?.kind === "result"
-        ? consoleCopyCandidate(
+        ? (consoleLiveCopyCandidate(
             focusedEntry,
             console.resultOwner,
             inspectionOwner,
             copyDisplayedValueSurface,
-          )
+            workspaceOwnerKey,
+          ) ??
+          consoleDisplayedCopyCandidate(focusedEntry, copyDisplayedValueSurface, workspaceOwnerKey))
         : null;
     if (
       focusedResultCandidateRef.current !== null &&
@@ -407,10 +619,12 @@ export function DebugConsolePanel({
         focusedCandidate,
       )
     ) {
-      focusedResultCandidateRef.current = null;
-      focusedResultIdRef.current = null;
-      setPinnedResultEntryId(null);
-      publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
+      focusedResultCandidateRef.current = focusedCandidate;
+      if (!focusedCandidate) {
+        focusedResultIdRef.current = null;
+        setPinnedResultEntryId(null);
+      }
+      publishDebugCopyValueCandidate(copyDisplayedValueSurface, focusedCandidate);
     }
     if (contextMenu) {
       const currentItem = renderItems.find((item) => item.id === contextMenu.candidate.identity);
@@ -419,12 +633,18 @@ export function DebugConsolePanel({
       );
       const candidate =
         currentItem?.kind === "entry" && currentItem.entry.kind === "result"
-          ? consoleCopyCandidate(
+          ? (consoleLiveCopyCandidate(
               currentItem.entry,
               console.resultOwner,
               inspectionOwner,
               copyDisplayedValueSurface,
-            )
+              workspaceOwnerKey,
+            ) ??
+            consoleDisplayedCopyCandidate(
+              currentItem.entry,
+              copyDisplayedValueSurface,
+              workspaceOwnerKey,
+            ))
           : currentItem?.kind === "result-variable"
             ? debugCopyValueCandidateForNode({
                 adapterEvaluateName: currentItem.variable.evaluateName,
@@ -434,9 +654,12 @@ export function DebugConsolePanel({
                 surface: copyDisplayedValueSurface,
               })
             : null;
-      if (!debugCopyValuePresentationCandidatesEqual(contextMenu.candidate, candidate)) {
+      if (!candidate) {
         setContextMenu(null);
         publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
+      } else if (!debugCopyValuePresentationCandidatesEqual(contextMenu.candidate, candidate)) {
+        publishDebugCopyValueCandidate(copyDisplayedValueSurface, candidate);
+        setContextMenu((current) => (current ? { ...current, candidate } : current));
       }
     }
   }, [
@@ -446,6 +669,7 @@ export function DebugConsolePanel({
     copyDisplayedValueSurface,
     inspectionOwner,
     renderItems,
+    workspaceOwnerKey,
   ]);
   useEffect(
     () => () => publishDebugCopyValueCandidate(copyDisplayedValueSurfaceRef.current, null),
@@ -634,7 +858,11 @@ export function DebugConsolePanel({
       onLoadVariablePage?.(owner, variablesReference, 0);
     }
   };
-  const renderedSegments = segmentRenderedRows(windowedRows, renderItems);
+  const renderedSegments = segmentDebugConsoleRenderedRows(windowedRows, renderItems);
+  const contextMenuCanCopyEvaluatePath =
+    contextMenu !== null &&
+    contextMenu.candidate.adapterEvaluateName !== undefined &&
+    canCopyConsoleEvaluatePath(copyDisplayedValueSurface);
   const resultOwnerByEntryId = new Map(
     renderItems.flatMap((item) =>
       item.kind === "entry" && item.resultInspectionOwner
@@ -644,15 +872,21 @@ export function DebugConsolePanel({
   );
   const renderEntry = (item: Extract<DebugConsoleRenderItem, { readonly kind: "entry" }>) => {
     const { entry } = item;
-    const copyCandidate =
+    const liveCopyCandidate =
       entry.kind === "result"
-        ? consoleCopyCandidate(
+        ? consoleLiveCopyCandidate(
             entry,
             console.resultOwner,
             inspectionOwner,
             copyDisplayedValueSurface,
+            workspaceOwnerKey,
           )
         : null;
+    const displayedCopyCandidate =
+      entry.kind === "result"
+        ? consoleDisplayedCopyCandidate(entry, copyDisplayedValueSurface, workspaceOwnerKey)
+        : null;
+    const copyCandidate = liveCopyCandidate ?? displayedCopyCandidate;
     const copyable = copyCandidate !== null;
     const toggleResult = () => {
       if (
@@ -733,8 +967,10 @@ export function DebugConsolePanel({
         }
         onKeyDown={(event) => {
           if (copyCandidate && isLocalDebugCopyShortcut(event)) {
-            publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
-            if (runDebugCopyDisplayedValue(copyDisplayedValueSurface)) {
+            if (
+              activateDebugConsoleCandidate(copyDisplayedValueSurface, copyCandidate) &&
+              runDebugCopyDisplayedValue(copyDisplayedValueSurface)
+            ) {
               event.preventDefault();
             }
             return;
@@ -742,6 +978,11 @@ export function DebugConsolePanel({
           if (item.expandable && event.key === "ArrowRight" && !item.expanded) {
             event.preventDefault();
             toggleResult();
+            return;
+          }
+          if (item.expandable && event.key === "ArrowRight" && item.expanded) {
+            event.preventDefault();
+            focusFirstResultTreeChild(item.entryId, 0);
             return;
           }
           if (item.expandable && event.key === "ArrowLeft" && item.expanded) {
@@ -802,9 +1043,32 @@ export function DebugConsolePanel({
       return (
         <div
           aria-level={item.depth + 1}
+          data-result-tree-item-id={item.id}
           key={item.id}
+          onBlur={releaseResultTreeFocusAfterBlur}
+          onFocus={() => {
+            focusedResultTreeItemIdRef.current = item.id;
+            focusedResultTreeEntryIdRef.current = item.entryId;
+            setPinnedResultTreeItemId(item.id);
+            setActiveResultTreeItemIds((current) => {
+              const next = new Map(current);
+              next.set(item.entryId, item.id);
+              return next;
+            });
+          }}
+          onKeyDown={(event) => {
+            if (handleResultTreeNavigation(event, item.entryId, item.id)) return;
+            if (event.key !== "ArrowLeft") return;
+            event.preventDefault();
+            focusResultTreeParent(item.entryId, item.id, item.depth);
+          }}
+          ref={(element) => {
+            if (element) resultTreeItemElementsRef.current.set(item.id, element);
+            else resultTreeItemElementsRef.current.delete(item.id);
+          }}
           role="treeitem"
           style={{ ...styles.variableRow, ...styles.muted, paddingLeft: 8 + item.depth * 12 }}
+          tabIndex={effectiveResultTreeItemIds.get(item.entryId) === item.id ? 0 : -1}
         >
           {item.label}
         </div>
@@ -812,20 +1076,43 @@ export function DebugConsolePanel({
     }
 
     if (item.kind === "result-load") {
+      const load = () => onLoadVariablePage?.(item.owner, item.variablesReference, item.nextStart);
       return (
         <div
           aria-level={item.depth + 1}
+          data-result-tree-item-id={item.id}
           key={item.id}
+          onBlur={releaseResultTreeFocusAfterBlur}
+          onFocus={() => {
+            focusedResultTreeItemIdRef.current = item.id;
+            focusedResultTreeEntryIdRef.current = item.entryId;
+            setPinnedResultTreeItemId(item.id);
+            setActiveResultTreeItemIds((current) => {
+              const next = new Map(current);
+              next.set(item.entryId, item.id);
+              return next;
+            });
+          }}
+          onKeyDown={(event) => {
+            if (handleResultTreeNavigation(event, item.entryId, item.id)) return;
+            if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              focusResultTreeParent(item.entryId, item.id, item.depth);
+              return;
+            }
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            load();
+          }}
+          ref={(element) => {
+            if (element) resultTreeItemElementsRef.current.set(item.id, element);
+            else resultTreeItemElementsRef.current.delete(item.id);
+          }}
           role="treeitem"
           style={{ ...styles.variableRow, paddingLeft: 8 + item.depth * 12 }}
+          tabIndex={effectiveResultTreeItemIds.get(item.entryId) === item.id ? 0 : -1}
         >
-          <button
-            onClick={() =>
-              onLoadVariablePage?.(item.owner, item.variablesReference, item.nextStart)
-            }
-            style={styles.disclosure}
-            type="button"
-          >
+          <button onClick={load} style={styles.disclosure} tabIndex={-1} type="button">
             {item.label}
           </button>
         </div>
@@ -859,13 +1146,22 @@ export function DebugConsolePanel({
         aria-expanded={item.expandable ? item.expanded : undefined}
         aria-level={item.depth + 1}
         data-testid="debug-console-variable"
+        data-result-tree-item-id={item.id}
         key={item.id}
-        onBlur={
-          copyCandidate
-            ? () => publishDebugCopyValueCandidate(copyDisplayedValueSurface, null)
+        onBlur={() => {
+          releaseResultTreeFocusAfterBlur();
+          if (copyCandidate) {
+            publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
+          }
+        }}
+        onClick={
+          item.expandable
+            ? (event) => {
+                event.currentTarget.focus();
+                toggle();
+              }
             : undefined
         }
-        onClick={item.expandable ? toggle : undefined}
         onContextMenu={
           copyCandidate
             ? (event) => {
@@ -880,22 +1176,48 @@ export function DebugConsolePanel({
               }
             : undefined
         }
-        onFocus={
-          copyCandidate
-            ? () => publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate)
-            : undefined
-        }
+        onFocus={() => {
+          focusedResultTreeItemIdRef.current = item.id;
+          focusedResultTreeEntryIdRef.current = item.entryId;
+          setPinnedResultTreeItemId(item.id);
+          setActiveResultTreeItemIds((current) => {
+            const next = new Map(current);
+            next.set(item.entryId, item.id);
+            return next;
+          });
+          if (copyCandidate) {
+            publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
+          }
+        }}
         onKeyDown={(event) => {
           if (copyCandidate && isLocalDebugCopyShortcut(event)) {
-            publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
-            if (runDebugCopyDisplayedValue(copyDisplayedValueSurface)) {
+            if (
+              activateDebugConsoleCandidate(copyDisplayedValueSurface, copyCandidate) &&
+              runDebugCopyDisplayedValue(copyDisplayedValueSurface)
+            ) {
               event.preventDefault();
             }
             return;
           }
+          if (handleResultTreeNavigation(event, item.entryId, item.id)) return;
           if (event.key === "ArrowRight" && item.expandable && !item.expanded) {
             event.preventDefault();
             toggle();
+            return;
+          }
+          if (event.key === "ArrowRight" && item.expandable && item.expanded) {
+            event.preventDefault();
+            const items = resultTreeItemsByEntry.get(item.entryId) ?? [];
+            const index = items.findIndex(({ id }) => id === item.id);
+            let child: (typeof items)[number] | undefined;
+            for (const candidate of items.slice(index + 1)) {
+              if (candidate.depth <= item.depth) break;
+              if (candidate.depth === item.depth + 1) {
+                child = candidate;
+                break;
+              }
+            }
+            if (child) focusResultTreeItem(item.entryId, child.id, "nearest");
             return;
           }
           if (event.key === "ArrowLeft" && item.expandable && item.expanded) {
@@ -903,14 +1225,23 @@ export function DebugConsolePanel({
             toggle();
             return;
           }
+          if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            focusResultTreeParent(item.entryId, item.id, item.depth);
+            return;
+          }
           if (item.expandable && (event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
             toggle();
           }
         }}
+        ref={(element) => {
+          if (element) resultTreeItemElementsRef.current.set(item.id, element);
+          else resultTreeItemElementsRef.current.delete(item.id);
+        }}
         role="treeitem"
         style={{ ...styles.variableRow, paddingLeft: 8 + item.depth * 12 }}
-        tabIndex={0}
+        tabIndex={effectiveResultTreeItemIds.get(item.entryId) === item.id ? 0 : -1}
       >
         {item.expandable ? (
           <button
@@ -1004,14 +1335,14 @@ export function DebugConsolePanel({
               id: "copy-value",
               label: "Copy Value",
               onSelect: () => {
-                publishDebugCopyValueCandidate(copyDisplayedValueSurface, contextMenu.candidate);
                 copyDisplayedValueFromMenuAndRestoreFocus(
                   copyDisplayedValueSurface,
+                  contextMenu.candidate,
                   contextMenu.invoker,
                 );
               },
             },
-            ...(contextMenu.candidate.adapterEvaluateName === undefined
+            ...(!contextMenuCanCopyEvaluatePath
               ? []
               : [
                   {
@@ -1112,74 +1443,6 @@ export function DebugConsolePanel({
   );
 }
 
-interface RenderedSegment {
-  readonly items: readonly DebugConsoleRenderItem[];
-  readonly key: string;
-  readonly kind: "entry" | "tree";
-  readonly offsetTop: number;
-}
-
-function segmentRenderedRows(
-  rows: readonly WindowedRow[],
-  items: readonly DebugConsoleRenderItem[],
-): readonly RenderedSegment[] {
-  const segments: RenderedSegment[] = [];
-  let cursor = 0;
-
-  while (cursor < rows.length) {
-    const firstRow = rows[cursor]!;
-    const firstItem = items[firstRow.index];
-
-    if (!firstItem) {
-      cursor += 1;
-      continue;
-    }
-
-    if (firstItem.kind === "entry") {
-      segments.push({
-        items: [firstItem],
-        key: firstItem.id,
-        kind: "entry",
-        offsetTop: firstRow.offsetTop,
-      });
-      cursor += 1;
-      continue;
-    }
-
-    const segmentItems: DebugConsoleRenderItem[] = [firstItem];
-    let nextCursor = cursor + 1;
-    let previousIndex = firstRow.index;
-
-    while (nextCursor < rows.length) {
-      const nextRow = rows[nextCursor]!;
-      const nextItem = items[nextRow.index];
-
-      if (
-        !nextItem ||
-        nextItem.kind === "entry" ||
-        nextItem.entryId !== firstItem.entryId ||
-        nextRow.index !== previousIndex + 1
-      ) {
-        break;
-      }
-
-      segmentItems.push(nextItem);
-      previousIndex = nextRow.index;
-      nextCursor += 1;
-    }
-
-    segments.push({
-      items: segmentItems,
-      key: `tree-${firstItem.entryId}`,
-      kind: "tree",
-      offsetTop: firstRow.offsetTop,
-    });
-    cursor = nextCursor;
-  }
-
-  return segments;
-}
-
 function trimBlankLines(value: string): string {
   return value.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "");
 }
@@ -1202,10 +1465,11 @@ function eventHasModifier(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
 
 function copyDisplayedValueFromMenuAndRestoreFocus(
   surface: DebugCopyDisplayedValueSurface | undefined,
+  candidate: DebugCopyValueCandidate,
   invoker: HTMLElement,
 ): void {
   try {
-    if (!surface?.canCopyDisplayedValue()) {
+    if (!activateDebugConsoleCandidate(surface, candidate) || !surface?.canCopyDisplayedValue()) {
       queueMicrotask(() => invoker.focus());
       return;
     }
@@ -1217,16 +1481,19 @@ function copyDisplayedValueFromMenuAndRestoreFocus(
   }
 }
 
-function consoleCopyCandidate(
+function consoleLiveCopyCandidate(
   entry: Extract<UseDebugConsoleResult["state"]["entries"][number], { readonly kind: "result" }>,
   currentResultOwner: UseDebugConsoleResult["resultOwner"],
   owner: DebugInspectionOwner | null,
   surface: DebugCopyDisplayedValueSurface | undefined,
+  workspaceOwnerKey: string | null,
 ): DebugCopyValueCandidate | null {
   if (
     !owner ||
     !entry.resultOwner ||
     !currentResultOwner ||
+    !workspaceOwnerKey ||
+    entry.resultOwner.workspaceOwnerKey !== workspaceOwnerKey ||
     entry.resultOwner.epoch !== currentResultOwner.epoch ||
     entry.resultOwner.rootKey !== currentResultOwner.rootKey ||
     entry.resultOwner.workspaceOwnerKey !== currentResultOwner.workspaceOwnerKey ||
@@ -1251,6 +1518,54 @@ function consoleCopyCandidate(
   });
 }
 
+function consoleDisplayedCopyCandidate(
+  entry: Extract<UseDebugConsoleResult["state"]["entries"][number], { readonly kind: "result" }>,
+  surface: DebugCopyDisplayedValueSurface | undefined,
+  workspaceOwnerKey: string | null,
+): DebugCopyValueCandidate | null {
+  const owner = entry.resultOwner;
+  if (
+    !owner ||
+    !surface ||
+    !workspaceOwnerKey ||
+    owner.workspaceOwnerKey !== workspaceOwnerKey ||
+    surface.workspaceOwnerKey !== workspaceOwnerKey
+  ) {
+    return null;
+  }
+  return {
+    source: "console",
+    identity: entry.id,
+    rootKey: owner.rootKey,
+    workspaceOwnerKey,
+    sessionId: owner.sessionId,
+    pauseGeneration: owner.pauseGeneration,
+    frameId: owner.frameId,
+    generation: surface.generation,
+    epoch: owner.epoch,
+    displayedValue: entry.value,
+  };
+}
+
+function canCopyConsoleEvaluatePath(surface: DebugCopyDisplayedValueSurface | undefined): boolean {
+  try {
+    return surface?.canCopyEvaluatePath() === true;
+  } catch {
+    return false;
+  }
+}
+
+function activateDebugConsoleCandidate(
+  surface: DebugCopyDisplayedValueSurface | undefined,
+  candidate: DebugCopyValueCandidate,
+): boolean {
+  try {
+    return surface?.onCandidateChange(candidate) === true;
+  } catch {
+    return false;
+  }
+}
+
 function copyConsoleEvaluatePathFromMenuAndRestoreFocus(
   surface: DebugCopyDisplayedValueSurface | undefined,
   candidate: DebugCopyValueCandidate,
@@ -1262,8 +1577,7 @@ function copyConsoleEvaluatePathFromMenuAndRestoreFocus(
     return;
   }
   try {
-    publishDebugCopyValueCandidate(surface, candidate);
-    if (!surface?.canCopyEvaluatePath()) {
+    if (!activateDebugConsoleCandidate(surface, candidate) || !surface?.canCopyEvaluatePath()) {
       queueMicrotask(() => invoker.focus());
       return;
     }

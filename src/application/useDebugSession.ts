@@ -64,7 +64,11 @@ import {
   startDebugCompoundAccepted as startDebugCompound,
   type ActiveDebugCompound,
 } from "./debugCompoundStart";
-import { selectDebugFrame, type DebugFrameSelection } from "./debugFrameSelection";
+import type { DebugFrameSelection } from "./debugFrameSelection";
+import {
+  useDebugFrameSelectionCommand,
+  useDebugFrameSelectionProjection,
+} from "./useDebugFrameSelectionLifecycle";
 import {
   activeDebugSessionId,
   exactWorkspaceOwnerCurrent,
@@ -92,7 +96,6 @@ import {
   emptyCompoundSessionIds,
   emptyEvaluationHistory,
   emptyOutput,
-  emptyScopes,
   inactiveSnapshot,
 } from "./debugSessionDefaults";
 import { useDebugConsoleCompletion } from "./useDebugConsoleCompletion";
@@ -273,6 +276,22 @@ export function useWorkbenchDebugSession({
       ),
     [],
   );
+  const selectFrame = useDebugFrameSelectionCommand({
+    activeSessionId,
+    currentRootRef,
+    currentWorkspaceEpochRef: workspaceOwnerEpochRef,
+    currentWorkspaceIdRef,
+    frameSelectionGenerationByRootRef,
+    frameSelectionByRootRef,
+    gateway,
+    isExactWorkspaceOwnerCurrent,
+    isWorkspaceTrusted,
+    mountedRef,
+    pauseGenerationByRootRef,
+    sessionOwnersRef,
+    setFrameSelectionByRoot,
+    snapshotsRef,
+  });
   const exactLiveCompoundSessionIds = useCallback(
     (rootPath: string, selectedSessionId: number): readonly number[] | null => {
       const compound = activeCompoundRef.current;
@@ -492,6 +511,7 @@ export function useWorkbenchDebugSession({
     compoundCoordinatorRef,
     compoundProjectionRef,
     currentWorkspaceIdRef,
+    frameSelectionByRootRef,
     finalizeExactSession,
     gateway,
     isExactWorkspaceOwnerCurrent,
@@ -504,6 +524,7 @@ export function useWorkbenchDebugSession({
     pendingRestartsRef,
     pendingStartKeysRef,
     restartCoordinatorsRef,
+    selectFrame,
     sessionOwnersRef,
     setDebugCompoundActive,
     setFrameSelectionByRoot,
@@ -742,6 +763,11 @@ export function useWorkbenchDebugSession({
           restartOwnerIdsRef.current.delete(key);
         }
         adoptExceptionPauseSession(requestedRoot, status.sessionId, policy.adapterKind);
+        const acceptedSnapshot = snapshotsRef.current[key] ?? inactiveSnapshot;
+        if (acceptedSnapshot.state.kind === "stopped") {
+          const topFrame = acceptedSnapshot.state.frames[0];
+          if (topFrame) void selectFrame(topFrame.frameId);
+        }
         return status.sessionId;
       } finally {
         pendingStopKeysRef.current.delete(key);
@@ -782,6 +808,7 @@ export function useWorkbenchDebugSession({
       gateway,
       isExactWorkspaceOwnerCurrent,
       isWorkspaceTrusted,
+      selectFrame,
       setPauseGeneration,
     ],
   );
@@ -817,15 +844,21 @@ export function useWorkbenchDebugSession({
   );
 
   const startDebugCompoundAccepted = useCallback(
-    (members: readonly DebugCompoundLaunchTarget[]) =>
-      startDebugCompound(
+    async (members: readonly DebugCompoundLaunchTarget[]) => {
+      const accepted = await startDebugCompound(
         {
           activeCompoundRef,
           adoptBreakpointsActivation,
           adoptExceptionPauseSession,
           breakpointsByRootRef,
-          clearFrameSelection: (key) =>
-            setFrameSelectionByRoot((current) => ({ ...current, [key]: null })),
+          clearFrameSelection: (key) => {
+            const cleared = {
+              ...frameSelectionByRootRef.current,
+              [key]: null,
+            };
+            frameSelectionByRootRef.current = cleared;
+            setFrameSelectionByRoot(cleared);
+          },
           compoundCoordinator: compoundCoordinatorRef.current,
           compoundProjection: compoundProjectionRef.current,
           currentRootRef,
@@ -852,7 +885,19 @@ export function useWorkbenchDebugSession({
           workspaceOwnerEpochRef,
         },
         members,
-      ),
+      );
+      if (accepted) {
+        const root = currentRootRef.current;
+        if (root) {
+          const state = (snapshotsRef.current[normalizedWorkspaceRootKey(root)] ?? inactiveSnapshot)
+            .state;
+          if (state.kind === "stopped" && state.frames[0]) {
+            void selectFrame(state.frames[0].frameId);
+          }
+        }
+      }
+      return accepted;
+    },
     [
       adoptBreakpointsActivation,
       adoptExceptionPauseSession,
@@ -860,6 +905,7 @@ export function useWorkbenchDebugSession({
       gateway,
       isExactWorkspaceOwnerCurrent,
       isWorkspaceTrusted,
+      selectFrame,
       setPauseGeneration,
     ],
   );
@@ -1428,25 +1474,6 @@ export function useWorkbenchDebugSession({
   syncFunctionBreakpointsForSessionRef.current = synchronizeFunctionBreakpointsForSession;
   functionBreakpointsForStartRef.current = snapshotFunctionBreakpointsForStart;
 
-  const selectFrame = useCallback(
-    (frameId: number) =>
-      selectDebugFrame(
-        {
-          activeSessionId,
-          currentRootRef,
-          frameSelectionGenerationByRootRef,
-          gateway,
-          isWorkspaceTrusted,
-          mountedRef,
-          pauseGenerationByRootRef,
-          setFrameSelectionByRoot,
-          snapshotsRef,
-        },
-        frameId,
-      ),
-    [activeSessionId, gateway, isWorkspaceTrusted],
-  );
-
   const loadVariablePage = useCallback(
     async (owner: DebugInspectionOwner, variablesReference: number, start: number) => {
       if (!isWorkspaceTrusted()) return;
@@ -1697,37 +1724,22 @@ export function useWorkbenchDebugSession({
     workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
     workspaceId,
   });
-  let inspectionWorkspaceTrusted = false;
-  try {
-    inspectionWorkspaceTrusted = isWorkspaceTrusted();
-  } catch {
-    // Failed trust lookup invalidates pause-owned inspection data.
-  }
-  const inspectionOwner = useMemo<DebugInspectionOwner | null>(() => {
-    if (
-      !inspectionWorkspaceTrusted ||
-      !ownerProjection.pauseOwned ||
-      snapshot.state.kind !== "stopped" ||
-      activePauseGeneration <= 0
-    )
-      return null;
-    const frameId = selection?.frameId ?? snapshot.state.topFrame?.frameId ?? null;
-    return frameId === null
-      ? null
-      : {
-          rootKey: activeKey,
-          sessionId: snapshot.state.sessionId,
-          pauseGeneration: activePauseGeneration,
-          frameId,
-        };
-  }, [
+  const frameSelectionProjection = useDebugFrameSelectionProjection({
     activeKey,
-    ownerProjection.pauseOwned,
     activePauseGeneration,
-    inspectionWorkspaceTrusted,
-    selection?.frameId,
-    snapshot.state,
-  ]);
+    currentRootRef,
+    currentWorkspaceIdRef,
+    frameSelectionByRootRef,
+    frameSelectionGenerationByRootRef,
+    isExactWorkspaceOwnerCurrent,
+    isWorkspaceTrusted,
+    pauseOwned: ownerProjection.pauseOwned,
+    selection,
+    selectFrame,
+    setFrameSelectionByRoot,
+    snapshot,
+  });
+  const inspectionOwner = frameSelectionProjection.inspectionOwner;
   const completeDebugConsole = useDebugConsoleCompletion({
     currentRootRef,
     currentWorkspaceIdRef,
@@ -1809,8 +1821,9 @@ export function useWorkbenchDebugSession({
       exceptionTypeFilter,
       output: visibleOutput,
       lastStartError: startErrors[activeKey] ?? null,
-      selectedFrameId: ownerProjection.pauseOwned ? (selection?.frameId ?? null) : null,
-      scopes: ownerProjection.pauseOwned ? (selection?.scopes ?? emptyScopes) : emptyScopes,
+      selectedFrameId: frameSelectionProjection.selectedFrameId,
+      scopeLoadState: frameSelectionProjection.scopeLoadState,
+      scopes: frameSelectionProjection.scopes,
       variablesByReference,
       inspectionOwner,
       variablePages: visibleVariablePages,

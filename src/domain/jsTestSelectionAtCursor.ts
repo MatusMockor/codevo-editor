@@ -1,5 +1,9 @@
 import type { EditorPosition } from "./languageServerFeatures";
-import { jsTestDeclarations, type JsTestDeclaration } from "./jsTestDeclarations";
+import {
+  JsTestDeclarationBudgetError,
+  jsTestDeclarations,
+  type JsTestDeclaration,
+} from "./jsTestDeclarations";
 import { validatedJsTestRunScope } from "./jsTestRunScope";
 import { computeLineStartOffsets } from "./sourceLineOffsets";
 import { isWellFormedUnicode } from "./unicodeText";
@@ -44,7 +48,13 @@ export function jsTestSelectionAtCursor(
   const cursorOffset = offsetAtPosition(source, lineStarts, position);
   if (cursorOffset === null) return null;
 
-  const parsedDeclarations = jsTestDeclarations(source);
+  let parsedDeclarations: readonly JsTestDeclaration[];
+  try {
+    parsedDeclarations = jsTestDeclarations(source);
+  } catch (error) {
+    if (error instanceof JsTestDeclarationBudgetError) return null;
+    throw error;
+  }
   if (parsedDeclarations.length > MAX_JS_TEST_AT_CURSOR_DECLARATIONS) return null;
   const declarations = parsedDeclarations.filter(isRunnableDeclaration);
   const candidates = declarations.map((declaration) => ({

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { DebugEvent, DebugGateway, DebugScope, StackFrame } from "../domain/debug";
+import type { DebugEvent, DebugGateway, StackFrame } from "../domain/debug";
 import {
   createDebugVariablePagesState,
   type DebugVariablePagesState,
@@ -8,6 +8,7 @@ import {
 import { initialDebuggerSnapshot, type DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { ActiveDebugAdapterKind, DebugRestartFrameCandidate } from "./debugSessionContracts";
+import type { DebugFrameSelection } from "./debugFrameSelection";
 
 const RESTART_FRAME_LIFECYCLE_TIMEOUT_MS = 10_000;
 
@@ -59,9 +60,7 @@ interface DebugRestartFrameSessionBindings {
   readonly adapterKindForSession: (rootPath: string, sessionId: number) => ActiveDebugAdapterKind;
   readonly currentRootRef: MutableRefObject<string | null>;
   readonly currentWorkspaceIdRef: MutableRefObject<string | null>;
-  readonly frameSelectionByRootRef: MutableRefObject<
-    Record<string, { readonly frameId: number; readonly scopes: DebugScope[] } | null>
-  >;
+  readonly frameSelectionByRootRef: MutableRefObject<Record<string, DebugFrameSelection | null>>;
   readonly gateway: Pick<DebugGateway, "restartFrame">;
   readonly isExactWorkspaceOwnerCurrent: (rootPath: string, ownerKey: string) => boolean;
   readonly isWorkspaceTrusted: () => boolean;
@@ -77,7 +76,7 @@ interface DebugRestartFrameSessionBindings {
   >;
   readonly setControlPendingByRoot: Dispatch<SetStateAction<Record<string, boolean>>>;
   readonly setFrameSelectionByRoot: Dispatch<
-    SetStateAction<Record<string, { frameId: number; scopes: DebugScope[] } | null>>
+    SetStateAction<Record<string, DebugFrameSelection | null>>
   >;
   readonly setPauseGeneration: (key: string, generation: number) => void;
   readonly setSnapshots: Dispatch<SetStateAction<Record<string, DebuggerSessionSnapshot>>>;

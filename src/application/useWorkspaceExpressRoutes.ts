@@ -18,18 +18,27 @@ import {
   type WorkspaceExpressRouteSourceSnapshot,
 } from "../domain/workspaceExpressRoutes";
 import { readExpressRouteTsconfigAliases } from "./expressRouteTsconfigAliases";
+import {
+  bindExpressRouteNavigationReceipts,
+  createExpressRouteNavigationBindingCache,
+  createExpressRouteNavigationGeneration,
+  revokeExpressRouteNavigationBindingCache,
+  type ExpressRouteNavigationGeneration,
+  type NavigableWorkspaceExpressRoute,
+} from "./expressRouteNavigationReceipt";
 
 const DISCOVERY_LIMITS = { maxFiles: 2_000, maxVisited: 50_000 } as const;
 const PACKAGE_DISCOVERY_LIMITS = { maxFiles: MAX_ROOTS, maxVisited: 50_000 } as const;
 const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
 const MAX_TOTAL_PACKAGE_JSON_BYTES = 4 * 1024 * 1024;
-const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_TOTAL_SOURCE_BYTES = 32 * 1024 * 1024;
-const MAX_ROUTES = 20_000;
+const MAX_INTERACTIVE_SOURCE_BYTES = 256 * 1024;
+const MAX_INTERACTIVE_TOTAL_SOURCE_BYTES = 256 * 1024;
+const MAX_ROUTES = 2_000;
 const READ_CONCURRENCY = 8;
 const INVALIDATION_DEBOUNCE_MS = 75;
-// Each entry may retain up to 32 MiB of source. Four entries cap retained
-// cache source at 128 MiB while still covering short workspace switch-back flows.
+const DIRTY_PROJECTION_DEBOUNCE_MS = 75;
+// Each entry retains at most the 256 KiB interactive analysis budget. Four
+// entries cover short workspace switch-back flows while retaining at most 1 MiB.
 const MAX_WORKSPACE_CACHE_ENTRIES = 4;
 
 interface WorkspaceExpressRoutesCache {
@@ -45,11 +54,60 @@ interface WorkspaceExpressRoutesCache {
   readonly truncated: boolean;
 }
 
+interface WorkspaceExpressRoutesPresentation {
+  readonly navigationGeneration: ExpressRouteNavigationGeneration | null;
+  readonly ownerKey: string | null;
+  readonly routes: readonly NavigableWorkspaceExpressRoute[];
+  readonly truncated: boolean;
+}
+
+interface ExpressRouteNavigationRevision {
+  readonly discoveryVersion: number;
+  readonly rootPath: string | null;
+  readonly routeSnapshot: readonly WorkspaceExpressRoute[];
+  readonly workspaceId: string | null;
+  readonly workspaceKey: string | null;
+}
+
+interface IndependentDirtyProjectionCache {
+  base: WorkspaceExpressRoutesCache | null;
+  readonly baselineMetadata: Map<
+    string,
+    {
+      readonly independent: boolean;
+      readonly source: string;
+    }
+  >;
+  readonly entries: Map<
+    string,
+    {
+      readonly independent: boolean;
+      readonly sourceBytes: number;
+      result?: ReturnType<typeof workspaceExpressRoutesFromSnapshotsWithResolverBounded>;
+      readonly source: string;
+    }
+  >;
+}
+
+export type WorkspaceExpressRouteProjectionWork =
+  | { readonly kind: "parse"; readonly relativeFilePath: string }
+  | {
+      readonly inspectedCodeUnits: number;
+      readonly kind: "source-scan";
+      readonly relativeFilePath: string;
+    }
+  | {
+      readonly kind: "workspace-parse";
+      readonly snapshotCount: number;
+      readonly sourceBytes: number;
+    };
+
 export interface UseWorkspaceExpressRoutesOptions {
   readonly dirtySnapshots?: readonly WorkspaceExpressRouteSourceSnapshot[];
   readonly discoveryVersion: number;
   readonly gateway: WorkspaceSourceDiscoveryGateway;
   readonly isOpen: boolean;
+  readonly onProjectionWork?: (work: WorkspaceExpressRouteProjectionWork) => void;
   readonly rootPath: string | null;
   readonly workspaceId: string | null;
 }
@@ -57,7 +115,8 @@ export interface UseWorkspaceExpressRoutesOptions {
 export interface WorkspaceExpressRoutesState {
   readonly error: string | null;
   readonly loading: boolean;
-  readonly routes: readonly WorkspaceExpressRoute[];
+  readonly navigationGeneration: ExpressRouteNavigationGeneration | null;
+  readonly routes: readonly NavigableWorkspaceExpressRoute[];
   readonly truncated: boolean;
   refresh(): Promise<void>;
 }
@@ -75,15 +134,34 @@ const EMPTY_CACHE: WorkspaceExpressRoutesCache = {
   truncated: false,
 };
 
+const EMPTY_PRESENTATION: WorkspaceExpressRoutesPresentation = {
+  navigationGeneration: null,
+  ownerKey: null,
+  routes: [],
+  truncated: false,
+};
+const EMPTY_DIRTY_SNAPSHOTS: readonly WorkspaceExpressRouteSourceSnapshot[] = [];
+
 export function useWorkspaceExpressRoutes({
-  dirtySnapshots = [],
+  dirtySnapshots = EMPTY_DIRTY_SNAPSHOTS,
   discoveryVersion,
   gateway,
   isOpen,
+  onProjectionWork,
   rootPath,
   workspaceId,
 }: UseWorkspaceExpressRoutesOptions): WorkspaceExpressRoutesState {
   const [caches, setCaches] = useState<Record<string, WorkspaceExpressRoutesCache>>({});
+  const [presentation, setPresentation] =
+    useState<WorkspaceExpressRoutesPresentation>(EMPTY_PRESENTATION);
+  const navigationBindingCache = useRef(createExpressRouteNavigationBindingCache());
+  const independentDirtyProjectionCache = useRef<IndependentDirtyProjectionCache>({
+    base: null,
+    baselineMetadata: new Map(),
+    entries: new Map(),
+  });
+  const stableDirtySnapshots = useSemanticallyStableDirtySnapshots(dirtySnapshots);
+  const projectionSequence = useRef(0);
   const discoverySequences = useRef(new Map<string, number>());
   const discoveryVersions = useRef(new Map<string, number>());
   const nextDiscoverySequence = useRef(1);
@@ -157,13 +235,13 @@ export function useWorkspaceExpressRoutes({
             let read = await gateway.readSourceTextBounded(
               rootPath,
               relativeFilePath,
-              MAX_SOURCE_FILE_BYTES,
+              MAX_INTERACTIVE_SOURCE_BYTES,
             );
             if (read.status === "changed" && isCurrent()) {
               read = await gateway.readSourceTextBounded(
                 rootPath,
                 relativeFilePath,
-                MAX_SOURCE_FILE_BYTES,
+                MAX_INTERACTIVE_SOURCE_BYTES,
               );
             }
             return { packageLabel, read, relativeFilePath };
@@ -176,10 +254,10 @@ export function useWorkspaceExpressRoutes({
             omittedSource = true;
             continue;
           }
-          const sourceBytes = byteLength(read.content);
+          const sourceBytes = byteLengthBounded(read.content, MAX_INTERACTIVE_SOURCE_BYTES);
           if (
-            sourceBytes > MAX_SOURCE_FILE_BYTES ||
-            totalSourceBytes + sourceBytes > MAX_TOTAL_SOURCE_BYTES
+            sourceBytes > MAX_INTERACTIVE_SOURCE_BYTES ||
+            totalSourceBytes + sourceBytes > MAX_INTERACTIVE_TOTAL_SOURCE_BYTES
           ) {
             stoppedByBudget = true;
             omittedSource = true;
@@ -317,94 +395,475 @@ export function useWorkspaceExpressRoutes({
     };
   }, [workspaceKey]);
 
-  const overlay = useMemo(() => {
-    if (dirtySnapshots.length === 0) return { routes: cache.routes, truncated: false };
+  const navigationGeneration = useMemo(
+    () =>
+      createExpressRouteNavigationGenerationForRevision({
+        discoveryVersion,
+        rootPath,
+        routeSnapshot: cache.routes,
+        workspaceId,
+        workspaceKey,
+      }),
+    [cache.routes, discoveryVersion, rootPath, workspaceId, workspaceKey],
+  );
 
-    let truncated = false;
-    const normalizedDirtySnapshots: WorkspaceExpressRouteSourceSnapshot[] = [];
-    for (const snapshot of dirtySnapshots) {
-      const relativeFilePath = normalizeWorkspaceExpressRouteFilePath(snapshot.relativeFilePath);
-      if (!relativeFilePath) {
-        truncated = true;
-        continue;
-      }
-      normalizedDirtySnapshots.push({ ...snapshot, relativeFilePath });
+  useEffect(
+    () => () => revokeExpressRouteNavigationBindingCache(navigationBindingCache.current),
+    [navigationGeneration, workspaceKey],
+  );
+
+  useEffect(() => {
+    const sequence = projectionSequence.current + 1;
+    projectionSequence.current = sequence;
+    if (!workspaceKey || !rootPath || !workspaceId || !navigationGeneration || !cache.loaded) {
+      setPresentation(EMPTY_PRESENTATION);
+      return;
     }
-    const inferredDirtyFiles = expressRouteScanRoots({
-      packageJsonDirs: cache.packageJsonDirs,
-      relativeFilePaths: normalizedDirtySnapshots.map((snapshot) => snapshot.relativeFilePath),
-    }).files;
-    const snapshotsByPath = new Map<string, WorkspaceExpressRouteSourceSnapshot>();
-    for (let index = 0; index < normalizedDirtySnapshots.length; index += 1) {
-      const snapshot = normalizedDirtySnapshots[index];
-      if (!snapshot) continue;
-      const packageLabel =
-        normalizeExpressPackageLabel(snapshot.packageLabel) ??
-        inferredDirtyFiles[index]?.packageLabel;
-      const relativeFilePath = snapshot.relativeFilePath;
-      snapshotsByPath.set(snapshotIdentity(packageLabel, relativeFilePath), {
-        ...snapshot,
-        relativeFilePath,
-        ...(packageLabel ? { packageLabel } : { packageLabel: undefined }),
+    const capturedDirtySnapshots = stableDirtySnapshots;
+    const delay = capturedDirtySnapshots.length > 0 ? DIRTY_PROJECTION_DEBOUNCE_MS : 0;
+    const timeout = setTimeout(() => {
+      if (projectionSequence.current !== sequence) return;
+      const overlay = projectWorkspaceExpressRoutes(
+        cache,
+        capturedDirtySnapshots,
+        independentDirtyProjectionCache.current,
+        onProjectionWork,
+      );
+      if (projectionSequence.current !== sequence) return;
+      const presentedRoutes = overlay.routes.slice(0, MAX_ROUTES);
+      const presentationTruncated = overlay.routes.length > MAX_ROUTES;
+      const navigation = bindExpressRouteNavigationReceipts(
+        presentedRoutes,
+        overlay.snapshots,
+        {
+          generation: navigationGeneration,
+          rootPath,
+          workspaceId,
+        },
+        navigationBindingCache.current,
+      );
+      if (projectionSequence.current !== sequence) return;
+      setPresentation({
+        navigationGeneration,
+        ownerKey: workspaceKey,
+        routes: navigation.routes,
+        truncated:
+          cache.truncated || overlay.truncated || presentationTruncated || navigation.truncated,
       });
-    }
-    const normalizedSnapshots = [...snapshotsByPath.values()].sort(
-      (left, right) =>
-        compareText(left.relativeFilePath, right.relativeFilePath) ||
-        compareText(left.packageLabel ?? "", right.packageLabel ?? ""),
-    );
-    const dirtyPaths = new Set(
-      normalizedSnapshots.map((snapshot) =>
-        snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath),
-      ),
-    );
-    let totalSourceBytes = cache.totalSourceBytes;
-    for (const snapshotIdentityKey of dirtyPaths) {
-      totalSourceBytes -= cache.sourceBytesByFile[snapshotIdentityKey] ?? 0;
-    }
-
-    const acceptedSnapshots: WorkspaceExpressRouteSourceSnapshot[] = [];
-    for (const snapshot of normalizedSnapshots) {
-      const sourceBytes = byteLength(snapshot.source);
-      if (
-        sourceBytes > MAX_SOURCE_FILE_BYTES ||
-        totalSourceBytes + sourceBytes > MAX_TOTAL_SOURCE_BYTES
-      ) {
-        truncated = true;
-        continue;
-      }
-      totalSourceBytes += sourceBytes;
-      acceptedSnapshots.push(snapshot);
-    }
-    const overlay = workspaceExpressRoutesFromSnapshotsWithResolverBounded(
-      [
-        ...cache.snapshots.filter(
-          (snapshot) =>
-            !dirtyPaths.has(snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath)),
-        ),
-        ...acceptedSnapshots,
-      ],
-      MAX_ROUTES,
-      cache.importPathResolver,
-    );
-    return { routes: overlay.routes, truncated: truncated || overlay.capacityTruncated };
+    }, delay);
+    return () => {
+      clearTimeout(timeout);
+      if (projectionSequence.current === sequence) projectionSequence.current += 1;
+    };
   }, [
-    cache.routes,
-    cache.importPathResolver,
-    cache.packageJsonDirs,
-    cache.snapshots,
-    cache.sourceBytesByFile,
-    cache.totalSourceBytes,
-    dirtySnapshots,
+    cache,
+    navigationGeneration,
+    onProjectionWork,
+    rootPath,
+    stableDirtySnapshots,
+    workspaceId,
+    workspaceKey,
   ]);
+
+  const currentPresentation =
+    presentation.ownerKey === workspaceKey &&
+    presentation.navigationGeneration === navigationGeneration
+      ? presentation
+      : EMPTY_PRESENTATION;
 
   return {
     error: cache.error,
-    loading: cache.loading,
+    loading:
+      cache.loading ||
+      (isOpen && Boolean(workspaceKey) && !cache.loaded && cache.error === null) ||
+      (cache.loaded &&
+        cache.error === null &&
+        Boolean(workspaceKey) &&
+        currentPresentation.navigationGeneration !== navigationGeneration),
+    navigationGeneration: currentPresentation.navigationGeneration,
     refresh,
-    routes: overlay.routes,
-    truncated: cache.truncated || overlay.truncated,
+    routes: currentPresentation.routes,
+    truncated: cache.truncated || currentPresentation.truncated,
   };
+}
+
+function createExpressRouteNavigationGenerationForRevision({
+  rootPath,
+  workspaceId,
+  workspaceKey,
+}: ExpressRouteNavigationRevision): ExpressRouteNavigationGeneration | null {
+  return workspaceKey && rootPath && workspaceId ? createExpressRouteNavigationGeneration() : null;
+}
+
+function projectWorkspaceExpressRoutes(
+  cache: WorkspaceExpressRoutesCache,
+  dirtySnapshots: readonly WorkspaceExpressRouteSourceSnapshot[],
+  independentCache: IndependentDirtyProjectionCache,
+  onProjectionWork: ((work: WorkspaceExpressRouteProjectionWork) => void) | undefined,
+): {
+  readonly routes: readonly WorkspaceExpressRoute[];
+  readonly snapshots: readonly WorkspaceExpressRouteSourceSnapshot[];
+  readonly truncated: boolean;
+} {
+  prepareIndependentProjectionCache(independentCache, cache);
+  if (dirtySnapshots.length === 0) {
+    independentCache.baselineMetadata.clear();
+    independentCache.entries.clear();
+    return { routes: cache.routes, snapshots: cache.snapshots, truncated: false };
+  }
+  let truncated = dirtySnapshots.length > DISCOVERY_LIMITS.maxFiles;
+  const normalizedDirtySnapshots: WorkspaceExpressRouteSourceSnapshot[] = [];
+  for (const snapshot of dirtySnapshots.slice(0, DISCOVERY_LIMITS.maxFiles)) {
+    const relativeFilePath = normalizeWorkspaceExpressRouteFilePath(snapshot.relativeFilePath);
+    if (!relativeFilePath) {
+      truncated = true;
+      continue;
+    }
+    normalizedDirtySnapshots.push({ ...snapshot, relativeFilePath });
+  }
+  const inferredDirtyFiles = expressRouteScanRoots({
+    packageJsonDirs: cache.packageJsonDirs,
+    relativeFilePaths: normalizedDirtySnapshots.map((snapshot) => snapshot.relativeFilePath),
+  }).files;
+  const snapshotsByPath = new Map<string, WorkspaceExpressRouteSourceSnapshot>();
+  for (let index = 0; index < normalizedDirtySnapshots.length; index += 1) {
+    const snapshot = normalizedDirtySnapshots[index];
+    if (!snapshot) continue;
+    const packageLabel =
+      normalizeExpressPackageLabel(snapshot.packageLabel) ??
+      inferredDirtyFiles[index]?.packageLabel;
+    const relativeFilePath = snapshot.relativeFilePath;
+    snapshotsByPath.set(snapshotIdentity(packageLabel, relativeFilePath), {
+      ...snapshot,
+      relativeFilePath,
+      ...(packageLabel ? { packageLabel } : { packageLabel: undefined }),
+    });
+  }
+  const normalizedSnapshots = [...snapshotsByPath.values()].sort(
+    (left, right) =>
+      compareText(left.relativeFilePath, right.relativeFilePath) ||
+      compareText(left.packageLabel ?? "", right.packageLabel ?? ""),
+  );
+  const dirtyPaths = new Set(
+    normalizedSnapshots.map((snapshot) =>
+      snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath),
+    ),
+  );
+  pruneIndependentProjectionCache(independentCache, dirtyPaths);
+  let totalSourceBytes = cache.totalSourceBytes;
+  for (const snapshotIdentityKey of dirtyPaths) {
+    totalSourceBytes -= cache.sourceBytesByFile[snapshotIdentityKey] ?? 0;
+  }
+
+  const acceptedSnapshots: WorkspaceExpressRouteSourceSnapshot[] = [];
+  const acceptedSnapshotKeys = new Set<string>();
+  let degradedDirtySource = false;
+  for (const snapshot of normalizedSnapshots) {
+    const sourceBytes = dirtyProjectionMetadata(
+      independentCache,
+      snapshot,
+      onProjectionWork,
+    ).sourceBytes;
+    if (sourceBytes > MAX_INTERACTIVE_SOURCE_BYTES) {
+      degradedDirtySource = true;
+      truncated = true;
+      break;
+    }
+    if (totalSourceBytes + sourceBytes > MAX_INTERACTIVE_TOTAL_SOURCE_BYTES) {
+      truncated = true;
+      break;
+    }
+    totalSourceBytes += sourceBytes;
+    acceptedSnapshots.push(snapshot);
+    acceptedSnapshotKeys.add(snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath));
+  }
+  pruneIndependentProjectionCache(independentCache, acceptedSnapshotKeys);
+  const retainedSnapshots = cache.snapshots.filter(
+    (snapshot) =>
+      !dirtyPaths.has(snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath)),
+  );
+  const combinedSnapshots = [...retainedSnapshots, ...acceptedSnapshots];
+  if (degradedDirtySource) {
+    return {
+      routes: cache.routes.filter(
+        (route) => !dirtyPaths.has(snapshotIdentity(route.packageLabel, route.relativeFilePath)),
+      ),
+      snapshots: retainedSnapshots,
+      truncated: true,
+    };
+  }
+  const incremental = canProjectDirtySnapshotsIncrementally(
+    cache,
+    acceptedSnapshots,
+    dirtyPaths,
+    truncated,
+    independentCache,
+    onProjectionWork,
+  );
+  if (!incremental) {
+    notifyProjectionWork(onProjectionWork, {
+      kind: "workspace-parse",
+      snapshotCount: combinedSnapshots.length,
+      sourceBytes: totalSourceBytes,
+    });
+  }
+  const overlay = incremental
+    ? projectIndependentDirtySnapshots(
+        cache,
+        acceptedSnapshots,
+        dirtyPaths,
+        independentCache,
+        onProjectionWork,
+      )
+    : workspaceExpressRoutesFromSnapshotsWithResolverBounded(
+        combinedSnapshots,
+        MAX_ROUTES,
+        cache.importPathResolver,
+      );
+  return {
+    routes: overlay.routes,
+    snapshots: combinedSnapshots,
+    truncated: truncated || overlay.capacityTruncated || overlay.truncated,
+  };
+}
+
+function canProjectDirtySnapshotsIncrementally(
+  cache: WorkspaceExpressRoutesCache,
+  acceptedSnapshots: readonly WorkspaceExpressRouteSourceSnapshot[],
+  dirtyPaths: ReadonlySet<string>,
+  rejectedDirtySnapshot: boolean,
+  projectionCache: IndependentDirtyProjectionCache,
+  onProjectionWork: ((work: WorkspaceExpressRouteProjectionWork) => void) | undefined,
+): boolean {
+  if (rejectedDirtySnapshot || cache.routes.length >= MAX_ROUTES) return false;
+  const cachedSnapshots = new Map(
+    cache.snapshots.map((snapshot) => [
+      snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath),
+      snapshot,
+    ]),
+  );
+  for (const snapshot of acceptedSnapshots) {
+    if (!dirtyProjectionMetadata(projectionCache, snapshot, onProjectionWork).independent) {
+      return false;
+    }
+    const previous = cachedSnapshots.get(
+      snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath),
+    );
+    if (
+      previous &&
+      !baselineProjectionMetadata(projectionCache, previous, onProjectionWork).independent
+    ) {
+      return false;
+    }
+  }
+  return acceptedSnapshots.length === dirtyPaths.size;
+}
+
+function isMountIndependentExpressSource(source: string): boolean {
+  if (/\b(?:export|exports|module)\b|\.\s*use\s*\(/u.test(source)) return false;
+  for (const match of source.matchAll(/\b(?:import|require)\b/gu)) {
+    if (!isSafeExpressDependencyAt(source, match.index ?? 0, match[0])) return false;
+  }
+  return true;
+}
+
+function isSafeExpressDependencyAt(source: string, offset: number, keyword: string): boolean {
+  const tail = source.slice(offset + keyword.length, offset + keyword.length + 512);
+  if (keyword === "require") {
+    return /^\s*\(\s*(['"])express\1\s*\)/u.test(tail);
+  }
+  if (/^\s*\(/u.test(tail)) return false;
+  const statementEnd = tail.search(/[;\r\n]/u);
+  const statement = statementEnd < 0 ? tail : tail.slice(0, statementEnd);
+  return (
+    /^\s*(['"])express\1\s*$/u.test(statement) ||
+    /^\s+(?:type\s+)?(?:.{0,440}?\s+from\s+)?(['"])express\1\s*$/u.test(statement)
+  );
+}
+
+function projectIndependentDirtySnapshots(
+  cache: WorkspaceExpressRoutesCache,
+  dirtySnapshots: readonly WorkspaceExpressRouteSourceSnapshot[],
+  dirtyPaths: ReadonlySet<string>,
+  projectionCache: IndependentDirtyProjectionCache,
+  onProjectionWork: ((work: WorkspaceExpressRouteProjectionWork) => void) | undefined,
+): {
+  readonly capacityTruncated: boolean;
+  readonly routes: WorkspaceExpressRoute[];
+  readonly truncated: boolean;
+} {
+  const retainedRoutes = cache.routes.filter(
+    (route) => !dirtyPaths.has(snapshotIdentity(route.packageLabel, route.relativeFilePath)),
+  );
+  const retainedProjectionKeys = new Set<string>();
+  const dirtyRoutes: WorkspaceExpressRoute[] = [];
+  let capacityTruncated = false;
+  let truncated = false;
+  for (const snapshot of dirtySnapshots) {
+    const key = snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath);
+    retainedProjectionKeys.add(key);
+    const cached = dirtyProjectionMetadata(projectionCache, snapshot, onProjectionWork);
+    if (!cached.result) {
+      notifyProjectionWork(onProjectionWork, {
+        kind: "parse",
+        relativeFilePath: snapshot.relativeFilePath,
+      });
+      cached.result = workspaceExpressRoutesFromSnapshotsWithResolverBounded(
+        [snapshot],
+        MAX_ROUTES,
+        cache.importPathResolver,
+      );
+    }
+    const result = cached.result;
+    capacityTruncated ||= result.capacityTruncated;
+    truncated ||= result.truncated;
+    const remainingCapacity = MAX_ROUTES - retainedRoutes.length - dirtyRoutes.length;
+    if (remainingCapacity <= 0) {
+      capacityTruncated = true;
+      truncated = true;
+      break;
+    }
+    dirtyRoutes.push(...result.routes.slice(0, remainingCapacity));
+    if (result.routes.length > remainingCapacity) {
+      capacityTruncated = true;
+      truncated = true;
+      break;
+    }
+  }
+  for (const key of projectionCache.entries.keys()) {
+    if (!retainedProjectionKeys.has(key)) projectionCache.entries.delete(key);
+  }
+  const routes = [...retainedRoutes, ...dirtyRoutes].sort(compareWorkspaceExpressRoutes);
+  return {
+    capacityTruncated,
+    routes,
+    truncated,
+  };
+}
+
+function prepareIndependentProjectionCache(
+  projectionCache: IndependentDirtyProjectionCache,
+  cache: WorkspaceExpressRoutesCache,
+): void {
+  if (projectionCache.base === cache) return;
+  projectionCache.base = cache;
+  projectionCache.baselineMetadata.clear();
+  projectionCache.entries.clear();
+}
+
+function pruneIndependentProjectionCache(
+  projectionCache: IndependentDirtyProjectionCache,
+  retainedKeys: ReadonlySet<string>,
+): void {
+  for (const key of projectionCache.entries.keys()) {
+    if (!retainedKeys.has(key)) projectionCache.entries.delete(key);
+  }
+  for (const key of projectionCache.baselineMetadata.keys()) {
+    if (!retainedKeys.has(key)) projectionCache.baselineMetadata.delete(key);
+  }
+}
+
+function dirtyProjectionMetadata(
+  projectionCache: IndependentDirtyProjectionCache,
+  snapshot: WorkspaceExpressRouteSourceSnapshot,
+  onProjectionWork: ((work: WorkspaceExpressRouteProjectionWork) => void) | undefined,
+): {
+  readonly independent: boolean;
+  readonly sourceBytes: number;
+  result?: ReturnType<typeof workspaceExpressRoutesFromSnapshotsWithResolverBounded>;
+  readonly source: string;
+} {
+  const key = snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath);
+  const cached = projectionCache.entries.get(key);
+  if (cached?.source === snapshot.source) return cached;
+  const measurement = measureByteLengthBounded(snapshot.source, MAX_INTERACTIVE_SOURCE_BYTES);
+  const metadata = {
+    independent:
+      measurement.bytes <= MAX_INTERACTIVE_SOURCE_BYTES &&
+      isMountIndependentExpressSource(snapshot.source),
+    source: snapshot.source,
+    sourceBytes: measurement.bytes,
+  };
+  notifyProjectionWork(onProjectionWork, {
+    inspectedCodeUnits: measurement.inspectedCodeUnits,
+    kind: "source-scan",
+    relativeFilePath: snapshot.relativeFilePath,
+  });
+  if (measurement.bytes <= MAX_INTERACTIVE_SOURCE_BYTES) {
+    projectionCache.entries.set(key, metadata);
+  } else {
+    projectionCache.entries.delete(key);
+  }
+  return metadata;
+}
+
+function baselineProjectionMetadata(
+  projectionCache: IndependentDirtyProjectionCache,
+  snapshot: WorkspaceExpressRouteSourceSnapshot,
+  onProjectionWork: ((work: WorkspaceExpressRouteProjectionWork) => void) | undefined,
+): { readonly independent: boolean; readonly source: string } {
+  const key = snapshotIdentity(snapshot.packageLabel, snapshot.relativeFilePath);
+  const cached = projectionCache.baselineMetadata.get(key);
+  if (cached?.source === snapshot.source) return cached;
+  notifyProjectionWork(onProjectionWork, {
+    inspectedCodeUnits: snapshot.source.length,
+    kind: "source-scan",
+    relativeFilePath: snapshot.relativeFilePath,
+  });
+  const metadata = {
+    independent: isMountIndependentExpressSource(snapshot.source),
+    source: snapshot.source,
+  };
+  projectionCache.baselineMetadata.set(key, metadata);
+  return metadata;
+}
+
+function notifyProjectionWork(
+  observer: ((work: WorkspaceExpressRouteProjectionWork) => void) | undefined,
+  work: WorkspaceExpressRouteProjectionWork,
+): void {
+  try {
+    observer?.(work);
+  } catch {
+    // Optional performance telemetry must not affect route authority or publication.
+  }
+}
+
+function useSemanticallyStableDirtySnapshots(
+  snapshots: readonly WorkspaceExpressRouteSourceSnapshot[],
+): readonly WorkspaceExpressRouteSourceSnapshot[] {
+  const stable = useRef(snapshots);
+  if (!sameDirtySnapshots(stable.current, snapshots)) stable.current = snapshots;
+  return stable.current;
+}
+
+function sameDirtySnapshots(
+  left: readonly WorkspaceExpressRouteSourceSnapshot[],
+  right: readonly WorkspaceExpressRouteSourceSnapshot[],
+): boolean {
+  if (left === right) return true;
+  const leftLength = Math.min(left.length, DISCOVERY_LIMITS.maxFiles);
+  const rightLength = Math.min(right.length, DISCOVERY_LIMITS.maxFiles);
+  if (
+    leftLength !== rightLength ||
+    left.length > DISCOVERY_LIMITS.maxFiles !== right.length > DISCOVERY_LIMITS.maxFiles
+  ) {
+    return false;
+  }
+  for (let index = 0; index < leftLength; index += 1) {
+    const snapshot = left[index];
+    const candidate = right[index];
+    if (
+      !snapshot ||
+      !candidate ||
+      snapshot.packageLabel !== candidate.packageLabel ||
+      snapshot.relativeFilePath !== candidate.relativeFilePath ||
+      snapshot.source !== candidate.source
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function invalidateSequence(
@@ -424,7 +883,14 @@ function takeDiscoverySequence(counter: { current: number }): number {
   return sequence;
 }
 
-function byteLength(value: string): number {
+function byteLengthBounded(value: string, maxBytes: number): number {
+  return measureByteLengthBounded(value, maxBytes).bytes;
+}
+
+function measureByteLengthBounded(
+  value: string,
+  maxBytes: number,
+): { readonly bytes: number; readonly inspectedCodeUnits: number } {
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
@@ -441,8 +907,11 @@ function byteLength(value: string): number {
     } else {
       bytes += 3;
     }
+    if (bytes > maxBytes) {
+      return { bytes: maxBytes + 1, inspectedCodeUnits: index + 1 };
+    }
   }
-  return bytes;
+  return { bytes, inspectedCodeUnits: value.length };
 }
 
 function errorMessage(error: unknown): string {

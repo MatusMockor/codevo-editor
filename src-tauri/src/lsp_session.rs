@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 mod capabilities;
 mod request_dispatch;
 mod runtime_telemetry;
+mod server_configuration;
+mod transport_failure;
 
 use capabilities::parse_capabilities;
 use request_dispatch::{cancel_pending_request, send_request_with_timeout};
@@ -36,6 +38,7 @@ use runtime_telemetry::{
     snapshot_recent_requests, snapshot_stderr_tail, spawn_stderr_reader, RecentRequests,
     RuntimeLog, StderrTail, StderrTailBuffer,
 };
+use transport_failure::transport_failure_message;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -57,6 +60,7 @@ pub const JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT: &str =
 type PendingRequestResult = Result<Value, LanguageServerRequestError>;
 type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
 type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
+type SharedProcessKiller = Arc<Mutex<Option<Box<dyn ProcessKiller>>>>;
 type SessionRequestParts = (Arc<Mutex<Box<dyn Write + Send>>>, PendingRequests);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -627,7 +631,7 @@ struct RunningSession {
     pid: Option<u32>,
     stderr_reader: Option<JoinHandle<()>>,
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
-    killer: Box<dyn ProcessKiller>,
+    killer: SharedProcessKiller,
     pending_requests: PendingRequests,
     reader: Option<JoinHandle<()>>,
     server_configuration: Arc<Mutex<Value>>,
@@ -1589,7 +1593,8 @@ impl LanguageServerSupervisor {
     /// Start a session that automatically re-spawns the language server when it
     /// crashes unexpectedly (not on a requested shutdown). Restarts are governed
     /// by `restart_controller`: an exponential backoff with a bounded number of
-    /// attempts inside a sliding window, reset once a session runs stably.
+    /// attempts inside a sliding window. A healthy session regains budget only
+    /// after the previous attempts age out of that window.
     ///
     /// The spawner is owned (`Arc<… + Send + Sync>`) so the background restart
     /// can re-spawn the server for the *same* workspace without touching any
@@ -1673,14 +1678,15 @@ impl LanguageServerSupervisor {
             spawn_stderr_reader(stderr, Arc::clone(&self.log), Arc::clone(&self.stderr_tail))
         });
         let server_configuration = Arc::new(Mutex::new(
-            server_configuration_from_initialize_request(initialize_request),
+            server_configuration::from_initialize_request(initialize_request),
         ));
         let pid = spawned.killer.pid();
+        let killer = Arc::new(Mutex::new(Some(spawned.killer)));
         let mut session = Some(RunningSession {
             pid,
             stderr_reader,
             stdin: Arc::clone(&stdin),
-            killer: spawned.killer,
+            killer: Arc::clone(&killer),
             pending_requests: Arc::clone(&pending_requests),
             reader: None,
             server_configuration: Arc::clone(&server_configuration),
@@ -1734,6 +1740,7 @@ impl LanguageServerSupervisor {
             server_configuration,
             workspace_root,
             restart_context.clone(),
+            killer,
         ));
 
         if !self.attach_reader(&stop_requested, &mut reader)? {
@@ -1763,12 +1770,6 @@ impl LanguageServerSupervisor {
                     session_id,
                     capabilities,
                 );
-
-                if let Ok(LanguageServerRuntimeStatus::Running { .. }) = &running {
-                    if let Some(context) = &restart_context {
-                        context.controller.note_stable_run();
-                    }
-                }
 
                 running
             }
@@ -2155,7 +2156,7 @@ fn terminate_session(mut session: RunningSession) {
         &session.pending_requests,
         "Language server request was stopped.",
     );
-    let _ = session.killer.terminate();
+    terminate_process(&session.killer);
 
     if let Some(reader) = session.reader.take() {
         let _ = reader.join();
@@ -2163,6 +2164,15 @@ fn terminate_session(mut session: RunningSession) {
 
     if let Some(stderr_reader) = session.stderr_reader.take() {
         let _ = stderr_reader.join();
+    }
+}
+
+fn terminate_process(killer: &SharedProcessKiller) {
+    let Ok(mut killer) = killer.lock() else {
+        return;
+    };
+    if let Some(mut killer) = killer.take() {
+        let _ = killer.terminate();
     }
 }
 
@@ -2298,6 +2308,7 @@ impl RestartPolicy {
         delay.min(RESTART_MAX_DELAY)
     }
 
+    #[cfg(test)]
     fn reset(&mut self) {
         self.attempts.clear();
     }
@@ -2369,14 +2380,6 @@ impl RestartController {
         let delay = policy.backoff_delay(attempt_index);
         policy.record_attempt(now);
         RestartOutcome::Restart { delay }
-    }
-
-    /// Reset the attempt budget after a session has run successfully so a later
-    /// crash starts its backoff sequence from scratch.
-    fn note_stable_run(&self) {
-        if let Ok(mut policy) = self.policy.lock() {
-            policy.reset();
-        }
     }
 }
 
@@ -2557,6 +2560,7 @@ fn spawn_reader(
     server_configuration: Arc<Mutex<Value>>,
     workspace_root: String,
     restart_context: Option<Arc<RestartContext>>,
+    killer: SharedProcessKiller,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -2646,7 +2650,9 @@ fn spawn_reader(
                     let _ = handshake_tx.send(HandshakeOutcome::Failed(message));
                     return;
                 }
-                Ok(None) | Err(_) => {
+                Ok(None) => {
+                    terminate_process(&killer);
+
                     if !handshake_done {
                         let _ = handshake_tx.send(HandshakeOutcome::Disconnected);
                         return;
@@ -2667,6 +2673,23 @@ fn spawn_reader(
                     );
 
                     maybe_restart_after_crash(&restart_context, &stop_requested);
+                    return;
+                }
+                Err(error) => {
+                    let message = transport_failure_message(server_label, &error);
+                    terminate_process(&killer);
+
+                    if !handshake_done {
+                        let _ = handshake_tx.send(HandshakeOutcome::Failed(message));
+                        return;
+                    }
+
+                    if stop_requested.load(Ordering::SeqCst) {
+                        return;
+                    }
+
+                    reject_pending_requests(&pending_requests, &message);
+                    publish_crash(&status, status_sink.as_ref(), &message);
                     return;
                 }
             }
@@ -2779,7 +2802,9 @@ fn server_request_result(
     workspace_root: &str,
 ) -> Value {
     match method {
-        "workspace/configuration" => workspace_configuration_result(params, server_configuration),
+        "workspace/configuration" => {
+            server_configuration::workspace_result(params, server_configuration)
+        }
         "workspace/workspaceFolders" => workspace_folders_result(workspace_root),
         "workspace/applyEdit" => {
             workspace_apply_edit_result(params, workspace_edit_sink, session_id, workspace_root)
@@ -2826,158 +2851,6 @@ fn workspace_folders_result(workspace_root: &str) -> Value {
             "name": name,
         }
     ])
-}
-
-fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequest) -> Value {
-    let preferences = initialize_request
-        .params
-        .pointer("/initializationOptions/preferences")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let formatting_options = initialize_request
-        .params
-        .pointer("/initializationOptions/formattingOptions")
-        .cloned()
-        .unwrap_or_else(|| {
-            json!({
-                "insertSpaces": true,
-                "tabSize": 2,
-            })
-        });
-    let auto_imports_enabled = preferences
-        .get("includeCompletionsForModuleExports")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let inlay_hints_enabled = preferences
-        .get("includeInlayFunctionLikeReturnTypeHints")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let parameter_name_hints = preferences
-        .get("includeInlayParameterNameHints")
-        .and_then(Value::as_str)
-        .unwrap_or("literals");
-    let code_lens_enabled = preferences
-        .get("mockorCodeLensEnabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let validation_enabled = preferences
-        .get("mockorValidationEnabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let complete_function_calls = preferences
-        .get("completeFunctionCalls")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    json!({
-        "format": {
-            "enable": true,
-            "insertSpaceAfterCommaDelimiter": true,
-            "insertSpaceAfterConstructor": false,
-            "insertSpaceAfterFunctionKeywordForAnonymousFunctions": true,
-            "insertSpaceAfterKeywordsInControlFlowStatements": true,
-            "insertSpaceAfterOpeningAndBeforeClosingEmptyBraces": true,
-            "insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces": false,
-            "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces": true,
-            "insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets": false,
-            "insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis": false,
-            "insertSpaceAfterSemicolonInForStatements": true,
-            "insertSpaceBeforeAndAfterBinaryOperators": true,
-            "insertSpaceBeforeFunctionParenthesis": false,
-            "placeOpenBraceOnNewLineForControlBlocks": false,
-            "placeOpenBraceOnNewLineForFunctions": false,
-            "semicolons": "ignore",
-        },
-        "formattingOptions": formatting_options,
-        "implicitProjectConfiguration": {
-            "checkJs": false,
-            "experimentalDecorators": false,
-            "module": 99,
-            "strict": true,
-            "strictFunctionTypes": true,
-            "strictNullChecks": true,
-            "target": 11,
-        },
-        "preferences": preferences,
-        "updateImportsOnFileMove": {
-            "enabled": if auto_imports_enabled { "always" } else { "never" },
-        },
-        "validate": {
-            "enable": validation_enabled,
-        },
-        "implementationsCodeLens": { "enabled": code_lens_enabled },
-        "referencesCodeLens": {
-            "enabled": code_lens_enabled,
-            "showOnAllFunctions": false,
-        },
-        "suggest": {
-            "autoImports": auto_imports_enabled,
-            "completeFunctionCalls": complete_function_calls,
-            "includeAutomaticOptionalChainCompletions": true,
-            "includeCompletionsForImportStatements": auto_imports_enabled,
-            "includeCompletionsForModuleExports": auto_imports_enabled,
-        },
-        "inlayHints": {
-            "enumMemberValues": { "enabled": inlay_hints_enabled },
-            "functionLikeReturnTypes": { "enabled": inlay_hints_enabled },
-            "parameterNames": {
-                "enabled": parameter_name_hints,
-                "suppressWhenArgumentMatchesName": false,
-            },
-            "parameterTypes": { "enabled": inlay_hints_enabled },
-            "propertyDeclarationTypes": { "enabled": inlay_hints_enabled },
-            "variableTypes": {
-                "enabled": inlay_hints_enabled,
-                "suppressWhenTypeMatchesName": false,
-            },
-        },
-    })
-}
-
-fn workspace_configuration_result(params: Option<&Value>, server_configuration: &Value) -> Value {
-    let Some(items) = params
-        .and_then(|params| params.get("items"))
-        .and_then(Value::as_array)
-    else {
-        return Value::Array(Vec::new());
-    };
-
-    Value::Array(
-        items
-            .iter()
-            .map(|item| configuration_value_for_item(item, server_configuration))
-            .collect(),
-    )
-}
-
-fn configuration_value_for_item(item: &Value, server_configuration: &Value) -> Value {
-    let section = item.get("section").and_then(Value::as_str).unwrap_or("");
-    let Some(section) = javascript_typescript_configuration_section(section) else {
-        return json!({});
-    };
-
-    if section.is_empty() {
-        return server_configuration.clone();
-    }
-
-    server_configuration
-        .get(section)
-        .cloned()
-        .unwrap_or_else(|| json!({}))
-}
-
-fn javascript_typescript_configuration_section(section: &str) -> Option<&str> {
-    if section == "formattingOptions" {
-        return Some("formattingOptions");
-    }
-
-    if section == "typescript" || section == "javascript" {
-        return Some("");
-    }
-
-    section
-        .strip_prefix("typescript.")
-        .or_else(|| section.strip_prefix("javascript."))
 }
 
 fn workspace_apply_edit_result(
@@ -3230,6 +3103,7 @@ fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     mod request_cancellation_tests;
+    mod transport_failure_tests;
 
     #[cfg(unix)]
     use super::ChildKiller;
@@ -6243,54 +6117,6 @@ mod tests {
     }
 
     #[test]
-    fn unexpected_crash_stops_restarting_after_exhausting_attempts() {
-        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
-        let held = Arc::clone(&spawner.held_writer);
-        let (sink, rx) = ChannelSink::new();
-        let supervisor = Arc::new(LanguageServerSupervisor::new());
-
-        supervisor
-            .start_with_auto_restart(
-                &command(),
-                &initialize_request(),
-                Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
-                LanguageServerEventSinks::new(
-                    sink,
-                    noop_diagnostics_sink(),
-                    Arc::new(NoopWorkspaceEditSink),
-                    Arc::new(NoopRefreshSink),
-                ),
-                // Budget of exactly one restart.
-                Arc::new(RestartController::new(RestartPolicy::new(
-                    1,
-                    Duration::from_secs(60),
-                    Duration::from_millis(0),
-                ))),
-            )
-            .expect("start");
-        wait_for(&rx, &running_status());
-
-        // First crash -> one restart is allowed and succeeds.
-        *held.lock().expect("held writer lock") = None;
-        wait_for(
-            &rx,
-            &LanguageServerRuntimeStatus::Running {
-                session_id: 2,
-                capabilities: LanguageServerCapabilities::default(),
-            },
-        );
-
-        // Second crash -> budget exhausted -> stays crashed (no infinite loop).
-        *held.lock().expect("held writer lock") = None;
-        wait_for(
-            &rx,
-            &LanguageServerRuntimeStatus::Crashed {
-                message: "PHPactor exited unexpectedly.".to_string(),
-            },
-        );
-    }
-
-    #[test]
     fn legitimate_stop_does_not_trigger_restart() {
         let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
         let (sink, rx) = ChannelSink::new();
@@ -6687,31 +6513,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn restart_controller_reset_after_stable_run_restores_attempts() {
-        let controller = RestartController::new(RestartPolicy::new(
-            1,
-            Duration::from_secs(60),
-            Duration::from_secs(1),
-        ));
-
-        assert!(matches!(
-            controller.evaluate_crash(false),
-            RestartOutcome::Restart { .. }
-        ));
-        assert!(matches!(
-            controller.evaluate_crash(false),
-            RestartOutcome::GiveUp
-        ));
-
-        controller.note_stable_run();
-
-        assert!(matches!(
-            controller.evaluate_crash(false),
-            RestartOutcome::Restart { .. }
-        ));
-    }
-
     fn initialize_request() -> JsonRpcRequest {
         JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -6952,11 +6753,13 @@ mod tests {
     }
 
     struct FakeSpawner {
+        auto_close_after: Option<Duration>,
         stderr_script: Vec<u8>,
         stdin_capture: Arc<Mutex<Vec<u8>>>,
         stdin: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
         script: Vec<u8>,
         terminate_script: Vec<u8>,
+        terminate_count: Arc<AtomicUsize>,
         held_writer: Arc<Mutex<Option<PipeWriter>>>,
         keep_open: bool,
     }
@@ -6964,11 +6767,13 @@ mod tests {
     impl FakeSpawner {
         fn new(script: Vec<u8>, keep_open: bool) -> Self {
             Self {
+                auto_close_after: None,
                 stderr_script: Vec::new(),
                 stdin_capture: Arc::new(Mutex::new(Vec::new())),
                 stdin: Arc::new(Mutex::new(None)),
                 script,
                 terminate_script: Vec::new(),
+                terminate_count: Arc::new(AtomicUsize::new(0)),
                 held_writer: Arc::new(Mutex::new(None)),
                 keep_open,
             }
@@ -6976,11 +6781,13 @@ mod tests {
 
         fn with_stdin(script: Vec<u8>, keep_open: bool, stdin: Box<dyn Write + Send>) -> Self {
             Self {
+                auto_close_after: None,
                 stderr_script: Vec::new(),
                 stdin_capture: Arc::new(Mutex::new(Vec::new())),
                 stdin: Arc::new(Mutex::new(Some(stdin))),
                 script,
                 terminate_script: Vec::new(),
+                terminate_count: Arc::new(AtomicUsize::new(0)),
                 held_writer: Arc::new(Mutex::new(None)),
                 keep_open,
             }
@@ -6988,6 +6795,11 @@ mod tests {
 
         fn with_stderr(mut self, stderr_script: Vec<u8>) -> Self {
             self.stderr_script = stderr_script;
+            self
+        }
+
+        fn with_auto_close_after(mut self, delay: Duration) -> Self {
+            self.auto_close_after = Some(delay);
             self
         }
 
@@ -7010,8 +6822,15 @@ mod tests {
                 Some(Box::new(stderr_reader) as Box<dyn std::io::Read + Send>)
             };
 
-            if self.keep_open {
+            if self.keep_open || self.auto_close_after.is_some() {
                 *self.held_writer.lock().expect("held writer lock") = Some(writer);
+            }
+            if let Some(delay) = self.auto_close_after {
+                let held_writer = Arc::clone(&self.held_writer);
+                std::thread::spawn(move || {
+                    std::thread::sleep(delay);
+                    let _ = held_writer.lock().expect("held writer lock").take();
+                });
             }
 
             Ok(SpawnedServer {
@@ -7026,6 +6845,7 @@ mod tests {
                 killer: Box::new(FakeKiller {
                     held: Arc::clone(&self.held_writer),
                     terminate_script: self.terminate_script.clone(),
+                    terminate_count: Arc::clone(&self.terminate_count),
                 }),
             })
         }
@@ -7034,10 +6854,12 @@ mod tests {
     struct FakeKiller {
         held: Arc<Mutex<Option<PipeWriter>>>,
         terminate_script: Vec<u8>,
+        terminate_count: Arc<AtomicUsize>,
     }
 
     impl ProcessKiller for FakeKiller {
         fn terminate(&mut self) -> io::Result<()> {
+            self.terminate_count.fetch_add(1, Ordering::SeqCst);
             let mut writer = self.held.lock().expect("held writer lock").take();
 
             if let Some(writer) = writer.as_mut() {

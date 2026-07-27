@@ -53,7 +53,7 @@ describe("VS Code Node launch configuration loader", () => {
     expect(reads.readFile).not.toHaveBeenCalled();
   });
 
-  it("drops accepted console and disabled automation compatibility fields at the loader boundary", async () => {
+  it("drops accepted Node runtime, output, console and disabled automation compatibility fields", async () => {
     const result = await loadVscodeNodeLaunchConfigurations(
       ROOT,
       fixtures(
@@ -65,8 +65,11 @@ describe("VS Code Node launch configuration loader", () => {
               request: "launch",
               name: "API",
               program: "src/server.ts",
+              runtimeExecutable: "node",
+              runtimeArgs: [],
               console: "internalConsole",
               internalConsoleOptions: "openOnSessionStart",
+              outputCapture: "std",
               autoAttachChildProcesses: false,
               smartStep: false,
               restart: false,
@@ -87,6 +90,9 @@ describe("VS Code Node launch configuration loader", () => {
     for (const field of [
       "console",
       "internalConsoleOptions",
+      "outputCapture",
+      "runtimeExecutable",
+      "runtimeArgs",
       "autoAttachChildProcesses",
       "smartStep",
       "restart",

@@ -97,6 +97,7 @@ export function useDebugPanelProps({
     removeAllBreakpoints,
     removeBreakpoint,
     removeFunctionBreakpoint,
+    scopeLoadState,
     scopes,
     selectFrame,
     selectedFrameId,
@@ -240,6 +241,7 @@ export function useDebugPanelProps({
       onStep: (kind) => void stepDebug(kind),
       onStop: () => void stopDebug().catch(reportCommandError),
       rootPath: workspaceRoot,
+      scopeLoadState,
       scopes,
       selectedFrameId,
       snapshot,
@@ -247,12 +249,18 @@ export function useDebugPanelProps({
       variablePages,
       variableMutationRows,
       watches: {
+        canRefresh: canRefreshWatchEvaluations(watches),
         definitions: watches.definitions,
         evaluations: watches.evaluations,
         expressionMutations: watches.expressionMutations,
         pendingIds: watches.pendingIds,
+        refreshPending: watches.refreshPending === true,
         onAdd: watches.add,
         onClear: watches.clear,
+        onRefresh:
+          typeof watches.invalidateEvaluations === "function"
+            ? () => void watches.invalidateEvaluations()
+            : undefined,
         onRemove: watches.remove,
         onSetEnabled: watches.setEnabled,
         onUpdate: watches.update,
@@ -304,6 +312,7 @@ export function useDebugPanelProps({
       removeAllBreakpoints,
       removeBreakpoint,
       removeFunctionBreakpoint,
+      scopeLoadState,
       scopes,
       selectFrame,
       selectedFrameId,
@@ -327,4 +336,14 @@ export function useDebugPanelProps({
       workspaceTrusted,
     ],
   );
+}
+
+function canRefreshWatchEvaluations(
+  watches: UseDebugPanelPropsOptions["debugSession"]["watches"],
+): boolean {
+  try {
+    return watches.canInvalidateEvaluations?.() === true;
+  } catch {
+    return false;
+  }
 }

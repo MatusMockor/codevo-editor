@@ -441,6 +441,35 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.warmUp).toHaveBeenCalledWith(ROOT, document.path, SESSION);
   });
 
+  it("opens PHP documents independently when the JavaScript/TypeScript runtime is stopped", async () => {
+    const harness = createHarness();
+    const stoppedJavaScriptTypeScriptStatus: LanguageServerRuntimeStatus = {
+      kind: "stopped",
+      rootPath: ROOT,
+    };
+    harness.jsts.statusRef.current = stoppedJavaScriptTypeScriptStatus;
+    harness.jsts.statusByRootRef.current = {
+      [ROOT]: stoppedJavaScriptTypeScriptStatus,
+    };
+    const { api } = renderDocumentSync({
+      ...harness.deps,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: stoppedJavaScriptTypeScriptStatus,
+    });
+    const document = phpDocument();
+
+    await api().syncOpenDocument(document);
+
+    expect(harness.phpGateway.didOpen).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({
+        languageId: "php",
+        path: document.path,
+      }),
+      SESSION,
+    );
+    expect(harness.jstsGateway.didOpen).not.toHaveBeenCalled();
+  });
+
   it("rebinds document ownership when the injected workspace-root ref changes", async () => {
     const harness = createHarness();
     const rendered = renderDocumentSync(harness.deps);
@@ -1324,7 +1353,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBe(2);
   });
 
-  it("keeps large JS/TS content out of didChange/didSave and resumes with the exact shrunken snapshot", async () => {
+  it("closes a JS/TS document above the exact threshold and reopens the shrunken snapshot", async () => {
     const harness = createHarness();
     harness.deps.largeSmartDocumentPolicy = {
       characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -1346,19 +1375,441 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
     expect(harness.jstsGateway.didSave).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledWith(ROOT, large.path);
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, large.path)).toBeNull();
 
     harness.activeDocumentRef.current = shrunken;
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, shrunken.path)).toBeNull();
     api().scheduleJavaScriptTypeScriptDocumentChange(shrunken);
+    await flushMicrotasks();
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledTimes(2);
     await api().flushPendingJavaScriptTypeScriptDocumentChange(shrunken.path);
 
-    expect(harness.jstsGateway.didChange).toHaveBeenCalledOnce();
-    expect(harness.jstsGateway.didChange).toHaveBeenCalledWith(
+    expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didOpen).toHaveBeenLastCalledWith(
       ROOT,
-      expect.objectContaining({ text: shrunken.content, version: 2 }),
+      expect.objectContaining({ text: shrunken.content, version: 1 }),
     );
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, shrunken.path)).toBe(2);
+  });
+
+  it("keeps threshold minus one and exact threshold eligible, then closes once at plus one", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const { api } = renderDocumentSync(harness.deps);
+    const below = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT - 1),
+    });
+    const exact = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT),
+    });
+    const above = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    harness.activeDocumentRef.current = below;
+
+    await api().syncOpenJavaScriptTypeScriptDocument(below);
+    harness.activeDocumentRef.current = exact;
+    api().scheduleJavaScriptTypeScriptDocumentChange(exact);
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(exact.path);
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, exact.path)).toBe(2);
+
+    harness.activeDocumentRef.current = above;
+    api().scheduleJavaScriptTypeScriptDocumentChange(above);
+    api().scheduleJavaScriptTypeScriptDocumentChange(above);
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(above.path);
+    await flushMicrotasks();
+
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, above.path)).toBeNull();
+  });
+
+  it("cancels a pending debounced change and clears all document authority on large transition", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const rendered = renderDocumentSync(harness.deps);
+    const { api } = rendered;
+    const original = tsDocument({ content: "original" });
+    const pending = tsDocument({ content: "pending" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const syncKey = languageServerDocumentSyncKey(ROOT, original.path);
+    const uriKey = languageServerUriSyncKey(ROOT, fileUriFromPath(original.path));
+    harness.activeDocumentRef.current = original;
+    await api().syncOpenJavaScriptTypeScriptDocument(original);
+    harness.jsts.lastAppliedByUri.current[uriKey] = 1;
+    api().scheduleJavaScriptTypeScriptDocumentChange(pending);
+
+    harness.activeDocumentRef.current = large;
+    api().scheduleJavaScriptTypeScriptDocumentChange(large);
+    await vi.advanceTimersByTimeAsync(150);
+    await flushMicrotasks();
+
+    expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
+    expect(harness.jsts.syncedPaths.current.has(syncKey)).toBe(false);
+    expect(harness.jsts.syncedContent.current[syncKey]).toBeUndefined();
+    expect(harness.jsts.pendingChanges.current[syncKey]).toBeUndefined();
+    expect(harness.jsts.pendingOpenAttempts.current[syncKey]).toBeUndefined();
+    expect(harness.jsts.versions.current[syncKey]).toBeUndefined();
+    expect(harness.jsts.versionsByUri.current[uriKey]).toBeUndefined();
+    expect(harness.jsts.lastAppliedByUri.current[uriKey]).toBeUndefined();
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, original.path)).toBeNull();
+  });
+
+  it("orders didClose before a fresh didOpen when a large document shrinks during close", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const closeSettlement = deferred<void>();
+    const events: string[] = [];
+    vi.mocked(harness.jstsGateway.didOpen).mockImplementation(async (_root, document) => {
+      events.push(`open:${document.text}`);
+    });
+    vi.mocked(harness.jstsGateway.didClose).mockImplementationOnce(async () => {
+      events.push("close:start");
+      await closeSettlement.promise;
+      events.push("close:end");
+    });
+    const { api } = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const shrunken = tsDocument({ content: "current-full-text" });
+    harness.activeDocumentRef.current = original;
+    await api().syncOpenJavaScriptTypeScriptDocument(original);
+
+    harness.activeDocumentRef.current = large;
+    const close = api().syncSavedJavaScriptTypeScriptDocument(ROOT, large);
+    await flushMicrotasks();
+    harness.activeDocumentRef.current = shrunken;
+    const reopen = api().flushPendingJavaScriptTypeScriptDocumentChange(shrunken.path);
+    await flushMicrotasks();
+
+    expect(events).toEqual(["open:original", "close:start"]);
+    closeSettlement.resolve();
+    await Promise.all([close, reopen]);
+
+    expect(events).toEqual(["open:original", "close:start", "close:end", "open:current-full-text"]);
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, shrunken.path)).toBe(2);
+  });
+
+  it("does not let a late close completion clear a same-path replacement lifecycle", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const closeSettlement = deferred<void>();
+    vi.mocked(harness.jstsGateway.didClose).mockImplementationOnce(
+      async () => closeSettlement.promise,
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const replacement = tsDocument({ content: "replacement" });
+    const syncKey = languageServerDocumentSyncKey(ROOT, original.path);
+    harness.activeDocumentRef.current = original;
+    await api().syncOpenJavaScriptTypeScriptDocument(original);
+
+    harness.activeDocumentRef.current = large;
+    const close = api().syncSavedJavaScriptTypeScriptDocument(ROOT, large);
+    await flushMicrotasks();
+    harness.activeDocumentRef.current = replacement;
+    const reopen = api().syncOpenJavaScriptTypeScriptDocument(replacement);
+    expect(harness.jsts.syncedContent.current[syncKey]).toBe("replacement");
+
+    closeSettlement.resolve();
+    await Promise.all([close, reopen]);
+
+    expect(harness.jsts.syncedPaths.current.has(syncKey)).toBe(true);
+    expect(harness.jsts.syncedContent.current[syncKey]).toBe("replacement");
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, replacement.path)).toBe(2);
+  });
+
+  it("fails closed when a queued reopen races an uncertain didClose rejection", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    let rejectClose!: (error: Error) => void;
+    vi.mocked(harness.jstsGateway.didClose).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectClose = reject;
+        }),
+    );
+    const rendered = renderDocumentSync(harness.deps);
+    const { api } = rendered;
+    const original = tsDocument({ content: "original" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const replacement = tsDocument({ content: "replacement" });
+    const syncKey = languageServerDocumentSyncKey(ROOT, original.path);
+    harness.activeDocumentRef.current = original;
+    await api().syncOpenJavaScriptTypeScriptDocument(original);
+
+    harness.activeDocumentRef.current = large;
+    const close = api().syncSavedJavaScriptTypeScriptDocument(ROOT, large);
+    await flushMicrotasks();
+    harness.activeDocumentRef.current = replacement;
+    const blockedReopen = api().syncOpenJavaScriptTypeScriptDocument(replacement);
+    rejectClose(new Error("didClose settlement uncertain"));
+    await Promise.all([close, blockedReopen]);
+
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledOnce();
+    expect(harness.jsts.syncedPaths.current.has(syncKey)).toBe(false);
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, replacement.path)).toBeNull();
+    expect(harness.reportErrorForActiveWorkspaceRoot).toHaveBeenCalledOnce();
+
+    const replacementSession = runningStatus(ROOT, SESSION + 1);
+    harness.jsts.statusRef.current = replacementSession;
+    harness.jsts.statusByRootRef.current = { [ROOT]: replacementSession };
+    rendered.rerender({
+      ...harness.deps,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: replacementSession,
+    });
+    await api().syncOpenJavaScriptTypeScriptDocument(replacement);
+
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledTimes(2);
+    expect(harness.jstsGateway.didOpen).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ text: replacement.content }),
+    );
+  });
+
+  it("fails closed when didClose rejects before a same-session reopen is requested", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    vi.mocked(harness.jstsGateway.didClose).mockRejectedValueOnce(
+      new Error("didClose settlement uncertain"),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const replacement = tsDocument({ content: "replacement" });
+    harness.activeDocumentRef.current = original;
+    await api().syncOpenJavaScriptTypeScriptDocument(original);
+
+    harness.activeDocumentRef.current = large;
+    await api().syncSavedJavaScriptTypeScriptDocument(ROOT, large);
+    harness.activeDocumentRef.current = replacement;
+    await api().syncOpenJavaScriptTypeScriptDocument(replacement);
+
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledOnce();
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, replacement.path)).toBeNull();
+  });
+
+  it("poisons an in-flight close rejection after same-session authority replacement", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    let rejectClose!: (error: Error) => void;
+    vi.mocked(harness.jstsGateway.didClose).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectClose = reject;
+        }),
+    );
+    const rendered = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const replacement = tsDocument({ content: "replacement" });
+    harness.activeDocumentRef.current = original;
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(original);
+
+    harness.activeDocumentRef.current = large;
+    const close = rendered.api().syncSavedJavaScriptTypeScriptDocument(ROOT, large);
+    await flushMicrotasks();
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
+
+    rendered.rerender({
+      ...harness.deps,
+      isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot: (rootPath, sessionId) =>
+        rootPath === ROOT && sessionId === SESSION,
+    });
+    rejectClose(new Error("didClose settlement uncertain"));
+    await close;
+
+    harness.activeDocumentRef.current = replacement;
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(replacement);
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledOnce();
+    expect(
+      rendered.api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, replacement.path),
+    ).toBeNull();
+    expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+  });
+
+  it("drops a queued large-transition close across workspace A-B-A and reopens freshly", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const changeSettlement = deferred<void>();
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(
+      async () => changeSettlement.promise,
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const pending = tsDocument({ content: "pending" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const fresh = tsDocument({ content: "fresh-after-a-b-a" });
+    harness.activeDocumentRef.current = original;
+    await api().syncOpenJavaScriptTypeScriptDocument(original);
+    api().scheduleJavaScriptTypeScriptDocumentChange(pending);
+    const flush = api().flushPendingJavaScriptTypeScriptDocumentChange(pending.path);
+    await flushMicrotasks();
+
+    harness.activeDocumentRef.current = large;
+    api().scheduleJavaScriptTypeScriptDocumentChange(large);
+    harness.currentRootRef.current = OTHER_ROOT;
+    harness.jsts.generation.current += 1;
+    harness.currentRootRef.current = ROOT;
+    changeSettlement.resolve();
+    await flush;
+    await flushMicrotasks();
+
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
+    harness.activeDocumentRef.current = fresh;
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(fresh.path);
+    expect(harness.jstsGateway.didOpen).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ text: fresh.content }),
+    );
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, fresh.path)).toBe(3);
+  });
+
+  it("drops a queued large-transition close after the JS/TS gateway owner is replaced", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const changeSettlement = deferred<void>();
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(
+      async () => changeSettlement.promise,
+    );
+    const rendered = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const pending = tsDocument({ content: "pending" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    harness.activeDocumentRef.current = original;
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(original);
+    rendered.api().scheduleJavaScriptTypeScriptDocumentChange(pending);
+    const flush = rendered.api().flushPendingJavaScriptTypeScriptDocumentChange(pending.path);
+    await flushMicrotasks();
+
+    harness.activeDocumentRef.current = large;
+    rendered.api().scheduleJavaScriptTypeScriptDocumentChange(large);
+    const replacementGateway = createSyncGatewaySpy();
+    const replacementDependencies = {
+      ...harness.deps,
+      javaScriptTypeScriptLanguageServerDocumentSyncGateway: replacementGateway,
+    };
+    rendered.rerender(replacementDependencies);
+    changeSettlement.resolve();
+    await flush;
+    await flushMicrotasks();
+
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
+    expect(replacementGateway.didClose).not.toHaveBeenCalled();
+  });
+
+  it("drops a queued close when the trust/session authority provider is replaced", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const changeSettlement = deferred<void>();
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(
+      async () => changeSettlement.promise,
+    );
+    const rendered = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const pending = tsDocument({ content: "pending" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    harness.activeDocumentRef.current = original;
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(original);
+    rendered.api().scheduleJavaScriptTypeScriptDocumentChange(pending);
+    const flush = rendered.api().flushPendingJavaScriptTypeScriptDocumentChange(pending.path);
+    await flushMicrotasks();
+
+    harness.activeDocumentRef.current = large;
+    rendered.api().scheduleJavaScriptTypeScriptDocumentChange(large);
+    rendered.rerender({
+      ...harness.deps,
+      isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot: () => false,
+    });
+    changeSettlement.resolve();
+    await flush;
+    await flushMicrotasks();
+
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
+  });
+
+  it("drops a queued large-transition close after unmount", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const changeSettlement = deferred<void>();
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(
+      async () => changeSettlement.promise,
+    );
+    const rendered = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "original" });
+    const pending = tsDocument({ content: "pending" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    harness.activeDocumentRef.current = original;
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(original);
+    rendered.api().scheduleJavaScriptTypeScriptDocumentChange(pending);
+    const flush = rendered.api().flushPendingJavaScriptTypeScriptDocumentChange(pending.path);
+    await flushMicrotasks();
+
+    harness.activeDocumentRef.current = large;
+    rendered.api().scheduleJavaScriptTypeScriptDocumentChange(large);
+    rendered.unmount();
+    changeSettlement.resolve();
+    await flush;
+    await flushMicrotasks();
+
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
   });
 
   it("debounces edits and flushes / saves / closes symmetrically to PHP", async () => {

@@ -30,11 +30,7 @@ describe("JsTestGutterTargetsCache", () => {
     const reparsed = cache.resolve("/workspace/math.test.ts", CHANGED_SOURCE);
 
     expect(reparsed).not.toBe(first);
-    expect(reparsed.map((target) => target.filter)).toEqual([
-      "math",
-      "adds",
-      "subtracts",
-    ]);
+    expect(reparsed.map((target) => target.filter)).toEqual(["math", "adds", "subtracts"]);
   });
 
   it("keeps separate entries per path", () => {
@@ -67,5 +63,17 @@ describe("JsTestGutterTargetsCache", () => {
 
     expect(reparsed).not.toBe(first);
     expect(reparsed).toEqual(first);
+  });
+
+  it("caches a fail-closed empty result when ancestry exceeds the declaration budget", () => {
+    const cache = new JsTestGutterTargetsCache();
+    const depth = 363;
+    const source = `${'describe("s",()=>{'.repeat(depth)}it("leaf",()=>{});${"});".repeat(depth)}`;
+
+    const first = cache.resolve("/workspace/deep.test.ts", source);
+    const second = cache.resolve("/workspace/deep.test.ts", source);
+
+    expect(first).toEqual([]);
+    expect(second).toBe(first);
   });
 });

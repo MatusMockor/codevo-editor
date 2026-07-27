@@ -1,4 +1,9 @@
 use crate::{
+    js_test_execution_root::{
+        ensure_js_test_execution_context_identity, resolve_js_test_execution_context,
+        retain_js_test_process_authority, RetainedJsTestProcessAuthority, RetainedJsTestRunnerKind,
+    },
+    js_test_run::{JsTestNameMatch, JsTestRunScope},
     terminal_task_process::TerminalTaskOwnership,
     trust::WorkspaceTrustService,
     workspace_registry::{opened_root_path, WorkspaceId, WorkspaceRegistry},
@@ -6,24 +11,21 @@ use crate::{
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
-    fs::File,
-    io::{self, BufReader, Read},
-    path::{Component, Path, PathBuf},
-    process::{Child, Command, Stdio},
+    fs::{self, File},
+    io::{BufReader, Read},
+    path::{Path, PathBuf},
+    process::{Child, Stdio},
     sync::{Arc, Mutex, MutexGuard, Weak},
     thread,
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use std::os::{fd::AsRawFd, unix::process::CommandExt};
+#[cfg(test)]
+use std::process::Command;
 
 const WATCH_ID_BYTES_LIMIT: usize = 128;
 const WORKSPACE_ID_BYTES_LIMIT: usize = 1024;
-const PACKAGE_PATH_BYTES_LIMIT: usize = 4096;
-const FILE_PATH_BYTES_LIMIT: usize = 16 * 1024;
-const FULL_NAME_BYTES_LIMIT: usize = 16 * 1024;
 const OUTPUT_CHUNK_BYTES_LIMIT: usize = 64 * 1024;
 const OUTPUT_BYTES_LIMIT: usize = 1024 * 1024;
 const OUTPUT_EVENT_LIMIT: usize = 1024;
@@ -788,44 +790,64 @@ fn validate_owner(owner: &JsTestWatchOwner) -> Result<(), String> {
 }
 
 struct WatchPlan {
-    binary: PathBuf,
     args: Vec<String>,
-    cwd: PathBuf,
-    cwd_descriptor: File,
+    authority: RetainedJsTestProcessAuthority,
 }
 
 fn prepare_watch_plan(root: &File, command: &JsTestWatchCommand) -> Result<WatchPlan, String> {
-    let root_path = opened_root_path(root)
-        .map_err(|error| format!("Registered JavaScript test workspace is unavailable: {error}"))?;
-    ensure_root_identity(root, &root_path)?;
-    let (runner_name, package_relative_path, scope) = match command {
-        JsTestWatchCommand::VitestWatch {
-            package_root_relative_path,
-            scope,
-        } => ("vitest", package_root_relative_path, scope),
-        JsTestWatchCommand::JestWatch {
-            package_root_relative_path,
-            scope,
-        } => ("jest", package_root_relative_path, scope),
-    };
-    let package_root = resolve_package_root(&root_path, package_relative_path)?;
-    let cwd_descriptor = File::open(&package_root)
-        .map_err(|error| format!("Failed to retain JavaScript test package root: {error}"))?;
-    let retained_package_root = opened_root_path(&cwd_descriptor).map_err(|error| {
-        format!("Failed to inspect retained JavaScript test package root: {error}")
-    })?;
-    if retained_package_root != package_root {
-        return Err("JavaScript test package root identity changed.".to_string());
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (root, command);
+        return Err(
+            "Secure JavaScript test watch is available only on macOS and Linux.".to_string(),
+        );
     }
-    let binary = nearest_runner_binary(&root_path, &package_root, runner_name)?;
-    let args = watch_args(&root_path, scope)?;
-    ensure_root_identity(root, &root_path)?;
-    Ok(WatchPlan {
-        binary,
-        args,
-        cwd: package_root,
-        cwd_descriptor,
-    })
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let root_path = opened_root_path(root).map_err(|error| {
+            format!("Registered JavaScript test workspace is unavailable: {error}")
+        })?;
+        ensure_root_identity(root, &root_path)?;
+        let (runner_name, runner_kind, package_relative_path, scope) = match command {
+            JsTestWatchCommand::VitestWatch {
+                package_root_relative_path,
+                scope,
+            } => (
+                "vitest",
+                RetainedJsTestRunnerKind::Vitest,
+                package_root_relative_path,
+                scope,
+            ),
+            JsTestWatchCommand::JestWatch {
+                package_root_relative_path,
+                scope,
+            } => (
+                "jest",
+                RetainedJsTestRunnerKind::Jest,
+                package_root_relative_path,
+                scope,
+            ),
+        };
+        if !matches!(scope, JsTestWatchScope::All) {
+            return Err(
+                "Native continuous test watch currently supports only the full package. Selected file, suite, and test runs remain available as one-shot runs."
+                    .to_string(),
+            );
+        }
+        let context = resolve_js_test_execution_context(
+            &root_path,
+            package_relative_path,
+            test_run_scope(scope),
+        )?;
+        ensure_js_test_execution_context_identity(&context)?;
+        let binary = nearest_runner_binary(&root_path, &context.execution_root, runner_name)?;
+        let authority = retain_js_test_process_authority(&context, &binary, runner_kind)?;
+        let args = watch_args(&context.scope, runner_kind)?;
+        ensure_root_identity(root, &root_path)?;
+        ensure_js_test_execution_context_identity(&context)?;
+        authority.ensure_spawn_identity()?;
+        Ok(WatchPlan { args, authority })
+    }
 }
 
 fn nearest_runner_binary(
@@ -833,10 +855,20 @@ fn nearest_runner_binary(
     package_root: &Path,
     runner_name: &str,
 ) -> Result<PathBuf, String> {
+    let canonical_workspace = fs::canonicalize(workspace_root)
+        .map_err(|error| format!("Failed to resolve JavaScript test watch workspace: {error}"))?;
     let mut candidate = package_root.to_path_buf();
     loop {
         let binary = candidate.join("node_modules/.bin").join(runner_name);
         if binary.is_file() {
+            let resolved = fs::canonicalize(&binary).map_err(|error| {
+                format!("Failed to resolve JavaScript test watch runner: {error}")
+            })?;
+            if !resolved.starts_with(&canonical_workspace) || !resolved.is_file() {
+                return Err(
+                    "JavaScript test watch runner must stay inside its workspace.".to_string(),
+                );
+            }
             return Ok(binary);
         }
         if candidate == workspace_root {
@@ -855,118 +887,45 @@ fn nearest_runner_binary(
     ))
 }
 
-fn resolve_package_root(root: &Path, relative: &str) -> Result<PathBuf, String> {
-    if relative.len() > PACKAGE_PATH_BYTES_LIMIT || relative.chars().any(char::is_control) {
-        return Err("JavaScript test watch package root is invalid.".to_string());
-    }
-    let relative_path = Path::new(relative);
-    if relative_path.is_absolute()
-        || relative_path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        if relative.is_empty() {
-            return Ok(root.to_path_buf());
-        }
-        return Err(
-            "JavaScript test watch package root must stay inside the workspace.".to_string(),
-        );
-    }
-    let candidate = if relative.is_empty() {
-        root.to_path_buf()
-    } else {
-        root.join(relative_path)
-    };
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve JavaScript test package root: {error}"))?;
-    if !canonical.starts_with(root) || !canonical.is_dir() {
-        return Err(
-            "JavaScript test watch package root must stay inside the workspace.".to_string(),
-        );
-    }
-    Ok(canonical)
-}
-
-fn watch_args(workspace_root: &Path, scope: &JsTestWatchScope) -> Result<Vec<String>, String> {
-    let mut args = vec!["--watch".to_string()];
-    let (relative_file_path, full_name, prefix) = match scope {
-        JsTestWatchScope::All => return Ok(args),
-        JsTestWatchScope::File { relative_file_path } => (relative_file_path, None, false),
+fn test_run_scope(scope: &JsTestWatchScope) -> JsTestRunScope {
+    match scope {
+        JsTestWatchScope::All => JsTestRunScope::All,
+        JsTestWatchScope::File { relative_file_path } => JsTestRunScope::File {
+            relative_file_path: relative_file_path.clone(),
+        },
         JsTestWatchScope::Suite {
             relative_file_path,
             full_name,
-        } => (relative_file_path, Some(full_name), true),
+        } => JsTestRunScope::Suite {
+            relative_file_path: relative_file_path.clone(),
+            full_name: full_name.clone(),
+        },
         JsTestWatchScope::Test {
             relative_file_path,
             full_name,
             name_match,
-        } => (
-            relative_file_path,
-            Some(full_name),
-            matches!(name_match, Some(JsTestWatchNameMatch::Prefix)),
+        } => JsTestRunScope::Test {
+            relative_file_path: relative_file_path.clone(),
+            full_name: full_name.clone(),
+            name_match: name_match.map(|_| JsTestNameMatch::Prefix),
+        },
+    }
+}
+
+fn watch_args(
+    scope: &JsTestRunScope,
+    runner_kind: RetainedJsTestRunnerKind,
+) -> Result<Vec<String>, String> {
+    match scope {
+        JsTestRunScope::All => Ok(vec![match runner_kind {
+            RetainedJsTestRunnerKind::Vitest => "--watch",
+            RetainedJsTestRunnerKind::Jest => "--watchAll",
+        }
+        .to_string()]),
+        _ => Err(
+            "Native continuous test watch currently supports only the full package.".to_string(),
         ),
-    };
-    args.push(validated_test_file(workspace_root, relative_file_path)?);
-    if let Some(full_name) = full_name {
-        if full_name.trim().is_empty()
-            || full_name.len() > FULL_NAME_BYTES_LIMIT
-            || full_name.chars().any(char::is_control)
-        {
-            return Err("JavaScript test watch full name is invalid.".to_string());
-        }
-        let escaped = escape_regex(full_name);
-        let pattern = if prefix {
-            format!("^{escaped}(?: |$)")
-        } else {
-            format!("^{escaped}$")
-        };
-        args.push("--testNamePattern".to_string());
-        args.push(pattern);
     }
-    Ok(args)
-}
-
-fn validated_test_file(root: &Path, relative: &str) -> Result<String, String> {
-    if relative.is_empty()
-        || relative.len() > FILE_PATH_BYTES_LIMIT
-        || relative.chars().any(char::is_control)
-    {
-        return Err("JavaScript test watch file path is invalid.".to_string());
-    }
-    let relative_path = Path::new(relative);
-    if relative_path.is_absolute()
-        || relative_path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err("JavaScript test watch file path must stay inside the workspace.".to_string());
-    }
-    let canonical = root
-        .join(relative_path)
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve JavaScript test watch file: {error}"))?;
-    if !canonical.starts_with(root) || !canonical.is_file() {
-        return Err("JavaScript test watch file path must stay inside the workspace.".to_string());
-    }
-    canonical
-        .to_str()
-        .map(str::to_string)
-        .ok_or_else(|| "JavaScript test watch file path is not valid UTF-8.".to_string())
-}
-
-fn escape_regex(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        if matches!(
-            character,
-            '\\' | '^' | '$' | '.' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{' | '}'
-        ) {
-            escaped.push('\\');
-        }
-        escaped.push(character);
-    }
-    escaped
 }
 
 #[cfg(unix)]
@@ -1018,14 +977,18 @@ fn spawn_watch(
     registry: Arc<JsTestWatchRegistry>,
     sink: Arc<dyn JsTestWatchEventSink>,
 ) -> Result<SpawnedWatch, String> {
-    let mut command = Command::new(plan.binary);
+    plan.authority.ensure_spawn_identity()?;
+    let mut command = plan.authority.into_command(plan.args);
     command
-        .args(plan.args)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_watch_cwd(&mut command, &plan.cwd_descriptor, &plan.cwd)?;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start JavaScript test watch: {error}"))?;
@@ -1079,39 +1042,6 @@ fn spawn_watch(
         stdout: Some(stdout),
         stderr: Some(stderr),
     })
-}
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn configure_watch_cwd(
-    command: &mut Command,
-    directory: &File,
-    _path: &Path,
-) -> Result<(), String> {
-    let directory = directory
-        .try_clone()
-        .map_err(|error| format!("Failed to retain JavaScript test package root: {error}"))?;
-    unsafe {
-        command.pre_exec(move || {
-            if libc::setpgid(0, 0) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            if libc::fchdir(directory.as_raw_fd()) != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    Ok(())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn configure_watch_cwd(
-    command: &mut Command,
-    _directory: &File,
-    path: &Path,
-) -> Result<(), String> {
-    command.current_dir(path);
-    Ok(())
 }
 
 fn read_output(
@@ -1662,6 +1592,10 @@ mod tests {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[path = "js_test_watch_authority_tests.rs"]
+mod authority_tests;
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 #[path = "js_test_watch_lifecycle_tests.rs"]
 mod lifecycle_tests;

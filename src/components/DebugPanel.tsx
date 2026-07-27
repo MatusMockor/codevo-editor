@@ -39,7 +39,10 @@ import type {
 import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import type { LatencyTracker } from "../domain/latencyTracker";
 import type { ActiveDebugAdapterKind } from "../application/useDebugSession";
-import type { DebugVariableMutationRows } from "../application/debugSessionContracts";
+import type {
+  DebugScopeLoadState,
+  DebugVariableMutationRows,
+} from "../application/debugSessionContracts";
 import type { UseDebugConsoleResult } from "../application/useDebugConsole";
 import type { DebugConsoleFocusRequest } from "../application/useDebugConsoleSurfaceCommands";
 import { workspaceRelativePath } from "../domain/pathDerivation";
@@ -191,6 +194,7 @@ export interface DebugPanelProps {
   onStep(kind: StepKind): void;
   onStop(): void;
   rootPath: string | null;
+  scopeLoadState: DebugScopeLoadState;
   scopes: DebugScope[];
   selectedFrameId: number | null;
   snapshot: DebuggerSessionSnapshot;
@@ -411,6 +415,7 @@ export function DebugPanel({
   onStep,
   onStop,
   rootPath,
+  scopeLoadState,
   scopes,
   selectedFrameId,
   snapshot,
@@ -608,6 +613,8 @@ export function DebugPanel({
             latencyTracker={latencyTracker}
             onLoadVariablePage={onLoadVariablePage}
             onLoadVariables={onLoadVariables}
+            onRetryFrame={onSelectFrame}
+            scopeLoadState={scopeLoadState}
             scopes={scopes}
             setVariableSurface={debugSetVariable}
             stopped={stopped}
@@ -1176,6 +1183,8 @@ function Variables({
   latencyTracker,
   onLoadVariablePage,
   onLoadVariables,
+  onRetryFrame,
+  scopeLoadState,
   scopes,
   setVariableSurface,
   stopped,
@@ -1189,6 +1198,8 @@ function Variables({
   latencyTracker?: LatencyTracker;
   onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
   onLoadVariables(variablesReference: number): void;
+  onRetryFrame(frameId: number): void;
+  scopeLoadState: DebugScopeLoadState;
   scopes: DebugScope[];
   setVariableSurface?: DebugSetVariableSurface;
   stopped: boolean;
@@ -1196,12 +1207,39 @@ function Variables({
   variableMutationRows?: DebugVariableMutationRows;
   variablesByReference: Record<number, DebugVariable[]>;
 }) {
-  if (!stopped) {
+  if (!stopped || scopeLoadState.kind === "inactive") {
     return <div style={styles.message}>Not paused</div>;
   }
 
+  if (scopeLoadState.kind === "unavailable") {
+    return <div style={styles.message}>No stack frame available</div>;
+  }
+
+  if (scopeLoadState.kind === "loading") {
+    return (
+      <div aria-live="polite" role="status" style={styles.message}>
+        Loading variables…
+      </div>
+    );
+  }
+
+  if (scopeLoadState.kind === "error") {
+    return (
+      <div role="alert" style={styles.message}>
+        <div>{scopeLoadState.message}</div>
+        <button
+          aria-label="Retry"
+          onClick={() => onRetryFrame(scopeLoadState.frameId)}
+          type="button"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   if (scopes.length === 0) {
-    return <div style={styles.message}>Select a frame to inspect variables</div>;
+    return <div style={styles.message}>No variables in selected frame</div>;
   }
 
   const roots: DebugVariableTreeRoot[] = scopes.map((scope, index) => ({
