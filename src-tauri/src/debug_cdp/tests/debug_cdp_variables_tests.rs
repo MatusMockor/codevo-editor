@@ -39,6 +39,9 @@ mod collection_variables_tests {
     include!("debug_cdp_collection_variables_tests.rs");
 }
 
+#[path = "debug_cdp_collection_variables_real_integration_tests.rs"]
+mod collection_variables_real_integration_tests;
+
 fn variables_responder(properties: Value) -> MockResponder {
     Box::new(move |id, method, _params| match method {
         "Runtime.runIfWaitingForDebugger" => vec![
@@ -1457,6 +1460,7 @@ fn variables_page_slices_value_descriptors_and_registers_only_returned_children(
             "generatePreview": false,
         })]
     );
+    assert!(server.params_for("Runtime.callFunctionOn").is_empty());
 }
 
 #[test]

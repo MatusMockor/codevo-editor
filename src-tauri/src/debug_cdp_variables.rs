@@ -1,4 +1,4 @@
-//! Bounded CDP variable paging and pause/frame-owned object references.
+//! Count-bounded CDP paging; descriptor byte limits are post-receipt, not wire bounds.
 
 use self::set_expression_provenance::{SetExpressionReference, SetExpressionTarget};
 use super::transport::{CdpClient, CdpShared};
@@ -28,9 +28,7 @@ use descriptor_snapshot_policy::{retained_descriptor_prefix_search, validate_pro
 
 #[path = "debug_cdp_collection_variables.rs"]
 mod collection_variables;
-use collection_variables::{
-    acquire_descriptor_sources, remote_object_access, reserve_variable_page_load,
-};
+use collection_variables::{acquire_descriptor_sources_with_page_load, remote_object_access};
 
 pub(super) mod set_variable {
     include!("debug_cdp_set_variable.rs");
@@ -54,12 +52,20 @@ pub(super) mod set_expression_proof {
 
 pub(super) const MAX_CDP_PROPERTY_DESCRIPTORS: usize = 10_000;
 pub(super) const MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION: usize = 512;
+pub(super) const CDP_COLLECTION_ENTRY_WINDOW_SIZE: usize = 16;
+pub(super) const CDP_COLLECTION_ENTRY_WINDOW_FUNCTION: &str = "function(start, count) { const page = [count > 0 ? this[start] : void 0, count > 1 ? this[start + 1] : void 0, count > 2 ? this[start + 2] : void 0, count > 3 ? this[start + 3] : void 0, count > 4 ? this[start + 4] : void 0, count > 5 ? this[start + 5] : void 0, count > 6 ? this[start + 6] : void 0, count > 7 ? this[start + 7] : void 0, count > 8 ? this[start + 8] : void 0, count > 9 ? this[start + 9] : void 0, count > 10 ? this[start + 10] : void 0, count > 11 ? this[start + 11] : void 0, count > 12 ? this[start + 12] : void 0, count > 13 ? this[start + 13] : void 0, count > 14 ? this[start + 14] : void 0, count > 15 ? this[start + 15] : void 0]; page.length = count; return page; }";
 const _: () = assert!(MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION == 512);
+const _: () = assert!(CDP_COLLECTION_ENTRY_WINDOW_SIZE == 16);
+const _: () = assert!(
+    (1 + MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION.div_ceil(CDP_COLLECTION_ENTRY_WINDOW_SIZE) * 2)
+        * 8
+        < MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE
+);
 pub(super) const MAX_CDP_PROPERTY_DESCRIPTOR_BYTES_PER_PAUSE: usize = 4 * 1024 * 1024;
 pub(super) const MAX_CDP_OBJECT_REFERENCES_PER_PAUSE: usize = 4_096;
 pub(super) const MAX_CDP_OBJECT_REFERENCE_BYTES_PER_PAUSE: usize = 4 * 1024 * 1024;
 pub(super) const MAX_CDP_OBJECT_ID_BYTES: usize = 4 * 1024;
-pub(super) const MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE: usize = 128;
+pub(super) const MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE: usize = 1024;
 pub(super) const MAX_CDP_VARIABLE_MUTATIONS_PER_PAUSE: usize = 128;
 const MAX_VARIABLE_PAGE_JSON_BYTES: usize = 1024 * 1024;
 
@@ -554,8 +560,7 @@ fn descriptor_snapshot(
         return Ok(snapshot);
     }
 
-    reserve_variable_page_load(shared, request)?;
-    let acquisition = acquire_descriptor_sources(client, shared, request, parent)?;
+    let acquisition = acquire_descriptor_sources_with_page_load(client, shared, request, parent)?;
     let mut descriptors = Vec::new();
     let mut snapshot_bytes = 0usize;
     let mut limit_reason = acquisition.limit_reason;

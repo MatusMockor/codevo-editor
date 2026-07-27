@@ -1,8 +1,9 @@
 //! Projects bounded collection entries alongside ordinary own property descriptors.
 
 use super::{
-    descriptor_snapshot_policy::is_canonical_array_index, owner_is_current, CdpClient, CdpShared,
+    descriptor_snapshot_policy::is_canonical_array_index, CdpClient, CdpShared,
     DebugVariablePageRequest, ObjectReference, ObjectReferenceAccess,
+    CDP_COLLECTION_ENTRY_WINDOW_FUNCTION, CDP_COLLECTION_ENTRY_WINDOW_SIZE,
     MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION, MAX_CDP_OBJECT_ID_BYTES,
     MAX_CDP_PROPERTY_DESCRIPTORS, MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE,
 };
@@ -21,6 +22,11 @@ pub(super) struct DescriptorAcquisition {
     pub(super) limit_reason: Option<DebugVariablePageLimitReason>,
 }
 
+enum CollectionWindow {
+    Descriptors(Value),
+    Degraded(DebugVariablePageLimitReason),
+}
+
 pub(super) fn remote_object_access(remote: &Value) -> ObjectReferenceAccess {
     match remote.get("subtype").and_then(Value::as_str) {
         Some("map" | "set" | "weakmap" | "weakset") => ObjectReferenceAccess::Collection,
@@ -28,14 +34,29 @@ pub(super) fn remote_object_access(remote: &Value) -> ObjectReferenceAccess {
     }
 }
 
-pub(super) fn acquire_descriptor_sources(
+pub(super) fn acquire_descriptor_sources_with_page_load(
+    client: &CdpClient,
+    shared: &Arc<Mutex<CdpShared>>,
+    request: DebugVariablePageRequest,
+    parent: &ObjectReference,
+) -> Result<DescriptorAcquisition, String> {
+    if !reserve_variable_page_load(shared, request)? {
+        return Ok(DescriptorAcquisition {
+            sources: Vec::new(),
+            limit_reason: Some(DebugVariablePageLimitReason::AcquisitionCount),
+        });
+    }
+    acquire_descriptor_sources(client, shared, request, parent)
+}
+
+fn acquire_descriptor_sources(
     client: &CdpClient,
     shared: &Arc<Mutex<CdpShared>>,
     request: DebugVariablePageRequest,
     parent: &ObjectReference,
 ) -> Result<DescriptorAcquisition, String> {
     let result = request_properties(client, &parent.object_id)?;
-    if !owner_is_current(shared, request)? {
+    if !collection_owner_is_current(shared, request, parent)? {
         return Err("The debug pause owner changed while acquiring variables.".to_string());
     }
     let parent_is_collection = parent.access == ObjectReferenceAccess::Collection;
@@ -50,26 +71,145 @@ pub(super) fn acquire_descriptor_sources(
             DebugVariablePageLimitReason::Capability,
         ));
     };
-    if entry_count > MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION {
-        return Ok(degraded_acquisition(
-            ordinary,
-            DebugVariablePageLimitReason::DescriptorCount,
-        ));
+    let retained_entry_count = entry_count.min(MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION);
+    let mut entries = DescriptorAcquisition {
+        sources: Vec::with_capacity(retained_entry_count),
+        limit_reason: (retained_entry_count != entry_count)
+            .then_some(DebugVariablePageLimitReason::DescriptorCount),
+    };
+    let mut start = 0usize;
+    while start < retained_entry_count {
+        let count = CDP_COLLECTION_ENTRY_WINDOW_SIZE.min(retained_entry_count - start);
+        let window = match request_collection_window(
+            client,
+            shared,
+            request,
+            parent,
+            entries_object_id,
+            start,
+            count,
+        )? {
+            CollectionWindow::Descriptors(window) => window,
+            CollectionWindow::Degraded(reason) => {
+                entries.limit_reason = entries.limit_reason.or(Some(reason));
+                return Ok(merge_descriptor_sources(ordinary, entries));
+            }
+        };
+        let Ok(mut window) = collection_descriptor_sources(&window, start, count) else {
+            entries.limit_reason = entries
+                .limit_reason
+                .or(Some(DebugVariablePageLimitReason::Capability));
+            return Ok(merge_descriptor_sources(ordinary, entries));
+        };
+        entries.sources.append(&mut window.sources);
+        start = start.saturating_add(count);
     }
-    if !try_reserve_variable_page_load(shared, request)? {
-        return Ok(degraded_acquisition(
-            ordinary,
+    Ok(merge_descriptor_sources(ordinary, entries))
+}
+
+fn request_collection_window(
+    client: &CdpClient,
+    shared: &Arc<Mutex<CdpShared>>,
+    request: DebugVariablePageRequest,
+    parent: &ObjectReference,
+    entries_object_id: &str,
+    start: usize,
+    count: usize,
+) -> Result<CollectionWindow, String> {
+    if !try_reserve_variable_page_load(shared, request, Some(parent))? {
+        return Ok(CollectionWindow::Degraded(
             DebugVariablePageLimitReason::AcquisitionCount,
         ));
     }
-    let entries = request_properties(client, entries_object_id)?;
-    if !owner_is_current(shared, request)? {
+    let window = client.request(
+        "Runtime.callFunctionOn",
+        json!({
+            "objectId": entries_object_id,
+            "functionDeclaration": CDP_COLLECTION_ENTRY_WINDOW_FUNCTION,
+            "arguments": [
+                {"value": start},
+                {"value": count}
+            ],
+            "awaitPromise": false,
+            "silent": true,
+            "returnByValue": false,
+            "throwOnSideEffect": true,
+            "generatePreview": false,
+        }),
+    )?;
+    if !collection_owner_is_current(shared, request, parent)? {
+        if let Some(object_id) = releasable_window_object_id(&window) {
+            release_collection_window(client, object_id);
+        }
         return Err(
             "The debug collection pause owner changed while acquiring entries.".to_string(),
         );
     }
-    let entries = collection_descriptor_sources(&entries)?;
-    Ok(merge_descriptor_sources(ordinary, entries))
+    let Some(window_object_id) = collection_window_object_id(&window) else {
+        if let Some(object_id) = releasable_window_object_id(&window) {
+            release_collection_window(client, object_id);
+        }
+        return Ok(CollectionWindow::Degraded(
+            DebugVariablePageLimitReason::Capability,
+        ));
+    };
+    if !try_reserve_variable_page_load(shared, request, Some(parent))? {
+        release_collection_window(client, window_object_id);
+        return Ok(CollectionWindow::Degraded(
+            DebugVariablePageLimitReason::AcquisitionCount,
+        ));
+    }
+    let result = request_properties(client, window_object_id);
+    release_collection_window(client, window_object_id);
+    let result = result?;
+    if !collection_owner_is_current(shared, request, parent)? {
+        return Err(
+            "The debug collection pause owner changed while acquiring entries.".to_string(),
+        );
+    }
+    Ok(CollectionWindow::Descriptors(result))
+}
+
+fn collection_window_object_id(result: &Value) -> Option<&str> {
+    if result.get("exceptionDetails").is_some() {
+        return None;
+    }
+    let remote = result.get("result")?;
+    if remote.get("type").and_then(Value::as_str) != Some("object")
+        || remote.get("subtype").and_then(Value::as_str) != Some("array")
+    {
+        return None;
+    }
+    let object_id = remote.get("objectId").and_then(Value::as_str)?;
+    if object_id.is_empty() || object_id.len() > MAX_CDP_OBJECT_ID_BYTES {
+        return None;
+    }
+    Some(object_id)
+}
+
+fn releasable_window_object_id(result: &Value) -> Option<&str> {
+    let object_id = result.pointer("/result/objectId").and_then(Value::as_str)?;
+    (!object_id.is_empty() && object_id.len() <= MAX_CDP_OBJECT_ID_BYTES).then_some(object_id)
+}
+
+fn release_collection_window(client: &CdpClient, object_id: &str) {
+    let _ = client.request("Runtime.releaseObject", json!({"objectId": object_id}));
+}
+
+fn collection_owner_is_current(
+    shared: &Arc<Mutex<CdpShared>>,
+    request: DebugVariablePageRequest,
+    parent: &ObjectReference,
+) -> Result<bool, String> {
+    let state = shared.lock().map_err(|error| error.to_string())?;
+    Ok(state.pause.as_ref().is_some_and(|pause| {
+        pause.pause_generation == request.pause_generation
+            && pause.call_frame_ids.contains_key(&request.frame_id)
+            && pause
+                .object_ids
+                .get(&request.variables_reference)
+                .is_some_and(|owned| owned == parent)
+    }))
 }
 
 fn degraded_acquisition(
@@ -93,19 +233,17 @@ fn request_properties(client: &CdpClient, object_id: &str) -> Result<Value, Stri
     )
 }
 
-pub(super) fn reserve_variable_page_load(
+fn reserve_variable_page_load(
     shared: &Arc<Mutex<CdpShared>>,
     request: DebugVariablePageRequest,
-) -> Result<(), String> {
-    if !try_reserve_variable_page_load(shared, request)? {
-        return Err("The debug variable acquisition limit was reached for this pause.".to_string());
-    }
-    Ok(())
+) -> Result<bool, String> {
+    try_reserve_variable_page_load(shared, request, None)
 }
 
 fn try_reserve_variable_page_load(
     shared: &Arc<Mutex<CdpShared>>,
     request: DebugVariablePageRequest,
+    exact_parent: Option<&ObjectReference>,
 ) -> Result<bool, String> {
     let mut state = shared.lock().map_err(|error| error.to_string())?;
     let pause = state
@@ -114,8 +252,19 @@ fn try_reserve_variable_page_load(
         .ok_or_else(|| "The debugger is not paused.".to_string())?;
     if pause.pause_generation != request.pause_generation
         || !pause.call_frame_ids.contains_key(&request.frame_id)
+        || exact_parent.is_some_and(|parent| {
+            !pause
+                .object_ids
+                .get(&request.variables_reference)
+                .is_some_and(|owned| owned == parent)
+        })
     {
-        return Err("The debug pause owner changed while acquiring variables.".to_string());
+        return Err(match exact_parent {
+            Some(_) => {
+                "The debug collection pause owner changed while acquiring entries.".to_string()
+            }
+            None => "The debug pause owner changed while acquiring variables.".to_string(),
+        });
     }
     if pause.variable_page_loads >= MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE {
         return Ok(false);
@@ -211,22 +360,22 @@ fn regular_descriptor_sources(result: &Value) -> Result<DescriptorAcquisition, S
     })
 }
 
-fn collection_descriptor_sources(result: &Value) -> Result<DescriptorAcquisition, String> {
+fn collection_descriptor_sources(
+    result: &Value,
+    start: usize,
+    count: usize,
+) -> Result<DescriptorAcquisition, String> {
     let properties = result
         .get("result")
         .and_then(Value::as_array)
         .ok_or_else(|| {
             "Runtime.getProperties returned no collection descriptor array.".to_string()
         })?;
-    let mut available_entries = 0usize;
-    let mut expected_entries = None;
-    let mut exceeded_entry_cap = false;
-    let mut sources = Vec::new();
-    for (position, property) in properties
-        .iter()
-        .take(MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION.saturating_add(2))
-        .enumerate()
-    {
+    if properties.len() != count.saturating_add(1) {
+        return Err("Runtime.getProperties returned an invalid collection descriptor.".to_string());
+    }
+    let mut sources = Vec::with_capacity(count);
+    for (position, property) in properties.iter().enumerate() {
         let name = property.get("name").and_then(Value::as_str).unwrap_or("");
         if name == "length" {
             let length = property
@@ -236,41 +385,29 @@ fn collection_descriptor_sources(result: &Value) -> Result<DescriptorAcquisition
                 .ok_or_else(|| {
                     "Runtime.getProperties returned an invalid collection descriptor.".to_string()
                 })?;
-            if position.saturating_add(1) != properties.len() || length != available_entries as u64
-            {
+            if position != count || length != count as u64 {
                 return Err(
                     "Runtime.getProperties returned an invalid collection descriptor.".to_string(),
                 );
             }
-            expected_entries = Some(length);
-            break;
+            continue;
         }
-        if !is_canonical_array_index(name) || name != available_entries.to_string() {
+        if position >= count || !is_canonical_array_index(name) || name != position.to_string() {
             return Err(
                 "Runtime.getProperties returned an invalid collection descriptor.".to_string(),
             );
         }
-        available_entries = available_entries.saturating_add(1);
-        if sources.len() >= MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION {
-            exceeded_entry_cap = true;
-            break;
-        }
+        let mut property = property.clone();
+        property["name"] = Value::String(start.saturating_add(position).to_string());
         sources.push(DescriptorSource {
-            property: property.clone(),
+            property,
             private: false,
             indexed: false,
         });
     }
-    let complete = expected_entries
-        .and_then(|count| usize::try_from(count).ok())
-        .is_some_and(|count| count == available_entries)
-        && !exceeded_entry_cap;
-    if !complete && !exceeded_entry_cap {
-        return Err("Runtime.getProperties returned an invalid collection descriptor.".to_string());
-    }
     Ok(DescriptorAcquisition {
         sources,
-        limit_reason: (!complete).then_some(DebugVariablePageLimitReason::DescriptorCount),
+        limit_reason: None,
     })
 }
 
@@ -323,7 +460,7 @@ mod tests {
                 })])
                 .collect::<Vec<_>>();
 
-            let error = collection_descriptor_sources(&json!({"result": properties}))
+            let error = collection_descriptor_sources(&json!({"result": properties}), 0, 2)
                 .err()
                 .expect("invalid collection indices must fail closed");
 
@@ -344,19 +481,23 @@ mod tests {
             }]
         }))
         .expect("ordinary descriptors");
-        let entries = collection_descriptor_sources(&json!({
-            "result": [
-                {
-                    "name": "0",
-                    "value": {
-                        "type": "object",
-                        "subtype": "internal#entry",
-                        "objectId": "entry-0"
-                    }
-                },
-                {"name": "length", "value": {"type": "number", "value": 1}}
-            ]
-        }))
+        let entries = collection_descriptor_sources(
+            &json!({
+                "result": [
+                    {
+                        "name": "0",
+                        "value": {
+                            "type": "object",
+                            "subtype": "internal#entry",
+                            "objectId": "entry-0"
+                        }
+                    },
+                    {"name": "length", "value": {"type": "number", "value": 1}}
+                ]
+            }),
+            0,
+            1,
+        )
         .expect("collection descriptors");
 
         let merged = merge_descriptor_sources(ordinary, entries);
@@ -385,8 +526,8 @@ mod tests {
             count: 1,
         };
 
-        reserve_variable_page_load(&shared, request).expect("first CDP request");
-        reserve_variable_page_load(&shared, request).expect("second CDP request");
+        assert!(reserve_variable_page_load(&shared, request).expect("first CDP request"));
+        assert!(reserve_variable_page_load(&shared, request).expect("second CDP request"));
 
         assert_eq!(
             shared
@@ -416,9 +557,8 @@ mod tests {
             count: 1,
         };
 
-        assert!(
-            !try_reserve_variable_page_load(&shared, request).expect("current owner remains valid")
-        );
+        assert!(!try_reserve_variable_page_load(&shared, request, None)
+            .expect("current owner remains valid"));
         let acquisition = degraded_acquisition(
             DescriptorAcquisition {
                 sources: Vec::new(),
@@ -429,6 +569,22 @@ mod tests {
         assert_eq!(
             acquisition.limit_reason,
             Some(DebugVariablePageLimitReason::AcquisitionCount)
+        );
+    }
+
+    #[test]
+    fn acquisition_exhaustion_preserves_a_more_precise_descriptor_count_reason() {
+        let acquisition = degraded_acquisition(
+            DescriptorAcquisition {
+                sources: Vec::new(),
+                limit_reason: Some(DebugVariablePageLimitReason::DescriptorCount),
+            },
+            DebugVariablePageLimitReason::AcquisitionCount,
+        );
+
+        assert_eq!(
+            acquisition.limit_reason,
+            Some(DebugVariablePageLimitReason::DescriptorCount)
         );
     }
 }
