@@ -141,7 +141,31 @@ use smart_step_runtime::{
 
 fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<String> {
     let message: Value = serde_json::from_str(text).ok()?;
-    if let Some(id) = message.get("id").and_then(Value::as_u64) {
+    let router = context.disconnect_notifier.session_router();
+    let scope = match session_routing::parse_cdp_target_scope(&message) {
+        Ok(scope) => scope,
+        Err(_) => {
+            router.record_dropped_message();
+            return None;
+        }
+    };
+    if let Some(id) = message.get("id") {
+        let Some(id) = id.as_u64() else {
+            router.record_dropped_message();
+            return None;
+        };
+        if let CdpTargetScope::Session(session_id) = &scope {
+            if router.dispatch_response(session_id, id, &message)
+                == CdpSessionResponseDispatch::ReceiverOverflow
+            {
+                fail_closed_transport(
+                    &context.pending,
+                    &context.shutdown,
+                    &context.disconnect_notifier,
+                );
+            }
+            return None;
+        }
         if handle_smart_step_response(id, &message, context) {
             return None;
         }
@@ -161,6 +185,14 @@ fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<St
             &context.shutdown,
             &context.disconnect_notifier,
         );
+        return None;
+    }
+    if let CdpTargetScope::Session(session_id) = scope {
+        if message.get("method").and_then(Value::as_str).is_some() {
+            router.dispatch_event(&session_id, &message);
+            return None;
+        }
+        router.record_dropped_message();
         return None;
     }
     match message.get("method").and_then(Value::as_str) {

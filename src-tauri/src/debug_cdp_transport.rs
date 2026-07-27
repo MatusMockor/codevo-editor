@@ -35,6 +35,8 @@ const NODE_INTERNALS_BLACKBOX_PATTERN: &str = r"^(?:node:|internal/)";
 // covers direct paths and file URLs only; source-map-derived original ranges are not inferred.
 const NODE_DEPENDENCIES_BLACKBOX_PATTERN: &str = r"(?:^|[/\\])node_modules[/\\]";
 
+#[path = "debug_cdp_session_routing.rs"]
+mod session_routing;
 #[path = "debug_cdp_smart_step.rs"]
 mod smart_step;
 #[path = "debug_cdp_smart_step_runtime.rs"]
@@ -42,6 +44,11 @@ mod smart_step_runtime;
 #[cfg(test)]
 #[path = "debug_cdp_smart_step_runtime_tests.rs"]
 mod smart_step_runtime_tests;
+use session_routing::{
+    serialize_cdp_request, CdpSessionEventSink, CdpSessionId, CdpSessionRegistration,
+    CdpSessionRequestError, CdpSessionResponseDispatch, CdpSessionRouter, CdpSessionRoutingError,
+    CdpTargetScope,
+};
 pub(crate) use smart_step_runtime::begin_smart_step_pause;
 
 mod clipboard {
@@ -197,6 +204,7 @@ pub(super) type PendingCdpRequests =
 #[derive(Clone)]
 struct DisconnectNotifier {
     notified: Arc<AtomicBool>,
+    session_router: CdpSessionRouter,
     sender: Option<mpsc::Sender<()>>,
 }
 
@@ -204,17 +212,23 @@ impl DisconnectNotifier {
     fn new(sender: Option<mpsc::Sender<()>>) -> Self {
         Self {
             notified: Arc::new(AtomicBool::new(false)),
+            session_router: CdpSessionRouter::new(),
             sender,
         }
     }
 
     fn notify(&self) {
+        self.session_router.close_transport();
         if self.notified.swap(true, Ordering::SeqCst) {
             return;
         }
         if let Some(sender) = &self.sender {
             let _ = sender.send(());
         }
+    }
+
+    fn session_router(&self) -> CdpSessionRouter {
+        self.session_router.clone()
     }
 }
 
@@ -361,6 +375,63 @@ impl CdpClient {
         self.request_with_timeout(method, params, self.request_timeout)
     }
 
+    pub(crate) fn register_session(
+        &self,
+        session_id: CdpSessionId,
+        sink: CdpSessionEventSink,
+    ) -> Result<CdpSessionRegistration, CdpSessionRoutingError> {
+        self.disconnect_notifier
+            .session_router()
+            .register(session_id, sink)
+    }
+
+    pub(crate) fn detach_session(&self, session_id: &CdpSessionId) -> bool {
+        self.disconnect_notifier.session_router().detach(session_id)
+    }
+
+    pub(crate) fn request_in_scope(
+        &self,
+        scope: &CdpTargetScope,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, CdpSessionRequestError> {
+        if matches!(scope, CdpTargetScope::Parent) {
+            return self
+                .request(method, params)
+                .map_err(CdpSessionRequestError::Protocol);
+        }
+        let CdpTargetScope::Session(session_id) = scope else {
+            return Err(CdpSessionRequestError::Routing(
+                CdpSessionRoutingError::SessionNotRegistered,
+            ));
+        };
+        let router = self.disconnect_notifier.session_router();
+        let request = router
+            .begin_request(session_id)
+            .map_err(CdpSessionRequestError::Routing)?;
+        let payload = serialize_cdp_request(scope, request.id(), method, params);
+        match self.outgoing.try_send(payload) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                fail_closed_transport(
+                    &self.pending,
+                    &self.shutdown_requested,
+                    &self.disconnect_notifier,
+                );
+                return Err(CdpSessionRequestError::TransportQueueOverflow);
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                fail_closed_transport(
+                    &self.pending,
+                    &self.shutdown_requested,
+                    &self.disconnect_notifier,
+                );
+                return Err(CdpSessionRequestError::TransportClosed);
+            }
+        }
+        request.recv_timeout(self.request_timeout)
+    }
+
     pub(super) fn request_with_timeout(
         &self,
         method: &str,
@@ -420,6 +491,8 @@ impl CdpClient {
 
     pub(super) fn shutdown(&mut self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
+        reject_pending_cdp_requests(&self.pending);
+        self.disconnect_notifier.notify();
         if let Some(handle) = self.io_thread.take() {
             let _ = handle.join();
         }
@@ -1413,3 +1486,7 @@ mod bounded_channel_tests {
         assert!(pending.lock().is_ok_and(|pending| pending.is_empty()));
     }
 }
+
+#[cfg(test)]
+#[path = "debug_cdp/tests/debug_cdp_session_routing_tests.rs"]
+mod session_routing_tests;
