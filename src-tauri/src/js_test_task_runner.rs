@@ -531,6 +531,8 @@ fn output_read_error(output: &JsTestProcessOutput) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::js_test_run::batch::test_support;
     use std::{
         fs,
         sync::mpsc,
@@ -689,7 +691,9 @@ mod tests {
             &root,
             "runner.sh",
             &format!(
-                "sleep 30 &\nchild=$!\nprintf '%s' \"$child\" > '{}'\nwait \"$child\"",
+                "sleep 30 &\nchild=$!\nprintf '%s' \"$child\" > '{}.tmp'\nmv '{}.tmp' '{}'\nwait \"$child\"",
+                grandchild_path.display(),
+                grandchild_path.display(),
                 grandchild_path.display()
             ),
         );
@@ -705,15 +709,8 @@ mod tests {
         let ownership = owner_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("receive ownership");
+        let grandchild = test_support::wait_for_parseable_pid(&grandchild_path, "grandchild pid");
         let started = Instant::now();
-        while !grandchild_path.is_file() {
-            assert!(started.elapsed() < Duration::from_secs(2));
-            thread::sleep(Duration::from_millis(5));
-        }
-        let grandchild: i32 = fs::read_to_string(&grandchild_path)
-            .expect("read grandchild")
-            .parse()
-            .expect("grandchild pid");
         assert!(ownership.request_stop());
         assert!(matches!(
             worker.join().expect("join runner").expect("runner result"),

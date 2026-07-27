@@ -54,6 +54,9 @@ mod validation;
 use validation::{validate_owner_id, validate_package_roots};
 #[cfg(test)]
 use validation::{MAX_BATCH_OWNER_ID_BYTES, MAX_BATCH_PACKAGE_ROOT_BYTES};
+#[cfg(all(test, unix))]
+#[path = "js_test_pid_test_support.rs"]
+pub(crate) mod test_support;
 
 pub(crate) const MAX_JS_TEST_BATCH_PACKAGES: usize = 8;
 const JS_TEST_BATCH_CONCURRENCY: usize = 2;
@@ -1240,7 +1243,9 @@ mod tests {
             "packages/b",
             JsTestBatchRunner::Vitest,
             &format!(
-                "printf '%s' $$ > '{}'\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nsleep 30",
+                "printf '%s' $$ > '{}.tmp'\nmv '{}.tmp' '{}'\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nsleep 30",
+                child_pid.display(),
+                child_pid.display(),
                 child_pid.display(),
                 ready_b.display(),
                 release.display()
@@ -1286,10 +1291,7 @@ mod tests {
             worker.join().expect("join batch"),
             JsTestBatchOutcome::Error { .. }
         ));
-        let pid = fs::read_to_string(&child_pid)
-            .expect("read child pid")
-            .parse::<i32>()
-            .expect("valid child pid");
+        let pid = test_support::wait_for_parseable_pid(&child_pid, "child pid");
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         assert_eq!(
             std::io::Error::last_os_error().raw_os_error(),
@@ -1621,7 +1623,9 @@ mod tests {
             "packages/b",
             JsTestBatchRunner::Vitest,
             &format!(
-                "printf '%s' $$ > '{}'\ntouch '{}'\nsleep 30",
+                "printf '%s' $$ > '{}.tmp'\nmv '{}.tmp' '{}'\ntouch '{}'\nsleep 30",
+                sibling_pid.display(),
+                sibling_pid.display(),
                 sibling_pid.display(),
                 ready.display()
             ),
@@ -1647,10 +1651,7 @@ mod tests {
             panic!("aggregate overflow must atomically fail the whole batch");
         };
         assert!(message.contains("remaining batch safety limit"));
-        let pid = fs::read_to_string(&sibling_pid)
-            .expect("read sibling pid")
-            .parse::<i32>()
-            .expect("valid sibling pid");
+        let pid = test_support::wait_for_parseable_pid(&sibling_pid, "sibling pid");
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         assert_eq!(
             std::io::Error::last_os_error().raw_os_error(),

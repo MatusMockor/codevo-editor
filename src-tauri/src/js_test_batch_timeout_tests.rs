@@ -36,8 +36,12 @@ fn timeout_reaps_two_complete_process_groups_clears_registry_and_publishes_no_pa
             &format!("packages/{package}"),
             JsTestBatchRunner::Vitest,
             &format!(
-                "printf '%s' $$ > '{}'\nsleep 30 &\nchild=$!\nprintf '%s' \"$child\" > '{}'\ntouch '{}'\nwait \"$child\"",
+                "printf '%s' $$ > '{}.tmp'\nmv '{}.tmp' '{}'\nsleep 30 &\nchild=$!\nprintf '%s' \"$child\" > '{}.tmp'\nmv '{}.tmp' '{}'\ntouch '{}'\nwait \"$child\"",
                 parent_pid.display(),
+                parent_pid.display(),
+                parent_pid.display(),
+                child_pid.display(),
+                child_pid.display(),
                 child_pid.display(),
                 ready.display()
             ),
@@ -97,10 +101,9 @@ fn timeout_reaps_two_complete_process_groups_clears_registry_and_publishes_no_pa
     assert!(registry.is_empty(), "reservation must be released");
     for package in ["a", "b"] {
         for role in ["parent", "child"] {
-            let pid = fs::read_to_string(markers.join(format!("{package}-{role}-pid")))
-                .unwrap_or_else(|error| panic!("read {package} {role} pid: {error}"))
-                .parse::<i32>()
-                .unwrap_or_else(|error| panic!("parse {package} {role} pid: {error}"));
+            let pid_path = markers.join(format!("{package}-{role}-pid"));
+            let pid =
+                test_support::wait_for_parseable_pid(&pid_path, &format!("{package} {role} pid"));
             assert_process_reaped(pid);
         }
     }
