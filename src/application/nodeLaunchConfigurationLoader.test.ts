@@ -317,6 +317,7 @@ describe("loadNodeLaunchConfigurations", () => {
       diagnostics: [
         {
           source: "vscode",
+          severity: "skipped",
           configurationIndex: 1,
           message: expect.stringContaining('type must be "node" or "pwa-node"'),
         },
@@ -325,6 +326,50 @@ describe("loadNodeLaunchConfigurations", () => {
     if (result.kind !== "loaded") return;
     expect(result.configurations[0]).not.toHaveProperty("postDebugTask");
     expect(result.configurations[0]).not.toHaveProperty("sourceMaps");
+  });
+
+  it("does not project source-map glob metadata beyond the VS Code import boundary", async () => {
+    const result = await loadNodeLaunchConfigurations(
+      ROOT,
+      {
+        readDirectory: vscodeConfigurationDirectories,
+        readFile: async () =>
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "VS Code API",
+                program: "src/server.ts",
+                outFiles: ["${workspaceFolder}/dist/**/*.js"],
+                resolveSourceMapLocations: ["!**/node_modules/**"],
+              },
+            ],
+          }),
+      },
+      () => true,
+    );
+
+    expect(result).toMatchObject({
+      kind: "loaded",
+      configurations: [{ name: "VS Code API" }],
+      entries: [{ source: "vscode", configuration: { name: "VS Code API" } }],
+      diagnostics: [
+        {
+          source: "vscode",
+          configurationIndex: 0,
+          severity: "reduced",
+          fields: ["outFiles", "resolveSourceMapLocations"],
+          message: expect.stringContaining("tsconfig outDir"),
+        },
+      ],
+    });
+    if (result.kind !== "loaded") return;
+    expect(result.configurations[0]).not.toHaveProperty("outFiles");
+    expect(result.configurations[0]).not.toHaveProperty("resolveSourceMapLocations");
+    expect(result.entries[0]).not.toHaveProperty("outFiles");
+    expect(result.entries[0]).not.toHaveProperty("resolveSourceMapLocations");
   });
 
   it("retains private native watch metadata without projecting it into launch configurations", async () => {
@@ -614,6 +659,65 @@ describe("loadConfiguredNodeLaunch", () => {
     if (result.kind !== "configured") return;
     expect(result.entry.configuration).not.toHaveProperty("justMyCode");
     expect(result.entry.configuration).not.toHaveProperty("skipFiles");
+  });
+
+  it("auto-starts one imported npm target with reduced outFiles capability", async () => {
+    const result = await loadConfiguredNodeLaunch({
+      workspaceRoot: ROOT,
+      documentPath: DOCUMENT,
+      readDirectory: vscodeConfigurationDirectories,
+      readFile: async () =>
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "API dev",
+              runtimeExecutable: "npm",
+              runtimeArgs: ["run", "dev:api"],
+              outFiles: ["${workspaceFolder}/actual-build/**/*.js"],
+            },
+          ],
+        }),
+      isCurrent: () => true,
+    });
+
+    expect(result).toMatchObject({
+      kind: "configured",
+      entry: { source: "vscode", configuration: { name: "API dev" } },
+      launch: { kind: "node-npm-script", script: "dev:api" },
+    });
+  });
+
+  it("suppresses imported npm auto-start when another configuration was skipped", async () => {
+    const result = await loadConfiguredNodeLaunch({
+      workspaceRoot: ROOT,
+      documentPath: DOCUMENT,
+      readDirectory: vscodeConfigurationDirectories,
+      readFile: async () =>
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "API dev",
+              runtimeExecutable: "npm",
+              runtimeArgs: ["run", "dev:api"],
+            },
+            {
+              type: "python",
+              request: "launch",
+              name: "Unsupported",
+              program: "src/server.py",
+            },
+          ],
+        }),
+      isCurrent: () => true,
+    });
+
+    expect(result).toEqual({ kind: "none" });
   });
 
   it("keeps imported compounds out of the configured F5 projection", async () => {

@@ -8,6 +8,10 @@ import {
   VSCODE_SERVER_READY_PATTERN_MAX_BYTES,
   VSCODE_SERVER_READY_URI_FORMAT_MAX_BYTES,
 } from "./vscodeNodeLaunchConfiguration";
+import {
+  VSCODE_LAUNCH_GLOB_LIST_MAX_ELEMENTS,
+  VSCODE_LAUNCH_GLOB_MAX_BYTES,
+} from "./vscodeLaunchGlobList";
 
 describe("VS Code Node launch configuration import", () => {
   it("imports bounded JSONC launch metadata without projecting a task command", () => {
@@ -370,6 +374,47 @@ describe("VS Code Node launch configuration import", () => {
         {
           compoundIndex: 0,
           message: expect.stringContaining("without serverReadyAction"),
+        },
+      ],
+    });
+  });
+
+  it("imports an eight-member compound and rejects a nine-member compound", () => {
+    const configurations = Array.from({ length: 9 }, (_, index) => ({
+      type: "node",
+      request: "launch",
+      name: `Service ${index + 1}`,
+      program: `src/service-${index + 1}.js`,
+    }));
+    const parse = (memberCount: number) =>
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations,
+          compounds: [
+            {
+              name: "Services",
+              configurations: configurations
+                .slice(0, memberCount)
+                .map((configuration) => configuration.name),
+              stopAll: true,
+            },
+          ],
+        }),
+      );
+
+    expect(parse(8)).toMatchObject({
+      kind: "ok",
+      compounds: [{ members: Array.from({ length: 8 }, () => expect.anything()) }],
+      diagnostics: [],
+    });
+    expect(parse(9)).toMatchObject({
+      kind: "ok",
+      compounds: [],
+      diagnostics: [
+        {
+          compoundIndex: 0,
+          message: expect.stringContaining("2 to 8"),
         },
       ],
     });
@@ -1086,6 +1131,7 @@ describe("VS Code Node launch configuration import", () => {
         configurations: [],
         diagnostics: [
           {
+            severity: "skipped",
             configurationIndex: 0,
             message: "configurations[0].stopOnEntry must be a boolean.",
           },
@@ -1124,6 +1170,7 @@ describe("VS Code Node launch configuration import", () => {
       configurations: [],
       diagnostics: [
         {
+          severity: "skipped",
           configurationIndex: 0,
           message: "configurations[0].stopOnEntry is supported only for launch.",
         },
@@ -1155,6 +1202,7 @@ describe("VS Code Node launch configuration import", () => {
         configurations: [],
         diagnostics: [
           {
+            severity: "skipped",
             configurationIndex: 0,
             message: "configurations[0].stopOnEntry is unsupported for a native Node watch launch.",
           },
@@ -1192,6 +1240,7 @@ describe("VS Code Node launch configuration import", () => {
         configurations: [],
         diagnostics: [
           {
+            severity: "skipped",
             configurationIndex: 0,
             message: "configurations[0].sourceMaps must be a boolean.",
           },
@@ -1200,36 +1249,146 @@ describe("VS Code Node launch configuration import", () => {
     }
   });
 
-  it.each(["outFiles", "resolveSourceMapLocations"] as const)(
-    "rejects %s with the supported source-map discovery alternative",
-    (field) => {
-      expect(
-        parseVscodeNodeLaunchConfigurations(
-          JSON.stringify({
-            version: "0.2.0",
-            configurations: [
-              {
-                type: "node",
-                request: "launch",
-                name: "Source maps",
-                program: "src/server.js",
-                [field]: ["dist/**/*.js"],
-              },
-            ],
-          }),
-        ),
-      ).toEqual({
-        kind: "ok",
-        configurations: [],
-        diagnostics: [
+  it("reports stock source-map glob fields as reduced capability", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Source maps",
+              program: "src/server.js",
+              outFiles: ["${workspaceFolder}/dist/**/*.js"],
+              resolveSourceMapLocations: ["${workspaceFolder}/**", "!**/node_modules/**"],
+            },
+          ],
+        }),
+      ),
+    ).toEqual({
+      kind: "ok",
+      configurations: [
+        {
+          configuration: {
+            args: [],
+            default: false,
+            env: {},
+            name: "Source maps",
+            target: { kind: "script", path: "src/server.js" },
+          },
+          justMyCode: "nodeInternals",
+          outFiles: ["${workspaceFolder}/dist/**/*.js"],
+          resolveSourceMapLocations: ["${workspaceFolder}/**", "!**/node_modules/**"],
+        },
+      ],
+      diagnostics: [
+        {
+          configurationIndex: 0,
+          severity: "reduced",
+          fields: ["outFiles", "resolveSourceMapLocations"],
+          message: expect.stringContaining("tsconfig outDir"),
+        },
+      ],
+    });
+  });
+
+  it("preserves empty glob lists distinctly from absent fields", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
           {
-            configurationIndex: 0,
-            message: `configurations[0].${field} is unsupported; use tsconfig outDir-driven generated-file discovery.`,
+            type: "node",
+            request: "launch",
+            name: "Empty globs",
+            program: "src/server.js",
+            outFiles: [],
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Absent globs",
+            program: "src/worker.js",
           },
         ],
-      });
-    },
-  );
+      }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [{ outFiles: [] }, { configuration: { name: "Absent globs" } }],
+    });
+    if (parsed.kind === "error") return;
+    expect(parsed.configurations[0]).toHaveProperty("outFiles");
+    expect(parsed.configurations[1]).not.toHaveProperty("outFiles");
+  });
+
+  it.each([
+    ["a non-array", "outFiles", "**/*.js"],
+    ["a non-string element", "resolveSourceMapLocations", ["**/*.js", 1]],
+    ["a null element", "outFiles", [null]],
+    [
+      "an element count over the cap",
+      "outFiles",
+      Array.from({ length: VSCODE_LAUNCH_GLOB_LIST_MAX_ELEMENTS + 1 }, () => "**/*.js"),
+    ],
+    [
+      "an element byte length over the cap",
+      "resolveSourceMapLocations",
+      ["é".repeat(VSCODE_LAUNCH_GLOB_MAX_BYTES / 2 + 1)],
+    ],
+  ])("rejects %s for %s", (_case, field, invalidValue) => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Invalid globs",
+              program: "src/server.js",
+              [field]: invalidValue,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [
+        {
+          configurationIndex: 0,
+          message: expect.stringContaining(`configurations[0].${field} must be an array`),
+        },
+      ],
+    });
+  });
+
+  it("still rejects an unrelated unknown launch field", () => {
+    expect(
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Unknown",
+              program: "src/server.js",
+              unknownCapability: true,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [
+        { configurationIndex: 0, message: expect.stringContaining("unsupported field") },
+      ],
+    });
+  });
 
   it.each([
     ["script", { program: "src/server.js" }],
@@ -1568,6 +1727,7 @@ describe("VS Code Node launch configuration import", () => {
       configurations: [],
       diagnostics: [
         {
+          severity: "skipped",
           configurationIndex: 0,
           message:
             field === "smartStep"
@@ -1635,6 +1795,7 @@ describe("VS Code Node launch configuration import", () => {
       configurations: [],
       diagnostics: [
         {
+          severity: "skipped",
           configurationIndex: 0,
           message:
             field === "smartStep"
@@ -2080,6 +2241,7 @@ describe("VS Code Node launch configuration import", () => {
             name: "API",
             program: "src/api.js",
             stopOnEntry: true,
+            outFiles: ["${workspaceFolder}/dist/**/*.js"],
           },
           {
             type: "node",
@@ -2110,6 +2272,7 @@ describe("VS Code Node launch configuration import", () => {
             {
               configuration: { name: "API", target: { kind: "script" } },
               stopOnEntry: true,
+              outFiles: ["${workspaceFolder}/dist/**/*.js"],
             },
             {
               configuration: { name: "Worker", target: { kind: "npm" } },
@@ -2119,7 +2282,13 @@ describe("VS Code Node launch configuration import", () => {
           preLaunchTask: "build services",
         },
       ],
-      diagnostics: [],
+      diagnostics: [
+        {
+          configurationIndex: 0,
+          severity: "reduced",
+          fields: ["outFiles"],
+        },
+      ],
     });
     if (parsed.kind !== "ok" || !parsed.compounds) return;
     expect(Object.isFrozen(parsed.compounds)).toBe(true);
@@ -2130,6 +2299,8 @@ describe("VS Code Node launch configuration import", () => {
     expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.configuration.args)).toBe(true);
     expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.configuration.env)).toBe(true);
     expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.configuration.target)).toBe(true);
+    expect(parsed.compounds[0]?.members[0]?.outFiles).toEqual(["${workspaceFolder}/dist/**/*.js"]);
+    expect(Object.isFrozen(parsed.compounds[0]?.members[0]?.outFiles)).toBe(true);
     expect(parsed.compounds[0]).not.toHaveProperty("stopAll");
     expect(parsed.compounds[0]).not.toHaveProperty("configurations");
   });

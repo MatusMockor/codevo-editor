@@ -13,8 +13,11 @@ import {
   loadVscodeNodeLaunchConfigurations,
   type VscodeNodeLaunchConfigurationsLoadResult,
 } from "./vscodeNodeLaunchConfigurationLoader";
-import type { VscodeNodeLaunchCompound } from "../domain/vscodeNodeLaunchConfiguration";
-import type { VscodeNodeServerReadyActionRecipe } from "../domain/vscodeNodeLaunchConfiguration";
+import type {
+  VscodeNodeLaunchCompound,
+  VscodeNodeLaunchDiagnostic,
+  VscodeNodeServerReadyActionRecipe,
+} from "../domain/vscodeNodeLaunchConfiguration";
 import type { NativeNodeWatchLaunchIntent } from "../domain/nativeNodeWatchLaunchIntent";
 
 export const NODE_LAUNCH_CONFIGURATION_READ_ERROR = `${NODE_LAUNCH_CONFIGURATION_PATH} could not be read.`;
@@ -50,12 +53,9 @@ export interface NodeLaunchCompoundEntry {
   readonly compound: VscodeNodeLaunchCompound;
 }
 
-export interface NodeLaunchConfigurationDiagnostic {
+export type NodeLaunchConfigurationDiagnostic = VscodeNodeLaunchDiagnostic & {
   readonly source: "vscode";
-  readonly configurationIndex?: number;
-  readonly compoundIndex?: number;
-  readonly message: string;
-}
+};
 
 export type NodeLaunchConfigurationsLoadResult =
   | {
@@ -220,7 +220,7 @@ export async function loadConfiguredNodeLaunch({
 function singleImportedNpmConfiguration(
   result: Extract<NodeLaunchConfigurationsLoadResult, { readonly kind: "loaded" }>,
 ): NodeLaunchConfiguration | null {
-  if (result.diagnostics.length > 0) return null;
+  if (result.diagnostics.some(({ severity }) => severity === "skipped")) return null;
   const entry = result.entries.length === 1 ? result.entries[0] : undefined;
   return entry?.source === "vscode" && entry.configuration.target.kind === "npm"
     ? entry.configuration

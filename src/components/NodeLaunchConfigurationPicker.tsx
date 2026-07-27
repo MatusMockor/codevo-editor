@@ -333,7 +333,7 @@ export function NodeLaunchConfigurationPicker({
         </label>
         {diagnosticNotice ? (
           <div
-            aria-label={`${diagnosticNotice.count} skipped VS Code launch configurations`}
+            aria-label={diagnosticNotice.message}
             role="status"
             style={styles.message}
           >

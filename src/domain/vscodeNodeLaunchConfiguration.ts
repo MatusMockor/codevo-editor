@@ -3,6 +3,11 @@ import { isNodeDebugPort } from "./debug";
 import type { NodeLaunchConfiguration } from "./nodeLaunchConfiguration";
 import type { NodeDebugJustMyCodePolicy } from "./nodeDebugJustMyCode";
 import {
+  displaySafeString,
+  parseVscodeLaunchGlobList,
+  type VscodeLaunchGlobList,
+} from "./vscodeLaunchGlobList";
+import {
   cloneNativeNodeWatchLaunchIntent,
   type NativeNodeWatchLaunchIntent,
 } from "./nativeNodeWatchLaunchIntent";
@@ -20,7 +25,7 @@ export type VscodeNodeScriptRuntime = "tsx" | "ts-node";
 const MAX_CONFIGURATIONS = 64;
 const MAX_COMPOUNDS = 16;
 const MIN_COMPOUND_MEMBERS = 2;
-const MAX_COMPOUND_MEMBERS = 4;
+const MAX_COMPOUND_MEMBERS = 8;
 const MAX_ARGUMENTS = 128;
 const MAX_ENVIRONMENT_ENTRIES = 128;
 const MAX_NAME_BYTES = 256;
@@ -49,6 +54,8 @@ export interface VscodeNodeLaunchConfiguration {
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly justMyCode?: NodeDebugJustMyCodePolicy;
   readonly sourceMaps?: boolean;
+  readonly outFiles?: VscodeLaunchGlobList;
+  readonly resolveSourceMapLocations?: VscodeLaunchGlobList;
   /** Private debugger runtime policy. Missing VS Code values default to enabled. */
   readonly smartStep?: boolean;
   readonly stopOnEntry?: boolean;
@@ -143,11 +150,21 @@ export interface VscodeNodeLaunchCompound {
   readonly preLaunchTask?: string;
 }
 
-export interface VscodeNodeLaunchDiagnostic {
-  readonly configurationIndex?: number;
-  readonly compoundIndex?: number;
-  readonly message: string;
-}
+export type VscodeNodeLaunchReducedField = "outFiles" | "resolveSourceMapLocations";
+
+export type VscodeNodeLaunchDiagnostic =
+  | {
+      readonly severity: "skipped";
+      readonly configurationIndex?: number;
+      readonly compoundIndex?: number;
+      readonly message: string;
+    }
+  | {
+      readonly severity: "reduced";
+      readonly configurationIndex: number;
+      readonly fields: readonly VscodeNodeLaunchReducedField[];
+      readonly message: string;
+    };
 
 export type ParseVscodeNodeLaunchConfigurationsResult =
   | {
@@ -188,13 +205,15 @@ export function parseVscodeNodeLaunchConfigurations(
   }
 
   const candidates: VscodeNodeLaunchConfiguration[] = [];
+  const configurationIndexes = new Map<VscodeNodeLaunchConfiguration, number>();
   const diagnostics: VscodeNodeLaunchDiagnostic[] = [];
   value.configurations.forEach((candidate, index) => {
     const parsed = parseConfiguration(candidate, index);
     if (parsed.kind === "error") {
-      diagnostics.push({ configurationIndex: index, message: parsed.message });
+      diagnostics.push({ severity: "skipped", configurationIndex: index, message: parsed.message });
       return;
     }
+    configurationIndexes.set(parsed.value, index);
     candidates.push(parsed.value);
   });
   const duplicateNames = new Set(
@@ -205,9 +224,22 @@ export function parseVscodeNodeLaunchConfigurations(
   const configurations = candidates.filter(({ configuration }) => {
     if (!duplicateNames.has(configuration.name)) return true;
     diagnostics.push({
+      severity: "skipped",
       message: `All configurations named "${configuration.name}" were ignored because the name is ambiguous.`,
     });
     return false;
+  });
+  configurations.forEach((configuration) => {
+    const reducedFields = reducedFieldsFor(configuration);
+    if (reducedFields.length === 0) return;
+    const configurationIndex = configurationIndexes.get(configuration);
+    if (configurationIndex === undefined) return;
+    diagnostics.push({
+      severity: "reduced",
+      configurationIndex,
+      fields: reducedFields,
+      message: reducedCapabilityMessage(configurationIndex, reducedFields),
+    });
   });
   if (value.compounds === undefined) {
     return { kind: "ok", configurations, diagnostics };
@@ -237,10 +269,10 @@ function parseCompounds(
   values.forEach((value, index) => {
     const parsed = parseCompound(value, index);
     if (parsed.kind === "error") {
-      diagnostics.push({ compoundIndex: index, message: parsed.message });
-    } else {
-      candidates.push(parsed.value);
+      diagnostics.push({ severity: "skipped", compoundIndex: index, message: parsed.message });
+      return;
     }
+    candidates.push(parsed.value);
   });
 
   const duplicateNames = new Set(
@@ -255,6 +287,7 @@ function parseCompounds(
   for (const candidate of candidates) {
     if (duplicateNames.has(candidate.name)) {
       diagnostics.push({
+        severity: "skipped",
         compoundIndex: candidate.index,
         message: `All compounds named "${candidate.name}" were ignored because the name is ambiguous.`,
       });
@@ -262,6 +295,7 @@ function parseCompounds(
     }
     if (configurationsByName.has(candidate.name)) {
       diagnostics.push({
+        severity: "skipped",
         compoundIndex: candidate.index,
         message: `compounds[${candidate.index}].name collides with a launch configuration name.`,
       });
@@ -271,6 +305,7 @@ function parseCompounds(
     const missingMember = candidate.memberNames.find((_name, index) => !members[index]);
     if (missingMember !== undefined) {
       diagnostics.push({
+        severity: "skipped",
         compoundIndex: candidate.index,
         message: `compounds[${candidate.index}] references an unknown launch configuration.`,
       });
@@ -288,6 +323,7 @@ function parseCompounds(
       )
     ) {
       diagnostics.push({
+        severity: "skipped",
         compoundIndex: candidate.index,
         message: `compounds[${candidate.index}] members must be task-free script or npm launch configurations without serverReadyAction.`,
       });
@@ -316,6 +352,10 @@ function frozenCompoundMember(entry: VscodeNodeLaunchConfiguration): VscodeNodeL
     ...(entry.nativeWatch ? { nativeWatch: entry.nativeWatch } : {}),
     ...(entry.justMyCode ? { justMyCode: entry.justMyCode } : {}),
     ...(entry.sourceMaps !== undefined ? { sourceMaps: entry.sourceMaps } : {}),
+    ...(entry.outFiles !== undefined ? { outFiles: entry.outFiles } : {}),
+    ...(entry.resolveSourceMapLocations !== undefined
+      ? { resolveSourceMapLocations: entry.resolveSourceMapLocations }
+      : {}),
     ...(entry.smartStep !== undefined ? { smartStep: entry.smartStep } : {}),
     ...(entry.stopOnEntry !== undefined ? { stopOnEntry: entry.stopOnEntry } : {}),
   });
@@ -331,7 +371,7 @@ function parseCompound(
   if (!isRecord(value)) return rejected(`${path} must be an object`);
   const unknown = unknownKey(value, ["name", "configurations", "stopAll", "preLaunchTask"]);
   if (unknown !== undefined) return rejected(`${path} contains an unsupported field`);
-  if (!displaySafe(value.name, MAX_NAME_BYTES)) {
+  if (!displaySafeString(value.name, MAX_NAME_BYTES)) {
     return rejected(`${path}.name must be a bounded display-safe string`);
   }
   if (value.stopAll !== true) return rejected(`${path}.stopAll must be true`);
@@ -339,7 +379,7 @@ function parseCompound(
     !Array.isArray(value.configurations) ||
     value.configurations.length < MIN_COMPOUND_MEMBERS ||
     value.configurations.length > MAX_COMPOUND_MEMBERS ||
-    !value.configurations.every((name) => displaySafe(name, MAX_NAME_BYTES))
+    !value.configurations.every((name) => displaySafeString(name, MAX_NAME_BYTES))
   ) {
     return rejected(
       `${path}.configurations must contain ${MIN_COMPOUND_MEMBERS} to ${MAX_COMPOUND_MEMBERS} bounded display-safe names`,
@@ -369,13 +409,34 @@ function parseConfiguration(
   | { readonly kind: "error"; readonly message: string } {
   const path = `configurations[${index}]`;
   if (!isRecord(value)) return rejected(`${path} must be an object`);
-  for (const field of ["outFiles", "resolveSourceMapLocations"] as const) {
-    if (Object.prototype.hasOwnProperty.call(value, field)) {
-      return rejected(
-        `${path}.${field} is unsupported; use tsconfig outDir-driven generated-file discovery`,
-      );
-    }
-  }
+  const outFiles = parseVscodeLaunchGlobList(value.outFiles, `${path}.outFiles`);
+  if (outFiles.kind === "error") return outFiles;
+  const resolveSourceMapLocations = parseVscodeLaunchGlobList(
+    value.resolveSourceMapLocations,
+    `${path}.resolveSourceMapLocations`,
+  );
+  if (resolveSourceMapLocations.kind === "error") return resolveSourceMapLocations;
+  const parsed = parseConfigurationValue(value, path);
+  if (parsed.kind === "error") return parsed;
+  if (outFiles.value === undefined && resolveSourceMapLocations.value === undefined) return parsed;
+  return {
+    kind: "ok",
+    value: {
+      ...parsed.value,
+      ...(outFiles.value !== undefined ? { outFiles: outFiles.value } : {}),
+      ...(resolveSourceMapLocations.value !== undefined
+        ? { resolveSourceMapLocations: resolveSourceMapLocations.value }
+        : {}),
+    },
+  };
+}
+
+function parseConfigurationValue(
+  value: Record<string, unknown>,
+  path: string,
+):
+  | { readonly kind: "ok"; readonly value: VscodeNodeLaunchConfiguration }
+  | { readonly kind: "error"; readonly message: string } {
   const unknown = unknownKey(value, [
     "type",
     "request",
@@ -402,6 +463,8 @@ function parseConfiguration(
     "restart",
     "address",
     "serverReadyAction",
+    "outFiles",
+    "resolveSourceMapLocations",
   ]);
   if (unknown !== undefined) return rejected(`${path} contains an unsupported field`);
   const compatibility = validateNoopLaunchCompatibility(value, path);
@@ -423,7 +486,7 @@ function parseConfiguration(
   if (value.type !== "node" && value.type !== "pwa-node") {
     return rejected(`${path}.type must be "node" or "pwa-node"`);
   }
-  if (!displaySafe(value.name, MAX_NAME_BYTES)) {
+  if (!displaySafeString(value.name, MAX_NAME_BYTES)) {
     return rejected(`${path}.name must be a bounded display-safe string`);
   }
   const preLaunchTask = optionalTaskLabel(value.preLaunchTask, `${path}.preLaunchTask`);
@@ -996,7 +1059,7 @@ function safeNpmScriptName(value: unknown): value is string {
 
 function optionalTaskLabel(value: unknown, path: string) {
   if (value === undefined) return { kind: "ok" as const, value: undefined };
-  return displaySafe(value, VSCODE_PRE_LAUNCH_TASK_MAX_BYTES) && value.trim() === value
+  return displaySafeString(value, VSCODE_PRE_LAUNCH_TASK_MAX_BYTES) && value.trim() === value
     ? { kind: "ok" as const, value }
     : rejected(
         `${path} must be a non-empty display-safe string of at most ${VSCODE_PRE_LAUNCH_TASK_MAX_BYTES} UTF-8 bytes`,
@@ -1061,16 +1124,27 @@ function environment(value: unknown, path: string) {
   return { kind: "ok" as const, value: Object.fromEntries(entries) };
 }
 
-function displaySafe(value: unknown, maximumBytes: number): value is string {
-  return (
-    safeString(value, maximumBytes) &&
-    value.trim().length > 0 &&
-    !/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(value)
-  );
-}
-
 function safeLiteral(value: unknown, maximumBytes: number): value is string {
   return safeString(value, maximumBytes) && !value.includes("${");
+}
+
+function reducedFieldsFor(
+  configuration: VscodeNodeLaunchConfiguration,
+): readonly VscodeNodeLaunchReducedField[] {
+  const fields: VscodeNodeLaunchReducedField[] = [];
+  if (configuration.outFiles !== undefined) fields.push("outFiles");
+  if (configuration.resolveSourceMapLocations !== undefined) {
+    fields.push("resolveSourceMapLocations");
+  }
+  return Object.freeze(fields);
+}
+
+function reducedCapabilityMessage(
+  index: number,
+  fields: readonly VscodeNodeLaunchReducedField[],
+): string {
+  const paths = fields.map((field) => `configurations[${index}].${field}`);
+  return `${paths.join(" and ")} ${paths.length === 1 ? "is" : "are"} imported but not enforced; generated files come from tsconfig outDir.`;
 }
 
 function safeString(value: unknown, maximumBytes: number): value is string {

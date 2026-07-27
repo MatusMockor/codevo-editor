@@ -77,7 +77,7 @@ describe("useNodeLaunchConfigurationPicker", () => {
     ui.unmount();
   });
 
-  it("projects only safe VS Code source metadata and a generic skipped count", async () => {
+  it("reports skipped and reduced VS Code configurations with truthful bounded wording", async () => {
     const ui = renderPicker({ workspaceReads: vscodeReads() });
     await act(async () => ui.hook().load());
 
@@ -94,12 +94,27 @@ describe("useNodeLaunchConfigurationPicker", () => {
     expect(ui.hook().state).toEqual({
       kind: "ready",
       diagnosticNotice: {
-        count: 1,
-        message: "1 VS Code launch configuration was skipped because it is unsupported or invalid.",
+        count: 2,
+        message:
+          "1 VS Code launch item was skipped because it is unsupported or invalid. 1 VS Code launch configuration was imported with reduced capability: outFiles and resolveSourceMapLocations are not enforced; generated files come from tsconfig outDir.",
       },
     });
     expect(JSON.stringify(ui.hook())).not.toContain("configurations[1]");
     expect(JSON.stringify(ui.hook())).not.toContain("unsupported field");
+    ui.unmount();
+  });
+
+  it("reports a skipped VS Code compound as a launch item", async () => {
+    const ui = renderPicker({ workspaceReads: vscodeReadsWithSkippedCompound() });
+    await act(async () => ui.hook().load());
+
+    expect(ui.hook().state).toMatchObject({
+      kind: "ready",
+      diagnosticNotice: {
+        count: 1,
+        message: "1 VS Code launch item was skipped because it is unsupported or invalid.",
+      },
+    });
     ui.unmount();
   });
 
@@ -312,6 +327,8 @@ function vscodeReads(): NodeLaunchConfigurationReads {
             name: "Imported API",
             program: "src/api.ts",
             preLaunchTask: "build",
+            outFiles: ["${workspaceFolder}/dist/**/*.js"],
+            resolveSourceMapLocations: ["!**/node_modules/**"],
           },
           {
             type: "node",
@@ -321,6 +338,30 @@ function vscodeReads(): NodeLaunchConfigurationReads {
             unsupported: "/private/path",
           },
         ],
+      }),
+    ),
+  };
+}
+
+function vscodeReadsWithSkippedCompound(): NodeLaunchConfigurationReads {
+  return {
+    readDirectory: vi.fn(async (path) =>
+      path === ROOT
+        ? [{ kind: "directory" as const, name: ".vscode", path: `${path}/.vscode` }]
+        : [{ kind: "file" as const, name: "launch.json", path: `${path}/launch.json` }],
+    ),
+    readFile: vi.fn(async () =>
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Imported API",
+            program: "src/api.ts",
+          },
+        ],
+        compounds: [{ name: "Services", configurations: ["Imported API"], stopAll: false }],
       }),
     ),
   };

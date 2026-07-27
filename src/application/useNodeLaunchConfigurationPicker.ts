@@ -7,6 +7,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   loadNodeLaunchConfigurations,
   type NodeLaunchCompoundEntry,
+  type NodeLaunchConfigurationDiagnostic,
   type NodeLaunchConfigurationEntry,
   type NodeLaunchConfigurationReads,
 } from "./nodeLaunchConfigurationLoader";
@@ -287,7 +288,7 @@ export function useNodeLaunchConfigurationPicker<TPrivate>(
       setState({ kind: "error", message: boundedNodeLaunchConfigurationMessage(result.message) });
       return;
     }
-    const diagnosticNotice = vscodeDiagnosticNotice(result.diagnostics.length);
+    const diagnosticNotice = vscodeDiagnosticNotice(result.diagnostics);
     if (result.configurations.length === 0 && (result.pickerCompounds?.length ?? 0) === 0) {
       setChoices(EMPTY_CHOICES);
       setSelectedName(null);
@@ -594,11 +595,32 @@ export function boundedNodeLaunchConfigurationMessage(value: string): string {
 }
 
 function vscodeDiagnosticNotice(
-  count: number,
+  diagnostics: readonly NodeLaunchConfigurationDiagnostic[],
 ): NodeLaunchConfigurationPickerDiagnosticNotice | undefined {
-  if (!Number.isSafeInteger(count) || count <= 0) return undefined;
+  if (diagnostics.length === 0) return undefined;
+  const skippedCount = diagnostics.filter(({ severity }) => severity === "skipped").length;
+  const reduced = diagnostics.filter(
+    (
+      diagnostic,
+    ): diagnostic is Extract<NodeLaunchConfigurationDiagnostic, { severity: "reduced" }> =>
+      diagnostic.severity === "reduced",
+  );
+  const fields = [...new Set(reduced.flatMap(({ fields: diagnosticFields }) => diagnosticFields))];
+  const messages: string[] = [];
+  if (skippedCount > 0) {
+    messages.push(
+      `${skippedCount} VS Code launch ${skippedCount === 1 ? "item was skipped because it is" : "items were skipped because they are"} unsupported or invalid.`,
+    );
+  }
+  if (reduced.length > 0) {
+    const fieldNames = fields.join(" and ");
+    messages.push(
+      `${reduced.length} VS Code launch ${reduced.length === 1 ? "configuration was" : "configurations were"} imported with reduced capability: ${fieldNames} ${fields.length === 1 ? "is" : "are"} not enforced; generated files come from tsconfig outDir.`,
+    );
+  }
+  const count = skippedCount + reduced.length;
   return Object.freeze({
     count,
-    message: `${count} VS Code launch ${count === 1 ? "configuration was skipped because it is" : "configurations were skipped because they are"} unsupported or invalid.`,
+    message: boundedNodeLaunchConfigurationMessage(messages.join(" ")),
   });
 }

@@ -118,8 +118,7 @@ describe("NodeLaunchConfigurationPicker", () => {
       choices: [importedChoice],
       diagnosticNotice: {
         count: 2,
-        message:
-          "2 VS Code launch configurations were skipped because they are unsupported or invalid.",
+        message: "2 VS Code launch items were skipped because they are unsupported or invalid.",
       },
       selectedName: "Imported API",
     });
@@ -128,10 +127,10 @@ describe("NodeLaunchConfigurationPicker", () => {
     expect(option?.textContent).toContain("npm · VS Code");
     expect(option?.textContent).toContain("preLaunchTask: build");
     const notice = host.querySelector(
-      '[role="status"][aria-label="2 skipped VS Code launch configurations"]',
+      '[role="status"][aria-label="2 VS Code launch items were skipped because they are unsupported or invalid."]',
     );
     expect(notice?.textContent).toBe(
-      "2 VS Code launch configurations were skipped because they are unsupported or invalid.",
+      "2 VS Code launch items were skipped because they are unsupported or invalid.",
     );
     expect(host.textContent).not.toContain(".vscode/launch.json");
     expect(host.textContent).not.toContain("private:dev");

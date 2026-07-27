@@ -102,6 +102,47 @@ describe("VS Code Node launch configuration loader", () => {
     expect(imported?.configuration).not.toHaveProperty("smartStep");
   });
 
+  it("loads source-map glob metadata with truthful reduced-capability diagnostics", async () => {
+    const result = await loadVscodeNodeLaunchConfigurations(
+      ROOT,
+      fixtures(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "API",
+              program: "src/server.ts",
+              outFiles: ["${workspaceFolder}/dist/**/*.js"],
+              resolveSourceMapLocations: ["${workspaceFolder}/**", "!**/node_modules/**"],
+            },
+          ],
+        }),
+      ),
+      () => true,
+    );
+
+    expect(result).toMatchObject({
+      kind: "loaded",
+      configurations: [
+        {
+          configuration: { name: "API" },
+          outFiles: ["${workspaceFolder}/dist/**/*.js"],
+          resolveSourceMapLocations: ["${workspaceFolder}/**", "!**/node_modules/**"],
+        },
+      ],
+      diagnostics: [
+        {
+          configurationIndex: 0,
+          severity: "reduced",
+          fields: ["outFiles", "resolveSourceMapLocations"],
+          message: expect.stringContaining("tsconfig outDir"),
+        },
+      ],
+    });
+  });
+
   it("returns none when the exact directory or file is absent", async () => {
     const noDirectory = fixtures("{}", false);
     expect(await loadVscodeNodeLaunchConfigurations(ROOT, noDirectory, () => true)).toEqual({
