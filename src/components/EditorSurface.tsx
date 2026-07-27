@@ -56,6 +56,7 @@ import type {
 } from "../application/useWorkbenchCodeQualityDiagnostics";
 import type { EditorSurfaceEslintDisableRunner } from "../application/workbenchEslintDisableCommand";
 import type { DebugInlineValueContext } from "../application/debugInlineValueContext";
+import type { DebugBreakpointManagement } from "../application/useDebugBreakpointManagement";
 import type { JsTestExplorerCurrentFileIdentity } from "../domain/jsTestExplorerFilter";
 import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import type {
@@ -163,10 +164,7 @@ import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./useEditorS
 import { EditorRuntimeHost, type EditorRuntimeSurfaceRegistration } from "./EditorRuntimeHost";
 import { useEditorRuntimeContext } from "./editorRuntimeContext";
 import { editorActionForSurfaceCommand } from "./editorSurfaceCommandAction";
-import {
-  EditorBreakpointInteractionLayer,
-  type EditorBreakpointActions,
-} from "./EditorBreakpointInteractionLayer";
+import { EditorBreakpointGutterMenu } from "./EditorBreakpointGutterMenu";
 import {
   toBoundedDiagnosticOverviewDecorations,
   toMonacoDiagnosticMarker,
@@ -175,6 +173,7 @@ import {
   applyLocalPhpValidationSnapshot,
   localPhpDiagnosticsFromVisibleMarkers,
 } from "./editorLocalPhpValidation";
+
 import {
   changePreviewText,
   clampNumber,
@@ -261,7 +260,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   clearLanguageServerDiagnosticsForPath?(path: string): void;
   bookmarkedLineNumbers?: readonly number[];
   breakpoints?: readonly Breakpoint[];
-  breakpointActions?: Partial<EditorBreakpointActions>;
+  breakpointActions?: Partial<DebugBreakpointManagement>;
   onBreakpointMutationError?: (error: unknown) => void;
   changeHunks: EditorChangeHunk[];
   debugStoppedLocation?: { filePath: string; lineNumber: number } | null;
@@ -573,7 +572,7 @@ function EditorSurfaceComponent({
   const editorConfigIndentSize = editorConfig?.indentSize;
   const editorConfigIndentStyle = editorConfig?.indentStyle;
   const editorConfigTabWidth = editorConfig?.tabWidth;
-  const editorViewStateCaptureEnabled = !!onEditorViewStateChange;
+  const editorViewStateCaptureEnabled = Boolean(onEditorViewStateChange);
   const {
     templateLanguageProvidersRef,
     phpPresenterLinkCompletionsRef,
@@ -602,7 +601,6 @@ function EditorSurfaceComponent({
       ? breakpointModel
       : null;
   const toggleBreakpointAction = breakpointActions?.toggleBreakpoint ?? onToggleBreakpoint;
-  const resolvedBreakpointActions = breakpointActions ?? { toggleBreakpoint: onToggleBreakpoint };
   const reportBreakpointMutationError = useCallback(
     (error: unknown) => {
       try {
@@ -621,7 +619,7 @@ function EditorSurfaceComponent({
     breakpoints,
     {
       authoritativeContent: activeDocumentContent,
-      relocateBreakpoint: resolvedBreakpointActions.relocateBreakpoint,
+      relocateBreakpoint: breakpointActions?.relocateBreakpoint,
       workspaceOwnerKey: workspaceIdentityDescriptor?.workspaceId,
       workspaceRoot,
     },
@@ -652,7 +650,6 @@ function EditorSurfaceComponent({
   const captureEditorSurfaceScope = useCallback((): EditorSurfaceCommandInvocationScope | null => {
     const document = activeDocumentRef.current;
     const model = editorApi?.getModel();
-
     if (
       !document ||
       !model ||
@@ -660,7 +657,6 @@ function EditorSurfaceComponent({
     ) {
       return null;
     }
-
     return {
       documentPath: document.path,
       modelIdentity: model,
@@ -2746,7 +2742,6 @@ function EditorSurfaceComponent({
           event.event.metaKey !== true &&
           event.event.shiftKey !== true &&
           event.event.altKey !== true;
-
         if (!toggleBreakpointAction || !isPlainLeftClick || !lineNumber || !path) {
           return;
         }
@@ -4385,14 +4380,15 @@ function EditorSurfaceComponent({
         }
       />
       {overlay}
-      <EditorBreakpointInteractionLayer
-        actions={resolvedBreakpointActions}
+      <EditorBreakpointGutterMenu
+        actions={breakpointActions}
         activeDocumentPath={activeDocumentPath}
         breakpoints={breakpoints}
         editor={editorApi}
         modelIdentity={currentBreakpointModel}
         monaco={monacoApi}
         onMutationError={reportBreakpointMutationError}
+        toggleBreakpointFallback={onToggleBreakpoint}
         workspaceRoot={workspaceRoot}
       />
       {activeDocument && changePreview ? (

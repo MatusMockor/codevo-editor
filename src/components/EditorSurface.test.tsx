@@ -5613,7 +5613,7 @@ class InvoiceServiceTest extends TestCase
     expect(onToggleBreakpoint).not.toHaveBeenCalled();
   });
 
-  it("opens conditional breakpoint actions at the right-clicked gutter location", async () => {
+  it("closes an open breakpoint dialog when the document path changes with stable actions", async () => {
     const activeDocument: EditorDocument = {
       content: "one\ntwo\nthree\n",
       language: "typescript",
@@ -5624,6 +5624,7 @@ class InvoiceServiceTest extends TestCase
     const model: FakeModel = {
       dispose: vi.fn(),
       getLineCount: vi.fn(() => 3),
+      getVersionId: vi.fn(() => 1),
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const monaco = createMonaco(model);
@@ -5632,6 +5633,11 @@ class InvoiceServiceTest extends TestCase
     editorSurfaceMocks.monaco = monaco;
     const preventDefault = vi.fn();
     const stopPropagation = vi.fn();
+    const breakpointActions = {
+      setBreakpointCondition: vi.fn(),
+      setBreakpointLogMessage: vi.fn(),
+      toggleBreakpoint: vi.fn(),
+    };
 
     await act(async () => {
       root.render(
@@ -5647,11 +5653,7 @@ class InvoiceServiceTest extends TestCase
               logMessage: "value={value}",
             },
           ],
-          breakpointActions: {
-            setBreakpointCondition: vi.fn(),
-            setBreakpointLogMessage: vi.fn(),
-            toggleBreakpoint: vi.fn(),
-          },
+          breakpointActions,
           workspaceRoot: "/workspace",
         }),
       );
@@ -5667,23 +5669,24 @@ class InvoiceServiceTest extends TestCase
           stopPropagation,
         },
         target: {
+          detail: { glyphMarginLane: monaco.editor.GlyphMarginLane.Left },
           position: { column: 1, lineNumber: 3 },
-          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
         },
       };
       for (const [handler] of editor.onMouseDown.mock.calls) handler(event);
     });
-    const menu = host.querySelector<HTMLElement>('[role="menu"]');
+    const menu = document.querySelector<HTMLElement>('[role="menu"]');
     expect(menu?.getAttribute("aria-label")).toContain("line 3");
     expect(menu?.style.left).toBe("42px");
     expect(menu?.style.top).toBe("64px");
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(stopPropagation).toHaveBeenCalledOnce();
     const editLogpoint = Array.from(
-      host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
-    ).find((button) => button.textContent === "Edit Logpoint");
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ).find((button) => button.textContent === "Edit Logpoint...");
     await act(async () => editLogpoint?.click());
-    expect(host.querySelector<HTMLInputElement>('input[placeholder^="Log message"]')?.value).toBe(
+    expect(document.querySelector<HTMLInputElement>('input[placeholder^="value="]')?.value).toBe(
       "value={value}",
     );
 
@@ -5691,16 +5694,71 @@ class InvoiceServiceTest extends TestCase
       root.render(
         createElement(EditorSurface, {
           ...memoGuardProps({ ...activeDocument, path: "/workspace/src/other.ts" }),
-          breakpointActions: {
-            setBreakpointCondition: vi.fn(),
-            toggleBreakpoint: vi.fn(),
-          },
+          breakpointActions,
           workspaceRoot: "/workspace",
         }),
       );
       await Promise.resolve();
     });
-    expect(host.querySelector('[role="menu"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("keeps onToggleBreakpoint as the gutter-menu fallback when breakpointActions is partial", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 3),
+      getVersionId: vi.fn(() => 1),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onToggleBreakpoint = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          breakpointActions: { relocateBreakpoint: vi.fn(async () => true) },
+          onToggleBreakpoint,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    act(() => {
+      const event = {
+        event: {
+          posx: 42,
+          posy: 64,
+          preventDefault: vi.fn(),
+          rightButton: true,
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          position: { column: 1, lineNumber: 3 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+        },
+      };
+      for (const [handler] of editor.onMouseDown.mock.calls) handler(event);
+    });
+    const addBreakpoint = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ).find((button) => button.textContent === "Add Breakpoint");
+
+    await act(async () => {
+      addBreakpoint?.click();
+      await Promise.resolve();
+    });
+
+    expect(onToggleBreakpoint).toHaveBeenCalledWith(activeDocument.path, 3);
   });
 
   it("clears breakpoint glyphs when the active document switches", async () => {
