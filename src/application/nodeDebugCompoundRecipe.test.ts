@@ -53,6 +53,25 @@ describe("cloneNodeDebugCompoundMembers", () => {
     }
   });
 
+  it("accepts and freezes exactly eight members while rejecting nine", () => {
+    const eight = Array.from({ length: 8 }, (_, index) => ({
+      launch: {
+        kind: "node-script" as const,
+        scriptPath: `/workspace/service-${index}.ts`,
+      },
+      preLaunchTask: null,
+    }));
+
+    const cloned = cloneNodeDebugCompoundMembers(eight);
+
+    expect(cloned).toHaveLength(8);
+    expect(cloned).not.toBe(eight);
+    expect(Object.isFrozen(cloned)).toBe(true);
+    expect(cloned?.every((member) => Object.isFrozen(member))).toBe(true);
+    expect(cloned?.every((member) => Object.isFrozen(member.launch))).toBe(true);
+    expect(cloneNodeDebugCompoundMembers([...eight, eight[0]!])).toBeNull();
+  });
+
   it.each([null, "true", 1])(
     "rejects malformed stopOnEntry value %# in a compound member",
     (stopOnEntry) => {

@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { DebugCompoundLaunchTarget } from "../domain/debug";
 import type { VscodeProcessTaskCompletion } from "./vscodeProcessTaskCoordinator";
+import type { DebugCompoundStartOutcome } from "./debugCompoundStart";
 import { useNodeDebugCompoundComposition } from "./useNodeDebugCompoundComposition";
 import type { PreparedNodeDebugCompoundLaunch } from "./useNodeDebugConfigurationLauncher";
 import type { VscodeProcessTasksState } from "./useVscodeProcessTasks";
@@ -88,6 +89,18 @@ describe("useNodeDebugCompoundComposition", () => {
     ui.unmount();
   });
 
+  it("reports the bounded payload reason for a compound request above one MiB", async () => {
+    const ui = renderComposition();
+    ui.startCompound.mockResolvedValueOnce({ kind: "request-too-large" });
+
+    await act(async () => expect(await ui.start()(PREPARED)).toBe(false));
+
+    expect(ui.reportWarning).toHaveBeenCalledExactlyOnceWith(
+      "Node debug compound request exceeded the 1 MiB payload limit.",
+    );
+    ui.unmount();
+  });
+
   it.each([
     ["workspace A-B-A", { rootPath: "/workspace-b", workspaceId: "workspace-b" }, {}],
     ["trust A-B-A", { workspaceTrusted: false }, { workspaceTrusted: true }],
@@ -161,9 +174,9 @@ function renderComposition(overrides: { readonly tasks?: VscodeProcessTasksState
   const tasks = overrides.tasks ?? taskState();
   const reportWarning = vi.fn();
   const stopAcceptedCompound = vi.fn(async () => undefined);
-  const startCompound = vi.fn<(members: readonly DebugCompoundLaunchTarget[]) => Promise<boolean>>(
-    async () => true,
-  );
+  const startCompound = vi.fn<
+    (members: readonly DebugCompoundLaunchTarget[]) => Promise<DebugCompoundStartOutcome>
+  >(async () => true);
   let patch: Partial<Parameters<typeof useNodeDebugCompoundComposition>[0]> = {};
   let hook: ReturnType<typeof useNodeDebugCompoundComposition> | null = null;
 

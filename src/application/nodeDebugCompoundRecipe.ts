@@ -14,7 +14,7 @@ export interface NodeDebugCompoundMemberRecipe {
 export function cloneNodeDebugCompoundMembers(
   members: readonly PreparedNodeDebugLaunch[],
 ): readonly NodeDebugCompoundMemberRecipe[] | null {
-  if (!Array.isArray(members) || members.length < 2 || members.length > 4) return null;
+  if (!Array.isArray(members) || members.length < 2 || members.length > 8) return null;
   const cloned: NodeDebugCompoundMemberRecipe[] = [];
   for (const member of members) {
     if (
