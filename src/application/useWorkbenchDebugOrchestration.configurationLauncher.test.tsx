@@ -31,9 +31,9 @@ const mocks = vi.hoisted(() => {
   const startDebug = vi.fn(async () => undefined);
   const startDebugAccepted = vi.fn(async () => true);
   const startDebugSessionAccepted = vi.fn(async () => 1);
-  const startDebugCompoundAccepted = vi.fn(
-    async (): Promise<DebugCompoundStartOutcome> => ({ kind: "accepted" }),
-  );
+  const startDebugCompoundAccepted = vi.fn(async (): Promise<DebugCompoundStartOutcome> => ({
+    kind: "accepted",
+  }));
   const restartDebug = vi.fn(async () => undefined);
   const canRestartDebug = vi.fn(() => true);
   const restartPostTask = vi.fn(async () => true);
