@@ -1,9 +1,12 @@
 use super::*;
+use crate::debug_adapter::{DebugEventPayload, DebugOutputStream};
 
 #[test]
 fn worker_keeps_the_session_alive_when_a_read_only_reresolution_request_fails() {
-    let state = unresolved_worker_state();
+    let state = captured_worker_state();
     let state_for_assertion = Arc::clone(&state);
+    let emitted = Arc::new(Mutex::new(Vec::new()));
+    let emitted_for_worker = Arc::clone(&emitted);
     let failed_closed = Arc::new(AtomicBool::new(false));
     let failed_closed_for_worker = Arc::clone(&failed_closed);
     let (entered_tx, entered_rx) = mpsc::sync_channel(4);
@@ -19,7 +22,12 @@ fn worker_keeps_the_session_alive_when_a_read_only_reresolution_request_fails() 
     let (trigger, worker) = spawn_worker_with_fail_closed(
         cdp,
         state,
-        Arc::new(|_| {}),
+        Arc::new(move |payload| {
+            emitted_for_worker
+                .lock()
+                .expect("emitted payload lock")
+                .push(payload);
+        }),
         Arc::new(|| true),
         Arc::new(move || failed_closed_for_worker.store(true, Ordering::Release)),
     );
@@ -47,6 +55,17 @@ fn worker_keeps_the_session_alive_when_a_read_only_reresolution_request_fails() 
             .map(String::as_str),
         Some("render")
     );
+    let events = emitted.lock().expect("emitted payload lock");
+    assert!(matches!(
+        events.as_slice(),
+        [
+            DebugEventPayload::Output {
+                stream: DebugOutputStream::Stderr,
+                ..
+            },
+            DebugEventPayload::Stopped { .. }
+        ]
+    ));
 }
 
 #[test]
