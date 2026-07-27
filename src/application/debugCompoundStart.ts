@@ -17,6 +17,7 @@ import type {
   DebugCompoundProjectionLease,
   DebugCompoundSessionProjection,
 } from "./debugCompoundSessionProjection";
+import { decodableLifecycleEvent } from "./debugCompoundSessionProjection";
 import type {
   NodeDebugCompoundLease,
   NodeDebugCompoundOwner,
@@ -30,7 +31,16 @@ import type { DebugOutputLine } from "./debugSessionContracts";
 import type { DebugSessionOwner } from "./useDebugSessionEnd";
 
 export const COMPOUND_POLICY_SYNC_ERROR = "Unable to synchronize the active debug compound.";
-export type DebugCompoundStartOutcome = boolean | { readonly kind: "request-too-large" };
+export type DebugCompoundStartOutcome =
+  | { readonly kind: "accepted" }
+  | { readonly kind: "lifecycle-buffer-overflow" }
+  | { readonly kind: "rejected" }
+  | { readonly kind: "request-too-large" };
+const DEBUG_COMPOUND_ACCEPTED_OUTCOME = Object.freeze({ kind: "accepted" as const });
+const DEBUG_COMPOUND_LIFECYCLE_BUFFER_OVERFLOW_OUTCOME = Object.freeze({
+  kind: "lifecycle-buffer-overflow" as const,
+});
+const DEBUG_COMPOUND_REJECTED_OUTCOME = Object.freeze({ kind: "rejected" as const });
 const DEBUG_COMPOUND_REQUEST_TOO_LARGE_OUTCOME = Object.freeze({
   kind: "request-too-large" as const,
 });
@@ -55,6 +65,7 @@ export interface ActiveDebugCompound {
   readonly childPauseGenerations: Map<number, number>;
   readonly childSnapshots: Map<number, DebuggerSessionSnapshot>;
   readonly lease: NodeDebugCompoundLease;
+  lifecycleBufferOverflowed: boolean;
   readonly owner: NodeDebugCompoundOwner;
   readonly pendingLifecycleEvents: DebugEvent[];
   policyDiverged: boolean;
@@ -122,7 +133,7 @@ export async function startDebugCompoundAccepted(
     !trustedWorkspace(context.isWorkspaceTrusted) ||
     !context.isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId)
   ) {
-    return false;
+    return DEBUG_COMPOUND_REJECTED_OUTCOME;
   }
 
   const key = normalizedWorkspaceRootKey(requestedRoot);
@@ -135,7 +146,7 @@ export async function startDebugCompoundAccepted(
     context.pendingRestartsRef.current.has(key) ||
     (state.kind !== "inactive" && state.kind !== "terminated")
   ) {
-    return false;
+    return DEBUG_COMPOUND_REJECTED_OUTCOME;
   }
 
   const owner: NodeDebugCompoundOwner = {
@@ -145,7 +156,7 @@ export async function startDebugCompoundAccepted(
     workspaceId: requestedWorkspaceId,
   };
   const lease = context.compoundCoordinator.begin(owner, members.length);
-  if (!lease) return false;
+  if (!lease) return DEBUG_COMPOUND_REJECTED_OUTCOME;
   const startSettlement = deferredVoid();
   const compound: ActiveDebugCompound = {
     cancelPromise: null,
@@ -153,6 +164,7 @@ export async function startDebugCompoundAccepted(
     childPauseGenerations: new Map(),
     childSnapshots: new Map(),
     lease,
+    lifecycleBufferOverflowed: false,
     owner,
     pendingLifecycleEvents: [],
     policyDiverged: false,
@@ -200,12 +212,12 @@ export async function startDebugCompoundAccepted(
     });
     if (status.kind !== "ok" || !Array.isArray(status.sessionIds)) {
       await rollback();
-      return false;
+      return DEBUG_COMPOUND_REJECTED_OUTCOME;
     }
     compound.representativeSessionId = status.sessionIds.find(validDebugSessionId) ?? null;
     if (compound.cancelRequested || status.sessionIds.length !== members.length) {
       await rollback();
-      return false;
+      return DEBUG_COMPOUND_REJECTED_OUTCOME;
     }
 
     let ready = false;
@@ -213,18 +225,22 @@ export async function startDebugCompoundAccepted(
       const acceptance = context.compoundCoordinator.accept(lease, index, sessionId);
       if (acceptance.kind === "rejected") {
         await rollback();
-        return false;
+        return DEBUG_COMPOUND_REJECTED_OUTCOME;
       }
       ready = acceptance.kind === "ready";
     }
     if (!ready) {
       await rollback();
-      return false;
+      return DEBUG_COMPOUND_REJECTED_OUTCOME;
     }
 
     const projectionLease = context.compoundProjection.begin(requestedRoot, status.sessionIds);
     compound.projectionLease = projectionLease;
     initializeCompoundChildSnapshots(compound, status.sessionIds);
+    if (compound.lifecycleBufferOverflowed) {
+      await rollback();
+      return DEBUG_COMPOUND_LIFECYCLE_BUFFER_OVERFLOW_OUTCOME;
+    }
     if (
       !projectionLease ||
       context.compoundProjection.snapshot().kind === "ending" ||
@@ -234,7 +250,7 @@ export async function startDebugCompoundAccepted(
       context.workspaceOwnerEpochRef.current.epoch !== owner.workspaceEpoch
     ) {
       await rollback();
-      return false;
+      return DEBUG_COMPOUND_REJECTED_OUTCOME;
     }
 
     const selectedSessionId =
@@ -242,7 +258,7 @@ export async function startDebugCompoundAccepted(
       context.compoundCoordinator.selectedSession(lease);
     if (selectedSessionId === null) {
       await rollback();
-      return false;
+      return DEBUG_COMPOUND_REJECTED_OUTCOME;
     }
 
     context.sessionsByRootRef.current = {
@@ -277,13 +293,13 @@ export async function startDebugCompoundAccepted(
       return next;
     });
     context.setDebugCompoundActive(true);
-    return true;
+    return DEBUG_COMPOUND_ACCEPTED_OUTCOME;
   } catch (error) {
     await rollback();
     if (isDebugCompoundRequestTooLargeError(error)) {
       return DEBUG_COMPOUND_REQUEST_TOO_LARGE_OUTCOME;
     }
-    return false;
+    return DEBUG_COMPOUND_REJECTED_OUTCOME;
   } finally {
     context.pendingStartKeysRef.current.delete(key);
     compound.resolveStartSettlement();
@@ -306,7 +322,7 @@ export function initializeCompoundChildSnapshots(
   }
   const exactSessionIds = new Set(sessionIds);
   const replay = compound.pendingLifecycleEvents
-    .filter((event) => exactSessionIds.has(event.sessionId))
+    .filter((event) => decodableLifecycleEvent(event) && exactSessionIds.has(event.sessionId))
     .sort((left, right) => left.seq - right.seq);
   compound.pendingLifecycleEvents.length = 0;
   for (const event of replay) applyCompoundChildEvent(compound, event);

@@ -24,7 +24,10 @@ import type {
   DebugRestartFrameCandidate,
   NodeDebugAttachCandidateStartPort,
 } from "./debugSessionContracts";
-import { DebugCompoundSessionProjection } from "./debugCompoundSessionProjection";
+import {
+  DebugCompoundSessionProjection,
+  MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS,
+} from "./debugCompoundSessionProjection";
 import type { DebugCompoundStartOutcome } from "./debugCompoundStart";
 import {
   MAX_NODE_DEBUG_COMPOUND_MEMBERS,
@@ -328,7 +331,9 @@ describe("useDebugSession", () => {
     });
 
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     expect(ui.hook().debugCompoundActive).toBe(true);
     expect(ui.hook().snapshot.state).toMatchObject({
@@ -374,7 +379,9 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     expect(ui.hook().snapshot.state).toMatchObject({ kind: "running", sessionId: 41 });
 
@@ -436,7 +443,9 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
 
     const firstFrame = { ...frame, frameId: 41 };
@@ -505,6 +514,30 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("keeps the compound coordinator and projection aligned after a malformed terminated event", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
+    });
+
+    act(() => {
+      harness.emit({
+        payload: { exitCode: 2 ** 40, kind: "terminated" },
+        rootPath: "/workspace/one",
+        seq: 1,
+        sessionId: 41,
+      });
+    });
+
+    expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 41 });
+    await act(async () => void (await ui.hook().stopDebug()));
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
+    ui.unmount();
+  });
+
   it("derives live fan-out admission from the exported compound member bound", async () => {
     const harness = createGateway();
     harness.startCompound.mockResolvedValue({
@@ -516,7 +549,9 @@ describe("useDebugSession", () => {
     );
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(eightCompoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(eightCompoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
 
     await act(async () => {
@@ -553,6 +588,48 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("returns lifecycle-buffer-overflow and rolls back when decodable replay exceeds its bound", async () => {
+    const harness = createGateway();
+    const status = deferred<{ readonly kind: "ok"; readonly sessionIds: readonly number[] }>();
+    harness.startCompound.mockReturnValueOnce(status.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    let starting!: Promise<DebugCompoundStartOutcome>;
+
+    act(() => {
+      starting = ui.hook().startDebugCompoundAccepted(eightCompoundMembers);
+    });
+    await act(async () => Promise.resolve());
+    act(() => {
+      for (let index = 1; index <= MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS + 1; index += 1) {
+        harness.emit({
+          payload:
+            index === 1
+              ? { kind: "started", sessionId: 48 }
+              : index % 2 === 0
+                ? {
+                    frames: [frame],
+                    kind: "stopped",
+                    pauseGeneration: index / 2,
+                    reason: "breakpoint",
+                  }
+                : { kind: "resumed" },
+          rootPath: "/workspace/one",
+          seq: index,
+          sessionId: 48,
+        });
+      }
+    });
+    status.resolve({ kind: "ok", sessionIds: eightCompoundSessionIds });
+
+    await act(async () => {
+      await expect(starting).resolves.toEqual({ kind: "lifecycle-buffer-overflow" });
+    });
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
+    expect(ui.hook().debugCompoundActive).toBe(false);
+    expect(ui.hook().snapshot.state.kind).toBe("inactive");
+    ui.unmount();
+  });
+
   it("fails an eight-member compound closed when live breakpoint fan-out diverges", async () => {
     const harness = createGateway();
     const divergent = deferred<Breakpoint[]>();
@@ -568,7 +645,9 @@ describe("useDebugSession", () => {
     });
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(eightCompoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(eightCompoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
 
     let mutation!: Promise<BreakpointCreationOwnership | null>;
@@ -602,7 +681,9 @@ describe("useDebugSession", () => {
     });
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
 
     await act(async () => {
@@ -626,7 +707,9 @@ describe("useDebugSession", () => {
     });
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     await act(async () => void (await ui.hook().setExceptionPauseMode("all")));
     expect(ui.hook().exceptionPauseError).toBeNull();
@@ -640,7 +723,9 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     act(() => {
       harness.emit({
@@ -666,7 +751,9 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     ui.set({ workspaceId: "foreign-owner" });
     await act(async () => undefined);
@@ -689,7 +776,9 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
 
     act(() => {
@@ -720,7 +809,9 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     expect(ui.hook().canRestartDebug()).toBe(false);
     await act(async () => {
@@ -742,7 +833,9 @@ describe("useDebugSession", () => {
     const pending = deferred<void>();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     harness.stop.mockReturnValueOnce(pending.promise);
     let first!: Promise<void>;
@@ -771,7 +864,9 @@ describe("useDebugSession", () => {
       .mockResolvedValueOnce(undefined);
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
 
     await act(async () => {
@@ -816,7 +911,7 @@ describe("useDebugSession", () => {
       await Promise.all([starting, firstStop, secondStop]);
     });
 
-    await expect(starting).resolves.toBe(false);
+    await expect(starting).resolves.toEqual({ kind: "rejected" });
     expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
     expect(ui.hook().debugCompoundStartPending).toBe(false);
     expect(ui.hook().debugCompoundActive).toBe(false);
@@ -845,7 +940,7 @@ describe("useDebugSession", () => {
       await Promise.all([starting, stopping]);
     });
 
-    await expect(starting).resolves.toBe(false);
+    await expect(starting).resolves.toEqual({ kind: "rejected" });
     expect(harness.stop).not.toHaveBeenCalled();
     expect(ui.hook().debugCompoundStartPending).toBe(false);
     expect(ui.hook().debugStopPending).toBe(false);
@@ -893,7 +988,7 @@ describe("useDebugSession", () => {
     await act(async () => {
       await Promise.all([starting, stopping]);
     });
-    await expect(starting).resolves.toBe(false);
+    await expect(starting).resolves.toEqual({ kind: "rejected" });
     expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
     expect(ui.hook().debugStartBlockedByOtherOwner).toBe(false);
     ui.unmount();
@@ -904,7 +999,9 @@ describe("useDebugSession", () => {
     harness.startCompound.mockResolvedValueOnce({ kind: "ok", sessionIds: [41, 41] });
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(false);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "rejected",
+      });
     });
     expect(harness.stop).toHaveBeenCalledTimes(1);
     expect(harness.stop).toHaveBeenCalledWith(41);
@@ -918,7 +1015,9 @@ describe("useDebugSession", () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
     ui.set({ workspaceId: "owner-2" });
     ui.set({ workspaceId: "owner-1" });
@@ -941,7 +1040,9 @@ describe("useDebugSession", () => {
       () => ownerCurrent,
     );
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toEqual({
+        kind: "accepted",
+      });
     });
 
     ownerCurrent = false;
@@ -977,7 +1078,7 @@ describe("useDebugSession", () => {
     });
     ui.unmount();
     status.resolve({ kind: "ok", sessionIds: [41, 42] });
-    await expect(pending).resolves.toBe(false);
+    await expect(pending).resolves.toEqual({ kind: "rejected" });
     expect(harness.stop).toHaveBeenCalledTimes(1);
     expect(harness.stop).toHaveBeenCalledWith(41);
   });

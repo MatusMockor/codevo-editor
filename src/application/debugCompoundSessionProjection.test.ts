@@ -2,9 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { DebugEvent, DebugStopReason } from "../domain/debug";
 import {
   DebugCompoundSessionProjection,
+  MAX_DEBUG_COMPOUND_PROJECTED_SESSIONS,
   MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS,
+  MIN_DEBUG_COMPOUND_PROJECTED_SESSIONS,
 } from "./debugCompoundSessionProjection";
-import { MAX_NODE_DEBUG_COMPOUND_MEMBERS } from "./nodeDebugCompoundSessionCoordinator";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  MIN_NODE_DEBUG_COMPOUND_MEMBERS,
+} from "./nodeDebugCompoundSessionCoordinator";
 
 const event = (
   sessionId: number,
@@ -34,6 +39,8 @@ const OVERSIZED_UTF8_ROOT = `${EXACT_UTF8_ROOT}😀`;
 
 describe("DebugCompoundSessionProjection", () => {
   it("derives pending lifecycle capacity from the compound member bound", () => {
+    expect(MIN_DEBUG_COMPOUND_PROJECTED_SESSIONS).toBe(MIN_NODE_DEBUG_COMPOUND_MEMBERS);
+    expect(MAX_DEBUG_COMPOUND_PROJECTED_SESSIONS).toBe(MAX_NODE_DEBUG_COMPOUND_MEMBERS);
     expect(MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS).toBe(MAX_NODE_DEBUG_COMPOUND_MEMBERS * 4);
   });
 

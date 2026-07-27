@@ -901,7 +901,7 @@ export function useWorkbenchDebugSession({
         },
         members,
       );
-      if (accepted === true) {
+      if (accepted.kind === "accepted") {
         const root = currentRootRef.current;
         if (root) {
           const state = (snapshotsRef.current[normalizedWorkspaceRootKey(root)] ?? inactiveSnapshot)

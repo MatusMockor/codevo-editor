@@ -1,4 +1,4 @@
-import type { DebugGateway } from "../domain/debug";
+import type { DebugEvent, DebugGateway } from "../domain/debug";
 import { describe, expect, it, vi } from "vitest";
 import { invokeDebugIpc, type InvokeDebugCommand } from "../infrastructure/tauriDebugIpcContract";
 import { DebugCompoundSessionProjection } from "./debugCompoundSessionProjection";
@@ -30,7 +30,7 @@ describe("startDebugCompoundAccepted", () => {
 
     await expect(
       startDebugCompoundAccepted(context, launchTargets(MAX_NODE_DEBUG_COMPOUND_MEMBERS)),
-    ).resolves.toBe(true);
+    ).resolves.toEqual({ kind: "accepted" });
 
     expect(startCompound).toHaveBeenCalledOnce();
     const request = startCompound.mock.calls[0]?.[0];
@@ -66,7 +66,7 @@ describe("startDebugCompoundAccepted", () => {
 
     await expect(
       startDebugCompoundAccepted(context, launchTargets(MAX_NODE_DEBUG_COMPOUND_MEMBERS + 1)),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ kind: "rejected" });
     expect(startCompound).not.toHaveBeenCalled();
   });
 
@@ -106,12 +106,51 @@ describe("startDebugCompoundAccepted", () => {
 
     await expect(
       startDebugCompoundAccepted(context, launchTargets(MAX_NODE_DEBUG_COMPOUND_MEMBERS)),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ kind: "rejected" });
 
     expect(context.gateway.stop).toHaveBeenCalledExactlyOnceWith(31);
     expect(context.activeCompoundRef.current).toBeNull();
     expect(context.compoundCoordinator.snapshot()).toEqual({ kind: "idle" });
     expect(context.compoundProjection.snapshot()).toEqual({ kind: "idle" });
+  });
+
+  it("replays only lifecycle events accepted by the projection decoder", async () => {
+    const status = deferred<{ readonly kind: "ok"; readonly sessionIds: readonly number[] }>();
+    const startCompound = vi.fn(() => status.promise);
+    const context = compoundContext(startCompound);
+    const running = startDebugCompoundAccepted(context, launchTargets(2));
+    await Promise.resolve();
+    const compound = context.activeCompoundRef.current!;
+    const started: DebugEvent = {
+      payload: { kind: "started", sessionId: 41 },
+      rootPath: "/workspace",
+      seq: 1,
+      sessionId: 41,
+    };
+    const malformedStopped: DebugEvent = {
+      payload: {
+        frames: [],
+        kind: "stopped",
+        pauseGeneration: -1,
+        reason: "breakpoint",
+      },
+      rootPath: "/workspace",
+      seq: 2,
+      sessionId: 41,
+    };
+    expect(context.compoundProjection.handleEvent(started)).toBe(false);
+    compound.pendingLifecycleEvents.push(started);
+    expect(context.compoundProjection.handleEvent(malformedStopped)).toBe(false);
+    compound.pendingLifecycleEvents.push(malformedStopped);
+
+    status.resolve({ kind: "ok", sessionIds: [41, 42] });
+
+    await expect(running).resolves.toEqual({ kind: "accepted" });
+    expect(context.snapshotsRef.current["/workspace"]).toMatchObject({
+      lastSeq: 1,
+      state: { kind: "running", sessionId: 41 },
+    });
+    expect(context.setPauseGeneration).toHaveBeenCalledExactlyOnceWith("/workspace", 0);
   });
 });
 
@@ -160,4 +199,12 @@ function launchTargets(count: number) {
     kind: "node-script" as const,
     scriptPath: `/workspace/service-${index}.ts`,
   }));
+}
+
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
 }

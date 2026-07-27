@@ -1,4 +1,8 @@
 import type { DebugCompoundLaunchTarget, DebugLaunchTarget } from "../domain/debug";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  MIN_NODE_DEBUG_COMPOUND_MEMBERS,
+} from "./nodeDebugCompoundSessionCoordinator";
 import { cloneNodeLaunchTarget, type NodeDebugLaunchTarget } from "./debugRestartCoordinator";
 import type { PreparedNodeDebugLaunch } from "./useNodeDebugConfigurationLauncher";
 
@@ -14,7 +18,13 @@ export interface NodeDebugCompoundMemberRecipe {
 export function cloneNodeDebugCompoundMembers(
   members: readonly PreparedNodeDebugLaunch[],
 ): readonly NodeDebugCompoundMemberRecipe[] | null {
-  if (!Array.isArray(members) || members.length < 2 || members.length > 8) return null;
+  if (
+    !Array.isArray(members) ||
+    members.length < MIN_NODE_DEBUG_COMPOUND_MEMBERS ||
+    members.length > MAX_NODE_DEBUG_COMPOUND_MEMBERS
+  ) {
+    return null;
+  }
   const cloned: NodeDebugCompoundMemberRecipe[] = [];
   for (const member of members) {
     if (

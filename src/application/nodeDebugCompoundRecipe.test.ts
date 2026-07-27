@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  MIN_NODE_DEBUG_COMPOUND_MEMBERS,
+} from "./nodeDebugCompoundSessionCoordinator";
 import { cloneNodeDebugCompoundMembers } from "./nodeDebugCompoundRecipe";
 
 describe("cloneNodeDebugCompoundMembers", () => {
@@ -54,7 +58,7 @@ describe("cloneNodeDebugCompoundMembers", () => {
   });
 
   it("accepts and freezes exactly eight members while rejecting nine", () => {
-    const eight = Array.from({ length: 8 }, (_, index) => ({
+    const eight = Array.from({ length: MAX_NODE_DEBUG_COMPOUND_MEMBERS }, (_, index) => ({
       launch: {
         kind: "node-script" as const,
         scriptPath: `/workspace/service-${index}.ts`,
@@ -64,12 +68,15 @@ describe("cloneNodeDebugCompoundMembers", () => {
 
     const cloned = cloneNodeDebugCompoundMembers(eight);
 
-    expect(cloned).toHaveLength(8);
+    expect(cloned).toHaveLength(MAX_NODE_DEBUG_COMPOUND_MEMBERS);
     expect(cloned).not.toBe(eight);
     expect(Object.isFrozen(cloned)).toBe(true);
     expect(cloned?.every((member) => Object.isFrozen(member))).toBe(true);
     expect(cloned?.every((member) => Object.isFrozen(member.launch))).toBe(true);
     expect(cloneNodeDebugCompoundMembers([...eight, eight[0]!])).toBeNull();
+    expect(
+      cloneNodeDebugCompoundMembers(eight.slice(0, MIN_NODE_DEBUG_COMPOUND_MEMBERS - 1)),
+    ).toBeNull();
   });
 
   it.each([null, "true", 1])(

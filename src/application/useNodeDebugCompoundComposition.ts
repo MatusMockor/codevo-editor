@@ -18,6 +18,8 @@ const COMPOUND_STALE_WARNING =
 const COMPOUND_START_WARNING = "Node debug compound could not be started.";
 const COMPOUND_REQUEST_TOO_LARGE_WARNING =
   "Node debug compound request exceeded the 1 MiB payload limit.";
+const COMPOUND_BOUNDED_REJECTION_WARNING =
+  "Node debug compound start was rejected by bounded safety checks.";
 
 interface CompoundBoundary {
   readonly launchConfigurationVersion: number;
@@ -129,6 +131,7 @@ export function useNodeDebugCompoundComposition(options: {
       }
       const members = Object.freeze(recipes.map(({ launch }) => launch));
       let accepted = false;
+      let lifecycleBufferOverflow = false;
       let requestTooLarge = false;
       const pending = coordinator.run(
         {
@@ -138,10 +141,21 @@ export function useNodeDebugCompoundComposition(options: {
         },
         async () => {
           const result = await optionsRef.current.startCompound(members);
-          accepted = result === true;
-          requestTooLarge =
-            typeof result === "object" && result !== null && result.kind === "request-too-large";
-          return accepted;
+          switch (result.kind) {
+            case "accepted":
+              accepted = true;
+              return true;
+            case "lifecycle-buffer-overflow":
+              lifecycleBufferOverflow = true;
+              return false;
+            case "rejected":
+              return false;
+            case "request-too-large":
+              requestTooLarge = true;
+              return false;
+            default:
+              return assertNever(result);
+          }
         },
       );
       if (mountedRef.current) setRevision((current) => current + 1);
@@ -153,13 +167,15 @@ export function useNodeDebugCompoundComposition(options: {
       const warning =
         outcome.status === "error" && requestTooLarge
           ? COMPOUND_REQUEST_TOO_LARGE_WARNING
-          : outcome.status === "task-unavailable"
-            ? COMPOUND_PRE_LAUNCH_UNAVAILABLE_WARNING
-            : outcome.status === "task-failed"
-              ? COMPOUND_PRE_LAUNCH_FAILED_WARNING
-              : outcome.status === "busy" || outcome.status === "stale"
-                ? COMPOUND_STALE_WARNING
-                : COMPOUND_START_WARNING;
+          : outcome.status === "error" && lifecycleBufferOverflow
+            ? COMPOUND_BOUNDED_REJECTION_WARNING
+            : outcome.status === "task-unavailable"
+              ? COMPOUND_PRE_LAUNCH_UNAVAILABLE_WARNING
+              : outcome.status === "task-failed"
+                ? COMPOUND_PRE_LAUNCH_FAILED_WARNING
+                : outcome.status === "busy" || outcome.status === "stale"
+                  ? COMPOUND_STALE_WARNING
+                  : COMPOUND_START_WARNING;
       safelyWarn(optionsRef.current.reportWarning, warning);
       return false;
     },
@@ -232,6 +248,10 @@ function safelyWarn(reportWarning: (message: string) => void, message: string): 
   } catch {
     // Presentation failures never own task or compound start admission.
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected debug compound start outcome: ${String(value)}`);
 }
 
 async function safelyStopAcceptedCompound(

@@ -1,10 +1,14 @@
 import type { DebugEvent } from "../domain/debug";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
-import { MAX_NODE_DEBUG_COMPOUND_MEMBERS } from "./nodeDebugCompoundSessionCoordinator";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  MIN_NODE_DEBUG_COMPOUND_MEMBERS,
+} from "./nodeDebugCompoundSessionCoordinator";
 
-export const MIN_DEBUG_COMPOUND_PROJECTED_SESSIONS = 2;
-export const MAX_DEBUG_COMPOUND_PROJECTED_SESSIONS = 8;
+export const MIN_DEBUG_COMPOUND_PROJECTED_SESSIONS = MIN_NODE_DEBUG_COMPOUND_MEMBERS;
+export const MAX_DEBUG_COMPOUND_PROJECTED_SESSIONS = MAX_NODE_DEBUG_COMPOUND_MEMBERS;
 export const MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS = MAX_NODE_DEBUG_COMPOUND_MEMBERS * 4;
+const MAX_TAINTED_DEBUG_COMPOUND_PROJECTION_ROOTS = MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS;
 const MAX_DEBUG_COMPOUND_PROJECTION_ROOT_BYTES = 4_096;
 const UTF8_ENCODER = new TextEncoder();
 
@@ -285,7 +289,7 @@ export class DebugCompoundSessionProjection {
 
   private markTainted(rootKey: string): void {
     if (this.taintedRoots.has(rootKey)) return;
-    if (this.taintedRoots.size >= MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS) {
+    if (this.taintedRoots.size >= MAX_TAINTED_DEBUG_COMPOUND_PROJECTION_ROOTS) {
       const oldest = this.taintedRoots.values().next().value;
       if (oldest !== undefined) this.taintedRoots.delete(oldest);
     }
@@ -344,6 +348,10 @@ function decodeLifecycleEvent(event: DebugEvent): ProjectionEvent | null {
     default:
       return null;
   }
+}
+
+export function decodableLifecycleEvent(event: DebugEvent): boolean {
+  return safelyDecodeLifecycleEvent(event) !== null;
 }
 
 function safelyDecodeLifecycleEvent(event: DebugEvent): ProjectionEvent | null {

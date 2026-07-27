@@ -9,6 +9,7 @@ import {
 } from "../domain/debugSessionState";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
+  decodableLifecycleEvent,
   MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS,
   type DebugCompoundSessionProjection,
 } from "./debugCompoundSessionProjection";
@@ -176,20 +177,25 @@ export function useDebugSessionEventProjection(
           }
           return;
         }
-        const isLifecycleEvent =
+        const lifecycleEvent =
           event.payload.kind === "started" ||
           event.payload.kind === "stopped" ||
           event.payload.kind === "resumed" ||
           event.payload.kind === "terminated";
-        const selectedOwnerBeforeLifecycle = isLifecycleEvent
+        const decodable = decodableLifecycleEvent(event);
+        const selectedOwnerBeforeLifecycle = decodable
           ? bindings.sessionOwnersRef.current.get(key)
           : undefined;
-        const projectionChanged = bindings.compoundProjectionRef.current.handleEvent(event);
+        const projectionChanged =
+          decodable && bindings.compoundProjectionRef.current.handleEvent(event);
         if (projectionChanged && selectedOwnerBeforeLifecycle) {
           const owner = outputOwner(key, event.rootPath, selectedOwnerBeforeLifecycle.sessionId);
           if (owner) outputCoordinator.flushOwner(owner);
         }
-        if (event.payload.kind === "stopped" || event.payload.kind === "terminated") {
+        if (
+          decodable &&
+          (event.payload.kind === "stopped" || event.payload.kind === "terminated")
+        ) {
           bindings.compoundCoordinatorRef.current.handleEvent({
             kind: event.payload.kind,
             rootPath: event.rootPath,
@@ -201,11 +207,12 @@ export function useDebugSessionEventProjection(
         // only by the private compound seams. They must not accidentally adopt a child as a
         // legacy single session.
         if (!compound.projectionLease) {
-          if (isLifecycleEvent) {
+          if (decodable) {
             if (
               compound.pendingLifecycleEvents.length >= MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS
             ) {
               compound.pendingLifecycleEvents.shift();
+              compound.lifecycleBufferOverflowed = true;
             }
             compound.pendingLifecycleEvents.push(event);
           }
@@ -227,7 +234,7 @@ export function useDebugSessionEventProjection(
           return;
         }
 
-        if (isLifecycleEvent && projectionChanged) {
+        if (decodable && projectionChanged) {
           applyCompoundChildEvent(compound, event);
         }
         const selectedSessionId = bindings.compoundProjectionRef.current.selectedSessionId(
@@ -236,7 +243,7 @@ export function useDebugSessionEventProjection(
         if (selectedSessionId === null) return;
         const existing = bindings.snapshotsRef.current[key] ?? inactiveSnapshot;
         const selectedSnapshot = compound.childSnapshots.get(selectedSessionId);
-        if (isLifecycleEvent && selectedSnapshot) {
+        if (decodable && selectedSnapshot) {
           bindings.snapshotsRef.current = {
             ...bindings.snapshotsRef.current,
             [key]: selectedSnapshot,
@@ -268,7 +275,7 @@ export function useDebugSessionEventProjection(
           bindings.adoptBreakpointsActivation(key, selectedSessionId);
           bindings.adoptExceptionPauseSession(event.rootPath, selectedSessionId, "node");
         }
-        if (isLifecycleEvent) {
+        if (decodable) {
           if (selectedSnapshot !== existing) {
             if (selectedSnapshot?.state.kind === "stopped" && selectedSnapshot.state.frames[0]) {
               void bindings.selectFrame(selectedSnapshot.state.frames[0].frameId);
@@ -283,6 +290,7 @@ export function useDebugSessionEventProjection(
           }
           return;
         }
+        if (lifecycleEvent) return;
         if (event.sessionId !== selectedSessionId) return;
       }
       if (

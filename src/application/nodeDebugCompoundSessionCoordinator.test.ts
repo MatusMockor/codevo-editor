@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
   MAX_PENDING_NODE_DEBUG_COMPOUND_EVENTS,
   NodeDebugCompoundSessionCoordinator,
   type NodeDebugCompoundOwner,
@@ -15,6 +16,10 @@ const EXACT_UTF8_ROOT = `/${"😀".repeat(1_023)}abc`;
 const OVERSIZED_UTF8_ROOT = `${EXACT_UTF8_ROOT}😀`;
 
 describe("NodeDebugCompoundSessionCoordinator", () => {
+  it("derives pending event capacity from the member bound", () => {
+    expect(MAX_PENDING_NODE_DEBUG_COMPOUND_EVENTS).toBe(MAX_NODE_DEBUG_COMPOUND_MEMBERS * 4);
+  });
+
   it("accepts eight exact members and rejects nine", () => {
     const coordinator = new NodeDebugCompoundSessionCoordinator();
     const lease = coordinator.begin(OWNER, 8);

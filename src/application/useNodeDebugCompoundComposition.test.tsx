@@ -101,6 +101,30 @@ describe("useNodeDebugCompoundComposition", () => {
     ui.unmount();
   });
 
+  it("reports the generic start warning for an ordinary compound rejection", async () => {
+    const ui = renderComposition();
+    ui.startCompound.mockResolvedValueOnce({ kind: "rejected" });
+
+    await act(async () => expect(await ui.start()(PREPARED)).toBe(false));
+
+    expect(ui.reportWarning).toHaveBeenCalledExactlyOnceWith(
+      "Node debug compound could not be started.",
+    );
+    ui.unmount();
+  });
+
+  it("reports the bounded lifecycle buffer reason only for lifecycle replay overflow", async () => {
+    const ui = renderComposition();
+    ui.startCompound.mockResolvedValueOnce({ kind: "lifecycle-buffer-overflow" });
+
+    await act(async () => expect(await ui.start()(PREPARED)).toBe(false));
+
+    expect(ui.reportWarning).toHaveBeenCalledExactlyOnceWith(
+      "Node debug compound start was rejected by bounded safety checks.",
+    );
+    ui.unmount();
+  });
+
   it.each([
     ["workspace A-B-A", { rootPath: "/workspace-b", workspaceId: "workspace-b" }, {}],
     ["trust A-B-A", { workspaceTrusted: false }, { workspaceTrusted: true }],
@@ -135,7 +159,7 @@ describe("useNodeDebugCompoundComposition", () => {
   });
 
   it("revalidates the exact owner after the atomic start port resolves", async () => {
-    const accepted = deferred<boolean>();
+    const accepted = deferred<DebugCompoundStartOutcome>();
     const ui = renderComposition();
     ui.startCompound.mockReturnValueOnce(accepted.promise);
     const running = ui.start()({ ...PREPARED, preLaunchTask: null });
@@ -143,7 +167,7 @@ describe("useNodeDebugCompoundComposition", () => {
 
     act(() => ui.set({ workspaceTrusted: false }));
     act(() => ui.set({ workspaceTrusted: true }));
-    accepted.resolve(true);
+    accepted.resolve({ kind: "accepted" });
 
     await expect(running).resolves.toBe(false);
     expect(ui.startCompound).toHaveBeenCalledOnce();
@@ -151,7 +175,7 @@ describe("useNodeDebugCompoundComposition", () => {
   });
 
   it("stops one accepted compound when the configuration generation changes during start", async () => {
-    const accepted = deferred<boolean>();
+    const accepted = deferred<DebugCompoundStartOutcome>();
     const ui = renderComposition();
     ui.startCompound.mockReturnValueOnce(accepted.promise);
     const running = ui.start()({ ...PREPARED, preLaunchTask: null });
@@ -159,7 +183,7 @@ describe("useNodeDebugCompoundComposition", () => {
 
     act(() => ui.set({ launchConfigurationVersion: 1 }));
     act(() => ui.set({ launchConfigurationVersion: 0 }));
-    accepted.resolve(true);
+    accepted.resolve({ kind: "accepted" });
 
     await expect(running).resolves.toBe(false);
     expect(ui.startCompound).toHaveBeenCalledOnce();
@@ -176,7 +200,7 @@ function renderComposition(overrides: { readonly tasks?: VscodeProcessTasksState
   const stopAcceptedCompound = vi.fn(async () => undefined);
   const startCompound = vi.fn<
     (members: readonly DebugCompoundLaunchTarget[]) => Promise<DebugCompoundStartOutcome>
-  >(async () => true);
+  >(async () => ({ kind: "accepted" }));
   let patch: Partial<Parameters<typeof useNodeDebugCompoundComposition>[0]> = {};
   let hook: ReturnType<typeof useNodeDebugCompoundComposition> | null = null;
 
