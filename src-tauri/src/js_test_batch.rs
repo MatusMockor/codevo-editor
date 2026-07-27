@@ -927,7 +927,12 @@ fn display_package_root(value: &str) -> &str {
 mod tests {
     use super::*;
     use crate::php_test_run::{PhpTestCase, PhpTestStatus, PhpTestSuite};
-    use std::{os::unix::fs::PermissionsExt, sync::atomic::AtomicU64};
+    use std::{
+        ffi::CString,
+        io::{Read, Write},
+        os::unix::{ffi::OsStrExt, fs::PermissionsExt, io::AsRawFd},
+        sync::atomic::AtomicU64,
+    };
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -983,6 +988,54 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup workspace");
         if data.exists() {
             fs::remove_dir_all(data).expect("cleanup app data");
+        }
+    }
+
+    fn open_fifo(path: &Path) -> fs::File {
+        let native_path = CString::new(path.as_os_str().as_bytes()).expect("fifo path");
+        let result = unsafe { libc::mkfifo(native_path.as_ptr(), 0o600) };
+        assert_eq!(
+            result,
+            0,
+            "create fifo at {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        );
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("open fifo")
+    }
+
+    fn read_start_events(events: &mut fs::File, buffer: &mut [u8], timeout: Duration, label: &str) {
+        let deadline = Instant::now() + timeout;
+        let mut filled = 0;
+        while filled < buffer.len() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "{label}: only {filled} of {} start events arrived before the deadline",
+                buffer.len()
+            );
+            let mut descriptor = libc::pollfd {
+                fd: events.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ready =
+                unsafe { libc::poll(&mut descriptor, 1, remaining.as_millis() as libc::c_int) };
+            assert!(
+                ready >= 0,
+                "{label} poll: {}",
+                std::io::Error::last_os_error()
+            );
+            if ready == 0 {
+                continue;
+            }
+            filled += events
+                .read(&mut buffer[filled..])
+                .expect("read start events");
         }
     }
 
@@ -1220,21 +1273,21 @@ mod tests {
         let root = temp_root("partial-start");
         let markers = root.join("markers");
         fs::create_dir_all(&markers).expect("create markers");
-        let ready_a = markers.join("ready-a");
-        let ready_b = markers.join("ready-b");
-        let release = markers.join("release");
+        let ready = markers.join("ready");
+        let release_a = markers.join("release-a");
+        let hold_b = markers.join("hold-b");
         let child_pid = markers.join("child-pid");
-        for marker in [&ready_a, &ready_b, &child_pid] {
-            fs::write(marker, "").expect("prepare marker");
-        }
+        let mut ready_events = open_fifo(&ready);
+        let mut release_a_event = open_fifo(&release_a);
+        let _hold_b_event = open_fifo(&hold_b);
         install_package(
             &root,
             "packages/a",
             JsTestBatchRunner::Vitest,
             &format!(
-                "touch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.01; done\n{}",
-                ready_a.display(),
-                release.display(),
+                "printf a > '{}'\nread event < '{}'\n{}",
+                ready.display(),
+                release_a.display(),
                 report_script("a")
             ),
         );
@@ -1243,12 +1296,12 @@ mod tests {
             "packages/b",
             JsTestBatchRunner::Vitest,
             &format!(
-                "printf '%s' $$ > '{}.tmp'\nmv '{}.tmp' '{}'\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nsleep 30",
+                "printf '%s' $$ > '{}.tmp'\nmv '{}.tmp' '{}'\nprintf b > '{}'\nread event < '{}'",
                 child_pid.display(),
                 child_pid.display(),
                 child_pid.display(),
-                ready_b.display(),
-                release.display()
+                ready.display(),
+                hold_b.display()
             ),
         );
         install_package(
@@ -1270,14 +1323,27 @@ mod tests {
         let worker = thread::spawn(move || {
             execute_prepared_js_test_batch(prepared, JsTestBatchCancellation::new())
         });
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while (!ready_a.exists() || !ready_b.exists()) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert!(
-            ready_a.exists() && ready_b.exists(),
-            "two siblings must start"
+        let mut started = [0; 2];
+        read_start_events(
+            &mut ready_events,
+            &mut started,
+            Duration::from_secs(5),
+            "sibling starts",
         );
+        started.sort();
+        assert_eq!(
+            started,
+            [b'a', b'b'],
+            "both siblings must signal their exact start event"
+        );
+        let pid_contents =
+            fs::read_to_string(&child_pid).expect("read child pid after start event");
+        let pid = pid_contents.trim().parse::<i32>();
+        assert!(
+            pid.is_ok(),
+            "child pid must be parseable after package b signals readiness: {pid_contents:?}"
+        );
+        let pid = pid.unwrap_or_default();
         let binary = root.join("packages/c/node_modules/.bin/vitest");
         fs::rename(&binary, binary.with_extension("old")).expect("replace third runner");
         fs::write(&binary, "#!/bin/sh\nexit 0\n").expect("replacement runner");
@@ -1286,12 +1352,13 @@ mod tests {
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&binary, permissions).expect("replacement permissions");
-        fs::write(&release, "go").expect("release first two packages");
+        release_a_event
+            .write_all(b"go\n")
+            .expect("release first package");
         assert!(matches!(
             worker.join().expect("join batch"),
             JsTestBatchOutcome::Error { .. }
         ));
-        let pid = test_support::wait_for_parseable_pid(&child_pid, "child pid");
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         assert_eq!(
             std::io::Error::last_os_error().raw_os_error(),
@@ -1608,14 +1675,14 @@ mod tests {
         fs::create_dir_all(&markers).expect("create markers");
         let ready = markers.join("ready");
         let sibling_pid = markers.join("sibling-pid");
-        fs::write(&sibling_pid, "").expect("prepare pid marker");
+        let _ready_event = open_fifo(&ready);
         install_package(
             &root,
             "packages/a",
             JsTestBatchRunner::Vitest,
             &raw_report_script(
                 &raw_report(3_000),
-                &format!("while [ ! -f '{}' ]; do sleep 0.01; done", ready.display()),
+                &format!("read event < '{}'", ready.display()),
             ),
         );
         install_package(
@@ -1623,7 +1690,7 @@ mod tests {
             "packages/b",
             JsTestBatchRunner::Vitest,
             &format!(
-                "printf '%s' $$ > '{}.tmp'\nmv '{}.tmp' '{}'\ntouch '{}'\nsleep 30",
+                "printf '%s' $$ > '{}.tmp'\nmv '{}.tmp' '{}'\nprintf 'b\\n' > '{}'\nsleep 30",
                 sibling_pid.display(),
                 sibling_pid.display(),
                 sibling_pid.display(),
