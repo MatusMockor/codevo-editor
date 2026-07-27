@@ -35,6 +35,8 @@ const NODE_INTERNALS_BLACKBOX_PATTERN: &str = r"^(?:node:|internal/)";
 // covers direct paths and file URLs only; source-map-derived original ranges are not inferred.
 const NODE_DEPENDENCIES_BLACKBOX_PATTERN: &str = r"(?:^|[/\\])node_modules[/\\]";
 
+#[path = "debug_cdp_breakpoint_rebind.rs"]
+pub(crate) mod breakpoint_rebind;
 #[path = "debug_cdp_session_routing.rs"]
 mod session_routing;
 #[path = "debug_cdp_smart_step.rs"]
@@ -162,7 +164,7 @@ pub(crate) fn generated_script_identity(value: Option<&Value>) -> GeneratedScrip
 pub(crate) struct CdpShared {
     pub(crate) breakpoint_hits: CdpBreakpointHitRegistry,
     pub(super) breakpoints_by_file: HashMap<String, Vec<DebugBreakpoint>>,
-    cdp_ids_by_file: HashMap<String, Vec<String>>,
+    pub(super) cdp_ids_by_file: HashMap<String, Vec<String>>,
     pub(crate) first_pause_seen: bool,
     pub(crate) explicit_pause_requested: bool,
     pub(crate) internal_action: Option<PendingInternalAction>,
@@ -284,6 +286,35 @@ mod request_handle {
 }
 use request_handle::{CdpClientStartOptions, CdpRequestFailure, CdpRequestHandle};
 
+impl breakpoint_rebind::BreakpointRebindCdp for CdpRequestHandle {
+    fn request(
+        &self,
+        method: &str,
+        params: Value,
+        reserve: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<Value, breakpoint_rebind::BreakpointRebindRequestFailure> {
+        self.request_with_timeout_classified_and_reserved(
+            method,
+            params,
+            self.request_timeout,
+            |_| {
+                if reserve() {
+                    return Ok(());
+                }
+                Err("Breakpoint rebind authority is stale.".to_string())
+            },
+        )
+        .map_err(|failure| match failure {
+            CdpRequestFailure::Rejected(message) => {
+                breakpoint_rebind::BreakpointRebindRequestFailure::Rejected(message)
+            }
+            CdpRequestFailure::Uncertain(_) => {
+                breakpoint_rebind::BreakpointRebindRequestFailure::Uncertain
+            }
+        })
+    }
+}
+
 impl CdpClient {
     fn start(
         socket: WebSocket<BoundedCdpStream>,
@@ -334,7 +365,7 @@ impl CdpClient {
             function_breakpoint_emitter.emit(payload);
         });
         let function_breakpoint_authority = Arc::clone(&context.mutation_is_allowed);
-        let function_breakpoint_fail_closed = {
+        let function_breakpoint_fail_closed: Arc<dyn Fn() + Send + Sync> = {
             let pending = Arc::clone(&pending);
             let shutdown = Arc::clone(&shutdown_requested);
             let disconnect_notifier = disconnect_notifier.clone();
@@ -342,6 +373,26 @@ impl CdpClient {
                 fail_closed_transport(&pending, &shutdown, &disconnect_notifier);
             })
         };
+        let breakpoint_rebind_emitter = context.emitter.clone();
+        let breakpoint_rebind_emit = Arc::new(move |payload| {
+            breakpoint_rebind_emitter.emit(payload);
+        });
+        let breakpoint_rebind_enabled = context
+            .shared
+            .lock()
+            .ok()
+            .is_some_and(|state| state.source_maps.is_some());
+        if breakpoint_rebind_enabled
+            && !breakpoint_rebind::register_transport(
+                &context.shared,
+                Arc::new(request_handle.clone()),
+                breakpoint_rebind_emit,
+                Arc::clone(&context.mutation_is_allowed),
+                Arc::clone(&function_breakpoint_fail_closed),
+            )
+        {
+            function_breakpoint_fail_closed();
+        }
         let io_thread = thread::spawn(move || {
             run_socket_loop(socket, context);
             io_disconnect_notifier.notify();
@@ -825,15 +876,30 @@ impl DebugAdapter for NodeCdpAdapter {
         file_path: &str,
         breakpoints: &[DebugBreakpoint],
     ) -> Result<Vec<DebugBreakpoint>, String> {
-        let previous_ids = {
+        let source_maps_enabled = self
+            .shared
+            .lock()
+            .map_err(|error| error.to_string())?
+            .source_maps
+            .is_some();
+        let registration_and_previous_ids = {
             let mut shared = self.shared.lock().map_err(|error| error.to_string())?;
-            let ids = shared.cdp_ids_by_file.remove(file_path).unwrap_or_default();
-            for id in &ids {
-                shared.resolution_index.remove(id);
-                shared.pending_resolutions.remove(id);
-                shared.breakpoint_hits.remove(id);
-            }
-            ids
+            let registration_mutation = (!source_maps_enabled)
+                .then_some(0)
+                .or_else(|| breakpoint_rebind::begin_registration_mutation(&self.shared));
+            registration_mutation.map(|generation| {
+                let ids = shared.cdp_ids_by_file.remove(file_path).unwrap_or_default();
+                for id in &ids {
+                    shared.resolution_index.remove(id);
+                    shared.pending_resolutions.remove(id);
+                    shared.breakpoint_hits.remove(id);
+                }
+                (generation, ids)
+            })
+        };
+        let Some((registration_mutation, previous_ids)) = registration_and_previous_ids else {
+            self.terminate();
+            return Err("Debug breakpoint registration generation is exhausted.".to_string());
         };
         for breakpoint_id in previous_ids {
             ensure_startup_current(self.mutation_is_allowed.as_ref())?;
@@ -1014,7 +1080,7 @@ impl DebugAdapter for NodeCdpAdapter {
             }
             applied.push(updated);
         }
-        {
+        let committed_generation_available = {
             let mut shared = self.shared.lock().map_err(|error| error.to_string())?;
             shared
                 .cdp_ids_by_file
@@ -1022,6 +1088,16 @@ impl DebugAdapter for NodeCdpAdapter {
             shared
                 .breakpoints_by_file
                 .insert(file_path.to_string(), applied.clone());
+            !source_maps_enabled
+                || breakpoint_rebind::finish_registration_mutation(
+                    &self.shared,
+                    registration_mutation,
+                )
+                .is_some()
+        };
+        if !committed_generation_available {
+            self.terminate();
+            return Err("Debug breakpoint registration generation is exhausted.".to_string());
         }
         Ok(applied)
     }

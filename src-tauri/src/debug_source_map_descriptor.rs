@@ -279,3 +279,27 @@ impl SourceMapLoader {
         Ok(file)
     }
 }
+
+impl SourceMapRegistry {
+    pub(crate) fn generated_url_for_script(&self, script_id: &str) -> Option<&str> {
+        validate_identity_component(script_id, MAX_SCRIPT_ID_BYTES, "script id").ok()?;
+        if let Some(pending) = self.pending.get(script_id).filter(|pending| {
+            pending.identity.transport_id == self.loader.inner.transport_id
+                && pending.identity.generation > self.stale_generation_floor
+        }) {
+            return Some(&pending.identity.generated_url);
+        }
+        if let Some(entry) = self.maps.iter().rev().find(|entry| {
+            !entry.dispatch_state.superseded.load(Ordering::Acquire)
+                && entry.identity.script_id == script_id
+                && entry.identity.transport_id == self.loader.inner.transport_id
+        }) {
+            return Some(&entry.identity.generated_url);
+        }
+        let outcome = self.settled_outcomes.get(script_id)?;
+        self.settled_generations
+            .get(script_id)
+            .is_some_and(|generation| *generation == outcome.generation)
+            .then_some(outcome.generated_url.as_str())
+    }
+}

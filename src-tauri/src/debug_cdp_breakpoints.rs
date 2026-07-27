@@ -13,6 +13,7 @@ struct SourceMapWorkerJob {
     emitter: crate::debug_cdp::event_sink::CdpEventEmitter,
     mutation_is_allowed: Arc<dyn Fn() -> bool + Send + Sync>,
     request: crate::debug_source_map::SourceMapPreparation,
+    script_id: String,
     settlement: crate::debug_source_map::SourceMapSettlement,
     shared: Arc<Mutex<crate::debug_cdp::transport::CdpShared>>,
 }
@@ -91,6 +92,7 @@ pub(crate) fn handle_script_parsed(
         mutation_is_allowed: Arc::clone(&context.mutation_is_allowed),
         settlement,
         request,
+        script_id: script_id.to_string(),
         shared: Arc::clone(&context.shared),
     };
     let Some(worker) = source_map_worker() else {
@@ -150,7 +152,7 @@ fn process_source_map_worker_job(job: SourceMapWorkerJob) {
         settle_source_map_worker_job_without_diagnostic(&job.shared, job.settlement);
         return;
     }
-    let diagnostic = {
+    let (diagnostic, committed_receipt) = {
         let Ok(mut shared) = job.shared.lock() else {
             job.settlement.complete();
             return;
@@ -161,20 +163,32 @@ fn process_source_map_worker_job(job: SourceMapWorkerJob) {
         };
         if !(job.mutation_is_allowed)() {
             source_maps.settle_failed_preparation(job.settlement.clone());
-            None
+            (None, None)
         } else {
             match result {
-                Ok(prepared) => source_maps
-                    .commit_script(prepared)
-                    .err()
-                    .and_then(|error| source_maps.source_map_diagnostic(&error)),
+                Ok(prepared) => match source_maps.commit_script_with_receipt(prepared) {
+                    Ok(receipt) => (None, Some(receipt)),
+                    Err(error) => (source_maps.source_map_diagnostic(&error), None),
+                },
                 Err(error) => {
                     source_maps.settle_failed_preparation(job.settlement.clone());
-                    source_maps.source_map_diagnostic(&error)
+                    (source_maps.source_map_diagnostic(&error), None)
                 }
             }
         }
     };
+    if let Some(receipt) = committed_receipt {
+        if !(job.mutation_is_allowed)() {
+            return;
+        }
+        if crate::debug_cdp::transport::breakpoint_rebind::enqueue(
+            &job.shared,
+            receipt,
+            job.script_id,
+        ) {
+            crate::debug_cdp::transport::breakpoint_rebind::schedule(&job.shared);
+        }
+    }
     if let Some(text) = diagnostic.filter(|_| (job.mutation_is_allowed)()) {
         job.emitter
             .emit(crate::debug_adapter::DebugEventPayload::Output {

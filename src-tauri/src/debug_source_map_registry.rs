@@ -75,6 +75,7 @@ struct ReverseSegment {
 }
 
 pub(crate) struct PreparedSourceMap {
+    line_starts: HashMap<u32, (u32, u32, u32, u32)>,
     identity: SourceMapScriptIdentity,
     completion: Arc<SourceMapCompletion>,
     map: SourceMap,
@@ -117,6 +118,7 @@ struct SourceMapCompletion {
 
 struct RegisteredSourceMap {
     dispatch_state: Arc<SourceMapDispatchState>,
+    line_starts: HashMap<u32, (u32, u32, u32, u32)>,
     identity: Arc<SourceMapScriptIdentity>,
     map: SourceMap,
     reverse: HashMap<(u32, u32), Vec<ReverseSegment>>,
@@ -189,6 +191,12 @@ pub(crate) struct SourceMapRegistry {
     smart_step_enabled: bool,
 }
 
+impl SourceMapReceipt {
+    pub(crate) fn generation(&self) -> u64 {
+        self.identity.generation
+    }
+}
+
 // Descriptor-backed loading and path confinement live in a separate implementation
 // unit so the registry stays focused on session state and prepared indexes.
 include!("debug_source_map_descriptor.rs");
@@ -249,6 +257,13 @@ impl SourceMapRegistry {
     }
 
     pub(crate) fn commit_script(&mut self, prepared: PreparedSourceMap) -> Result<(), String> {
+        self.commit_script_with_receipt(prepared).map(|_| ())
+    }
+
+    pub(crate) fn commit_script_with_receipt(
+        &mut self,
+        prepared: PreparedSourceMap,
+    ) -> Result<SourceMapReceipt, String> {
         let settlement = SourceMapSettlement {
             identity: prepared.identity.clone(),
             completion: Arc::clone(&prepared.completion),
@@ -258,7 +273,10 @@ impl SourceMapRegistry {
         result
     }
 
-    fn commit_script_inner(&mut self, prepared: PreparedSourceMap) -> Result<(), String> {
+    fn commit_script_inner(
+        &mut self,
+        prepared: PreparedSourceMap,
+    ) -> Result<SourceMapReceipt, String> {
         self.prune_superseded_unpinned_maps();
         if prepared.identity.transport_id != self.loader.inner.transport_id {
             return Err("Source-map result belongs to a stale debugger transport.".to_string());
@@ -344,12 +362,15 @@ impl SourceMapRegistry {
             prepared.identity.generation,
         );
         self.settled_outcomes.remove(&prepared.identity.script_id);
+        let dispatch_state = Arc::new(SourceMapDispatchState {
+            pins: AtomicUsize::new(0),
+            superseded: AtomicBool::new(false),
+        });
+        let identity = Arc::new(prepared.identity);
         self.maps.push(RegisteredSourceMap {
-            dispatch_state: Arc::new(SourceMapDispatchState {
-                pins: AtomicUsize::new(0),
-                superseded: AtomicBool::new(false),
-            }),
-            identity: Arc::new(prepared.identity),
+            dispatch_state: Arc::clone(&dispatch_state),
+            line_starts: prepared.line_starts,
+            identity: Arc::clone(&identity),
             map: prepared.map,
             reverse: prepared.reverse,
             source_ids_by_path: prepared.source_ids_by_path,
@@ -357,7 +378,10 @@ impl SourceMapRegistry {
             source_authority_count: prepared.source_authority_count,
             token_count: prepared.token_count,
         });
-        Ok(())
+        Ok(SourceMapReceipt {
+            dispatch_state,
+            identity,
+        })
     }
 
     pub(crate) fn mark_pending(&mut self, settlement: SourceMapSettlement) -> Result<(), String> {
@@ -870,6 +894,7 @@ fn prepare_index(
         return Err("Source map does not reference a source inside the workspace.".to_string());
     }
     let mut reverse: HashMap<(u32, u32), Vec<ReverseSegment>> = HashMap::new();
+    let mut line_starts = HashMap::new();
     for token in map.tokens() {
         let source_id = token.get_src_id();
         if source_id == u32::MAX
@@ -880,13 +905,21 @@ fn prepare_index(
         {
             continue;
         }
+        let generated_line = token.get_dst_line();
+        let generated_column = token.get_dst_col();
+        line_starts.entry(generated_line).or_insert((
+            generated_column,
+            source_id,
+            token.get_src_line(),
+            token.get_src_col(),
+        ));
         reverse
             .entry((source_id, token.get_src_line()))
             .or_default()
             .push(ReverseSegment {
                 source_column: token.get_src_col(),
-                generated_line: token.get_dst_line(),
-                generated_column: token.get_dst_col(),
+                generated_line,
+                generated_column,
             });
     }
     for segments in reverse.values_mut() {
@@ -899,6 +932,7 @@ fn prepare_index(
         });
     }
     Ok(PreparedSourceMap {
+        line_starts,
         identity,
         completion,
         map,
@@ -916,19 +950,34 @@ fn map_generated_entry(
     line_number: u32,
     column: u32,
 ) -> Option<MappedSourceCandidate> {
-    let token = entry.map.lookup_token(line_number, column)?;
-    if token.get_dst_line() != line_number {
-        return None;
-    }
+    let token = entry.map.lookup_token(line_number, column);
+    let exact = token
+        .filter(|token| token.get_dst_line() == line_number)
+        .map(|token| {
+            (
+                token.get_src_id(),
+                token.get_src_line(),
+                token.get_src_col(),
+            )
+        });
+    let (source_id, source_line, source_column) = exact.or_else(|| {
+        entry
+            .line_starts
+            .get(&line_number)
+            .filter(|(generated_column, _, _, _)| column == 0 && *generated_column > 0)
+            .map(|(_, source_id, source_line, source_column)| {
+                (*source_id, *source_line, *source_column)
+            })
+    })?;
     let authority = entry
         .source_paths
-        .get(token.get_src_id() as usize)?
+        .get(source_id as usize)?
         .as_ref()?
         .clone();
     Some(MappedSourceCandidate {
         authority,
-        line_number: token.get_src_line().checked_add(1)?,
-        column: token.get_src_col().checked_add(1)?,
+        line_number: source_line.checked_add(1)?,
+        column: source_column.checked_add(1)?,
         loader: loader.clone(),
         receipt: SourceMapReceipt {
             dispatch_state: Arc::clone(&entry.dispatch_state),
@@ -1255,41 +1304,7 @@ mod tests {
             .contains("stale script generation"));
     }
 
-    #[test]
-    fn forward_lookup_never_leaks_a_mapping_across_an_unmapped_generated_line() {
-        let root = fixture("exact-generated-line");
-        let generated = root.join("dist/app.js");
-        let source = root.join("src/app.ts");
-        let map = root.join("dist/app.js.map");
-        write(&generated, "mapped();\nhelper();\nmappedAgain();\n");
-        write(&source, "first();\nsecond();\n");
-        write(
-            &map,
-            r#"{"version":3,"file":"app.js","sources":["../src/app.ts"],"names":[],"mappings":"AAAA;;AACA"}"#,
-        );
-        let generated_url = file_url_from_path(&generated.to_string_lossy());
-        let mut registry = SourceMapRegistry::new(&root).expect("registry");
-        let prepared = registry
-            .loader()
-            .prepare_script(
-                "script",
-                &generated_url,
-                &file_url_from_path(&map.to_string_lossy()),
-            )
-            .expect("prepare");
-        registry.commit_script(prepared).expect("commit");
-
-        assert!(registry
-            .map_generated_for_script("script", &generated_url, 1, 0)
-            .is_none());
-        assert_eq!(
-            registry
-                .map_generated_for_script("script", &generated_url, 2, 0)
-                .expect("third generated line")
-                .line_number,
-            2
-        );
-    }
+    include!("debug_cdp/tests/debug_source_map_registry_forward_lookup_tests.rs");
 
     #[test]
     fn rejects_oversized_external_and_inline_maps_before_parsing() {

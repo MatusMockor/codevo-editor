@@ -938,13 +938,15 @@ pub(crate) fn build_pause_inventory(
             continue;
         };
         let raw_generated_url = call_frame.get("url").and_then(Value::as_str);
-        let generated_url = raw_generated_url.filter(|url| {
+        let bounded_raw_generated_url = raw_generated_url.filter(|url| {
             !url.is_empty()
                 && url.len() <= MAX_CDP_STACK_FRAME_PATH_BYTES
                 && !url.chars().any(char::is_control)
                 && !url.trim().is_empty()
         });
-        if raw_generated_url.is_some_and(|url| !url.is_empty()) && generated_url.is_none() {
+        if raw_generated_url.is_some_and(|url| !url.is_empty())
+            && bounded_raw_generated_url.is_none()
+        {
             inventory.frames_truncated = true;
         }
         let generated_line = call_frame
@@ -958,6 +960,25 @@ pub(crate) fn build_pause_inventory(
         let script_id = call_frame
             .pointer("/location/scriptId")
             .and_then(Value::as_str);
+        let recovered_generated_url = bounded_raw_generated_url
+            .is_none()
+            .then(|| {
+                script_id.and_then(|script_id| {
+                    state
+                        .source_maps
+                        .as_ref()
+                        .and_then(|source_maps| source_maps.generated_url_for_script(script_id))
+                        .filter(|url| {
+                            !url.is_empty()
+                                && url.len() <= MAX_CDP_STACK_FRAME_PATH_BYTES
+                                && !url.chars().any(char::is_control)
+                                && !url.trim().is_empty()
+                        })
+                        .map(str::to_string)
+                })
+            })
+            .flatten();
+        let generated_url = bounded_raw_generated_url.or(recovered_generated_url.as_deref());
         let mapped = call_frame
             .get("__codevoOriginalLocation")
             .and_then(decode_prepared_source_location)
@@ -1100,7 +1121,6 @@ pub(crate) fn prepare_pause_source_mappings(params: &Value, context: &SocketLoop
             .into_iter()
             .flatten()
             .map(|frame| {
-                let url = frame.get("url").and_then(Value::as_str)?;
                 let line = u32::try_from(frame.pointer("/location/lineNumber")?.as_u64()?).ok()?;
                 let column = u32::try_from(
                     frame
@@ -1110,6 +1130,14 @@ pub(crate) fn prepare_pause_source_mappings(params: &Value, context: &SocketLoop
                 )
                 .ok()?;
                 let script_id = frame.pointer("/location/scriptId").and_then(Value::as_str);
+                let url = frame
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .filter(|url| !url.is_empty())
+                    .or_else(|| {
+                        script_id
+                            .and_then(|script_id| source_maps.generated_url_for_script(script_id))
+                    })?;
                 let candidate = match script_id {
                     Some(script_id) => {
                         source_maps.map_generated_candidate_for_script(script_id, url, line, column)
