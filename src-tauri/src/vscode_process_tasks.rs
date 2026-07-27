@@ -43,11 +43,23 @@ pub enum VscodeTaskGraphError {
 pub struct ValidatedProcessTask {
     pub label: String,
     pub depends_on: Vec<String>,
-    pub command: String,
-    pub args: Vec<String>,
+    pub dependency_order: TaskDependencyOrder,
+    pub execution: ValidatedTaskExecution,
     pub options: ProcessTaskOptions,
     pub group: Option<ProcessTaskGroup>,
     pub problem_matcher: ProcessTaskProblemMatcher,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskDependencyOrder {
+    Sequence,
+    Parallel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidatedTaskExecution {
+    Process { command: String, args: Vec<String> },
+    Npm { script: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,13 +208,21 @@ fn parse_task(value: &Value) -> Result<ValidatedProcessTask, TaskError> {
     let allowed = [
         "args",
         "command",
+        "detail",
         "dependsOn",
         "dependsOrder",
         "group",
+        "isBackground",
         "label",
+        "linux",
         "options",
+        "osx",
+        "presentation",
         "problemMatcher",
+        "runOptions",
+        "script",
         "type",
+        "windows",
     ];
     if let Some(field) = first_unknown_key(object, &allowed) {
         return Err(unsupported(
@@ -212,30 +232,176 @@ fn parse_task(value: &Value) -> Result<ValidatedProcessTask, TaskError> {
     }
     let label = required_text(object, "label", 256, false, label_hint.clone())?;
     let task_type = required_text(object, "type", 32, false, Some(label.clone()))?;
-    if task_type != "process" {
+    reject_execution_semantics(object, &label)?;
+    parse_inert_metadata(object, &label)?;
+    let execution = match task_type.as_str() {
+        "process" => parse_process_execution(object, &label)?,
+        "npm" => parse_npm_execution(object, &label)?,
+        "shell" => {
+            return Err(unsupported(
+                Some(label),
+                "shell tasks are forbidden by the no-shell execution policy",
+            ));
+        }
+        _ => {
+            return Err(unsupported(
+                Some(label),
+                format!("unsupported task type \"{task_type}\""),
+            ));
+        }
+    };
+    if task_type == "npm"
+        && object
+            .get("options")
+            .and_then(Value::as_object)
+            .is_some_and(|options| options.contains_key("env"))
+    {
         return Err(unsupported(
             Some(label),
-            "only type \"process\" is supported".to_string(),
+            "npm task environment overrides cannot map to the closed package-script execution path",
         ));
     }
-    let command = required_text(object, "command", 4_096, false, Some(label.clone()))?;
-    let depends_on = parse_dependencies(object, &label)?;
-    let args = optional_string_array(object.get("args"), "args", MAX_ARGS, 4_096, &label)?;
+    let (depends_on, dependency_order) = parse_dependencies(object, &label)?;
     let options = parse_options(object.get("options"), &label)?;
     let group = parse_group(object.get("group"), &label)?;
     let problem_matcher = parse_problem_matcher(object.get("problemMatcher"));
+    if task_type == "npm" && problem_matcher != ProcessTaskProblemMatcher::None {
+        return Err(unsupported(
+            Some(label),
+            "npm task problemMatcher is not supported because package-script output is not connected to problem matching",
+        ));
+    }
     Ok(ValidatedProcessTask {
         label,
         depends_on,
-        command,
-        args,
+        dependency_order,
+        execution,
         options,
         group,
         problem_matcher,
     })
 }
 
-fn parse_dependencies(object: &Map<String, Value>, label: &str) -> Result<Vec<String>, TaskError> {
+fn parse_process_execution(
+    object: &Map<String, Value>,
+    label: &str,
+) -> Result<ValidatedTaskExecution, TaskError> {
+    if object.contains_key("script") {
+        return Err(unsupported(
+            Some(label.to_string()),
+            "process tasks do not support the npm script field",
+        ));
+    }
+    let command = required_text(object, "command", 4_096, false, Some(label.to_string()))?;
+    let args = optional_string_array(object.get("args"), "args", MAX_ARGS, 4_096, label)?;
+    Ok(ValidatedTaskExecution::Process { command, args })
+}
+
+fn parse_npm_execution(
+    object: &Map<String, Value>,
+    label: &str,
+) -> Result<ValidatedTaskExecution, TaskError> {
+    if object.contains_key("args") || object.contains_key("command") {
+        return Err(unsupported(
+            Some(label.to_string()),
+            "npm task extra arguments cannot map to the closed package-script execution path",
+        ));
+    }
+    let script = required_text(object, "script", 214, false, Some(label.to_string()))?;
+    if script.chars().any(char::is_whitespace) {
+        return Err(unsupported(
+            Some(label.to_string()),
+            "npm task extra arguments must not be embedded in script",
+        ));
+    }
+    Ok(ValidatedTaskExecution::Npm { script })
+}
+
+fn reject_execution_semantics(object: &Map<String, Value>, label: &str) -> Result<(), TaskError> {
+    if object.contains_key("isBackground") {
+        return Err(unsupported(
+            Some(label.to_string()),
+            "background task execution is not supported",
+        ));
+    }
+    if object.contains_key("windows") || object.contains_key("linux") || object.contains_key("osx")
+    {
+        return Err(unsupported(
+            Some(label.to_string()),
+            "platform-specific task execution overrides are not supported",
+        ));
+    }
+    let Some(run_options) = object.get("runOptions") else {
+        return Ok(());
+    };
+    let Some(run_options) = run_options.as_object() else {
+        return Err(invalid(
+            Some(label.to_string()),
+            "runOptions must be an object",
+        ));
+    };
+    if run_options.contains_key("runOn") {
+        return Err(unsupported(
+            Some(label.to_string()),
+            "runOptions.runOn automatic execution is not supported",
+        ));
+    }
+    if let Some(field) = first_unknown_key(run_options, &["instanceLimit", "reevaluateOnRerun"]) {
+        return Err(unsupported(
+            Some(label.to_string()),
+            format!("unsupported runOptions field \"{field}\""),
+        ));
+    }
+    if run_options
+        .get("reevaluateOnRerun")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(invalid(
+            Some(label.to_string()),
+            "runOptions.reevaluateOnRerun must be a boolean",
+        ));
+    }
+    if run_options.get("instanceLimit").is_some_and(|value| {
+        value
+            .as_u64()
+            .is_none_or(|instance_limit| instance_limit == 0 || instance_limit > 1_024)
+    }) {
+        return Err(invalid(
+            Some(label.to_string()),
+            "runOptions.instanceLimit must be an integer from 1 through 1024",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_inert_metadata(object: &Map<String, Value>, label: &str) -> Result<(), TaskError> {
+    if let Some(detail) = object.get("detail") {
+        detail
+            .as_str()
+            .filter(|detail| bounded_text(detail, 4_096, true))
+            .ok_or_else(|| {
+                invalid(
+                    Some(label.to_string()),
+                    "detail must be a bounded safe string",
+                )
+            })?;
+    }
+    let Some(presentation) = object.get("presentation") else {
+        return Ok(());
+    };
+    if !presentation.is_object() {
+        return Err(invalid(
+            Some(label.to_string()),
+            "presentation must be an object",
+        ));
+    }
+    Ok(())
+}
+
+fn parse_dependencies(
+    object: &Map<String, Value>,
+    label: &str,
+) -> Result<(Vec<String>, TaskDependencyOrder), TaskError> {
     let Some(value) = object.get("dependsOn") else {
         if object.contains_key("dependsOrder") {
             return Err(unsupported(
@@ -243,17 +409,20 @@ fn parse_dependencies(object: &Map<String, Value>, label: &str) -> Result<Vec<St
                 "dependsOrder requires dependsOn",
             ));
         }
-        return Ok(Vec::new());
+        return Ok((Vec::new(), TaskDependencyOrder::Sequence));
+    };
+    let dependency_order = match object.get("dependsOrder") {
+        None => TaskDependencyOrder::Sequence,
+        Some(Value::String(order)) if order == "sequence" => TaskDependencyOrder::Sequence,
+        Some(Value::String(order)) if order == "parallel" => TaskDependencyOrder::Parallel,
+        Some(_) => {
+            return Err(unsupported(
+                Some(label.to_string()),
+                "dependsOrder must be exactly \"sequence\" or \"parallel\"",
+            ));
+        }
     };
     let dependencies = if let Some(dependency) = value.as_str() {
-        if let Some(order) = object.get("dependsOrder") {
-            if order.as_str() != Some("sequence") {
-                return Err(unsupported(
-                    Some(label.to_string()),
-                    "dependsOrder must be exactly \"sequence\"",
-                ));
-            }
-        }
         if !bounded_text(dependency, 256, false) {
             return Err(invalid(
                 Some(label.to_string()),
@@ -262,10 +431,10 @@ fn parse_dependencies(object: &Map<String, Value>, label: &str) -> Result<Vec<St
         }
         vec![dependency.to_string()]
     } else {
-        if object.get("dependsOrder").and_then(Value::as_str) != Some("sequence") {
+        if !object.contains_key("dependsOrder") {
             return Err(unsupported(
                 Some(label.to_string()),
-                "dependency arrays require dependsOrder \"sequence\"",
+                "dependency arrays require dependsOrder \"sequence\" or \"parallel\"",
             ));
         }
         optional_string_array(Some(value), "dependsOn", MAX_TASK_DEPENDENCIES, 256, label)?
@@ -276,7 +445,7 @@ fn parse_dependencies(object: &Map<String, Value>, label: &str) -> Result<Vec<St
             "dependsOn must not be empty",
         ));
     }
-    Ok(dependencies)
+    Ok((dependencies, dependency_order))
 }
 
 fn task_label_hint(value: &Value) -> Option<String> {
@@ -392,6 +561,9 @@ fn parse_problem_matcher(value: Option<&Value>) -> ProcessTaskProblemMatcher {
     let Some(values) = value.as_array() else {
         return ProcessTaskProblemMatcher::Unsupported;
     };
+    if values.is_empty() {
+        return ProcessTaskProblemMatcher::None;
+    }
     let [matcher] = values.as_slice() else {
         return ProcessTaskProblemMatcher::Unsupported;
     };

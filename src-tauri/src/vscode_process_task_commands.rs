@@ -21,8 +21,10 @@ use crate::{
 
 #[cfg(all(not(test), any(target_os = "macos", target_os = "linux")))]
 use crate::{
+    node_package_scripts::{finish_node_package_task, NodePackageTaskCompletion},
     process_task_runtime::{
         finish_process_task, ProcessTaskOwner, ProcessTaskRuntime, SpawnProcessTaskRequest,
+        SpawnedRuntimeTask,
     },
     terminal_session::TerminalSupervisor,
     trust::WorkspaceTrustService,
@@ -80,15 +82,17 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
             .map_err(|_| "Process task workspace is not registered.".to_string())?;
         let trust = self.0.state::<Mutex<WorkspaceTrustService>>();
         let terminals = self.0.state::<TerminalSupervisor>();
+        let identity = parse_task_owner_label(&owner.label)?;
         ProcessTaskRuntime::new(&registry, &trust, &terminals).resolve_chain_labels(
             &SpawnProcessTaskRequest {
                 owner: ProcessTaskOwner {
                     workspace_id: owner.workspace_id.clone(),
-                    workspace_root: descriptor.canonical_root_path,
+                    workspace_root: descriptor.canonical_root_path.clone(),
                     terminal_session_id: owner.session_id,
                 },
                 config_revision: owner.config_revision.clone(),
-                label: owner.label.clone(),
+                label: identity.label,
+                package_root_relative_path: identity.package_root_relative_path,
             },
         )
     }
@@ -111,16 +115,45 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
             .map_err(|_| "Process task workspace is not registered.".to_string())?;
         let trust = self.0.state::<Mutex<WorkspaceTrustService>>();
         let terminals = self.0.state::<TerminalSupervisor>();
-        let mut spawned = ProcessTaskRuntime::new(&registry, &trust, &terminals)
-            .prepare_and_spawn(&SpawnProcessTaskRequest {
+        let identity = parse_task_owner_label(&owner.label)?;
+        let spawned = ProcessTaskRuntime::new(&registry, &trust, &terminals).prepare_and_spawn(
+            &SpawnProcessTaskRequest {
                 owner: ProcessTaskOwner {
                     workspace_id: owner.workspace_id.clone(),
-                    workspace_root: descriptor.canonical_root_path,
+                    workspace_root: descriptor.canonical_root_path.clone(),
                     terminal_session_id: owner.session_id,
                 },
                 config_revision: owner.config_revision.clone(),
                 label: label.to_string(),
-            })?;
+                package_root_relative_path: identity.package_root_relative_path,
+            },
+        )?;
+        let SpawnedRuntimeTask::Process(mut spawned) = spawned else {
+            let SpawnedRuntimeTask::NodePackage(spawned) = spawned else {
+                return Err("Unable to prepare the configured task.".to_string());
+            };
+            let ownership = spawned.ownership.clone();
+            let terminal_sink = self
+                .0
+                .state::<TerminalSupervisor>()
+                .task_sink(owner.session_id, &descriptor.canonical_root_path)?;
+            let app = self.0.clone();
+            return Ok(PreparedProcessTask {
+                ownership,
+                problem_matcher: None,
+                terminal_sink,
+                stdout: None,
+                stderr: None,
+                finish: Box::new(move || {
+                    let terminals = app.state::<TerminalSupervisor>();
+                    match finish_node_package_task(&terminals, spawned) {
+                        NodePackageTaskCompletion::Exited { exit_code } => Ok(exit_code),
+                        NodePackageTaskCompletion::Stopped => Ok(None),
+                        NodePackageTaskCompletion::Failed { message } => Err(message),
+                    }
+                }),
+            });
+        };
         let stdout = spawned
             .stdout
             .take()
@@ -149,6 +182,33 @@ impl ProcessTaskRuntimePort for AppProcessTaskRuntime {
             }),
         })
     }
+}
+
+struct ParsedTaskOwnerLabel {
+    package_root_relative_path: String,
+    label: String,
+}
+
+fn parse_task_owner_label(value: &str) -> Result<ParsedTaskOwnerLabel, String> {
+    let parsed = serde_json::from_str::<(String, String, String)>(value)
+        .map_err(|_| "The configured task identity is invalid.".to_string())?;
+    if parsed.0 != "v1" || parsed.2.trim().is_empty() || parsed.2.chars().any(char::is_control) {
+        return Err("The configured task identity is invalid.".to_string());
+    }
+    let package = std::path::Path::new(&parsed.1);
+    if parsed.1 != "."
+        && (parsed.1.is_empty()
+            || package.is_absolute()
+            || package
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_))))
+    {
+        return Err("The configured task package identity is invalid.".to_string());
+    }
+    Ok(ParsedTaskOwnerLabel {
+        package_root_relative_path: parsed.1,
+        label: parsed.2,
+    })
 }
 
 #[cfg(all(not(test), not(any(target_os = "macos", target_os = "linux"))))]
@@ -196,8 +256,11 @@ impl VscodeProcessTaskCommandService {
         request: StartVscodeProcessTaskRequest,
     ) -> Result<StartVscodeProcessTaskResponse, String> {
         self.registry.reserve(request.clone())?;
+        let target_label = parse_task_owner_label(&request.label)
+            .map(|identity| identity.label)
+            .unwrap_or_else(|_| request.label.clone());
         let chain = match self.runtime.resolve_chain(&request) {
-            Ok(chain) if valid_chain(&chain, &request.label) => chain,
+            Ok(chain) if valid_chain(&chain, &target_label) => chain,
             _ => {
                 let _ = self.registry.complete(
                     &request,

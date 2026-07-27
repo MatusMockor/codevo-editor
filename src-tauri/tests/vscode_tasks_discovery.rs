@@ -6,12 +6,14 @@ mod vscode_tasks_discovery;
 use std::{cell::RefCell, collections::BTreeSet};
 
 use vscode_process_tasks::{
-    vscode_tasks_config_revision, ValidatedProcessTask, MAX_VSCODE_TASKS_CONFIG_BYTES,
+    vscode_tasks_config_revision, ValidatedProcessTask, ValidatedTaskExecution,
+    MAX_VSCODE_TASKS_CONFIG_BYTES,
 };
 use vscode_tasks_discovery::{
     ProcessTaskPlanRejectionCode, ProcessTaskPlanResolution, RetainedWorkspaceFileRead,
-    RetainedWorkspaceFileReader, VscodeProcessTaskPlanResolver, VscodeTaskDiagnosticSeverity,
-    VscodeTaskDisplayGroup, VscodeTasksDiscoveryRequest, VscodeTasksDiscoveryService,
+    RetainedWorkspaceFileReader, RetainedWorkspaceTaskFile, RetainedWorkspaceTaskFilesRead,
+    VscodeProcessTaskPlanResolver, VscodeTaskDiagnosticSeverity, VscodeTaskDisplayGroup,
+    VscodeTasksDiscoveryRequest, VscodeTasksDiscoveryService,
 };
 
 struct Reader {
@@ -29,6 +31,20 @@ impl Reader {
 }
 
 impl RetainedWorkspaceFileReader for Reader {
+    fn list_registered_workspace_task_files(
+        &self,
+        _workspace_id: &str,
+        _maximum_manifests: usize,
+    ) -> RetainedWorkspaceTaskFilesRead {
+        RetainedWorkspaceTaskFilesRead::Files {
+            files: vec![RetainedWorkspaceTaskFile {
+                package_root_relative_path: ".".to_string(),
+                source: ".vscode/tasks.json".to_string(),
+            }],
+            truncated: false,
+        }
+    }
+
     fn read_registered_workspace_file(
         &self,
         workspace_id: &str,
@@ -62,6 +78,7 @@ impl VscodeProcessTaskPlanResolver for Resolver {
     fn resolve(
         &self,
         workspace_id: &str,
+        _package_root_relative_path: &str,
         config_revision: &str,
         task: &ValidatedProcessTask,
     ) -> ProcessTaskPlanResolution {
@@ -69,7 +86,10 @@ impl VscodeProcessTaskPlanResolver for Resolver {
             workspace_id.to_string(),
             config_revision.to_string(),
             task.label.clone(),
-            task.command.clone(),
+            match &task.execution {
+                ValidatedTaskExecution::Process { command, .. } => command.clone(),
+                ValidatedTaskExecution::Npm { script } => script.clone(),
+            },
         ));
         if self.reject_label == Some(task.label.as_str()) {
             ProcessTaskPlanResolution::Rejected(ProcessTaskPlanRejectionCode::PolicyRejected)
@@ -81,18 +101,21 @@ impl VscodeProcessTaskPlanResolver for Resolver {
 
 #[test]
 fn missing_untrusted_and_unregistered_semantics_are_explicit() {
-    for (read, expected_message) in [
+    for (read, expected_message, expected_truncated) in [
         (
             RetainedWorkspaceFileRead::Missing,
-            "No .vscode/tasks.json file was found.",
+            ".vscode/tasks.json disappeared after task discovery enumerated it.",
+            true,
         ),
         (
             RetainedWorkspaceFileRead::Untrusted,
             "Trust the workspace before discovering process tasks.",
+            false,
         ),
         (
             RetainedWorkspaceFileRead::Unregistered,
             "The workspace is not registered.",
+            false,
         ),
     ] {
         let reader = Reader::returning(read);
@@ -104,7 +127,7 @@ fn missing_untrusted_and_unregistered_semantics_are_explicit() {
         );
         assert!(response.tasks.is_empty());
         assert_eq!(response.diagnostics[0].message, expected_message);
-        assert!(!response.truncated);
+        assert_eq!(response.truncated, expected_truncated);
         assert!(resolver.seen.borrow().is_empty());
     }
 
@@ -139,13 +162,13 @@ fn reads_only_the_registered_tasks_path_with_the_exact_cap() {
         )]
     );
 
-    let oversized_reader = Reader::returning(RetainedWorkspaceFileRead::Content(vec![
-        b' ';
-        MAX_VSCODE_TASKS_CONFIG_BYTES
-            + 1
-    ]));
+    let oversized = vec![b' '; MAX_VSCODE_TASKS_CONFIG_BYTES + 1];
+    let oversized_revision = vscode_tasks_config_revision(&oversized);
+    let oversized_reader = Reader::returning(RetainedWorkspaceFileRead::Content(oversized));
     let response = discover(&oversized_reader, &resolver);
     assert!(response.truncated);
+    assert!(response.tasks.is_empty());
+    assert_eq!(response.config_revision, oversized_revision);
     assert_eq!(
         response.diagnostics[0].severity,
         VscodeTaskDiagnosticSeverity::Error
@@ -202,6 +225,10 @@ fn display_wire_never_contains_process_command_args_cwd_or_environment() {
     let wire = serde_json::to_string(&response).expect("wire JSON");
 
     assert_eq!(response.tasks[0].label, "private");
+    assert_eq!(
+        response.tasks[0].config_revision,
+        resolver.seen.borrow()[0].1
+    );
     assert_eq!(response.tasks[0].group, VscodeTaskDisplayGroup::Test);
     assert!(response.tasks[0].executable);
     for secret in ["SECRET_COMMAND", "SECRET_ARG", "SECRET_CWD", "SECRET_ENV"] {
@@ -393,11 +420,13 @@ fn request_and_response_use_an_exact_camel_case_serde_contract() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         [
+            "configRevision",
             "dependsOn",
             "detail",
             "executable",
             "group",
             "label",
+            "package",
             "problemMatcher",
             "source"
         ]
@@ -418,6 +447,117 @@ fn request_and_response_use_an_exact_camel_case_serde_contract() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         ["message", "severity"]
+    );
+}
+
+struct MultiReader {
+    files: Vec<(RetainedWorkspaceTaskFile, Vec<u8>)>,
+}
+
+impl RetainedWorkspaceFileReader for MultiReader {
+    fn list_registered_workspace_task_files(
+        &self,
+        _workspace_id: &str,
+        _maximum_manifests: usize,
+    ) -> RetainedWorkspaceTaskFilesRead {
+        RetainedWorkspaceTaskFilesRead::Files {
+            files: self.files.iter().map(|(file, _)| file.clone()).collect(),
+            truncated: false,
+        }
+    }
+
+    fn read_registered_workspace_file(
+        &self,
+        _workspace_id: &str,
+        relative_path: &str,
+        _maximum_bytes: usize,
+    ) -> RetainedWorkspaceFileRead {
+        let Some((_, bytes)) = self
+            .files
+            .iter()
+            .find(|(file, _)| file.source == relative_path)
+        else {
+            return RetainedWorkspaceFileRead::Missing;
+        };
+        RetainedWorkspaceFileRead::Content(bytes.clone())
+    }
+}
+
+#[derive(Default)]
+struct MultiResolver {
+    seen: RefCell<Vec<(String, String)>>,
+}
+
+impl VscodeProcessTaskPlanResolver for MultiResolver {
+    fn resolve(
+        &self,
+        _workspace_id: &str,
+        package_root_relative_path: &str,
+        config_revision: &str,
+        _task: &ValidatedProcessTask,
+    ) -> ProcessTaskPlanResolution {
+        self.seen.borrow_mut().push((
+            package_root_relative_path.to_string(),
+            config_revision.to_string(),
+        ));
+        ProcessTaskPlanResolution::Executable
+    }
+}
+
+#[test]
+fn multi_file_displays_retain_the_owning_revision_used_for_execution_resolution() {
+    let first = valid_config("Build");
+    let second = [
+        br#"{"version":"2.0.0","tasks":[{"label":"Build","type":"process","command":"other"}]}"#
+            .as_slice(),
+        b" ",
+    ]
+    .concat();
+    let reader = MultiReader {
+        files: vec![
+            (
+                RetainedWorkspaceTaskFile {
+                    package_root_relative_path: ".".to_string(),
+                    source: ".vscode/tasks.json".to_string(),
+                },
+                first.clone(),
+            ),
+            (
+                RetainedWorkspaceTaskFile {
+                    package_root_relative_path: "packages/api".to_string(),
+                    source: "packages/api/.vscode/tasks.json".to_string(),
+                },
+                second.clone(),
+            ),
+        ],
+    };
+    let resolver = MultiResolver::default();
+    let response = VscodeTasksDiscoveryService::new(&reader, &resolver).discover(
+        VscodeTasksDiscoveryRequest {
+            workspace_id: "workspace-a".to_string(),
+        },
+    );
+
+    assert_eq!(response.tasks.len(), 2);
+    assert_eq!(
+        response.tasks[0].config_revision,
+        vscode_tasks_config_revision(&first)
+    );
+    assert_eq!(
+        response.tasks[1].config_revision,
+        vscode_tasks_config_revision(&second)
+    );
+    assert_ne!(response.config_revision, response.tasks[0].config_revision);
+    assert_ne!(response.config_revision, response.tasks[1].config_revision);
+    assert_eq!(
+        *resolver.seen.borrow(),
+        vec![
+            (".".to_string(), response.tasks[0].config_revision.clone()),
+            (
+                "packages/api".to_string(),
+                response.tasks[1].config_revision.clone()
+            )
+        ]
     );
 }
 

@@ -22,6 +22,31 @@ const ROOT_A = "/workspace/a";
 const ROOT_B = "/workspace/b";
 
 describe("useVscodeProcessTasks", () => {
+  it("starts duplicate labels by exact package identity and uses the selected file revision", async () => {
+    const gateway = gatewayHarness({
+      discover: async () =>
+        snapshot("aggregate-revision", [
+          task(".", "Build", "root-revision"),
+          task("packages/api", "Build", "api-revision"),
+        ]),
+    });
+    const harness = renderHook({ gateway: gateway.gateway });
+    await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
+
+    await act(async () =>
+      expect(await harness.hook().start({ package: "packages/api", label: "Build" })).toBe(true),
+    );
+
+    expect(gateway.start).toHaveBeenCalledExactlyOnceWith({
+      runId: "run-1",
+      workspaceId: "workspace-a",
+      sessionId: 1,
+      label: '["v1","packages/api","Build"]',
+      configRevision: "api-revision",
+    });
+    harness.unmount();
+  });
+
   it("discovers display-only tasks and runs one executable label through the exact lifecycle", async () => {
     const gateway = gatewayHarness();
     const harness = renderHook({ gateway: gateway.gateway });
@@ -30,13 +55,13 @@ describe("useVscodeProcessTasks", () => {
     expect(Object.isFrozen(harness.hook().tasks)).toBe(true);
     expect(Object.isFrozen(harness.hook().diagnostics)).toBe(true);
 
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
     const owner = gateway.start.mock.calls[0]?.[0];
     expect(owner).toEqual({
       runId: "run-1",
       workspaceId: "workspace-a",
       sessionId: 1,
-      label: "Build",
+      label: '["v1",".","Build"]',
       configRevision: "revision-1",
     });
     expect(owner).not.toHaveProperty("command");
@@ -86,7 +111,7 @@ describe("useVscodeProcessTasks", () => {
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
     let waiting!: Promise<unknown>;
     act(() => {
-      waiting = harness.hook().startAndWait("Build");
+      waiting = harness.hook().startAndWait(rootTask("Build"));
     });
     await waitForReact(() => expect(gateway.start).toHaveBeenCalledOnce());
     const owner = gateway.start.mock.calls[0]![0];
@@ -102,7 +127,7 @@ describe("useVscodeProcessTasks", () => {
     const gateway = gatewayHarness();
     const harness = renderHook({ gateway: gateway.gateway });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
     const owner = gateway.start.mock.calls[0]![0];
     const problem = {
       filePath: `${ROOT_A}/src/main.ts`,
@@ -172,7 +197,7 @@ describe("useVscodeProcessTasks", () => {
     let oldOwnership: { readonly cancel: () => Promise<boolean> } | undefined;
     let firstWaiting!: Promise<unknown>;
     act(() => {
-      firstWaiting = harness.hook().startAndWait("Build", (ownership) => {
+      firstWaiting = harness.hook().startAndWait(rootTask("Build"), (ownership) => {
         oldOwnership = ownership;
       });
     });
@@ -189,8 +214,11 @@ describe("useVscodeProcessTasks", () => {
     );
     await firstWaiting;
 
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
-    expect(gateway.start.mock.calls[1]![0]).toMatchObject({ label: "Build", runId: "run-2" });
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
+    expect(gateway.start.mock.calls[1]![0]).toMatchObject({
+      label: '["v1",".","Build"]',
+      runId: "run-2",
+    });
     await expect(oldOwnership!.cancel()).resolves.toBe(false);
     expect(gateway.stop).not.toHaveBeenCalled();
     expect(harness.hook().running).toBe(true);
@@ -205,7 +233,7 @@ describe("useVscodeProcessTasks", () => {
 
     let waiting!: Promise<unknown>;
     act(() => {
-      waiting = harness.hook().startAndWait("Build");
+      waiting = harness.hook().startAndWait(rootTask("Build"));
     });
     await waitForReact(() => expect(gateway.discover).toHaveBeenCalledTimes(2));
     await waitForReact(() => expect(gateway.start).toHaveBeenCalledOnce());
@@ -222,8 +250,8 @@ describe("useVscodeProcessTasks", () => {
     const harness = renderHook({ createRunId, gateway: gateway.gateway });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
 
-    await expect(harness.hook().start("Shell")).resolves.toBe(false);
-    await expect(harness.hook().start("Missing")).resolves.toBe(false);
+    await expect(harness.hook().start(rootTask("Shell"))).resolves.toBe(false);
+    await expect(harness.hook().start(rootTask("Missing"))).resolves.toBe(false);
     expect(createRunId).not.toHaveBeenCalled();
     expect(gateway.start).not.toHaveBeenCalled();
     harness.unmount();
@@ -238,7 +266,7 @@ describe("useVscodeProcessTasks", () => {
     const harness = renderHook({ gateway: gateway.gateway });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
 
-    await act(async () => expect(await harness.hook().start("Build")).toBe(false));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(false));
     expect(harness.hook().error).toBe("Unable to start configured task. Refresh and try again.");
     expect(harness.hook().error).not.toContain("secret");
     harness.unmount();
@@ -248,7 +276,7 @@ describe("useVscodeProcessTasks", () => {
     const gateway = gatewayHarness();
     const harness = renderHook({ gateway: gateway.gateway });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
     const oldOwner = gateway.start.mock.calls[0]![0];
     const oldEmit = gateway.emit;
 
@@ -263,7 +291,7 @@ describe("useVscodeProcessTasks", () => {
       truncated: false,
     });
 
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
     expect(gateway.start.mock.calls[1]?.[0]).toMatchObject({
       runId: "run-2",
       workspaceId: "workspace-a",
@@ -295,7 +323,7 @@ describe("useVscodeProcessTasks", () => {
     const second = gatewayHarness({ revision: "revision-2" });
     const harness = renderHook({ gateway: first.gateway });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
     const firstOwner = first.start.mock.calls[0]![0];
 
     harness.set({ configurationVersion: 1, gateway: second.gateway });
@@ -303,7 +331,7 @@ describe("useVscodeProcessTasks", () => {
     await waitForReact(() => expect(harness.hook().configRevision).toBe("revision-2"));
     expect(second.discover).toHaveBeenCalledWith("workspace-a");
 
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
     const secondOwner = second.start.mock.calls[0]![0];
     harness.set({ workspaceTrusted: false });
     await waitForReact(() => expect(second.stop).toHaveBeenCalledExactlyOnceWith(secondOwner));
@@ -315,7 +343,7 @@ describe("useVscodeProcessTasks", () => {
 
     harness.set({ workspaceTrusted: true });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
     const unmountOwner = second.start.mock.calls[1]![0];
     harness.unmount();
     await vi.waitFor(() => expect(second.stop).toHaveBeenCalledWith(unmountOwner));
@@ -326,7 +354,7 @@ describe("useVscodeProcessTasks", () => {
     const gateway = gatewayHarness({ stop: () => stopping.promise });
     const harness = renderHook({ gateway: gateway.gateway });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
 
     let first!: Promise<boolean>;
     let second!: Promise<boolean>;
@@ -351,7 +379,7 @@ describe("useVscodeProcessTasks", () => {
     });
     const harness = renderHook({ gateway: gateway.gateway });
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await harness.hook().start("Build")).toBe(true));
+    await act(async () => expect(await harness.hook().start(rootTask("Build"))).toBe(true));
 
     harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
     await waitForReact(() => expect(harness.hook().stopping).toBe(true));
@@ -366,7 +394,7 @@ describe("useVscodeProcessTasks", () => {
       running: false,
       status: null,
     });
-    await expect(harness.hook().start("Build")).resolves.toBe(false);
+    await expect(harness.hook().start(rootTask("Build"))).resolves.toBe(false);
     expect(gateway.start).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
@@ -379,7 +407,7 @@ describe("useVscodeProcessTasks", () => {
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
     let starting!: Promise<boolean>;
     act(() => {
-      starting = harness.hook().start("Build");
+      starting = harness.hook().start(rootTask("Build"));
     });
     await vi.waitFor(() =>
       expect(gateway.gateway.subscribeVscodeProcessTaskEvents).toHaveBeenCalledOnce(),
@@ -401,7 +429,7 @@ describe("useVscodeProcessTasks", () => {
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
     let starting!: Promise<boolean>;
     act(() => {
-      starting = harness.hook().start("Build");
+      starting = harness.hook().start(rootTask("Build"));
     });
     expect(harness.hook()).toMatchObject({
       activeLabel: "Build",
@@ -422,7 +450,7 @@ describe("useVscodeProcessTasks", () => {
       requestTerminalSession: async () => null,
     });
     await waitForReact(() => expect(nullHarness.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await nullHarness.hook().start("Build")).toBe(false));
+    await act(async () => expect(await nullHarness.hook().start(rootTask("Build"))).toBe(false));
     expect(nullHarness.hook().error).toBe(
       "Unable to start configured task. Refresh and try again.",
     );
@@ -434,7 +462,7 @@ describe("useVscodeProcessTasks", () => {
       requestTerminalSession: () => unmountTerminal.promise,
     });
     await waitForReact(() => expect(unmountHarness.hook().tasks).toHaveLength(2));
-    const unmountedStart = unmountHarness.hook().start("Build");
+    const unmountedStart = unmountHarness.hook().start(rootTask("Build"));
     unmountHarness.unmount();
     unmountTerminal.resolve(8);
     await expect(unmountedStart).resolves.toBe(false);
@@ -451,7 +479,7 @@ describe("useVscodeProcessTasks", () => {
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(2));
     let starting!: Promise<boolean>;
     act(() => {
-      starting = harness.hook().start("Build");
+      starting = harness.hook().start(rootTask("Build"));
     });
     expect(harness.hook()).toMatchObject({
       activeLabel: "Build",
@@ -485,7 +513,7 @@ describe("useVscodeProcessTasks", () => {
     });
     await waitForReact(() => expect(exhausted.hook().tasks).toHaveLength(2));
 
-    await act(async () => expect(await exhausted.hook().start("Build")).toBe(false));
+    await act(async () => expect(await exhausted.hook().start(rootTask("Build"))).toBe(false));
     expect(exhausted.hook().error).toBe("Unable to start configured task. Refresh and try again.");
     expect(gateway.gateway.subscribeVscodeProcessTaskEvents).not.toHaveBeenCalled();
     expect(gateway.start).not.toHaveBeenCalled();
@@ -498,7 +526,7 @@ describe("useVscodeProcessTasks", () => {
       gateway: gateway.gateway,
     });
     await waitForReact(() => expect(throwing.hook().tasks).toHaveLength(2));
-    await act(async () => expect(await throwing.hook().start("Build")).toBe(false));
+    await act(async () => expect(await throwing.hook().start(rootTask("Build"))).toBe(false));
     expect(throwing.hook().error).toBe("Unable to start configured task. Refresh and try again.");
     expect(gateway.start).not.toHaveBeenCalled();
     throwing.unmount();
@@ -611,32 +639,43 @@ function gatewayHarness(
   };
 }
 
-function snapshot(configRevision: string): VscodeProcessTasksSnapshot {
+function snapshot(
+  configRevision: string,
+  tasks: VscodeProcessTasksSnapshot["tasks"] = [
+    task(".", "Build", configRevision),
+    Object.freeze({
+      ...task(".", "Shell", configRevision),
+      detail: null,
+      group: "none" as const,
+      executable: false,
+      problemMatcher: null,
+    }),
+  ],
+): VscodeProcessTasksSnapshot {
   return Object.freeze({
     configRevision,
-    tasks: Object.freeze([
-      Object.freeze({
-        label: "Build",
-        detail: "Compile",
-        group: "build" as const,
-        source: ".vscode/tasks.json",
-        executable: true,
-        dependsOn: [],
-        problemMatcher: "typescript" as const,
-      }),
-      Object.freeze({
-        label: "Shell",
-        detail: null,
-        group: "none" as const,
-        source: ".vscode/tasks.json",
-        executable: false,
-        dependsOn: [],
-        problemMatcher: null,
-      }),
-    ]),
+    tasks: Object.freeze(tasks),
     diagnostics: Object.freeze([]),
     truncated: false,
   });
+}
+
+function task(packagePath: string, label: string, configRevision: string) {
+  return Object.freeze({
+    package: packagePath,
+    label,
+    configRevision,
+    detail: "Compile",
+    group: "build" as const,
+    source: packagePath === "." ? ".vscode/tasks.json" : `${packagePath}/.vscode/tasks.json`,
+    executable: true,
+    dependsOn: Object.freeze([]),
+    problemMatcher: "typescript" as const,
+  });
+}
+
+function rootTask(label: string) {
+  return Object.freeze({ package: ".", label });
 }
 
 function output(

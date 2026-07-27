@@ -120,6 +120,8 @@ function createCommands(
 
 function task(label: string, executable: boolean): VscodeProcessTaskDisplay {
   return {
+    package: ".",
+    configRevision: "revision-1",
     detail: null,
     executable,
     group: "none",

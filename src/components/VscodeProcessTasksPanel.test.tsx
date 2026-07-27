@@ -61,7 +61,9 @@ describe("VscodeProcessTasksPanel", () => {
     rerender({
       tasks: [
         {
+          package: ".",
           label: "Build",
+          configRevision: "revision-1",
           detail: null,
           group: "build",
           source: ".vscode/tasks.json",
@@ -79,7 +81,7 @@ describe("VscodeProcessTasksPanel", () => {
     expect(buttons(/^Run configured task /)).toHaveLength(1);
   });
 
-  it("refreshes and starts the exact selected executable label", async () => {
+  it("refreshes and starts the exact selected executable identity", async () => {
     render();
 
     await click("Refresh configured tasks");
@@ -87,10 +89,48 @@ describe("VscodeProcessTasksPanel", () => {
     rerender({ activeLabel: "Build", occupied: true, running: true, status: "pending" });
 
     expect(discover).toHaveBeenCalledOnce();
-    expect(start).toHaveBeenCalledExactlyOnceWith("Build");
+    expect(start).toHaveBeenCalledExactlyOnceWith({ package: ".", label: "Build" });
     expect(host.querySelector('[aria-label="Active configured task"]')?.textContent).toContain(
       "Build",
     );
+  });
+
+  it("starts duplicate labels from their exact package buttons", async () => {
+    rerender({
+      tasks: [
+        {
+          package: ".",
+          label: "Build",
+          configRevision: "root-revision",
+          detail: null,
+          group: "build",
+          source: ".vscode/tasks.json",
+          executable: true,
+          dependsOn: [],
+          problemMatcher: null,
+        },
+        {
+          package: "packages/api",
+          label: "Build",
+          configRevision: "api-revision",
+          detail: null,
+          group: "build",
+          source: "packages/api/.vscode/tasks.json",
+          executable: true,
+          dependsOn: [],
+          problemMatcher: null,
+        },
+      ],
+    });
+
+    const runButtons = buttons(/^Run configured task Build$/);
+    expect(runButtons).toHaveLength(2);
+    await act(async () => runButtons[1]!.click());
+
+    expect(start).toHaveBeenCalledExactlyOnceWith({
+      package: "packages/api",
+      label: "Build",
+    });
   });
 
   it("offers exact create/open configuration actions and respects busy state", async () => {
@@ -344,7 +384,9 @@ describe("VscodeProcessTasksPanel", () => {
       status: null,
       tasks: [
         {
+          package: ".",
           label: "Workspace B task",
+          configRevision: "revision-2",
           detail: null,
           group: "none",
           source: ".vscode/tasks.json",
@@ -409,7 +451,9 @@ describe("VscodeProcessTasksPanel", () => {
       stopping: false,
       tasks: [
         {
+          package: ".",
           label: "Build",
+          configRevision: "revision-1",
           detail: "Compile TypeScript",
           group: "build",
           source: ".vscode/tasks.json",
@@ -418,7 +462,9 @@ describe("VscodeProcessTasksPanel", () => {
           problemMatcher: "typescript",
         },
         {
+          package: ".",
           label: "Lint",
+          configRevision: "revision-1",
           detail: null,
           group: "none",
           source: ".vscode/tasks.json",
@@ -427,7 +473,9 @@ describe("VscodeProcessTasksPanel", () => {
           problemMatcher: "eslint",
         },
         {
+          package: ".",
           label: "Unsupported shell",
+          configRevision: "revision-1",
           detail: "Task has an unsupported problemMatcher; output will not create Problems.",
           group: "none",
           source: ".vscode/tasks.json",

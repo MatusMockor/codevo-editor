@@ -10,12 +10,17 @@ import { workspaceRelativePath } from "./workspace";
 export const MAX_VSCODE_PROCESS_TASK_OUTPUT_EVENTS = 1_024;
 export const MAX_VSCODE_PROCESS_TASK_OUTPUT_TOTAL_BYTES = 1_048_576;
 export const MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS = 128 * 1_024;
-
+export const MAX_VSCODE_PROCESS_TASK_OWNER_LABEL_BYTES = 256;
 export type VscodeProcessTaskGroup = "build" | "test" | "none";
 export type VscodeProcessTaskProblemMatcher = "eslint" | "typescript";
 export type VscodeProcessTaskDiagnosticSeverity = "error" | "warning";
 export type VscodeProcessTaskStream = "stdout" | "stderr";
 export type VscodeProcessTaskTerminalStatus = "exited" | "failed" | "stopped";
+
+export interface VscodeProcessTaskIdentity {
+  readonly package: string;
+  readonly label: string;
+}
 
 export interface VscodeProcessTaskOwner {
   readonly runId: string;
@@ -26,7 +31,9 @@ export interface VscodeProcessTaskOwner {
 }
 
 export interface VscodeProcessTaskDisplay {
+  readonly package: string;
   readonly label: string;
+  readonly configRevision: string;
   readonly detail: string | null;
   readonly group: VscodeProcessTaskGroup;
   readonly source: string;
@@ -404,6 +411,49 @@ export function vscodeProcessTaskOwnersEqual(
     left.label === right.label &&
     left.configRevision === right.configRevision
   );
+}
+
+export function vscodeProcessTaskIdentity(
+  task: Pick<VscodeProcessTaskDisplay, "label" | "package">,
+): VscodeProcessTaskIdentity | null {
+  if (!isNormalizedPackageRoot(task.package)) return null;
+  return Object.freeze({ package: task.package, label: task.label });
+}
+
+export function encodeVscodeProcessTaskOwnerLabel(
+  identity: VscodeProcessTaskIdentity,
+): string | null {
+  const encoded = JSON.stringify(["v1", identity.package, identity.label]);
+  if (UTF8_ENCODER.encode(encoded).byteLength > MAX_VSCODE_PROCESS_TASK_OWNER_LABEL_BYTES) {
+    return null;
+  }
+  return encoded;
+}
+
+export function decodeVscodeProcessTaskOwnerLabel(value: string): VscodeProcessTaskIdentity | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 3 ||
+    parsed[0] !== "v1" ||
+    typeof parsed[1] !== "string" ||
+    typeof parsed[2] !== "string" ||
+    !isNormalizedPackageRoot(parsed[1])
+  ) {
+    return null;
+  }
+  return Object.freeze({ package: parsed[1], label: parsed[2] });
+}
+
+function isNormalizedPackageRoot(value: string): boolean {
+  if (value === ".") return true;
+  if (!value || value.startsWith("/") || value.endsWith("/") || value.includes("\\")) return false;
+  return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 function emptyState(owner: VscodeProcessTaskOwner): VscodeProcessTaskState {

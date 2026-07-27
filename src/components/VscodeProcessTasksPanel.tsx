@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
 import {
   MAX_VSCODE_PROCESS_TASK_RENDERED_STREAM_CODE_UNITS,
+  vscodeProcessTaskIdentity,
   vscodeProcessTaskOutputStreamTail,
   type VscodeProcessTaskOutput,
 } from "../domain/vscodeProcessTasks";
@@ -210,8 +211,9 @@ export function VscodeProcessTasksPanel({
         <ul aria-label="Configured process tasks" style={styles.taskList}>
           {tasks.map((task) => {
             const dependencySummary = vscodeProcessTaskDependencySummary(task.dependsOn);
+            const identity = vscodeProcessTaskIdentity(task);
             return (
-              <li key={task.label} style={styles.task}>
+              <li key={`${task.package}\u0000${task.label}`} style={styles.task}>
                 <div style={styles.taskMetadata}>
                   <strong>{task.label}</strong>
                   {task.detail && <span>{task.detail}</span>}
@@ -228,8 +230,10 @@ export function VscodeProcessTasksPanel({
                 {task.executable && (
                   <button
                     aria-label={`Run configured task ${task.label}`}
-                    disabled={busy || unavailable !== null}
-                    onClick={() => void start(task.label)}
+                    disabled={identity === null || busy || unavailable !== null}
+                    onClick={() => {
+                      if (identity) void start(identity);
+                    }}
                     type="button"
                   >
                     Run

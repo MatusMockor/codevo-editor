@@ -8,6 +8,59 @@ use super::{ValidatedProcessTask, VscodeTaskDiagnostic, VscodeTaskDiagnosticCode
 type IndexedTask = (usize, ValidatedProcessTask);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedTaskExecutionPlan {
+    steps: Vec<ValidatedTaskExecutionStep>,
+}
+
+impl ValidatedTaskExecutionPlan {
+    pub fn steps(&self) -> &[ValidatedTaskExecutionStep] {
+        &self.steps
+    }
+
+    pub fn ready_steps(
+        &self,
+        completed: &BTreeSet<usize>,
+        running: &BTreeSet<usize>,
+    ) -> Vec<usize> {
+        if !running.is_empty() {
+            return Vec::new();
+        }
+        self.steps
+            .iter()
+            .enumerate()
+            .filter(|(index, step)| {
+                !completed.contains(index)
+                    && !running.contains(index)
+                    && step
+                        .prerequisites
+                        .iter()
+                        .all(|prerequisite| completed.contains(prerequisite))
+            })
+            .map(|(index, _)| index)
+            .take(1)
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedTaskExecutionStep {
+    label: String,
+    prerequisites: Vec<usize>,
+}
+
+impl ValidatedTaskExecutionStep {
+    #[cfg_attr(test, allow(dead_code))]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    #[cfg(test)]
+    pub fn prerequisites(&self) -> &[usize] {
+        &self.prerequisites
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedTaskGraph {
     tasks: Vec<ValidatedProcessTask>,
     indexes: BTreeMap<String, usize>,
@@ -30,6 +83,97 @@ impl ValidatedTaskGraph {
         let mut plan = Vec::new();
         self.append_postorder(target, &mut visited, &mut plan);
         Some(plan)
+    }
+
+    pub fn execution_plan(&self, label: &str) -> Option<ValidatedTaskExecutionPlan> {
+        let target = *self.indexes.get(label)?;
+        let mut visited = BTreeSet::new();
+        let mut positions = Vec::new();
+        self.append_position_postorder(target, &mut visited, &mut positions)?;
+        let plan_indexes = positions
+            .iter()
+            .enumerate()
+            .map(|(plan_index, position)| (*position, plan_index))
+            .collect::<BTreeMap<_, _>>();
+        let mut prerequisites = vec![BTreeSet::new(); positions.len()];
+        for position in &positions {
+            let plan_index = *plan_indexes.get(position)?;
+            let task = self.tasks.get(*position)?;
+            for dependency in &task.depends_on {
+                let dependency_position = self.indexes.get(dependency)?;
+                prerequisites
+                    .get_mut(plan_index)?
+                    .insert(*plan_indexes.get(dependency_position)?);
+            }
+            if task.dependency_order == super::TaskDependencyOrder::Sequence {
+                self.append_sequence_barriers(task, &plan_indexes, &mut prerequisites)?;
+            }
+        }
+        Some(ValidatedTaskExecutionPlan {
+            steps: positions
+                .into_iter()
+                .enumerate()
+                .map(|(plan_index, position)| {
+                    Some(ValidatedTaskExecutionStep {
+                        label: self.tasks.get(position)?.label.clone(),
+                        prerequisites: prerequisites.get(plan_index)?.iter().copied().collect(),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+
+    fn append_sequence_barriers(
+        &self,
+        task: &ValidatedProcessTask,
+        plan_indexes: &BTreeMap<usize, usize>,
+        prerequisites: &mut [BTreeSet<usize>],
+    ) -> Option<()> {
+        let mut earlier_branch_members = BTreeSet::new();
+        let mut previous_root = None;
+        for dependency in &task.depends_on {
+            let dependency_position = *self.indexes.get(dependency)?;
+            let mut branch_members = BTreeSet::new();
+            self.collect_positions(dependency_position, &mut branch_members)?;
+            if let Some(previous_root) = previous_root {
+                let previous_plan_index = *plan_indexes.get(&previous_root)?;
+                for member in branch_members.difference(&earlier_branch_members) {
+                    let member_plan_index = *plan_indexes.get(member)?;
+                    prerequisites
+                        .get_mut(member_plan_index)?
+                        .insert(previous_plan_index);
+                }
+            }
+            earlier_branch_members.extend(branch_members);
+            previous_root = Some(dependency_position);
+        }
+        Some(())
+    }
+
+    fn collect_positions(&self, position: usize, collected: &mut BTreeSet<usize>) -> Option<()> {
+        if !collected.insert(position) {
+            return Some(());
+        }
+        for dependency in &self.tasks.get(position)?.depends_on {
+            self.collect_positions(*self.indexes.get(dependency)?, collected)?;
+        }
+        Some(())
+    }
+
+    fn append_position_postorder(
+        &self,
+        position: usize,
+        visited: &mut BTreeSet<usize>,
+        plan: &mut Vec<usize>,
+    ) -> Option<()> {
+        if !visited.insert(position) {
+            return Some(());
+        }
+        for dependency in &self.tasks.get(position)?.depends_on {
+            self.append_position_postorder(*self.indexes.get(dependency)?, visited, plan)?;
+        }
+        plan.push(position);
+        Some(())
     }
 
     fn append_postorder<'a>(
@@ -238,4 +382,145 @@ enum VisitState {
     Unvisited,
     Visiting,
     Visited,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vscode_process_tasks::VscodeTasksParser;
+
+    #[test]
+    fn parallel_dependency_plan_runs_one_ready_step_at_a_time_in_topological_order() {
+        let parsed = VscodeTasksParser::parse(
+            br#"{
+                "version":"2.0.0",
+                "tasks":[
+                    {"label":"one","type":"process","command":"node"},
+                    {"label":"two","type":"process","command":"node"},
+                    {"label":"three","type":"process","command":"node"},
+                    {"label":"four","type":"process","command":"node"},
+                    {"label":"five","type":"process","command":"node"},
+                    {"label":"six","type":"process","command":"node"},
+                    {
+                        "label":"target",
+                        "type":"process",
+                        "command":"node",
+                        "dependsOn":["one","two","three","four","five","six"],
+                        "dependsOrder":"parallel"
+                    }
+                ]
+            }"#,
+        )
+        .expect("valid task graph");
+        let plan = parsed
+            .tasks
+            .execution_plan("target")
+            .expect("target execution plan");
+
+        let mut completed = BTreeSet::new();
+        let running = BTreeSet::from([0]);
+        assert!(plan.ready_steps(&completed, &running).is_empty());
+        let running = BTreeSet::new();
+        for index in 0..plan.steps().len() {
+            assert_eq!(plan.ready_steps(&completed, &running), vec![index]);
+            completed.insert(index);
+        }
+        assert!(plan.ready_steps(&completed, &running).is_empty());
+    }
+
+    #[test]
+    fn sequential_dependency_plan_blocks_every_node_in_the_later_branch() {
+        let parsed = VscodeTasksParser::parse(
+            br#"{
+                "version":"2.0.0",
+                "tasks":[
+                    {"label":"first-leaf","type":"process","command":"node"},
+                    {
+                        "label":"first",
+                        "type":"process",
+                        "command":"node",
+                        "dependsOn":"first-leaf",
+                        "dependsOrder":"sequence"
+                    },
+                    {"label":"second-leaf","type":"process","command":"node"},
+                    {
+                        "label":"second",
+                        "type":"process",
+                        "command":"node",
+                        "dependsOn":"second-leaf",
+                        "dependsOrder":"sequence"
+                    },
+                    {
+                        "label":"target",
+                        "type":"process",
+                        "command":"node",
+                        "dependsOn":["first","second"],
+                        "dependsOrder":"sequence"
+                    }
+                ]
+            }"#,
+        )
+        .expect("valid task graph");
+        let plan = parsed
+            .tasks
+            .execution_plan("target")
+            .expect("target execution plan");
+
+        let mut completed = BTreeSet::new();
+        let running = BTreeSet::new();
+        assert_eq!(plan.ready_steps(&completed, &running), vec![0]);
+        completed.insert(0);
+        assert_eq!(plan.ready_steps(&completed, &running), vec![1]);
+        completed.insert(1);
+        assert_eq!(plan.ready_steps(&completed, &running), vec![2]);
+        completed.insert(2);
+        assert_eq!(plan.ready_steps(&completed, &running), vec![3]);
+        completed.insert(3);
+        assert_eq!(plan.ready_steps(&completed, &running), vec![4]);
+    }
+
+    #[test]
+    fn sequential_dependency_plan_does_not_cycle_shared_descendants() {
+        let parsed = VscodeTasksParser::parse(
+            br#"{
+                "version":"2.0.0",
+                "tasks":[
+                    {"label":"shared","type":"process","command":"node"},
+                    {
+                        "label":"first",
+                        "type":"process",
+                        "command":"node",
+                        "dependsOn":"shared",
+                        "dependsOrder":"sequence"
+                    },
+                    {
+                        "label":"second",
+                        "type":"process",
+                        "command":"node",
+                        "dependsOn":"shared",
+                        "dependsOrder":"sequence"
+                    },
+                    {
+                        "label":"target",
+                        "type":"process",
+                        "command":"node",
+                        "dependsOn":["first","second"],
+                        "dependsOrder":"sequence"
+                    }
+                ]
+            }"#,
+        )
+        .expect("valid task graph");
+        let plan = parsed
+            .tasks
+            .execution_plan("target")
+            .expect("target execution plan");
+
+        let prerequisites = plan
+            .steps()
+            .iter()
+            .map(|step| step.prerequisites().to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(prerequisites, vec![vec![], vec![0], vec![0, 1], vec![1, 2]]);
+    }
 }

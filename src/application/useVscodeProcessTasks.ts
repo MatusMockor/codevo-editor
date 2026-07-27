@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createVscodeProcessTaskOutput,
+  decodeVscodeProcessTaskOwnerLabel,
+  encodeVscodeProcessTaskOwnerLabel,
+  vscodeProcessTaskIdentity,
   vscodeProcessTaskProblemsToNotices,
   type VscodeProcessTaskDiagnostic,
   type VscodeProcessTaskDisplay,
+  type VscodeProcessTaskIdentity,
   type VscodeProcessTaskOutput,
   type VscodeProcessTaskOwner,
   type VscodeProcessTaskProblemsState,
@@ -46,9 +50,9 @@ export interface VscodeProcessTasksState {
   readonly truncated: boolean;
   readonly unavailable: string | null;
   discover(): Promise<boolean>;
-  start(label: string): Promise<boolean>;
+  start(identity: VscodeProcessTaskIdentity | string): Promise<boolean>;
   startAndWait(
-    label: string,
+    identity: VscodeProcessTaskIdentity | string,
     onOwned?: (ownership: VscodeProcessTaskRunOwnership) => void,
   ): Promise<VscodeProcessTaskCompletion | null>;
   stop(): Promise<boolean>;
@@ -74,7 +78,7 @@ interface ActivationBoundary {
 interface PendingTerminalAdmission {
   readonly activation: number;
   readonly identity: object;
-  readonly label: string;
+  readonly task: VscodeProcessTaskIdentity;
   readonly workspaceId: string;
 }
 
@@ -199,13 +203,25 @@ export function useVscodeProcessTasks({
   }, [activation, gateway, rootPath, workspaceId, workspaceTrusted]);
 
   const start = useCallback(
-    async (label: string): Promise<boolean> => {
+    async (requestedIdentity: VscodeProcessTaskIdentity | string): Promise<boolean> => {
       const currentDiscoveryEntry = discoveryRef.current;
       const currentDiscovery =
         currentDiscoveryEntry?.activation === activation ? currentDiscoveryEntry.snapshot : null;
-      const selected = currentDiscovery?.tasks.find((task) => task.label === label);
+      const matches = currentDiscovery?.tasks.filter((task) => {
+        const taskIdentity = vscodeProcessTaskIdentity(task);
+        if (typeof requestedIdentity === "string") {
+          return taskIdentity?.label === requestedIdentity;
+        }
+        return (
+          taskIdentity?.package === requestedIdentity.package &&
+          taskIdentity.label === requestedIdentity.label
+        );
+      });
+      const selected = matches?.length === 1 ? matches[0] : undefined;
+      const identity = selected ? vscodeProcessTaskIdentity(selected) : null;
       if (
         !currentDiscovery ||
+        !identity ||
         !selected?.executable ||
         !workspaceId ||
         !rootPath ||
@@ -219,7 +235,10 @@ export function useVscodeProcessTasks({
       const admission: PendingTerminalAdmission = Object.freeze({
         activation,
         identity: Object.freeze({}),
-        label: selected.label,
+        task: Object.freeze({
+          package: identity.package,
+          label: selected.label,
+        }),
         workspaceId,
       });
       startAdmissionRef.current = admission;
@@ -249,12 +268,14 @@ export function useVscodeProcessTasks({
         }
         const runId = createRunId();
         if (runId === null) throw new Error("Run id sequence exhausted.");
+        const ownerLabel = encodeVscodeProcessTaskOwnerLabel(admission.task);
+        if (ownerLabel === null) throw new Error("Task identity exceeds the owner label limit.");
         owner = Object.freeze({
           runId,
           workspaceId,
           sessionId,
-          label: selected.label,
-          configRevision: currentDiscovery.configRevision,
+          label: ownerLabel,
+          configRevision: selected.configRevision,
         });
       } catch {
         if (
@@ -305,13 +326,21 @@ export function useVscodeProcessTasks({
 
   const startAndWait = useCallback(
     async (
-      label: string,
+      identity: VscodeProcessTaskIdentity | string,
       onOwned?: (ownership: VscodeProcessTaskRunOwnership) => void,
     ): Promise<VscodeProcessTaskCompletion | null> => {
+      const requested = typeof identity === "string" ? identity : Object.freeze({ ...identity });
       if (!(await discover())) return null;
-      if (!(await start(label))) return null;
+      if (!(await start(requested))) return null;
       const owner = coordinator.snapshot().owner;
-      if (!owner || owner.label !== label) return Object.freeze({ status: "stale" });
+      if (
+        !owner ||
+        (typeof requested === "string"
+          ? decodeVscodeProcessTaskOwnerLabel(owner.label)?.label !== requested
+          : encodeVscodeProcessTaskOwnerLabel(requested) !== owner.label)
+      ) {
+        return Object.freeze({ status: "stale" });
+      }
       if (onOwned) {
         const ownership: VscodeProcessTaskRunOwnership = Object.freeze({
           cancel: () => coordinator.cancelExact(owner),
@@ -370,7 +399,12 @@ export function useVscodeProcessTasks({
   );
 
   return Object.freeze({
-    activeLabel: currentPending?.label ?? currentExecution.owner?.label ?? null,
+    activeLabel:
+      currentPending?.task.label ??
+      (currentExecution.owner
+        ? (decodeVscodeProcessTaskOwnerLabel(currentExecution.owner.label)?.label ??
+          currentExecution.owner.label)
+        : null),
     configRevision: discovery?.configRevision ?? null,
     currentStep: currentExecution.task?.currentStep ?? null,
     diagnostics: discovery?.diagnostics ?? EMPTY_DIAGNOSTICS,

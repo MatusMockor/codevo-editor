@@ -30,6 +30,7 @@ export const MAX_VSCODE_PROCESS_TASK_DIAGNOSTICS = 256;
 export const MAX_VSCODE_PROCESS_TASK_RESPONSE_BYTES = 1_048_576;
 export const MAX_VSCODE_PROCESS_TASK_EVENT_OUTPUT_BYTES = 8_192;
 export const MAX_VSCODE_PROCESS_TASK_STEPS = 128;
+export const MAX_VSCODE_PROCESS_TASK_PACKAGE_BYTES = 4_096;
 
 export interface DiscoverVscodeProcessTasksRequest {
   readonly workspaceId: string;
@@ -151,7 +152,17 @@ function parseTask(value: unknown, path: string): VscodeProcessTaskDisplay {
   const task = record(value, path);
   exactKeys(
     task,
-    ["label", "detail", "group", "source", "executable", "dependsOn", "problemMatcher"],
+    [
+      "package",
+      "label",
+      "dependsOn",
+      "configRevision",
+      "detail",
+      "group",
+      "problemMatcher",
+      "source",
+      "executable",
+    ],
     path,
   );
   if (task.group !== "build" && task.group !== "test" && task.group !== "none") {
@@ -173,7 +184,9 @@ function parseTask(value: unknown, path: string): VscodeProcessTaskDisplay {
     invalid(`${path}.dependsOn`, "unique task labels");
   }
   return Object.freeze({
+    package: packageRoot(task.package, `${path}.package`),
     label: label(task.label, `${path}.label`),
+    configRevision: configRevision(task.configRevision, `${path}.configRevision`),
     detail: task.detail === null ? null : displayText(task.detail, `${path}.detail`, 2_048, true),
     group: task.group,
     source: displayText(task.source, `${path}.source`, 256, false),
@@ -387,6 +400,21 @@ function configRevision(value: unknown, path: string): string {
   const candidate = identifier(value, path, 71);
   if (!/^sha256:[0-9a-f]{64}$/.test(candidate)) {
     invalid(path, "an exact lowercase SHA-256 revision");
+  }
+  return candidate;
+}
+
+function packageRoot(value: unknown, path: string): string {
+  const candidate = displayText(value, path, MAX_VSCODE_PROCESS_TASK_PACKAGE_BYTES, false);
+  if (candidate === ".") return candidate;
+  if (
+    candidate.startsWith("/") ||
+    candidate.endsWith("/") ||
+    candidate.includes("\\") ||
+    /^[A-Za-z]:/.test(candidate) ||
+    candidate.split("/").some((part) => part === "" || part === "." || part === "..")
+  ) {
+    invalid(path, "a normalized workspace-relative package root");
   }
   return candidate;
 }

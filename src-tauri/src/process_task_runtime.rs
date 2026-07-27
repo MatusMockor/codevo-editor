@@ -1,5 +1,9 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
+use crate::node_package_scripts::{
+    preflight_vscode_node_package_task, spawn_vscode_node_package_task,
+    NodePackageTaskOutputObserver, RunNodePackageScriptRequest, SpawnedNodePackageTask,
+};
 use crate::{
     managed_javascript_typescript::node_executable_path,
     node_package_problem_matcher::{NodePackageProblemMatcher, NodePackageProblemMatcherKind},
@@ -14,7 +18,7 @@ use crate::{
     terminal_task_process::TerminalTaskOwnership,
     trust::WorkspaceTrustService,
     vscode_process_tasks::{
-        ProcessTaskProblemMatcher, ValidatedProcessTask, VscodeTasksParser,
+        ProcessTaskProblemMatcher, ValidatedProcessTask, ValidatedTaskExecution, VscodeTasksParser,
         MAX_VSCODE_TASKS_CONFIG_BYTES,
     },
     workspace_registry::{
@@ -47,6 +51,7 @@ pub(crate) struct SpawnProcessTaskRequest {
     pub owner: ProcessTaskOwner,
     pub config_revision: String,
     pub label: String,
+    pub package_root_relative_path: String,
 }
 
 pub(crate) struct SpawnedProcessTask {
@@ -56,6 +61,24 @@ pub(crate) struct SpawnedProcessTask {
     pub sink: Arc<dyn TerminalEventSink>,
     pub stdout: Option<ChildStdout>,
     pub stderr: Option<ChildStderr>,
+}
+
+impl Drop for SpawnedProcessTask {
+    fn drop(&mut self) {
+        self.ownership.terminate();
+        let _ = self.ownership.wait_after_terminate(&mut self.child);
+    }
+}
+
+pub(crate) enum SpawnedRuntimeTask {
+    Process(Box<SpawnedProcessTask>),
+    NodePackage(SpawnedNodePackageTask),
+}
+
+impl SpawnProcessTaskRequest {
+    fn package_root_relative_path(&self) -> &str {
+        &self.package_root_relative_path
+    }
 }
 
 pub(crate) struct ProcessTaskRuntime<'a> {
@@ -96,20 +119,64 @@ impl<'a> ProcessTaskRuntime<'a> {
         let config = read_current_tasks_config(
             self.registry,
             &request.owner.workspace_id,
+            request.package_root_relative_path(),
             &request.config_revision,
         )?;
         let _trust = validate_workspace_trust(self.trust, &descriptor)?;
-        let chain = config
-            .resolve_sequential_chain(&request.label)
-            .map_err(|_| "The selected process task no longer exists.".to_string())?;
+        let execution_plan = config
+            .tasks
+            .execution_plan(&request.label)
+            .ok_or_else(|| "The selected process task no longer exists.".to_string())?;
         let resolver = WorkspaceRegistryProcessTaskResolver::new(self.registry, descriptor);
-        for task in &chain {
-            let definition = ProcessTaskDefinition::from(*task);
+        let mut npm_preflights = Vec::new();
+        for step in execution_plan.steps() {
+            let task = config
+                .tasks
+                .iter()
+                .find(|task| task.label == step.label())
+                .ok_or_else(|| "The selected process task no longer exists.".to_string())?;
+            if matches!(task.execution, ValidatedTaskExecution::Npm { .. }) {
+                if let ValidatedTaskExecution::Npm { script } = &task.execution {
+                    npm_preflights.push(RunNodePackageScriptRequest {
+                        workspace_id: request.owner.workspace_id.clone(),
+                        session_id: request.owner.terminal_session_id,
+                        manifest_relative_path: npm_manifest_relative_path(
+                            request.package_root_relative_path(),
+                            task.options.cwd.as_deref(),
+                        )?,
+                        script_name: script.clone(),
+                    });
+                }
+                continue;
+            }
+            let definition = process_task_definition(task)?;
             let environment_policy = production_process_task_environment_policy(task);
             resolve_process_task_plan(&definition, &environment_policy, &resolver)
                 .map_err(format_plan_error)?;
         }
-        Ok(chain.iter().map(|task| task.label.clone()).collect())
+        drop(_trust);
+        drop(_operation);
+        for preflight in &npm_preflights {
+            preflight_vscode_node_package_task(
+                self.registry,
+                preflight,
+                &request.owner.workspace_root,
+            )?;
+        }
+        let mut completed = BTreeSet::new();
+        let running = BTreeSet::new();
+        let mut labels = Vec::new();
+        while completed.len() < execution_plan.steps().len() {
+            let ready = execution_plan.ready_steps(&completed, &running);
+            if ready.is_empty() {
+                return Err("Unable to resolve the process task graph safely.".to_string());
+            }
+            for index in ready {
+                labels.push(execution_plan.steps()[index].label().to_string());
+                completed.insert(index);
+            }
+        }
+        Ok(labels)
     }
 
     /// Revalidates every authority-bearing input while the workspace operation lock is held.
@@ -118,7 +185,7 @@ impl<'a> ProcessTaskRuntime<'a> {
     pub(crate) fn prepare_and_spawn(
         &self,
         request: &SpawnProcessTaskRequest,
-    ) -> Result<SpawnedProcessTask, String> {
+    ) -> Result<SpawnedRuntimeTask, String> {
         let _operation = self
             .registry
             .lock_operations()
@@ -132,6 +199,7 @@ impl<'a> ProcessTaskRuntime<'a> {
         let config = read_current_tasks_config(
             self.registry,
             &request.owner.workspace_id,
+            request.package_root_relative_path(),
             &request.config_revision,
         )?;
         let mut matching = config
@@ -146,7 +214,29 @@ impl<'a> ProcessTaskRuntime<'a> {
         }
 
         let resolver = WorkspaceRegistryProcessTaskResolver::new(self.registry, descriptor.clone());
-        let definition = ProcessTaskDefinition::from(task);
+        if let ValidatedTaskExecution::Npm { script } = &task.execution {
+            let manifest_relative_path = npm_manifest_relative_path(
+                request.package_root_relative_path(),
+                task.options.cwd.as_deref(),
+            )?;
+            drop(_operation);
+            let spawned = spawn_vscode_node_package_task(
+                self.registry,
+                self.trust,
+                self.terminals,
+                &RunNodePackageScriptRequest {
+                    workspace_id: request.owner.workspace_id.clone(),
+                    session_id: request.owner.terminal_session_id,
+                    manifest_relative_path,
+                    script_name: script.clone(),
+                },
+                Arc::new(SilentNodePackageObserver),
+                &descriptor.canonical_root_path,
+            )?;
+            return Ok(SpawnedRuntimeTask::NodePackage(spawned));
+        }
+        let definition =
+            package_process_task_definition(task, request.package_root_relative_path())?;
         let environment_policy = production_process_task_environment_policy(task);
         let plan = resolve_process_task_plan(&definition, &environment_policy, &resolver)
             .map_err(format_plan_error)?;
@@ -199,15 +289,106 @@ impl<'a> ProcessTaskRuntime<'a> {
         let stderr = child.stderr.take();
         drop(trust);
         drop(_operation);
-        Ok(SpawnedProcessTask {
+        let spawned = SpawnedProcessTask {
             child,
             problem_matcher,
             ownership,
             sink,
             stdout,
             stderr,
-        })
+        };
+        Ok(SpawnedRuntimeTask::Process(Box::new(spawned)))
     }
+}
+
+struct SilentNodePackageObserver;
+
+impl NodePackageTaskOutputObserver for SilentNodePackageObserver {
+    fn prepare(
+        &self,
+        _workspace_root: &fs::File,
+        _workspace_path: &Path,
+        _package_directory: &fs::File,
+        _package_path: &Path,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn observe(
+        &self,
+        _stream: crate::node_package_problem_matcher::NodePackageTaskOutputStream,
+        _bytes: &[u8],
+    ) {
+    }
+
+    fn finish(&self, _stream: crate::node_package_problem_matcher::NodePackageTaskOutputStream) {}
+
+    fn finish_task(&self, _preserve_problems: bool) {}
+}
+
+fn npm_manifest_relative_path(
+    package_root_relative_path: &str,
+    cwd: Option<&str>,
+) -> Result<String, String> {
+    let package = normalized_package_root(package_root_relative_path)?;
+    let directory = match cwd {
+        Some(cwd) if cwd == crate::process_task_plan::WORKSPACE_FOLDER_PLACEHOLDER => {
+            PathBuf::new()
+        }
+        Some(cwd)
+            if cwd.starts_with(&format!(
+                "{}/",
+                crate::process_task_plan::WORKSPACE_FOLDER_PLACEHOLDER
+            )) =>
+        {
+            PathBuf::from(
+                cwd.trim_start_matches(crate::process_task_plan::WORKSPACE_FOLDER_PLACEHOLDER)
+                    .trim_start_matches('/'),
+            )
+        }
+        Some(cwd) => package.join(cwd),
+        None => package,
+    };
+    Ok(directory.join("package.json").to_string_lossy().to_string())
+}
+
+pub(crate) fn package_process_task_definition(
+    task: &ValidatedProcessTask,
+    package_root_relative_path: &str,
+) -> Result<ProcessTaskDefinition, String> {
+    let mut definition = process_task_definition(task)?;
+    let package = normalized_package_root(package_root_relative_path)?;
+    definition.cwd = match definition.cwd {
+        Some(cwd) if cwd == crate::process_task_plan::WORKSPACE_FOLDER_PLACEHOLDER => Some(cwd),
+        Some(cwd)
+            if cwd.starts_with(&format!(
+                "{}/",
+                crate::process_task_plan::WORKSPACE_FOLDER_PLACEHOLDER
+            )) =>
+        {
+            Some(cwd)
+        }
+        Some(cwd) => Some(package.join(cwd).to_string_lossy().to_string()),
+        None if package.as_os_str().is_empty() => None,
+        None => Some(package.to_string_lossy().to_string()),
+    };
+    Ok(definition)
+}
+
+fn normalized_package_root(value: &str) -> Result<PathBuf, String> {
+    if value == "." {
+        return Ok(PathBuf::new());
+    }
+    let path = Path::new(value);
+    if value.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("The process task package identity is invalid.".to_string());
+    }
+    Ok(path.to_path_buf())
 }
 
 fn problem_matcher_kind(
@@ -229,9 +410,15 @@ fn problem_matcher_kind(
 fn read_current_tasks_config(
     registry: &WorkspaceRegistry,
     workspace_id: &WorkspaceId,
+    package_root_relative_path: &str,
     expected_revision: &str,
 ) -> Result<crate::vscode_process_tasks::ValidatedVscodeTasksConfig, String> {
-    let bytes = read_retained_tasks_config(registry, workspace_id)?;
+    let package = normalized_package_root(package_root_relative_path)?;
+    let source = package.join(TASKS_CONFIG_PATH);
+    let source = source
+        .to_str()
+        .ok_or_else(|| "The process task configuration path is invalid.".to_string())?;
+    let bytes = read_retained_tasks_config(registry, workspace_id, source)?;
     let config = VscodeTasksParser::parse(&bytes)
         .map_err(|error| format!("Unable to parse .vscode/tasks.json: {error:?}"))?;
     if config.revision != expected_revision {
@@ -276,13 +463,18 @@ pub(crate) fn production_process_task_environment_policy(
     }
 }
 
-impl From<&ValidatedProcessTask> for ProcessTaskDefinition {
-    fn from(task: &ValidatedProcessTask) -> Self {
-        Self {
-            command: task.command.clone(),
-            args: task.args.clone(),
+pub(crate) fn process_task_definition(
+    task: &ValidatedProcessTask,
+) -> Result<ProcessTaskDefinition, String> {
+    match &task.execution {
+        ValidatedTaskExecution::Process { command, args } => Ok(ProcessTaskDefinition {
+            command: command.clone(),
+            args: args.clone(),
             cwd: task.options.cwd.clone(),
             env: task.options.env.clone(),
+        }),
+        ValidatedTaskExecution::Npm { .. } => {
+            Err("The npm task requires the closed package-script runtime.".to_string())
         }
     }
 }
@@ -482,9 +674,10 @@ fn validate_owner_root(
 fn read_retained_tasks_config(
     registry: &WorkspaceRegistry,
     workspace_id: &WorkspaceId,
+    relative_path: &str,
 ) -> Result<Vec<u8>, String> {
     let file = registry
-        .open_descendant(workspace_id, Path::new(TASKS_CONFIG_PATH))
+        .open_descendant(workspace_id, Path::new(relative_path))
         .map_err(|_| {
             "Unable to reopen .vscode/tasks.json from the retained workspace.".to_string()
         })?;

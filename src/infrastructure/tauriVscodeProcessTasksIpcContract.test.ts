@@ -11,6 +11,7 @@ import {
   MAX_VSCODE_PROCESS_TASK_DEPENDENCY_EDGES,
   MAX_VSCODE_PROCESS_TASK_DIAGNOSTICS,
   MAX_VSCODE_PROCESS_TASK_EVENT_OUTPUT_BYTES,
+  MAX_VSCODE_PROCESS_TASK_PACKAGE_BYTES,
   MAX_VSCODE_PROCESS_TASK_STEPS,
   MAX_VSCODE_PROCESS_TASKS,
   START_VSCODE_PROCESS_TASK_IPC_COMMAND,
@@ -32,7 +33,9 @@ const snapshot = {
   configRevision: CONFIG_REVISION,
   tasks: [
     {
+      package: ".",
       label: "Build",
+      configRevision: CONFIG_REVISION,
       detail: "Compile TypeScript",
       group: "build",
       source: ".vscode/tasks.json",
@@ -41,7 +44,9 @@ const snapshot = {
       problemMatcher: "typescript",
     },
     {
+      package: ".",
       label: "Unsupported shell",
+      configRevision: CONFIG_REVISION,
       detail: null,
       group: "none",
       source: ".vscode/tasks.json",
@@ -50,7 +55,9 @@ const snapshot = {
       problemMatcher: null,
     },
     {
+      package: ".",
       label: "Generate",
+      configRevision: CONFIG_REVISION,
       detail: null,
       group: "none",
       source: ".vscode/tasks.json",
@@ -100,6 +107,75 @@ describe("VS Code process tasks IPC contract", () => {
     expect(result.tasks[0]).not.toHaveProperty("command");
     expect(result.tasks[0]).not.toHaveProperty("args");
     expect(result.tasks[0]).not.toHaveProperty("env");
+  });
+
+  it("round trips task-local package identity and config revision", async () => {
+    const packageSnapshot = {
+      ...snapshot,
+      tasks: snapshot.tasks.map((task) => ({
+        ...task,
+        package: "packages/api",
+        source: "packages/api/.vscode/tasks.json",
+      })),
+    };
+
+    await expect(
+      invokeDiscoverVscodeProcessTasksIpc(
+        vi.fn(async () => packageSnapshot),
+        { workspaceId: "workspace-1" },
+      ),
+    ).resolves.toEqual(packageSnapshot);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+    ["over-length", `sha256:${"a".repeat(65)}`],
+    ["non-string", 42],
+  ])("rejects a %s task configRevision", async (_case, configRevision) => {
+    const task = { ...snapshot.tasks[0], configRevision };
+    if (configRevision === undefined) delete task.configRevision;
+    await expect(
+      invokeDiscoverVscodeProcessTasksIpc(
+        vi.fn(async () => ({ ...snapshot, tasks: [task] })),
+        { workspaceId: "workspace-1" },
+      ),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["non-string", 42],
+    ["Unix absolute", "/packages/api"],
+    ["Windows absolute", "C:/packages/api"],
+    ["parent traversal", "packages/../api"],
+    ["current-directory component", "packages/./api"],
+    ["empty component", "packages//api"],
+    ["trailing separator", "packages/api/"],
+    ["backslash separator", "packages\\api"],
+    ["over-length", "a".repeat(MAX_VSCODE_PROCESS_TASK_PACKAGE_BYTES + 1)],
+    ["control-character", "packages/\u0000api"],
+  ])("rejects a %s task package", async (_case, packageValue) => {
+    const task = { ...snapshot.tasks[0], package: packageValue };
+    if (packageValue === undefined) delete task.package;
+    await expect(
+      invokeDiscoverVscodeProcessTasksIpc(
+        vi.fn(async () => ({ ...snapshot, tasks: [task] })),
+        { workspaceId: "workspace-1" },
+      ),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it("rejects unknown task fields while decoding the expanded closed contract", async () => {
+    await expect(
+      invokeDiscoverVscodeProcessTasksIpc(
+        vi.fn(async () => ({
+          ...snapshot,
+          tasks: [{ ...snapshot.tasks[0], command: "tsc" }],
+        })),
+        { workspaceId: "workspace-1" },
+      ),
+    ).rejects.toThrow("exactly the fields");
   });
 
   it.each([

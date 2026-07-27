@@ -3,7 +3,7 @@ mod vscode_process_tasks;
 
 use vscode_process_tasks::{
     vscode_tasks_config_revision, ProcessTaskGroup, ProcessTaskProblemMatcher,
-    VscodeTaskDiagnosticCode, VscodeTasksConfigError, VscodeTasksParser,
+    ValidatedTaskExecution, VscodeTaskDiagnosticCode, VscodeTasksConfigError, VscodeTasksParser,
     MAX_VSCODE_TASKS_CONFIG_BYTES,
 };
 
@@ -26,8 +26,13 @@ fn parses_strict_jsonc_process_tasks_and_exact_bytes_revision() {
     assert_eq!(parsed.revision, vscode_tasks_config_revision(bytes));
     assert_eq!(parsed.tasks.len(), 1);
     assert!(parsed.diagnostics.is_empty());
-    assert_eq!(parsed.tasks[0].command, "node");
-    assert_eq!(parsed.tasks[0].args, ["--test"]);
+    assert_eq!(
+        parsed.tasks[0].execution,
+        ValidatedTaskExecution::Process {
+            command: "node".to_string(),
+            args: vec!["--test".to_string()],
+        }
+    );
     assert_eq!(
         parsed.tasks[0].group,
         Some(ProcessTaskGroup::Definition {
@@ -48,6 +53,89 @@ fn parses_strict_jsonc_process_tasks_and_exact_bytes_revision() {
     );
     assert_eq!(parsed.revision.len(), 71);
     assert!(parsed.revision.starts_with("sha256:"));
+}
+
+#[test]
+fn parses_npm_tasks_into_a_closed_script_execution() {
+    let source = br#"{
+      "version":"2.0.0",
+      "tasks":[{
+        "label":"package build",
+        "type":"npm",
+        "script":"build",
+        "options":{"cwd":"packages/web"},
+        "presentation":{"reveal":"always"},
+        "detail":"Build web package"
+      }]
+    }"#;
+    let parsed = VscodeTasksParser::parse(source).expect("valid root");
+    assert!(parsed.diagnostics.is_empty());
+    assert_eq!(parsed.tasks.len(), 1);
+    assert_eq!(
+        parsed.tasks[0].execution,
+        ValidatedTaskExecution::Npm {
+            script: "build".to_string(),
+        }
+    );
+    assert_eq!(parsed.tasks[0].options.cwd.as_deref(), Some("packages/web"));
+}
+
+#[test]
+fn rejects_npm_problem_matchers_but_accepts_an_explicit_empty_matcher_list() {
+    let source = br#"{
+      "version":"2.0.0",
+      "tasks":[
+        {"label":"plain","type":"npm","script":"build","problemMatcher":[]},
+        {"label":"named","type":"npm","script":"build","problemMatcher":"$tsc"},
+        {"label":"custom","type":"npm","script":"build","problemMatcher":{"owner":"x"}}
+      ]
+    }"#;
+    let parsed = VscodeTasksParser::parse(source).expect("valid root");
+    assert_eq!(parsed.tasks.len(), 1);
+    assert_eq!(parsed.tasks[0].label, "plain");
+    assert_eq!(parsed.diagnostics.len(), 2);
+    assert!(parsed.diagnostics.iter().all(|diagnostic| {
+        diagnostic.code == VscodeTaskDiagnosticCode::UnsupportedTask
+            && diagnostic.message.contains("problemMatcher")
+            && diagnostic.message.contains("not connected")
+    }));
+}
+
+#[test]
+fn reports_specific_policy_rejections_and_keeps_supported_siblings() {
+    let source = br#"{
+      "version":"2.0.0",
+      "tasks":[
+        {"label":"ok","type":"npm","script":"build","detail":"supported"},
+        {"label":"shell","type":"shell","command":"npm test"},
+        {"label":"background","type":"process","command":"node","isBackground":true},
+        {"label":"automatic","type":"process","command":"node","runOptions":{"runOn":"folderOpen"}},
+        {"label":"args","type":"npm","script":"build","args":["--watch"]},
+        {"label":"named hook","type":"npm","script":"prebuild"}
+      ]
+    }"#;
+    let parsed = VscodeTasksParser::parse(source).expect("valid root");
+    assert_eq!(
+        parsed
+            .tasks
+            .iter()
+            .map(|task| task.label.as_str())
+            .collect::<Vec<_>>(),
+        ["ok", "named hook"]
+    );
+    let messages = parsed
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(messages.iter().any(|message| message.contains("no-shell")));
+    assert!(messages
+        .iter()
+        .any(|message| message.contains("background")));
+    assert!(messages.iter().any(|message| message.contains("runOn")));
+    assert!(messages
+        .iter()
+        .any(|message| message.contains("extra arguments")));
 }
 
 #[test]
@@ -107,8 +195,12 @@ fn reports_unsupported_and_invalid_tasks_without_rejecting_valid_siblings() {
     );
     assert_eq!(
         parsed.diagnostics[1].code,
-        VscodeTaskDiagnosticCode::UnsupportedTask
+        VscodeTaskDiagnosticCode::DependencyGraph
     );
+    assert_eq!(parsed.diagnostics[1].label.as_deref(), Some("depends"));
+    assert!(parsed.diagnostics[1]
+        .message
+        .contains("missing or non-executable"));
     assert_eq!(
         parsed.diagnostics[2].code,
         VscodeTaskDiagnosticCode::InvalidTask
@@ -218,8 +310,6 @@ fn rejects_all_known_execution_expansion_fields_as_task_diagnostics() {
         r#""windows":{"command":"cmd"}"#,
         r#""linux":{"command":"sh"}"#,
         r#""osx":{"command":"zsh"}"#,
-        r#""presentation":{"reveal":"always"}"#,
-        r#""runOptions":{"instanceLimit":2}"#,
     ] {
         let source = format!(
             r#"{{"version":"2.0.0","tasks":[{{"label":"x","type":"process","command":"node",{field}}}]}}"#
@@ -232,6 +322,53 @@ fn rejects_all_known_execution_expansion_fields_as_task_diagnostics() {
             "{field}"
         );
     }
+}
+
+#[test]
+fn accepts_and_ignores_bounded_inert_run_options() {
+    let source = br#"{
+      "version":"2.0.0",
+      "tasks":[{
+        "label":"x",
+        "type":"process",
+        "command":"node",
+        "runOptions":{"reevaluateOnRerun":false,"instanceLimit":2}
+      }]
+    }"#;
+    let parsed = VscodeTasksParser::parse(source).expect("valid root");
+    assert_eq!(parsed.tasks.len(), 1);
+    assert!(parsed.diagnostics.is_empty());
+
+    for run_options in [
+        r#"{"reevaluateOnRerun":"false"}"#,
+        r#"{"instanceLimit":0}"#,
+        r#"{"instanceLimit":1025}"#,
+        r#"{"unknown":true}"#,
+    ] {
+        let source = format!(
+            r#"{{"version":"2.0.0","tasks":[{{"label":"x","type":"process","command":"node","runOptions":{run_options}}}]}}"#
+        );
+        let parsed = VscodeTasksParser::parse(source.as_bytes()).expect("valid root");
+        assert!(parsed.tasks.is_empty(), "{run_options}");
+        assert_eq!(parsed.diagnostics.len(), 1, "{run_options}");
+    }
+}
+
+#[test]
+fn accepts_and_ignores_bounded_presentation_metadata() {
+    let source = br#"{
+      "version":"2.0.0",
+      "tasks":[{
+        "label":"x",
+        "type":"process",
+        "command":"node",
+        "presentation":{"reveal":"always","panel":"dedicated"},
+        "detail":"Build task"
+      }]
+    }"#;
+    let parsed = VscodeTasksParser::parse(source).expect("valid root");
+    assert_eq!(parsed.tasks.len(), 1);
+    assert!(parsed.diagnostics.is_empty());
 }
 
 #[test]
@@ -256,7 +393,6 @@ fn accepts_only_bounded_explicit_sequential_dependencies() {
     assert!(parsed.tasks[0].depends_on.is_empty());
 
     for dependency_fields in [
-        r#""dependsOn":"lint","dependsOrder":"parallel""#,
         r#""dependsOn":["lint"]"#,
         r#""dependsOn":[],"dependsOrder":"sequence""#,
         r#""dependsOn":["lint","lint"],"dependsOrder":"sequence""#,

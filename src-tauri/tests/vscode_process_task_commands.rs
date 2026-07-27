@@ -745,6 +745,45 @@ fn prestart_stop_race_is_carried_through_activation() {
 }
 
 #[test]
+fn concurrent_starts_in_one_terminal_admit_only_the_first_owner() {
+    let (prepare_entered_sender, prepare_entered_receiver) = mpsc::sync_channel(0);
+    let (prepare_release_sender, prepare_release_receiver) = mpsc::sync_channel(0);
+    let runtime = FakeRuntime::new(move |_| {
+        prepare_entered_sender.send(()).unwrap();
+        prepare_release_receiver.recv().unwrap();
+        let (_release, finish_receiver) = closed_receiver();
+        Ok(prepared(
+            TerminalTaskOwnership::new(92, 14),
+            Arc::new(RawTerminalSink::default()),
+            None,
+            None,
+            finish_receiver,
+            Some(0),
+        ))
+    });
+    let (service, _) = service(runtime);
+    let service = Arc::new(service);
+    let first_owner = owner("concurrent-first", "workspace-a", 92);
+    let first = {
+        let service = Arc::clone(&service);
+        let owner = first_owner.clone();
+        thread::spawn(move || service.start(owner))
+    };
+    prepare_entered_receiver.recv().unwrap();
+
+    let error = service
+        .start(owner("concurrent-second", "workspace-a", 92))
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        "A typed task is already starting or running in this terminal session."
+    );
+    prepare_release_sender.send(()).unwrap();
+    assert_eq!(first.join().unwrap().unwrap(), first_owner);
+}
+
+#[test]
 fn stop_before_start_records_an_exact_tombstone_and_never_calls_runtime() {
     let (service, _) = service(FakeRuntime::new(|_| panic!("runtime must not run")));
     let task_owner = owner("prestart", "workspace-a", 91);

@@ -4,6 +4,7 @@ import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { DebugEvent } from "../domain/debug";
+import type { VscodeProcessTaskIdentity } from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTaskCompletion } from "./vscodeProcessTaskCoordinator";
 import type {
   VscodeProcessTaskRunOwnership,
@@ -301,7 +302,10 @@ describe("useNodeDebugPreLaunchComposition", () => {
     discovery.resolve(true);
     await act(async () => Promise.resolve());
     expect(ui.tasks.startAndWait).toHaveBeenCalledOnce();
-    expect(ui.tasks.startAndWait.mock.calls[0]?.[0]).toBe("build api");
+    expect(ui.tasks.startAndWait.mock.calls[0]?.[0]).toEqual({
+      package: ".",
+      label: "build api",
+    });
     expect(JSON.stringify(ui.tasks.startAndWait.mock.calls)).not.toMatch(/command|args|cwd|env/);
     expect(ui.startDebug).not.toHaveBeenCalled();
     completion.resolve({ status: "exited", exitCode: 0 });
@@ -1085,7 +1089,10 @@ function taskState(
   const suppliedStartAndWait =
     overrides.startAndWait ?? (async () => ({ status: "exited" as const, exitCode: 0 }));
   const startAndWait = vi.fn(
-    async (label: string, onOwned?: (ownership: { cancel(): Promise<boolean> }) => void) => {
+    async (
+      identity: VscodeProcessTaskIdentity | string,
+      onOwned?: (ownership: { cancel(): Promise<boolean> }) => void,
+    ) => {
       if (!options.delegateOwnership) {
         onOwned?.(
           Object.freeze({
@@ -1093,6 +1100,7 @@ function taskState(
           }),
         );
       }
+      const label = typeof identity === "string" ? identity : identity.label;
       return suppliedStartAndWait(label, onOwned);
     },
   );
@@ -1109,7 +1117,19 @@ function taskState(
     start: vi.fn(async () => true),
     status: null,
     stopping: false,
-    tasks: [],
+    tasks: ["build api", "stop api", "clean api"].map((label) =>
+      Object.freeze({
+        package: ".",
+        label,
+        configRevision: "sha256:current",
+        detail: null,
+        group: "none" as const,
+        source: ".vscode/tasks.json",
+        executable: true,
+        dependsOn: Object.freeze([]),
+        problemMatcher: null,
+      }),
+    ),
     truncated: false,
     unavailable: null,
     ...overrides,
@@ -1119,7 +1139,9 @@ function taskState(
 }
 
 function taskLabels(startAndWait: ReturnType<typeof vi.fn>): string[] {
-  return startAndWait.mock.calls.map(([label]) => label as string);
+  return startAndWait.mock.calls.map(([identity]) =>
+    typeof identity === "string" ? identity : (identity as VscodeProcessTaskIdentity).label,
+  );
 }
 
 function deferred<T>() {

@@ -20,12 +20,69 @@ mod managed_javascript_typescript {
 
 #[path = "../src/node_package_problem_matcher.rs"]
 mod node_package_problem_matcher;
+mod node_package_scripts {
+    use super::*;
+    use crate::node_package_problem_matcher::NodePackageTaskOutputStream;
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct RunNodePackageScriptRequest {
+        pub workspace_id: workspace_registry::WorkspaceId,
+        pub session_id: u64,
+        pub manifest_relative_path: String,
+        pub script_name: String,
+    }
+
+    pub(crate) trait NodePackageTaskOutputObserver: Send + Sync + 'static {
+        fn prepare(
+            &self,
+            workspace_root: &File,
+            workspace_path: &Path,
+            package_directory: &File,
+            package_path: &Path,
+        ) -> Result<(), String>;
+        fn observe(&self, stream: NodePackageTaskOutputStream, bytes: &[u8]);
+        fn finish(&self, stream: NodePackageTaskOutputStream);
+        fn finish_task(&self, preserve_problems: bool);
+    }
+
+    pub(crate) struct SpawnedNodePackageTask;
+
+    pub(crate) fn preflight_vscode_node_package_task(
+        _registry: &workspace_registry::WorkspaceRegistry,
+        request: &RunNodePackageScriptRequest,
+        _expected_workspace_root: &Path,
+    ) -> Result<(), String> {
+        if request.script_name == "preflight-failure" {
+            return Err("npm preflight port exercised".to_string());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn spawn_vscode_node_package_task(
+        _registry: &workspace_registry::WorkspaceRegistry,
+        _trust: &Mutex<trust::WorkspaceTrustService>,
+        _terminals: &terminal_session::TerminalSupervisor,
+        request: &RunNodePackageScriptRequest,
+        _output_observer: Arc<dyn NodePackageTaskOutputObserver>,
+        _expected_workspace_root: &Path,
+    ) -> Result<SpawnedNodePackageTask, String> {
+        Err(format!(
+            "npm spawn port exercised for {}:{}:{}:{}",
+            request.workspace_id.0,
+            request.session_id,
+            request.manifest_relative_path,
+            request.script_name
+        ))
+    }
+}
 #[path = "../src/process_task_plan.rs"]
 mod process_task_plan;
 #[path = "../src/process_task_resolver.rs"]
 mod process_task_resolver;
 #[path = "../src/vscode_process_tasks.rs"]
 mod vscode_process_tasks;
+#[path = "../src/vscode_tasks_discovery.rs"]
+mod vscode_tasks_discovery;
 
 mod terminal {
     pub(crate) trait TerminalEventSink: Send + Sync {}
@@ -37,6 +94,8 @@ mod terminal_task_process {
     pub(crate) struct TerminalTaskOwnership;
 
     impl TerminalTaskOwnership {
+        pub(crate) fn terminate(&self) {}
+
         pub(crate) fn try_wait(&self, child: &mut Child) -> io::Result<Option<ExitStatus>> {
             child.try_wait()
         }
@@ -255,7 +314,7 @@ use process_task_plan::{ProcessTaskExecutionPlan, ProcessTaskProgramKind};
 use process_task_resolver::{resolve_process_task_plan, ProcessTaskPlanError};
 use process_task_runtime::{
     finish_process_task, production_process_task_environment_policy, spawn_process_task,
-    ProcessTaskOwner, ProcessTaskRuntime, SpawnProcessTaskRequest,
+    ProcessTaskOwner, ProcessTaskRuntime, SpawnProcessTaskRequest, SpawnedRuntimeTask,
     WorkspaceRegistryProcessTaskResolver,
 };
 use std::collections::BTreeMap;
@@ -263,6 +322,60 @@ use std::io::Read;
 use terminal_session::TerminalSupervisor;
 use trust::WorkspaceTrustService;
 use workspace_registry::WorkspaceRegistry;
+
+struct MultiFileDiscoveryReader {
+    files: BTreeMap<String, Vec<u8>>,
+}
+
+impl vscode_tasks_discovery::RetainedWorkspaceFileReader for MultiFileDiscoveryReader {
+    fn list_registered_workspace_task_files(
+        &self,
+        _workspace_id: &str,
+        _maximum_manifests: usize,
+    ) -> vscode_tasks_discovery::RetainedWorkspaceTaskFilesRead {
+        vscode_tasks_discovery::RetainedWorkspaceTaskFilesRead::Files {
+            files: self
+                .files
+                .keys()
+                .map(|source| {
+                    let package = source.strip_suffix("/.vscode/tasks.json").unwrap_or(".");
+                    vscode_tasks_discovery::RetainedWorkspaceTaskFile {
+                        package_root_relative_path: package.to_string(),
+                        source: source.clone(),
+                    }
+                })
+                .collect(),
+            truncated: false,
+        }
+    }
+
+    fn read_registered_workspace_file(
+        &self,
+        _workspace_id: &str,
+        relative_path: &str,
+        _maximum_bytes: usize,
+    ) -> vscode_tasks_discovery::RetainedWorkspaceFileRead {
+        self.files
+            .get(relative_path)
+            .cloned()
+            .map(vscode_tasks_discovery::RetainedWorkspaceFileRead::Content)
+            .unwrap_or(vscode_tasks_discovery::RetainedWorkspaceFileRead::Missing)
+    }
+}
+
+struct AcceptingDiscoveryResolver;
+
+impl vscode_tasks_discovery::VscodeProcessTaskPlanResolver for AcceptingDiscoveryResolver {
+    fn resolve(
+        &self,
+        _workspace_id: &str,
+        _package_root_relative_path: &str,
+        _config_revision: &str,
+        _task: &vscode_process_tasks::ValidatedProcessTask,
+    ) -> vscode_tasks_discovery::ProcessTaskPlanResolution {
+        vscode_tasks_discovery::ProcessTaskPlanResolution::Executable
+    }
+}
 
 fn fixture_root(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -309,15 +422,128 @@ fn authoritative_task_revision_attaches_only_a_supported_problem_matcher() {
         },
         config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
         label: "test".to_string(),
+        package_root_relative_path: ".".to_string(),
     };
-    let mut spawned = ProcessTaskRuntime::new(&registry, &trust, &terminals)
-        .prepare_and_spawn(&request)
-        .expect("spawn supported matcher task");
+    let SpawnedRuntimeTask::Process(mut spawned) =
+        ProcessTaskRuntime::new(&registry, &trust, &terminals)
+            .prepare_and_spawn(&request)
+            .expect("spawn supported matcher task")
+    else {
+        panic!("expected process task");
+    };
     assert!(spawned.problem_matcher.is_some());
     assert!(finish_process_task(&terminals, &mut spawned)
         .expect("finish matcher task")
         .success());
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn package_owned_revision_starts_from_the_package_configuration() {
+    let root = fixture_root("package-owned-revision");
+    let package = root.join("packages/api");
+    fs::create_dir_all(package.join(".vscode")).unwrap();
+    let executable = package.join("task");
+    fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    let mut permissions = fs::metadata(&executable).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o700);
+    fs::set_permissions(&executable, permissions).unwrap();
+    let root_bytes = tasks_bytes("/usr/bin/true");
+    let package_bytes = br#"{"version":"2.0.0","tasks":[{"label":"test","type":"process","command":"${workspaceFolder}/packages/api/task","options":{"cwd":"${workspaceFolder}"}}]}"#;
+    fs::write(root.join(".vscode/tasks.json"), root_bytes).unwrap();
+    fs::write(package.join(".vscode/tasks.json"), package_bytes).unwrap();
+    let discovery = vscode_tasks_discovery::VscodeTasksDiscoveryService::new(
+        &MultiFileDiscoveryReader {
+            files: BTreeMap::from([
+                (
+                    ".vscode/tasks.json".to_string(),
+                    tasks_bytes("/usr/bin/true"),
+                ),
+                (
+                    "packages/api/.vscode/tasks.json".to_string(),
+                    package_bytes.to_vec(),
+                ),
+            ]),
+        },
+        &AcceptingDiscoveryResolver,
+    )
+    .discover(vscode_tasks_discovery::VscodeTasksDiscoveryRequest {
+        workspace_id: "workspace".to_string(),
+    });
+    let selected = discovery
+        .tasks
+        .iter()
+        .find(|task| task.package == "packages/api" && task.label == "test")
+        .expect("discover package-owned task");
+    let registry = WorkspaceRegistry::new(root.clone());
+    let terminals = TerminalSupervisor {
+        expected_session: 7,
+        expected_root: root.clone(),
+    };
+    let trust = Mutex::new(WorkspaceTrustService { trusted: true });
+    let request = SpawnProcessTaskRequest {
+        owner: ProcessTaskOwner {
+            workspace_id: registry
+                .descriptor(&workspace_registry::WorkspaceId("workspace".into()))
+                .unwrap()
+                .workspace_id,
+            workspace_root: root.clone(),
+            terminal_session_id: 7,
+        },
+        config_revision: selected.config_revision.clone(),
+        label: selected.label.clone(),
+        package_root_relative_path: selected.package.clone(),
+    };
+
+    let SpawnedRuntimeTask::Process(mut spawned) =
+        ProcessTaskRuntime::new(&registry, &trust, &terminals)
+            .prepare_and_spawn(&request)
+            .expect("start package-owned task")
+    else {
+        panic!("expected process task");
+    };
+    assert!(finish_process_task(&terminals, &mut spawned)
+        .expect("finish package-owned task")
+        .success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn npm_execution_branch_uses_the_package_spawn_port_in_tests() {
+    let root = fixture_root("npm-runtime-port");
+    let package = root.join("packages/api");
+    fs::create_dir_all(package.join(".vscode")).unwrap();
+    let bytes = br#"{"version":"2.0.0","tasks":[{"label":"test","type":"npm","script":"build"}]}"#;
+    fs::write(package.join(".vscode/tasks.json"), bytes).unwrap();
+    let registry = WorkspaceRegistry::new(root.clone());
+    let terminals = TerminalSupervisor {
+        expected_session: 7,
+        expected_root: root.clone(),
+    };
+    let trust = Mutex::new(WorkspaceTrustService { trusted: true });
+    let request = SpawnProcessTaskRequest {
+        owner: ProcessTaskOwner {
+            workspace_id: registry
+                .descriptor(&workspace_registry::WorkspaceId("workspace".into()))
+                .unwrap()
+                .workspace_id,
+            workspace_root: root.clone(),
+            terminal_session_id: 7,
+        },
+        config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
+        label: "test".to_string(),
+        package_root_relative_path: "packages/api".to_string(),
+    };
+
+    let error =
+        match ProcessTaskRuntime::new(&registry, &trust, &terminals).prepare_and_spawn(&request) {
+            Ok(_) => panic!("mock npm port must identify the branch"),
+            Err(error) => error,
+        };
+    assert!(
+        error.contains("npm spawn port exercised for workspace:7:packages/api/package.json:build")
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -354,6 +580,7 @@ fn supported_matcher_fails_closed_when_retained_root_disappears_before_construct
         },
         config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
         label: "test".to_string(),
+        package_root_relative_path: ".".to_string(),
     };
 
     let error =
@@ -398,6 +625,7 @@ fn all_owner_checks_fail_before_the_process_is_spawned() {
         },
         config_revision: revision,
         label: "test".to_string(),
+        package_root_relative_path: ".".to_string(),
     };
 
     let untrusted = Mutex::new(WorkspaceTrustService { trusted: false });
@@ -472,6 +700,7 @@ fn backend_reparses_and_rejects_a_non_executable_dependency_graph() {
         },
         config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
         label: "test".to_string(),
+        package_root_relative_path: ".".to_string(),
     };
     let trusted = Mutex::new(WorkspaceTrustService { trusted: true });
 
@@ -521,6 +750,7 @@ fn resolves_postorder_chain_and_revalidates_revision_before_each_step() {
         },
         config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
         label: "target".to_string(),
+        package_root_relative_path: ".".to_string(),
     };
     let runtime = ProcessTaskRuntime::new(&registry, &trusted, &terminals);
 
@@ -577,6 +807,7 @@ fn chain_preflight_rejects_a_later_unsafe_step_before_any_process_can_spawn() {
         },
         config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
         label: "target".to_string(),
+        package_root_relative_path: ".".to_string(),
     };
 
     assert!(ProcessTaskRuntime::new(&registry, &trusted, &terminals)
@@ -628,6 +859,7 @@ fn changed_revision_between_steps_prevents_the_next_child_from_spawning() {
         },
         config_revision: vscode_process_tasks::vscode_tasks_config_revision(bytes),
         label: "target".to_string(),
+        package_root_relative_path: ".".to_string(),
     };
     let runtime = ProcessTaskRuntime::new(&registry, &trusted, &terminals);
     assert_eq!(
@@ -636,7 +868,10 @@ fn changed_revision_between_steps_prevents_the_next_child_from_spawning() {
     );
     let mut dependency = base.clone();
     dependency.label = "dependency".to_string();
-    let mut spawned = runtime.prepare_and_spawn(&dependency).unwrap();
+    let SpawnedRuntimeTask::Process(mut spawned) = runtime.prepare_and_spawn(&dependency).unwrap()
+    else {
+        panic!("expected process task");
+    };
     assert!(finish_process_task(&terminals, &mut spawned)
         .unwrap()
         .success());

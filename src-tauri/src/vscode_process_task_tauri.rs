@@ -5,11 +5,12 @@ use crate::{
 use tauri::State;
 
 #[tauri::command]
-pub(crate) fn workspace_start_vscode_process_task(
+pub(crate) async fn workspace_start_vscode_process_task(
     request: VscodeProcessTaskOwner,
     service: State<'_, VscodeProcessTaskCommandService>,
 ) -> Result<VscodeProcessTaskOwner, String> {
-    service.start(request)
+    let service = service.inner().clone();
+    crate::run_blocking_command(move || service.start(request)).await
 }
 
 #[tauri::command]

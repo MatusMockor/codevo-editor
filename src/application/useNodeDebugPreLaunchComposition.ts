@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DebugEvent, DebugGateway } from "../domain/debug";
+import {
+  vscodeProcessTaskIdentity,
+  type VscodeProcessTaskIdentity,
+} from "../domain/vscodeProcessTasks";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   VscodeProcessTaskRunOwnership,
@@ -120,7 +124,12 @@ export function useNodeDebugPreLaunchComposition(options: {
   executionRef.current = options.processTasks;
   const ownedPostTaskExecutionRef = useRef<OwnedPostTaskExecution | null>(null);
   const [execution] = useState<NodeDebugPreLaunchTaskExecution>(() => ({
-    startAndWait: (label, onOwned) => executionRef.current.startAndWait(label, onOwned),
+    startAndWait: (label, onOwned) => {
+      const processTasks = executionRef.current;
+      const identity = exactConfiguredTaskIdentity(processTasks, label);
+      if (!identity) return Promise.resolve(null);
+      return processTasks.startAndWait(identity, onOwned);
+    },
   }));
   const [coordinator] = useState(() =>
     createNodeDebugPreLaunchTaskCoordinator({
@@ -425,7 +434,10 @@ export function useNodeDebugPreLaunchComposition(options: {
               };
               ownedPostTaskExecutionRef.current = ownedExecution;
               try {
-                const completion = await execution.startAndWait(task.label, (ownedRun) => {
+                const processTasks = executionRef.current;
+                const identity = exactConfiguredTaskIdentity(processTasks, task.label);
+                if (!identity) throw new Error("post task unavailable");
+                const completion = await processTasks.startAndWait(identity, (ownedRun) => {
                   ownedExecution.ownership = ownedRun;
                   if (
                     ownedExecution.cancellationRequested ||
@@ -712,6 +724,15 @@ function debugStartOwnerIsCurrent(
   } catch {
     return false;
   }
+}
+
+function exactConfiguredTaskIdentity(
+  processTasks: VscodeProcessTasksState,
+  label: string,
+): VscodeProcessTaskIdentity | null {
+  const matches = processTasks.tasks.filter((task) => task.executable && task.label === label);
+  if (matches.length !== 1) return null;
+  return vscodeProcessTaskIdentity(matches[0]!);
 }
 
 function sameWorkspaceAuthority(

@@ -123,6 +123,13 @@ struct ParsedManifest {
     scripts: Vec<String>,
 }
 
+#[cfg_attr(test, allow(dead_code))]
+#[derive(Clone, Copy)]
+enum ScriptExecutionPolicy {
+    PackagePanel,
+    VscodeTask,
+}
+
 #[tauri::command]
 pub(crate) fn workspace_discover_node_package_scripts(
     registry: State<'_, WorkspaceRegistry>,
@@ -243,11 +250,26 @@ fn discover_node_package_scripts_with_registry(
 }
 
 pub(crate) struct SpawnedNodePackageTask {
-    child: std::process::Child,
+    pub(crate) child: std::process::Child,
     pub(crate) ownership: crate::terminal_task_process::TerminalTaskOwnership,
-    stderr_reader: Option<thread::JoinHandle<Result<(), String>>>,
-    stdout_reader: Option<thread::JoinHandle<Result<(), String>>>,
-    output_observer: Arc<dyn NodePackageTaskOutputObserver>,
+    pub(crate) stderr_reader: Option<thread::JoinHandle<Result<(), String>>>,
+    pub(crate) stdout_reader: Option<thread::JoinHandle<Result<(), String>>>,
+    pub(crate) output_observer: Arc<dyn NodePackageTaskOutputObserver>,
+    settled: bool,
+}
+
+impl Drop for SpawnedNodePackageTask {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        self.ownership.terminate();
+        let _ = self.ownership.wait_after_terminate(&mut self.child);
+        let _ = join_output_reader(self.stdout_reader.take());
+        let _ = join_output_reader(self.stderr_reader.take());
+        self.output_observer.finish_task(false);
+        self.settled = true;
+    }
 }
 
 pub(crate) trait NodePackageTaskOutputObserver: Send + Sync + 'static {
@@ -280,21 +302,101 @@ pub(crate) fn spawn_node_package_task(
     request: &RunNodePackageScriptRequest,
     output_observer: Arc<dyn NodePackageTaskOutputObserver>,
 ) -> Result<SpawnedNodePackageTask, String> {
+    spawn_node_package_task_with_policy(
+        registry,
+        trust,
+        terminals,
+        request,
+        output_observer,
+        ScriptExecutionPolicy::PackagePanel,
+        None,
+    )
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn spawn_vscode_node_package_task(
+    registry: &WorkspaceRegistry,
+    trust: &Mutex<WorkspaceTrustService>,
+    terminals: &TerminalSupervisor,
+    request: &RunNodePackageScriptRequest,
+    output_observer: Arc<dyn NodePackageTaskOutputObserver>,
+    expected_workspace_root: &Path,
+) -> Result<SpawnedNodePackageTask, String> {
+    spawn_node_package_task_with_policy(
+        registry,
+        trust,
+        terminals,
+        request,
+        output_observer,
+        ScriptExecutionPolicy::VscodeTask,
+        Some(expected_workspace_root),
+    )
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn preflight_vscode_node_package_task(
+    registry: &WorkspaceRegistry,
+    request: &RunNodePackageScriptRequest,
+    expected_workspace_root: &Path,
+) -> Result<(), String> {
     validate_workspace_id(&request.workspace_id)?;
     validate_script_name(&request.script_name)?;
     let manifest_path = validate_manifest_relative_path(&request.manifest_relative_path)?;
-
-    // Keep workspace admission and trust stable until after the child has been spawned. The
-    // child owns a descriptor-bound cwd, so later path replacement cannot redirect execution.
-    let _operation = registry
+    let operation = registry
         .lock_operations()
         .map_err(|error| error.to_string())?;
     let descriptor = registry
         .descriptor(&request.workspace_id)
         .map_err(|_| "Node package script workspace is not registered.".to_string())?;
+    if descriptor.canonical_root_path != expected_workspace_root {
+        return Err("The package task workspace identity changed before start.".to_string());
+    }
     let root = registry
         .clone_root(&request.workspace_id)
         .map_err(|_| "Node package script workspace is not registered.".to_string())?;
+    drop(operation);
+    let package_root = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+    let package_directory = open_package_directory(&root, package_root)
+        .map_err(|error| format!("Failed to open the package directory safely: {error}"))?;
+    let manifest_file = open_manifest_in_directory(&package_directory)
+        .map_err(|error| format!("Failed to open package.json safely: {error}"))?;
+    let parsed = parse_manifest(manifest_file)?;
+    if !parsed
+        .scripts
+        .iter()
+        .any(|script| script == &request.script_name)
+    {
+        return Err("The requested package script no longer exists in package.json.".to_string());
+    }
+    reject_vscode_lifecycle_hooks(&parsed, &request.script_name)
+}
+
+fn spawn_node_package_task_with_policy(
+    registry: &WorkspaceRegistry,
+    trust: &Mutex<WorkspaceTrustService>,
+    terminals: &TerminalSupervisor,
+    request: &RunNodePackageScriptRequest,
+    output_observer: Arc<dyn NodePackageTaskOutputObserver>,
+    policy: ScriptExecutionPolicy,
+    expected_workspace_root: Option<&Path>,
+) -> Result<SpawnedNodePackageTask, String> {
+    validate_workspace_id(&request.workspace_id)?;
+    validate_script_name(&request.script_name)?;
+    let manifest_path = validate_manifest_relative_path(&request.manifest_relative_path)?;
+
+    let operation = registry
+        .lock_operations()
+        .map_err(|error| error.to_string())?;
+    let descriptor = registry
+        .descriptor(&request.workspace_id)
+        .map_err(|_| "Node package script workspace is not registered.".to_string())?;
+    if expected_workspace_root.is_some_and(|expected| descriptor.canonical_root_path != expected) {
+        return Err("The package task workspace identity changed before start.".to_string());
+    }
+    let root = registry
+        .clone_root(&request.workspace_id)
+        .map_err(|_| "Node package script workspace is not registered.".to_string())?;
+    drop(operation);
     let root_identity = opened_root_path(&root)
         .map_err(|error| format!("Failed to inspect the registered workspace root: {error}"))?;
     if root_identity != descriptor.canonical_root_path {
@@ -304,8 +406,12 @@ pub(crate) fn spawn_node_package_task(
         .selected_root_path
         .to_str()
         .ok_or_else(|| "Workspace root path is not valid UTF-8.".to_string())?;
-    let trust_guard = trust.lock().map_err(|error| error.to_string())?;
-    if !trust_guard.get(trust_root).trusted {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(trust_root)
+        .trusted;
+    if !trusted {
         return Err("Trust this workspace before running a package script.".to_string());
     }
     let sink = terminals.task_sink(request.session_id, &root_identity)?;
@@ -334,9 +440,12 @@ pub(crate) fn spawn_node_package_task(
     {
         return Err("The requested package script no longer exists in package.json.".to_string());
     }
+    if matches!(policy, ScriptExecutionPolicy::VscodeTask) {
+        reject_vscode_lifecycle_hooks(&parsed, &request.script_name)?;
+    }
     let manager = parsed
         .manager
-        .or_else(|| detect_manager_from_lockfiles(registry, &request.workspace_id, package_root))
+        .or_else(|| detect_manager_from_retained_root(&root, package_root))
         .ok_or_else(|| "Could not determine a supported package manager.".to_string())?;
 
     let mut command = Command::new(manager.executable());
@@ -347,9 +456,19 @@ pub(crate) fn spawn_node_package_task(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_descriptor_bound_cwd(&mut command, &package_directory)?;
+    let operation = registry
+        .lock_operations()
+        .map_err(|error| error.to_string())?;
+    let current_descriptor = registry
+        .descriptor(&request.workspace_id)
+        .map_err(|_| "Node package script workspace is not registered.".to_string())?;
+    if current_descriptor != descriptor {
+        return Err("The package task workspace identity changed before start.".to_string());
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start package script: {error}"))?;
+    drop(operation);
     let process_group_id = i32::try_from(child.id()).map_err(|_| {
         let _ = child.kill();
         let _ = child.wait();
@@ -370,9 +489,6 @@ pub(crate) fn spawn_node_package_task(
             };
         }
     };
-    drop(trust_guard);
-    drop(_operation);
-
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let stdout_reader = stdout.map(|stream| {
@@ -399,7 +515,27 @@ pub(crate) fn spawn_node_package_task(
         stderr_reader,
         stdout_reader,
         output_observer,
+        settled: false,
     })
+}
+
+fn reject_vscode_lifecycle_hooks(
+    manifest: &ParsedManifest,
+    selected_script: &str,
+) -> Result<(), String> {
+    let pre = format!("pre{selected_script}");
+    let post = format!("post{selected_script}");
+    if manifest.scripts.iter().any(|script| script == &pre) {
+        return Err(format!(
+            "The selected npm script defines lifecycle hook \"{pre}\", which VS Code tasks do not execute."
+        ));
+    }
+    if manifest.scripts.iter().any(|script| script == &post) {
+        return Err(format!(
+            "The selected npm script defines lifecycle hook \"{post}\", which VS Code tasks do not execute."
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn finish_node_package_task(
@@ -411,8 +547,8 @@ pub(crate) fn finish_node_package_task(
     // Remove ownership immediately after the atomic Reaped/Terminated transition. Reader joins
     // can take arbitrarily longer and must never retain a reusable operating-system PGID.
     terminals.unregister_task(&task.ownership);
-    let stdout_result = join_output_reader(task.stdout_reader);
-    let stderr_result = join_output_reader(task.stderr_reader);
+    let stdout_result = join_output_reader(task.stdout_reader.take());
+    let stderr_result = join_output_reader(task.stderr_reader.take());
     let completion = if stopped {
         NodePackageTaskCompletion::Stopped
     } else {
@@ -432,6 +568,7 @@ pub(crate) fn finish_node_package_task(
         completion,
         NodePackageTaskCompletion::Exited { .. }
     ));
+    task.settled = true;
     completion
 }
 
@@ -496,6 +633,29 @@ fn detect_manager_from_lockfiles(
                 current.join(lockfile)
             };
             if registry.open_descendant(workspace_id, &candidate).is_ok() {
+                return Some(manager);
+            }
+        }
+        directory = current.parent();
+    }
+    Some(NodePackageManager::Npm)
+}
+
+fn detect_manager_from_retained_root(
+    root: &File,
+    package_root: &Path,
+) -> Option<NodePackageManager> {
+    let mut directory = Some(package_root);
+    while let Some(current) = directory {
+        let opened = open_package_directory(root, current).ok()?;
+        for (lockfile, manager) in [
+            ("pnpm-lock.yaml", NodePackageManager::Pnpm),
+            ("yarn.lock", NodePackageManager::Yarn),
+            ("package-lock.json", NodePackageManager::Npm),
+            ("bun.lock", NodePackageManager::Bun),
+            ("bun.lockb", NodePackageManager::Bun),
+        ] {
+            if open_regular_file_in_directory(&opened, lockfile).is_ok() {
                 return Some(manager);
             }
         }
@@ -624,10 +784,16 @@ fn open_package_directory(root: &File, relative: &Path) -> io::Result<File> {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn open_manifest_in_directory(directory: &File) -> io::Result<File> {
+    open_regular_file_in_directory(directory, "package.json")
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn open_regular_file_in_directory(directory: &File, name: &str) -> io::Result<File> {
+    let name = std::ffi::CString::new(name)?;
     let fd = unsafe {
         libc::openat(
             directory.as_raw_fd(),
-            c"package.json".as_ptr(),
+            name.as_ptr(),
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
     };
@@ -810,6 +976,86 @@ mod tests {
         let path = root.join(relative);
         fs::create_dir_all(path.parent().expect("manifest parent")).expect("create parent");
         fs::write(path, content).expect("write manifest");
+    }
+
+    #[test]
+    fn vscode_entry_rejects_selected_script_lifecycle_hooks() {
+        let manifest = ParsedManifest {
+            manager: Some(NodePackageManager::Npm),
+            package_name: None,
+            scripts: vec![
+                "build".to_string(),
+                "prebuild".to_string(),
+                "postbuild".to_string(),
+            ],
+        };
+
+        let error = reject_vscode_lifecycle_hooks(&manifest, "build")
+            .expect_err("lifecycle hooks must be rejected");
+
+        assert!(error.contains("prebuild"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vscode_entry_spawns_and_reaps_a_closed_npm_script_in_test_builds() {
+        let root = temp_workspace("vscode-npm-spawn");
+        write_manifest(
+            &root,
+            "package.json",
+            r#"{"packageManager":"npm@10","scripts":{"build":"node -e \"process.exit(0)\""}}"#,
+        );
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry.register(&root).expect("register workspace");
+        let supervisor = TerminalSupervisor::new();
+        let status = supervisor
+            .start(
+                descriptor.canonical_root_path.clone(),
+                TerminalSize::default(),
+                TerminalProfile {
+                    command: None,
+                    id: "default".into(),
+                    label: "Default".into(),
+                },
+                None,
+                &FakeSpawner,
+                Arc::new(NoopSink),
+            )
+            .expect("start terminal");
+        let TerminalRuntimeStatus::Running { session_id, .. } = status else {
+            panic!("expected running terminal");
+        };
+        let storage = root.join("trust.json");
+        let mut trust = WorkspaceTrustService::load(storage).expect("load trust");
+        trust
+            .set(
+                descriptor
+                    .selected_root_path
+                    .to_str()
+                    .expect("utf8 selected root"),
+                true,
+            )
+            .expect("trust workspace");
+        let task = spawn_vscode_node_package_task(
+            &registry,
+            &Mutex::new(trust),
+            &supervisor,
+            &RunNodePackageScriptRequest {
+                workspace_id: descriptor.workspace_id,
+                session_id,
+                manifest_relative_path: "package.json".to_string(),
+                script_name: "build".to_string(),
+            },
+            Arc::new(NoopOutputObserver),
+            &descriptor.canonical_root_path,
+        )
+        .expect("spawn vscode npm task");
+        assert!(matches!(
+            finish_node_package_task(&supervisor, task),
+            NodePackageTaskCompletion::Exited { exit_code: Some(0) }
+        ));
+        supervisor.stop(session_id).expect("stop terminal");
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[cfg(unix)]
