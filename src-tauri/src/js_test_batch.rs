@@ -55,6 +55,9 @@ use validation::{validate_owner_id, validate_package_roots};
 #[cfg(test)]
 use validation::{MAX_BATCH_OWNER_ID_BYTES, MAX_BATCH_PACKAGE_ROOT_BYTES};
 #[cfg(all(test, unix))]
+#[path = "js_test_fifo_test_support.rs"]
+mod fifo_test_support;
+#[cfg(all(test, unix))]
 #[path = "js_test_pid_test_support.rs"]
 pub(crate) mod test_support;
 
@@ -927,12 +930,8 @@ fn display_package_root(value: &str) -> &str {
 mod tests {
     use super::*;
     use crate::php_test_run::{PhpTestCase, PhpTestStatus, PhpTestSuite};
-    use std::{
-        ffi::CString,
-        io::{Read, Write},
-        os::unix::{ffi::OsStrExt, fs::PermissionsExt, io::AsRawFd},
-        sync::atomic::AtomicU64,
-    };
+    use fifo_test_support::{open_fifo, read_start_events};
+    use std::{io::Write, os::unix::fs::PermissionsExt, sync::atomic::AtomicU64};
 
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -988,54 +987,6 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup workspace");
         if data.exists() {
             fs::remove_dir_all(data).expect("cleanup app data");
-        }
-    }
-
-    fn open_fifo(path: &Path) -> fs::File {
-        let native_path = CString::new(path.as_os_str().as_bytes()).expect("fifo path");
-        let result = unsafe { libc::mkfifo(native_path.as_ptr(), 0o600) };
-        assert_eq!(
-            result,
-            0,
-            "create fifo at {}: {}",
-            path.display(),
-            std::io::Error::last_os_error()
-        );
-        fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .expect("open fifo")
-    }
-
-    fn read_start_events(events: &mut fs::File, buffer: &mut [u8], timeout: Duration, label: &str) {
-        let deadline = Instant::now() + timeout;
-        let mut filled = 0;
-        while filled < buffer.len() {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(
-                !remaining.is_zero(),
-                "{label}: only {filled} of {} start events arrived before the deadline",
-                buffer.len()
-            );
-            let mut descriptor = libc::pollfd {
-                fd: events.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            let ready =
-                unsafe { libc::poll(&mut descriptor, 1, remaining.as_millis() as libc::c_int) };
-            assert!(
-                ready >= 0,
-                "{label} poll: {}",
-                std::io::Error::last_os_error()
-            );
-            if ready == 0 {
-                continue;
-            }
-            filled += events
-                .read(&mut buffer[filled..])
-                .expect("read start events");
         }
     }
 
