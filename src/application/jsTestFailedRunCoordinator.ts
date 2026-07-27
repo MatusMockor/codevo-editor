@@ -11,6 +11,7 @@ import {
   type JsTestTaskOwner,
 } from "../domain/jsTestTask";
 import { validatedJsTestRunScope } from "../domain/jsTestRunScope";
+import { validatedJsTestExecutionAuthority } from "../domain/jsTestExecutionAuthority";
 import type { TestRunOk } from "../domain/testResults";
 
 export interface JsTestFailedRunRequest {
@@ -184,8 +185,10 @@ export function createJsTestFailedRunCoordinator({
             envelope = await gateway.runTask(
               Object.freeze({
                 ...owner,
-                packageRootRelativePath: "",
-                scope: cloneFrozenScope(scope),
+                packageRootRelativePath: validatedJsTestExecutionAuthority({
+                  packageRootRelativePath: scope.packageRootRelativePath ?? "",
+                }).packageRootRelativePath,
+                scope: cloneFrozenRunScope(scope),
               }),
             );
           } catch (cause) {
@@ -267,7 +270,10 @@ function validRequest(request: JsTestFailedRunRequest): boolean {
       (scope) =>
         Object.isFrozen(scope) &&
         scope.kind === "test" &&
-        exactScope(validatedJsTestRunScope(scope), scope),
+        exactScope(validatedJsTestRunScope(scope), scope) &&
+        validatedJsTestExecutionAuthority({
+          packageRootRelativePath: scope.packageRootRelativePath ?? "",
+        }).packageRootRelativePath === (scope.packageRootRelativePath ?? ""),
     );
   } catch {
     return false;
@@ -325,6 +331,18 @@ function batchBoundaryOutcome(
 }
 
 function cloneFrozenScope(scope: JsTestFailedRunScope): JsTestFailedRunScope {
+  return Object.freeze({
+    fullName: scope.fullName,
+    kind: "test",
+    ...(scope.nameMatch === "prefix" ? { nameMatch: "prefix" as const } : {}),
+    ...(scope.packageRootRelativePath === undefined
+      ? {}
+      : { packageRootRelativePath: scope.packageRootRelativePath }),
+    relativeFilePath: scope.relativeFilePath,
+  });
+}
+
+function cloneFrozenRunScope(scope: JsTestFailedRunScope): JsTestFailedRunScope {
   return Object.freeze({
     fullName: scope.fullName,
     kind: "test",

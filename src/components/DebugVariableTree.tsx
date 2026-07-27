@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { DebugVariable } from "../domain/debug";
+import type { DebugVariableFilter } from "../domain/debug";
 import type { LatencyClock, LatencyTracker } from "../domain/latencyTracker";
 import type { DebugCopyValueCandidate } from "../application/debugCopyValue";
 import type {
@@ -82,7 +83,12 @@ export interface DebugVariableTreeProps {
   readonly copyValueSurface?: DebugCopyValueSurface;
   readonly setVariableSurface?: DebugSetVariableSurface;
   readonly virtualizeRows?: boolean;
-  onLoadPage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
+  onLoadPage?(
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    start: number,
+    filter?: DebugVariableFilter,
+  ): void | Promise<void>;
   onLoadVariables?(variablesReference: number): void;
 }
 
@@ -448,11 +454,13 @@ export function DebugVariableTree({
   const activate = (row: TreeRow) => {
     if (row.kind === "action") {
       if (row.owner && row.nextStart !== undefined) {
-        onLoadPage?.(row.owner, row.variablesReference, row.nextStart);
+        onLoadPage?.(row.owner, row.variablesReference, row.nextStart, row.filter);
       }
       return;
     }
-    if (row.kind === "node" && row.expandable) setExpanded(row, !row.expanded);
+    if ((row.kind === "node" || row.kind === "range") && row.expandable) {
+      setExpanded(row, !row.expanded);
+    }
   };
   const commitEdit = async () => {
     const current = editing;
@@ -833,7 +841,13 @@ function requestVariables(
   onLoadVariables: DebugVariableTreeProps["onLoadVariables"],
 ) {
   if (variablePages && onLoadPage && row.owner) {
-    onLoadPage(row.owner, row.variablesReference, 0);
+    if (row.kind === "range" && row.filter && row.nextStart !== undefined) {
+      onLoadPage(row.owner, row.variablesReference, row.nextStart, row.filter);
+      return;
+    }
+    void Promise.resolve(onLoadPage(row.owner, row.variablesReference, 0, "named"))
+      .catch(() => undefined)
+      .then(() => onLoadPage(row.owner!, row.variablesReference, 0, "indexed"));
   } else if (!variablesByReference[row.variablesReference]) {
     onLoadVariables?.(row.variablesReference);
   }

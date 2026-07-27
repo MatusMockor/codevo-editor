@@ -13,7 +13,15 @@ describe("JavaScript test execution authority", () => {
     },
   );
 
-  it.each(["/tmp/package", "../outside", "packages/../outside", "packages//web", "C:/repo"])(
+  it.each([
+    "/tmp/package",
+    "../outside",
+    "packages/../outside",
+    "packages//web",
+    "packages/line\nbreak",
+    "packages/\u202ehidden",
+    "C:/repo",
+  ])(
     "rejects foreign package root %j",
     (value) => {
       expect(() => validatedJsTestPackageRootRelativePath(value)).toThrow(

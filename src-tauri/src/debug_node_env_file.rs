@@ -1,6 +1,7 @@
 use crate::debug_adapter::{
     DebugBreakpoint, DebugExceptionPauseMode, DebugFunctionBreakpoint, DebugJustMyCodePolicy,
     DebugLaunchTarget, DebugSessionRegistry, DebugStartResponse, NodeConfiguredScriptRuntime,
+    NodeDebugRuntimePolicy,
 };
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
@@ -39,6 +40,8 @@ pub(crate) struct NodeConfiguredScriptLaunchWire {
     #[serde(default, deserialize_with = "deserialize_optional_bool")]
     source_maps: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_optional_bool")]
+    smart_step: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_optional_bool")]
     stop_on_entry: Option<bool>,
 }
 
@@ -51,6 +54,8 @@ pub(crate) enum NodeSourceMappedLaunchWire {
         #[serde(default, deserialize_with = "deserialize_optional_bool")]
         source_maps: Option<bool>,
         #[serde(default, deserialize_with = "deserialize_optional_bool")]
+        smart_step: Option<bool>,
+        #[serde(default, deserialize_with = "deserialize_optional_bool")]
         stop_on_entry: Option<bool>,
     },
     #[serde(rename = "node-script", rename_all = "camelCase")]
@@ -58,6 +63,8 @@ pub(crate) enum NodeSourceMappedLaunchWire {
         script_path: String,
         #[serde(default, deserialize_with = "deserialize_optional_bool")]
         source_maps: Option<bool>,
+        #[serde(default, deserialize_with = "deserialize_optional_bool")]
+        smart_step: Option<bool>,
         #[serde(default, deserialize_with = "deserialize_optional_bool")]
         stop_on_entry: Option<bool>,
     },
@@ -71,6 +78,8 @@ pub(crate) enum NodeSourceMappedLaunchWire {
         just_my_code: Option<DebugJustMyCodePolicy>,
         #[serde(default, deserialize_with = "deserialize_optional_bool")]
         source_maps: Option<bool>,
+        #[serde(default, deserialize_with = "deserialize_optional_bool")]
+        smart_step: Option<bool>,
         #[serde(default, deserialize_with = "deserialize_optional_bool")]
         stop_on_entry: Option<bool>,
     },
@@ -109,7 +118,7 @@ pub(crate) async fn debug_start(
     let retained_root =
         crate::debug_session_registry::retain_workspace_root(&workspace_registry, &root_path)?;
     let workspace = retained_root.try_clone_directory()?;
-    let (launch, source_maps_enabled, stop_on_entry) =
+    let (launch, runtime_policy, stop_on_entry) =
         decode_node_launch_with_env_file(&workspace, launch)?;
     crate::debug_commands::debug_start(
         root_path,
@@ -118,7 +127,7 @@ pub(crate) async fn debug_start(
         function_breakpoints,
         exception_pause_mode,
         exception_type_filter,
-        source_maps_enabled,
+        runtime_policy,
         stop_on_entry,
         app,
         registry,
@@ -131,13 +140,15 @@ pub(crate) async fn debug_start(
 fn decode_node_launch_with_env_file(
     workspace: &File,
     launch: NodeDebugLaunchWire,
-) -> Result<(DebugLaunchTarget, bool, bool), String> {
+) -> Result<(DebugLaunchTarget, NodeDebugRuntimePolicy, bool), String> {
     let configured = match launch {
         NodeDebugLaunchWire::ConfiguredScript(configured) => configured,
         NodeDebugLaunchWire::SourceMapped(source_mapped) => {
             return decode_source_mapped_launch(source_mapped)
         }
-        NodeDebugLaunchWire::Existing(existing) => return Ok((existing, true, false)),
+        NodeDebugLaunchWire::Existing(existing) => {
+            return Ok((existing, NodeDebugRuntimePolicy::default(), false))
+        }
     };
     let NodeConfiguredScriptLaunchWire {
         kind: NodeConfiguredScriptKind::NodeConfiguredScript,
@@ -149,6 +160,7 @@ fn decode_node_launch_with_env_file(
         just_my_code,
         runtime,
         source_maps,
+        smart_step,
         stop_on_entry,
     } = configured;
     let mut environment = env;
@@ -173,7 +185,10 @@ fn decode_node_launch_with_env_file(
                 runtime,
                 just_my_code,
             },
-            source_maps.unwrap_or(true),
+            NodeDebugRuntimePolicy {
+                source_maps_enabled: source_maps.unwrap_or(true),
+                smart_step_enabled: smart_step.unwrap_or(true),
+            },
             stop_on_entry.unwrap_or(false),
         ));
     }
@@ -185,18 +200,22 @@ fn decode_node_launch_with_env_file(
             env: environment,
             just_my_code,
         },
-        source_maps.unwrap_or(true),
+        NodeDebugRuntimePolicy {
+            source_maps_enabled: source_maps.unwrap_or(true),
+            smart_step_enabled: smart_step.unwrap_or(true),
+        },
         stop_on_entry.unwrap_or(false),
     ))
 }
 
 fn decode_source_mapped_launch(
     value: NodeSourceMappedLaunchWire,
-) -> Result<(DebugLaunchTarget, bool, bool), String> {
+) -> Result<(DebugLaunchTarget, NodeDebugRuntimePolicy, bool), String> {
     match value {
         NodeSourceMappedLaunchWire::Attach {
             port,
             source_maps,
+            smart_step,
             stop_on_entry,
         } => {
             if stop_on_entry == Some(true) {
@@ -204,17 +223,24 @@ fn decode_source_mapped_launch(
             }
             Ok((
                 DebugLaunchTarget::NodeAttach { port },
-                source_maps.unwrap_or(true),
+                NodeDebugRuntimePolicy {
+                    source_maps_enabled: source_maps.unwrap_or(true),
+                    smart_step_enabled: smart_step.unwrap_or(true),
+                },
                 false,
             ))
         }
         NodeSourceMappedLaunchWire::Script {
             script_path,
             source_maps,
+            smart_step,
             stop_on_entry,
         } => Ok((
             DebugLaunchTarget::NodeScript { script_path },
-            source_maps.unwrap_or(true),
+            NodeDebugRuntimePolicy {
+                source_maps_enabled: source_maps.unwrap_or(true),
+                smart_step_enabled: smart_step.unwrap_or(true),
+            },
             stop_on_entry.unwrap_or(false),
         )),
         NodeSourceMappedLaunchWire::NpmScript {
@@ -225,6 +251,7 @@ fn decode_source_mapped_launch(
             env,
             just_my_code,
             source_maps,
+            smart_step,
             stop_on_entry,
         } => Ok((
             DebugLaunchTarget::NodeNpmScript {
@@ -235,7 +262,10 @@ fn decode_source_mapped_launch(
                 env,
                 just_my_code,
             },
-            source_maps.unwrap_or(true),
+            NodeDebugRuntimePolicy {
+                source_maps_enabled: source_maps.unwrap_or(true),
+                smart_step_enabled: smart_step.unwrap_or(true),
+            },
             stop_on_entry.unwrap_or(false),
         )),
     }
@@ -448,7 +478,7 @@ REFERENCE=${PLAIN}
         });
         let wire = serde_json::from_value(launch).unwrap();
 
-        let (decoded, source_maps_enabled, stop_on_entry) =
+        let (decoded, runtime_policy, stop_on_entry) =
             decode_node_launch_with_env_file(&fixture.directory, wire).unwrap();
 
         let environment = match decoded {
@@ -460,7 +490,8 @@ REFERENCE=${PLAIN}
         assert_eq!(environment.get("FROM_FILE").unwrap(), "file");
         assert_eq!(environment.get("INLINE").unwrap(), "inline");
         assert_eq!(environment.get("OVERRIDE").unwrap(), "inline");
-        assert!(source_maps_enabled);
+        assert!(runtime_policy.source_maps_enabled);
+        assert!(runtime_policy.smart_step_enabled);
         assert!(!stop_on_entry);
     }
 
@@ -479,7 +510,7 @@ REFERENCE=${PLAIN}
                 "runtime": wire_name
             });
             let wire = serde_json::from_value(launch).expect("runtime wire");
-            let (decoded, source_maps_enabled, stop_on_entry) =
+            let (decoded, runtime_policy, stop_on_entry) =
                 decode_node_launch_with_env_file(&fixture.directory, wire).expect("runtime target");
             assert!(matches!(
                 decoded,
@@ -488,7 +519,8 @@ REFERENCE=${PLAIN}
                     ..
                 } if decoded_runtime == runtime
             ));
-            assert!(source_maps_enabled);
+            assert!(runtime_policy.source_maps_enabled);
+            assert!(runtime_policy.smart_step_enabled);
             assert!(!stop_on_entry);
         }
 
@@ -536,9 +568,10 @@ REFERENCE=${PLAIN}
                 launch["sourceMaps"] = source_maps;
             }
             let wire = serde_json::from_value(launch).expect("source maps wire");
-            let (_, source_maps_enabled, _) =
+            let (_, runtime_policy, _) =
                 decode_node_launch_with_env_file(&fixture.directory, wire).expect("launch");
-            assert_eq!(source_maps_enabled, expected);
+            assert_eq!(runtime_policy.source_maps_enabled, expected);
+            assert!(runtime_policy.smart_step_enabled);
         }
 
         let invalid = serde_json::json!({
@@ -553,6 +586,43 @@ REFERENCE=${PLAIN}
             "sourceMaps": null
         });
         assert!(serde_json::from_value::<NodeDebugLaunchWire>(null).is_err());
+    }
+
+    #[test]
+    fn smart_step_wire_defaults_enabled_and_preserves_exact_boolean_policy() {
+        let fixture = Fixture::new("smart-step-wire");
+        for (smart_step, expected) in [
+            (serde_json::Value::Null, true),
+            (serde_json::json!(true), true),
+            (serde_json::json!(false), false),
+        ] {
+            let mut launch = serde_json::json!({
+                "kind": "node-script",
+                "scriptPath": fixture.root.join("server.js").to_string_lossy()
+            });
+            if !smart_step.is_null() {
+                launch["smartStep"] = smart_step;
+            }
+            let wire = serde_json::from_value(launch).expect("smart-step wire");
+            let (_, runtime_policy, _) =
+                decode_node_launch_with_env_file(&fixture.directory, wire).expect("launch");
+            assert!(runtime_policy.source_maps_enabled);
+            assert_eq!(runtime_policy.smart_step_enabled, expected);
+        }
+        for invalid in [
+            serde_json::json!("false"),
+            serde_json::json!(null),
+            serde_json::json!(1),
+        ] {
+            assert!(
+                serde_json::from_value::<NodeDebugLaunchWire>(serde_json::json!({
+                    "kind": "node-attach",
+                    "port": 9229,
+                    "smartStep": invalid
+                }))
+                .is_err()
+            );
+        }
     }
 
     #[test]

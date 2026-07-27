@@ -12,8 +12,9 @@ mod adversarial_tests;
 mod registry;
 use registry::MAX_SOURCE_MAP_URL_BYTES;
 pub(crate) use registry::{
-    MappedSourceCandidate, MappedSourceLocation, PreparedSourceMap, SourceMapPreparation,
-    SourceMapReceipt, SourceMapRegistry, SourceMapSettlement,
+    GeneratedSourceMapClassification, MappedSourceCandidate, MappedSourceLocation,
+    PreparedSourceMap, SourceMapDispatchLease, SourceMapPreparation, SourceMapReceipt,
+    SourceMapRegistry, SourceMapSettlement,
 };
 
 pub(crate) fn emitted_type_script_path(root: &Path, source: &Path) -> Result<PathBuf, String> {

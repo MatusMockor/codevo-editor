@@ -4,6 +4,7 @@ use super::{
     MAX_DEBUG_SCOPES, MAX_DEBUG_VARIABLE_NAME_BYTES, MAX_DEBUG_VARIABLE_PAGE_COUNT,
     MAX_DEBUG_VARIABLE_START, MAX_JAVASCRIPT_SAFE_INTEGER,
 };
+use crate::debug_adapter::DebugVariableFilter;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +119,7 @@ pub(crate) struct DebugVariablesRequest {
     pub(crate) pause_generation: u64,
     pub(crate) frame_id: u64,
     pub(crate) variables_reference: u64,
+    pub(crate) filter: DebugVariableFilter,
     pub(crate) start: u64,
     pub(crate) count: u32,
 }

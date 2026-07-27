@@ -23,12 +23,20 @@ impl PauseGenerationFloor {
 
 impl CdpShared {
     pub(in crate::debug_cdp) fn new(source_maps: Option<SourceMapRegistry>) -> Self {
-        Self::new_at_pause_generation_floor(source_maps, PauseGenerationFloor::INITIAL)
+        Self::new_with_smart_step(source_maps, PauseGenerationFloor::INITIAL, false)
     }
 
     pub(in crate::debug_cdp) fn new_at_pause_generation_floor(
         source_maps: Option<SourceMapRegistry>,
         floor: PauseGenerationFloor,
+    ) -> Self {
+        Self::new_with_smart_step(source_maps, floor, false)
+    }
+
+    pub(in crate::debug_cdp) fn new_with_smart_step(
+        source_maps: Option<SourceMapRegistry>,
+        floor: PauseGenerationFloor,
+        smart_step_enabled: bool,
     ) -> Self {
         Self {
             breakpoint_hits: CdpBreakpointHitRegistry::default(),
@@ -46,6 +54,9 @@ impl CdpShared {
             resolution_index: HashMap::new(),
             suppress_next_resumed: false,
             source_maps,
+            smart_step_dispatch_lease: None,
+            smart_step_fallback: None,
+            smart_step_policy: super::smart_step::StepPolicy::new(smart_step_enabled),
             startup_validation: None,
         }
     }
@@ -68,6 +79,16 @@ impl CdpShared {
     pub(in crate::debug_cdp) fn invalidate_pause(&mut self) {
         self.pause = None;
         let _ = self.advance_pause_generation();
+    }
+
+    pub(crate) fn cancel_smart_step(&mut self) {
+        if let Some(lease) = self.smart_step_dispatch_lease.take() {
+            if let Some(source_maps) = self.source_maps.as_mut() {
+                source_maps.release_dispatch(lease);
+            }
+        }
+        self.smart_step_fallback = None;
+        self.smart_step_policy.cancel();
     }
 }
 

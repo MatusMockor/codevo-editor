@@ -822,11 +822,13 @@ describe("debug Tauri IPC contract", () => {
   it("encodes and decodes the exact Rust-equivalent paged variables wire", async () => {
     const page = {
       variables: [{ name: "value", value: "1", type: null, variablesReference: 0 }],
+      filter: "named",
       start: 100,
       returned: 1,
       total: 102,
       nextStart: 101,
       truncated: false,
+      limitReason: null,
     };
     const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue(page);
     const args: DebugIpcCommandArgs<"debug_variables"> = {
@@ -836,6 +838,7 @@ describe("debug Tauri IPC contract", () => {
         pauseGeneration: 3,
         frameId: 11,
         variablesReference: 21,
+        filter: "named",
         start: 100,
         count: 100,
       },
@@ -847,9 +850,13 @@ describe("debug Tauri IPC contract", () => {
   it("strictly preserves optional evaluate names on variable pages", () => {
     const page = (variable: Record<string, unknown>) => ({
       variables: [variable],
+      filter: "named",
       start: 0,
       returned: 1,
+      total: 1,
+      nextStart: null,
       truncated: false,
+      limitReason: null,
     });
     const base = { name: "item", value: "1", variablesReference: 0 };
     expect(decodeDebugIpcResult("debug_variables", page(base))).toEqual(page(base));
@@ -966,9 +973,13 @@ describe("debug Tauri IPC contract", () => {
 
     const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
       variables: [],
+      filter: "named",
       start: 1,
       returned: 0,
+      total: 1,
+      nextStart: null,
       truncated: false,
+      limitReason: null,
     });
     await expect(
       invokeDebugIpc(invokeCommand, "debug_variables", {
@@ -978,6 +989,7 @@ describe("debug Tauri IPC contract", () => {
           pauseGeneration: 3,
           frameId: 11,
           variablesReference: 21,
+          filter: "named",
           start: 0,
           count: 1,
         },
@@ -989,9 +1001,13 @@ describe("debug Tauri IPC contract", () => {
         { name: "one", value: "1", variablesReference: 0 },
         { name: "two", value: "2", variablesReference: 0 },
       ],
+      filter: "named",
       start: 0,
       returned: 2,
+      total: 2,
+      nextStart: null,
       truncated: false,
+      limitReason: null,
     });
     await expect(
       invokeDebugIpc(invokeCommand, "debug_variables", {
@@ -1001,6 +1017,7 @@ describe("debug Tauri IPC contract", () => {
           pauseGeneration: 3,
           frameId: 11,
           variablesReference: 21,
+          filter: "named",
           start: 0,
           count: 1,
         },
@@ -1012,11 +1029,13 @@ describe("debug Tauri IPC contract", () => {
     expect(
       decodeDebugIpcResult("debug_variables", {
         variables: [{ name: "first", value: "1", variablesReference: 0 }],
+        filter: "named",
         start: 0,
         returned: 1,
         total: 3,
         nextStart: 1,
         truncated: true,
+        limitReason: "page-bytes",
       }),
     ).toMatchObject({ returned: 1, nextStart: 1, truncated: true });
   });
@@ -1275,6 +1294,7 @@ describe("debug Tauri IPC contract", () => {
       args: ["--port", "3000"],
       cwd: "/workspace",
       env: { PORT: "3000" },
+      smartStep: false,
       sourceMaps: false,
     };
     await expect(
@@ -1286,6 +1306,16 @@ describe("debug Tauri IPC contract", () => {
         exceptionTypeFilter: [],
       }),
     ).resolves.toEqual({ status: "ok", sessionId: 9 });
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start", {
+        rootPath: "/workspace",
+        launch: { ...launch, smartStep: "false" },
+        breakpoints: [],
+        exceptionPauseMode: "none",
+        exceptionTypeFilter: [],
+      } as never),
+    ).rejects.toThrow("debug_start args.launch.smartStep");
 
     await expect(
       invokeDebugIpc(invokeCommand, "debug_start", {
@@ -1456,7 +1486,7 @@ describe("debug Tauri IPC contract", () => {
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_compound", { request });
   });
 
-  it("validates native Node watch sourceMaps as a boolean", async () => {
+  it("validates native Node watch sourceMaps and smartStep as booleans", async () => {
     const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
       status: "ok",
       sessionId: 9,
@@ -1470,6 +1500,7 @@ describe("debug Tauri IPC contract", () => {
       exceptionPauseMode: "none" as const,
       exceptionTypeFilter: [],
       sourceMaps: false,
+      smartStep: true,
     };
 
     await expect(
@@ -1480,6 +1511,11 @@ describe("debug Tauri IPC contract", () => {
         request: { ...args, sourceMaps: "false" },
       } as never),
     ).rejects.toThrow("debug_start_native_node_watch args.request.sourceMaps");
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
+        request: { ...args, smartStep: "true" },
+      } as never),
+    ).rejects.toThrow("debug_start_native_node_watch args.request.smartStep");
     await expect(
       invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
         request: { ...args, sourceMaps: null },
@@ -2411,9 +2447,13 @@ describe("debug Tauri IPC contract", () => {
     expect(
       decodeDebugIpcResult("debug_variables", {
         variables: [{ name: "value", value: "1", type: null, variablesReference: 0 }],
+        filter: "named",
         start: 0,
         returned: 1,
+        total: 1,
+        nextStart: null,
         truncated: false,
+        limitReason: null,
       }),
     ).toMatchObject({ returned: 1, start: 0 });
     expect(

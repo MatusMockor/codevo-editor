@@ -600,6 +600,7 @@ describe("loadConfiguredNodeLaunch", () => {
         },
         justMyCode: "nodeInternals",
         preLaunchTask: "build api",
+        smartStep: true,
       },
       launch: {
         kind: "node-npm-script",

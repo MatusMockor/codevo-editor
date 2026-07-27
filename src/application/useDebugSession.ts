@@ -7,7 +7,6 @@ import type {
   DebugExceptionTypeFilter,
   DebugLaunchTarget,
   DebugSetBreakpointsActiveRequest,
-  DebugVariable,
   StepKind,
 } from "../domain/debug";
 import { debuggerSessionId } from "../domain/debug";
@@ -40,6 +39,15 @@ import type { DebugOutputOwner } from "./debugOutputBatchCoordinator";
 import { useDebugSetVariable } from "./useDebugSetVariable";
 import { useDebugSetExpression } from "./useDebugSetExpression";
 import { useDebugVariableMutationRows } from "./useDebugVariableMutationRows";
+import { useDebugInspectionOwnerInvalidation } from "./useDebugInspectionOwnerInvalidation";
+import {
+  debugVariablePageCanLoad,
+  debugVariablePagePublicationIsCurrent,
+  debugVariablePageRequestKey,
+  currentDebugInspectionOwner,
+  flattenNamedDebugVariables,
+  normalizeDebugVariablePageResult,
+} from "./debugVariablePageAuthority";
 import {
   useDebugSessionEnd,
   type DebugSessionOwner,
@@ -1475,25 +1483,25 @@ export function useWorkbenchDebugSession({
   functionBreakpointsForStartRef.current = snapshotFunctionBreakpointsForStart;
 
   const loadVariablePage = useCallback(
-    async (owner: DebugInspectionOwner, variablesReference: number, start: number) => {
+    async (
+      owner: DebugInspectionOwner,
+      variablesReference: number,
+      start: number,
+      filter: import("../domain/debug").DebugVariableFilter = "named",
+    ) => {
       if (!isWorkspaceTrusted()) return;
-      const requestKey = `${owner.rootKey}\0${owner.sessionId}\0${owner.pauseGeneration}\0${owner.frameId}\0${variablesReference}\0${start}`;
+      const requestKey = debugVariablePageRequestKey(owner, variablesReference, filter, start);
       if (variablePageRequestsRef.current.has(requestKey)) return;
       if (variablePageFlightsRef.current.size >= MAX_DEBUG_VARIABLE_CONCURRENT_REQUESTS) return;
       const expansion = selectDebugVariableExpansion(
         variablePagesRef.current,
         owner,
         variablesReference,
+        [],
+        0,
+        filter,
       );
-      if (
-        expansion.kind === "stale" ||
-        expansion.kind === "leaf" ||
-        expansion.kind === "circular" ||
-        expansion.kind === "limit" ||
-        (expansion.kind !== "idle" && expansion.nextStart !== start)
-      ) {
-        return;
-      }
+      if (!debugVariablePageCanLoad(expansion, filter, start)) return;
       variablePageRequestIdRef.current += 1;
       const requestId = `variables-${variablePageRequestIdRef.current}`;
       variablePageRequestsRef.current.set(requestKey, requestId);
@@ -1503,6 +1511,7 @@ export function useWorkbenchDebugSession({
           type: "request",
           owner,
           variablesReference,
+          filter,
           start,
           requestId,
         }),
@@ -1514,22 +1523,28 @@ export function useWorkbenchDebugSession({
           pauseGeneration: owner.pauseGeneration,
           frameId: owner.frameId,
           variablesReference,
+          filter,
           start,
           count: 100,
         });
         if (!mountedRef.current || !isWorkspaceTrusted()) return;
         const root = currentRootRef.current;
-        if (!root || normalizedWorkspaceRootKey(root) !== owner.rootKey) return;
+        if (!root) return;
         const key = normalizedWorkspaceRootKey(root);
         const state = (snapshotsRef.current[key] ?? inactiveSnapshot).state;
         const selectedFrame =
           frameSelectionByRootRef.current[key]?.frameId ??
           (state.kind === "stopped" ? (state.topFrame?.frameId ?? null) : null);
         if (
-          state.kind !== "stopped" ||
-          state.sessionId !== owner.sessionId ||
-          (pauseGenerationByRootRef.current[key] ?? 0) !== owner.pauseGeneration ||
-          selectedFrame !== owner.frameId
+          !debugVariablePagePublicationIsCurrent({
+            owner,
+            workspaceId: currentWorkspaceIdRef.current,
+            workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
+            currentRootKey: key,
+            stoppedSessionId: state.kind === "stopped" ? state.sessionId : null,
+            pauseGeneration: pauseGenerationByRootRef.current[key] ?? 0,
+            selectedFrameId: selectedFrame,
+          })
         )
           return;
         setVariablePages((current) =>
@@ -1537,14 +1552,10 @@ export function useWorkbenchDebugSession({
             type: "resolve",
             owner,
             variablesReference,
+            filter,
             start,
             requestId,
-            result: {
-              variablesReference,
-              start: page.start,
-              variables: page.variables,
-              nextStart: page.nextStart ?? null,
-            },
+            result: normalizeDebugVariablePageResult(page, variablesReference, filter),
           }),
         );
       } catch (error) {
@@ -1553,6 +1564,7 @@ export function useWorkbenchDebugSession({
             type: "reject",
             owner,
             variablesReference,
+            filter,
             start,
             requestId,
             message: error instanceof Error ? error.message : "Variable loading failed.",
@@ -1564,6 +1576,7 @@ export function useWorkbenchDebugSession({
             type: "cancel",
             owner,
             variablesReference,
+            filter,
             start,
             requestId,
           }),
@@ -1587,12 +1600,18 @@ export function useWorkbenchDebugSession({
         frameSelectionByRootRef.current[key]?.frameId ??
         (state.kind === "stopped" ? (state.topFrame?.frameId ?? null) : null);
       const pauseGeneration = pauseGenerationByRootRef.current[key] ?? 0;
-      if (state.kind !== "stopped" || frameId === null || pauseGeneration <= 0) return;
-      await loadVariablePage(
-        { rootKey: key, sessionId: state.sessionId, pauseGeneration, frameId },
-        variablesReference,
-        0,
+      const owner = currentDebugInspectionOwner(
+        key,
+        currentWorkspaceIdRef.current,
+        workspaceOwnerEpochRef.current.epoch,
+        state.kind === "stopped" ? state.sessionId : null,
+        pauseGeneration,
+        frameId,
       );
+      if (owner) {
+        await loadVariablePage(owner, variablesReference, 0, "named");
+        await loadVariablePage(owner, variablesReference, 0, "indexed");
+      }
     },
     [loadVariablePage],
   );
@@ -1606,6 +1625,12 @@ export function useWorkbenchDebugSession({
   const refreshDebugWatchEvaluations = useCallback(() => {
     setDebugInspectionRevision((current) => current + 1);
   }, []);
+  const invalidateDebugInspectionOwner = useDebugInspectionOwnerInvalidation({
+    requestsRef: variablePageRequestsRef,
+    pagesRef: variablePagesRef,
+    setPages: setVariablePages,
+    publishRevision: refreshDebugWatchEvaluations,
+  });
 
   const setWatchExpression = useDebugSetExpression({
     adapterKindForSession,
@@ -1640,6 +1665,7 @@ export function useWorkbenchDebugSession({
     gateway,
     isExactWorkspaceOwnerCurrent,
     isWorkspaceTrusted,
+    invalidateDebugInspectionOwner,
     mountedRef,
     pauseGenerationByRootRef,
     pendingActiveStopsRef,
@@ -1654,10 +1680,8 @@ export function useWorkbenchDebugSession({
     workspaceOwnerEpochRef,
   });
   const variableMutationRows = useDebugVariableMutationRows({
-    refreshDebugWatchEvaluations,
+    loadVariablePage,
     setVariable,
-    setVariablePages,
-    variablePageRequestsRef,
     variablePagesRef,
   });
 
@@ -1673,6 +1697,7 @@ export function useWorkbenchDebugSession({
     gateway,
     isExactWorkspaceOwnerCurrent,
     isWorkspaceTrusted,
+    invalidateDebugInspectionOwner,
     mountedRef,
     pauseGenerationByRootRef,
     pendingControlsRef,
@@ -1738,6 +1763,7 @@ export function useWorkbenchDebugSession({
     activePauseGeneration,
     currentRootRef,
     currentWorkspaceIdRef,
+    workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
     frameSelectionByRootRef,
     frameSelectionGenerationByRootRef,
     isExactWorkspaceOwnerCurrent,
@@ -1767,15 +1793,10 @@ export function useWorkbenchDebugSession({
   const visibleVariablePages = debugInspectionOwnersEqual(variablePages.owner, inspectionOwner)
     ? variablePages
     : createDebugVariablePagesState(inspectionOwner);
-  const variablesByReference = useMemo(() => {
-    const flattened: Record<number, DebugVariable[]> = {};
-    for (const [reference, entry] of Object.entries(visibleVariablePages.references)) {
-      flattened[Number(reference)] = Object.values(entry.pages)
-        .sort((left, right) => left.start - right.start)
-        .flatMap((page) => page.variables);
-    }
-    return flattened;
-  }, [visibleVariablePages]);
+  const variablesByReference = useMemo(
+    () => flattenNamedDebugVariables(visibleVariablePages.references),
+    [visibleVariablePages],
+  );
 
   const activeBreakpoints = breakpointsByRoot[activeKey] ?? emptyBreakpoints;
   const breakpointsActivated = breakpointsActivatedFor(activeKey, sessionId);

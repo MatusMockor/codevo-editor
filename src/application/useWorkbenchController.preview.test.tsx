@@ -6328,7 +6328,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
-  it("globally caps notices across many diagnostic files with an overflow indicator", async () => {
+  it("bounds diagnostics across many files with an exact retention receipt", async () => {
     let publishDiagnostics: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
     const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
       subscribeDiagnostics: vi.fn(async (listener) => {
@@ -6377,26 +6377,16 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    const notices = getWorkbench().notices;
-    const diagnosticNotices = notices.filter((notice) =>
-      notice.groupKey?.startsWith("language-server-diagnostics:"),
-    );
-    const overflowNotices = notices.filter(
-      (notice) => notice.groupKey === "workbench-notice-overflow",
+    const retentionReceipt = getWorkbench().notices.find((notice) =>
+      notice.groupKey?.startsWith("diagnostics-retention-receipt:"),
     );
 
-    // Bounded near the global cap (kept diagnostics + one overflow indicator),
-    // never the full 2100.
-    expect(notices.length).toBeLessThanOrEqual(2001);
-    expect(diagnosticNotices.length).toBeLessThanOrEqual(2000);
-    expect(diagnosticNotices.length).toBeGreaterThan(0);
-    expect(overflowNotices).toHaveLength(1);
-    expect(overflowNotices[0].kind).toBe("overflow");
-
-    // Editor markers come from a separate, uncapped source: every file's
-    // diagnostics are still tracked for markers even though notices are capped.
-    expect(Object.keys(getWorkbench().languageServerDiagnosticsByPath).length).toBe(fileCount);
-    expect(getWorkbench().diagnosticsSummary.errors).toBe(fileCount);
+    expect(retentionReceipt).toMatchObject({
+      kind: "overflow",
+      message: "Retained 2000 of 2100 published diagnostics.",
+    });
+    expect(Object.keys(getWorkbench().languageServerDiagnosticsByPath)).toHaveLength(2000);
+    expect(getWorkbench().diagnosticsSummary.errors).toBe(2000);
   });
 
   it("preserves the per-document notice cap with an overflow indicator", async () => {
@@ -6596,7 +6586,7 @@ describe("useWorkbenchController preview tabs", () => {
     const overflow = groupNotices[groupNotices.length - 1];
     expect(overflow.severity).toBe("info");
     // The hidden count is truthful (300 - 100 = 200), not a lie about "100".
-    expect(overflow.message).toContain("200 more");
+    expect(overflow.message).toContain("200 not shown");
 
     // Markers (the separate, uncapped source) keep ALL 300 diagnostics so no
     // squiggle is lost.
@@ -6850,7 +6840,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(0);
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
     expect(getWorkbench().diagnosticsSummary).toEqual({
       errors: 0,
       warnings: 0,
@@ -40560,7 +40550,7 @@ trait SoftDeletes
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toEqual([]);
+    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toBeUndefined();
   });
 
   it("stops stale PHP trait host-method search after switching project tabs", async () => {
@@ -41646,7 +41636,7 @@ class HostState
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().languageServerDiagnosticsByPath[resolvesHostStatePath]).toEqual([]);
+    expect(getWorkbench().languageServerDiagnosticsByPath[resolvesHostStatePath]).toBeUndefined();
   });
 
   it("suppresses trait host-constant diagnostics when the host declares the constant", async () => {
@@ -41746,7 +41736,7 @@ class HostState
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().languageServerDiagnosticsByPath[resolvesHostStatePath]).toEqual([]);
+    expect(getWorkbench().languageServerDiagnosticsByPath[resolvesHostStatePath]).toBeUndefined();
   });
 
   it("stops stale PHP trait host-constant search after switching project tabs", async () => {
@@ -42135,7 +42125,7 @@ class Model
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toEqual([]);
+    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toBeUndefined();
   });
 
   it("suppresses trait host-method diagnostics when a descendant provides the method", async () => {
@@ -42266,7 +42256,7 @@ class Comment extends BaseModel
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toEqual([]);
+    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toBeUndefined();
   });
 
   it("suppresses trait host-method diagnostics reported with a short trait name", async () => {
@@ -42384,7 +42374,7 @@ class Model
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toEqual([]);
+    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toBeUndefined();
   });
 
   it("suppresses static local-scope diagnostics only when the model defines the scope", async () => {

@@ -11,6 +11,7 @@ use crate::debug_node_process::watch_cdp::watch_cdp_event_emitter;
 use crate::debug_node_process::watch_control_proxy::WatchSetFunctionBreakpointsRequest;
 use crate::debug_node_process::watch_event_gate::WatchDebugEventGate;
 use crate::debug_session_registry::DebugSessionRegistry;
+use crate::debug_source_map::SourceMapRegistry;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::net::TcpListener;
@@ -262,7 +263,10 @@ fn runtime(
         &socket.url,
         watch_cdp_event_emitter(gate, lease, Arc::new(AtomicU64::new(0))),
         timeout,
-        None,
+        Some(
+            SourceMapRegistry::new(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                .expect("source-map registry"),
+        ),
         Arc::new(|| true),
         PauseGenerationFloor::INITIAL,
         None,
@@ -298,6 +302,7 @@ fn typed_commands_use_exact_single_cdp_requests_and_owned_epoch_response() {
         runtime.execute(WatchDebugControlCommand::Pause, deadline, &revoked),
         Ok(WatchDebugControlResponse::Ack)
     );
+    runtime.adapter.watch_set_pause_for_test(1);
     assert_eq!(
         runtime.execute(
             WatchDebugControlCommand::Step(StepKind::StepOver),
@@ -306,12 +311,38 @@ fn typed_commands_use_exact_single_cdp_requests_and_owned_epoch_response() {
         ),
         Ok(WatchDebugControlResponse::Ack)
     );
+    assert!(runtime.adapter.watch_smart_step_active_for_test());
+    assert_eq!(
+        runtime.execute(WatchDebugControlCommand::Pause, deadline, &revoked),
+        Ok(WatchDebugControlResponse::Ack)
+    );
+    assert!(!runtime.adapter.watch_smart_step_active_for_test());
+    assert_eq!(
+        runtime.execute(
+            WatchDebugControlCommand::Step(StepKind::StepInto),
+            deadline,
+            &revoked
+        ),
+        Ok(WatchDebugControlResponse::Ack)
+    );
+    assert!(runtime.adapter.watch_smart_step_active_for_test());
+    assert_eq!(
+        runtime.execute(
+            WatchDebugControlCommand::Step(StepKind::Continue),
+            deadline,
+            &revoked
+        ),
+        Ok(WatchDebugControlResponse::Ack)
+    );
+    assert!(!runtime.adapter.watch_smart_step_active_for_test());
     assert_eq!(
         socket.methods(),
         [
             "Runtime.runIfWaitingForDebugger",
             "Debugger.pause",
-            "Debugger.stepOver"
+            "Debugger.stepOver",
+            "Debugger.stepInto",
+            "Debugger.resume"
         ]
     );
     runtime.shutdown(Instant::now() + Duration::from_millis(250), &revoked);
@@ -399,6 +430,7 @@ struct FakePausedInspection {
     frames: Vec<DebugStackFrame>,
     scopes: Vec<DebugScopeInfo>,
     reads: AtomicUsize,
+    last_variables_filter: Option<crate::debug_adapter::DebugVariableFilter>,
     revoke_on_read: bool,
     expire_on_read: bool,
 }
@@ -420,6 +452,7 @@ impl FakePausedInspection {
                 expensive: false,
             }],
             reads: AtomicUsize::new(0),
+            last_variables_filter: None,
             revoke_on_read: false,
             expire_on_read: false,
         }
@@ -484,6 +517,7 @@ impl WatchPausedInspection for FakePausedInspection {
         request: WatchVariablesRequest,
     ) -> Result<DebugVariablePage, String> {
         self.reads.fetch_add(1, Ordering::SeqCst);
+        self.last_variables_filter = Some(request.filter());
         if request.frame_id() != 1 || request.variables_reference() != 2 {
             return Err("wrong variables owner".to_string());
         }
@@ -502,6 +536,7 @@ impl WatchPausedInspection for FakePausedInspection {
             total: Some(1),
             next_start: None,
             truncated: false,
+            limit_reason: None,
         })
     }
 
@@ -586,6 +621,14 @@ fn variables_request(epoch: u64, frame_id: u64, reference: u64) -> WatchVariable
         count: 10,
     })
     .expect("variables request")
+}
+
+fn indexed_variables_request(epoch: u64, frame_id: u64, reference: u64) -> WatchVariablesRequest {
+    WatchVariablesRequest::new_filtered(
+        variables_request(epoch, frame_id, reference).request(),
+        crate::debug_adapter::DebugVariableFilter::Indexed,
+    )
+    .expect("indexed variables request")
 }
 
 fn evaluate_request(
@@ -721,6 +764,25 @@ fn variables_and_evaluate_require_the_exact_pre_and_post_pause_epoch() {
     assert_eq!(result.frame_id(), 1);
     assert_eq!(result.variables_reference(), 2);
     assert_eq!(result.page().variables[0].value, "42");
+    assert_eq!(
+        variables.last_variables_filter,
+        Some(crate::debug_adapter::DebugVariableFilter::Named)
+    );
+
+    let mut indexed = FakePausedInspection::new([Some(7), Some(7)]);
+    let result = variables_at_epoch(
+        &mut indexed,
+        indexed_variables_request(7, 1, 2),
+        deadline,
+        &revoked,
+    )
+    .expect("indexed variables");
+    assert_eq!(result.pause_epoch(), 7);
+    assert_eq!(result.variables_reference(), 2);
+    assert_eq!(
+        indexed.last_variables_filter,
+        Some(crate::debug_adapter::DebugVariableFilter::Indexed)
+    );
 
     let mut evaluation = FakePausedInspection::new([Some(7), Some(7)]);
     let result = evaluate_at_epoch(

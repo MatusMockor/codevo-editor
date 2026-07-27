@@ -20,6 +20,12 @@ import {
   validatedJsTestExecutionAuthority,
   type JsTestExecutionAuthority,
 } from "../domain/jsTestExecutionAuthority";
+import {
+  immutableJsTestBatchRequest,
+  type JsTestBatchGateway,
+  type JsTestBatchRequest,
+  type JsTestBatchResponse,
+} from "../domain/jsTestBatch";
 
 type InvokeCommand = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -36,10 +42,13 @@ export const JS_TEST_RESPONSE_LIMITS = Object.freeze({
 
 interface DecodeContext {
   cases: number;
+  suites: number;
   textBytes: number;
 }
 
-export class TauriJsTestGateway implements TestGateway, JsTestGateway, JsTestTaskGateway {
+export class TauriJsTestGateway
+  implements TestGateway, JsTestGateway, JsTestTaskGateway, JsTestBatchGateway
+{
   constructor(private readonly invokeTestCommand = invokeCommand) {}
 
   run(
@@ -98,6 +107,179 @@ export class TauriJsTestGateway implements TestGateway, JsTestGateway, JsTestTas
     assertEchoedTaskRunId(response.runId, validatedRequest.runId);
     if (typeof response.stopped !== "boolean") throw invalid("stopped");
     return response.stopped;
+  }
+
+  async runBatch(request: Parameters<JsTestBatchGateway["runBatch"]>[0]) {
+    const validatedRequest = immutableJsTestBatchRequest(request);
+    const response = await this.invokeTestCommand("run_js_test_batch_json", {
+      request: validatedRequest,
+    });
+    return decodeJsTestBatchResponse(response, validatedRequest);
+  }
+
+  async stopBatch(request: JsTestTaskStopRequest): Promise<boolean> {
+    const validatedRequest = {
+      runId: validatedJsTestTaskRunId(request.runId),
+      workspaceId: validatedJsTestTaskWorkspaceId(request.workspaceId),
+    };
+    const response = record(
+      await this.invokeTestCommand("stop_js_test_batch", { request: validatedRequest }),
+      "JavaScript test batch stop response",
+    );
+    exactKeys(response, ["runId", "stopped"]);
+    assertEchoedTaskRunId(response.runId, validatedRequest.runId);
+    if (typeof response.stopped !== "boolean") throw invalid("stopped");
+    return response.stopped;
+  }
+}
+
+function decodeJsTestBatchResponse(
+  value: unknown,
+  expectedRequest: JsTestBatchRequest,
+): JsTestBatchResponse {
+  const envelope = record(value, "JavaScript test batch response");
+  const owner = decodeJsTestTaskOwner(envelope.owner, expectedRequest);
+  if (envelope.status === "ok") {
+    exactKeys(envelope, ["owner", "packages", "status", "totals"]);
+    if (
+      !Array.isArray(envelope.packages) ||
+      envelope.packages.length !== expectedRequest.packages.length
+    ) {
+      throw invalid("packages");
+    }
+    const seen = new Set<string>();
+    const batchContext = decodeContext();
+    const packages = envelope.packages.map((candidate, index) => {
+      const item = record(candidate, `packages[${index}]`);
+      exactKeys(item, ["authority", "output", "response"]);
+      const authority = decodeJsTestBatchAuthority(item.authority, `packages[${index}].authority`);
+      const packageRootRelativePath = authority.packageRootRelativePath;
+      if (
+        seen.has(packageRootRelativePath) ||
+        packageRootRelativePath !== expectedRequest.packages[index]?.packageRootRelativePath
+      ) {
+        throw invalid(`packages[${index}]`);
+      }
+      seen.add(packageRootRelativePath);
+      const response = decodeTestRunResponse(item.response, batchContext);
+      if (response.status !== "ok") throw invalid(`packages[${index}].response`);
+      return Object.freeze({
+        authority,
+        output: decodeJsTestTaskOutput(item.output),
+        response,
+      });
+    });
+    const totals = decodeTotals(envelope.totals);
+    assertBatchTotals(packages, totals);
+    return Object.freeze({
+      owner,
+      packages: Object.freeze(packages),
+      status: "ok" as const,
+      totals,
+    });
+  }
+  if (
+    envelope.status !== "cancelled" &&
+    envelope.status !== "error" &&
+    envelope.status !== "unavailable"
+  ) {
+    throw invalid("status");
+  }
+  const hasOutput = envelope.status !== "unavailable";
+  const hasMessage = envelope.status !== "cancelled";
+  exactKeys(envelope, [
+    "authorities",
+    ...(hasMessage ? ["message"] : []),
+    ...(hasOutput ? ["output"] : []),
+    "owner",
+    "status",
+  ]);
+  const authorities = decodeJsTestBatchAuthorities(envelope.authorities, expectedRequest);
+  if (envelope.status === "cancelled") {
+    return Object.freeze({
+      authorities,
+      output: decodeJsTestTaskOutput(envelope.output),
+      owner,
+      status: "cancelled" as const,
+    });
+  }
+  const message = string(
+    envelope.message,
+    "message",
+    decodeContext(),
+    JS_TEST_RESPONSE_LIMITS.maxMessageBytes,
+  );
+  if (envelope.status === "unavailable") {
+    return Object.freeze({
+      authorities,
+      message,
+      owner,
+      status: "unavailable" as const,
+    });
+  }
+  return Object.freeze({
+    authorities,
+    message,
+    output: decodeJsTestTaskOutput(envelope.output),
+    owner,
+    status: "error" as const,
+  });
+}
+
+function decodeJsTestBatchAuthorities(value: unknown, expectedRequest: JsTestBatchRequest) {
+  if (
+    !Array.isArray(value) ||
+    (value.length !== 0 && value.length !== expectedRequest.packages.length)
+  ) {
+    throw invalid("authorities");
+  }
+  const authorities = value.map((candidate, index) => {
+    const authority = decodeJsTestBatchAuthority(candidate, `authorities[${index}]`);
+    if (
+      authority.packageRootRelativePath !== expectedRequest.packages[index]?.packageRootRelativePath
+    ) {
+      throw invalid(`authorities[${index}]`);
+    }
+    return authority;
+  });
+  return Object.freeze(authorities);
+}
+
+function decodeJsTestBatchAuthority(value: unknown, path: string) {
+  const authority = record(value, path);
+  exactKeys(authority, ["packageRootRelativePath", "runner"]);
+  const packageRootRelativePath = validatedJsTestExecutionAuthority({
+    packageRootRelativePath: authority.packageRootRelativePath as string,
+  }).packageRootRelativePath;
+  if (authority.runner !== "jest" && authority.runner !== "vitest") {
+    throw invalid(`${path}.runner`);
+  }
+  return Object.freeze({ packageRootRelativePath, runner: authority.runner });
+}
+
+function assertBatchTotals(
+  packages: readonly { readonly response: Extract<TestRunResponse, { status: "ok" }> }[],
+  totals: ReturnType<typeof decodeTotals>,
+): void {
+  const aggregate = packages.reduce(
+    (sum, { response }) => ({
+      errors: sum.errors + response.totals.errors,
+      failures: sum.failures + response.totals.failures,
+      skipped: sum.skipped + response.totals.skipped,
+      tests: sum.tests + response.totals.tests,
+      time:
+        sum.time === null || response.totals.time === null ? null : sum.time + response.totals.time,
+    }),
+    { errors: 0, failures: 0, skipped: 0, tests: 0, time: 0 as number | null },
+  );
+  if (
+    aggregate.errors !== totals.errors ||
+    aggregate.failures !== totals.failures ||
+    aggregate.skipped !== totals.skipped ||
+    aggregate.tests !== totals.tests ||
+    aggregate.time !== totals.time
+  ) {
+    throw invalid("totals");
   }
 }
 
@@ -184,8 +366,10 @@ function assertEchoedTaskRunId(value: unknown, expectedRunId: string): void {
   if (echoedRunId !== expectedRunId) throw invalid("runId");
 }
 
-function decodeTestRunResponse(value: unknown): TestRunResponse {
-  const context: DecodeContext = { cases: 0, textBytes: 0 };
+function decodeTestRunResponse(
+  value: unknown,
+  context: DecodeContext = decodeContext(),
+): TestRunResponse {
   const response = record(value, "JavaScript test response");
   exactKeys(
     response,
@@ -203,8 +387,12 @@ function decodeTestRunResponse(value: unknown): TestRunResponse {
     };
   }
   if (response.status !== "ok") throw invalid("status");
-  if (!Array.isArray(response.suites) || response.suites.length > JS_TEST_RESPONSE_LIMITS.maxSuites)
+  if (
+    !Array.isArray(response.suites) ||
+    context.suites + response.suites.length > JS_TEST_RESPONSE_LIMITS.maxSuites
+  )
     throw invalid("suites");
+  context.suites += response.suites.length;
   const suites = response.suites.map((suite, index) => decodeSuite(suite, index, context));
   const totals = decodeTotals(response.totals);
   assertAggregateCounts(suites, totals);
@@ -213,6 +401,10 @@ function decodeTestRunResponse(value: unknown): TestRunResponse {
     suites,
     totals,
   };
+}
+
+function decodeContext(): DecodeContext {
+  return { cases: 0, suites: 0, textBytes: 0 };
 }
 
 function decodeSuite(value: unknown, index: number, context: DecodeContext) {

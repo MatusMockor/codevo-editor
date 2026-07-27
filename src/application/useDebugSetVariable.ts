@@ -3,6 +3,7 @@ import type { DebugGateway, DebugScope, DebugVariable } from "../domain/debug";
 import { initialDebuggerSnapshot, type DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import type { DebugSessionOwner } from "./useDebugSessionEnd";
+import type { DebugInspectionOwner } from "../domain/debugVariablePages";
 
 interface FrameSelection {
   readonly frameId: number;
@@ -24,6 +25,7 @@ interface DebugSetVariableOptions {
   readonly gateway: DebugGateway;
   readonly isExactWorkspaceOwnerCurrent: (rootPath: string, workspaceId: string | null) => boolean;
   readonly isWorkspaceTrusted: () => boolean;
+  readonly invalidateDebugInspectionOwner: (owner: DebugInspectionOwner) => void;
   readonly mountedRef: MutableRefObject<boolean>;
   readonly pauseGenerationByRootRef: MutableRefObject<Record<string, number>>;
   readonly pendingActiveStopsRef: MutableRefObject<Map<string, unknown>>;
@@ -49,6 +51,7 @@ export function useDebugSetVariable({
   gateway,
   isExactWorkspaceOwnerCurrent,
   isWorkspaceTrusted,
+  invalidateDebugInspectionOwner,
   mountedRef,
   pauseGenerationByRootRef,
   pendingActiveStopsRef,
@@ -151,6 +154,14 @@ export function useDebugSetVariable({
         if (!ownerIsCurrent() || pendingControlsRef.current.get(key) !== operation) return null;
         throw error;
       } finally {
+        invalidateDebugInspectionOwner({
+          rootKey: key,
+          workspaceId,
+          workspaceEpoch: workspaceOwnerEpoch,
+          sessionId: state.sessionId,
+          pauseGeneration,
+          frameId,
+        });
         if (pendingControlsRef.current.get(key) === operation) {
           pendingControlsRef.current.delete(key);
           if (mountedRef.current) {
@@ -168,6 +179,7 @@ export function useDebugSetVariable({
       gateway,
       isExactWorkspaceOwnerCurrent,
       isWorkspaceTrusted,
+      invalidateDebugInspectionOwner,
       mountedRef,
       pauseGenerationByRootRef,
       pendingActiveStopsRef,

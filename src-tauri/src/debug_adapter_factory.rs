@@ -1,6 +1,6 @@
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEventEmitter, DebugExceptionPauseMode,
-    DebugFunctionBreakpoint, DebugLaunchTarget,
+    DebugFunctionBreakpoint, DebugLaunchTarget, NodeDebugRuntimePolicy,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ pub(crate) fn create_debug_adapter_with_exception_filter(
     breakpoints: &[DebugBreakpoint],
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: &[String],
-    source_maps_enabled: bool,
+    runtime_policy: NodeDebugRuntimePolicy,
     stop_on_entry: bool,
     emitter: DebugEventEmitter,
     finish: Box<dyn FnOnce(Option<i32>) + Send>,
@@ -25,7 +25,7 @@ pub(crate) fn create_debug_adapter_with_exception_filter(
         &[],
         exception_pause_mode,
         exception_type_filter,
-        source_maps_enabled,
+        runtime_policy,
         stop_on_entry,
         emitter,
         finish,
@@ -41,7 +41,7 @@ pub(crate) fn create_debug_adapter_with_startup_function_breakpoints(
     function_breakpoints: &[DebugFunctionBreakpoint],
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: &[String],
-    source_maps_enabled: bool,
+    runtime_policy: NodeDebugRuntimePolicy,
     stop_on_entry: bool,
     emitter: DebugEventEmitter,
     finish: Box<dyn FnOnce(Option<i32>) + Send>,
@@ -51,14 +51,14 @@ pub(crate) fn create_debug_adapter_with_startup_function_breakpoints(
         exception_type_filter.to_vec(),
     )?;
     if launch.is_node() {
-        return crate::debug_cdp::create_node_cdp_adapter_with_startup_function_breakpoints(
+        return crate::debug_cdp::create_node_cdp_adapter_with_runtime_policy(
             root,
             launch,
             breakpoints,
             function_breakpoints,
             exception_pause_mode,
             exception_type_filter,
-            source_maps_enabled,
+            runtime_policy,
             stop_on_entry,
             emitter,
             finish,

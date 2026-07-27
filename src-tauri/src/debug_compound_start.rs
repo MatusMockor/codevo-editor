@@ -1,7 +1,7 @@
 use super::{create_debug_adapter_with_exception_filter, AppHandleDebugEventSink, DebugFinishGate};
 use crate::debug_adapter::{
     DebugBreakpoint, DebugEventSink, DebugExceptionPauseMode, DebugLaunchTarget,
-    DebugSessionRegistry, DebugStartupPermit,
+    DebugSessionRegistry, DebugStartupPermit, NodeDebugRuntimePolicy,
 };
 use crate::debug_breakpoint_policy::{
     breakpoints_by_file, validate_initial_breakpoints, DebugBreakpointAdapterKind,
@@ -58,6 +58,11 @@ enum DebugCompoundLaunchTarget {
             default,
             deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
         )]
+        smart_step: Option<bool>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
         stop_on_entry: Option<bool>,
     },
     #[serde(rename = "node-configured-script", rename_all = "camelCase")]
@@ -73,6 +78,11 @@ enum DebugCompoundLaunchTarget {
             deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
         )]
         source_maps: Option<bool>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
+        smart_step: Option<bool>,
         #[serde(
             default,
             deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
@@ -97,20 +107,29 @@ enum DebugCompoundLaunchTarget {
             default,
             deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
         )]
+        smart_step: Option<bool>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
         stop_on_entry: Option<bool>,
     },
 }
 
 impl DebugCompoundLaunchTarget {
-    fn into_launch(self) -> (DebugLaunchTarget, bool, bool) {
+    fn into_launch(self) -> (DebugLaunchTarget, NodeDebugRuntimePolicy, bool) {
         match self {
             Self::Script {
                 script_path,
                 source_maps,
+                smart_step,
                 stop_on_entry,
             } => (
                 DebugLaunchTarget::NodeScript { script_path },
-                source_maps.unwrap_or(true),
+                NodeDebugRuntimePolicy {
+                    source_maps_enabled: source_maps.unwrap_or(true),
+                    smart_step_enabled: smart_step.unwrap_or(true),
+                },
                 stop_on_entry.unwrap_or(false),
             ),
             Self::ConfiguredScript {
@@ -120,6 +139,7 @@ impl DebugCompoundLaunchTarget {
                 env,
                 just_my_code,
                 source_maps,
+                smart_step,
                 stop_on_entry,
             } => (
                 DebugLaunchTarget::NodeConfiguredScript {
@@ -129,7 +149,10 @@ impl DebugCompoundLaunchTarget {
                     env,
                     just_my_code,
                 },
-                source_maps.unwrap_or(true),
+                NodeDebugRuntimePolicy {
+                    source_maps_enabled: source_maps.unwrap_or(true),
+                    smart_step_enabled: smart_step.unwrap_or(true),
+                },
                 stop_on_entry.unwrap_or(false),
             ),
             Self::NpmScript {
@@ -140,6 +163,7 @@ impl DebugCompoundLaunchTarget {
                 env,
                 just_my_code,
                 source_maps,
+                smart_step,
                 stop_on_entry,
             } => (
                 DebugLaunchTarget::NodeNpmScript {
@@ -150,7 +174,10 @@ impl DebugCompoundLaunchTarget {
                     env,
                     just_my_code,
                 },
-                source_maps.unwrap_or(true),
+                NodeDebugRuntimePolicy {
+                    source_maps_enabled: source_maps.unwrap_or(true),
+                    smart_step_enabled: smart_step.unwrap_or(true),
+                },
                 stop_on_entry.unwrap_or(false),
             ),
         }
@@ -294,7 +321,7 @@ async fn start_member(
     let member_root = Arc::clone(context.retained_root);
     let member_registry = Arc::clone(context.registry);
     let member_group = context.group.clone();
-    let (launch, source_maps_enabled, stop_on_entry) = member.launch.into_launch();
+    let (launch, runtime_policy, stop_on_entry) = member.launch.into_launch();
     let result = crate::run_blocking_command(move || {
         Ok(start_compound_member_blocking(
             member_root,
@@ -304,7 +331,7 @@ async fn start_member(
             breakpoints,
             member.exception_pause_mode,
             member.exception_type_filter,
-            source_maps_enabled,
+            runtime_policy,
             stop_on_entry,
             sink,
             member_registry,
@@ -427,7 +454,7 @@ fn start_compound_member_blocking(
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
-    source_maps_enabled: bool,
+    runtime_policy: NodeDebugRuntimePolicy,
     stop_on_entry: bool,
     sink: Arc<dyn DebugEventSink>,
     registry: Arc<DebugSessionRegistry>,
@@ -460,7 +487,7 @@ fn start_compound_member_blocking(
                 &breakpoints,
                 exception_pause_mode,
                 &exception_type_filter,
-                source_maps_enabled,
+                runtime_policy,
                 stop_on_entry,
                 emitter,
                 finish,
@@ -647,8 +674,9 @@ mod tests {
             }
             let decoded: DebugCompoundLaunchTarget =
                 serde_json::from_value(launch).expect("compound launch");
-            let (_, source_maps_enabled, _) = decoded.into_launch();
-            assert_eq!(source_maps_enabled, expected);
+            let (_, runtime_policy, _) = decoded.into_launch();
+            assert_eq!(runtime_policy.source_maps_enabled, expected);
+            assert!(runtime_policy.smart_step_enabled);
         }
 
         assert!(
@@ -667,6 +695,36 @@ mod tests {
                 "kind": "node-script",
                 "scriptPath": "/workspace/a.js",
                 "sourceMaps": null
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn compound_smart_step_defaults_enabled_and_preserves_false() {
+        for (smart_step, expected) in [
+            (serde_json::Value::Null, true),
+            (serde_json::json!(true), true),
+            (serde_json::json!(false), false),
+        ] {
+            let mut launch = serde_json::json!({
+                "kind": "node-script",
+                "scriptPath": "/workspace/a.js"
+            });
+            if !smart_step.is_null() {
+                launch["smartStep"] = smart_step;
+            }
+            let decoded: DebugCompoundLaunchTarget =
+                serde_json::from_value(launch).expect("compound launch");
+            let (_, runtime_policy, _) = decoded.into_launch();
+            assert!(runtime_policy.source_maps_enabled);
+            assert_eq!(runtime_policy.smart_step_enabled, expected);
+        }
+        assert!(
+            serde_json::from_value::<DebugCompoundLaunchTarget>(serde_json::json!({
+                "kind": "node-script",
+                "scriptPath": "/workspace/a.js",
+                "smartStep": "false"
             }))
             .is_err()
         );

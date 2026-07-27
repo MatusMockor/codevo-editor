@@ -61,7 +61,12 @@ export interface DebugWatchesPanelProps {
   onRemove(id: string): void;
   onSetEnabled(id: string, enabled: boolean): void;
   onUpdate(id: string, expression: string): void;
-  onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
+  onLoadVariablePage?(
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    start: number,
+    filter?: import("../domain/debug").DebugVariableFilter,
+  ): void | Promise<void>;
 }
 
 interface EditorState {

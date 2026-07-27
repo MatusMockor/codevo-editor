@@ -46,7 +46,7 @@ pub(crate) fn handle_script_parsed(
     let Some(source_map_url) = source_map_url else {
         if let Ok(mut shared) = context.shared.lock() {
             if let Some(source_maps) = shared.source_maps.as_mut() {
-                source_maps.evict_exact_script(script_id, generated_url);
+                source_maps.mark_plain_script(script_id, generated_url);
             }
         }
         return;
@@ -248,7 +248,7 @@ fn settle_source_map_failure(
         let Some(source_maps) = shared.source_maps.as_mut() else {
             return;
         };
-        source_maps.evict_exact_script(script_id, generated_url);
+        source_maps.mark_failed_script(script_id, generated_url);
         source_maps.source_map_diagnostic(error)
     };
     if let Some(text) = diagnostic {

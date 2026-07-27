@@ -125,6 +125,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
         cwd: `${ROOT_A}/private-package`,
         env: { PRIVATE_TOKEN: "hidden-value" },
         justMyCode: "nodeInternals",
+        smartStep: true,
         sourceMaps: false,
         stopOnEntry: true,
       },
@@ -305,6 +306,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
             justMyCode: "nodeInternals",
             kind: "node-configured-script",
             scriptPath: `${ROOT_A}/src/api.ts`,
+            smartStep: true,
           },
           preLaunchTask: null,
         },
@@ -316,6 +318,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
             kind: "node-npm-script",
             packageRootPath: ROOT_A,
             script: "worker",
+            smartStep: true,
           },
           preLaunchTask: null,
         },
@@ -385,7 +388,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
     ]);
     await act(async () => expect(await ui.hook().startSelected()).toBe(true));
     expect(startDebug).toHaveBeenCalledWith({
-      launch: { kind: "node-attach", port: 9229 },
+      launch: { kind: "node-attach", port: 9229, smartStep: true },
       preLaunchTask: null,
     });
     ui.unmount();
@@ -543,6 +546,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
         justMyCode: "nodeInternals",
         kind: "node-configured-script",
         scriptPath: `${ROOT_A}/src/api.ts`,
+        smartStep: true,
       },
       preLaunchTask: null,
     });
@@ -578,11 +582,13 @@ describe("useNodeDebugConfigurationLauncher", () => {
       expect(startDebug).toHaveBeenCalledWith({
         launch: {
           args: [],
+          cwd: undefined,
           env: {},
           justMyCode: "nodeInternals",
           kind: "node-configured-script",
           runtime,
           scriptPath: `${ROOT_A}/src/api.ts`,
+          smartStep: true,
         },
         preLaunchTask: null,
       });

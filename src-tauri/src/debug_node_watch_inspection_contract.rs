@@ -2,8 +2,8 @@ use crate::debug_adapter::variable_name::is_valid_debug_variable_name;
 use crate::debug_adapter::{
     DebugEvaluateContext, DebugEvaluateFailure, DebugEvaluatePolicy, DebugScopeInfo,
     DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
-    DebugSetVariableResult, DebugStackFrame, DebugVariableInfo, DebugVariablePage,
-    DebugVariablePageRequest,
+    DebugSetVariableResult, DebugStackFrame, DebugVariableFilter, DebugVariableInfo,
+    DebugVariablePage, DebugVariablePageRequest,
 };
 
 pub(super) const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
@@ -179,6 +179,7 @@ impl WatchSetExpressionResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct WatchVariablesRequest {
     request: DebugVariablePageRequest,
+    filter: DebugVariableFilter,
 }
 
 impl WatchVariablesRequest {
@@ -192,7 +193,17 @@ impl WatchVariablesRequest {
         {
             return Err(());
         }
-        Ok(Self { request })
+        Ok(Self {
+            request,
+            filter: DebugVariableFilter::Named,
+        })
+    }
+
+    pub(super) fn new_filtered(
+        request: DebugVariablePageRequest,
+        filter: DebugVariableFilter,
+    ) -> Result<Self, ()> {
+        Self::new(request).map(|request| Self { filter, ..request })
     }
 
     pub(super) fn request(self) -> DebugVariablePageRequest {
@@ -209,6 +220,10 @@ impl WatchVariablesRequest {
 
     pub(super) fn variables_reference(self) -> u64 {
         self.request.variables_reference
+    }
+
+    pub(super) fn filter(self) -> DebugVariableFilter {
+        self.filter
     }
 }
 
@@ -253,7 +268,7 @@ impl WatchVariablesResult {
     }
 
     pub(super) fn validate(&self, request: WatchVariablesRequest) -> Result<(), ()> {
-        WatchVariablesRequest::new(request.request())?;
+        WatchVariablesRequest::new_filtered(request.request(), request.filter())?;
         if self.pause_epoch != request.expected_pause_epoch()
             || self.frame_id != request.frame_id()
             || self.variables_reference != request.variables_reference()

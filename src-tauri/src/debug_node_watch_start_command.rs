@@ -31,6 +31,11 @@ pub(crate) struct NativeNodeWatchStartRequest {
         deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
     )]
     source_maps: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+    )]
+    smart_step: Option<bool>,
 }
 
 #[tauri::command]
@@ -50,6 +55,7 @@ pub(crate) async fn debug_start_native_node_watch(
         exception_type_filter,
         just_my_code,
         source_maps,
+        smart_step,
     } = request;
     let exception_type_filter = parse_native_watch_exception_filter(exception_type_filter)?;
     let preserve_output = validate_closed_intent(watch, preserve_output)?;
@@ -69,6 +75,7 @@ pub(crate) async fn debug_start_native_node_watch(
                 exception_type_filter,
                 just_my_code,
                 source_maps_enabled: source_maps.unwrap_or(true),
+                smart_step_enabled: smart_step.unwrap_or(true),
                 sink: app_debug_event_sink(worker_app.clone()),
                 registry: &worker_registry,
                 workspace_registry: workspace_registry.inner(),
@@ -188,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn native_watch_source_maps_wire_rejects_null_and_non_boolean_values() {
+    fn native_watch_runtime_policy_wire_accepts_booleans_and_rejects_null_or_text() {
         let request = serde_json::json!({
             "rootPath": "/workspace",
             "scriptPath": "/workspace/server.js",
@@ -200,10 +207,12 @@ mod tests {
             "sourceMaps": false
         });
         assert!(serde_json::from_value::<NativeNodeWatchStartRequest>(request.clone()).is_ok());
-        for invalid in [serde_json::Value::Null, serde_json::json!("false")] {
-            let mut request = request.clone();
-            request["sourceMaps"] = invalid;
-            assert!(serde_json::from_value::<NativeNodeWatchStartRequest>(request).is_err());
+        for field in ["sourceMaps", "smartStep"] {
+            for invalid in [serde_json::Value::Null, serde_json::json!("false")] {
+                let mut request = request.clone();
+                request[field] = invalid;
+                assert!(serde_json::from_value::<NativeNodeWatchStartRequest>(request).is_err());
+            }
         }
     }
 

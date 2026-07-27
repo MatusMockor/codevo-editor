@@ -1566,11 +1566,19 @@ describe("VS Code Node launch configuration import", () => {
     expect(parsed).toEqual({
       kind: "ok",
       configurations: [],
-      diagnostics: [{ configurationIndex: 0, message: `configurations[0].${diagnostic}.` }],
+      diagnostics: [
+        {
+          configurationIndex: 0,
+          message:
+            field === "smartStep"
+              ? "configurations[0].smartStep must be a boolean."
+              : `configurations[0].${diagnostic}.`,
+        },
+      ],
     });
   });
 
-  it("accepts exact false compatibility flags without retaining executable metadata", () => {
+  it("retains smartStep while dropping exact false no-op compatibility flags", () => {
     const parsed = parseVscodeNodeLaunchConfigurations(
       JSON.stringify({
         version: "0.2.0",
@@ -1590,20 +1598,20 @@ describe("VS Code Node launch configuration import", () => {
 
     expect(parsed).toMatchObject({
       kind: "ok",
-      configurations: [{ configuration: { name: "API" } }],
+      configurations: [{ configuration: { name: "API" }, smartStep: false }],
       diagnostics: [],
     });
     if (parsed.kind !== "ok") return;
-    for (const field of ["autoAttachChildProcesses", "smartStep", "restart"]) {
+    for (const field of ["autoAttachChildProcesses", "restart"]) {
       expect(parsed.configurations[0]).not.toHaveProperty(field);
       expect(parsed.configurations[0]?.configuration).not.toHaveProperty(field);
     }
+    expect(parsed.configurations[0]?.configuration).not.toHaveProperty("smartStep");
   });
 
   it.each([
     ["autoAttachChildProcesses", true],
     ["autoAttachChildProcesses", 0],
-    ["smartStep", true],
     ["smartStep", "false"],
     ["restart", true],
     ["restart", null],
@@ -1628,10 +1636,44 @@ describe("VS Code Node launch configuration import", () => {
       diagnostics: [
         {
           configurationIndex: 0,
-          message: `configurations[0].${field} must be exactly false.`,
+          message:
+            field === "smartStep"
+              ? "configurations[0].smartStep must be a boolean."
+              : `configurations[0].${field} must be exactly false.`,
         },
       ],
     });
+  });
+
+  it("accepts smartStep true and leaves the missing value for the loader default", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "pwa-node",
+            request: "attach",
+            name: "Attach",
+            port: 9229,
+            smartStep: true,
+          },
+          {
+            type: "node",
+            request: "launch",
+            name: "Default",
+            program: "server.js",
+          },
+        ],
+      }),
+    );
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [{ smartStep: true }, { configuration: { name: "Default" } }],
+      diagnostics: [],
+    });
+    if (parsed.kind === "ok") {
+      expect(parsed.configurations[1]).not.toHaveProperty("smartStep");
+    }
   });
 
   it("accepts only the backend-owned numeric IPv4 loopback attach address as a no-op", () => {

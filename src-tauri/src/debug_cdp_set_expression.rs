@@ -4,7 +4,9 @@ use super::super::transport::{CdpClient, CdpShared};
 use super::set_expression_proof::prepare_static_assignment;
 use super::set_expression_provenance::{SetExpressionReference, SetExpressionTarget};
 use super::set_variable::set_variable;
-use super::ObjectReferenceAccess;
+use super::{
+    invalidate_all_descriptor_snapshots, recalculate_object_reference_bytes, ObjectReferenceAccess,
+};
 use crate::debug_adapter::{
     DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
 };
@@ -130,6 +132,8 @@ fn invalidate_after_attempt(
     pause
         .object_reference_ids
         .retain(|_, reference| retained.contains(reference));
+    recalculate_object_reference_bytes(pause);
+    invalidate_all_descriptor_snapshots(pause);
     Ok(())
 }
 

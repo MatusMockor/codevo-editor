@@ -9,7 +9,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -116,6 +116,7 @@ struct SourceMapCompletion {
 }
 
 struct RegisteredSourceMap {
+    dispatch_state: Arc<SourceMapDispatchState>,
     identity: Arc<SourceMapScriptIdentity>,
     map: SourceMap,
     reverse: HashMap<(u32, u32), Vec<ReverseSegment>>,
@@ -149,8 +150,19 @@ pub(crate) struct MappedGeneratedCandidate {
 
 #[derive(Clone)]
 pub(crate) struct SourceMapReceipt {
+    dispatch_state: Arc<SourceMapDispatchState>,
     identity: Arc<SourceMapScriptIdentity>,
 }
+
+struct SourceMapDispatchState {
+    pins: AtomicUsize,
+    superseded: AtomicBool,
+}
+
+#[path = "debug_source_map_smart_step.rs"]
+mod smart_step;
+pub(crate) use smart_step::{GeneratedSourceMapClassification, SourceMapDispatchLease};
+use smart_step::{SettledScriptKind, SettledScriptOutcome};
 
 pub(crate) struct ValidatedMappedSource {
     pub(crate) location: MappedSourceLocation,
@@ -169,10 +181,12 @@ pub(crate) struct SourceMapRegistry {
     source_authority_count: usize,
     source_authority_limit: usize,
     settled_generations: HashMap<String, u64>,
+    settled_outcomes: HashMap<String, SettledScriptOutcome>,
     pending: HashMap<String, SourceMapSettlement>,
     stale_generation_floor: u64,
     diagnostics_emitted: usize,
     diagnostics_suppressed_reported: bool,
+    smart_step_enabled: bool,
 }
 
 // Descriptor-backed loading and path confinement live in a separate implementation
@@ -188,10 +202,12 @@ impl SourceMapRegistry {
             source_authority_count: 0,
             source_authority_limit: MAX_SOURCE_AUTHORITIES_TOTAL,
             settled_generations: HashMap::new(),
+            settled_outcomes: HashMap::new(),
             pending: HashMap::new(),
             stale_generation_floor: 0,
             diagnostics_emitted: 0,
             diagnostics_suppressed_reported: false,
+            smart_step_enabled: true,
         })
     }
 
@@ -243,6 +259,7 @@ impl SourceMapRegistry {
     }
 
     fn commit_script_inner(&mut self, prepared: PreparedSourceMap) -> Result<(), String> {
+        self.prune_superseded_unpinned_maps();
         if prepared.identity.transport_id != self.loader.inner.transport_id {
             return Err("Source-map result belongs to a stale debugger transport.".to_string());
         }
@@ -263,10 +280,19 @@ impl SourceMapRegistry {
         {
             return Err("Source-map result belongs to a stale script generation.".to_string());
         }
-        let replaced = self
-            .maps
-            .iter()
-            .position(|entry| entry.identity.script_id == prepared.identity.script_id);
+        for entry in self.maps.iter().filter(|entry| {
+            entry.identity.script_id == prepared.identity.script_id
+                && entry.dispatch_state.pins.load(Ordering::Acquire) > 0
+        }) {
+            entry
+                .dispatch_state
+                .superseded
+                .store(true, Ordering::Release);
+        }
+        let replaced = self.maps.iter().position(|entry| {
+            entry.identity.script_id == prepared.identity.script_id
+                && entry.dispatch_state.pins.load(Ordering::Acquire) == 0
+        });
         let replaced_tokens = replaced
             .map(|index| self.maps[index].token_count)
             .unwrap_or(0);
@@ -317,7 +343,12 @@ impl SourceMapRegistry {
             prepared.identity.script_id.clone(),
             prepared.identity.generation,
         );
+        self.settled_outcomes.remove(&prepared.identity.script_id);
         self.maps.push(RegisteredSourceMap {
+            dispatch_state: Arc::new(SourceMapDispatchState {
+                pins: AtomicUsize::new(0),
+                superseded: AtomicBool::new(false),
+            }),
             identity: Arc::new(prepared.identity),
             map: prepared.map,
             reverse: prepared.reverse,
@@ -365,19 +396,19 @@ impl SourceMapRegistry {
         })
     }
 
-    pub(crate) fn is_current_receipt(&self, receipt: &SourceMapReceipt) -> bool {
-        receipt.identity.transport_id == self.loader.inner.transport_id
-            && self.maps.iter().any(|entry| {
-                Arc::ptr_eq(&entry.identity, &receipt.identity)
-                    || entry.identity.as_ref() == receipt.identity.as_ref()
-            })
-    }
-
     pub(crate) fn evict_script(&mut self, generated_url: &str) {
         let mut removed = 0usize;
         let mut removed_authorities = 0usize;
         self.maps.retain(|entry| {
-            let keep = entry.identity.generated_url != generated_url;
+            let matches = entry.identity.generated_url == generated_url;
+            let pinned = entry.dispatch_state.pins.load(Ordering::Acquire) > 0;
+            if matches && pinned {
+                entry
+                    .dispatch_state
+                    .superseded
+                    .store(true, Ordering::Release);
+            }
+            let keep = !matches || pinned;
             if !keep {
                 removed = removed.saturating_add(entry.token_count);
                 removed_authorities =
@@ -402,6 +433,7 @@ impl SourceMapRegistry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn evict_exact_script(&mut self, script_id: &str, generated_url: &str) {
         if !self.accepts_script_identity(script_id, generated_url) {
             return;
@@ -415,6 +447,7 @@ impl SourceMapRegistry {
             })
             .unwrap_or(u64::MAX);
         self.record_settled_generation(script_id.to_string(), generation);
+        self.settled_outcomes.remove(script_id);
         self.remove_script(script_id);
         if let Some(pending) = self.pending.remove(script_id) {
             pending.complete();
@@ -457,13 +490,29 @@ impl SourceMapRegistry {
     fn settle_failed_identity(&mut self, identity: &SourceMapScriptIdentity) {
         self.record_settled_generation(identity.script_id.clone(), identity.generation);
         self.remove_script(&identity.script_id);
+        self.settled_outcomes.insert(
+            identity.script_id.clone(),
+            SettledScriptOutcome {
+                generated_url: identity.generated_url.clone(),
+                generation: identity.generation,
+                kind: SettledScriptKind::Failed,
+            },
+        );
     }
 
     fn remove_script(&mut self, script_id: &str) {
         let mut removed = 0usize;
         let mut removed_authorities = 0usize;
         self.maps.retain(|entry| {
-            let keep = entry.identity.script_id != script_id;
+            let matches = entry.identity.script_id == script_id;
+            let pinned = entry.dispatch_state.pins.load(Ordering::Acquire) > 0;
+            if matches && pinned {
+                entry
+                    .dispatch_state
+                    .superseded
+                    .store(true, Ordering::Release);
+            }
+            let keep = !matches || pinned;
             if !keep {
                 removed = removed.saturating_add(entry.token_count);
                 removed_authorities =
@@ -488,6 +537,7 @@ impl SourceMapRegistry {
                 .map(|(script_id, generation)| (script_id.clone(), *generation))
             {
                 self.settled_generations.remove(&oldest_id);
+                self.settled_outcomes.remove(&oldest_id);
                 self.stale_generation_floor = self.stale_generation_floor.max(oldest_generation);
             }
         }
@@ -534,7 +584,8 @@ impl SourceMapRegistry {
         column: u32,
     ) -> Option<MappedSourceCandidate> {
         let entry = self.maps.iter().rev().find(|entry| {
-            entry.identity.script_id == script_id
+            !entry.dispatch_state.superseded.load(Ordering::Acquire)
+                && entry.identity.script_id == script_id
                 && entry.identity.generated_url == generated_url
                 && entry.identity.transport_id == self.loader.inner.transport_id
         })?;
@@ -557,11 +608,10 @@ impl SourceMapRegistry {
         line_number: u32,
         column: u32,
     ) -> Option<MappedSourceCandidate> {
-        let entry = self
-            .maps
-            .iter()
-            .rev()
-            .find(|entry| entry.identity.generated_url == generated_url)?;
+        let entry = self.maps.iter().rev().find(|entry| {
+            !entry.dispatch_state.superseded.load(Ordering::Acquire)
+                && entry.identity.generated_url == generated_url
+        })?;
         map_generated_entry(&self.loader, entry, line_number, column)
     }
 
@@ -618,6 +668,9 @@ impl SourceMapRegistry {
         }
         let source_line = line_number.checked_sub(1)?;
         for entry in self.maps.iter().rev() {
+            if entry.dispatch_state.superseded.load(Ordering::Acquire) {
+                continue;
+            }
             let Some(source_ids) = entry.source_ids_by_path.get(&source_path) else {
                 continue;
             };
@@ -670,6 +723,7 @@ impl SourceMapRegistry {
                         column: segment.generated_column.checked_add(1)?,
                     },
                     receipt: SourceMapReceipt {
+                        dispatch_state: Arc::clone(&entry.dispatch_state),
                         identity: Arc::clone(&entry.identity),
                     },
                 });
@@ -877,6 +931,7 @@ fn map_generated_entry(
         column: token.get_src_col().checked_add(1)?,
         loader: loader.clone(),
         receipt: SourceMapReceipt {
+            dispatch_state: Arc::clone(&entry.dispatch_state),
             identity: Arc::clone(&entry.identity),
         },
     })
@@ -1051,62 +1106,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pending_receipts_fence_replaced_generations_and_complete_exactly() {
-        let root = fixture("pending-generation-receipts");
-        let generated = root.join("dist/app.js");
-        let source = root.join("src/app.ts");
-        let map = root.join("dist/app.map");
-        write(&generated, "compiled();\n");
-        write(&source, "source();\n");
-        write(
-            &map,
-            r#"{"version":3,"file":"app.js","sources":["../src/app.ts"],"names":[],"mappings":"AAAA"}"#,
-        );
-        let generated_url = file_url_from_path(&generated.to_string_lossy());
-        let map_url = file_url_from_path(&map.to_string_lossy());
-        let mut registry = SourceMapRegistry::new(&root).expect("registry");
-        let loader = registry.loader();
-        let request_a = loader
-            .reserve_script("script", &generated_url, &map_url)
-            .expect("reserve A");
-        let settlement_a = request_a.settlement();
-        registry
-            .mark_pending(settlement_a.clone())
-            .expect("mark A pending");
-        assert!(!settlement_a.wait_until(Instant::now()));
-
-        let request_b = loader
-            .reserve_script("script", &generated_url, &map_url)
-            .expect("reserve B");
-        let settlement_b = request_b.settlement();
-        registry
-            .mark_pending(settlement_b.clone())
-            .expect("replace with B");
-
-        assert!(settlement_a.wait_until(Instant::now()));
-        assert!(!settlement_b.wait_until(Instant::now()));
-        assert!(registry
-            .pending_settlement("script", "file:///wrong.js")
-            .is_none());
-        assert!(registry
-            .pending_settlement("foreign-script", &generated_url)
-            .is_none());
-
-        let error = registry
-            .commit_script(request_a.prepare().expect("prepare stale A"))
-            .expect_err("A must not replace pending B");
-        assert!(error.contains("replaced pending script"));
-        assert!(!settlement_b.wait_until(Instant::now()));
-
-        registry
-            .commit_script(request_b.prepare().expect("prepare B"))
-            .expect("commit exact pending B");
-        assert!(settlement_b.wait_until(Instant::now()));
-        assert!(registry
-            .pending_settlement("script", &generated_url)
-            .is_none());
-    }
+    include!("debug_source_map_smart_step_tests.rs");
 
     #[test]
     fn pending_receipts_are_bounded_and_rejection_is_immediately_settled() {

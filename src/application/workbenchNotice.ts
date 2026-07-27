@@ -68,11 +68,9 @@ export function replaceJsTestProblemNotices(
  * panel. A single Laravel file can publish hundreds of diagnostics; mapping
  * every one to a notice and re-rendering the panel freezes the main thread.
  *
- * Markers in the editor (Monaco `setModelMarkers`) are populated from a
- * separate, uncapped diagnostics source, so capping notices here never hides a
- * squiggle. The kept notices are the server-ordered head of the list, and an
- * `info` overflow indicator carrying the truthful hidden count is appended so
- * diagnostics are never dropped silently.
+ * Monaco markers use their own bounded projection. The kept notices are the
+ * server-ordered head of the list, and an `info` overflow indicator carrying
+ * the truthful hidden count is appended so list truncation is never silent.
  */
 export function capDiagnosticNotices(
   notices: WorkbenchNotice[],
@@ -111,8 +109,7 @@ export const GLOBAL_NOTICE_OVERFLOW_GROUP_KEY = "workbench-notice-overflow";
  * `isCappable` decides which notices may be truncated; everything else (errors,
  * setup prompts, anything the caller wants to protect) is always retained in its
  * original position so important non-diagnostic notices are never silently
- * dropped. When omitted, every notice is cappable. Editor markers come from a
- * separate, uncapped source, so this never hides a squiggle.
+ * dropped. When omitted, every notice is cappable.
  */
 export function capWorkbenchNotices(
   notices: WorkbenchNotice[],
@@ -158,7 +155,7 @@ function buildGlobalNoticeOverflowNotice(hiddenCount: number): WorkbenchNotice {
   return createWorkbenchNotice(
     "warning",
     "Notices",
-    `${hiddenCount} more notices hidden. Open a file to see its markers.`,
+    `${hiddenCount} additional diagnostic notices are not shown in Problems.`,
     GLOBAL_NOTICE_OVERFLOW_GROUP_KEY,
     undefined,
     "overflow",

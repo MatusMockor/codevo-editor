@@ -1,37 +1,34 @@
+import { useCallback, useMemo, type MutableRefObject } from "react";
+import type { DebugVariable, DebugVariableFilter } from "../domain/debug";
 import {
-  useCallback,
-  useMemo,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
-import type { DebugVariable } from "../domain/debug";
-import {
-  debugVariableMutationInvalidatedReferences,
   debugVariableMutationCandidateIsCurrent,
-  reconcileDebugVariableMutation,
   selectDebugVariableMutationCandidate,
 } from "../domain/debugVariableMutation";
-import type { DebugInspectionOwner, DebugVariablePagesState } from "../domain/debugVariablePages";
+import {
+  debugInspectionOwnersEqual,
+  type DebugInspectionOwner,
+  type DebugVariablePagesState,
+} from "../domain/debugVariablePages";
 import type { DebugVariableMutationRows, DebugVariableRowMutation } from "./debugSessionContracts";
 
 interface DebugVariableMutationRowsOptions {
-  readonly refreshDebugWatchEvaluations: () => void;
+  readonly loadVariablePage: (
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    start: number,
+    filter: DebugVariableFilter,
+  ) => Promise<void>;
   readonly setVariable: (
     variablesReference: number,
     name: string,
     value: string,
   ) => Promise<DebugVariable | null>;
-  readonly setVariablePages: Dispatch<SetStateAction<DebugVariablePagesState>>;
   readonly variablePagesRef: MutableRefObject<DebugVariablePagesState>;
-  readonly variablePageRequestsRef: MutableRefObject<Map<string, string>>;
 }
 
 export function useDebugVariableMutationRows({
-  refreshDebugWatchEvaluations,
+  loadVariablePage,
   setVariable,
-  setVariablePages,
-  variablePageRequestsRef,
   variablePagesRef,
 }: DebugVariableMutationRowsOptions) {
   const forRow = useCallback(
@@ -40,6 +37,7 @@ export function useDebugVariableMutationRows({
       parentVariablesReference: number,
       pageStart: number,
       index: number,
+      filter: DebugVariableFilter = "named",
     ): DebugVariableRowMutation | null => {
       const candidate = selectDebugVariableMutationCandidate(
         variablePagesRef.current,
@@ -47,55 +45,61 @@ export function useDebugVariableMutationRows({
         parentVariablesReference,
         pageStart,
         index,
+        filter,
       );
       if (!candidate) return null;
+      const ownedCandidate = candidate;
       return Object.freeze({
-        currentValue: candidate.variable.value,
+        currentValue: ownedCandidate.variable.value,
         async commit(nextValue: string) {
-          if (!debugVariableMutationCandidateIsCurrent(variablePagesRef.current, candidate)) {
+          if (!debugVariableMutationCandidateIsCurrent(variablePagesRef.current, ownedCandidate)) {
             return null;
           }
-          const result = await setVariable(
-            candidate.parentVariablesReference,
-            candidate.variable.name,
-            nextValue,
-          );
-          if (!result) return null;
-          const current = variablePagesRef.current;
-          const next = reconcileDebugVariableMutation(current, candidate, result);
-          if (next === current) return null;
-          invalidateVariablePageRequests(
-            variablePageRequestsRef.current,
-            candidate.owner,
-            debugVariableMutationInvalidatedReferences(current, candidate, result),
-          );
-          variablePagesRef.current = next;
-          setVariablePages(next);
-          refreshDebugWatchEvaluations();
+          let result: DebugVariable | null;
+          try {
+            result = await setVariable(
+              ownedCandidate.parentVariablesReference,
+              ownedCandidate.variable.name,
+              nextValue,
+            );
+          } catch (error) {
+            reloadAfterDispatchedMutation();
+            throw error;
+          }
+          if (!result) {
+            reloadAfterDispatchedMutation();
+            return null;
+          }
+          reloadAfterDispatchedMutation();
           return result;
         },
       });
+
+      function reloadAfterDispatchedMutation(): void {
+        const current = variablePagesRef.current;
+        if (
+          !debugInspectionOwnersEqual(current.owner, ownedCandidate.owner) ||
+          Object.keys(current.references).length !== 0
+        ) {
+          return;
+        }
+        void (async () => {
+          await loadVariablePage(
+            ownedCandidate.owner,
+            ownedCandidate.parentVariablesReference,
+            0,
+            "named",
+          );
+          await loadVariablePage(
+            ownedCandidate.owner,
+            ownedCandidate.parentVariablesReference,
+            ownedCandidate.filter === "indexed" ? ownedCandidate.pageStart : 0,
+            "indexed",
+          );
+        })();
+      }
     },
-    [
-      refreshDebugWatchEvaluations,
-      setVariable,
-      setVariablePages,
-      variablePageRequestsRef,
-      variablePagesRef,
-    ],
+    [loadVariablePage, setVariable, variablePagesRef],
   );
   return useMemo<DebugVariableMutationRows>(() => Object.freeze({ forRow }), [forRow]);
-}
-
-function invalidateVariablePageRequests(
-  requests: Map<string, string>,
-  owner: DebugInspectionOwner,
-  references: ReadonlySet<number>,
-): void {
-  const prefix = `${owner.rootKey}\0${owner.sessionId}\0${owner.pauseGeneration}\0${owner.frameId}\0`;
-  for (const key of requests.keys()) {
-    if (!key.startsWith(prefix)) continue;
-    const reference = Number(key.slice(prefix.length).split("\0", 1)[0]);
-    if (references.has(reference)) requests.delete(key);
-  }
 }

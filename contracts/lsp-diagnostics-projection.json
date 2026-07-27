@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "javascriptSafeInteger": 9007199254740991,
+  "maxDiagnostics": 2000,
+  "maxDiagnosticsUtf8Bytes": 2097152,
+  "authority": {
+    "dataNodes": 32768,
+    "filesystemProbes": 256,
+    "pathCacheEntries": 2048,
+    "pathCacheUtf8Bytes": 1048576
+  },
+  "diagnostic": {
+    "messageUtf8Bytes": 8192,
+    "shortFieldUtf8Bytes": 512,
+    "uriHrefUtf8Bytes": 16384,
+    "dataUtf8Bytes": 16384,
+    "dataDepth": 16,
+    "dataNodes": 1024,
+    "dataContainerItems": 256,
+    "relatedInformation": 16,
+    "tags": 2,
+    "tagValues": [1, 2],
+    "position": 2147483647
+  },
+  "reasons": [
+    "itemLimit",
+    "byteLimit",
+    "fieldLimit",
+    "dataDepthLimit",
+    "relatedInformationLimit",
+    "authorityNodeLimit",
+    "pathProbeLimit"
+  ],
+  "wire": {
+    "eventKeys": ["rootPath", "sessionId", "uri", "version", "diagnostics", "projection"],
+    "diagnosticRequiredKeys": [
+      "code",
+      "codeDescriptionHref",
+      "message",
+      "severity",
+      "source",
+      "tags",
+      "relatedInformation",
+      "line",
+      "character",
+      "endLine",
+      "endCharacter"
+    ],
+    "diagnosticOptionalKeys": ["data"],
+    "relatedInformationRequiredKeys": [
+      "uri",
+      "message",
+      "line",
+      "character",
+      "endLine",
+      "endCharacter"
+    ],
+    "relatedInformationOptionalKeys": [],
+    "completeProjectionKeys": [
+      "kind",
+      "publishedCount",
+      "retainedCount",
+      "severityCounts",
+      "retainedUtf8Bytes"
+    ],
+    "truncatedProjectionKeys": [
+      "kind",
+      "publishedCount",
+      "retainedCount",
+      "severityCounts",
+      "retainedUtf8Bytes",
+      "omittedCount",
+      "reasons",
+      "sanitizedFieldCount"
+    ],
+    "severityKeys": ["error", "warning", "information", "hint"],
+    "projectionKinds": ["complete", "truncated"],
+    "severityCountsAuthority": "published",
+    "retainedUtf8BytesAuthority": "nativeSerde",
+    "decodedUtf8BytesAuthority": "typescriptDecoder",
+    "publishedEqualsRetainedPlusOmitted": true,
+    "rangesAreNonNegative": true,
+    "rangeEndNotBeforeStart": true,
+    "javascriptSafeIntegerFields": ["sessionId", "version", "diagnostic.code"],
+    "sessionIdPositive": true
+  }
+}

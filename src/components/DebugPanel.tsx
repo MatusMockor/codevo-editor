@@ -202,7 +202,12 @@ export interface DebugPanelProps {
   inspectionOwner?: DebugInspectionOwner | null;
   variablePages?: DebugVariablePagesState;
   variableMutationRows?: DebugVariableMutationRows;
-  onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
+  onLoadVariablePage?(
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    start: number,
+    filter?: import("../domain/debug").DebugVariableFilter,
+  ): void | Promise<void>;
   watches: Omit<
     DebugWatchesPanelProps,
     | "debugAdapterKind"
@@ -1213,7 +1218,12 @@ function Variables({
   copyValueSurface?: DebugCopyValueSurface;
   inspectionOwner?: DebugInspectionOwner | null;
   latencyTracker?: LatencyTracker;
-  onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
+  onLoadVariablePage?(
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    start: number,
+    filter?: import("../domain/debug").DebugVariableFilter,
+  ): void | Promise<void>;
   onLoadVariables(variablesReference: number): void;
   onRetryFrame(frameId: number): void;
   scopeLoadState: DebugScopeLoadState;

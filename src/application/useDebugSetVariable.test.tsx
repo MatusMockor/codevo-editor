@@ -45,6 +45,7 @@ function renderLifecycle() {
   const mountedRef = { current: true };
   const trusted = { current: true };
   const indeterminate = { current: false };
+  const invalidateDebugInspectionOwner = vi.fn();
   const captured: {
     commit:
       ((reference: number, name: string, value: string) => Promise<DebugVariable | null>) | null;
@@ -65,6 +66,7 @@ function renderLifecycle() {
         return rootPath === currentRootRef.current && workspaceId === currentWorkspaceIdRef.current;
       },
       isWorkspaceTrusted: () => trusted.current,
+      invalidateDebugInspectionOwner,
       mountedRef,
       pauseGenerationByRootRef,
       pendingActiveStopsRef: { current: new Map() },
@@ -101,6 +103,7 @@ function renderLifecycle() {
     frameSelectionGenerationByRootRef,
     gatewaySetVariable: setVariable,
     indeterminate,
+    invalidateDebugInspectionOwner,
     mountedRef,
     pauseGenerationByRootRef,
     pendingControlsRef,
@@ -143,6 +146,14 @@ describe("useDebugSetVariable", () => {
       name: "count",
       value: "43",
     });
+    expect(ui.invalidateDebugInspectionOwner).toHaveBeenCalledExactlyOnceWith({
+      rootKey: "/workspace/one",
+      workspaceId: "owner-1",
+      workspaceEpoch: 0,
+      sessionId: 4,
+      pauseGeneration: 2,
+      frameId: 11,
+    });
     ui.unmount();
   });
 
@@ -152,6 +163,7 @@ describe("useDebugSetVariable", () => {
     ui.sideEffectingEvaluationFlightsRef.current.add(sameOwner);
     await expect(ui.commit(21, "count", "43")).resolves.toBeNull();
     expect(ui.gatewaySetVariable).not.toHaveBeenCalled();
+    expect(ui.invalidateDebugInspectionOwner).not.toHaveBeenCalled();
 
     ui.sideEffectingEvaluationFlightsRef.current.clear();
     ui.sideEffectingEvaluationFlightsRef.current.add(
@@ -202,6 +214,7 @@ describe("useDebugSetVariable", () => {
     await expect(ui.commit(21, "count", "43")).rejects.toBe(failure);
     expect(ui.pendingControlsRef.current.size).toBe(0);
     expect(ui.gatewaySetVariable).toHaveBeenCalledTimes(1);
+    expect(ui.invalidateDebugInspectionOwner).toHaveBeenCalledOnce();
     ui.unmount();
   });
 });

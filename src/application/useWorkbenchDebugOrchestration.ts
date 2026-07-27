@@ -442,6 +442,8 @@ export function useWorkbenchDebugOrchestration({
               "justMyCode" in prepared.launch ? prepared.launch.justMyCode : undefined;
             const sourceMaps =
               "sourceMaps" in prepared.launch ? prepared.launch.sourceMaps : undefined;
+            const smartStep =
+              "smartStep" in prepared.launch ? prepared.launch.smartStep : undefined;
             return debugSessionRef.current.startDebugDescriptorSessionAccepted(
               nativeNodeWatchDebugStartDescriptor(
                 debugGateway as NativeNodeWatchDebugGateway,
@@ -451,6 +453,7 @@ export function useWorkbenchDebugOrchestration({
                   ...(nativeWatch.preserveOutput ? { preserveOutput: true } : {}),
                   ...(justMyCode ? { justMyCode } : {}),
                   ...(sourceMaps !== undefined ? { sourceMaps } : {}),
+                  ...(smartStep !== undefined ? { smartStep } : {}),
                 },
                 () => {
                   const current = debugDocumentsRef.current;

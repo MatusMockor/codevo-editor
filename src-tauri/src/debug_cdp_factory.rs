@@ -83,14 +83,17 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
     finish: DebugSessionFinish,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Box<dyn DebugAdapter>, String> {
-    create_node_cdp_adapter_with_startup_function_breakpoints(
+    create_node_cdp_adapter_with_runtime_policy(
         root,
         launch_target,
         initial_breakpoints,
         &[],
         exception_pause_mode,
         exception_type_filter,
-        source_maps_enabled,
+        crate::debug_adapter::NodeDebugRuntimePolicy {
+            source_maps_enabled,
+            smart_step_enabled: source_maps_enabled,
+        },
         stop_on_entry,
         emitter,
         finish,
@@ -112,13 +115,48 @@ pub(crate) fn create_node_cdp_adapter_with_startup_function_breakpoints(
     finish: DebugSessionFinish,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Box<dyn DebugAdapter>, String> {
+    create_node_cdp_adapter_with_runtime_policy(
+        root,
+        launch_target,
+        initial_breakpoints,
+        initial_function_breakpoints,
+        exception_pause_mode,
+        exception_type_filter,
+        crate::debug_adapter::NodeDebugRuntimePolicy {
+            source_maps_enabled,
+            smart_step_enabled: source_maps_enabled,
+        },
+        stop_on_entry,
+        emitter,
+        finish,
+        startup_is_current,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_node_cdp_adapter_with_runtime_policy(
+    root: &Path,
+    launch_target: &DebugLaunchTarget,
+    initial_breakpoints: &[DebugBreakpoint],
+    initial_function_breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+    exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: &[String],
+    runtime_policy: crate::debug_adapter::NodeDebugRuntimePolicy,
+    stop_on_entry: bool,
+    emitter: DebugEventEmitter,
+    finish: DebugSessionFinish,
+    startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<Box<dyn DebugAdapter>, String> {
+    let source_maps_enabled = runtime_policy.source_maps_enabled;
     let internal_step_filter = launch_target.just_my_code();
     if let DebugLaunchTarget::NodeAttach { port, .. } = launch_target {
         ensure_startup_current(startup_is_current.as_ref())?;
         let target = crate::debug_inspector_attach::discover_single_node_target(root, *port)?;
         ensure_startup_current(startup_is_current.as_ref())?;
-        let source_maps =
-            optional_source_maps(source_maps_enabled, || SourceMapRegistry::new(root))?;
+        let source_maps = optional_source_maps(source_maps_enabled, || {
+            SourceMapRegistry::new(root)
+                .map(|maps| maps.with_smart_step_enabled(runtime_policy.smart_step_enabled))
+        })?;
         let (disconnected_tx, disconnected_rx) = mpsc::channel();
         let adapter = NodeCdpAdapter::connect_with_startup_function_breakpoints(
             &target.web_socket_url,
@@ -158,6 +196,7 @@ pub(crate) fn create_node_cdp_adapter_with_startup_function_breakpoints(
     )?;
     let source_maps = optional_source_maps(source_maps_enabled, || {
         source_map_registry(root, launch_target)
+            .map(|maps| maps.with_smart_step_enabled(runtime_policy.smart_step_enabled))
     })?;
     let mut process =
         spawn_node_inspector(&launch, emitter.clone(), Arc::clone(&startup_is_current))?;

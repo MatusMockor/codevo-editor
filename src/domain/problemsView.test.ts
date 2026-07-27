@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkbenchNotice } from "./workbenchNotice";
-import { buildProblemsView } from "./problemsView";
+import {
+  DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY,
+  MAX_PROBLEMS_VIEW_ROWS,
+  buildProblemsView,
+} from "./problemsView";
 
 const ROOT = "/workspace";
 
@@ -342,5 +346,192 @@ describe("buildProblemsView", () => {
 
     expect(view.files.flatMap((file) => file.entries.map((entry) => entry.id))).toEqual(ids);
     expect(view.totals).toEqual({ errors: 1, warnings: 1 });
+  });
+
+  it("constructs a bounded view and one truthful receipt from 100,000 entries", () => {
+    const notices = Array.from({ length: 100_000 }, (_, index) =>
+      notice(
+        `diagnostic-${index}`,
+        `/workspace/src/file-${index}.ts`,
+        1,
+        "error",
+        `Diagnostic ${index}`,
+      ),
+    );
+
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "");
+    const rows = [...view.general, ...view.files.flatMap((file) => file.entries)];
+
+    expect(rows).toHaveLength(MAX_PROBLEMS_VIEW_ROWS);
+    expect(view.files).toHaveLength(MAX_PROBLEMS_VIEW_ROWS - 1);
+    expect(view.totals).toEqual({
+      errors: MAX_PROBLEMS_VIEW_ROWS - 1,
+      warnings: 0,
+    });
+    expect(view.general).toEqual([
+      expect.objectContaining({
+        groupKey: DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY,
+        kind: "overflow",
+        message: "Problems view retained 1999 of 100000 input rows.",
+      }),
+    ]);
+  });
+
+  it("preserves an upstream retention receipt when the UI projection is saturated", () => {
+    const receipt: WorkbenchNotice = {
+      groupKey: DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY,
+      id: "upstream-receipt",
+      kind: "overflow",
+      message: "Retained 20000 of 100000 published diagnostics.",
+      severity: "info",
+      source: "Diagnostics",
+    };
+    const notices = [
+      receipt,
+      ...Array.from({ length: MAX_PROBLEMS_VIEW_ROWS }, (_, index) =>
+        notice(
+          `diagnostic-${index}`,
+          `/workspace/src/file-${index}.ts`,
+          1,
+          "error",
+          `Diagnostic ${index}`,
+        ),
+      ),
+    ];
+
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "");
+
+    expect(view.general).toEqual([
+      {
+        ...receipt,
+        message:
+          "Retained 20000 of 100000 published diagnostics. Problems view retained 1999 of 2000 input rows.",
+      },
+    ]);
+    expect(view.files).toHaveLength(MAX_PROBLEMS_VIEW_ROWS - 1);
+  });
+
+  it("finds filtered diagnostics beyond the cutoff without inventing overflow", () => {
+    const notices = Array.from({ length: 100_000 }, (_, index) =>
+      notice(
+        `diagnostic-${index}`,
+        `/workspace/src/file-${index}.ts`,
+        1,
+        "error",
+        index === 99_999 ? "Unique needle" : `Diagnostic ${index}`,
+      ),
+    );
+
+    const view = buildProblemsView(
+      notices,
+      ROOT,
+      { errors: true, warnings: true },
+      "unique needle",
+    );
+
+    expect(view.files.flatMap((file) => file.entries)).toEqual([
+      expect.objectContaining({ id: "diagnostic-99999" }),
+    ]);
+    expect(view.general).toEqual([]);
+  });
+
+  it("lets a later authoritative language-server duplicate replace a task row at cutoff", () => {
+    const path = "/workspace/src/index.ts";
+    const task = {
+      ...notice("task", path, 4, "error", "Type mismatch (TS2322)"),
+      code: "TS2322",
+      groupKey: "node-package-task-problems:workspace:run",
+    };
+    const languageServer = {
+      ...task,
+      code: undefined,
+      groupKey: `javascript-typescript-diagnostics:file://${path}`,
+      id: "language-server",
+      message: `file://${path} 4:1 Type mismatch`,
+      source: "typescript",
+    };
+    const fillers = Array.from({ length: MAX_PROBLEMS_VIEW_ROWS - 1 }, (_, index) =>
+      notice(
+        `filler-${index}`,
+        `/workspace/src/filler-${index}.ts`,
+        1,
+        "warning",
+        `Filler ${index}`,
+      ),
+    );
+
+    const view = buildProblemsView(
+      [task, ...fillers, languageServer],
+      ROOT,
+      { errors: true, warnings: true },
+      "",
+    );
+    const ids = view.files.flatMap((file) => file.entries.map((entry) => entry.id));
+
+    expect(ids).toContain("language-server");
+    expect(ids).not.toContain("task");
+    expect(view.totals.errors).toBe(1);
+  });
+
+  it("reports the actual retained rows after duplicate-heavy projection", () => {
+    const path = "/workspace/src/index.ts";
+    const task = {
+      ...notice("task", path, 4, "error", "Type mismatch"),
+      groupKey: "node-package-task-problems:workspace:run",
+    };
+    const languageServer = {
+      ...task,
+      groupKey: `javascript-typescript-diagnostics:file://${path}`,
+      id: "language-server",
+      source: "typescript",
+    };
+    const notices = Array.from({ length: 50_000 }, (_, index) =>
+      index % 2 === 0
+        ? { ...task, id: `task-${index}` }
+        : {
+            ...languageServer,
+            id: `language-server-${index}`,
+          },
+    );
+
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "");
+    const retainedRows = view.files.flatMap((file) => file.entries).length;
+    const receipt = view.general[0];
+
+    expect(retainedRows).toBeLessThanOrEqual(MAX_PROBLEMS_VIEW_ROWS - 1);
+    expect(receipt?.message).toBe(`Problems view retained ${retainedRows} of 50000 input rows.`);
+  });
+
+  it("recognizes an exact-owner retention receipt prefix", () => {
+    const receipt: WorkbenchNotice = {
+      groupKey: `${DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY}:php:owner:7:3`,
+      id: "owned-receipt",
+      kind: "overflow",
+      message: "Retained 2000 of 100000 published diagnostics.",
+      severity: "info",
+      source: "Diagnostics",
+    };
+    const notices = [
+      receipt,
+      ...Array.from({ length: MAX_PROBLEMS_VIEW_ROWS }, (_, index) =>
+        notice(
+          `diagnostic-${index}`,
+          `/workspace/src/file-${index}.ts`,
+          1,
+          "error",
+          `Diagnostic ${index}`,
+        ),
+      ),
+    ];
+
+    const view = buildProblemsView(
+      notices,
+      ROOT,
+      { errors: false, warnings: false },
+      "does not match receipt",
+    );
+
+    expect(view.general).toEqual([receipt]);
+    expect(view.files).toEqual([]);
   });
 });

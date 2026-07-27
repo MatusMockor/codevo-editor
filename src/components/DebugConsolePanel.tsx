@@ -175,7 +175,12 @@ export function DebugConsolePanel({
   onDismiss?(): void;
   onFocusRequestHandled?(request: DebugConsoleFocusRequest): void;
   onInputChanged?(request: DebugConsoleCompletionRequest): void;
-  onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
+  onLoadVariablePage?(
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    start: number,
+    filter?: import("../domain/debug").DebugVariableFilter,
+  ): void | Promise<void>;
   onRequest?(request: DebugConsoleCompletionRequest): void;
   inspectionOwner?: DebugInspectionOwner | null;
   latencyClock?: LatencyClock;

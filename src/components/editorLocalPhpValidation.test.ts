@@ -5,6 +5,7 @@ import {
   applyLocalPhpValidationSnapshot,
   localPhpDiagnosticsFromVisibleMarkers,
 } from "./editorLocalPhpValidation";
+import { MAX_MONACO_DIAGNOSTIC_ITEMS } from "./editorDiagnosticMonacoMappings";
 
 function stateSetter<Value>(read: () => Value, write: (value: Value) => void) {
   return ((action: SetStateAction<Value>) => {
@@ -77,6 +78,59 @@ describe("editorLocalPhpValidation", () => {
       expect.objectContaining({ severity: 8, source: "PHP Syntax" }),
       expect.objectContaining({ severity: 4, source: "PHP Inspection" }),
     ]);
+  });
+
+  it("bounds a 100,000-item snapshot before mapping, caching, and marker publication", () => {
+    const monaco = {
+      MarkerSeverity: { Error: 8, Warning: 4 },
+      MarkerTag: { Unnecessary: 1 },
+    } as unknown as typeof Monaco;
+    let messageReads = 0;
+    const syntaxDiagnostic = {
+      character: 0,
+      endCharacter: 1,
+      endLine: 0,
+      line: 0,
+      get message() {
+        messageReads += 1;
+        return "Syntax error";
+      },
+    };
+    const writeMarkers = vi.fn();
+    const onDiagnosticsChange = vi.fn();
+    let syntaxByPath = {};
+    let inspectionCounts = {};
+
+    applyLocalPhpValidationSnapshot(
+      {
+        inspectionDiagnostics: [],
+        syntaxDiagnostics: Array(100_000).fill(syntaxDiagnostic),
+      },
+      monaco,
+      "/workspace/large.php",
+      writeMarkers,
+      onDiagnosticsChange,
+      stateSetter(
+        () => syntaxByPath,
+        (value) => {
+          syntaxByPath = value;
+        },
+      ),
+      stateSetter(
+        () => inspectionCounts,
+        (value) => {
+          inspectionCounts = value;
+        },
+      ),
+    );
+
+    expect(onDiagnosticsChange.mock.calls[0]?.[1]).toHaveLength(MAX_MONACO_DIAGNOSTIC_ITEMS);
+    expect(
+      (syntaxByPath as Record<string, readonly unknown[]>)["/workspace/large.php"],
+    ).toHaveLength(MAX_MONACO_DIAGNOSTIC_ITEMS);
+    expect(writeMarkers.mock.calls[0]?.[0]).toHaveLength(MAX_MONACO_DIAGNOSTIC_ITEMS);
+    expect(messageReads).toBe(MAX_MONACO_DIAGNOSTIC_ITEMS * 2);
+    expect(inspectionCounts).toEqual({});
   });
 
   it("keeps only visible problem markers and maps their severities", () => {

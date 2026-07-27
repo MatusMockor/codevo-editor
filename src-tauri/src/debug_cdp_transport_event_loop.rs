@@ -20,8 +20,15 @@ fn fail_closed_transport(
     disconnect_notifier.notify();
 }
 
+fn cancel_smart_step_on_socket_end(context: &SocketLoopContext) {
+    if let Ok(mut shared) = context.shared.lock() {
+        shared.cancel_smart_step();
+    }
+}
+
 pub(crate) fn fail_closed_exception_timeout(context: &SocketLoopContext) {
     if let Ok(mut shared) = context.shared.lock() {
+        shared.cancel_smart_step();
         shared.explicit_pause_requested = false;
         shared.internal_action = None;
         shared.pending_explicit_pause = None;
@@ -36,6 +43,7 @@ pub(crate) fn fail_closed_exception_timeout(context: &SocketLoopContext) {
 }
 
 pub(crate) fn fail_closed_socket_loop(context: &SocketLoopContext) {
+    cancel_smart_step_on_socket_end(context);
     fail_closed_transport(
         &context.pending,
         &context.shutdown,
@@ -67,6 +75,7 @@ fn run_socket_loop(mut socket: WebSocket<BoundedCdpStream>, context: SocketLoopC
         }
         let timeout_request = handle_exception_classification_timeout(&context)
             .or_else(|| handle_internal_action_timeout(&context));
+        expire_smart_step_request(&context);
         if context.shutdown.load(Ordering::SeqCst) || context.emitter.health().is_failed_closed() {
             let _ = socket.close(None);
             break;
@@ -109,17 +118,33 @@ fn run_socket_loop(mut socket: WebSocket<BoundedCdpStream>, context: SocketLoopC
             if context.shutdown.load(Ordering::SeqCst) {
                 break;
             }
-            if socket.send(Message::text(reply)).is_err() {
+            let Some(dispatch_lease) = commit_smart_step_dispatch(&context) else {
+                continue;
+            };
+            let send_failed = socket.send(Message::text(reply)).is_err();
+            finish_smart_step_dispatch(&context, dispatch_lease);
+            if send_failed {
                 break;
             }
         }
     }
+    cancel_smart_step_on_socket_end(&context);
     reject_pending_cdp_requests(&context.pending);
 }
+
+#[cfg(test)]
+use smart_step_runtime::validate_smart_step_dispatch;
+use smart_step_runtime::{
+    commit_smart_step_dispatch, expire_smart_step_request, finish_smart_step_dispatch,
+    handle_smart_step_response,
+};
 
 fn handle_incoming_message(text: &str, context: &SocketLoopContext) -> Option<String> {
     let message: Value = serde_json::from_str(text).ok()?;
     if let Some(id) = message.get("id").and_then(Value::as_u64) {
+        if handle_smart_step_response(id, &message, context) {
+            return None;
+        }
         if let Some(InternalResponse::Handled(reply)) =
             handle_exception_classification_response(id, &message, context)
         {
@@ -1005,18 +1030,19 @@ pub(crate) fn build_pause_inventory(
             }
             let scope_type = scope.get("type").and_then(Value::as_str).unwrap_or("scope");
             let reference = state.allocate_id();
-            inventory.object_ids.insert(
-                reference,
-                ObjectReference {
-                    frame_id,
-                    object_id: object_id.to_string(),
-                    pause_generation: inventory.pause_generation,
-                    evaluate_name: None,
-                    access: ObjectReferenceAccess::ScopeRoot,
-                    mutation: scope_mutation(Some(call_frame_id), scope_number, scope_type),
-                    lineage: None,
-                },
-            );
+            let owned = ObjectReference {
+                frame_id,
+                object_id: object_id.to_string(),
+                pause_generation: inventory.pause_generation,
+                evaluate_name: None,
+                access: ObjectReferenceAccess::ScopeRoot,
+                mutation: scope_mutation(Some(call_frame_id), scope_number, scope_type),
+                lineage: None,
+            };
+            if try_reserve_object_reference_bytes(&mut inventory, &owned).is_err() {
+                break;
+            }
+            inventory.object_ids.insert(reference, owned);
             scopes.push(DebugScopeInfo {
                 name: super::scope::display_name(scope_type),
                 variables_reference: reference,
@@ -1457,6 +1483,76 @@ mod bounded_pause_projection_tests {
             inventory.frames[0].file_path.as_deref(),
             Some(fixture.source_b.to_string_lossy().as_ref())
         );
+        let _ = fs::remove_dir_all(fixture.root);
+    }
+
+    #[test]
+    fn smart_step_dispatch_revalidates_the_exact_map_receipt_at_commit_time() {
+        let fixture = source_map_fixture();
+        let generated_url = fixture.generated_url.clone();
+        let receipt =
+            match fixture
+                .registry
+                .classify_generated_for_script("A", &generated_url, 1, 0)
+            {
+                crate::debug_source_map::GeneratedSourceMapClassification::LoadedButUnmapped(
+                    receipt,
+                ) => receipt,
+                _ => panic!("expected an exact loaded-but-unmapped receipt"),
+            };
+        let mut shared = CdpShared::new(Some(fixture.registry));
+        shared.smart_step_dispatch_lease = shared
+            .source_maps
+            .as_ref()
+            .and_then(|maps| maps.pin_dispatch(&receipt));
+        shared.smart_step_fallback = Some(json!({"reason": "step"}));
+        shared
+            .source_maps
+            .as_mut()
+            .expect("source maps")
+            .evict_exact_script("A", &generated_url);
+
+        assert!(validate_smart_step_dispatch(&mut shared).is_err());
+        assert!(shared.smart_step_dispatch_lease.is_none());
+        assert!(shared.smart_step_fallback.is_none());
+        let _ = fs::remove_dir_all(fixture.root);
+    }
+
+    #[test]
+    fn committed_smart_step_pin_defers_exact_map_removal_through_dispatch() {
+        let fixture = source_map_fixture();
+        let generated_url = fixture.generated_url.clone();
+        let receipt =
+            match fixture
+                .registry
+                .classify_generated_for_script("A", &generated_url, 1, 0)
+            {
+                crate::debug_source_map::GeneratedSourceMapClassification::LoadedButUnmapped(
+                    receipt,
+                ) => receipt,
+                _ => panic!("expected an exact loaded-but-unmapped receipt"),
+            };
+        let mut shared = CdpShared::new(Some(fixture.registry));
+        shared.smart_step_dispatch_lease = shared
+            .source_maps
+            .as_ref()
+            .and_then(|maps| maps.pin_dispatch(&receipt));
+        let lease = validate_smart_step_dispatch(&mut shared)
+            .expect("commit-time validation")
+            .expect("dispatch lease");
+
+        let maps = shared.source_maps.as_mut().expect("source maps");
+        maps.evict_exact_script("A", &generated_url);
+        assert!(matches!(
+            maps.classify_generated_for_script("A", &generated_url, 1, 0),
+            crate::debug_source_map::GeneratedSourceMapClassification::Unknown
+        ));
+        assert!(maps.map_generated(&generated_url, 1, 0).is_none());
+        maps.release_dispatch(lease);
+        assert!(matches!(
+            maps.classify_generated_for_script("A", &generated_url, 1, 0),
+            crate::debug_source_map::GeneratedSourceMapClassification::Unknown
+        ));
         let _ = fs::remove_dir_all(fixture.root);
     }
 

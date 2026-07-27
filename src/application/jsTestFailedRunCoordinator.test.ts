@@ -63,6 +63,28 @@ describe("createJsTestFailedRunCoordinator", () => {
     expect(coordinator.snapshot()).toEqual({ completed: 0, phase: "idle", total: 0 });
   });
 
+  it("retains the exact package authority while keeping it out of the scoped wire payload", async () => {
+    const runTask = vi.fn<JsTestTaskGateway["runTask"]>(async (request) =>
+      envelope(request.runId, ok("nested")),
+    );
+    const coordinator = createCoordinator(taskGateway({ runTask }));
+    const nestedScope = Object.freeze({
+      ...scope("nested"),
+      packageRootRelativePath: "packages/vitest-app",
+    });
+
+    await expect(coordinator.start(batchRequest([nestedScope]))).resolves.toMatchObject({
+      status: "success",
+    });
+
+    expect(runTask).toHaveBeenCalledExactlyOnceWith({
+      packageRootRelativePath: "packages/vitest-app",
+      runId: "run-1",
+      scope: scope("nested"),
+      workspaceId: "workspace-1",
+    });
+  });
+
   it("is single-flight and rejects malformed, empty, stale, or mutable requests", async () => {
     const pending = deferred<JsTestTaskRunResponse>();
     let current = true;

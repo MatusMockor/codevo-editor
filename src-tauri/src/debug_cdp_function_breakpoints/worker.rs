@@ -1,6 +1,6 @@
 use super::installation::{
     evaluate_and_install_function_breakpoint, parse_call_frame_function_location,
-    FunctionBreakpointCdp, FunctionLocation,
+    FunctionBreakpointCdp, FunctionBreakpointResolutionFailure, FunctionLocation,
 };
 use super::state::FunctionBreakpointSessionState;
 use crate::debug_adapter::{
@@ -23,7 +23,7 @@ pub(crate) fn run_reresolution_worker(
     is_current: Arc<dyn Fn() -> bool + Send + Sync>,
     fail_closed: Arc<dyn Fn() + Send + Sync>,
 ) {
-    while triggers.recv().is_ok() {
+    'worker: while triggers.recv().is_ok() {
         loop {
             match triggers.recv_timeout(FUNCTION_BREAKPOINT_RERESOLUTION_QUIET_PERIOD) {
                 Ok(()) => {}
@@ -72,6 +72,7 @@ pub(crate) fn run_reresolution_worker(
         drop(publication_guard);
         let mut resolved = Vec::new();
         let mut resolved_function_locations = Vec::new();
+        let mut request_failed = false;
         let capture_function_location = match state.has_hidden_continue_pause() {
             Ok(capture) => capture,
             Err(()) => {
@@ -152,7 +153,15 @@ pub(crate) fn run_reresolution_worker(
                     resolved.push(DebugFunctionBreakpointVerification { id, verified: true });
                 }
                 Ok(None) => {}
-                Err(_) => {
+                Err(FunctionBreakpointResolutionFailure::Recoverable(_)) => {
+                    if !is_current() || state.revision.load(Ordering::Acquire) != sweep_revision {
+                        fail_closed();
+                        return;
+                    }
+                    request_failed = true;
+                    break;
+                }
+                Err(FunctionBreakpointResolutionFailure::InstallUncertain(_)) => {
                     fail_closed();
                     return;
                 }
@@ -170,6 +179,15 @@ pub(crate) fn run_reresolution_worker(
                 });
             }
         }
+        if request_failed {
+            surface_hidden_pause_after_reresolution_failure(
+                &state,
+                &shared,
+                emit.as_ref(),
+                fail_closed.as_ref(),
+            );
+            continue 'worker;
+        }
         resume_after_hidden_continue_pause(
             &mut cdp,
             &state,
@@ -184,6 +202,49 @@ pub(crate) fn run_reresolution_worker(
             },
         );
     }
+}
+
+fn surface_hidden_pause_after_reresolution_failure(
+    state: &FunctionBreakpointSessionState,
+    shared: &Mutex<crate::debug_cdp::transport::CdpShared>,
+    emit: &(dyn Fn(DebugEventPayload) + Send + Sync),
+    fail_closed: &(dyn Fn() + Send + Sync),
+) {
+    let hidden_pause = match state.take_hidden_continue_pause() {
+        Ok(Some(hidden_pause)) => hidden_pause,
+        Ok(None) => return,
+        Err(()) => {
+            fail_closed();
+            return;
+        }
+    };
+    let pause = match shared.lock() {
+        Ok(mut shared) => {
+            shared.suppress_next_resumed = false;
+            crate::debug_cdp::transport::install_visible_pause(&hidden_pause.params, &mut shared)
+        }
+        Err(_) => {
+            fail_closed();
+            return;
+        }
+    };
+    let Ok((frames, pause_generation, reason, frames_truncated)) = pause else {
+        fail_closed();
+        return;
+    };
+    emit(DebugEventPayload::Output {
+        stream: DebugOutputStream::Stderr,
+        text:
+            "[debugger] Unable to resolve a pending function breakpoint; it remains unverified.\n"
+                .to_string(),
+        truncated: false,
+    });
+    emit(DebugEventPayload::Stopped {
+        reason,
+        frames,
+        pause_generation,
+        frames_truncated,
+    });
 }
 
 pub(super) struct HiddenPauseSettleContext<'a> {

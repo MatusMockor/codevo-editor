@@ -1,9 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import {
-  modelMatchesWorkspacePath,
-  modelPath,
-} from "./phpMonacoDocumentContext";
+import { modelMatchesWorkspacePath, modelPath } from "./phpMonacoDocumentContext";
+import { MAX_MONACO_DIAGNOSTIC_ITEMS } from "./editorDiagnosticMonacoMappings";
 
 export const EDITOR_PLACEHOLDER_MODEL_PATH = "inmemory://workbench/empty";
 
@@ -26,13 +24,9 @@ export function reconcileEditorRuntimeMarkers(
   monacoApi: typeof Monaco,
   workspaceRoot: string | null,
   diagnosticsByPath: Readonly<Record<string, readonly LanguageServerDiagnostic[]>>,
-  previousDiagnosticsByPath: Readonly<
-    Record<string, readonly LanguageServerDiagnostic[]>
-  >,
+  previousDiagnosticsByPath: Readonly<Record<string, readonly LanguageServerDiagnostic[]>>,
   markedModels: WeakSet<Monaco.editor.ITextModel>,
-  toMarker: (
-    diagnostic: LanguageServerDiagnostic,
-  ) => Monaco.editor.IMarkerData,
+  toMarker: (diagnostic: LanguageServerDiagnostic) => Monaco.editor.IMarkerData,
 ): void {
   monacoApi.editor.getModels().forEach((model) => {
     const path = modelPath(model);
@@ -43,18 +37,19 @@ export function reconcileEditorRuntimeMarkers(
 
     const diagnostics = diagnosticsByPath[path] ?? [];
     const isNewModel = !markedModels.has(model);
-    const diagnosticsChanged =
-      previousDiagnosticsByPath[path] !== diagnosticsByPath[path];
+    const diagnosticsChanged = previousDiagnosticsByPath[path] !== diagnosticsByPath[path];
 
     if (!isNewModel && !diagnosticsChanged) {
       return;
     }
 
-    monacoApi.editor.setModelMarkers(
-      model,
-      "php-language-server",
-      diagnostics.map(toMarker),
-    );
+    const retainedCount = Math.min(diagnostics.length, MAX_MONACO_DIAGNOSTIC_ITEMS);
+    const markers = new Array<Monaco.editor.IMarkerData>(retainedCount);
+    for (let index = 0; index < retainedCount; index += 1) {
+      markers[index] = toMarker(diagnostics[index]!);
+    }
+
+    monacoApi.editor.setModelMarkers(model, "php-language-server", markers);
     markedModels.add(model);
   });
 }

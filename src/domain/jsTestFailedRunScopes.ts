@@ -19,7 +19,9 @@ export interface JsTestFailedRunSnapshot {
   readonly rootPath: string;
 }
 
-export type JsTestFailedRunScope = Extract<JsTestRunScope, { readonly kind: "test" }>;
+export type JsTestFailedRunScope = Extract<JsTestRunScope, { readonly kind: "test" }> & {
+  readonly packageRootRelativePath?: string;
+};
 
 export type JsTestFailedRunPlan =
   | {
@@ -38,6 +40,17 @@ export type JsTestFailedRunPlan =
       readonly unresolved: number;
     };
 
+export interface JsTestFailedRunResolver {
+  resolve(response: TestRunOk): JsTestFailedRunPlan;
+}
+
+export type JsTestFailedRunResolverPlan =
+  | {
+      readonly resolver: JsTestFailedRunResolver;
+      readonly status: "available";
+    }
+  | Exclude<JsTestFailedRunPlan, { readonly status: "available" }>;
+
 interface CanonicalDiscovery {
   readonly fullName: string;
   readonly id: string;
@@ -45,6 +58,11 @@ interface CanonicalDiscovery {
   readonly parameterized: boolean;
   readonly relativeFilePath: string;
   readonly scope: JsTestFailedRunScope;
+}
+
+interface CanonicalFileIndex {
+  readonly byName: ReadonlyMap<string, readonly CanonicalDiscovery[]>;
+  readonly sortedNames: readonly string[];
 }
 
 const encoder = new TextEncoder();
@@ -55,36 +73,49 @@ const unsafeTextPattern = /[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
  * The result is deliberately all-or-nothing: a partial rerun is never presented as "rerun failed".
  */
 export function jsTestFailedRunScopes(snapshot: JsTestFailedRunSnapshot): JsTestFailedRunPlan {
-  if (
-    snapshot.discoveryTruncated ||
-    snapshot.response.status !== "ok" ||
-    !canonicalRootPath(snapshot.rootPath)
-  ) {
+  const prepared = createJsTestFailedRunResolver(snapshot);
+  return prepared.status === "available" ? prepared.resolver.resolve(snapshot.response) : prepared;
+}
+
+export function createJsTestFailedRunResolver(snapshot: {
+  readonly discoveries: readonly JsTestExplorerTestDiscovery[];
+  readonly discoveryTruncated: boolean;
+  readonly rootPath: string;
+}): JsTestFailedRunResolverPlan {
+  if (snapshot.discoveryTruncated || !canonicalRootPath(snapshot.rootPath)) {
     return unavailable(0);
   }
-  const cases = snapshot.response.suites.flatMap(({ cases: suiteCases }) => suiteCases);
-  if (
-    cases.length > MAX_JS_TEST_FAILED_RUN_CASES ||
-    snapshot.discoveries.length > MAX_JS_TEST_FAILED_RUN_DISCOVERIES
-  ) {
+  if (snapshot.discoveries.length > MAX_JS_TEST_FAILED_RUN_DISCOVERIES) {
     return overflow(0);
   }
-
   const canonical = canonicalDiscoveries(snapshot.discoveries, snapshot.rootPath);
   if (!canonical) return unavailable(0);
-  const byFile = new Map<string, CanonicalDiscovery[]>();
-  for (const discovery of canonical) {
-    const entries = byFile.get(discovery.relativeFilePath) ?? [];
-    entries.push(discovery);
-    byFile.set(discovery.relativeFilePath, entries);
+  const byFile = canonicalDiscoveryIndex(canonical);
+  return Object.freeze({
+    resolver: Object.freeze({
+      resolve: (response: TestRunOk) => resolveFailedRunScopes(response, snapshot.rootPath, byFile),
+    }),
+    status: "available" as const,
+  });
+}
+
+function resolveFailedRunScopes(
+  response: TestRunOk,
+  rootPath: string,
+  byFile: ReadonlyMap<string, CanonicalFileIndex>,
+): JsTestFailedRunPlan {
+  const cases: TestCase[] = [];
+  for (const suite of response.suites) {
+    if (cases.length + suite.cases.length > MAX_JS_TEST_FAILED_RUN_CASES) return overflow(0);
+    cases.push(...suite.cases);
   }
 
   const scopes = new Map<string, JsTestFailedRunScope>();
   let unresolved = 0;
   for (const testCase of cases) {
     if (testCase.status !== "failed" && testCase.status !== "error") continue;
-    const resolved = resolveFailedCase(testCase, snapshot.rootPath, byFile);
-    if (!resolved || scopeSelectionCount(resolved.scope, canonical) !== 1) {
+    const resolved = resolveFailedCase(testCase, rootPath, byFile);
+    if (!resolved || scopeSelectionCount(resolved.scope, byFile) !== 1) {
       unresolved += 1;
       continue;
     }
@@ -187,7 +218,7 @@ function canonicalDiscovery(
 function resolveFailedCase(
   testCase: TestCase,
   rootPath: string,
-  byFile: ReadonlyMap<string, readonly CanonicalDiscovery[]>,
+  byFile: ReadonlyMap<string, CanonicalFileIndex>,
 ): CanonicalDiscovery | null {
   const relativeFilePath = relativeTestPath(rootPath, testCase.file);
   const runtimeName = testCase.name;
@@ -198,31 +229,76 @@ function resolveFailedCase(
   ) {
     return null;
   }
-  const matches = (byFile.get(relativeFilePath) ?? []).filter(
-    (discovery) =>
-      (testCase.line === null || discovery.lineNumber === testCase.line) &&
-      (discovery.parameterized
-        ? runtimeName === discovery.fullName || runtimeName.startsWith(`${discovery.fullName} `)
-        : runtimeName === discovery.fullName),
+  const index = byFile.get(relativeFilePath);
+  if (!index) return null;
+  const candidates = new Map<string, CanonicalDiscovery>();
+  for (const discovery of index.byName.get(runtimeName) ?? []) {
+    candidates.set(discovery.id, discovery);
+  }
+  for (let boundary = runtimeName.indexOf(" "); boundary >= 0;) {
+    const prefix = runtimeName.slice(0, boundary);
+    for (const discovery of index.byName.get(prefix) ?? []) {
+      if (discovery.parameterized) candidates.set(discovery.id, discovery);
+    }
+    boundary = runtimeName.indexOf(" ", boundary + 1);
+  }
+  const matches = [...candidates.values()].filter(
+    (discovery) => testCase.line === null || discovery.lineNumber === testCase.line,
   );
   return matches.length === 1 ? matches[0]! : null;
 }
 
 function scopeSelectionCount(
   scope: JsTestFailedRunScope,
-  discoveries: readonly CanonicalDiscovery[],
+  byFile: ReadonlyMap<string, CanonicalFileIndex>,
 ): number {
-  let count = 0;
+  const index = byFile.get(scope.relativeFilePath);
+  if (!index) return 0;
+  const exact = index.byName.get(scope.fullName)?.length ?? 0;
+  if (scope.nameMatch !== "prefix") return exact;
+  const descendantPrefix = `${scope.fullName} `;
+  return (
+    exact +
+    lowerBound(index.sortedNames, `${scope.fullName}!`) -
+    lowerBound(index.sortedNames, descendantPrefix)
+  );
+}
+
+function canonicalDiscoveryIndex(
+  discoveries: readonly CanonicalDiscovery[],
+): ReadonlyMap<string, CanonicalFileIndex> {
+  const mutable = new Map<string, { byName: Map<string, CanonicalDiscovery[]>; names: string[] }>();
   for (const discovery of discoveries) {
-    if (discovery.relativeFilePath !== scope.relativeFilePath) continue;
-    const selected =
-      scope.nameMatch === "prefix"
-        ? discovery.fullName === scope.fullName ||
-          discovery.fullName.startsWith(`${scope.fullName} `)
-        : discovery.fullName === scope.fullName;
-    if (selected) count += 1;
+    const file = mutable.get(discovery.relativeFilePath) ?? {
+      byName: new Map<string, CanonicalDiscovery[]>(),
+      names: [],
+    };
+    const named = file.byName.get(discovery.fullName) ?? [];
+    named.push(discovery);
+    file.byName.set(discovery.fullName, named);
+    file.names.push(discovery.fullName);
+    mutable.set(discovery.relativeFilePath, file);
   }
-  return count;
+  return new Map(
+    [...mutable].map(([filePath, file]) => [
+      filePath,
+      Object.freeze({
+        byName: file.byName,
+        sortedNames: Object.freeze(file.names.sort(compareText)),
+      }),
+    ]),
+  );
+}
+
+function lowerBound(values: readonly string[], target: string): number {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (compareText(values[middle]!, target) < 0) low = middle + 1;
+    else high = middle;
+  }
+  return low;
 }
 
 function relativeTestPath(rootPath: string, path: string | null): string | null {
@@ -307,14 +383,21 @@ function cloneFrozenScope(scope: JsTestFailedRunScope): JsTestFailedRunScope {
     fullName: scope.fullName,
     kind: "test",
     ...(scope.nameMatch === "prefix" ? { nameMatch: "prefix" as const } : {}),
+    ...(scope.packageRootRelativePath === undefined
+      ? {}
+      : { packageRootRelativePath: scope.packageRootRelativePath }),
     relativeFilePath: scope.relativeFilePath,
   });
 }
 
-function unavailable(unresolved: number): JsTestFailedRunPlan {
+function unavailable(
+  unresolved: number,
+): Extract<JsTestFailedRunPlan, { readonly status: "unavailable" }> {
   return Object.freeze({ scopes: Object.freeze([] as const), status: "unavailable", unresolved });
 }
 
-function overflow(unresolved: number): JsTestFailedRunPlan {
+function overflow(
+  unresolved: number,
+): Extract<JsTestFailedRunPlan, { readonly status: "overflow" }> {
   return Object.freeze({ scopes: Object.freeze([] as const), status: "overflow", unresolved });
 }

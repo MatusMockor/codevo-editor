@@ -79,6 +79,7 @@ interface UseDebugFrameSelectionProjectionOptions {
   readonly activePauseGeneration: number;
   readonly currentRootRef: MutableRefObject<string | null>;
   readonly currentWorkspaceIdRef: MutableRefObject<string | null>;
+  readonly workspaceEpoch: number;
   readonly frameSelectionByRootRef: MutableRefObject<Record<string, DebugFrameSelection | null>>;
   readonly frameSelectionGenerationByRootRef: MutableRefObject<Record<string, number>>;
   readonly isExactWorkspaceOwnerCurrent: (rootPath: string, workspaceId: string | null) => boolean;
@@ -103,6 +104,7 @@ export function useDebugFrameSelectionProjection({
   activePauseGeneration,
   currentRootRef,
   currentWorkspaceIdRef,
+  workspaceEpoch,
   frameSelectionByRootRef,
   frameSelectionGenerationByRootRef,
   isExactWorkspaceOwnerCurrent,
@@ -166,6 +168,8 @@ export function useDebugFrameSelectionProjection({
       ? null
       : {
           rootKey: activeKey,
+          workspaceId: currentWorkspaceIdRef.current,
+          workspaceEpoch,
           sessionId: snapshot.state.sessionId,
           pauseGeneration: activePauseGeneration,
           frameId,
@@ -173,9 +177,11 @@ export function useDebugFrameSelectionProjection({
   }, [
     activeKey,
     activePauseGeneration,
+    currentWorkspaceIdRef,
     pauseOwned,
     selection?.frameId,
     snapshot.state,
+    workspaceEpoch,
     workspaceAuthorized,
   ]);
 

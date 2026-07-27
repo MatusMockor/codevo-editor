@@ -205,8 +205,9 @@ export class DebugRestartCoordinator {
 export function cloneNodeLaunchTarget(launch: DebugLaunchTarget): NodeDebugLaunchTarget | null {
   if (!isRecord(launch) || typeof launch.kind !== "string") return null;
   const sourceMaps = cloneSourceMaps(launch);
+  const smartStep = cloneSmartStep(launch);
   const stopOnEntry = cloneStopOnEntry(launch);
-  if (!sourceMaps || !stopOnEntry) return null;
+  if (!sourceMaps || !smartStep || !stopOnEntry) return null;
   let clone: NodeDebugLaunchTarget | null = null;
   switch (launch.kind) {
     case "node-attach":
@@ -282,7 +283,7 @@ export function cloneNodeLaunchTarget(launch: DebugLaunchTarget): NodeDebugLaunc
       return null;
   }
   const launchWithSourceMaps = clone
-    ? ({ ...clone, ...sourceMaps, ...stopOnEntry } as NodeDebugLaunchTarget)
+    ? ({ ...clone, ...sourceMaps, ...smartStep, ...stopOnEntry } as NodeDebugLaunchTarget)
     : null;
   return launchWithSourceMaps &&
     launchTextBytes(launchWithSourceMaps) <= MAX_DEBUG_RESTART_RETAINED_TEXT_BYTES
@@ -321,6 +322,21 @@ function cloneSourceMaps(
     return null;
   }
   return typeof launch.sourceMaps === "boolean" ? { sourceMaps: launch.sourceMaps } : null;
+}
+
+function cloneSmartStep(
+  launch: Record<string, unknown>,
+): { readonly smartStep?: boolean } | null {
+  if (!Object.prototype.hasOwnProperty.call(launch, "smartStep")) return {};
+  if (
+    launch.kind !== "node-attach" &&
+    launch.kind !== "node-script" &&
+    launch.kind !== "node-configured-script" &&
+    launch.kind !== "node-npm-script"
+  ) {
+    return null;
+  }
+  return typeof launch.smartStep === "boolean" ? { smartStep: launch.smartStep } : null;
 }
 
 function cloneSelectedTestLaunch(

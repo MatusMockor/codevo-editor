@@ -31,6 +31,7 @@ export type NodeLaunchConfigurationEntry =
       readonly nativeWatch?: NativeNodeWatchLaunchIntent;
       readonly justMyCode?: NodeDebugJustMyCodePolicy;
       readonly sourceMaps?: boolean;
+      readonly smartStep?: boolean;
       readonly stopOnEntry?: boolean;
       /** Display-safe label only; task execution remains owned by the task coordinator. */
       readonly preLaunchTask?: string;
@@ -244,6 +245,7 @@ function importedVscodeResult(
       nativeWatch,
       justMyCode,
       sourceMaps,
+      smartStep,
       stopOnEntry,
       preLaunchTask,
       postDebugTask,
@@ -254,6 +256,7 @@ function importedVscodeResult(
       ...(nativeWatch ? { nativeWatch } : {}),
       ...(justMyCode ? { justMyCode } : {}),
       ...(sourceMaps !== undefined ? { sourceMaps } : {}),
+      smartStep: smartStep ?? true,
       ...(stopOnEntry !== undefined ? { stopOnEntry } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),

@@ -3,7 +3,10 @@ import {
   clonePreparedNodeDebugLaunch,
   createPreparedNodeDebugRestartStrategy,
 } from "./nodeDebugPreparedLaunchRecipe";
-import type { PreparedNodeDebugLaunch } from "./useNodeDebugConfigurationLauncher";
+import {
+  prepareNodeDebugLaunch,
+  type PreparedNodeDebugLaunch,
+} from "./useNodeDebugConfigurationLauncher";
 
 describe("clonePreparedNodeDebugLaunch", () => {
   it("retains a bounded immutable private recipe without caller aliases", () => {
@@ -96,6 +99,37 @@ describe("clonePreparedNodeDebugLaunch", () => {
     expect(strategy).toEqual({ kind: "replay-prepared", prepared: ordinary });
     expect(Object.isFrozen(strategy)).toBe(true);
     expect(Object.isFrozen(strategy?.prepared)).toBe(true);
+  });
+
+  it("retains the exact relative VS Code Node compatibility launch used by desktop QA", () => {
+    const configuration = {
+      args: [],
+      default: false,
+      env: {},
+      name: "Compat node smartStep off",
+      target: { kind: "script" as const, path: "qa-large.js" },
+    };
+    const prepared = prepareNodeDebugLaunch(configuration, "/workspace", {
+      configuration,
+      smartStep: false,
+      source: "vscode",
+    });
+
+    expect(prepared).toMatchObject({
+      kind: "supported",
+      value: {
+        launch: {
+          args: [],
+          env: {},
+          kind: "node-configured-script",
+          scriptPath: "/workspace/qa-large.js",
+          smartStep: false,
+        },
+        preLaunchTask: null,
+      },
+    });
+    if (prepared.kind !== "supported") return;
+    expect(createPreparedNodeDebugRestartStrategy(prepared.value)).not.toBeNull();
   });
 
   it("rejects a structurally typed recipe that bypasses parser URL and matcher grammar", () => {

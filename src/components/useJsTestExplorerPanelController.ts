@@ -12,6 +12,7 @@ import type { JsTestCoverageGateway } from "../domain/jsTestCoverage";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { JsTestGateway } from "../domain/jsTestRunScope";
 import type { JsTestTaskGateway } from "../domain/jsTestTask";
+import type { JsTestBatchGateway } from "../domain/jsTestBatch";
 import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import { formatJsTestOutput } from "../domain/jsTestOutput";
 import type { TextClipboardGateway } from "../domain/textClipboard";
@@ -26,6 +27,7 @@ import type { JsTestExplorerPanelProps } from "./JsTestExplorerPanel";
 
 interface UseJsTestExplorerPanelControllerOptions {
   readonly activeDocumentIdentity?: JsTestExplorerCurrentFileIdentity | null;
+  readonly batchGateway?: JsTestBatchGateway | null;
   readonly discoveryGateway: WorkspaceTestDiscoveryGateway;
   readonly coverageGateway: JsTestCoverageGateway;
   readonly coverageInvalidationVersion: number;
@@ -62,6 +64,7 @@ interface ContinuousRunWatchCommandState {
 
 export function useJsTestExplorerPanelController({
   activeDocumentIdentity = null,
+  batchGateway = null,
   coverageGateway,
   coverageInvalidationVersion,
   continuousRunVersion = 0,
@@ -201,6 +204,7 @@ export function useJsTestExplorerPanelController({
     workspaceTrusted,
   });
   const explorer = useJsTestExplorer({
+    batchGateway,
     continuousRunBlocked:
       !continuousRunAvailable ||
       coverage.isRunning ||

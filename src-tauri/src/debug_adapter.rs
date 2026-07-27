@@ -134,6 +134,23 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DebugVariableFilter {
+    Indexed,
+    Named,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DebugVariablePageLimitReason {
+    DescriptorCount,
+    DescriptorBytes,
+    PageBytes,
+    References,
+    ReferenceBytes,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DebugVariablePageRequest {
     pub pause_generation: u64,
@@ -232,6 +249,8 @@ pub struct DebugVariablePage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_start: Option<u64>,
     pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit_reason: Option<DebugVariablePageLimitReason>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -454,6 +473,21 @@ impl DebugLaunchTarget {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NodeDebugRuntimePolicy {
+    pub(crate) source_maps_enabled: bool,
+    pub(crate) smart_step_enabled: bool,
+}
+
+impl Default for NodeDebugRuntimePolicy {
+    fn default() -> Self {
+        Self {
+            source_maps_enabled: true,
+            smart_step_enabled: true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum NodeConfiguredScriptRuntime {
     #[serde(rename = "tsx")]
@@ -606,7 +640,20 @@ pub trait DebugAdapter: Send {
             total: Some(total),
             next_start: (consumed < total).then_some(consumed),
             truncated: false,
+            limit_reason: None,
         })
+    }
+    fn variables_page_filtered(
+        &mut self,
+        request: DebugVariablePageRequest,
+        filter: DebugVariableFilter,
+    ) -> Result<DebugVariablePage, String> {
+        match filter {
+            DebugVariableFilter::Named => self.variables_page(request),
+            DebugVariableFilter::Indexed => {
+                Err("Indexed variable ranges are unavailable for this debug adapter.".to_string())
+            }
+        }
     }
     fn set_variable(
         &mut self,

@@ -43,10 +43,13 @@ use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
+#[path = "debug_node_watch_cdp_policy.rs"]
+mod policy;
 #[path = "debug_node_watch_cdp_reconcile.rs"]
 mod reconcile;
 #[path = "debug_node_watch_cdp_target.rs"]
 mod target;
+pub(crate) use policy::NodeCdpWatchAdapterPolicy;
 use reconcile::{function_breakpoint_authority, reconcile_replayed_plan};
 #[cfg(test)]
 use target::{close_after_event_lease_ends, map_watch_event_disposition, DisconnectPublication};
@@ -69,6 +72,7 @@ pub(crate) struct NodeCdpWatchConnector {
     gate: Arc<WatchDebugEventGate>,
     control_proxy: WatchDebugControlProxy,
     source_maps_enabled: bool,
+    smart_step_enabled: bool,
     connected_once: bool,
 }
 
@@ -86,34 +90,6 @@ pub(crate) struct NodeCdpWatchPublisher {
     command_policy: WatchDebugCommandWorkerPolicy,
     mutation: Arc<Mutex<()>>,
     start_gate: Arc<NativeNodeWatchStartGate>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct NodeCdpWatchAdapterPolicy {
-    request_timeout: Duration,
-    command_policy: WatchDebugCommandWorkerPolicy,
-    source_maps_enabled: bool,
-}
-
-impl NodeCdpWatchAdapterPolicy {
-    pub(crate) fn new(
-        request_timeout: Duration,
-        command_policy: WatchDebugCommandWorkerPolicy,
-    ) -> Result<Self, &'static str> {
-        if request_timeout.is_zero() {
-            return Err("watch CDP request timeout must be positive");
-        }
-        Ok(Self {
-            request_timeout,
-            command_policy,
-            source_maps_enabled: true,
-        })
-    }
-
-    pub(crate) fn with_source_maps_enabled(mut self, enabled: bool) -> Self {
-        self.source_maps_enabled = enabled;
-        self
-    }
 }
 
 #[expect(
@@ -196,6 +172,7 @@ pub(crate) fn node_cdp_watch_adapters_with_start_gate(
             gate: Arc::clone(&gate),
             control_proxy: control_proxy.clone(),
             source_maps_enabled: policy.source_maps_enabled,
+            smart_step_enabled: policy.smart_step_enabled,
             connected_once: false,
         },
         NodeCdpWatchReplay {
@@ -247,7 +224,10 @@ impl WatchTargetConnector for NodeCdpWatchConnector {
         );
         let source_maps = match self
             .source_maps_enabled
-            .then(|| SourceMapRegistry::new(&self.root))
+            .then(|| {
+                SourceMapRegistry::new(&self.root)
+                    .map(|maps| maps.with_smart_step_enabled(self.smart_step_enabled))
+            })
             .transpose()
         {
             Ok(source_maps) => source_maps,
@@ -554,13 +534,15 @@ mod tests {
     }
 
     #[test]
-    fn watch_adapter_policy_defaults_source_maps_on_and_preserves_disabled_policy() {
+    fn watch_adapter_policy_defaults_runtime_features_on_and_preserves_disables() {
         let command_policy =
             WatchDebugCommandWorkerPolicy::new(1, Duration::from_secs(1)).expect("policy");
         let enabled = NodeCdpWatchAdapterPolicy::new(Duration::from_secs(1), command_policy)
             .expect("adapter policy");
         assert!(enabled.source_maps_enabled);
+        assert!(enabled.smart_step_enabled);
         assert!(!enabled.with_source_maps_enabled(false).source_maps_enabled);
+        assert!(!enabled.with_smart_step_enabled(false).smart_step_enabled);
     }
 
     #[test]

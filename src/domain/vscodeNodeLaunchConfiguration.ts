@@ -49,6 +49,8 @@ export interface VscodeNodeLaunchConfiguration {
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly justMyCode?: NodeDebugJustMyCodePolicy;
   readonly sourceMaps?: boolean;
+  /** Private debugger runtime policy. Missing VS Code values default to enabled. */
+  readonly smartStep?: boolean;
   readonly stopOnEntry?: boolean;
   /** Exact display-safe task label only. No task command or execution capability is projected. */
   readonly preLaunchTask?: string;
@@ -314,6 +316,7 @@ function frozenCompoundMember(entry: VscodeNodeLaunchConfiguration): VscodeNodeL
     ...(entry.nativeWatch ? { nativeWatch: entry.nativeWatch } : {}),
     ...(entry.justMyCode ? { justMyCode: entry.justMyCode } : {}),
     ...(entry.sourceMaps !== undefined ? { sourceMaps: entry.sourceMaps } : {}),
+    ...(entry.smartStep !== undefined ? { smartStep: entry.smartStep } : {}),
     ...(entry.stopOnEntry !== undefined ? { stopOnEntry: entry.stopOnEntry } : {}),
   });
 }
@@ -479,6 +482,7 @@ function parseConfiguration(
           target: { kind: "attach", port: value.port },
         },
         ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps } : {}),
+        ...(value.smartStep !== undefined ? { smartStep: value.smartStep as boolean } : {}),
         ...(preLaunchTask.value ? { preLaunchTask: preLaunchTask.value } : {}),
         ...(postDebugTask.value ? { postDebugTask: postDebugTask.value } : {}),
       },
@@ -578,10 +582,13 @@ function validateNoopLaunchCompatibility(
   if (value.outputCapture !== undefined && value.outputCapture !== "std") {
     return rejected(`${path}.outputCapture must be exactly "std"`);
   }
-  for (const field of ["autoAttachChildProcesses", "smartStep", "restart"] as const) {
+  for (const field of ["autoAttachChildProcesses", "restart"] as const) {
     if (value[field] !== undefined && value[field] !== false) {
       return rejected(`${path}.${field} must be exactly false`);
     }
+  }
+  if (value.smartStep !== undefined && typeof value.smartStep !== "boolean") {
+    return rejected(`${path}.smartStep must be a boolean`);
   }
   return { kind: "ok" };
 }
@@ -642,6 +649,7 @@ function parseScriptLaunchConfiguration(
       ...(envFile.value ? { envFile: envFile.value } : {}),
       ...(justMyCode ? { justMyCode } : {}),
       ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
+      ...(value.smartStep !== undefined ? { smartStep: value.smartStep as boolean } : {}),
       ...(value.stopOnEntry !== undefined ? { stopOnEntry: value.stopOnEntry as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
@@ -720,6 +728,7 @@ function parseNativeNodeWatchConfiguration(
       nativeWatch: intent.intent,
       ...(justMyCode ? { justMyCode } : {}),
       ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
+      ...(value.smartStep !== undefined ? { smartStep: value.smartStep as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
       ...(serverReadyAction ? { serverReadyAction } : {}),
@@ -787,6 +796,7 @@ function parseNpmLaunchConfiguration(
       },
       ...(justMyCode ? { justMyCode } : {}),
       ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
+      ...(value.smartStep !== undefined ? { smartStep: value.smartStep as boolean } : {}),
       ...(value.stopOnEntry !== undefined ? { stopOnEntry: value.stopOnEntry as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),

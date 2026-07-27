@@ -9,6 +9,7 @@ import { initialDebuggerSnapshot, type DebuggerSessionSnapshot } from "../domain
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import type { ActiveDebugAdapterKind } from "./debugSessionContracts";
 import { debugMutationOwnerKey } from "./useDebugSetVariable";
+import type { DebugInspectionOwner } from "../domain/debugVariablePages";
 
 interface FrameSelection {
   readonly frameId: number;
@@ -27,6 +28,7 @@ interface DebugEvaluationOptions {
   readonly gateway: DebugGateway;
   readonly isExactWorkspaceOwnerCurrent: (rootPath: string, workspaceId: string | null) => boolean;
   readonly isWorkspaceTrusted: () => boolean;
+  readonly invalidateDebugInspectionOwner: (owner: DebugInspectionOwner) => void;
   readonly mountedRef: MutableRefObject<boolean>;
   readonly pauseGenerationByRootRef: MutableRefObject<Record<string, number>>;
   readonly pendingControlsRef: MutableRefObject<Map<string, Promise<unknown>>>;
@@ -50,6 +52,7 @@ export function useDebugEvaluation({
   gateway,
   isExactWorkspaceOwnerCurrent,
   isWorkspaceTrusted,
+  invalidateDebugInspectionOwner,
   mountedRef,
   pauseGenerationByRootRef,
   pendingControlsRef,
@@ -162,6 +165,14 @@ export function useDebugEvaluation({
       } finally {
         activeEvaluationRequestsRef.current.delete(requestId);
         if (context === "repl") {
+          invalidateDebugInspectionOwner({
+            rootKey: key,
+            workspaceId,
+            workspaceEpoch: workspaceOwnerEpoch,
+            sessionId,
+            pauseGeneration,
+            frameId,
+          });
           sideEffectingEvaluationFlightsRef.current.delete(sideEffectingOwnerKey);
         }
       }
@@ -178,6 +189,7 @@ export function useDebugEvaluation({
       gateway,
       isExactWorkspaceOwnerCurrent,
       isWorkspaceTrusted,
+      invalidateDebugInspectionOwner,
       mountedRef,
       pauseGenerationByRootRef,
       pendingControlsRef,

@@ -1,6 +1,5 @@
-use crate::file_uri_path::path_from_file_uri;
 use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
-use crate::lsp_diagnostics::{parse_publish_diagnostics, LanguageServerDiagnosticEvent};
+use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
 use crate::lsp_features::{
     parse_workspace_edit_result, LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
 };
@@ -23,12 +22,14 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 mod capabilities;
+mod diagnostic_authority;
 mod request_dispatch;
 mod runtime_telemetry;
 mod server_configuration;
 mod transport_failure;
 
 use capabilities::parse_capabilities;
+use diagnostic_authority::{consume_diagnostic_bytes, is_file_uri_in_workspace};
 use request_dispatch::{cancel_pending_request, send_request_with_timeout};
 pub use runtime_telemetry::RecentLspRequest;
 #[cfg(test)]
@@ -246,7 +247,7 @@ impl DiagnosticsSink for AppHandleEventSink {
 
         let _ = self.app.emit(
             self.diagnostics_event,
-            diagnostics_event_payload(&self.root_path, event),
+            diagnostics_event_payload(&self.root_path, &event),
         );
     }
 }
@@ -294,14 +295,19 @@ fn status_event_payload(root_path: &str, status: LanguageServerRuntimeStatus) ->
     language_server_status_payload(root_path, status)
 }
 
-fn diagnostics_event_payload(root_path: &str, event: LanguageServerDiagnosticEvent) -> Value {
-    let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LanguageServerDiagnosticsEventPayload<'a> {
+    root_path: &'a str,
+    #[serde(flatten)]
+    event: &'a LanguageServerDiagnosticEvent,
+}
 
-    if let Value::Object(object) = &mut value {
-        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
-    }
-
-    value
+fn diagnostics_event_payload<'a>(
+    root_path: &'a str,
+    event: &'a LanguageServerDiagnosticEvent,
+) -> LanguageServerDiagnosticsEventPayload<'a> {
+    LanguageServerDiagnosticsEventPayload { root_path, event }
 }
 
 fn refresh_event_payload(root_path: &str, event: LanguageServerRefreshEvent) -> Value {
@@ -2573,6 +2579,17 @@ fn spawn_reader(
                         return;
                     }
 
+                    if handshake_done
+                        && consume_diagnostic_bytes(
+                            &bytes,
+                            session_id,
+                            &workspace_root,
+                            diagnostics_sink.as_ref(),
+                        )
+                    {
+                        continue;
+                    }
+
                     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
                         continue;
                     };
@@ -2606,16 +2623,6 @@ fn spawn_reader(
                         .is_ok()
                         {
                             continue;
-                        }
-
-                        if let Some(event) = parse_publish_diagnostics(&value, session_id) {
-                            let Some(event) =
-                                filter_diagnostic_event_to_workspace(&workspace_root, event)
-                            else {
-                                continue;
-                            };
-
-                            diagnostics_sink.emit_diagnostics(event);
                         }
 
                         continue;
@@ -2916,40 +2923,6 @@ fn ensure_workspace_edit_paths_in_workspace(
     Ok(())
 }
 
-fn filter_diagnostic_event_to_workspace(
-    workspace_root: &str,
-    mut event: LanguageServerDiagnosticEvent,
-) -> Option<LanguageServerDiagnosticEvent> {
-    if !is_file_uri_in_workspace(workspace_root, &event.uri) {
-        return None;
-    }
-
-    for diagnostic in &mut event.diagnostics {
-        diagnostic.related_information.retain(|related| {
-            !related.uri.starts_with("file://")
-                || is_file_uri_in_workspace(workspace_root, &related.uri)
-        });
-
-        if diagnostic
-            .code_description_href
-            .as_ref()
-            .is_some_and(|href| {
-                href.starts_with("file://") && !is_file_uri_in_workspace(workspace_root, href)
-            })
-        {
-            diagnostic.code_description_href = None;
-        }
-
-        if diagnostic.data.as_ref().is_some_and(|data| {
-            ensure_diagnostic_json_payload_paths_in_workspace(workspace_root, data, false).is_err()
-        }) {
-            diagnostic.data = None;
-        }
-    }
-
-    Some(event)
-}
-
 fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperation) -> Vec<&str> {
     match operation {
         LanguageServerWorkspaceFileOperation::Create { uri, .. }
@@ -2972,129 +2945,6 @@ fn ensure_workspace_edit_uri_in_workspace(workspace_root: &str, uri: &str) -> Re
     Err("Workspace edit path is outside the workspace root.".to_string())
 }
 
-fn ensure_diagnostic_json_payload_paths_in_workspace(
-    workspace_root: &str,
-    value: &Value,
-    path_context: bool,
-) -> Result<(), String> {
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                ensure_diagnostic_json_payload_paths_in_workspace(
-                    workspace_root,
-                    item,
-                    path_context,
-                )?;
-            }
-        }
-        Value::Object(fields) => {
-            for (key, field_value) in fields {
-                ensure_diagnostic_payload_string_in_workspace(workspace_root, key, false)?;
-                ensure_diagnostic_json_payload_paths_in_workspace(
-                    workspace_root,
-                    field_value,
-                    path_context || is_lsp_path_payload_key(key),
-                )?;
-            }
-        }
-        Value::String(value) => {
-            ensure_diagnostic_payload_string_in_workspace(workspace_root, value, path_context)?;
-        }
-        _ => {}
-    }
-
-    Ok(())
-}
-
-fn ensure_diagnostic_payload_string_in_workspace(
-    workspace_root: &str,
-    value: &str,
-    path_context: bool,
-) -> Result<(), String> {
-    if value.starts_with("file://") {
-        if is_file_uri_in_workspace(workspace_root, value) {
-            return Ok(());
-        }
-
-        return Err("Diagnostic payload path is outside the workspace root.".to_string());
-    }
-
-    if !path_context || has_non_file_uri_scheme(value) {
-        return Ok(());
-    }
-
-    let root = workspace_guard_path(workspace_root)?;
-    let Some(path) = resolve_existing_or_parent_path(Path::new(value)) else {
-        return Err("Diagnostic payload path could not be resolved.".to_string());
-    };
-
-    if path.starts_with(root) {
-        return Ok(());
-    }
-
-    Err("Diagnostic payload path is outside the workspace root.".to_string())
-}
-
-fn is_lsp_path_payload_key(key: &str) -> bool {
-    let normalized = key
-        .chars()
-        .filter(|character| *character != '_' && *character != '-')
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-
-    normalized == "file"
-        || normalized == "target"
-        || normalized.ends_with("uri")
-        || normalized.ends_with("path")
-        || normalized.ends_with("filename")
-}
-
-fn has_non_file_uri_scheme(value: &str) -> bool {
-    let bytes = value.as_bytes();
-
-    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
-        return false;
-    }
-
-    let Some(first) = bytes.first() else {
-        return false;
-    };
-
-    if !first.is_ascii_alphabetic() {
-        return false;
-    }
-
-    for byte in bytes.iter().skip(1) {
-        if *byte == b':' {
-            return !value.starts_with("file:");
-        }
-
-        if !(byte.is_ascii_alphanumeric() || matches!(*byte, b'+' | b'-' | b'.')) {
-            return false;
-        }
-    }
-
-    false
-}
-
-fn is_file_uri_in_workspace(workspace_root: &str, uri: &str) -> bool {
-    if !uri.starts_with("file://") {
-        return false;
-    }
-
-    let Some(path) = path_from_file_uri(uri) else {
-        return false;
-    };
-    let Ok(root) = workspace_guard_path(workspace_root) else {
-        return false;
-    };
-    let Some(path) = resolve_existing_or_parent_path(Path::new(&path)) else {
-        return false;
-    };
-
-    path.starts_with(&root)
-}
-
 fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
     resolve_existing_or_parent_path(Path::new(workspace_root))
         .ok_or_else(|| "Workspace root could not be resolved.".to_string())
@@ -3102,6 +2952,7 @@ fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    mod diagnostics_projection_tests;
     mod request_cancellation_tests;
     mod transport_failure_tests;
 
@@ -3119,7 +2970,10 @@ mod tests {
         WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
-    use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
+    use crate::lsp_diagnostics::{
+        LanguageServerDiagnosticEvent, LanguageServerDiagnosticProjection,
+        LanguageServerDiagnosticProjectionReason, LanguageServerDiagnosticSeverityCounts,
+    };
     use crate::lsp_features::LanguageServerWorkspaceEdit;
     use crate::lsp_transport::{read_message, write_message};
     use serde_json::{json, Value};
@@ -5013,18 +4867,38 @@ mod tests {
                 "rootPath": "/tmp/workspace-a",
             }),
         );
+        let diagnostic_event = LanguageServerDiagnosticEvent {
+            diagnostics: Vec::new(),
+            projection: LanguageServerDiagnosticProjection::Complete {
+                published_count: 0,
+                retained_count: 0,
+                severity_counts: LanguageServerDiagnosticSeverityCounts::default(),
+                retained_utf8_bytes: 2,
+            },
+            session_id: 7,
+            uri: file_uri(Path::new("/tmp/workspace-a/src/App.php")),
+            version: Some(3),
+        };
         assert_eq!(
-            super::diagnostics_event_payload(
+            serde_json::to_value(super::diagnostics_event_payload(
                 "/tmp/workspace-a",
-                LanguageServerDiagnosticEvent {
-                    diagnostics: Vec::new(),
-                    session_id: 7,
-                    uri: file_uri(Path::new("/tmp/workspace-a/src/App.php")),
-                    version: Some(3),
-                },
-            ),
+                &diagnostic_event,
+            ))
+            .expect("serialize borrowed diagnostics payload"),
             json!({
                 "diagnostics": [],
+                "projection": {
+                    "kind": "complete",
+                    "publishedCount": 0,
+                    "retainedCount": 0,
+                    "severityCounts": {
+                        "error": 0,
+                        "warning": 0,
+                        "information": 0,
+                        "hint": 0,
+                    },
+                    "retainedUtf8Bytes": 2,
+                },
                 "rootPath": "/tmp/workspace-a",
                 "sessionId": 7,
                 "uri": file_uri(Path::new("/tmp/workspace-a/src/App.php")),
@@ -5175,6 +5049,7 @@ mod tests {
                 .expect("outside related parent"),
         )
         .expect("outside related parent");
+        let mixed_case_file_uri = |path: &Path| file_uri(path).replacen("file:", "FiLe:", 1);
         let spawner = FakeSpawner::new(ready_script(), true);
         let held = Arc::clone(&spawner.held_writer);
         let (sink, status_rx, diagnostics_sink, diagnostics_rx) = ChannelSink::with_diagnostics();
@@ -5209,10 +5084,10 @@ mod tests {
                             "source": "tsserver",
                             "message": "Issue with unsafe metadata",
                             "codeDescription": {
-                                "href": file_uri(&outside.join("docs/unsafe.html"))
+                                "href": mixed_case_file_uri(&outside.join("docs/unsafe.html"))
                             },
                             "data": {
-                                "uri": file_uri(&outside.join("src/FixTarget.ts"))
+                                "uri": mixed_case_file_uri(&outside.join("src/FixTarget.ts"))
                             },
                             "relatedInformation": [
                                 {
@@ -5227,7 +5102,7 @@ mod tests {
                                 },
                                 {
                                     "location": {
-                                        "uri": file_uri(&outside_related_path),
+                                        "uri": mixed_case_file_uri(&outside_related_path),
                                         "range": {
                                             "start": { "line": 3, "character": 5 },
                                             "end": { "line": 3, "character": 9 }
@@ -5282,6 +5157,22 @@ mod tests {
                 .and_then(|data| data.get("file")),
             Some(&json!(path_string(&root.join("src/SafeFix.ts"))))
         );
+        let retained_utf8_bytes = serde_json::to_vec(&event.diagnostics)
+            .expect("serialize filtered diagnostics")
+            .len();
+        assert!(matches!(
+            event.projection,
+            LanguageServerDiagnosticProjection::Truncated {
+                published_count: 2,
+                retained_count: 2,
+                omitted_count: 0,
+                retained_utf8_bytes: projected_bytes,
+                ref reasons,
+                sanitized_field_count: 3,
+                ..
+            } if projected_bytes == retained_utf8_bytes
+                && reasons == &[LanguageServerDiagnosticProjectionReason::Field]
+        ));
         fs::remove_dir_all(root).expect("cleanup root");
         fs::remove_dir_all(outside).expect("cleanup outside");
     }

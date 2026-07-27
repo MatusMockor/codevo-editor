@@ -11,6 +11,28 @@ const STALE_FUNCTION_BREAKPOINT_AUTHORITY: &str = "Debug function breakpoint aut
 
 pub(crate) trait FunctionBreakpointCdp {
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String>;
+
+    fn request_classified(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, FunctionBreakpointRequestFailure> {
+        self.request(method, params)
+            .map_err(FunctionBreakpointRequestFailure::Rejected)
+    }
+}
+
+pub(crate) enum FunctionBreakpointRequestFailure {
+    Rejected(String),
+    Uncertain(String),
+}
+
+impl FunctionBreakpointRequestFailure {
+    pub(super) fn into_message(self) -> String {
+        match self {
+            Self::Rejected(message) | Self::Uncertain(message) => message,
+        }
+    }
 }
 
 impl FunctionBreakpointCdp for CdpClient {
@@ -36,6 +58,26 @@ pub(super) struct FunctionLocation {
 pub(super) struct InstalledFunctionBreakpoint {
     pub(super) breakpoint_id: String,
     pub(super) function_location: Option<FunctionLocation>,
+}
+
+pub(super) enum FunctionBreakpointResolutionFailure {
+    Recoverable(String),
+    InstallUncertain(String),
+}
+
+impl From<String> for FunctionBreakpointResolutionFailure {
+    fn from(message: String) -> Self {
+        Self::Recoverable(message)
+    }
+}
+
+impl From<FunctionBreakpointResolutionFailure> for String {
+    fn from(failure: FunctionBreakpointResolutionFailure) -> Self {
+        match failure {
+            FunctionBreakpointResolutionFailure::Recoverable(message)
+            | FunctionBreakpointResolutionFailure::InstallUncertain(message) => message,
+        }
+    }
 }
 
 impl<const N: usize> From<[(&str, &str); N]> for FunctionBreakpointRegistrations {
@@ -261,18 +303,22 @@ pub(super) fn evaluate_and_install_function_breakpoint(
     function_name: &str,
     capture_function_location: bool,
     is_current: &impl Fn() -> bool,
-) -> Result<Option<InstalledFunctionBreakpoint>, String> {
+) -> Result<Option<InstalledFunctionBreakpoint>, FunctionBreakpointResolutionFailure> {
     ensure_current(is_current)?;
-    let evaluated = cdp.request(
-        "Runtime.evaluate",
-        json!({
-            "expression":function_name,
-            "silent":true,
-            "returnByValue":false,
-            "awaitPromise":false,
-            "throwOnSideEffect":true
-        }),
-    )?;
+    let evaluated = cdp
+        .request_classified(
+            "Runtime.evaluate",
+            json!({
+                "expression":function_name,
+                "silent":true,
+                "returnByValue":false,
+                "awaitPromise":false,
+                "throwOnSideEffect":true
+            }),
+        )
+        .map_err(|failure| {
+            FunctionBreakpointResolutionFailure::Recoverable(failure.into_message())
+        })?;
     ensure_current(is_current)?;
     let Some(object_id) = Some(evaluated)
         .filter(|response| response.get("exceptionDetails").is_none())
@@ -288,31 +334,46 @@ pub(super) fn evaluate_and_install_function_breakpoint(
         return Ok(None);
     };
     let function_location = if capture_function_location {
-        let properties = cdp.request(
-            "Runtime.getProperties",
-            json!({
-                "objectId":object_id,
-                "ownProperties":false,
-                "accessorPropertiesOnly":false,
-                "generatePreview":false
-            }),
-        )?;
+        let properties = cdp
+            .request_classified(
+                "Runtime.getProperties",
+                json!({
+                    "objectId":object_id,
+                    "ownProperties":false,
+                    "accessorPropertiesOnly":false,
+                    "generatePreview":false
+                }),
+            )
+            .map_err(|failure| {
+                FunctionBreakpointResolutionFailure::Recoverable(failure.into_message())
+            })?;
         parse_function_location(&properties)
     } else {
         None
     };
     ensure_current(is_current)?;
-    let installed = cdp.request(
-        "Debugger.setBreakpointOnFunctionCall",
-        json!({"objectId":object_id}),
-    )?;
+    let installed = cdp
+        .request_classified(
+            "Debugger.setBreakpointOnFunctionCall",
+            json!({"objectId":object_id}),
+        )
+        .map_err(|failure| match failure {
+            FunctionBreakpointRequestFailure::Rejected(message) => {
+                FunctionBreakpointResolutionFailure::Recoverable(message)
+            }
+            FunctionBreakpointRequestFailure::Uncertain(message) => {
+                FunctionBreakpointResolutionFailure::InstallUncertain(message)
+            }
+        })?;
     let Some(cdp_id) = installed
         .get("breakpointId")
         .and_then(Value::as_str)
         .map(str::to_string)
     else {
         ensure_current(is_current)?;
-        return Err("Node debugger returned an invalid function breakpoint result.".to_string());
+        return Err(FunctionBreakpointResolutionFailure::Recoverable(
+            "Node debugger returned an invalid function breakpoint result.".to_string(),
+        ));
     };
     Ok(Some(InstalledFunctionBreakpoint {
         breakpoint_id: cdp_id,

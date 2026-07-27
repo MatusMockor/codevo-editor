@@ -209,8 +209,8 @@ export function useDebugPanelProps({
       onConsoleCompletionDismiss: consoleCompletions?.dismiss,
       onConsoleCompletionInputChanged: consoleCompletions?.inputChanged,
       onConsoleCompletionRequest: consoleCompletions?.request,
-      onLoadVariablePage: (owner, variablesReference, start) =>
-        void loadVariablePage(owner, variablesReference, start),
+      onLoadVariablePage: (owner, variablesReference, start, filter) =>
+        loadVariablePage(owner, variablesReference, start, filter),
       onDisableAllBreakpoints: () => void disableAllBreakpoints().catch(reportCommandError),
       onDisconnect: () => void disconnectDebug().catch(reportCommandError),
       onEnableAllBreakpoints: () => void enableAllBreakpoints().catch(reportCommandError),

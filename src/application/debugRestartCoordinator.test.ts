@@ -71,13 +71,14 @@ describe("DebugRestartCoordinator retention", () => {
     expect(Object.isFrozen(resolved)).toBe(true);
   });
 
-  it("preserves an explicit source-map disable across a restart lease", () => {
+  it("preserves explicit source-map and smart-step disables across a restart lease", () => {
     const coordinator = new DebugRestartCoordinator();
     const launch: DebugLaunchTarget = {
       args: [],
       env: {},
       kind: "node-configured-script",
       scriptPath: `${ROOT}/server.ts`,
+      smartStep: false,
       sourceMaps: false,
     };
 

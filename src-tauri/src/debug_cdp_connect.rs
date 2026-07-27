@@ -6,6 +6,7 @@ struct OpenCdpTransportOptions {
     request_timeout: Duration,
     ownership: DebuggeeOwnership,
     source_maps: Option<SourceMapRegistry>,
+    smart_step_enabled: bool,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
     pause_generation_floor: PauseGenerationFloor,
     disconnected: Option<mpsc::Sender<()>>,
@@ -103,9 +104,10 @@ fn open_cdp_transport_with_authorization(
             CdpSocketAuthorizationProof::KernelBoundExternal { connection, proof }
         }
     };
-    let mut shared_state = CdpShared::new_at_pause_generation_floor(
+    let mut shared_state = CdpShared::new_with_smart_step(
         options.source_maps,
         options.pause_generation_floor,
+        options.smart_step_enabled,
     );
     shared_state.first_pause_seen =
         startup_policy::first_pause_seen_at_transport_open(options.attached, options.stop_on_entry);
@@ -408,6 +410,9 @@ impl NodeCdpAdapter {
             startup_is_current,
             internal_step_filter,
         } = options;
+        let smart_step_enabled = source_maps
+            .as_ref()
+            .is_some_and(SourceMapRegistry::smart_step_enabled);
         let attached = matches!(startup, CdpStartupPolicy::Attached);
         let mut adapter = open_cdp_transport(
             ws_url,
@@ -416,6 +421,7 @@ impl NodeCdpAdapter {
                 request_timeout,
                 ownership,
                 source_maps,
+                smart_step_enabled,
                 startup_is_current: Arc::clone(&startup_is_current),
                 pause_generation_floor,
                 disconnected,
@@ -548,6 +554,9 @@ impl NodeCdpAdapter {
             disconnected,
             startup_is_current,
         } = options;
+        let smart_step_enabled = source_maps
+            .as_ref()
+            .is_some_and(SourceMapRegistry::smart_step_enabled);
         let (adapter, authorization) = open_cdp_transport_with_authorization(
             ws_url,
             emitter.clone().into(),
@@ -555,6 +564,7 @@ impl NodeCdpAdapter {
                 request_timeout,
                 ownership: DebuggeeOwnership::External,
                 source_maps,
+                smart_step_enabled,
                 startup_is_current: Arc::clone(&startup_is_current),
                 pause_generation_floor: PauseGenerationFloor::INITIAL,
                 disconnected,
@@ -599,6 +609,9 @@ impl NodeCdpAdapter {
         pause_generation_floor: PauseGenerationFloor,
         disconnected: Option<mpsc::Sender<()>>,
     ) -> Result<NodeCdpAdapter, String> {
+        let smart_step_enabled = source_maps
+            .as_ref()
+            .is_some_and(SourceMapRegistry::smart_step_enabled);
         open_cdp_transport(
             ws_url,
             emitter,
@@ -606,6 +619,7 @@ impl NodeCdpAdapter {
                 request_timeout,
                 ownership: DebuggeeOwnership::External,
                 source_maps,
+                smart_step_enabled,
                 startup_is_current,
                 pause_generation_floor,
                 disconnected,

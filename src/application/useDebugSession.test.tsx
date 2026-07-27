@@ -5697,6 +5697,7 @@ describe("useDebugSession", () => {
       pauseGeneration: 1,
       frameId: 11,
       variablesReference: 21,
+      filter: "named",
       start: 0,
       count: 100,
     });
@@ -5734,6 +5735,7 @@ describe("useDebugSession", () => {
       pauseGeneration: 1,
       frameId: 11,
       variablesReference: 31,
+      filter: "named",
       start: 0,
       count: 100,
     });
@@ -5760,7 +5762,7 @@ describe("useDebugSession", () => {
       await ui.hook().loadVariables(21);
     });
     expect(harness.scopesAtPause).toHaveBeenCalledTimes(1);
-    expect(harness.variablesPage).toHaveBeenCalledTimes(2);
+    expect(harness.variablesPage).toHaveBeenCalledTimes(3);
     ui.unmount();
   });
 
@@ -6568,9 +6570,14 @@ describe("useDebugSession", () => {
     expect(ui.hook().scopeLoadState).toEqual({ kind: "inactive" });
     expect(ui.hook().scopes).toEqual([]);
     trusted = true;
-    ui.set({ workspaceRoot: "/workspace/one" });
+    await act(async () => {
+      ui.set({ workspaceRoot: "/workspace/one" });
+      await Promise.resolve();
+    });
     expect(ui.hook().inspectionOwner).toEqual({
       rootKey: "/workspace/one",
+      workspaceId: null,
+      workspaceEpoch: 0,
       sessionId: 4,
       pauseGeneration: 1,
       frameId: 11,
@@ -7233,14 +7240,16 @@ describe("useDebugSession", () => {
 
   it("reconciles a verified Set Variable row in paged and legacy cache views", async () => {
     const harness = createGateway();
+    let mutated = false;
     harness.variablesPage.mockImplementation(async (request) => ({
       variables:
         request.variablesReference === 20
           ? [
               {
                 name: "count",
-                value: "42",
-                variablesReference: 30,
+                value: mutated ? "43" : "42",
+                ...(mutated ? { evaluateName: "state.count" } : {}),
+                variablesReference: mutated ? 40 : 30,
                 canSetValue: true as const,
               },
             ]
@@ -7283,6 +7292,7 @@ describe("useDebugSession", () => {
       value: "clipboard",
     });
     await act(async () => {
+      mutated = true;
       setReply.resolve(result);
       await expect(pendingSet).resolves.toEqual(result);
     });
@@ -7358,7 +7368,7 @@ describe("useDebugSession", () => {
       currentParent = ui.hook().loadVariablePage(owner, 20, 1);
       currentChild = ui.hook().loadVariablePage(owner, 30, 0);
     });
-    expect(harness.variablesPage).toHaveBeenCalledTimes(5);
+    expect(harness.variablesPage).toHaveBeenCalledTimes(7);
 
     await act(async () => {
       oldParent.resolve({
@@ -7379,7 +7389,7 @@ describe("useDebugSession", () => {
       void ui.hook().loadVariablePage(owner, 20, 1);
       void ui.hook().loadVariablePage(owner, 30, 0);
     });
-    expect(harness.variablesPage).toHaveBeenCalledTimes(5);
+    expect(harness.variablesPage).toHaveBeenCalledTimes(7);
 
     await act(async () => {
       newParent.resolve({

@@ -89,6 +89,7 @@ impl WatchDebugControlPort for RecordingPort {
                         total: Some(0),
                         next_start: None,
                         truncated: false,
+                        limit_reason: None,
                     },
                 )
                 .expect("variables response"),

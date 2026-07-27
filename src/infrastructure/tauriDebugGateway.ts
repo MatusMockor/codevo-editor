@@ -318,9 +318,13 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
     if (!this.isRuntimeAvailable()) {
       return Promise.resolve({
         variables: [],
+        filter: request.filter,
         start: request.start,
         returned: 0,
+        total: 0,
+        nextStart: null,
         truncated: false,
+        limitReason: null,
       });
     }
 

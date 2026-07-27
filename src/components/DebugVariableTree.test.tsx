@@ -127,7 +127,7 @@ describe("DebugVariableTree", () => {
     });
   };
 
-  it("uses roving focus and the complete tree keyboard contract", () => {
+  it("uses roving focus and the complete tree keyboard contract", async () => {
     render();
     expect(host.querySelector('[role="tree"] > [role="group"]')).not.toBeNull();
     const scope = host.querySelector<HTMLButtonElement>('[data-testid="debug-scope"]')!;
@@ -144,7 +144,11 @@ describe("DebugVariableTree", () => {
     expect(document.activeElement).toBe(rows[1]);
     expect(scope.tabIndex).toBe(-1);
     press(rows[1]!, "Enter");
-    expect(props.onLoadPage).toHaveBeenCalledWith(owner, 11, 0);
+    expect(props.onLoadPage).toHaveBeenCalledWith(owner, 11, 0, "named");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(props.onLoadPage).toHaveBeenCalledWith(owner, 11, 0, "indexed");
     press(rows[1]!, "ArrowUp");
     expect(document.activeElement).toBe(scope);
     press(scope, "ArrowDown");
@@ -258,12 +262,12 @@ describe("DebugVariableTree", () => {
     act(() => scope.click());
     const retry = host.querySelector<HTMLButtonElement>('[aria-label^="Retry:"]')!;
     press(retry, "Enter");
-    expect(props.onLoadPage).toHaveBeenCalledWith(owner, 10, 100);
+    expect(props.onLoadPage).toHaveBeenCalledWith(owner, 10, 100, "named");
 
     render({ variablePages: { ...pages([]), references: {} } });
     act(() => scope.click()); // collapse
     act(() => scope.click()); // expand and request the first page
-    expect(props.onLoadPage).toHaveBeenLastCalledWith(owner, 10, 0);
+    expect(props.onLoadPage).toHaveBeenCalledWith(owner, 10, 0, "named");
   });
 
   it("fails closed in paged mode when the root has no inspection owner", () => {

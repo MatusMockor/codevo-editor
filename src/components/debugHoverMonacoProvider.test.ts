@@ -300,13 +300,14 @@ describe("debug hover Monaco provider", () => {
       await provider.provideHover(model(`/workspace/model-${index}.ts`), position, cancellation());
     }
 
+    expect(fixture.port.evaluate).toHaveBeenCalledTimes(10_000);
     expect(fixture.port.registerCopyEvaluatePath).toHaveBeenCalledTimes(10_000);
     expect(fixture.port.revokeCopyEvaluatePath).toHaveBeenCalledTimes(
       10_000 - MAX_DEBUG_HOVER_COPY_TOKENS,
     );
     registration.dispose();
     expect(fixture.port.revokeCopyEvaluatePath).toHaveBeenCalledTimes(10_000);
-  });
+  }, 15_000);
 
   it("renders capped values and types as untrusted non-HTML Markdown", async () => {
     const fixture = providerFixture();

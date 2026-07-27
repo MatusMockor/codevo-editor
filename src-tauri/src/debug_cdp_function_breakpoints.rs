@@ -6,6 +6,7 @@ mod worker;
 pub(crate) use command::debug_set_function_breakpoints;
 pub(crate) use installation::{
     replace_function_breakpoints, validate_function_breakpoints, FunctionBreakpointCdp,
+    FunctionBreakpointRequestFailure,
 };
 pub(crate) use state::{
     FunctionBreakpointSessionState, FunctionBreakpointVerificationReceipt, HiddenPauseCapture,
@@ -40,6 +41,9 @@ mod tests {
     use std::thread::{self, JoinHandle};
     use std::time::Duration;
 
+    #[path = "worker_policy_tests.rs"]
+    mod worker_policy_tests;
+
     #[derive(Default)]
     struct FakeCdp {
         calls: Vec<(String, Value)>,
@@ -55,7 +59,7 @@ mod tests {
 
     struct WorkerFakeCdp {
         calls: Arc<Mutex<Vec<(String, Value)>>>,
-        replies: VecDeque<Result<Value, String>>,
+        replies: VecDeque<Result<Value, FunctionBreakpointRequestFailure>>,
         request_entered: SyncSender<String>,
         continue_request: Option<Receiver<()>>,
         blocked_method: Option<&'static str>,
@@ -63,6 +67,15 @@ mod tests {
 
     impl FunctionBreakpointCdp for WorkerFakeCdp {
         fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+            self.request_classified(method, params)
+                .map_err(FunctionBreakpointRequestFailure::into_message)
+        }
+
+        fn request_classified(
+            &mut self,
+            method: &str,
+            params: Value,
+        ) -> Result<Value, FunctionBreakpointRequestFailure> {
             self.calls
                 .lock()
                 .expect("worker fake calls lock")
@@ -1302,49 +1315,6 @@ mod tests {
             .expect("registrations lock")
             .by_logical_id
             .is_empty());
-        assert!(failed_closed.load(Ordering::Acquire));
-    }
-
-    #[test]
-    fn worker_fails_closed_when_an_async_install_ack_is_uncertain() {
-        let state = unresolved_worker_state();
-        let failed_closed = Arc::new(AtomicBool::new(false));
-        let failed_closed_for_worker = Arc::clone(&failed_closed);
-        let (entered_tx, entered_rx) = mpsc::sync_channel(4);
-        let cdp = WorkerFakeCdp {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            replies: VecDeque::from([
-                Ok(json!({"result":{"type":"function","objectId":"function:9"}})),
-                Err("install acknowledgement timeout".to_string()),
-            ]),
-            request_entered: entered_tx,
-            continue_request: None,
-            blocked_method: None,
-        };
-        let (trigger, worker) = spawn_worker_with_fail_closed(
-            cdp,
-            state,
-            Arc::new(|_| {}),
-            Arc::new(|| true),
-            Arc::new(move || failed_closed_for_worker.store(true, Ordering::Release)),
-        );
-
-        trigger.send(()).expect("resolution trigger");
-        assert_eq!(
-            entered_rx
-                .recv_timeout(Duration::from_millis(500))
-                .expect("evaluation entered"),
-            "Runtime.evaluate"
-        );
-        assert_eq!(
-            entered_rx
-                .recv_timeout(Duration::from_millis(500))
-                .expect("install entered"),
-            "Debugger.setBreakpointOnFunctionCall"
-        );
-        drop(trigger);
-        join_worker_with_timeout(worker);
-
         assert!(failed_closed.load(Ordering::Acquire));
     }
 

@@ -5,6 +5,7 @@ import type {
   LanguageServerDiagnosticEvent,
   LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
+import { decodeLanguageServerDiagnosticEvent } from "../domain/languageServerDiagnostics";
 
 const DIAGNOSTICS_EVENT = "language-server://diagnostics";
 export const JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT =
@@ -12,16 +13,14 @@ export const JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT =
 
 type ListenToDiagnostics = (
   event: string,
-  handler: (event: { payload: LanguageServerDiagnosticEvent }) => void,
+  handler: (event: { payload: unknown }) => void,
 ) => Promise<DiagnosticsUnsubscribeFn>;
 type RuntimeDetector = () => boolean;
 
 const listenToDiagnostics: ListenToDiagnostics = (event, handler) =>
-  listen<LanguageServerDiagnosticEvent>(event, handler);
+  listen<unknown>(event, handler);
 
-export class TauriLanguageServerDiagnosticsGateway
-  implements LanguageServerDiagnosticsGateway
-{
+export class TauriLanguageServerDiagnosticsGateway implements LanguageServerDiagnosticsGateway {
   constructor(
     private readonly listenToEvent: ListenToDiagnostics = listenToDiagnostics,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
@@ -36,7 +35,8 @@ export class TauriLanguageServerDiagnosticsGateway
     }
 
     return this.listenToEvent(this.diagnosticsEvent, (event) => {
-      listener(event.payload);
+      const decoded = decodeLanguageServerDiagnosticEvent(event.payload);
+      if (decoded) listener(decoded);
     });
   }
 }

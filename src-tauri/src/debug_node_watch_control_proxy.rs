@@ -10,7 +10,8 @@ use crate::debug_adapter::{
     DebugFunctionBreakpointVerification, DebugSetExpressionRequest as AdapterSetExpressionRequest,
     DebugSetExpressionResult as AdapterSetExpressionResult,
     DebugSetVariableRequest as AdapterSetVariableRequest,
-    DebugSetVariableResult as AdapterSetVariableResult, DebugVariablePageRequest, StepKind,
+    DebugSetVariableResult as AdapterSetVariableResult, DebugVariableFilter,
+    DebugVariablePageRequest, StepKind,
 };
 use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use std::fmt;
@@ -703,7 +704,15 @@ impl WatchDebugControlProxy {
         &self,
         request: DebugVariablePageRequest,
     ) -> Result<WatchVariablesResult, WatchDebugControlFailure> {
-        let request = WatchVariablesRequest::new(request)
+        self.variables_page_filtered(request, DebugVariableFilter::Named)
+    }
+
+    pub(crate) fn variables_page_filtered(
+        &self,
+        request: DebugVariablePageRequest,
+        filter: DebugVariableFilter,
+    ) -> Result<WatchVariablesResult, WatchDebugControlFailure> {
+        let request = WatchVariablesRequest::new_filtered(request, filter)
             .map_err(|()| WatchDebugControlFailure::TargetRejected)?;
         match self.execute(WatchDebugControlCommand::Variables(request))? {
             WatchDebugControlResponse::Variables(result) => {

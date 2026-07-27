@@ -94,26 +94,22 @@ describe("debug variable mutation reconciliation", () => {
     expect(selectDebugVariableMutationCandidate(current, owner, 30, 0, 0)).toBeNull();
   });
 
-  it("replaces only the source row and invalidates old and new child trees", () => {
+  it("invalidates both parent filters and the old and new child trees", () => {
     const current = state();
     const candidate = selectDebugVariableMutationCandidate(current, owner, 20, 0, 0)!;
     const result = variable("duplicate", "updated", 40, true);
     const next = reconcileDebugVariableMutation(current, candidate, result);
 
     expect(next).not.toBe(current);
-    expect(next.references[20]?.pages[0]?.variables).toEqual([
-      result,
-      variable("duplicate", "sibling", 0, true),
-    ]);
-    expect(next.references[20]?.pages[2]?.variables[0]?.value).toBe("other page");
-    expect(next.references[21]?.pages[0]?.variables[0]?.value).toBe("other parent");
+    expect(next.references[20]).toBeUndefined();
+    expect(next.references[21]).toBeUndefined();
     expect(next.references[30]).toBeUndefined();
     expect(next.references[31]).toBeUndefined();
     expect(next.references[40]).toBeUndefined();
     expect(next.references[41]).toBeUndefined();
     expect(next.pendingCount).toBe(0);
-    expect(next.totalVariables).toBe(4);
-    expect(next.totalBytes).toBeLessThan(999);
+    expect(next.totalVariables).toBe(0);
+    expect(next.totalBytes).toBe(0);
 
     const afterLateParentReply = reduceDebugVariablePages(next, {
       type: "resolve",

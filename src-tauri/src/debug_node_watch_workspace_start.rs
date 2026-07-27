@@ -33,6 +33,7 @@ pub(crate) struct NativeNodeWatchWorkspaceStartup<'a> {
     pub(crate) exception_type_filter: DebugExceptionTypeFilter,
     pub(crate) just_my_code: Option<DebugJustMyCodePolicy>,
     pub(crate) source_maps_enabled: bool,
+    pub(crate) smart_step_enabled: bool,
     pub(crate) sink: Arc<dyn DebugEventSink>,
     pub(crate) registry: &'a Arc<DebugSessionRegistry>,
     pub(crate) workspace_registry: &'a WorkspaceRegistry,
@@ -49,6 +50,7 @@ pub(crate) struct NativeNodeWatchIntentWorkspaceStartup<'a> {
     pub(crate) exception_type_filter: DebugExceptionTypeFilter,
     pub(crate) just_my_code: Option<DebugJustMyCodePolicy>,
     pub(crate) source_maps_enabled: bool,
+    pub(crate) smart_step_enabled: bool,
     pub(crate) sink: Arc<dyn DebugEventSink>,
     pub(crate) registry: &'a Arc<DebugSessionRegistry>,
     pub(crate) workspace_registry: &'a WorkspaceRegistry,
@@ -70,6 +72,7 @@ pub(crate) fn start_native_node_watch_intent_for_retained_workspace(
             exception_type_filter: startup.exception_type_filter,
             just_my_code: startup.just_my_code,
             source_maps_enabled: startup.source_maps_enabled,
+            smart_step_enabled: startup.smart_step_enabled,
             sink: startup.sink,
             registry: startup.registry,
             workspace_registry: startup.workspace_registry,
@@ -100,6 +103,7 @@ fn start_native_node_watch_with_readiness(
         exception_type_filter,
         just_my_code,
         source_maps_enabled,
+        smart_step_enabled,
         sink,
         registry,
         workspace_registry,
@@ -145,7 +149,8 @@ fn start_native_node_watch_with_readiness(
                 authority: authorized
                     .authority
                     .with_verified_runtime(runtime)
-                    .with_source_maps_enabled(source_maps_enabled),
+                    .with_source_maps_enabled(source_maps_enabled)
+                    .with_smart_step_enabled(smart_step_enabled),
             })
         },
     )
@@ -546,6 +551,7 @@ mod tests {
             exception_type_filter: DebugExceptionTypeFilter::default(),
             just_my_code: None,
             source_maps_enabled: true,
+            smart_step_enabled: true,
             sink: Arc::new(TestSink),
             registry: &fixture.registry,
             workspace_registry: &fixture.workspace_registry,
@@ -566,6 +572,7 @@ mod tests {
                 exception_type_filter: DebugExceptionTypeFilter::default(),
                 just_my_code: None,
                 source_maps_enabled: true,
+                smart_step_enabled: true,
                 sink: Arc::new(TestSink),
                 registry: &fixture.registry,
                 workspace_registry: &fixture.workspace_registry,

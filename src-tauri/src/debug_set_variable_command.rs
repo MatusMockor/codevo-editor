@@ -63,6 +63,7 @@ fn bound_result(
             total: Some(1),
             next_start: None,
             truncated: false,
+            limit_reason: None,
         },
         DebugVariablePageRequest {
             pause_generation: 1,

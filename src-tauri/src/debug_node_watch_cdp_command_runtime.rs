@@ -221,7 +221,7 @@ impl WatchPausedInspection for NodeCdpAdapter {
         &mut self,
         request: WatchVariablesRequest,
     ) -> Result<DebugVariablePage, String> {
-        self.variables_page(request.request())
+        self.variables_page_filtered(request.request(), request.filter())
     }
 
     fn evaluate_with_policy(
@@ -300,7 +300,7 @@ fn variables_at_epoch(
     deadline: Instant,
     revoked: &AtomicBool,
 ) -> Result<WatchVariablesResult, WatchDebugCommandFailure> {
-    WatchVariablesRequest::new(request.request())
+    WatchVariablesRequest::new_filtered(request.request(), request.filter())
         .map_err(|()| WatchDebugCommandFailure::TargetRejected)?;
     ensure_pause_epoch(adapter, request.expected_pause_epoch(), deadline, revoked)?;
     let page = adapter.read_variables_page(request);

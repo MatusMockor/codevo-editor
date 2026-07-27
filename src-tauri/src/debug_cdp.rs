@@ -75,7 +75,7 @@ use startup_policy::loopback_web_socket_port;
 const CDP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const MAX_CDP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
-const MAX_CDP_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_CDP_FRAME_BYTES: usize = MAX_CDP_MESSAGE_BYTES;
 const MAX_CDP_HANDSHAKE_BYTES: usize = 64 * 1024;
 
 include!("debug_cdp_factory.rs");
@@ -111,6 +111,7 @@ mod tests {
     #[path = "../../debug_cdp_completion_tests.rs"]
     mod completion_tests;
     mod debug_cdp_stop_on_entry_integration_tests;
+    mod debug_cdp_transport_bounds_tests;
     mod debug_exception_type_filter_integration_tests;
     #[cfg(target_os = "macos")]
     #[path = "debug_cdp_held_external_attach_tests.rs"]

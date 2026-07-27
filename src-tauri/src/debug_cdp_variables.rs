@@ -4,9 +4,11 @@ use self::set_expression_provenance::{SetExpressionReference, SetExpressionTarge
 use super::transport::{CdpClient, CdpShared};
 use crate::debug_adapter::variable_name::is_valid_debug_variable_name;
 use crate::debug_adapter::{
-    DebugEvaluateFailure, DebugVariableInfo, DebugVariablePage, DebugVariablePageRequest,
+    DebugEvaluateFailure, DebugVariableFilter, DebugVariableInfo, DebugVariablePage,
+    DebugVariablePageRequest,
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 mod evaluate_name {
@@ -16,6 +18,12 @@ use evaluate_name::{
     evaluation_evaluate_name, evaluation_parent_accessor, is_reserved_binding_word,
     nested_evaluate_name, private_evaluate_name, scope_child_evaluate_name,
     simple_binding_identifier,
+};
+
+#[path = "debug_cdp_descriptor_snapshot_policy.rs"]
+mod descriptor_snapshot_policy;
+use descriptor_snapshot_policy::{
+    is_canonical_array_index, retained_descriptor_prefix_search, validate_property_descriptor,
 };
 
 pub(super) mod set_variable {
@@ -39,11 +47,33 @@ pub(super) mod set_expression_proof {
 }
 
 pub(super) const MAX_CDP_PROPERTY_DESCRIPTORS: usize = 10_000;
+pub(super) const MAX_CDP_PROPERTY_DESCRIPTOR_BYTES_PER_PAUSE: usize = 4 * 1024 * 1024;
 pub(super) const MAX_CDP_OBJECT_REFERENCES_PER_PAUSE: usize = 4_096;
+pub(super) const MAX_CDP_OBJECT_REFERENCE_BYTES_PER_PAUSE: usize = 4 * 1024 * 1024;
 pub(super) const MAX_CDP_OBJECT_ID_BYTES: usize = 4 * 1024;
 pub(super) const MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE: usize = 128;
 pub(super) const MAX_CDP_VARIABLE_MUTATIONS_PER_PAUSE: usize = 128;
 const MAX_VARIABLE_PAGE_JSON_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub(super) struct CachedPropertyDescriptor {
+    property: Value,
+    private: bool,
+    indexed: bool,
+    encoded_bytes: usize,
+    prefix_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PropertyDescriptorSnapshot {
+    descriptors: Vec<CachedPropertyDescriptor>,
+    indexed_indices: Vec<usize>,
+    named_indices: Vec<usize>,
+    complete: bool,
+    limit_reason: Option<crate::debug_adapter::DebugVariablePageLimitReason>,
+}
+
+pub(super) type PropertyDescriptorSnapshots = HashMap<u64, Arc<PropertyDescriptorSnapshot>>;
 
 pub(super) fn ensure_evaluation_owner(
     shared: &Arc<Mutex<CdpShared>>,
@@ -310,48 +340,30 @@ pub(super) fn load_variables_page(
     client: &CdpClient,
     shared: &Arc<Mutex<CdpShared>>,
     request: DebugVariablePageRequest,
+    filter: DebugVariableFilter,
 ) -> Result<DebugVariablePage, String> {
     validate_request(request)?;
     let parent = owned_object_reference(shared, request)?;
-    let result = client.request(
-        "Runtime.getProperties",
-        json!({
-            "objectId": parent.object_id,
-            "ownProperties": true,
-            "generatePreview": false,
-        }),
-    )?;
-    let empty = Vec::new();
-    let properties = result
-        .get("result")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
-    let private_properties = result
-        .get("privateProperties")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
-    let descriptor_count = properties.len().saturating_add(private_properties.len());
-    let descriptors_truncated = descriptor_count > MAX_CDP_PROPERTY_DESCRIPTORS;
-    let bounded = properties
-        .iter()
-        .map(|property| (property, false))
-        .chain(private_properties.iter().map(|property| (property, true)))
-        .take(MAX_CDP_PROPERTY_DESCRIPTORS)
-        .collect::<Vec<_>>();
-    let available = bounded
-        .iter()
-        .filter(|(property, _)| property.get("value").is_some())
-        .count() as u64;
+    let snapshot = descriptor_snapshot(client, shared, request, &parent)?;
+    let descriptors_truncated = !snapshot.complete;
+    let indices = match filter {
+        DebugVariableFilter::Indexed => &snapshot.indexed_indices,
+        DebugVariableFilter::Named => &snapshot.named_indices,
+    };
+    let available = indices.len() as u64;
     let total = (!descriptors_truncated).then_some(available);
     let mut variables = Vec::new();
     let mut aggregate_bytes = 2usize;
     let mut aggregate_truncated = false;
-    for (property, private) in bounded
+    let mut child_limit_reason = None;
+    for descriptor_index in indices
         .iter()
-        .filter(|(property, _)| property.get("value").is_some())
         .skip(request.start as usize)
         .take(request.count as usize)
     {
+        let descriptor = &snapshot.descriptors[*descriptor_index];
+        let property = &descriptor.property;
+        let private = descriptor.private;
         let remote = property.get("value").expect("filtered value descriptor");
         let name = property.get("name").and_then(Value::as_str).unwrap_or("");
         let valid_mutation_name = is_valid_debug_variable_name(name);
@@ -362,7 +374,7 @@ pub(super) fn load_variables_page(
                 .is_some_and(|subtype| subtype.starts_with("internal#"));
         let evaluate_name = if parent.access == ObjectReferenceAccess::ScopeRoot {
             scope_child_evaluate_name(name, synthetic)
-        } else if *private {
+        } else if private {
             private_evaluate_name(parent.evaluate_name.as_deref(), name, synthetic)
         } else {
             nested_evaluate_name(parent.evaluate_name.as_deref(), name, synthetic)
@@ -380,7 +392,7 @@ pub(super) fn load_variables_page(
             property,
             name,
             evaluate_name.as_deref(),
-            *private,
+            private,
             synthetic,
         )
         .then_some(true);
@@ -397,6 +409,9 @@ pub(super) fn load_variables_page(
             aggregate_truncated = true;
             break;
         }
+        if has_child {
+            clear_reference_limit_reason(shared);
+        }
         variable.variables_reference = remote
             .get("objectId")
             .and_then(Value::as_str)
@@ -412,7 +427,7 @@ pub(super) fn load_variables_page(
                     );
                 }
                 let mutation =
-                    child_object_mutation(&parent.mutation, property, remote, *private, synthetic);
+                    child_object_mutation(&parent.mutation, property, remote, private, synthetic);
                 register_child_object_reference(
                     shared,
                     (request.pause_generation, request.frame_id),
@@ -424,6 +439,12 @@ pub(super) fn load_variables_page(
                 )
             })
             .unwrap_or(0);
+        if has_child && variable.variables_reference == 0 {
+            if let Some(reason) = reference_limit_reason(shared) {
+                child_limit_reason = Some(reason);
+                break;
+            }
+        }
         aggregate_bytes += encoded_bytes;
         variables.push(variable);
     }
@@ -437,9 +458,185 @@ pub(super) fn load_variables_page(
         start: request.start,
         returned,
         total,
-        next_start: (consumed < available).then_some(consumed),
-        truncated: descriptors_truncated || aggregate_truncated,
+        next_start: (child_limit_reason.is_none() && consumed < available).then_some(consumed),
+        truncated: descriptors_truncated || aggregate_truncated || child_limit_reason.is_some(),
+        limit_reason: if descriptors_truncated {
+            snapshot.limit_reason
+        } else if aggregate_truncated {
+            Some(crate::debug_adapter::DebugVariablePageLimitReason::PageBytes)
+        } else {
+            child_limit_reason
+        },
     })
+}
+
+fn reference_limit_reason(
+    shared: &Arc<Mutex<CdpShared>>,
+) -> Option<crate::debug_adapter::DebugVariablePageLimitReason> {
+    shared.lock().ok().and_then(|state| {
+        state
+            .pause
+            .as_ref()
+            .and_then(|pause| pause.last_object_reference_limit_reason)
+    })
+}
+
+fn clear_reference_limit_reason(shared: &Arc<Mutex<CdpShared>>) {
+    if let Ok(mut state) = shared.lock() {
+        if let Some(pause) = state.pause.as_mut() {
+            pause.last_object_reference_limit_reason = None;
+        }
+    }
+}
+
+fn descriptor_snapshot(
+    client: &CdpClient,
+    shared: &Arc<Mutex<CdpShared>>,
+    request: DebugVariablePageRequest,
+    parent: &ObjectReference,
+) -> Result<Arc<PropertyDescriptorSnapshot>, String> {
+    {
+        let mut state = shared.lock().map_err(|error| error.to_string())?;
+        let pause = state
+            .pause
+            .as_mut()
+            .ok_or_else(|| "The debugger is not paused.".to_string())?;
+        if let Some(snapshot) = pause
+            .property_descriptor_snapshots
+            .get(&request.variables_reference)
+        {
+            return Ok(Arc::clone(snapshot));
+        }
+        if pause.variable_page_loads >= MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE {
+            return Err(
+                "The debug variable acquisition limit was reached for this pause.".to_string(),
+            );
+        }
+        pause.variable_page_loads += 1;
+    }
+
+    let result = client.request(
+        "Runtime.getProperties",
+        json!({
+            "objectId": parent.object_id,
+            "ownProperties": true,
+            "generatePreview": false,
+        }),
+    )?;
+    let properties = result
+        .get("result")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Runtime.getProperties returned no descriptor array.".to_string())?;
+    let empty = Vec::new();
+    let private_properties = match result.get("privateProperties") {
+        None => &empty,
+        Some(value) => value.as_array().ok_or_else(|| {
+            "Runtime.getProperties returned invalid private descriptors.".to_string()
+        })?,
+    };
+    let mut descriptors = Vec::new();
+    let mut snapshot_bytes = 0usize;
+    let mut limit_reason = None;
+    for (property, private) in properties
+        .iter()
+        .map(|property| (property, false))
+        .chain(private_properties.iter().map(|property| (property, true)))
+    {
+        validate_property_descriptor(property)?;
+        if descriptors.len() >= MAX_CDP_PROPERTY_DESCRIPTORS {
+            limit_reason =
+                Some(crate::debug_adapter::DebugVariablePageLimitReason::DescriptorCount);
+            break;
+        }
+        let encoded_bytes = serde_json::to_vec(property)
+            .map_err(|error| format!("Unable to bound a debug property descriptor: {error}"))?
+            .len();
+        if snapshot_bytes.saturating_add(encoded_bytes)
+            > MAX_CDP_PROPERTY_DESCRIPTOR_BYTES_PER_PAUSE
+        {
+            limit_reason =
+                Some(crate::debug_adapter::DebugVariablePageLimitReason::DescriptorBytes);
+            break;
+        }
+        snapshot_bytes += encoded_bytes;
+        descriptors.push(CachedPropertyDescriptor {
+            property: property.clone(),
+            private,
+            indexed: property
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(is_canonical_array_index),
+            encoded_bytes,
+            prefix_bytes: snapshot_bytes,
+        });
+    }
+    let mut snapshot = PropertyDescriptorSnapshot {
+        descriptors,
+        indexed_indices: Vec::new(),
+        named_indices: Vec::new(),
+        complete: limit_reason.is_none(),
+        limit_reason,
+    };
+
+    let mut state = shared.lock().map_err(|error| error.to_string())?;
+    let pause = state
+        .pause
+        .as_mut()
+        .ok_or_else(|| "The debugger is not paused.".to_string())?;
+    if pause.pause_generation != request.pause_generation
+        || !pause.call_frame_ids.contains_key(&request.frame_id)
+        || !pause
+            .object_ids
+            .get(&request.variables_reference)
+            .is_some_and(|owned| owned == parent)
+    {
+        return Err("The debug pause owner changed while acquiring variables.".to_string());
+    }
+    if let Some(existing) = pause
+        .property_descriptor_snapshots
+        .get(&request.variables_reference)
+    {
+        return Ok(Arc::clone(existing));
+    }
+    let remaining_count =
+        MAX_CDP_PROPERTY_DESCRIPTORS.saturating_sub(pause.property_descriptor_count);
+    let remaining_bytes =
+        MAX_CDP_PROPERTY_DESCRIPTOR_BYTES_PER_PAUSE.saturating_sub(pause.property_descriptor_bytes);
+    let count_bounded = remaining_count.min(snapshot.descriptors.len());
+    let (retained_count, _) =
+        retained_descriptor_prefix_search(&snapshot.descriptors[..count_bounded], remaining_bytes);
+    let retained_bytes = snapshot
+        .descriptors
+        .get(retained_count.wrapping_sub(1))
+        .map_or(0, |descriptor| descriptor.prefix_bytes);
+    if retained_count < snapshot.descriptors.len() {
+        snapshot.limit_reason = Some(if retained_count == count_bounded {
+            crate::debug_adapter::DebugVariablePageLimitReason::DescriptorCount
+        } else {
+            crate::debug_adapter::DebugVariablePageLimitReason::DescriptorBytes
+        });
+    }
+    if retained_count < snapshot.descriptors.len() {
+        snapshot.descriptors.truncate(retained_count);
+        snapshot.complete = false;
+    }
+    for (index, descriptor) in snapshot.descriptors.iter().enumerate() {
+        if descriptor.property.get("value").is_none() {
+            continue;
+        }
+        if descriptor.indexed {
+            snapshot.indexed_indices.push(index);
+        } else {
+            snapshot.named_indices.push(index);
+        }
+    }
+    pause.property_descriptor_count += snapshot.descriptors.len();
+    pause.property_descriptor_bytes += retained_bytes;
+    let snapshot = Arc::new(snapshot);
+    pause
+        .property_descriptor_snapshots
+        .insert(request.variables_reference, Arc::clone(&snapshot));
+    Ok(snapshot)
 }
 
 fn validate_request(request: DebugVariablePageRequest) -> Result<(), String> {
@@ -459,10 +656,10 @@ pub(super) fn owned_object_reference(
     shared: &Arc<Mutex<CdpShared>>,
     request: DebugVariablePageRequest,
 ) -> Result<ObjectReference, String> {
-    let mut state = shared.lock().map_err(|error| error.to_string())?;
+    let state = shared.lock().map_err(|error| error.to_string())?;
     let pause = state
         .pause
-        .as_mut()
+        .as_ref()
         .ok_or_else(|| "The debugger is not paused.".to_string())?;
     if pause.pause_generation != request.pause_generation
         || !pause.call_frame_ids.contains_key(&request.frame_id)
@@ -485,10 +682,6 @@ pub(super) fn owned_object_reference(
     if owned.frame_id != request.frame_id {
         return Err("The variables reference belongs to another debug frame.".to_string());
     }
-    if pause.variable_page_loads >= MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE {
-        return Err("The debug variable page load limit was reached for this pause.".to_string());
-    }
-    pause.variable_page_loads += 1;
     Ok(owned)
 }
 
@@ -648,24 +841,100 @@ fn register_object_reference_with_lineage(
         // individual Runtime.releaseObject here could invalidate a retained
         // reference. Refuse local ownership instead; the next pause replaces
         // the complete bounded inventory under a new owner generation.
+        state.pause.as_mut()?.last_object_reference_limit_reason =
+            Some(crate::debug_adapter::DebugVariablePageLimitReason::References);
         return None;
     }
     let reference = state.allocate_id();
     let pause = state.pause.as_mut()?;
-    pause.object_ids.insert(
-        reference,
-        ObjectReference {
-            frame_id,
-            object_id: object_id.to_string(),
-            pause_generation,
-            evaluate_name,
-            access: ObjectReferenceAccess::Object,
-            mutation,
-            lineage,
-        },
-    );
+    let owned = ObjectReference {
+        frame_id,
+        object_id: object_id.to_string(),
+        pause_generation,
+        evaluate_name,
+        access: ObjectReferenceAccess::Object,
+        mutation,
+        lineage,
+    };
+    if try_reserve_keyed_object_reference_bytes(pause, &owned, &key).is_err() {
+        return None;
+    }
+    pause.object_ids.insert(reference, owned);
     pause.object_reference_ids.insert(key, reference);
     Some(reference)
+}
+
+fn object_reference_retained_bytes(
+    object_id: &str,
+    evaluate_name: Option<&str>,
+    mutation: &ObjectReferenceMutation,
+    lineage: Option<&ObjectReferenceLineage>,
+) -> usize {
+    let mutation_bytes = match mutation {
+        ObjectReferenceMutation::ScopeSlot { call_frame_id, .. } => call_frame_id.len(),
+        ObjectReferenceMutation::ObjectProperty { object_id } => object_id.len(),
+        ObjectReferenceMutation::ReadOnly => 0,
+    };
+    object_id
+        .len()
+        .saturating_add(evaluate_name.map_or(0, str::len))
+        .saturating_add(mutation_bytes)
+        .saturating_add(lineage.map_or(0, |lineage| lineage.property_name.len()))
+        .saturating_add(64)
+}
+
+fn object_reference_key_retained_bytes(key: &ObjectReferenceKey) -> usize {
+    object_reference_retained_bytes(
+        &key.object_id,
+        key.evaluate_name.as_deref(),
+        &key.mutation,
+        key.lineage.as_ref(),
+    )
+}
+
+fn try_reserve_keyed_object_reference_bytes(
+    pause: &mut crate::debug_cdp::transport::PauseInventory,
+    reference: &ObjectReference,
+    key: &ObjectReferenceKey,
+) -> Result<(), crate::debug_adapter::DebugVariablePageLimitReason> {
+    reserve_object_reference_bytes(
+        pause,
+        object_reference_retained_bytes(
+            &reference.object_id,
+            reference.evaluate_name.as_deref(),
+            &reference.mutation,
+            reference.lineage.as_ref(),
+        )
+        .saturating_add(object_reference_key_retained_bytes(key)),
+    )
+}
+
+pub(super) fn try_reserve_object_reference_bytes(
+    pause: &mut crate::debug_cdp::transport::PauseInventory,
+    reference: &ObjectReference,
+) -> Result<(), crate::debug_adapter::DebugVariablePageLimitReason> {
+    let retained_bytes = object_reference_retained_bytes(
+        &reference.object_id,
+        reference.evaluate_name.as_deref(),
+        &reference.mutation,
+        reference.lineage.as_ref(),
+    );
+    reserve_object_reference_bytes(pause, retained_bytes)
+}
+
+fn reserve_object_reference_bytes(
+    pause: &mut crate::debug_cdp::transport::PauseInventory,
+    retained_bytes: usize,
+) -> Result<(), crate::debug_adapter::DebugVariablePageLimitReason> {
+    if pause.object_reference_bytes.saturating_add(retained_bytes)
+        > MAX_CDP_OBJECT_REFERENCE_BYTES_PER_PAUSE
+    {
+        pause.last_object_reference_limit_reason =
+            Some(crate::debug_adapter::DebugVariablePageLimitReason::ReferenceBytes);
+        return Err(crate::debug_adapter::DebugVariablePageLimitReason::ReferenceBytes);
+    }
+    pause.object_reference_bytes += retained_bytes;
+    Ok(())
 }
 
 pub(super) fn child_object_mutation(
@@ -776,7 +1045,61 @@ pub(super) fn revoke_assigned_property_references(
     pause
         .object_reference_ids
         .retain(|_, reference_id| !removed.contains(reference_id));
+    recalculate_object_reference_bytes(pause);
+    removed.insert(parent_reference);
+    invalidate_descriptor_snapshots(pause, &removed);
     Ok(())
+}
+
+fn invalidate_descriptor_snapshots(
+    pause: &mut crate::debug_cdp::transport::PauseInventory,
+    references: &std::collections::HashSet<u64>,
+) {
+    pause
+        .property_descriptor_snapshots
+        .retain(|reference, _| !references.contains(reference));
+    pause.property_descriptor_count = pause
+        .property_descriptor_snapshots
+        .values()
+        .map(|snapshot| snapshot.descriptors.len())
+        .sum();
+    pause.property_descriptor_bytes = pause
+        .property_descriptor_snapshots
+        .values()
+        .flat_map(|snapshot| &snapshot.descriptors)
+        .map(|descriptor| descriptor.encoded_bytes)
+        .sum();
+}
+
+pub(super) fn invalidate_all_descriptor_snapshots(
+    pause: &mut crate::debug_cdp::transport::PauseInventory,
+) {
+    pause.property_descriptor_snapshots.clear();
+    pause.property_descriptor_count = 0;
+    pause.property_descriptor_bytes = 0;
+}
+
+pub(super) fn recalculate_object_reference_bytes(
+    pause: &mut crate::debug_cdp::transport::PauseInventory,
+) {
+    let owned_bytes: usize = pause
+        .object_ids
+        .values()
+        .map(|reference| {
+            object_reference_retained_bytes(
+                &reference.object_id,
+                reference.evaluate_name.as_deref(),
+                &reference.mutation,
+                reference.lineage.as_ref(),
+            )
+        })
+        .sum();
+    let key_bytes: usize = pause
+        .object_reference_ids
+        .keys()
+        .map(object_reference_key_retained_bytes)
+        .sum();
+    pause.object_reference_bytes = owned_bytes.saturating_add(key_bytes);
 }
 
 fn render_primitive_value(value: &Value) -> String {
@@ -807,7 +1130,66 @@ mod cache_tests {
     }
 
     #[test]
-    fn cache_revocation_preserves_the_per_pause_page_load_budget() {
+    fn descriptor_byte_prefix_search_is_logarithmic_at_the_ten_thousand_cap() {
+        let descriptors = (1..=MAX_CDP_PROPERTY_DESCRIPTORS)
+            .map(|index| CachedPropertyDescriptor {
+                property: json!({"name": index.to_string(), "value": {"type": "number"}}),
+                private: false,
+                indexed: true,
+                encoded_bytes: 10,
+                prefix_bytes: index * 10,
+            })
+            .collect::<Vec<_>>();
+
+        let (retained, probes) = retained_descriptor_prefix_search(&descriptors, 54_321);
+        assert_eq!(retained, 5_432);
+        assert!(probes <= 14, "binary search used {probes} probes");
+        let (all, all_probes) = retained_descriptor_prefix_search(&descriptors, usize::MAX);
+        assert_eq!(all, MAX_CDP_PROPERTY_DESCRIPTORS);
+        assert!(all_probes <= 14, "binary search used {all_probes} probes");
+    }
+
+    #[test]
+    fn keyed_reference_byte_reservation_counts_both_retained_copies() {
+        let object_id = "o".repeat(MAX_CDP_OBJECT_ID_BYTES);
+        let evaluate_name = Some("value".repeat(512));
+        let owned = ObjectReference {
+            frame_id: 7,
+            object_id: object_id.clone(),
+            pause_generation: 1,
+            evaluate_name: evaluate_name.clone(),
+            access: ObjectReferenceAccess::Object,
+            mutation: read_only(),
+            lineage: None,
+        };
+        let key = ObjectReferenceKey {
+            frame_id: 7,
+            object_id,
+            evaluate_name,
+            mutation: read_only(),
+            lineage: None,
+        };
+        let one_copy = object_reference_retained_bytes(
+            &owned.object_id,
+            owned.evaluate_name.as_deref(),
+            &owned.mutation,
+            owned.lineage.as_ref(),
+        );
+        let mut pause = PauseInventory::default();
+
+        try_reserve_keyed_object_reference_bytes(&mut pause, &owned, &key)
+            .expect("first keyed reference");
+        assert_eq!(pause.object_reference_bytes, one_copy * 2);
+        while try_reserve_keyed_object_reference_bytes(&mut pause, &owned, &key).is_ok() {}
+        assert!(pause.object_reference_bytes <= MAX_CDP_OBJECT_REFERENCE_BYTES_PER_PAUSE);
+        assert_eq!(
+            pause.last_object_reference_limit_reason,
+            Some(crate::debug_adapter::DebugVariablePageLimitReason::ReferenceBytes)
+        );
+    }
+
+    #[test]
+    fn owner_lookup_and_cache_revocation_do_not_consume_or_replenish_acquisition_budget() {
         let shared = paused_shared();
         {
             let mut state = shared.lock().expect("state");
@@ -833,15 +1215,13 @@ mod cache_tests {
             start: 0,
             count: 1,
         };
-        owned_object_reference(&shared, request).expect("last permitted page load");
+        owned_object_reference(&shared, request).expect("owned reference");
         revoke_assigned_property_references(&shared, 1, 7, 13, "missing")
             .expect("first cache revocation");
         revoke_assigned_property_references(&shared, 1, 7, 13, "missing")
             .expect("repeated cache revocation");
 
-        let error = owned_object_reference(&shared, request)
-            .expect_err("cache revocation must not replenish the per-pause budget");
-        assert!(error.contains("page load limit"));
+        owned_object_reference(&shared, request).expect("owned reference remains valid");
         assert_eq!(
             shared
                 .lock()
@@ -850,7 +1230,7 @@ mod cache_tests {
                 .as_ref()
                 .expect("pause")
                 .variable_page_loads,
-            MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE
+            MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE - 1
         );
     }
 

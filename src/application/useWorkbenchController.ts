@@ -229,22 +229,19 @@ import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
 import { usePhpCodeActionNewFileApplication } from "./usePhpCodeActionNewFileApplication";
 import { usePhpChangeSignatureWorkflow } from "./usePhpChangeSignatureWorkflow";
 import {
-  capDiagnosticNotices,
-  capWorkbenchNotices,
   createWorkbenchNotice,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
+import {
+  PhpDiagnosticsReclassificationCoordinator,
+  reclassifyPhpDiagnosticsForOwner,
+} from "./phpDiagnosticsReclassificationCoordinator";
 
 import {
   activeDotenvLocalDiagnosticNotices as buildActiveDotenvLocalDiagnosticNotices,
   activePhpLocalDiagnosticNotices as buildActivePhpLocalDiagnosticNotices,
-  buildDiagnosticOverflowNotice,
   composeEffectiveDiagnosticNotices,
-  DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-  diagnosticNoticeNavigationTarget,
-  GLOBAL_NOTICE_LIMIT,
-  isCappableDiagnosticNotice,
   localPhpDiagnosticsFromSource,
   phpLocalDiagnosticFileIdentity,
 } from "./diagnosticNotices";
@@ -264,9 +261,6 @@ import { useSymfonyWorkspaceNavigation } from "./useSymfonyWorkspaceNavigation";
 import { isJsTestRelativePath } from "../domain/jsTestFilePatterns";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
-  languageServerDiagnosticNoticeGroup,
-  languageServerDiagnosticNoticeMessage,
-  languageServerDiagnosticNoticeSeverity,
   type LanguageServerDiagnostic,
   type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
@@ -274,13 +268,12 @@ import {
 import {
   DiagnosticsCoalescer,
   animationFrameDiagnosticsFlushScheduler,
+  type DiagnosticsBatchSink,
   type DiagnosticsFlushScheduler,
 } from "../domain/diagnosticsCoalescer";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
-import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
 import { dotenvDiagnosticsFromSource } from "../domain/dotenvDiagnostics";
 import {
-  fileUriFromPath,
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
   type LanguageServerDocumentSyncGateway,
@@ -448,30 +441,6 @@ interface InFlightDirectoryLoad {
   rootPath: string | null;
 }
 
-function languageServerDiagnosticsEqual(
-  left: readonly LanguageServerDiagnostic[],
-  right: readonly LanguageServerDiagnostic[],
-): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-
-  return left.every((diagnostic, index) => {
-    const comparison = right[index];
-
-    return (
-      diagnostic.message === comparison.message &&
-      diagnostic.source === comparison.source &&
-      diagnostic.severity === comparison.severity &&
-      diagnostic.line === comparison.line &&
-      diagnostic.character === comparison.character &&
-      diagnostic.endLine === comparison.endLine &&
-      diagnostic.endCharacter === comparison.endCharacter &&
-      diagnostic.code === comparison.code
-    );
-  });
-}
-
 function restoreRuntimeStatusCacheEntry(
   cache: Record<string, LanguageServerRuntimeStatus>,
   rootKey: string,
@@ -512,6 +481,11 @@ export function ownerDocumentSavePipelineContextFor(
     settings,
   };
 }
+
+const createDiagnosticsCoalescer = (
+  sink: DiagnosticsBatchSink,
+  scheduler: DiagnosticsFlushScheduler,
+) => new DiagnosticsCoalescer(sink, scheduler);
 
 export function useWorkbenchController(
   workspaceGateways: WorkbenchWorkspaceGateways,
@@ -916,11 +890,6 @@ export function useWorkbenchController(
   const diagnosticsFlushSchedulerRef = useRef<DiagnosticsFlushScheduler>(
     options.diagnosticsFlushScheduler ?? animationFrameDiagnosticsFlushScheduler(),
   );
-  const createDiagnosticsCoalescer = useCallback(
-    (sink: (event: LanguageServerDiagnosticEvent) => void, scheduler: DiagnosticsFlushScheduler) =>
-      new DiagnosticsCoalescer(sink, scheduler),
-    [],
-  );
   const javaScriptTypeScriptRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
@@ -992,12 +961,42 @@ export function useWorkbenchController(
   const closeArtisanMakePalette = useCallback(() => {
     setArtisanMakePaletteRoot(null);
   }, []);
-  const reclassifyPhpLanguageServerDiagnosticsForRootRef = useRef<(rootPath: string) => void>(
-    () => {},
+  const workspaceRuntimeRootByTabRef = useRef<Record<string, string>>({});
+  const workspaceRuntimeOwnerByTabRef = useRef<Record<string, WorkspaceRuntimeOwner>>({});
+  const hasPhpWorkspaceByOwnerRef = useRef<Record<string, boolean>>({});
+  const resolveWorkspaceRuntimeOwner = useCallback(
+    (rootPath: string) => workspaceRuntimeOwnerByTabRef.current[rootPath] ?? null,
+    [],
   );
-  const onPhpLaravelSourcesLoaded = useCallback((rootPath: string) => {
-    reclassifyPhpLanguageServerDiagnosticsForRootRef.current(rootPath);
-  }, []);
+  const phpDiagnosticsReclassificationCoordinatorRef = useRef(
+    new PhpDiagnosticsReclassificationCoordinator(),
+  );
+  const reclassifyPhpLanguageServerDiagnosticsForRootRef = useRef<
+    (rootPath: string, expectedOwnerKey: string) => boolean
+  >(() => false);
+  const onPhpLaravelSourcesLoaded = useCallback(
+    (rootPath: string) => {
+      const ownerKey =
+        resolveWorkspaceRuntimeOwner(rootPath)?.ownerKey ?? normalizedWorkspaceRootKey(rootPath);
+      phpDiagnosticsReclassificationCoordinatorRef.current.sourcesLoaded(
+        rootPath,
+        ownerKey,
+        (sourceRoot, expectedOwnerKey) =>
+          reclassifyPhpLanguageServerDiagnosticsForRootRef.current(sourceRoot, expectedOwnerKey),
+      );
+    },
+    [resolveWorkspaceRuntimeOwner],
+  );
+  const onPhpLanguageServerDiagnosticsCommitted = useCallback(
+    (_rootPath: string, ownerKey: string) => {
+      phpDiagnosticsReclassificationCoordinatorRef.current.diagnosticsCommitted(
+        ownerKey,
+        (sourceRoot, expectedOwnerKey) =>
+          reclassifyPhpLanguageServerDiagnosticsForRootRef.current(sourceRoot, expectedOwnerKey),
+      );
+    },
+    [],
+  );
   const {
     currentPhpFrameworkSourceContext,
     ensurePhpFrameworkSourceCollectionsLoaded,
@@ -1057,13 +1056,6 @@ export function useWorkbenchController(
       return workspaceSettingsByRoot.resolve(descriptor?.canonicalRoot ?? rootPath);
     },
     [workspaceGateways.identity, workspaceSettingsByRoot],
-  );
-  const workspaceRuntimeRootByTabRef = useRef<Record<string, string>>({});
-  const workspaceRuntimeOwnerByTabRef = useRef<Record<string, WorkspaceRuntimeOwner>>({});
-  const hasPhpWorkspaceByOwnerRef = useRef<Record<string, boolean>>({});
-  const resolveWorkspaceRuntimeOwner = useCallback(
-    (rootPath: string) => workspaceRuntimeOwnerByTabRef.current[rootPath] ?? null,
-    [],
   );
   const workspaceRuntimeOwnerClaimsRef = useRef(new WorkspaceRuntimeOwnerClaimRegistry());
   const releaseWorkspaceTrustOwner = useCallback((ownerKey: string) => {
@@ -2036,7 +2028,9 @@ export function useWorkbenchController(
     updateLocalPhpDiagnostics,
     refreshLocalPhpDiagnosticsForContent,
     applyLanguageServerDiagnostics,
+    applyLanguageServerDiagnosticsBatch,
     applyJavaScriptTypeScriptLanguageServerDiagnostics,
+    applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
   } = useDiagnostics({
     currentWorkspaceRootRef,
     activeDocumentRef,
@@ -2063,6 +2057,7 @@ export function useWorkbenchController(
     phpLocalSyntaxDiagnosticsGateway,
     isExternallyRemovedDocumentPath,
     isLanguageServerSessionCurrentForRoot,
+    onPhpLanguageServerDiagnosticsCommitted,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   });
 
@@ -6967,100 +6962,27 @@ export function useWorkbenchController(
   resetPhpFrameworkMorphMapModelTypeCacheRef.current = resetPhpFrameworkMorphMapModelTypeCache;
 
   const reclassifyPhpLanguageServerDiagnosticsForRoot = useCallback(
-    (rootPath: string): void => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const diagnosticsByPath = languageServerDiagnosticsByRootRef.current[rootKey];
-
-      if (!diagnosticsByPath) {
-        return;
-      }
-
-      const { workspaceSources } = currentPhpFrameworkSourceContext();
-
-      if (workspaceSources.length === 0) {
-        return;
-      }
-
-      const isActiveRoot = workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath);
-      let nextDiagnosticsByPath = diagnosticsByPath;
-      const noticeUpdates: {
-        groupKey: string;
-        notices: WorkbenchNotice[];
-      }[] = [];
-
-      for (const [diagnosticPath, diagnostics] of Object.entries(diagnosticsByPath)) {
-        const document = documentsRef.current[diagnosticPath];
-
-        if (document?.language !== "php" || diagnostics.length === 0) {
-          continue;
-        }
-
-        const nextDiagnostics = filterPhpLanguageServerDiagnostics(document.content, diagnostics, {
-          frameworkProviders: activePhpFrameworkProviders,
-          frameworkSourceContext: { workspaceSources },
-          path: diagnosticPath,
-        });
-
-        if (languageServerDiagnosticsEqual(diagnostics, nextDiagnostics)) {
-          continue;
-        }
-
-        if (nextDiagnosticsByPath === diagnosticsByPath) {
-          nextDiagnosticsByPath = { ...diagnosticsByPath };
-        }
-
-        nextDiagnosticsByPath[diagnosticPath] = nextDiagnostics;
-
-        if (!isActiveRoot) {
-          continue;
-        }
-
-        const uri = fileUriFromPath(diagnosticPath);
-        const groupKey = languageServerDiagnosticNoticeGroup(uri);
-        const diagnosticNotices = capDiagnosticNotices(
-          nextDiagnostics.map((diagnostic) =>
-            createWorkbenchNotice(
-              languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-              diagnostic.source || "Language Server",
-              languageServerDiagnosticNoticeMessage(diagnostic, uri),
-              groupKey,
-              diagnosticNoticeNavigationTarget(uri, diagnostic),
-            ),
-          ),
-          DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-          (hiddenCount) => buildDiagnosticOverflowNotice("Language Server", groupKey, hiddenCount),
-        );
-
-        noticeUpdates.push({ groupKey, notices: diagnosticNotices });
-      }
-
-      if (nextDiagnosticsByPath === diagnosticsByPath) {
-        return;
-      }
-
-      languageServerDiagnosticsByRootRef.current[rootKey] = nextDiagnosticsByPath;
-
-      if (isActiveRoot) {
-        setLanguageServerDiagnosticsByPath(nextDiagnosticsByPath);
-      }
-
-      if (noticeUpdates.length === 0) {
-        return;
-      }
-
-      setNotices((current) =>
-        capWorkbenchNotices(
-          noticeUpdates.reduce(
-            (nextNotices, update) =>
-              replaceWorkbenchNoticeGroup(nextNotices, update.groupKey, update.notices),
-            current,
-          ),
-          GLOBAL_NOTICE_LIMIT,
-          isCappableDiagnosticNotice,
-        ),
-      );
-    },
-    [activePhpFrameworkProviders, currentPhpFrameworkSourceContext, documentsRef],
+    (rootPath: string, expectedOwnerKey: string): boolean =>
+      reclassifyPhpDiagnosticsForOwner({
+        activePhpFrameworkProviders,
+        currentWorkspaceRoot: currentWorkspaceRootRef.current,
+        diagnosticsByOwnerRef: languageServerDiagnosticsByRootRef,
+        documentsRef,
+        expectedOwnerKey,
+        resolveOwnerKey: (requestedRoot) =>
+          resolveWorkspaceRuntimeOwner(requestedRoot)?.ownerKey ??
+          normalizedWorkspaceRootKey(requestedRoot),
+        rootPath,
+        setDiagnosticsByPath: setLanguageServerDiagnosticsByPath,
+        setNotices,
+        workspaceSources: currentPhpFrameworkSourceContext().workspaceSources,
+      }),
+    [
+      activePhpFrameworkProviders,
+      currentPhpFrameworkSourceContext,
+      documentsRef,
+      resolveWorkspaceRuntimeOwner,
+    ],
   );
 
   useEffect(() => {
@@ -9034,7 +8956,9 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     createDiagnosticsCoalescer,
     applyLanguageServerDiagnostics,
+    applyLanguageServerDiagnosticsBatch,
     applyJavaScriptTypeScriptLanguageServerDiagnostics,
+    applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
     reportLanguageServerError,
     reportJavaScriptTypeScriptLanguageServerError,
   });

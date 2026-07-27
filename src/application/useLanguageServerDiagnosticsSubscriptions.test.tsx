@@ -25,8 +25,7 @@ import {
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROOT = "/workspace";
 
@@ -43,7 +42,7 @@ interface FakeCoalescer {
   dispose: ReturnType<typeof vi.fn>;
   dropOwner: ReturnType<typeof vi.fn>;
   enqueue: ReturnType<typeof vi.fn>;
-  sink: (event: LanguageServerDiagnosticEvent) => void;
+  sink: (events: readonly LanguageServerDiagnosticEvent[]) => void;
 }
 
 interface DiagnosticsGatewayHarness {
@@ -76,7 +75,7 @@ function createDeferred<T>(): Deferred<T> {
 }
 
 function fakeCoalescer(
-  sink: (event: LanguageServerDiagnosticEvent) => void = vi.fn(),
+  sink: (events: readonly LanguageServerDiagnosticEvent[]) => void = vi.fn(),
 ): FakeCoalescer {
   const dispose = vi.fn();
   const dropOwner = vi.fn();
@@ -120,16 +119,12 @@ function immediateGateway(): DiagnosticsGatewayHarness {
   };
 }
 
-function deferredGateway(
-  deferred: Deferred<DiagnosticsUnsubscribeFn>,
-): DiagnosticsGatewayHarness {
+function deferredGateway(deferred: Deferred<DiagnosticsUnsubscribeFn>): DiagnosticsGatewayHarness {
   const listeners: DiagnosticsGatewayHarness["listeners"] = [];
-  const subscribeDiagnostics = vi.fn(
-    (listener: (event: LanguageServerDiagnosticEvent) => void) => {
-      listeners.push(listener);
-      return deferred.promise;
-    },
-  );
+  const subscribeDiagnostics = vi.fn((listener: (event: LanguageServerDiagnosticEvent) => void) => {
+    listeners.push(listener);
+    return deferred.promise;
+  });
 
   return {
     gateway: { subscribeDiagnostics },
@@ -161,8 +156,7 @@ function baseDependencies(
     languageServerDiagnosticsCoalescerRef: ref(null),
     javaScriptTypeScriptDiagnosticsCoalescerRef: ref(null),
     languageServerDiagnosticsGateway: phpGateway.gateway,
-    javaScriptTypeScriptLanguageServerDiagnosticsGateway:
-      javaScriptTypeScriptGateway.gateway,
+    javaScriptTypeScriptLanguageServerDiagnosticsGateway: javaScriptTypeScriptGateway.gateway,
     createDiagnosticsCoalescer: vi.fn((sink) => {
       const coalescer = fakeCoalescer(sink);
       coalescers.push(coalescer);
@@ -186,9 +180,7 @@ function baseDependencies(
 let mountedRoot: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-function renderHook(
-  dependencies: LanguageServerDiagnosticsSubscriptionsDependencies,
-): void {
+function renderHook(dependencies: LanguageServerDiagnosticsSubscriptionsDependencies): void {
   container = document.createElement("div");
   document.body.appendChild(container);
   mountedRoot = createRoot(container);
@@ -242,15 +234,13 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     expect(coalescers[0]?.enqueue).toHaveBeenCalledWith(phpEvent);
     expect(coalescers[1]?.enqueue).toHaveBeenCalledWith(tsEvent);
 
-    coalescers[0]?.sink(phpEvent);
-    coalescers[1]?.sink(tsEvent);
+    coalescers[0]?.sink([phpEvent]);
+    coalescers[1]?.sink([tsEvent]);
 
-    expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledWith(
-      phpEvent,
+    expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledWith(phpEvent);
+    expect(dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics).toHaveBeenCalledWith(
+      tsEvent,
     );
-    expect(
-      dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics,
-    ).toHaveBeenCalledWith(tsEvent);
 
     act(() => {
       mountedRoot?.unmount();
@@ -266,9 +256,34 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     expect(coalescers[0]?.dispose).toHaveBeenCalledTimes(1);
     expect(coalescers[1]?.dispose).toHaveBeenCalledTimes(1);
     expect(dependencies.languageServerDiagnosticsCoalescerRef.current).toBeNull();
-    expect(
-      dependencies.javaScriptTypeScriptDiagnosticsCoalescerRef.current,
-    ).toBeNull();
+    expect(dependencies.javaScriptTypeScriptDiagnosticsCoalescerRef.current).toBeNull();
+  });
+
+  it("delivers each coalesced frame through one application batch call", async () => {
+    const applyPhpBatch = vi.fn();
+    const applyTypeScriptBatch = vi.fn();
+    const { coalescers, dependencies } = baseDependencies({
+      applyLanguageServerDiagnosticsBatch: applyPhpBatch,
+      applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch: applyTypeScriptBatch,
+    });
+    renderHook(dependencies);
+    await flushAsyncTurns();
+    const phpEvents = [eventFor(), eventFor(`${ROOT}/app/Post.php`)];
+    const typeScriptEvents = [eventFor(`${ROOT}/src/a.ts`), eventFor(`${ROOT}/src/b.ts`)];
+
+    coalescers[0]?.sink(phpEvents);
+    coalescers[1]?.sink(typeScriptEvents);
+
+    expect(applyPhpBatch).toHaveBeenCalledOnce();
+    expect(applyPhpBatch).toHaveBeenCalledWith(
+      phpEvents.map((event) => ({ event, owner: undefined })),
+    );
+    expect(applyTypeScriptBatch).toHaveBeenCalledOnce();
+    expect(applyTypeScriptBatch).toHaveBeenCalledWith(
+      typeScriptEvents.map((event) => ({ event, owner: undefined })),
+    );
+    expect(dependencies.applyLanguageServerDiagnostics).not.toHaveBeenCalled();
+    expect(dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics).not.toHaveBeenCalled();
   });
 
   it("disposes a late subscription result after cleanup", async () => {
@@ -280,8 +295,7 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     const javaScriptTypeScriptGateway = deferredGateway(tsDeferred);
     const { coalescers, dependencies } = baseDependencies({
       languageServerDiagnosticsGateway: phpGateway.gateway,
-      javaScriptTypeScriptLanguageServerDiagnosticsGateway:
-        javaScriptTypeScriptGateway.gateway,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway: javaScriptTypeScriptGateway.gateway,
     });
 
     renderHook(dependencies);
@@ -302,12 +316,11 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
 
   it("captures one owner for alias events, coalescer keys, sinks, and cleanup", async () => {
     const owner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
-    const { coalescers, dependencies, javaScriptTypeScriptGateway, phpGateway } =
-      baseDependencies({
-        workspaceRuntimeOwner: owner,
-        resolveCurrentWorkspaceRuntimeOwner: () => owner,
-        resolveWorkspaceRuntimeOwnerForDiagnosticsEvent: () => owner,
-      });
+    const { coalescers, dependencies, javaScriptTypeScriptGateway, phpGateway } = baseDependencies({
+      workspaceRuntimeOwner: owner,
+      resolveCurrentWorkspaceRuntimeOwner: () => owner,
+      resolveWorkspaceRuntimeOwnerForDiagnosticsEvent: () => owner,
+    });
 
     renderHook(dependencies);
     await flushAsyncTurns();
@@ -325,31 +338,21 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
       javaScriptTypeScriptGateway.listeners[0]?.(secondAliasEvent);
     });
 
-    expect(coalescers[0]?.enqueue).toHaveBeenNthCalledWith(
-      1,
-      firstAliasEvent,
-      owner.ownerKey,
-    );
-    expect(coalescers[0]?.enqueue).toHaveBeenNthCalledWith(
-      2,
-      secondAliasEvent,
-      owner.ownerKey,
-    );
-    expect(coalescers[1]?.enqueue).toHaveBeenCalledWith(
-      secondAliasEvent,
-      owner.ownerKey,
-    );
+    expect(coalescers[0]?.enqueue).toHaveBeenNthCalledWith(1, firstAliasEvent, owner.ownerKey);
+    expect(coalescers[0]?.enqueue).toHaveBeenNthCalledWith(2, secondAliasEvent, owner.ownerKey);
+    expect(coalescers[1]?.enqueue).toHaveBeenCalledWith(secondAliasEvent, owner.ownerKey);
 
-    coalescers[0]?.sink(secondAliasEvent);
-    coalescers[1]?.sink(secondAliasEvent);
+    coalescers[0]?.sink([secondAliasEvent]);
+    coalescers[1]?.sink([secondAliasEvent]);
 
     expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledWith(
       secondAliasEvent,
       owner,
     );
-    expect(
-      dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics,
-    ).toHaveBeenCalledWith(secondAliasEvent, owner);
+    expect(dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics).toHaveBeenCalledWith(
+      secondAliasEvent,
+      owner,
+    );
 
     act(() => {
       mountedRoot?.unmount();
@@ -362,10 +365,7 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
   it("keeps identical PHP and TS sessions in separate owner namespaces", async () => {
     const foregroundOwner = createWorkspaceRuntimeOwner("foreground-id", ROOT);
     const backgroundRoot = "/background-workspace";
-    const phpBackgroundOwner = createWorkspaceRuntimeOwner(
-      "php-background-id",
-      backgroundRoot,
-    );
+    const phpBackgroundOwner = createWorkspaceRuntimeOwner("php-background-id", backgroundRoot);
     const typeScriptBackgroundOwner = createWorkspaceRuntimeOwner(
       "typescript-background-id",
       backgroundRoot,
@@ -377,10 +377,7 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
       typescript: new Map([[1, typeScriptBackgroundOwner]]),
     };
     const resolveEventOwner = vi.fn(
-      (
-        event: LanguageServerDiagnosticEvent,
-        runtimeKind: LanguageServerDiagnosticsRuntimeKind,
-      ) => {
+      (event: LanguageServerDiagnosticEvent, runtimeKind: LanguageServerDiagnosticsRuntimeKind) => {
         if (event.rootPath === ROOT && ambiguousOwners.length > 1) {
           return null;
         }
@@ -392,12 +389,11 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
         return ownersByRuntimeKind[runtimeKind].get(event.sessionId) ?? null;
       },
     );
-    const { coalescers, dependencies, javaScriptTypeScriptGateway, phpGateway } =
-      baseDependencies({
-        workspaceRuntimeOwner: foregroundOwner,
-        resolveCurrentWorkspaceRuntimeOwner: () => foregroundOwner,
-        resolveWorkspaceRuntimeOwnerForDiagnosticsEvent: resolveEventOwner,
-      });
+    const { coalescers, dependencies, javaScriptTypeScriptGateway, phpGateway } = baseDependencies({
+      workspaceRuntimeOwner: foregroundOwner,
+      resolveCurrentWorkspaceRuntimeOwner: () => foregroundOwner,
+      resolveWorkspaceRuntimeOwnerForDiagnosticsEvent: resolveEventOwner,
+    });
 
     renderHook(dependencies);
     await flushAsyncTurns();
@@ -429,21 +425,19 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
       typeScriptBackgroundOwner.ownerKey,
     );
 
-    coalescers[0]?.sink(backgroundEvent);
-    coalescers[1]?.sink(backgroundEvent);
+    coalescers[0]?.sink([backgroundEvent]);
+    coalescers[1]?.sink([backgroundEvent]);
 
     expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledWith(
       backgroundEvent,
       phpBackgroundOwner,
     );
-    expect(
-      dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics,
-    ).toHaveBeenCalledWith(backgroundEvent, typeScriptBackgroundOwner);
-    expect(resolveEventOwner).toHaveBeenCalledWith(backgroundEvent, "php");
-    expect(resolveEventOwner).toHaveBeenCalledWith(
+    expect(dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics).toHaveBeenCalledWith(
       backgroundEvent,
-      "typescript",
+      typeScriptBackgroundOwner,
     );
+    expect(resolveEventOwner).toHaveBeenCalledWith(backgroundEvent, "php");
+    expect(resolveEventOwner).toHaveBeenCalledWith(backgroundEvent, "typescript");
     expect(dependencies.applyLanguageServerDiagnostics).not.toHaveBeenCalledWith(
       backgroundEvent,
       foregroundOwner,
@@ -455,8 +449,9 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
 
   it("preserves legacy event roots while rejecting rootless publications", async () => {
     const owner = createLegacyWorkspaceRuntimeOwner(ROOT);
-    const { coalescers, dependencies, javaScriptTypeScriptGateway, phpGateway } =
-      baseDependencies({ workspaceRuntimeOwner: owner });
+    const { coalescers, dependencies, javaScriptTypeScriptGateway, phpGateway } = baseDependencies({
+      workspaceRuntimeOwner: owner,
+    });
 
     renderHook(dependencies);
     await flushAsyncTurns();
@@ -479,19 +474,15 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     expect(coalescers[1]?.enqueue).toHaveBeenCalledOnce();
     expect(coalescers[1]?.enqueue).toHaveBeenCalledWith(backgroundEvent);
 
-    coalescers[0]?.sink(backgroundEvent);
-    coalescers[1]?.sink(backgroundEvent);
+    coalescers[0]?.sink([backgroundEvent]);
+    coalescers[1]?.sink([backgroundEvent]);
 
-    expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledWith(
+    expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledWith(backgroundEvent);
+    expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledOnce();
+    expect(dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics).toHaveBeenCalledWith(
       backgroundEvent,
     );
-    expect(dependencies.applyLanguageServerDiagnostics).toHaveBeenCalledOnce();
-    expect(
-      dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics,
-    ).toHaveBeenCalledWith(backgroundEvent);
-    expect(
-      dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics,
-    ).toHaveBeenCalledOnce();
+    expect(dependencies.applyJavaScriptTypeScriptLanguageServerDiagnostics).toHaveBeenCalledOnce();
 
     act(() => {
       mountedRoot?.unmount();
@@ -524,12 +515,10 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     aliasTsDeferred.reject(aliasTsError);
     await flushAsyncTurns();
 
-    expect(alias.dependencies.reportLanguageServerError).toHaveBeenCalledWith(
-      aliasPhpError,
+    expect(alias.dependencies.reportLanguageServerError).toHaveBeenCalledWith(aliasPhpError);
+    expect(alias.dependencies.reportJavaScriptTypeScriptLanguageServerError).toHaveBeenCalledWith(
+      aliasTsError,
     );
-    expect(
-      alias.dependencies.reportJavaScriptTypeScriptLanguageServerError,
-    ).toHaveBeenCalledWith(aliasTsError);
 
     act(() => {
       mountedRoot?.unmount();
@@ -553,9 +542,7 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     await flushAsyncTurns();
 
     expect(stale.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
-    expect(
-      stale.dependencies.reportJavaScriptTypeScriptLanguageServerError,
-    ).not.toHaveBeenCalled();
+    expect(stale.dependencies.reportJavaScriptTypeScriptLanguageServerError).not.toHaveBeenCalled();
   });
 
   it("reports subscription errors only for the still-active workspace root", async () => {
@@ -565,8 +552,7 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     const javaScriptTypeScriptGateway = deferredGateway(tsDeferred);
     const { dependencies } = baseDependencies({
       languageServerDiagnosticsGateway: phpGateway.gateway,
-      javaScriptTypeScriptLanguageServerDiagnosticsGateway:
-        javaScriptTypeScriptGateway.gateway,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway: javaScriptTypeScriptGateway.gateway,
     });
 
     renderHook(dependencies);
@@ -578,9 +564,9 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     await flushAsyncTurns();
 
     expect(dependencies.reportLanguageServerError).toHaveBeenCalledWith(phpError);
-    expect(
-      dependencies.reportJavaScriptTypeScriptLanguageServerError,
-    ).toHaveBeenCalledWith(tsError);
+    expect(dependencies.reportJavaScriptTypeScriptLanguageServerError).toHaveBeenCalledWith(
+      tsError,
+    );
 
     const stalePhpDeferred = createDeferred<DiagnosticsUnsubscribeFn>();
     const staleTsDeferred = createDeferred<DiagnosticsUnsubscribeFn>();
@@ -602,8 +588,6 @@ describe("useLanguageServerDiagnosticsSubscriptions", () => {
     await flushAsyncTurns();
 
     expect(stale.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
-    expect(
-      stale.dependencies.reportJavaScriptTypeScriptLanguageServerError,
-    ).not.toHaveBeenCalled();
+    expect(stale.dependencies.reportJavaScriptTypeScriptLanguageServerError).not.toHaveBeenCalled();
   });
 });

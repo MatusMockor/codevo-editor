@@ -1,16 +1,29 @@
-import type { LanguageServerDiagnosticEvent } from "./languageServerDiagnostics";
+import {
+  isBoundedLanguageServerDiagnosticEvent,
+  MAX_LANGUAGE_SERVER_DIAGNOSTICS_UTF8_BYTES,
+  type LanguageServerDiagnosticEvent,
+} from "./languageServerDiagnostics";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 /**
- * Sink that applies a single coalesced diagnostics event. Production wires this
- * to the existing `applyLanguageServerDiagnostics` /
- * `applyJavaScriptTypeScriptLanguageServerDiagnostics` callbacks, which already
- * enforce per-workspace isolation, session, version and notice-cap rules. The
- * coalescer never relaxes those guards; it only collapses bursts of events into
- * a single batched replay so React renders once per frame instead of once per
- * event.
+ * Sink that applies one complete coalesced frame. A batch boundary is explicit:
+ * application state can reduce the whole frame and publish React state once,
+ * instead of repeating an object spread and render for every event.
  */
-export type DiagnosticsSink = (event: LanguageServerDiagnosticEvent) => void;
+export type DiagnosticsBatchSink = (events: readonly LanguageServerDiagnosticEvent[]) => void;
+
+export const DIAGNOSTICS_COALESCER_MAX_EVENTS_PER_FLUSH = 256;
+export const DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH = 8 * 1024 * 1024;
+
+interface DiagnosticsOwnerBuffer {
+  readonly eventsByUri: Map<string, BufferedDiagnosticsEvent>;
+  utf8Bytes: number;
+}
+
+interface BufferedDiagnosticsEvent {
+  readonly event: LanguageServerDiagnosticEvent;
+  readonly utf8Bytes: number;
+}
 
 /**
  * Strategy for deferring a flush to the next frame. Production uses
@@ -30,8 +43,7 @@ export interface DiagnosticsFlushScheduler {
  */
 export function animationFrameDiagnosticsFlushScheduler(): DiagnosticsFlushScheduler {
   const hasRaf =
-    typeof requestAnimationFrame === "function" &&
-    typeof cancelAnimationFrame === "function";
+    typeof requestAnimationFrame === "function" && typeof cancelAnimationFrame === "function";
 
   if (hasRaf) {
     return {
@@ -63,22 +75,18 @@ export function animationFrameDiagnosticsFlushScheduler(): DiagnosticsFlushSched
  * root API derives a normalized owner from the event root.
  */
 export class DiagnosticsCoalescer {
-  private readonly buffersByOwner = new Map<
-    string,
-    Map<string, LanguageServerDiagnosticEvent>
-  >();
+  private readonly buffersByOwner = new Map<string, DiagnosticsOwnerBuffer>();
+  private bufferedEventCount = 0;
+  private bufferedEventUtf8Bytes = 0;
   private handle: number | null = null;
   private disposed = false;
 
   constructor(
-    private readonly sink: DiagnosticsSink,
+    private readonly sink: DiagnosticsBatchSink,
     private readonly scheduler: DiagnosticsFlushScheduler,
   ) {}
 
-  enqueue(
-    event: LanguageServerDiagnosticEvent,
-    explicitOwnerKey?: string | null,
-  ): void {
+  enqueue(event: LanguageServerDiagnosticEvent, explicitOwnerKey?: string | null): void {
     if (explicitOwnerKey !== undefined) {
       this.enqueueForOwner(explicitOwnerKey, event);
       return;
@@ -93,10 +101,7 @@ export class DiagnosticsCoalescer {
     this.enqueueForOwner(ownerKey, event);
   }
 
-  enqueueForOwner(
-    ownerKey: string | null | undefined,
-    event: LanguageServerDiagnosticEvent,
-  ): void {
+  enqueueForOwner(ownerKey: string | null | undefined, event: LanguageServerDiagnosticEvent): void {
     if (this.disposed) {
       return;
     }
@@ -105,14 +110,43 @@ export class DiagnosticsCoalescer {
       return;
     }
 
-    const ownerBuffer = this.buffersByOwner.get(ownerKey) ?? new Map();
-    const buffered = ownerBuffer.get(event.uri);
+    let ownerBuffer = this.buffersByOwner.get(ownerKey) ?? {
+      eventsByUri: new Map(),
+      utf8Bytes: 0,
+    };
+    const buffered = ownerBuffer.eventsByUri.get(event.uri);
 
-    if (buffered && !isNewerOrEqual(event, buffered)) {
+    if (buffered && !isNewerOrEqual(event, buffered.event)) {
       return;
     }
 
-    ownerBuffer.set(event.uri, event);
+    const eventBytes = diagnosticsEventUtf8Bytes(event);
+    if (diagnosticsBatchUtf8Bytes(eventBytes, 1) > DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH) {
+      this.disarm();
+      this.flush();
+      return;
+    }
+
+    let bufferedBytes = buffered?.utf8Bytes ?? 0;
+    const nextEventCount = this.bufferedEventCount + (buffered ? 0 : 1);
+    const nextEventUtf8Bytes = this.bufferedEventUtf8Bytes - bufferedBytes + eventBytes;
+    if (
+      (!buffered && this.bufferedEventCount >= DIAGNOSTICS_COALESCER_MAX_EVENTS_PER_FLUSH) ||
+      diagnosticsBatchUtf8Bytes(nextEventUtf8Bytes, nextEventCount) >
+        DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH
+    ) {
+      this.disarm();
+      this.flush();
+      ownerBuffer = { eventsByUri: new Map(), utf8Bytes: 0 };
+      bufferedBytes = 0;
+    }
+
+    if (!bufferedBytes) {
+      this.bufferedEventCount += 1;
+    }
+    this.bufferedEventUtf8Bytes += eventBytes - bufferedBytes;
+    ownerBuffer.eventsByUri.set(event.uri, { event, utf8Bytes: eventBytes });
+    ownerBuffer.utf8Bytes = ownerBuffer.utf8Bytes - bufferedBytes + eventBytes;
     this.buffersByOwner.set(ownerKey, ownerBuffer);
     this.arm();
   }
@@ -132,7 +166,12 @@ export class DiagnosticsCoalescer {
       return;
     }
 
-    this.buffersByOwner.delete(ownerKey);
+    const removed = this.buffersByOwner.get(ownerKey);
+    if (removed) {
+      this.bufferedEventCount -= removed.eventsByUri.size;
+      this.bufferedEventUtf8Bytes -= removed.utf8Bytes;
+      this.buffersByOwner.delete(ownerKey);
+    }
 
     if (this.buffersByOwner.size === 0) {
       this.disarm();
@@ -142,6 +181,8 @@ export class DiagnosticsCoalescer {
   dispose(): void {
     this.disposed = true;
     this.buffersByOwner.clear();
+    this.bufferedEventCount = 0;
+    this.bufferedEventUtf8Bytes = 0;
     this.disarm();
   }
 
@@ -175,13 +216,38 @@ export class DiagnosticsCoalescer {
     }
 
     const batch = Array.from(this.buffersByOwner.values()).flatMap((buffer) =>
-      Array.from(buffer.values()),
+      Array.from(buffer.eventsByUri.values(), ({ event }) => event),
     );
     this.buffersByOwner.clear();
+    this.bufferedEventCount = 0;
+    this.bufferedEventUtf8Bytes = 0;
 
-    batch.forEach((event) => {
-      this.sink(event);
-    });
+    this.sink(batch);
+  }
+}
+
+function diagnosticsBatchUtf8Bytes(eventUtf8Bytes: number, eventCount: number): number {
+  return 2 + eventUtf8Bytes + Math.max(0, eventCount - 1);
+}
+
+function diagnosticsEventUtf8Bytes(event: LanguageServerDiagnosticEvent): number {
+  try {
+    if (isBoundedLanguageServerDiagnosticEvent(event)) {
+      const decodedDiagnosticsUtf8Bytes = event.projection.decodedUtf8Bytes;
+      if (
+        decodedDiagnosticsUtf8Bytes < 2 ||
+        decodedDiagnosticsUtf8Bytes > MAX_LANGUAGE_SERVER_DIAGNOSTICS_UTF8_BYTES
+      ) {
+        return DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH + 1;
+      }
+      const envelopeUtf8Bytes = new TextEncoder().encode(
+        JSON.stringify({ ...event, diagnostics: [] }),
+      ).byteLength;
+      return envelopeUtf8Bytes - 2 + decodedDiagnosticsUtf8Bytes;
+    }
+    return new TextEncoder().encode(JSON.stringify(event)).byteLength;
+  } catch {
+    return DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH + 1;
   }
 }
 

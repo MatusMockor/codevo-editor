@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "commands": {
+    "run": "run_js_test_batch_json",
+    "stop": "stop_js_test_batch"
+  },
+  "limits": {
+    "maxPackages": 8,
+    "maxPackageRootBytes": 4096,
+    "maxOwnerIdBytes": 64,
+    "maxSuites": 5000,
+    "maxCases": 5000,
+    "maxReportBytes": 16777216,
+    "maxOutputStreamBytes": 65536
+  },
+  "wire": {
+    "requestKeys": ["packages", "runId", "workspaceId"],
+    "stopRequestKeys": ["runId", "workspaceId"],
+    "stopResponseKeys": ["runId", "stopped"],
+    "packagePlanKeys": ["packageRootRelativePath"],
+    "ownerKeys": ["runId", "workspaceId"],
+    "packageResultKeys": ["authority", "output", "response"],
+    "authorityKeys": ["packageRootRelativePath", "runner"],
+    "outputKeys": ["stderr", "stdout"],
+    "outputStreamKeys": ["text", "truncated"],
+    "runners": ["jest", "vitest"],
+    "statuses": ["cancelled", "error", "ok", "unavailable"],
+    "outcomeKeys": {
+      "ok": ["owner", "packages", "status", "totals"],
+      "cancelled": ["authorities", "output", "owner", "status"],
+      "error": ["authorities", "message", "output", "owner", "status"],
+      "unavailable": ["authorities", "message", "owner", "status"]
+    }
+  }
+}

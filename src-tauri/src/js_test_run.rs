@@ -10,6 +10,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "js_test_batch.rs"]
+pub(crate) mod batch;
 #[path = "js_test_coverage.rs"]
 pub(crate) mod coverage;
 #[path = "js_test_projection.rs"]
@@ -570,10 +572,19 @@ fn is_valid_filter(filter: &str) -> bool {
 }
 
 fn parse_jest_json(json: &[u8], root: &Path) -> Result<PhpTestRunResponse, String> {
+    parse_jest_json_with_limits(json, root, MAX_SUITES, MAX_CASES)
+}
+
+fn parse_jest_json_with_limits(
+    json: &[u8],
+    root: &Path,
+    max_suites: usize,
+    max_cases: usize,
+) -> Result<PhpTestRunResponse, String> {
     let report: JestReport = serde_json::from_slice(json).map_err(|error| error.to_string())?;
-    if report.test_results.len() > MAX_SUITES {
+    if report.test_results.len() > max_suites {
         return Err(format!(
-            "JavaScript test report contains {} suites; the safety limit is {MAX_SUITES}.",
+            "JavaScript test report contains {} suites; the remaining batch safety limit is {max_suites}.",
             report.test_results.len()
         ));
     }
@@ -586,9 +597,9 @@ fn parse_jest_json(json: &[u8], root: &Path) -> Result<PhpTestRunResponse, Strin
                 .max(usize::from(file.status.as_deref() == Some("failed")))
         })
         .sum::<usize>();
-    if reported_cases > MAX_CASES {
+    if reported_cases > max_cases {
         return Err(format!(
-            "JavaScript test report contains {reported_cases} cases; the safety limit is {MAX_CASES}."
+            "JavaScript test report contains {reported_cases} cases; the remaining batch safety limit is {max_cases}."
         ));
     }
     let mut suites = Vec::new();
@@ -1433,16 +1444,22 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn js_test_runner_capture_is_bounded_and_timeout_kills_the_process() {
+    fn js_test_runner_capture_is_bounded_without_competing_with_the_timeout_contract() {
         let root = temp_directory("runner-bounds");
         let noisy = root.join("noisy.sh");
         fs::write(&noisy, "#!/bin/sh\nprintf '%010000d' 0 >&2\n").expect("write noisy runner");
         make_executable(&noisy);
         let stderr =
-            execute_runner_with_timeout(&noisy, &root, vec![], std::time::Duration::from_secs(2))
+            execute_runner_with_timeout(&noisy, &root, vec![], std::time::Duration::from_secs(30))
                 .expect("bounded runner");
         assert_eq!(stderr.len(), ERROR_TAIL_BYTES);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 
+    #[cfg(unix)]
+    #[test]
+    fn js_test_runner_timeout_kills_the_process() {
+        let root = temp_directory("runner-timeout");
         let slow = root.join("slow.sh");
         fs::write(&slow, "#!/bin/sh\nsleep 5\n").expect("write slow runner");
         make_executable(&slow);

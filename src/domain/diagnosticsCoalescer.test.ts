@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  DIAGNOSTICS_COALESCER_MAX_EVENTS_PER_FLUSH,
+  DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH,
   DiagnosticsCoalescer,
   type DiagnosticsFlushScheduler,
 } from "./diagnosticsCoalescer";
@@ -68,8 +70,8 @@ describe("DiagnosticsCoalescer", () => {
 
     fire();
 
-    expect(sink).toHaveBeenCalledTimes(3);
-    expect(sink.mock.calls.map(([event]) => event.uri)).toEqual([
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0][0].map((event: LanguageServerDiagnosticEvent) => event.uri)).toEqual([
       "file:///a",
       "file:///b",
       "file:///c",
@@ -88,7 +90,7 @@ describe("DiagnosticsCoalescer", () => {
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].version).toBe(5);
+    expect(sink.mock.calls[0][0][0].version).toBe(5);
   });
 
   it("does not replace a buffered event with an older version", () => {
@@ -102,7 +104,7 @@ describe("DiagnosticsCoalescer", () => {
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].version).toBe(5);
+    expect(sink.mock.calls[0][0][0].version).toBe(5);
   });
 
   it("always replaces a buffered event when the new version is null", () => {
@@ -111,14 +113,12 @@ describe("DiagnosticsCoalescer", () => {
     const coalescer = new DiagnosticsCoalescer(sink, scheduler);
 
     coalescer.enqueue(diagnosticEvent({ uri: "file:///a", version: 5 }));
-    coalescer.enqueue(
-      diagnosticEvent({ diagnostics: [], uri: "file:///a", version: null }),
-    );
+    coalescer.enqueue(diagnosticEvent({ diagnostics: [], uri: "file:///a", version: null }));
 
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].version).toBeNull();
+    expect(sink.mock.calls[0][0][0].version).toBeNull();
   });
 
   it("does not overwrite a buffered null clear with a later numeric event", () => {
@@ -130,9 +130,7 @@ describe("DiagnosticsCoalescer", () => {
     // event arriving afterwards in the same burst must not resurrect markers by
     // overwriting the buffered clear.
     coalescer.enqueue(diagnosticEvent({ uri: "file:///a", version: 5 }));
-    coalescer.enqueue(
-      diagnosticEvent({ diagnostics: [], uri: "file:///a", version: null }),
-    );
+    coalescer.enqueue(diagnosticEvent({ diagnostics: [], uri: "file:///a", version: null }));
     coalescer.enqueue(
       diagnosticEvent({
         diagnostics: [
@@ -152,8 +150,8 @@ describe("DiagnosticsCoalescer", () => {
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].version).toBeNull();
-    expect(sink.mock.calls[0][0].diagnostics).toHaveLength(0);
+    expect(sink.mock.calls[0][0][0].version).toBeNull();
+    expect(sink.mock.calls[0][0][0].diagnostics).toHaveLength(0);
   });
 
   it("replaces a buffered null clear with a newer null publication", () => {
@@ -161,9 +159,7 @@ describe("DiagnosticsCoalescer", () => {
     const { scheduler, fire } = manualScheduler();
     const coalescer = new DiagnosticsCoalescer(sink, scheduler);
 
-    coalescer.enqueue(
-      diagnosticEvent({ diagnostics: [], uri: "file:///a", version: null }),
-    );
+    coalescer.enqueue(diagnosticEvent({ diagnostics: [], uri: "file:///a", version: null }));
     coalescer.enqueue(
       diagnosticEvent({
         diagnostics: [
@@ -183,7 +179,7 @@ describe("DiagnosticsCoalescer", () => {
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].diagnostics[0]?.message).toBe("fresh");
+    expect(sink.mock.calls[0][0][0].diagnostics[0]?.message).toBe("fresh");
   });
 
   it("keys the buffer by root and uri so different roots never collide", () => {
@@ -191,20 +187,15 @@ describe("DiagnosticsCoalescer", () => {
     const { scheduler, fire } = manualScheduler();
     const coalescer = new DiagnosticsCoalescer(sink, scheduler);
 
-    coalescer.enqueue(
-      diagnosticEvent({ rootPath: "/workspace-a", uri: "file:///shared" }),
-    );
-    coalescer.enqueue(
-      diagnosticEvent({ rootPath: "/workspace-b", uri: "file:///shared" }),
-    );
+    coalescer.enqueue(diagnosticEvent({ rootPath: "/workspace-a", uri: "file:///shared" }));
+    coalescer.enqueue(diagnosticEvent({ rootPath: "/workspace-b", uri: "file:///shared" }));
 
     fire();
 
-    expect(sink).toHaveBeenCalledTimes(2);
-    expect(sink.mock.calls.map(([event]) => event.rootPath).sort()).toEqual([
-      "/workspace-a",
-      "/workspace-b",
-    ]);
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(
+      sink.mock.calls[0][0].map((event: LanguageServerDiagnosticEvent) => event.rootPath).sort(),
+    ).toEqual(["/workspace-a", "/workspace-b"]);
   });
 
   it("coalesces root aliases that share an explicit owner key", () => {
@@ -224,8 +215,8 @@ describe("DiagnosticsCoalescer", () => {
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].rootPath).toBe("/selected-alias-b");
-    expect(sink.mock.calls[0][0].version).toBe(2);
+    expect(sink.mock.calls[0][0][0].rootPath).toBe("/selected-alias-b");
+    expect(sink.mock.calls[0][0][0].version).toBe(2);
   });
 
   it("isolates explicit owners even when their event roots and uris match", () => {
@@ -239,8 +230,10 @@ describe("DiagnosticsCoalescer", () => {
 
     fire();
 
-    expect(sink).toHaveBeenCalledTimes(2);
-    expect(sink.mock.calls.map(([queued]) => queued.version)).toEqual([1, 2]);
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(
+      sink.mock.calls[0][0].map((queued: LanguageServerDiagnosticEvent) => queued.version),
+    ).toEqual([1, 2]);
   });
 
   it("drops only buffered events belonging to a closed owner", () => {
@@ -255,7 +248,7 @@ describe("DiagnosticsCoalescer", () => {
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].uri).toBe("file:///b");
+    expect(sink.mock.calls[0][0][0].uri).toBe("file:///b");
   });
 
   it("accepts an explicit owner independently of the event root", () => {
@@ -275,18 +268,14 @@ describe("DiagnosticsCoalescer", () => {
     const { scheduler, fire } = manualScheduler();
     const coalescer = new DiagnosticsCoalescer(sink, scheduler);
 
-    coalescer.enqueue(
-      diagnosticEvent({ rootPath: "/workspace-a", uri: "file:///a" }),
-    );
-    coalescer.enqueue(
-      diagnosticEvent({ rootPath: "/workspace-b", uri: "file:///b" }),
-    );
+    coalescer.enqueue(diagnosticEvent({ rootPath: "/workspace-a", uri: "file:///a" }));
+    coalescer.enqueue(diagnosticEvent({ rootPath: "/workspace-b", uri: "file:///b" }));
 
     coalescer.dropRoot("/workspace-a");
     fire();
 
     expect(sink).toHaveBeenCalledTimes(1);
-    expect(sink.mock.calls[0][0].rootPath).toBe("/workspace-b");
+    expect(sink.mock.calls[0][0][0].rootPath).toBe("/workspace-b");
   });
 
   it("re-arms the scheduler for events arriving after a flush", () => {
@@ -319,6 +308,139 @@ describe("DiagnosticsCoalescer", () => {
     coalescer.enqueue(diagnosticEvent({ uri: "file:///c" }));
 
     expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds a 10k-uri burst by flushing fixed-size application batches", () => {
+    const sink = vi.fn();
+    const { scheduler, fire } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+
+    for (let index = 0; index < 10_000; index += 1) {
+      coalescer.enqueue(
+        diagnosticEvent({
+          uri: `file:///workspace/file-${index}.ts`,
+          version: null,
+        }),
+      );
+    }
+    fire();
+
+    const batches = sink.mock.calls.map(
+      ([events]) => events as readonly LanguageServerDiagnosticEvent[],
+    );
+    expect(batches.flat()).toHaveLength(10_000);
+    expect(
+      batches.every((events) => events.length <= DIAGNOSTICS_COALESCER_MAX_EVENTS_PER_FLUSH),
+    ).toBe(true);
+    expect(batches.length).toBeGreaterThan(1);
+  });
+
+  it("rejects an oversized event without emitting an oversized empty-buffer batch", () => {
+    const sink = vi.fn();
+    const { scheduler, fire, pending } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+
+    coalescer.enqueue(
+      diagnosticEvent({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "x".repeat(DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH),
+            severity: "error",
+            source: "test",
+          },
+        ],
+      }),
+    );
+
+    expect(pending()).toBe(false);
+    fire();
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("does not trust an underreported native byte claim on an unbranded event", () => {
+    const sink = vi.fn();
+    const { scheduler, pending } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+
+    coalescer.enqueue(
+      diagnosticEvent({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "x".repeat(DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH),
+            severity: "error",
+            source: "test",
+          },
+        ],
+        projection: {
+          kind: "complete",
+          publishedCount: 1,
+          retainedCount: 1,
+          retainedUtf8Bytes: 1,
+          severityCounts: {
+            error: 1,
+            hint: 0,
+            information: 0,
+            warning: 0,
+          },
+        },
+      }),
+    );
+
+    expect(pending()).toBe(false);
+    expect(sink).not.toHaveBeenCalled();
+  });
+
+  it("flushes the safe prefix and rejects an oversized successor", () => {
+    const sink = vi.fn();
+    const { scheduler } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+    coalescer.enqueue(diagnosticEvent({ uri: "file:///safe" }));
+
+    coalescer.enqueue(
+      diagnosticEvent({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "x".repeat(DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH),
+            severity: "error",
+            source: "test",
+          },
+        ],
+        uri: "file:///oversized",
+      }),
+    );
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    const batches = sink.mock.calls.map(
+      ([events]) => events as readonly LanguageServerDiagnosticEvent[],
+    );
+    expect(batches.flat().map((event) => event.uri)).toEqual(["file:///safe"]);
+    expect(
+      batches.every(
+        (events) =>
+          new TextEncoder().encode(JSON.stringify(events)).byteLength <=
+          DIAGNOSTICS_COALESCER_MAX_UTF8_BYTES_PER_FLUSH,
+      ),
+    ).toBe(true);
+  });
+
+  it("serializes each replacement only once for incremental byte accounting", () => {
+    const sink = vi.fn();
+    const { scheduler } = manualScheduler();
+    const stringify = vi.spyOn(JSON, "stringify");
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+
+    coalescer.enqueue(diagnosticEvent({ uri: "file:///same", version: 1 }));
+    coalescer.enqueue(diagnosticEvent({ uri: "file:///same", version: 2 }));
+    coalescer.enqueue(diagnosticEvent({ uri: "file:///same", version: 3 }));
+
+    expect(stringify).toHaveBeenCalledTimes(3);
+    stringify.mockRestore();
   });
 
   it("cancels a pending flush and clears the buffer on dispose", () => {

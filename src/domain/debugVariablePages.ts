@@ -1,11 +1,11 @@
-import type { DebugVariable } from "./debug";
+import type { DebugVariable, DebugVariableFilter, DebugVariablePageLimitReason } from "./debug";
 import { debugUtf8ByteLength, isBoundedDebugEvaluateName } from "./debugEvaluationPolicy";
 
 export const DEBUG_VARIABLE_PAGE_SIZE = 100;
 export const MAX_DEBUG_VARIABLE_PAGE_SIZE = 100;
 export const MAX_DEBUG_VARIABLE_CACHE_VARIABLES = 10_000;
-export const MAX_DEBUG_VARIABLE_CACHE_BYTES = 5 * 1_024 * 1_024;
-export const MAX_DEBUG_VARIABLE_CACHE_REFERENCES = 1_000;
+export const MAX_DEBUG_VARIABLE_CACHE_BYTES = 4 * 1_024 * 1_024;
+export const MAX_DEBUG_VARIABLE_CACHE_REFERENCES = 4_096;
 export const MAX_DEBUG_VARIABLE_CONCURRENT_REQUESTS = 16;
 export const MAX_DEBUG_VARIABLE_EXPANSION_DEPTH = 32;
 
@@ -20,6 +20,8 @@ const INVALID_VARIABLE_PAGE_ERROR = "The debug adapter returned an invalid varia
 
 export interface DebugInspectionOwner {
   readonly rootKey: string;
+  readonly workspaceId?: string | null;
+  readonly workspaceEpoch?: number;
   readonly sessionId: number;
   readonly pauseGeneration: number;
   readonly frameId: number;
@@ -27,30 +29,39 @@ export interface DebugInspectionOwner {
 
 export interface DebugVariablePageResult {
   readonly variablesReference: number;
+  readonly filter?: DebugVariableFilter;
   readonly start: number;
   readonly variables: readonly DebugVariable[];
   readonly nextStart: number | null;
+  readonly total?: number | null;
+  readonly truncated?: boolean;
+  readonly limitReason?: DebugVariablePageLimitReason | null;
 }
 
 export interface DebugVariablePage {
+  readonly filter?: DebugVariableFilter;
   readonly start: number;
   readonly variables: readonly DebugVariable[];
   readonly nextStart: number | null;
+  readonly total?: number | null;
+  readonly truncated?: boolean;
+  readonly limitReason?: DebugVariablePageLimitReason | null;
 }
 
 export type DebugVariableLimitReason =
   "variables" | "bytes" | "references" | "concurrency" | "depth";
 
 export interface DebugVariableReferencePages {
-  readonly pages: Readonly<Record<number, DebugVariablePage>>;
-  readonly pending: Readonly<Record<number, string>>;
-  readonly errors: Readonly<Record<number, string>>;
+  readonly pages: Readonly<Record<string, DebugVariablePage>>;
+  readonly pending: Readonly<Record<string, string>>;
+  readonly errors: Readonly<Record<string, string>>;
   readonly limit: DebugVariableLimitReason | null;
 }
 
 export interface DebugVariablePagesState {
   readonly owner: DebugInspectionOwner | null;
   readonly references: Readonly<Record<number, DebugVariableReferencePages>>;
+  readonly referenceCount?: number;
   readonly pendingCount: number;
   readonly totalVariables: number;
   readonly totalBytes: number;
@@ -62,6 +73,7 @@ export type DebugVariablePagesAction =
       readonly type: "request";
       readonly owner: DebugInspectionOwner;
       readonly variablesReference: number;
+      readonly filter?: DebugVariableFilter;
       readonly start: number;
       readonly requestId: string;
     }
@@ -69,6 +81,7 @@ export type DebugVariablePagesAction =
       readonly type: "resolve";
       readonly owner: DebugInspectionOwner;
       readonly variablesReference: number;
+      readonly filter?: DebugVariableFilter;
       readonly start: number;
       readonly requestId: string;
       readonly result: unknown;
@@ -77,6 +90,7 @@ export type DebugVariablePagesAction =
       readonly type: "reject";
       readonly owner: DebugInspectionOwner;
       readonly variablesReference: number;
+      readonly filter?: DebugVariableFilter;
       readonly start: number;
       readonly requestId: string;
       readonly message: unknown;
@@ -85,6 +99,7 @@ export type DebugVariablePagesAction =
       readonly type: "cancel";
       readonly owner: DebugInspectionOwner;
       readonly variablesReference: number;
+      readonly filter?: DebugVariableFilter;
       readonly start: number;
       readonly requestId: string;
     }
@@ -113,7 +128,15 @@ export type DebugVariableExpansionState =
       readonly nextStart: number | null;
     };
 
-const emptyReferences: Readonly<Record<number, DebugVariableReferencePages>> = {};
+const REFERENCE_STORE_BUCKETS = 64;
+interface ReferenceStoreMetadata {
+  readonly buckets: readonly Readonly<Record<number, DebugVariableReferencePages>>[];
+}
+const referenceStoreMetadata = new WeakMap<object, ReferenceStoreMetadata>();
+const emptyReferences = createReferenceStore(
+  Array.from({ length: REFERENCE_STORE_BUCKETS }, () => ({})),
+);
+const legacyReferenceCounts = new WeakMap<object, number>();
 
 export function createDebugVariablePagesState(
   owner: DebugInspectionOwner | null = null,
@@ -121,6 +144,7 @@ export function createDebugVariablePagesState(
   return {
     owner: isDebugInspectionOwner(owner) ? owner : null,
     references: emptyReferences,
+    referenceCount: 0,
     pendingCount: 0,
     totalVariables: 0,
     totalBytes: 0,
@@ -158,6 +182,7 @@ export function selectDebugVariableExpansion(
   variablesReference: number,
   ancestorReferences: readonly number[] = [],
   depth = 0,
+  filter: DebugVariableFilter = "named",
 ): DebugVariableExpansionState {
   if (!debugInspectionOwnersEqual(state.owner, owner)) return { kind: "stale" };
   if (!isPositiveSafeInteger(variablesReference)) return { kind: "leaf" };
@@ -167,7 +192,7 @@ export function selectDebugVariableExpansion(
   }
   const reference = state.references[variablesReference];
   if (!reference) {
-    if (Object.keys(state.references).length >= MAX_DEBUG_VARIABLE_CACHE_REFERENCES) {
+    if (debugVariableReferenceCount(state) >= MAX_DEBUG_VARIABLE_CACHE_REFERENCES) {
       return { kind: "limit", reason: "references" };
     }
     if (state.pendingCount >= MAX_DEBUG_VARIABLE_CONCURRENT_REQUESTS) {
@@ -182,16 +207,32 @@ export function selectDebugVariableExpansion(
     return { kind: "idle", nextStart: 0 };
   }
   if (reference.limit) return { kind: "limit", reason: reference.limit };
-  const pages = orderedPages(reference);
+  const pages = orderedPages(reference, filter);
   const variables = pages.flatMap((page) => page.variables);
-  const nextStart = pages.length === 0 ? 0 : pages[pages.length - 1]!.nextStart;
+  const nextStart = nextUnloadedStart(reference, filter, pages);
   if (nextStart === null) return { kind: "ready", variables, nextStart: null };
-  if (reference.pending[nextStart]) return { kind: "loading", variables, nextStart };
-  const message = reference.errors[nextStart];
+  if (reference.pending[pageKey(filter, nextStart)]) {
+    return { kind: "loading", variables, nextStart };
+  }
+  const message = reference.errors[pageKey(filter, nextStart)];
   if (message !== undefined) return { kind: "error", variables, nextStart, message };
   return pages.length === 0
     ? { kind: "idle", nextStart: 0 }
     : { kind: "ready", variables, nextStart };
+}
+
+function debugVariableReferenceCount(state: DebugVariablePagesState): number {
+  if (
+    state.referenceCount !== undefined &&
+    (state.referenceCount > 0 || state.references === emptyReferences)
+  ) {
+    return state.referenceCount;
+  }
+  const cached = legacyReferenceCounts.get(state.references);
+  if (cached !== undefined) return cached;
+  const count = Object.keys(state.references).length;
+  legacyReferenceCounts.set(state.references, count);
+  return count;
 }
 
 export function debugInspectionOwnersEqual(
@@ -203,6 +244,8 @@ export function debugInspectionOwnersEqual(
     (left !== null &&
       right !== null &&
       left.rootKey === right.rootKey &&
+      left.workspaceId === right.workspaceId &&
+      left.workspaceEpoch === right.workspaceEpoch &&
       left.sessionId === right.sessionId &&
       left.pauseGeneration === right.pauseGeneration &&
       left.frameId === right.frameId)
@@ -210,14 +253,33 @@ export function debugInspectionOwnersEqual(
 }
 
 export function isDebugInspectionOwner(value: unknown): value is DebugInspectionOwner {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ["rootKey", "sessionId", "pauseGeneration", "frameId"])
-  ) {
+  if (!isRecord(value)) {
     return false;
   }
+  const keys = Object.keys(value);
+  if (
+    !keys.every((key) =>
+      [
+        "rootKey",
+        "workspaceId",
+        "workspaceEpoch",
+        "sessionId",
+        "pauseGeneration",
+        "frameId",
+      ].includes(key),
+    ) ||
+    !["rootKey", "sessionId", "pauseGeneration", "frameId"].every((key) => hasOwn(value, key))
+  )
+    return false;
+  const hasWorkspaceId = hasOwn(value, "workspaceId");
+  const hasWorkspaceEpoch = hasOwn(value, "workspaceEpoch");
+  if (hasWorkspaceId !== hasWorkspaceEpoch) return false;
   return (
     isBoundedText(value.rootKey, MAX_ROOT_KEY_BYTES, false) &&
+    (!hasWorkspaceId ||
+      ((value.workspaceId === null ||
+        isBoundedText(value.workspaceId, MAX_ROOT_KEY_BYTES, false)) &&
+        isNonNegativeSafeInteger(value.workspaceEpoch))) &&
     isPositiveSafeInteger(value.sessionId) &&
     isPositiveSafeInteger(value.pauseGeneration) &&
     isPositiveSafeInteger(value.frameId)
@@ -228,10 +290,19 @@ function requestPage(
   state: DebugVariablePagesState,
   action: Extract<DebugVariablePagesAction, { type: "request" }>,
 ): DebugVariablePagesState {
+  const filter = action.filter ?? "named";
   const existing = state.references[action.variablesReference];
-  if (existing?.pages[action.start] || existing?.pending[action.start]) return state;
-  if (!isExpectedStart(existing, action.start)) return state;
-  if (!existing && Object.keys(state.references).length >= MAX_DEBUG_VARIABLE_CACHE_REFERENCES) {
+  const key = pageKey(filter, action.start);
+  if (existing?.pages[key] || existing?.pending[key]) return state;
+  if (
+    existing &&
+    orderedPages(existing, filter).some(
+      (page) => action.start >= page.start && action.start < page.start + page.variables.length,
+    )
+  ) {
+    return state;
+  }
+  if (!existing && debugVariableReferenceCount(state) >= MAX_DEBUG_VARIABLE_CACHE_REFERENCES) {
     return state;
   }
   const reference = existing ?? emptyReference();
@@ -241,8 +312,8 @@ function requestPage(
     action.variablesReference,
     {
       ...reference,
-      pending: { ...reference.pending, [action.start]: action.requestId },
-      errors: omitNumericKey(reference.errors, action.start),
+      pending: { ...reference.pending, [key]: action.requestId },
+      errors: omitKey(reference.errors, key),
     },
     { pendingCount: state.pendingCount + 1 },
   );
@@ -252,12 +323,15 @@ function resolvePage(
   state: DebugVariablePagesState,
   action: Extract<DebugVariablePagesAction, { type: "resolve" }>,
 ): DebugVariablePagesState {
+  const filter = action.filter ?? "named";
   const reference = state.references[action.variablesReference];
-  if (!reference || reference.pending[action.start] !== action.requestId) return state;
+  const key = pageKey(filter, action.start);
+  if (!reference || reference.pending[key] !== action.requestId) return state;
   const result = decodePageResult(action.result);
   if (
     !result ||
     result.variablesReference !== action.variablesReference ||
+    (result.filter ?? "named") !== filter ||
     result.start !== action.start ||
     !pageDoesNotOverlap(reference, result)
   ) {
@@ -268,7 +342,7 @@ function resolvePage(
     (total, variable) => total + variableBytes(variable),
     0,
   );
-  const pending = omitNumericKey(reference.pending, action.start);
+  const pending = omitKey(reference.pending, key);
   if (state.totalVariables + addedVariables > MAX_DEBUG_VARIABLE_CACHE_VARIABLES) {
     return replaceReference(
       state,
@@ -291,17 +365,21 @@ function resolvePage(
   }
   const page: DebugVariablePage = {
     start: result.start,
+    filter: result.filter,
     variables: result.variables.map((variable) => ({ ...variable })),
     nextStart: result.nextStart,
+    total: result.total,
+    truncated: result.truncated,
+    limitReason: result.limitReason,
   };
   return replaceReference(
     state,
     action.variablesReference,
     {
       ...reference,
-      pages: { ...reference.pages, [action.start]: page },
+      pages: { ...reference.pages, [key]: page },
       pending,
-      errors: omitNumericKey(reference.errors, action.start),
+      errors: omitKey(reference.errors, key),
     },
     {
       pendingCount: state.pendingCount - 1,
@@ -315,8 +393,10 @@ function rejectPage(
   state: DebugVariablePagesState,
   action: Extract<DebugVariablePagesAction, { type: "reject" }>,
 ): DebugVariablePagesState {
+  const filter = action.filter ?? "named";
   const reference = state.references[action.variablesReference];
-  if (!reference || reference.pending[action.start] !== action.requestId) {
+  const key = pageKey(filter, action.start);
+  if (!reference || reference.pending[key] !== action.requestId) {
     return state;
   }
   const message = boundedErrorMessage(action.message);
@@ -325,8 +405,8 @@ function rejectPage(
     action.variablesReference,
     {
       ...reference,
-      pending: omitNumericKey(reference.pending, action.start),
-      errors: { ...reference.errors, [action.start]: message },
+      pending: omitKey(reference.pending, key),
+      errors: { ...reference.errors, [key]: message },
     },
     { pendingCount: state.pendingCount - 1 },
   );
@@ -337,13 +417,17 @@ function settleInvalidPage(
   action: Extract<DebugVariablePagesAction, { type: "resolve" }>,
   reference: DebugVariableReferencePages,
 ): DebugVariablePagesState {
+  const filter = action.filter ?? "named";
   return replaceReference(
     state,
     action.variablesReference,
     {
       ...reference,
-      pending: omitNumericKey(reference.pending, action.start),
-      errors: { ...reference.errors, [action.start]: INVALID_VARIABLE_PAGE_ERROR },
+      pending: omitKey(reference.pending, pageKey(filter, action.start)),
+      errors: {
+        ...reference.errors,
+        [pageKey(filter, action.start)]: INVALID_VARIABLE_PAGE_ERROR,
+      },
     },
     { pendingCount: state.pendingCount - 1 },
   );
@@ -367,25 +451,55 @@ function cancelPage(
   state: DebugVariablePagesState,
   action: Extract<DebugVariablePagesAction, { type: "cancel" }>,
 ): DebugVariablePagesState {
+  const filter = action.filter ?? "named";
   const reference = state.references[action.variablesReference];
-  if (!reference || reference.pending[action.start] !== action.requestId) return state;
+  const key = pageKey(filter, action.start);
+  if (!reference || reference.pending[key] !== action.requestId) return state;
   return replaceReference(
     state,
     action.variablesReference,
-    { ...reference, pending: omitNumericKey(reference.pending, action.start) },
+    { ...reference, pending: omitKey(reference.pending, key) },
     { pendingCount: state.pendingCount - 1 },
   );
 }
 
 function decodePageResult(value: unknown): DebugVariablePageResult | null {
   if (
+    isRecord(value) &&
+    hasExactKeys(value, ["variablesReference", "start", "variables", "nextStart"])
+  ) {
+    const variables = Array.isArray(value.variables) ? value.variables : [];
+    value = {
+      ...value,
+      filter: "named",
+      total:
+        value.nextStart === null && isNonNegativeSafeInteger(value.start)
+          ? value.start + variables.length
+          : isNonNegativeSafeInteger(value.nextStart)
+            ? value.nextStart + 1
+            : null,
+      truncated: value.nextStart !== null,
+      limitReason: value.nextStart === null ? null : "page-bytes",
+    };
+  }
+  if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["variablesReference", "start", "variables", "nextStart"])
+    !hasExactKeys(value, [
+      "variablesReference",
+      "filter",
+      "start",
+      "variables",
+      "nextStart",
+      "total",
+      "truncated",
+      "limitReason",
+    ])
   ) {
     return null;
   }
   if (
     !isPositiveSafeInteger(value.variablesReference) ||
+    !isDebugVariableFilter(value.filter) ||
     !isNonNegativeSafeInteger(value.start) ||
     !Array.isArray(value.variables) ||
     value.variables.length > MAX_DEBUG_VARIABLE_PAGE_SIZE ||
@@ -404,11 +518,16 @@ function decodePageResult(value: unknown): DebugVariablePageResult | null {
   ) {
     return null;
   }
+  if (!isValidPageCompletion(value, minimumNext)) return null;
   return {
     variablesReference: value.variablesReference,
+    filter: value.filter,
     start: value.start,
     variables: value.variables,
     nextStart: value.nextStart,
+    total: value.total,
+    truncated: value.truncated,
+    limitReason: value.limitReason,
   };
 }
 
@@ -421,6 +540,7 @@ function isDebugVariable(value: unknown): value is DebugVariable {
       "type",
       "evaluateName",
       "canSetValue",
+      "childrenLimitReason",
       "variablesReference",
     ])
   ) {
@@ -438,18 +558,12 @@ function isDebugVariable(value: unknown): value is DebugVariable {
       isBoundedText(value.type, MAX_TYPE_BYTES, true)) &&
     (!hasOwn(value, "evaluateName") || isBoundedEvaluateName(value.evaluateName)) &&
     (!hasOwn(value, "canSetValue") || value.canSetValue === true) &&
+    (!hasOwn(value, "childrenLimitReason") ||
+      value.childrenLimitReason === "references" ||
+      value.childrenLimitReason === "referenceBytes") &&
+    (!hasOwn(value, "childrenLimitReason") || value.variablesReference === 0) &&
     isNonNegativeSafeInteger(value.variablesReference)
   );
-}
-
-function isExpectedStart(
-  reference: DebugVariableReferencePages | undefined,
-  start: number,
-): boolean {
-  if (!reference) return start === 0;
-  const pages = orderedPages(reference);
-  if (pages.length === 0) return start === 0;
-  return pages[pages.length - 1]!.nextStart === start;
 }
 
 function pageDoesNotOverlap(
@@ -457,14 +571,19 @@ function pageDoesNotOverlap(
   result: DebugVariablePageResult,
 ): boolean {
   const end = result.start + result.variables.length;
-  return orderedPages(reference).every((page) => {
+  return orderedPages(reference, result.filter ?? "named").every((page) => {
     const pageEnd = page.start + page.variables.length;
     return end <= page.start || result.start >= pageEnd;
   });
 }
 
-function orderedPages(reference: DebugVariableReferencePages): DebugVariablePage[] {
-  return Object.values(reference.pages).sort((left, right) => left.start - right.start);
+function orderedPages(
+  reference: DebugVariableReferencePages,
+  filter: DebugVariableFilter,
+): DebugVariablePage[] {
+  return Object.values(reference.pages)
+    .filter((page) => (page.filter ?? "named") === filter)
+    .sort((left, right) => left.start - right.start);
 }
 
 function emptyReference(): DebugVariableReferencePages {
@@ -482,17 +601,142 @@ function replaceReference(
   return {
     ...state,
     ...changes,
-    references: { ...state.references, [variablesReference]: reference },
+    referenceCount:
+      state.referenceCount === undefined
+        ? undefined
+        : state.referenceCount + (state.references[variablesReference] ? 0 : 1),
+    references: updateReferenceStore(state.references, variablesReference, reference),
   };
 }
 
-function omitNumericKey<Value>(
-  record: Readonly<Record<number, Value>>,
-  key: number,
-): Record<number, Value> {
+function updateReferenceStore(
+  references: Readonly<Record<number, DebugVariableReferencePages>>,
+  variablesReference: number,
+  reference: DebugVariableReferencePages,
+): Readonly<Record<number, DebugVariableReferencePages>> {
+  const metadata = referenceStoreMetadata.get(references) ?? materializeReferenceStore(references);
+  const bucketIndex = variablesReference % REFERENCE_STORE_BUCKETS;
+  const buckets = [...metadata.buckets];
+  buckets[bucketIndex] = { ...buckets[bucketIndex], [variablesReference]: reference };
+  return createReferenceStore(buckets);
+}
+
+function materializeReferenceStore(
+  references: Readonly<Record<number, DebugVariableReferencePages>>,
+): ReferenceStoreMetadata {
+  const buckets: Record<number, DebugVariableReferencePages>[] = Array.from(
+    { length: REFERENCE_STORE_BUCKETS },
+    () => ({}),
+  );
+  for (const [reference, pages] of Object.entries(references)) {
+    const value = Number(reference);
+    buckets[value % REFERENCE_STORE_BUCKETS]![value] = pages;
+  }
+  const metadata = { buckets };
+  referenceStoreMetadata.set(references, metadata);
+  return metadata;
+}
+
+function createReferenceStore(
+  buckets: readonly Readonly<Record<number, DebugVariableReferencePages>>[],
+): Readonly<Record<number, DebugVariableReferencePages>> {
+  const target: Record<number, DebugVariableReferencePages> = {};
+  const store = new Proxy(target, {
+    get(_target, property) {
+      if (typeof property !== "string" || !/^(?:0|[1-9]\d*)$/.test(property)) return undefined;
+      const reference = Number(property);
+      return buckets[reference % REFERENCE_STORE_BUCKETS]?.[reference];
+    },
+    has(_target, property) {
+      return (
+        typeof property === "string" &&
+        /^(?:0|[1-9]\d*)$/.test(property) &&
+        Number(property) in buckets[Number(property) % REFERENCE_STORE_BUCKETS]!
+      );
+    },
+    ownKeys: () =>
+      buckets
+        .flatMap((bucket) => Object.keys(bucket))
+        .sort((left, right) => Number(left) - Number(right)),
+    getOwnPropertyDescriptor(_target, property) {
+      if (typeof property !== "string" || !/^(?:0|[1-9]\d*)$/.test(property)) return undefined;
+      const reference = Number(property);
+      return reference in buckets[reference % REFERENCE_STORE_BUCKETS]!
+        ? { configurable: true, enumerable: true }
+        : undefined;
+    },
+  });
+  referenceStoreMetadata.set(store, { buckets });
+  return store;
+}
+
+function omitKey<Value>(
+  record: Readonly<Record<string, Value>>,
+  key: string,
+): Record<string, Value> {
   const next = { ...record };
   delete next[key];
   return next;
+}
+
+function pageKey(filter: DebugVariableFilter, start: number): string {
+  return filter === "named" ? String(start) : `indexed:${start}`;
+}
+
+function nextUnloadedStart(
+  reference: DebugVariableReferencePages,
+  filter: DebugVariableFilter,
+  pages: readonly DebugVariablePage[],
+): number | null {
+  if (pages.length === 0) return 0;
+  for (const page of pages) {
+    if (page.nextStart !== null && !reference.pages[pageKey(filter, page.nextStart)]) {
+      return page.nextStart;
+    }
+  }
+  const last = pages[pages.length - 1];
+  return last?.nextStart ?? null;
+}
+
+function isDebugVariableFilter(value: unknown): value is DebugVariableFilter {
+  return value === "indexed" || value === "named";
+}
+
+function isValidPageCompletion(
+  value: Record<string, unknown>,
+  consumed: number,
+): value is Record<string, unknown> & {
+  total: number | null;
+  truncated: boolean;
+  limitReason: DebugVariablePageLimitReason | null;
+} {
+  const total = value.total;
+  const truncated = value.truncated;
+  const limitReason = value.limitReason;
+  if (
+    (total !== null && (!isNonNegativeSafeInteger(total) || total < consumed)) ||
+    typeof truncated !== "boolean" ||
+    !isPageLimitReasonOrNull(limitReason)
+  ) {
+    return false;
+  }
+  if (!truncated) {
+    if (total === null || limitReason !== null) return false;
+    return value.nextStart === (consumed < total ? consumed : null);
+  }
+  if (limitReason === null) return false;
+  return value.nextStart === null || value.nextStart === consumed;
+}
+
+function isPageLimitReasonOrNull(value: unknown): value is DebugVariablePageLimitReason | null {
+  return (
+    value === null ||
+    value === "descriptor-count" ||
+    value === "descriptor-bytes" ||
+    value === "page-bytes" ||
+    value === "references" ||
+    value === "reference-bytes"
+  );
 }
 
 function variableBytes(variable: DebugVariable): number {

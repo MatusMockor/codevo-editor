@@ -6,9 +6,9 @@ use super::set_expression_target::{
     parse_static_member_target, StaticMemberRoot, StaticMemberSegment, StaticMemberTarget,
 };
 use super::{
-    is_writable_data_property, safe_binding_identifier, ObjectReference, ObjectReferenceAccess,
-    ObjectReferenceMutation, MAX_CDP_OBJECT_ID_BYTES, MAX_CDP_OBJECT_REFERENCES_PER_PAUSE,
-    MAX_CDP_PROPERTY_DESCRIPTORS,
+    is_writable_data_property, safe_binding_identifier, try_reserve_object_reference_bytes,
+    ObjectReference, ObjectReferenceAccess, ObjectReferenceMutation, MAX_CDP_OBJECT_ID_BYTES,
+    MAX_CDP_OBJECT_REFERENCES_PER_PAUSE, MAX_CDP_PROPERTY_DESCRIPTORS,
 };
 use crate::debug_adapter::variable_name::is_valid_debug_variable_name;
 use serde_json::{json, Value};
@@ -460,18 +460,19 @@ fn register_ephemeral_parent(
     }
     let reference = state.allocate_id();
     let pause = state.pause.as_mut().expect("validated pause");
-    pause.object_ids.insert(
-        reference,
-        ObjectReference {
-            frame_id,
-            object_id: object_id.clone(),
-            pause_generation,
-            evaluate_name: None,
-            access: ObjectReferenceAccess::Object,
-            mutation: ObjectReferenceMutation::ObjectProperty { object_id },
-            lineage: None,
-        },
-    );
+    let owned = ObjectReference {
+        frame_id,
+        object_id: object_id.clone(),
+        pause_generation,
+        evaluate_name: None,
+        access: ObjectReferenceAccess::Object,
+        mutation: ObjectReferenceMutation::ObjectProperty { object_id },
+        lineage: None,
+    };
+    if try_reserve_object_reference_bytes(pause, &owned).is_err() {
+        return Err("The static-property reference byte capacity changed.".to_string());
+    }
+    pause.object_ids.insert(reference, owned);
     Ok(reference)
 }
 

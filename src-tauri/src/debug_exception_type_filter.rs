@@ -284,6 +284,9 @@ pub(crate) fn handle_paused(params: &Value, context: &SocketLoopContext) -> Opti
     if let Some(reason) = startup_entry_reason {
         return handle_startup_entry_pause(params, context, reason);
     }
+    if let Some(request) = crate::debug_cdp::transport::begin_smart_step_pause(params, context) {
+        return Some(request);
+    }
     if !is_exception_pause(params) {
         return handle_visible_pause(params, context);
     }
@@ -429,14 +432,21 @@ pub(crate) fn handle_resumed(context: &SocketLoopContext) -> Option<String> {
         let Ok(mut shared) = context.shared.lock() else {
             return None;
         };
+        let suppress_smart_step_resume = shared.smart_step_policy.observe_resumed();
+        if !shared.smart_step_policy.is_active() {
+            shared.smart_step_fallback = None;
+        }
         invalidate_pause(&mut shared);
-        let internal_resume =
-            pending_exception || shared.internal_action.is_some() || shared.suppress_next_resumed;
+        let internal_resume = pending_exception
+            || shared.internal_action.is_some()
+            || shared.suppress_next_resumed
+            || suppress_smart_step_resume;
         let recovery = shared
             .internal_action
             .take()
             .map(fallback_from_internal_action);
-        let should_emit = !pending_exception && !shared.suppress_next_resumed;
+        let should_emit =
+            !pending_exception && !shared.suppress_next_resumed && !suppress_smart_step_resume;
         shared.suppress_next_resumed = false;
         let request = if let Some(pending) = shared.pending_explicit_pause.as_mut() {
             pending.resume_confirmed = true;
@@ -523,7 +533,7 @@ fn complete_startup_for_early_exception(context: &SocketLoopContext) {
     }
 }
 
-fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<String> {
+pub(crate) fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<String> {
     let reason_text = params
         .get("reason")
         .and_then(Value::as_str)
@@ -732,6 +742,7 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
         let Ok(mut shared) = context.shared.lock() else {
             return None;
         };
+        shared.cancel_smart_step();
         let Ok(pause) = install_visible_pause(params, &mut shared) else {
             return None;
         };

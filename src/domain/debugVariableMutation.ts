@@ -1,6 +1,6 @@
-import type { DebugVariable } from "./debug";
-import { debugUtf8ByteLength } from "./debugEvaluationPolicy";
+import type { DebugVariable, DebugVariableFilter } from "./debug";
 import {
+  createDebugVariablePagesState,
   debugInspectionOwnersEqual,
   type DebugInspectionOwner,
   type DebugVariablePagesState,
@@ -10,6 +10,7 @@ export interface DebugVariableMutationCandidate {
   readonly owner: DebugInspectionOwner;
   readonly parentVariablesReference: number;
   readonly pageStart: number;
+  readonly filter: DebugVariableFilter;
   readonly index: number;
   readonly rowIdentity: DebugVariable;
   readonly variable: Readonly<DebugVariable & { readonly canSetValue: true }>;
@@ -21,14 +22,18 @@ export function selectDebugVariableMutationCandidate(
   parentVariablesReference: number,
   pageStart: number,
   index: number,
+  filter: DebugVariableFilter = "named",
 ): DebugVariableMutationCandidate | null {
   if (!debugInspectionOwnersEqual(state.owner, owner)) return null;
-  const row = state.references[parentVariablesReference]?.pages[pageStart]?.variables[index];
+  const row =
+    state.references[parentVariablesReference]?.pages[variablePageKey(filter, pageStart)]
+      ?.variables[index];
   if (!row || row.canSetValue !== true) return null;
   return Object.freeze({
     owner: Object.freeze({ ...owner }),
     parentVariablesReference,
     pageStart,
+    filter,
     index,
     rowIdentity: row,
     variable: Object.freeze({ ...row, canSetValue: true as const }),
@@ -41,9 +46,9 @@ export function debugVariableMutationCandidateIsCurrent(
 ): boolean {
   return (
     debugInspectionOwnersEqual(state.owner, candidate.owner) &&
-    state.references[candidate.parentVariablesReference]?.pages[candidate.pageStart]?.variables[
-      candidate.index
-    ] === candidate.rowIdentity
+    state.references[candidate.parentVariablesReference]?.pages[
+      variablePageKey(candidate.filter, candidate.pageStart)
+    ]?.variables[candidate.index] === candidate.rowIdentity
   );
 }
 
@@ -58,35 +63,11 @@ export function reconcileDebugVariableMutation(
   ) {
     return state;
   }
-  const sourceReference = state.references[candidate.parentVariablesReference]!;
-  const sourcePage = sourceReference.pages[candidate.pageStart]!;
-  const nextVariables = [...sourcePage.variables];
-  nextVariables[candidate.index] = Object.freeze({ ...result });
-  const references = { ...state.references };
-  references[candidate.parentVariablesReference] = {
-    ...sourceReference,
-    pending: {},
-    pages: {
-      ...sourceReference.pages,
-      [candidate.pageStart]: { ...sourcePage, variables: nextVariables },
-    },
-  };
+  return createDebugVariablePagesState(state.owner);
+}
 
-  const invalidated = debugVariableMutationInvalidatedReferences(state, candidate, result);
-  invalidated.delete(candidate.parentVariablesReference);
-  for (const reference of invalidated) delete references[reference];
-
-  let pendingCount = 0;
-  let totalVariables = 0;
-  let totalBytes = 0;
-  for (const reference of Object.values(references)) {
-    pendingCount += Object.keys(reference.pending).length;
-    for (const page of Object.values(reference.pages)) {
-      totalVariables += page.variables.length;
-      totalBytes += page.variables.reduce((total, variable) => total + variableBytes(variable), 0);
-    }
-  }
-  return { ...state, references, pendingCount, totalVariables, totalBytes };
+function variablePageKey(filter: DebugVariableFilter, start: number): string {
+  return filter === "named" ? String(start) : `indexed:${start}`;
 }
 
 export function debugVariableMutationInvalidatedReferences(
@@ -135,13 +116,4 @@ function collectDescendantReferences(
     }
   }
   return collected;
-}
-
-function variableBytes(variable: DebugVariable): number {
-  return (
-    debugUtf8ByteLength(variable.name) +
-    debugUtf8ByteLength(variable.value) +
-    debugUtf8ByteLength(variable.type ?? "") +
-    debugUtf8ByteLength(variable.evaluateName ?? "")
-  );
 }

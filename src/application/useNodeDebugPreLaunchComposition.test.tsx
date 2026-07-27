@@ -426,14 +426,51 @@ describe("useNodeDebugPreLaunchComposition", () => {
     ui.unmount();
   });
 
-  it.each([
-    [
-      "launch configuration A-B-A",
-      { launchConfigurationVersion: 1 },
-      { launchConfigurationVersion: 0 },
-    ],
-    ["trust A-B-A", { workspaceTrusted: false }, { workspaceTrusted: true }],
-  ])(
+  it("keeps an accepted task-free launch when discovery advances after debug start commits", async () => {
+    const accepted = deferred<number>();
+    const ui = renderComposition();
+    ui.startDebug.mockReturnValueOnce(accepted.promise);
+    const running = ui.start()({ ...PREPARED, preLaunchTask: null });
+    await act(async () => Promise.resolve());
+    expect(ui.startDebug).toHaveBeenCalledOnce();
+
+    act(() => ui.set({ launchConfigurationVersion: 1 }));
+    let result!: boolean;
+    await act(async () => {
+      accepted.resolve(4);
+      result = await running;
+    });
+
+    expect(result).toBe(true);
+    expect(ui.debugGateway.stop).not.toHaveBeenCalled();
+    expect(ui.debugGateway.disconnect).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
+  it("keeps an accepted launch but drops stale post-task capabilities after discovery advances", async () => {
+    const accepted = deferred<number>();
+    const ui = renderComposition();
+    ui.startDebug.mockReturnValueOnce(accepted.promise);
+    const running = ui.start()(PREPARED_WITH_POST_TASK);
+    await act(async () => Promise.resolve());
+    expect(ui.startDebug).toHaveBeenCalledOnce();
+
+    act(() => ui.set({ launchConfigurationVersion: 1 }));
+    let result!: boolean;
+    await act(async () => {
+      accepted.resolve(4);
+      result = await running;
+    });
+
+    expect(result).toBe(true);
+    expect(ui.debugGateway.stop).not.toHaveBeenCalled();
+    expect(ui.composition().hasPostTaskRestart()).toBe(false);
+    act(() => ui.emit(terminatedEvent(4)));
+    expect(taskLabels(ui.tasks.startAndWait)).toEqual(["build api"]);
+    ui.unmount();
+  });
+
+  it.each([["trust A-B-A", { workspaceTrusted: false }, { workspaceTrusted: true }]])(
     "stops an accepted launch invalidated by pending-start %s",
     async (_name, invalidate, restore) => {
       const accepted = deferred<number>();
@@ -459,7 +496,7 @@ describe("useNodeDebugPreLaunchComposition", () => {
     },
   );
 
-  it("disconnects an accepted attach invalidated while its start is pending", async () => {
+  it("disconnects an accepted attach invalidated by trust A-B-A while its start is pending", async () => {
     const accepted = deferred<number>();
     const ui = renderComposition();
     ui.startDebug.mockReturnValueOnce(accepted.promise);
@@ -471,8 +508,8 @@ describe("useNodeDebugPreLaunchComposition", () => {
     await act(async () => Promise.resolve());
     expect(ui.startDebug).toHaveBeenCalledOnce();
 
-    act(() => ui.set({ launchConfigurationVersion: 1 }));
-    act(() => ui.set({ launchConfigurationVersion: 0 }));
+    act(() => ui.set({ workspaceTrusted: false }));
+    act(() => ui.set({ workspaceTrusted: true }));
     let result!: boolean;
     await act(async () => {
       accepted.resolve(4);

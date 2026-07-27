@@ -4,8 +4,8 @@ use super::watch_inspection_contract::{WatchScopesResult, WatchStackTraceResult}
 use crate::debug_adapter::{
     DebugBreakpoint, DebugEvaluateFailure, DebugEvaluatePolicy, DebugExceptionPauseMode,
     DebugFunctionBreakpoint, DebugFunctionBreakpointVerification, DebugSetExpressionRequest,
-    DebugSetExpressionResult, DebugSetVariableRequest, DebugSetVariableResult, DebugVariableInfo,
-    DebugVariablePage, DebugVariablePageRequest, StepKind,
+    DebugSetExpressionResult, DebugSetVariableRequest, DebugSetVariableResult, DebugVariableFilter,
+    DebugVariableInfo, DebugVariablePage, DebugVariablePageRequest, StepKind,
 };
 use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use std::sync::Arc;
@@ -130,6 +130,17 @@ impl WatchNodeDebugAdapter {
     ) -> Result<DebugVariablePage, WatchNodeDebugAdapterFailure> {
         self.control
             .variables_page(request)
+            .map(|result| result.into_page())
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn variables_page_filtered(
+        &self,
+        request: DebugVariablePageRequest,
+        filter: DebugVariableFilter,
+    ) -> Result<DebugVariablePage, WatchNodeDebugAdapterFailure> {
+        self.control
+            .variables_page_filtered(request, filter)
             .map(|result| result.into_page())
             .map_err(Into::into)
     }

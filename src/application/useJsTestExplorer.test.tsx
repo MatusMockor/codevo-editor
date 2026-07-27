@@ -11,6 +11,7 @@ import type { JsTestWatchCommand, JsTestWatchGateway } from "../domain/jsTestCom
 import { waitForReact } from "../test/reactTestLifecycle";
 import { useJsTestExplorer, type JsTestExplorerState } from "./useJsTestExplorer";
 import type { JsTestExecutionRootResolver } from "./jsTestExecutionRootResolver";
+import type { JsTestBatchGateway } from "../domain/jsTestBatch";
 
 const ROOT_A = "/workspace/a";
 const ROOT_B = "/workspace/b";
@@ -92,6 +93,219 @@ describe("useJsTestExplorer", () => {
       owner: { rootPath: ROOT_A, workspaceId: "workspace-a" },
     });
     expect(Object.isFrozen(harness.hook().outputSnapshot)).toBe(true);
+    harness.unmount();
+  });
+
+  it("runs all sibling Jest and Vitest packages atomically and retains failed package authority", async () => {
+    const runTask = vi.fn<JsTestTaskGateway["runTask"]>(async (request) =>
+      taskEnvelope(request.runId, ok([])),
+    );
+    const runBatch = vi.fn<JsTestBatchGateway["runBatch"]>(async (request) => ({
+      owner: { runId: request.runId, workspaceId: request.workspaceId },
+      packages: [
+        {
+          authority: { packageRootRelativePath: "packages/jest-app", runner: "jest" },
+          output: taskOutput("jest output", ""),
+          response: ok([
+            runtimeCase("suite works", `${ROOT_A}/packages/jest-app/a.test.ts`, 2, "failed"),
+          ]) as Extract<TestRunResponse, { status: "ok" }>,
+        },
+        {
+          authority: { packageRootRelativePath: "packages/vitest-app", runner: "vitest" },
+          output: taskOutput("vitest output", ""),
+          response: ok([
+            runtimeCase("suite works", `${ROOT_A}/packages/vitest-app/b.test.ts`, 2, "failed"),
+          ]) as Extract<TestRunResponse, { status: "ok" }>,
+        },
+      ],
+      status: "ok",
+      totals: { errors: 0, failures: 0, skipped: 0, tests: 2, time: 0 },
+    }));
+    const stopBatch = vi.fn<JsTestBatchGateway["stopBatch"]>(async () => true);
+    const taskGateway: JsTestTaskGateway & JsTestBatchGateway = {
+      runBatch,
+      runTask,
+      stopBatch,
+      stopTask: async () => true,
+    };
+    const harness = renderExplorer({
+      discoveryGateway: discovery({
+        enumerateJsTestFiles: async () => ({
+          files: ["packages/vitest-app/b.test.ts", "packages/jest-app/a.test.ts"],
+          truncated: false,
+          visited: 2,
+        }),
+      }),
+      resolveExecutionRoot: async (scope) => ({
+        packageRootRelativePath:
+          scope.kind !== "all" && scope.relativeFilePath.includes("vitest-app")
+            ? "packages/vitest-app"
+            : "packages/jest-app",
+      }),
+      batchGateway: taskGateway,
+      taskGateway,
+    });
+
+    await act(async () => harness.hook().run({ kind: "all" }));
+
+    expect(runBatch).toHaveBeenCalledExactlyOnceWith({
+      packages: [
+        { packageRootRelativePath: "packages/jest-app" },
+        { packageRootRelativePath: "packages/vitest-app" },
+      ],
+      runId: "task-1",
+      workspaceId: "workspace-a",
+    });
+    expect(runTask).not.toHaveBeenCalled();
+    expect(harness.hook().result?.totals.tests).toBe(2);
+    expect(harness.hook().canRerunFailedTests()).toBe(true);
+
+    await act(async () => expect(await harness.hook().rerunFailedTests()).toBe(true));
+
+    expect(runTask).toHaveBeenCalledTimes(2);
+    expect(runTask.mock.calls.map(([request]) => request.packageRootRelativePath)).toEqual([
+      "packages/jest-app",
+      "packages/vitest-app",
+    ]);
+    harness.unmount();
+  });
+
+  it("uses batch execution only through the explicit batch gateway port", async () => {
+    const runBatch = vi.fn<JsTestBatchGateway["runBatch"]>();
+    const runTask = vi.fn<JsTestTaskGateway["runTask"]>(async (request) =>
+      taskEnvelope(request.runId, ok([])),
+    );
+    const structurallyBatchCapableTaskGateway: JsTestTaskGateway & JsTestBatchGateway = {
+      runBatch,
+      runTask,
+      stopBatch: async () => true,
+      stopTask: async () => true,
+    };
+    const harness = renderExplorer({
+      batchGateway: null,
+      taskGateway: structurallyBatchCapableTaskGateway,
+    });
+
+    await act(async () => harness.hook().run({ kind: "all" }));
+
+    expect(runBatch).not.toHaveBeenCalled();
+    expect(runTask).toHaveBeenCalledExactlyOnceWith({
+      packageRootRelativePath: "",
+      runId: "task-1",
+      scope: { kind: "all" },
+      workspaceId: "workspace-a",
+    });
+    harness.unmount();
+  });
+
+  it("uses bounded file discovery for monorepo Run All when tests are dynamically declared", async () => {
+    const runBatch = vi.fn<JsTestBatchGateway["runBatch"]>(async (request) => ({
+      owner: { runId: request.runId, workspaceId: request.workspaceId },
+      packages: request.packages.map(({ packageRootRelativePath }) => ({
+        authority: {
+          packageRootRelativePath,
+          runner: packageRootRelativePath.endsWith("/a") ? ("jest" as const) : ("vitest" as const),
+        },
+        output: emptyTaskOutput(),
+        response: ok([]) as Extract<TestRunResponse, { status: "ok" }>,
+      })),
+      status: "ok",
+      totals: { errors: 0, failures: 0, skipped: 0, tests: 0, time: 0 },
+    }));
+    const taskGateway: JsTestTaskGateway & JsTestBatchGateway = {
+      runBatch,
+      runTask: async (request) => taskEnvelope(request.runId, ok([])),
+      stopBatch: async () => true,
+      stopTask: async () => true,
+    };
+    const harness = renderExplorer({
+      discoveryGateway: discovery({
+        enumerateJsTestFiles: async () => ({
+          files: ["packages/a/dynamic.test.ts", "packages/b/generated.test.ts"],
+          truncated: false,
+          visited: 2,
+        }),
+        readTextFileBounded: async () => ({ content: "export {};", status: "ok" }),
+      }),
+      resolveExecutionRoot: async (scope) => ({
+        packageRootRelativePath:
+          scope.kind !== "all" && scope.relativeFilePath.startsWith("packages/a/")
+            ? "packages/a"
+            : "packages/b",
+      }),
+      batchGateway: taskGateway,
+      taskGateway,
+    });
+
+    await act(async () => harness.hook().run({ kind: "all" }));
+
+    expect(runBatch).toHaveBeenCalledExactlyOnceWith({
+      packages: [
+        { packageRootRelativePath: "packages/a" },
+        { packageRootRelativePath: "packages/b" },
+      ],
+      runId: "task-1",
+      workspaceId: "workspace-a",
+    });
+    harness.unmount();
+  });
+
+  it("rediscovers exact execution files after invalidation before monorepo Run All", async () => {
+    const enumerateJsTestFiles = vi
+      .fn<WorkspaceTestDiscoveryGateway["enumerateJsTestFiles"]>()
+      .mockResolvedValueOnce({
+        files: ["packages/a/cached.test.ts"],
+        truncated: false,
+        visited: 1,
+      })
+      .mockResolvedValueOnce({
+        files: ["packages/a/cached.test.ts", "packages/b/new.test.ts"],
+        truncated: false,
+        visited: 2,
+      });
+    const runBatch = vi.fn<JsTestBatchGateway["runBatch"]>(async (request) => ({
+      owner: { runId: request.runId, workspaceId: request.workspaceId },
+      packages: request.packages.map(({ packageRootRelativePath }) => ({
+        authority: { packageRootRelativePath, runner: "vitest" as const },
+        output: emptyTaskOutput(),
+        response: ok([]) as Extract<TestRunResponse, { status: "ok" }>,
+      })),
+      status: "ok",
+      totals: { errors: 0, failures: 0, skipped: 0, tests: 0, time: 0 },
+    }));
+    const taskGateway: JsTestTaskGateway & JsTestBatchGateway = {
+      runBatch,
+      runTask: async (request) => taskEnvelope(request.runId, ok([])),
+      stopBatch: async () => true,
+      stopTask: async () => true,
+    };
+    const harness = renderExplorer({
+      batchGateway: taskGateway,
+      discoveryGateway: discovery({
+        enumerateJsTestFiles,
+        readTextFileBounded: async () => ({
+          content: 'test("works", () => {});',
+          status: "ok",
+        }),
+      }),
+      resolveExecutionRoot: async (scope) => ({
+        packageRootRelativePath:
+          scope.kind !== "all" && scope.relativeFilePath.startsWith("packages/a/")
+            ? "packages/a"
+            : "packages/b",
+      }),
+      taskGateway,
+    });
+
+    await act(async () => harness.hook().run({ kind: "all" }));
+    harness.set({ discoveryVersion: 1 });
+    await act(async () => harness.hook().run({ kind: "all" }));
+
+    expect(enumerateJsTestFiles).toHaveBeenCalledTimes(2);
+    expect(runBatch.mock.calls[1]?.[0].packages).toEqual([
+      { packageRootRelativePath: "packages/a" },
+      { packageRootRelativePath: "packages/b" },
+    ]);
     harness.unmount();
   });
 
@@ -2190,6 +2404,7 @@ test("same", () => {});`,
 });
 
 interface ExplorerProps {
+  batchGateway: JsTestBatchGateway | null;
   continuousRunBlocked: boolean;
   continuousRunVersion: number;
   continuousRunWatchCommand: JsTestWatchCommand | null;
@@ -2212,6 +2427,7 @@ function renderExplorer(overrides: Partial<ExplorerProps> = {}) {
   const host = document.createElement("div");
   const reactRoot = createRoot(host);
   let props: ExplorerProps = {
+    batchGateway: null,
     continuousRunBlocked: false,
     continuousRunVersion: 0,
     continuousRunWatchCommand: null,

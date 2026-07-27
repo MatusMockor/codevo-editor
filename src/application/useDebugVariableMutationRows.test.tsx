@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { DebugVariable } from "../domain/debug";
 import type { DebugInspectionOwner, DebugVariablePagesState } from "../domain/debugVariablePages";
+import { createDebugVariablePagesState } from "../domain/debugVariablePages";
 import { useDebugVariableMutationRows } from "./useDebugVariableMutationRows";
 
 const owner: DebugInspectionOwner = {
@@ -50,11 +51,10 @@ function initialState(): DebugVariablePagesState {
 }
 
 function renderRows() {
-  const refreshDebugWatchEvaluations = vi.fn();
   const setVariable =
     vi.fn<(reference: number, name: string, value: string) => Promise<DebugVariable | null>>();
+  const loadVariablePage = vi.fn().mockResolvedValue(undefined);
   const variablePagesRef = { current: initialState() };
-  const variablePageRequestsRef = { current: new Map<string, string>() };
   const captured: { rows: ReturnType<typeof useDebugVariableMutationRows> | null } = {
     rows: null,
   };
@@ -62,26 +62,29 @@ function renderRows() {
   const root = createRoot(host);
   function Harness() {
     captured.rows = useDebugVariableMutationRows({
-      refreshDebugWatchEvaluations,
-      setVariable,
-      setVariablePages: (next) => {
-        variablePagesRef.current =
-          typeof next === "function" ? next(variablePagesRef.current) : next;
+      loadVariablePage,
+      setVariable: async (...args) => {
+        try {
+          const result = await setVariable(...args);
+          if (result) variablePagesRef.current = createDebugVariablePagesState(owner);
+          return result;
+        } catch (error) {
+          variablePagesRef.current = createDebugVariablePagesState(owner);
+          throw error;
+        }
       },
-      variablePageRequestsRef,
       variablePagesRef,
     });
     return null;
   }
   act(() => root.render(<Harness />));
   return {
-    refreshDebugWatchEvaluations,
+    loadVariablePage,
     select: () => captured.rows!.forRow(owner, 20, 0, 0),
     selectNested: () => captured.rows!.forRow(owner, 30, 0, 0),
     setVariable,
     unmount: () => act(() => root.unmount()),
     variablePagesRef,
-    variablePageRequestsRef,
   };
 }
 
@@ -108,15 +111,16 @@ describe("useDebugVariableMutationRows", () => {
     expect(row?.currentValue).toBe("42");
     await expect(row?.commit("43")).resolves.toEqual(result);
     expect(ui.setVariable).toHaveBeenCalledExactlyOnceWith(20, "count", "43");
-    expect(ui.variablePagesRef.current.references[20]?.pages[0]?.variables[0]).toEqual(result);
+    expect(ui.variablePagesRef.current.references[20]).toBeUndefined();
     expect(ui.variablePagesRef.current.references[30]).toBeUndefined();
-    expect(ui.refreshDebugWatchEvaluations).toHaveBeenCalledOnce();
+    expect(ui.loadVariablePage).toHaveBeenCalledWith(owner, 20, 0, "named");
+    await Promise.resolve();
+    expect(ui.loadVariablePage).toHaveBeenCalledWith(owner, 20, 0, "indexed");
     ui.unmount();
   });
 
-  it("refreshes derived previews after a nested property reconcile without resetting pages", async () => {
+  it("invalidates unrelated roots after a dispatched nested mutation", async () => {
     const ui = renderRows();
-    const parentPage = ui.variablePagesRef.current.references[20];
     const row = ui.selectNested();
     const result = {
       name: "child",
@@ -128,13 +132,11 @@ describe("useDebugVariableMutationRows", () => {
 
     await expect(row?.commit("new")).resolves.toEqual(result);
 
-    expect(ui.variablePagesRef.current.references[20]).toBe(parentPage);
-    expect(ui.variablePagesRef.current.references[30]?.pages[0]?.variables[0]).toEqual(result);
-    expect(ui.refreshDebugWatchEvaluations).toHaveBeenCalledOnce();
+    expect(ui.variablePagesRef.current.references).toEqual({});
     ui.unmount();
   });
 
-  it("does not patch or return a reply after the exact row identity drifts", async () => {
+  it("returns the verified reply but invalidates the whole owner after row identity drifts", async () => {
     const ui = renderRows();
     const row = ui.select()!;
     const reply = deferred<DebugVariable | null>();
@@ -157,24 +159,25 @@ describe("useDebugVariableMutationRows", () => {
       },
     };
     reply.resolve({ name: "count", value: "43", variablesReference: 0 });
-    await expect(pending).resolves.toBeNull();
-    expect(ui.variablePagesRef.current.references[20]?.pages[0]?.variables[0]?.value).toBe(
-      "foreign",
-    );
+    await expect(pending).resolves.toEqual({
+      name: "count",
+      value: "43",
+      variablesReference: 0,
+    });
+    expect(ui.variablePagesRef.current.references).toEqual({});
     ui.unmount();
   });
 
-  it("does not patch on null or adapter error", async () => {
+  it("preserves cache on pre-dispatch null but invalidates after a dispatched error", async () => {
     const ui = renderRows();
     const row = ui.select()!;
     const before = ui.variablePagesRef.current;
     ui.setVariable.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("rejected"));
     await expect(row.commit("43")).resolves.toBeNull();
     expect(ui.variablePagesRef.current).toBe(before);
-    expect(ui.refreshDebugWatchEvaluations).not.toHaveBeenCalled();
     await expect(row.commit("44")).rejects.toThrow("rejected");
-    expect(ui.variablePagesRef.current).toBe(before);
-    expect(ui.refreshDebugWatchEvaluations).not.toHaveBeenCalled();
+    expect(ui.variablePagesRef.current.references).toEqual({});
+    expect(ui.loadVariablePage).toHaveBeenCalledWith(owner, 20, 0, "named");
     ui.unmount();
   });
 });

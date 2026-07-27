@@ -53,7 +53,7 @@ describe("VS Code Node launch configuration loader", () => {
     expect(reads.readFile).not.toHaveBeenCalled();
   });
 
-  it("drops accepted Node runtime, output, console and disabled automation compatibility fields", async () => {
+  it("retains smartStep while dropping no-op Node compatibility fields", async () => {
     const result = await loadVscodeNodeLaunchConfigurations(
       ROOT,
       fixtures(
@@ -82,7 +82,7 @@ describe("VS Code Node launch configuration loader", () => {
 
     expect(result).toMatchObject({
       kind: "loaded",
-      configurations: [{ configuration: { name: "API" } }],
+      configurations: [{ configuration: { name: "API" }, smartStep: false }],
       diagnostics: [],
     });
     if (result.kind !== "loaded") return;
@@ -94,12 +94,12 @@ describe("VS Code Node launch configuration loader", () => {
       "runtimeExecutable",
       "runtimeArgs",
       "autoAttachChildProcesses",
-      "smartStep",
       "restart",
     ]) {
       expect(imported).not.toHaveProperty(field);
       expect(imported?.configuration).not.toHaveProperty(field);
     }
+    expect(imported?.configuration).not.toHaveProperty("smartStep");
   });
 
   it("returns none when the exact directory or file is absent", async () => {

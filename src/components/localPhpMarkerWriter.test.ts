@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type * as Monaco from "monaco-editor";
+import { MAX_MONACO_DIAGNOSTIC_ITEMS } from "./editorDiagnosticMonacoMappings";
 import { LocalPhpMarkerWriter } from "./localPhpMarkerWriter";
 
 describe("LocalPhpMarkerWriter", () => {
@@ -48,6 +49,17 @@ describe("LocalPhpMarkerWriter", () => {
     writer.write(monaco, rightModel, markers);
 
     expect(setModelMarkers).toHaveBeenCalledTimes(2);
+  });
+
+  it("defensively caps oversized marker arrays", () => {
+    const setModelMarkers = vi.fn();
+    const writer = new LocalPhpMarkerWriter();
+    const monaco = monacoWith(setModelMarkers);
+    const model = {} as Monaco.editor.ITextModel;
+
+    writer.write(monaco, model, Array<Monaco.editor.IMarkerData>(100_000).fill(marker("Problem")));
+
+    expect(setModelMarkers.mock.calls[0]?.[2]).toHaveLength(MAX_MONACO_DIAGNOSTIC_ITEMS);
   });
 });
 

@@ -6,7 +6,6 @@ import type {
   DebugScope,
   DebugVariable,
   DebugVariablePage,
-  DebugVariablePageRequest,
   FunctionBreakpointVerification,
   StackFrame,
 } from "../domain/debug";
@@ -55,6 +54,10 @@ import {
 } from "../domain/debugConsoleCompletions";
 import { MAX_DEBUG_CONSOLE_OUTPUT_BYTES } from "../domain/debugConsoleState";
 import { isExceptionTypeFilter } from "../domain/debugExceptionTypeFilter";
+import {
+  validateDebugVariablePageCompletion,
+  validateDebugVariablePageRequestMatch,
+} from "./debugVariablePageWireValidation";
 import {
   type DebugCompoundStartResponseWire,
   type DebugEvaluationResultWire,
@@ -129,7 +132,7 @@ export async function invokeDebugIpc<Command extends DebugIpcCommand>(
     }
   }
   if (command === "debug_variables") {
-    validateVariablePageForRequest(
+    validateDebugVariablePageRequestMatch(
       result as DebugVariablePage,
       (args as DebugIpcCommandArgs<"debug_variables">).request,
     );
@@ -494,7 +497,7 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
           "exceptionPauseMode",
           "exceptionTypeFilter",
         ],
-        ["preserveOutput", "justMyCode", "sourceMaps"],
+        ["preserveOutput", "justMyCode", "sourceMaps", "smartStep"],
         `${command} args.request`,
       );
       const rootPath = requireBoundedString(
@@ -541,6 +544,7 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
       requireExceptionPausePolicy(request, "exceptionPauseMode", `${command} args.request`);
       decodeNodeDebugJustMyCode(request.justMyCode, `${command} args.request.justMyCode`);
       decodeOptionalBoolean(request.sourceMaps, `${command} args.request.sourceMaps`);
+      decodeOptionalBoolean(request.smartStep, `${command} args.request.smartStep`);
       return;
     }
     case "debug_confirm_native_node_watch": {
@@ -862,19 +866,31 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTargetWire
   const record = requireRecord(value, path);
   switch (record.kind) {
     case "node-attach":
-      requireObjectShape(record, ["kind", "port"], ["sourceMaps", "stopOnEntry"], path);
+      requireObjectShape(
+        record,
+        ["kind", "port"],
+        ["sourceMaps", "smartStep", "stopOnEntry"],
+        path,
+      );
       if (!isNodeDebugPort(record.port)) {
         throw invalidDebugWire(`${path}.port`, "an integer between 1 and 65535");
       }
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      decodeOptionalBoolean(record.smartStep, `${path}.smartStep`);
       if (record.stopOnEntry !== undefined && record.stopOnEntry !== false) {
         throw invalidDebugWire(`${path}.stopOnEntry`, "false when present");
       }
       break;
     case "node-script":
-      requireObjectShape(record, ["kind", "scriptPath"], ["sourceMaps", "stopOnEntry"], path);
+      requireObjectShape(
+        record,
+        ["kind", "scriptPath"],
+        ["sourceMaps", "smartStep", "stopOnEntry"],
+        path,
+      );
       requireString(record.scriptPath, `${path}.scriptPath`);
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      decodeOptionalBoolean(record.smartStep, `${path}.smartStep`);
       decodeOptionalBoolean(record.stopOnEntry, `${path}.stopOnEntry`);
       break;
     case "php-script":
@@ -909,7 +925,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTargetWire
       requireObjectShape(
         record,
         ["kind", "scriptPath", "args", "env"],
-        ["cwd", "envFile", "justMyCode", "runtime", "sourceMaps", "stopOnEntry"],
+        ["cwd", "envFile", "justMyCode", "runtime", "sourceMaps", "smartStep", "stopOnEntry"],
         path,
       );
       requireString(record.scriptPath, `${path}.scriptPath`);
@@ -918,6 +934,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTargetWire
       decodeOptionalEnum(record.runtime, `${path}.runtime`, ["tsx", "ts-node"], "tsx or ts-node");
       decodeNodeDebugJustMyCode(record.justMyCode, `${path}.justMyCode`);
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      decodeOptionalBoolean(record.smartStep, `${path}.smartStep`);
       decodeOptionalBoolean(record.stopOnEntry, `${path}.stopOnEntry`);
       break;
     case "js-configured-test":
@@ -937,7 +954,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTargetWire
       requireObjectShape(
         record,
         ["kind", "script", "packageRootPath", "args", "env"],
-        ["cwd", "justMyCode", "sourceMaps", "stopOnEntry"],
+        ["cwd", "justMyCode", "sourceMaps", "smartStep", "stopOnEntry"],
         path,
       );
       requireString(record.script, `${path}.script`);
@@ -945,6 +962,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTargetWire
       decodeNodeLaunchOptions(record, path);
       decodeNodeDebugJustMyCode(record.justMyCode, `${path}.justMyCode`);
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      decodeOptionalBoolean(record.smartStep, `${path}.smartStep`);
       decodeOptionalBoolean(record.stopOnEntry, `${path}.stopOnEntry`);
       break;
     case "php-test-file":
@@ -1185,7 +1203,7 @@ function decodeVariable(value: unknown, path: string): DebugVariable {
   requireObjectShape(
     record,
     ["name", "value", "variablesReference"],
-    ["type", "evaluateName", "canSetValue"],
+    ["type", "evaluateName", "canSetValue", "childrenLimitReason"],
     path,
   );
   const name = requireBoundedString(
@@ -1217,7 +1235,20 @@ function decodeVariable(value: unknown, path: string): DebugVariable {
   if (record.canSetValue !== undefined && record.canSetValue !== true) {
     throw invalidDebugWire(`${path}.canSetValue`, "true or omission");
   }
+  if (
+    record.childrenLimitReason !== undefined &&
+    record.childrenLimitReason !== "references" &&
+    record.childrenLimitReason !== "referenceBytes"
+  ) {
+    throw invalidDebugWire(
+      `${path}.childrenLimitReason`,
+      '"references", "referenceBytes", or omission',
+    );
+  }
   requireUnsignedInteger(record.variablesReference, `${path}.variablesReference`, U64_MAX);
+  if (record.childrenLimitReason !== undefined && record.variablesReference !== 0) {
+    throw invalidDebugWire(`${path}.variablesReference`, "zero when children are limited");
+  }
   return record as unknown as DebugVariable;
 }
 
@@ -1225,8 +1256,8 @@ function decodeVariablePage(value: unknown, path: string): DebugVariablePage {
   const record = requireRecord(value, path);
   requireObjectShape(
     record,
-    ["variables", "start", "returned", "truncated"],
-    ["total", "nextStart"],
+    ["variables", "filter", "start", "returned", "total", "nextStart", "truncated", "limitReason"],
+    [],
     path,
   );
   if (utf8ByteLength(JSON.stringify(record)) > MAX_DEBUG_VARIABLE_PAGE_BYTES) {
@@ -1238,6 +1269,9 @@ function decodeVariablePage(value: unknown, path: string): DebugVariablePage {
     decodeVariable,
     MAX_DEBUG_VARIABLE_PAGE_COUNT,
   );
+  if (record.filter !== "indexed" && record.filter !== "named") {
+    throw invalidDebugWire(`${path}.filter`, '"indexed" or "named"');
+  }
   const start = requireIntegerInRange(
     record.start,
     `${path}.start`,
@@ -1253,45 +1287,63 @@ function decodeVariablePage(value: unknown, path: string): DebugVariablePage {
   if (returned !== variables.length) {
     throw invalidDebugWire(`${path}.returned`, "the exact variables array length");
   }
-  const consumed = start + returned;
-  if (!Number.isSafeInteger(consumed)) {
-    throw invalidDebugWire(`${path}.returned`, "an offset that remains JavaScript-safe");
-  }
   const total =
-    record.total === undefined
-      ? undefined
-      : requireUnsignedInteger(record.total, `${path}.total`, U64_MAX);
+    record.total === null ? null : requireUnsignedInteger(record.total, `${path}.total`, U64_MAX);
   const nextStart =
-    record.nextStart === undefined
-      ? undefined
+    record.nextStart === null
+      ? null
       : requireUnsignedInteger(record.nextStart, `${path}.nextStart`, U64_MAX);
-  if (total !== undefined && total < consumed) {
-    throw invalidDebugWire(`${path}.total`, "at least start + returned");
-  }
-  if (nextStart !== undefined && (returned === 0 || nextStart !== consumed)) {
-    throw invalidDebugWire(`${path}.nextStart`, "the progressive start + returned offset");
-  }
-  if (total !== undefined && total > consumed && nextStart === undefined) {
-    throw invalidDebugWire(`${path}.nextStart`, "present while total has more variables");
-  }
-  if (nextStart !== undefined && total !== undefined && nextStart >= total) {
-    throw invalidDebugWire(`${path}.nextStart`, "less than total when both are present");
-  }
-  return {
-    variables,
+  const truncated = requireBoolean(record.truncated, `${path}.truncated`);
+  const limitReason = decodeVariablePageLimitReason(record.limitReason, `${path}.limitReason`);
+  validateDebugVariablePageCompletion({
+    path,
     start,
     returned,
-    ...(total === undefined ? {} : { total }),
-    ...(nextStart === undefined ? {} : { nextStart }),
-    truncated: requireBoolean(record.truncated, `${path}.truncated`),
+    total,
+    nextStart,
+    truncated,
+    limitReason,
+  });
+  return {
+    variables,
+    filter: record.filter,
+    start,
+    returned,
+    total,
+    nextStart,
+    truncated,
+    limitReason,
   };
+}
+
+function decodeVariablePageLimitReason(value: unknown, path: string) {
+  if (
+    value === null ||
+    value === "descriptor-count" ||
+    value === "descriptor-bytes" ||
+    value === "page-bytes" ||
+    value === "references" ||
+    value === "reference-bytes"
+  ) {
+    return value;
+  }
+  throw invalidDebugWire(path, "a supported variable page limit reason or null");
 }
 
 function validateVariablesRequest(request: Record<string, unknown>, command: string): void {
   const path = `${command} args.request`;
   requireExactKeys(
     request,
-    ["rootPath", "sessionId", "pauseGeneration", "frameId", "variablesReference", "start", "count"],
+    [
+      "rootPath",
+      "sessionId",
+      "pauseGeneration",
+      "frameId",
+      "variablesReference",
+      "filter",
+      "start",
+      "count",
+    ],
     path,
   );
   const rootPath = requireBoundedString(
@@ -1305,6 +1357,9 @@ function validateVariablesRequest(request: Record<string, unknown>, command: str
   requirePositiveSafeInteger(request.pauseGeneration, `${path}.pauseGeneration`);
   requirePositiveSafeInteger(request.frameId, `${path}.frameId`);
   requirePositiveSafeInteger(request.variablesReference, `${path}.variablesReference`);
+  if (request.filter !== "indexed" && request.filter !== "named") {
+    throw invalidDebugWire(`${path}.filter`, '"indexed" or "named"');
+  }
   requireIntegerInRange(request.start, `${path}.start`, 0, MAX_DEBUG_VARIABLE_PAGE_START);
   requireIntegerInRange(request.count, `${path}.count`, 1, MAX_DEBUG_VARIABLE_PAGE_COUNT);
 }
@@ -1332,18 +1387,6 @@ function validateRunToLocationRequest(request: Record<string, unknown>, command:
     1,
     MAX_DEBUG_RUN_TO_LOCATION_COLUMN,
   );
-}
-
-function validateVariablePageForRequest(
-  page: DebugVariablePage,
-  request: DebugVariablePageRequest,
-): void {
-  if (page.start !== request.start) {
-    throw invalidDebugWire("debug_variables result.start", "the request start");
-  }
-  if (page.returned > request.count) {
-    throw invalidDebugWire("debug_variables result.returned", "at most the request count");
-  }
 }
 
 function decodeEvaluationResult(value: unknown, path: string): DebugEvaluationResultWire {

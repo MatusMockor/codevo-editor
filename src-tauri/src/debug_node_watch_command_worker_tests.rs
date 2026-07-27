@@ -45,6 +45,7 @@ fn runtime_response(command: WatchDebugControlCommand) -> WatchDebugControlRespo
                     total: Some(0),
                     next_start: None,
                     truncated: false,
+                    limit_reason: None,
                 },
             )
             .expect("variables response"),

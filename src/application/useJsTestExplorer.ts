@@ -33,6 +33,7 @@ import type { JsTestExecutionRootResolver } from "./jsTestExecutionRootResolver"
 import type { TestRunOk, TestRunResponse } from "../domain/testResults";
 import { jsTestFailedRunScopes, type JsTestFailedRunPlan } from "../domain/jsTestFailedRunScopes";
 import type { JsTestTaskGateway } from "../domain/jsTestTask";
+import type { JsTestBatchGateway, JsTestBatchPackageResult } from "../domain/jsTestBatch";
 import {
   aggregateJsTestTaskOutputs,
   jsTestOutputSnapshot,
@@ -40,6 +41,14 @@ import {
 } from "../domain/jsTestOutput";
 import { createJsTestFailedRunCoordinator } from "./jsTestFailedRunCoordinator";
 import { createJsTestSingleRunCoordinator } from "./jsTestSingleRunCoordinator";
+import { secureJsTestTaskRunId } from "./jsTestTaskRunId";
+import {
+  aggregateJsTestRunResults,
+  jsTestFailedRunPlanForBatch,
+  planJsTestExplorerBatch,
+  runJsTestExplorerBatch,
+  type JsTestExplorerBatchCoordinator,
+} from "./jsTestExplorerBatchRun";
 import {
   createNativeJsTestWatchOutputBuffer,
   type NativeJsTestWatchOutputBuffer,
@@ -73,7 +82,13 @@ interface WorkspaceExplorerState {
   readonly unavailable: string | null;
 }
 
+interface JsTestDiscoveryExecutionSnapshot {
+  readonly filePaths: readonly string[];
+  readonly truncated: boolean;
+}
+
 export interface UseJsTestExplorerOptions {
+  readonly batchGateway?: JsTestBatchGateway | null;
   readonly continuousRunBlocked?: boolean;
   readonly continuousRunVersion?: number;
   readonly continuousRunWatchCommand?: JsTestWatchCommand | null;
@@ -125,6 +140,7 @@ export interface JsTestExplorerState {
 }
 
 interface JsTestExplorerActivation {
+  readonly batchGateway: JsTestBatchGateway | null;
   readonly discoveryGateway: WorkspaceTestDiscoveryGateway;
   readonly discoveryVersion: number;
   readonly resultInvalidationVersion: number;
@@ -146,6 +162,7 @@ interface JsTestExplorerFailedPlan {
 }
 
 interface ActiveExplorerRun {
+  batchCoordinator: JsTestExplorerBatchCoordinator | null;
   cancelRequested: boolean;
   readonly continuousLease: JsTestContinuousRunLease | null;
   singleCoordinator: ReturnType<typeof createJsTestSingleRunCoordinator> | null;
@@ -206,6 +223,7 @@ const EMPTY_STATE: WorkspaceExplorerState = {
 };
 
 export function useJsTestExplorer({
+  batchGateway = null,
   continuousRunBlocked = false,
   continuousRunVersion = 0,
   continuousRunWatchCommand = null,
@@ -270,6 +288,7 @@ export function useJsTestExplorer({
   const discoveryInvalidationTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const pendingDiscoveryInvalidations = useRef(new Set<string>());
   const discoverySequences = useRef(new Map<string, number>());
+  const discoveryExecutionSnapshots = useRef(new Map<string, JsTestDiscoveryExecutionSnapshot>());
   const discoveryVersionRef = useRef(discoveryVersion);
   const inFlightRuns = useRef(new Set<string>());
   const problemGenerations = useRef(new Map<string, number>());
@@ -287,9 +306,11 @@ export function useJsTestExplorer({
   const singleCoordinatorRef = useRef<ReturnType<typeof createJsTestSingleRunCoordinator> | null>(
     null,
   );
+  const batchCoordinatorRef = useRef<JsTestExplorerBatchCoordinator | null>(null);
   const activeExplorerRunRef = useRef<ActiveExplorerRun | null>(null);
   const failedBatchIdentityRef = useRef<object | null>(null);
   const activationBoundary: JsTestExplorerActivation = {
+    batchGateway,
     discoveryGateway,
     discoveryVersion,
     resultInvalidationVersion,
@@ -304,6 +325,7 @@ export function useJsTestExplorer({
     activationRef.current += 1;
     lastRunRef.current = null;
     failedPlanRef.current = null;
+    if (workspaceKey) discoveryExecutionSnapshots.current.delete(workspaceKey);
   }
   const activation = activationRef.current;
   const continuousOwnerBoundaryRef = useRef<JsTestContinuousOwnerBoundary | null>(null);
@@ -425,6 +447,14 @@ export function useJsTestExplorer({
         }
         return discovered;
       }
+      const truncated = enumeration.truncated || omittedLargeFile || stoppedByBudget;
+      discoveryExecutionSnapshots.current.set(
+        workspaceKey,
+        Object.freeze({
+          filePaths: Object.freeze([...enumeration.files]),
+          truncated,
+        }),
+      );
       setStates((current) => {
         const previous = current[workspaceKey] ?? EMPTY_STATE;
         const statuses = new Map(
@@ -440,13 +470,14 @@ export function useJsTestExplorer({
             })),
             loading: false,
             loaded: true,
-            truncated: enumeration.truncated || omittedLargeFile || stoppedByBudget,
+            truncated,
           },
         };
       });
       return discovered;
     } catch (error) {
       if (discoverySequences.current.get(workspaceKey) === sequence) {
+        discoveryExecutionSnapshots.current.delete(workspaceKey);
         setStates((current) => ({
           ...current,
           [workspaceKey]: {
@@ -527,6 +558,7 @@ export function useJsTestExplorer({
       if (!validatedScope) return false;
       const capturedActivation = activationRef.current;
       const runOwnership: ActiveExplorerRun = {
+        batchCoordinator: null,
         cancelRequested: false,
         continuousLease,
         singleCoordinator: null,
@@ -539,9 +571,43 @@ export function useJsTestExplorer({
         runSequences.current.set(workspaceKey, sequence);
         const problemGeneration = nextProblemGeneration(problemGenerations.current, workspaceKey);
         const capturedProblemOwner = problemOwner(workspaceId, rootPath);
+        const taskBatchGateway =
+          continuousLease === null && validatedScope.kind === "all" ? batchGateway : null;
         let available = states[workspaceKey]?.discoveries ?? [];
-        if (available.length === 0) available = await discover();
-        const executionAuthority = await resolveExecutionRoot(validatedScope);
+        let executionSnapshot = discoveryExecutionSnapshots.current.get(workspaceKey);
+        if (available.length === 0 || (taskBatchGateway && !executionSnapshot)) {
+          available = await discover();
+          executionSnapshot = discoveryExecutionSnapshots.current.get(workspaceKey);
+        }
+        const batchPlan = taskBatchGateway
+          ? executionSnapshot
+            ? await planJsTestExplorerBatch({
+                discoveries: available,
+                discoveryTruncated: executionSnapshot.truncated,
+                filePaths: executionSnapshot.filePaths,
+                isCurrent: () =>
+                  !runOwnership.cancelRequested &&
+                  mountedRef.current &&
+                  activationRef.current === capturedActivation &&
+                  currentKeyRef.current === workspaceKey,
+                resolveExecutionRoot,
+              })
+            : {
+                message: "JavaScript test Run All requires complete, stable package discovery.",
+                status: "error" as const,
+              }
+          : null;
+        if (batchPlan?.status === "stale") {
+          settleStaleRun(workspaceKey, sequence, validatedScope, rootPath);
+          return false;
+        }
+        if (batchPlan?.status === "error") {
+          throw new Error(batchPlan.message);
+        }
+        const executionAuthority =
+          taskBatchGateway && batchPlan?.status === "available"
+            ? null
+            : await resolveExecutionRoot(validatedScope);
         if (
           runOwnership.cancelRequested ||
           currentKeyRef.current !== workspaceKey ||
@@ -571,10 +637,49 @@ export function useJsTestExplorer({
           if (runOwnership.cancelRequested) return false;
           let response: TestRunResponse;
           let outputSnapshot: JsTestOutputSnapshot | null = null;
-          if (taskGateway && workspaceId) {
+          let batchPackageResults: readonly JsTestBatchPackageResult[] | null = null;
+          if (taskBatchGateway && batchPlan?.status === "available" && workspaceId) {
+            const outcome = await runJsTestExplorerBatch({
+              activation: capturedActivation,
+              createRunId: createTaskRunId ?? secureJsTestTaskRunId,
+              gateway: taskBatchGateway,
+              isCurrent: (ownerActivation, ownerWorkspaceId) =>
+                mountedRef.current &&
+                activationRef.current === ownerActivation &&
+                currentKeyRef.current === workspaceKey &&
+                ownerWorkspaceId === workspaceId,
+              onCoordinator: (coordinator) => {
+                runOwnership.batchCoordinator = coordinator;
+                batchCoordinatorRef.current = coordinator;
+              },
+              packages: batchPlan.packages,
+              workspaceId,
+            });
+            if (runOwnership.cancelRequested) {
+              settleStaleRun(workspaceKey, sequence, validatedScope, rootPath);
+              return false;
+            }
+            if (outcome.status === "stale") {
+              settleStaleRun(workspaceKey, sequence, validatedScope, rootPath);
+              return false;
+            }
+            if (outcome.status === "error") {
+              response = { message: outcome.message, status: "error" };
+            } else {
+              response = outcome.response;
+              batchPackageResults = outcome.packages;
+              outputSnapshot = outcome.output
+                ? jsTestOutputSnapshot(
+                    { rootPath, workspaceId },
+                    capturedActivation,
+                    outcome.output,
+                  )
+                : null;
+            }
+          } else if (taskGateway && workspaceId && executionAuthority) {
             if (runOwnership.cancelRequested) return false;
             const coordinator = createJsTestSingleRunCoordinator({
-              createRunId: createTaskRunId ?? defaultTaskRunId,
+              createRunId: createTaskRunId ?? secureJsTestTaskRunId,
               gateway: taskGateway,
               isCurrent: (ownerActivation, ownerWorkspaceId) =>
                 mountedRef.current &&
@@ -614,8 +719,13 @@ export function useJsTestExplorer({
                   ? { message: "JavaScript test run was cancelled.", status: "error" }
                   : outcome.envelope.response;
             }
-          } else {
+          } else if (executionAuthority) {
             response = await runGateway.run(rootPath, validatedScope, executionAuthority);
+          } else {
+            response = {
+              message: "JavaScript test execution authority is unavailable.",
+              status: "error",
+            };
           }
           if (runSequences.current.get(workspaceKey) !== sequence) {
             return false;
@@ -645,12 +755,19 @@ export function useJsTestExplorer({
               rootPath,
             );
             if (response.status === "ok") {
-              const plan = jsTestFailedRunScopes({
-                discoveries,
-                discoveryTruncated: previous.truncated,
-                response,
-                rootPath,
-              });
+              const plan = batchPackageResults
+                ? jsTestFailedRunPlanForBatch({
+                    discoveries,
+                    discoveryTruncated: previous.truncated,
+                    packages: batchPackageResults,
+                    rootPath,
+                  })
+                : jsTestFailedRunScopes({
+                    discoveries,
+                    discoveryTruncated: previous.truncated,
+                    response,
+                    rootPath,
+                  });
               failedPlanRef.current =
                 plan.status === "available" && plan.scopes.length > 0
                   ? Object.freeze({ activation: capturedActivation, plan })
@@ -725,6 +842,7 @@ export function useJsTestExplorer({
     },
     [
       discover,
+      batchGateway,
       rootPath,
       runGateway,
       createTaskRunId,
@@ -825,7 +943,7 @@ export function useJsTestExplorer({
     if (activeExplorerRunRef.current !== null) return false;
     activeFailedRunLease = batchIdentity;
     const coordinator = createJsTestFailedRunCoordinator({
-      createRunId: createTaskRunId ?? defaultTaskRunId,
+      createRunId: createTaskRunId ?? secureJsTestTaskRunId,
       gateway: {
         runTask: async (request) => {
           const response = await taskGateway.runTask(request);
@@ -923,7 +1041,7 @@ export function useJsTestExplorer({
         }
         return false;
       }
-      const aggregate = aggregateFailedRunResults(outcome.results.map(({ response }) => response));
+      const aggregate = aggregateJsTestRunResults(outcome.results.map(({ response }) => response));
       if (!aggregate) {
         if (mountedRef.current) {
           setStates((current) =>
@@ -1012,7 +1130,8 @@ export function useJsTestExplorer({
   const canCancelTestRun = useCallback(
     (): boolean =>
       failedCoordinatorRef.current?.canCancel() === true ||
-      singleCoordinatorRef.current?.canCancel() === true,
+      singleCoordinatorRef.current?.canCancel() === true ||
+      batchCoordinatorRef.current?.canCancel() === true,
     [],
   );
   const cancelTestRun = useCallback(async (): Promise<boolean> => {
@@ -1027,7 +1146,9 @@ export function useJsTestExplorer({
       return coordinator.cancel();
     }
     const singleCoordinator = singleCoordinatorRef.current;
-    return singleCoordinator?.canCancel() === true ? singleCoordinator.cancel() : false;
+    if (singleCoordinator?.canCancel() === true) return singleCoordinator.cancel();
+    const batchCoordinator = batchCoordinatorRef.current;
+    return batchCoordinator?.canCancel() === true ? batchCoordinator.cancel() : false;
   }, []);
 
   executeContinuousRunRef.current = async (lease): Promise<boolean> => {
@@ -1285,7 +1406,9 @@ export function useJsTestExplorer({
     if (!ownership || ownership.continuousLease !== lease) return false;
     ownership.cancelRequested = true;
     const coordinator = ownership.singleCoordinator;
-    return coordinator?.canCancel() === true ? coordinator.cancel() : true;
+    if (coordinator?.canCancel() === true) return coordinator.cancel();
+    const batchCoordinator = ownership.batchCoordinator;
+    return batchCoordinator?.canCancel() === true ? batchCoordinator.cancel() : true;
   };
 
   const canStartContinuousRun = useCallback(
@@ -1328,6 +1451,7 @@ export function useJsTestExplorer({
       void coordinator.invalidate();
     }
     void singleCoordinatorRef.current?.invalidate();
+    void batchCoordinatorRef.current?.invalidate();
     if (workspaceKey) {
       setStates((current) => {
         const previous = current[workspaceKey];
@@ -1357,6 +1481,7 @@ export function useJsTestExplorer({
       void continuousRunCoordinator.invalidate();
       void failedCoordinatorRef.current?.invalidate();
       void singleCoordinatorRef.current?.invalidate();
+      void batchCoordinatorRef.current?.invalidate();
     };
   }, [continuousRunCoordinator]);
 
@@ -1383,6 +1508,7 @@ export function useJsTestExplorer({
       workspaceKey,
       (discoverySequences.current.get(workspaceKey) ?? 0) + 1,
     );
+    discoveryExecutionSnapshots.current.delete(workspaceKey);
     pendingDiscoveryInvalidations.current.add(workspaceKey);
     setStates((current) => ({
       ...current,
@@ -1544,6 +1670,7 @@ function sameActivation(
 ): boolean {
   return (
     previous !== null &&
+    previous.batchGateway === next.batchGateway &&
     previous.discoveryGateway === next.discoveryGateway &&
     previous.discoveryVersion === next.discoveryVersion &&
     previous.resultInvalidationVersion === next.resultInvalidationVersion &&
@@ -1623,43 +1750,6 @@ function stopActiveContinuousWatch(ownership: ActiveContinuousWatch): Promise<bo
     if (ownership.stopFlight === flight) ownership.stopFlight = null;
   });
   return flight;
-}
-
-function defaultTaskRunId(): string {
-  const runId = globalThis.crypto?.randomUUID?.();
-  if (!runId) throw new Error("Secure JavaScript test task IDs are unavailable.");
-  return runId;
-}
-
-function aggregateFailedRunResults(responses: readonly TestRunOk[]): TestRunOk | null {
-  const suites = responses.flatMap(({ suites }) => suites);
-  const cases = suites.reduce((total, suite) => total + suite.cases.length, 0);
-  if (cases > 5_000 || suites.length > 5_000) return null;
-  const totals = responses.reduce(
-    (sum, response) => ({
-      errors: sum.errors + response.totals.errors,
-      failures: sum.failures + response.totals.failures,
-      skipped: sum.skipped + response.totals.skipped,
-      tests: sum.tests + response.totals.tests,
-      time:
-        sum.time === null || response.totals.time === null ? null : sum.time + response.totals.time,
-    }),
-    { errors: 0, failures: 0, skipped: 0, tests: 0, time: 0 as number | null },
-  );
-  if (
-    !Number.isSafeInteger(totals.errors) ||
-    !Number.isSafeInteger(totals.failures) ||
-    !Number.isSafeInteger(totals.skipped) ||
-    !Number.isSafeInteger(totals.tests) ||
-    (totals.time !== null && (!Number.isFinite(totals.time) || totals.time < 0))
-  ) {
-    return null;
-  }
-  return Object.freeze({
-    status: "ok",
-    suites: Object.freeze([...suites]) as TestRunOk["suites"],
-    totals: Object.freeze(totals),
-  });
 }
 
 function restoreFailedBatchState(

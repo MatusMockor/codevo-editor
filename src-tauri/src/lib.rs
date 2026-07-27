@@ -50,6 +50,7 @@ pub mod js_ts_file_watcher;
 pub mod js_ts_symbols;
 pub mod local_history;
 mod lsp;
+mod lsp_capability_support;
 mod lsp_diagnostics;
 mod lsp_document;
 mod lsp_features;
@@ -131,7 +132,7 @@ pub(crate) use blocking_command::run_blocking_command;
 use debug_commands::*;
 use debug_node_attach_list_command::debug_list_node_attach_candidates;
 use debug_node_attach_start_command::debug_start_node_attach_candidate;
-use runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
+use runtime_task_lifecycle::{shutdown_runtime_processes, RuntimeTaskLifecycleExt as _};
 use settings_fonts::cached_monospace_font_families;
 
 #[cfg(test)]
@@ -167,7 +168,7 @@ use index_scan::{
     METADATA_SCAN_COMPLETED_EVENT,
 };
 use job_scheduler::WorkspaceIndexLifecycle;
-use js_test_commands::{run_js_tests_json, run_js_tests_scoped_json};
+use js_test_run::batch::JsTestBatchRegistry;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use local_history::{LocalHistoryStore, LocalHistoryVersion};
 use lsp::{
@@ -176,6 +177,10 @@ use lsp::{
     PhpLanguageServerSettings, PhpactorLanguageServerPlanner,
     TypeScriptImportModuleSpecifierEnding, TypeScriptImportModuleSpecifierPreference,
     TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings, TypeScriptQuotePreference,
+};
+use lsp_capability_support::{
+    supports_code_action_resolve as lsp_status_supports_code_action_resolve,
+    supports_inlay_hint_resolve as lsp_status_supports_inlay_hint_resolve,
 };
 use lsp_document::{
     LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
@@ -306,47 +311,6 @@ struct WorkspaceIndexClearResult {
     status: &'static str,
 }
 
-fn shutdown_runtime_processes(app: &'_ AppHandle) {
-    app.request_stop_all_tasks();
-    if let Some(authorizer) = app.try_state::<LegacyLocalHistoryWorkspaceAuthorizer>() {
-        authorizer.clear();
-    }
-    if let Some(registry) = app.try_state::<WorkspaceRegistry>() {
-        registry.clear();
-    }
-    if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
-        index_lifecycle.cancel_all();
-    }
-
-    if let Some(watch_registry) = app.try_state::<JavaScriptTypeScriptWorkspaceWatchRegistry>() {
-        watch_registry.stop_all();
-    }
-
-    if let Some(watch_registry) = app.try_state::<WorkspaceFileChangeWatchRegistry>() {
-        watch_registry.stop_all();
-    }
-
-    if let Some(registry) = app.try_state::<PhpLanguageServerRegistry>() {
-        let _ = registry.stop_all();
-    }
-
-    if let Some(registry) = app.try_state::<JavaScriptTypeScriptLanguageServerRegistry>() {
-        let _ = registry.stop_all();
-    }
-
-    if let Some(registry) = app.try_state::<Arc<DebugSessionRegistry>>() {
-        registry.stop_all();
-    }
-
-    if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
-        supervisor.stop_all();
-    }
-
-    if let Some(registry) = app.try_state::<Arc<eslint::EslintProcessRegistry>>() {
-        registry.stop_all();
-    }
-}
-
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 enum NativeWorkspaceOpenResult {
@@ -469,36 +433,37 @@ fn register_workspace_path(
 #[tauri::command]
 fn unregister_workspace(
     app: AppHandle,
-    registry: State<'_, WorkspaceRegistry>,
-    local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
-    terminal_sessions: State<'_, TerminalSupervisor>,
-    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
-    node_attach_candidates: State<'_, Arc<debug_cdp::NodeAttachCandidatePublicationRegistry>>,
+    state: WorkspaceLifecycleState<'_>,
     workspace_id: WorkspaceId,
 ) -> Result<(), String> {
-    node_attach_candidates
+    state
+        .node_attach_candidates
         .invalidate_listings()
         .map_err(|_| "Node attach candidate invalidation failed.".to_string())?;
     let mut debug_deactivation = None;
-    let unregister = registry.unregister_after(&workspace_id, |descriptor| {
-        debug_deactivation = Some(
-            debug_sessions
-                .begin_root_deactivation(&descriptor.canonical_root_path.to_string_lossy()),
-        );
-        app.request_stop_workspace_tasks(&workspace_id);
-        terminal_sessions
-            .stop_root(&descriptor.canonical_root_path)
-            .map_err(io::Error::other)
-    });
+    let unregister = state
+        .workspace_registry
+        .unregister_after(&workspace_id, |descriptor| {
+            debug_deactivation = Some(
+                state
+                    .debug_sessions
+                    .begin_root_deactivation(&descriptor.canonical_root_path.to_string_lossy()),
+            );
+            app.request_stop_workspace_tasks(&workspace_id, &state.js_test_batches);
+            state
+                .terminal_sessions
+                .stop_root(&descriptor.canonical_root_path)
+                .map_err(io::Error::other)
+        });
     if let Some(deactivation) = debug_deactivation {
         DebugSessionRegistry::complete_root_deactivation(deactivation);
     }
     unregister.map_err(|error| error.to_string())?;
-    local_history_authorizer.revoke(&workspace_id);
+    state.local_history_authorizer.revoke(&workspace_id);
     Ok(())
 }
 
-struct DisposeWorkspaceState<'a> {
+struct WorkspaceLifecycleState<'a> {
     index_lifecycle: State<'a, WorkspaceIndexLifecycle>,
     javascript_typescript_language_servers: State<'a, JavaScriptTypeScriptLanguageServerRegistry>,
     javascript_typescript_watch_registry: State<'a, JavaScriptTypeScriptWorkspaceWatchRegistry>,
@@ -510,6 +475,8 @@ struct DisposeWorkspaceState<'a> {
     terminal_sessions: State<'a, TerminalSupervisor>,
     eslint_processes: State<'a, Arc<eslint::EslintProcessRegistry>>,
     workspace_registry: State<'a, WorkspaceRegistry>,
+    js_test_batches: State<'a, Arc<JsTestBatchRegistry>>,
+    local_history_authorizer: State<'a, LegacyLocalHistoryWorkspaceAuthorizer>,
 }
 
 fn state_from_command<'r, 'de: 'r, T, R>(
@@ -528,7 +495,9 @@ where
     })
 }
 
-impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for DisposeWorkspaceState<'r> {
+impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R>
+    for WorkspaceLifecycleState<'r>
+{
     fn from_command(
         command: tauri::ipc::CommandItem<'de, R>,
     ) -> Result<Self, tauri::ipc::InvokeError> {
@@ -544,6 +513,8 @@ impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for DisposeW
             terminal_sessions: state_from_command(&command)?,
             eslint_processes: state_from_command(&command)?,
             workspace_registry: state_from_command(&command)?,
+            js_test_batches: state_from_command(&command)?,
+            local_history_authorizer: state_from_command(&command)?,
         })
     }
 }
@@ -552,7 +523,7 @@ impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for DisposeW
 fn dispose_workspace_root(
     root_path: String,
     app: AppHandle,
-    state: DisposeWorkspaceState<'_>,
+    state: WorkspaceLifecycleState<'_>,
 ) -> Result<(), String> {
     state
         .node_attach_candidates
@@ -563,7 +534,7 @@ fn dispose_workspace_root(
         .workspace_registry
         .descriptor_for_registered_path(&root)
     {
-        app.request_stop_workspace_tasks(&descriptor.workspace_id);
+        app.request_stop_workspace_tasks(&descriptor.workspace_id, &state.js_test_batches);
     }
     let root_key = root.to_string_lossy().into_owned();
     state.debug_sessions.deactivate_root(&root_key);
@@ -3343,36 +3314,6 @@ async fn javascript_typescript_text_document_code_actions(
     )?)
 }
 
-/// Whether the running server advertises `codeActionProvider.resolveProvider`.
-///
-/// Some servers (notably phpactor) advertise `codeActionProvider` but ship lazy
-/// code actions without a `codeAction/resolve` handler. Sending the resolve
-/// request anyway returns a JSON-RPC "Handler codeAction/resolve not found"
-/// error that surfaces to the user as a confusing notice. When this returns
-/// `false` the resolve request must be skipped and the action returned
-/// unchanged.
-fn lsp_status_supports_code_action_resolve(status: &LanguageServerRuntimeStatus) -> bool {
-    matches!(
-        status,
-        LanguageServerRuntimeStatus::Running { capabilities, .. }
-            if capabilities.code_action_resolve
-    )
-}
-
-/// Whether the running server explicitly advertises
-/// `inlayHintProvider.resolveProvider`.
-///
-/// `inlayHintProvider: true` enables hint discovery but does not imply support
-/// for `inlayHint/resolve`. Keep resolution fail-closed so servers such as
-/// phpactor do not receive a method they did not advertise.
-fn lsp_status_supports_inlay_hint_resolve(status: &LanguageServerRuntimeStatus) -> bool {
-    matches!(
-        status,
-        LanguageServerRuntimeStatus::Running { capabilities, .. }
-            if capabilities.inlay_hint_resolve
-    )
-}
-
 #[tauri::command]
 async fn text_document_code_action_resolve(
     root_path: String,
@@ -4942,6 +4883,11 @@ async fn javascript_typescript_text_document_signature_help(
 pub fn run() {
     let terminal_task_admission =
         Arc::new(terminal_task_admission::TerminalTaskAdmissionRegistry::new());
+    let js_test_batch_registry = Arc::new(JsTestBatchRegistry::new());
+    #[cfg(target_os = "macos")]
+    let js_test_batch_registry_for_menu = Arc::clone(&js_test_batch_registry);
+    let js_test_batch_registry_for_window = Arc::clone(&js_test_batch_registry);
+    let js_test_batch_registry_for_run = Arc::clone(&js_test_batch_registry);
     #[cfg(not(test))]
     let vscode_process_task_registry = Arc::new(
         vscode_process_task_registry::VscodeProcessTaskRegistry::with_admission(Arc::clone(
@@ -4952,44 +4898,43 @@ pub fn run() {
     let vscode_process_task_registry_for_setup = Arc::clone(&vscode_process_task_registry);
     let builder = tauri::Builder::default().enable_macos_default_menu(false);
     #[cfg(target_os = "macos")]
-    let builder =
-        builder
-            .menu(application_menu)
-            .on_menu_event(|app, event| match event.id().as_ref() {
-                CLOSE_ACTIVE_TAB_MENU_ID => {
-                    let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
+    let builder = builder
+        .menu(application_menu)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            CLOSE_ACTIVE_TAB_MENU_ID => {
+                let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
+            }
+            FONT_ZOOM_IN_MENU_ID => {
+                let _ = app.emit(FONT_ZOOM_IN_EVENT, ());
+            }
+            FONT_ZOOM_OUT_MENU_ID => {
+                let _ = app.emit(FONT_ZOOM_OUT_EVENT, ());
+            }
+            FONT_ZOOM_RESET_MENU_ID => {
+                let _ = app.emit(FONT_ZOOM_RESET_EVENT, ());
+            }
+            OPEN_APPEARANCE_SETTINGS_MENU_ID => {
+                let _ = app.emit(OPEN_APPEARANCE_SETTINGS_EVENT, ());
+            }
+            QUIT_APPLICATION_MENU_ID => {
+                let listener_ready = app
+                    .try_state::<NativeCloseListenerState>()
+                    .is_some_and(|state| state.ready.load(Ordering::Acquire));
+                if listener_ready && app.emit(NATIVE_CLOSE_REQUEST_EVENT, "quit").is_ok() {
+                    return;
                 }
-                FONT_ZOOM_IN_MENU_ID => {
-                    let _ = app.emit(FONT_ZOOM_IN_EVENT, ());
-                }
-                FONT_ZOOM_OUT_MENU_ID => {
-                    let _ = app.emit(FONT_ZOOM_OUT_EVENT, ());
-                }
-                FONT_ZOOM_RESET_MENU_ID => {
-                    let _ = app.emit(FONT_ZOOM_RESET_EVENT, ());
-                }
-                OPEN_APPEARANCE_SETTINGS_MENU_ID => {
-                    let _ = app.emit(OPEN_APPEARANCE_SETTINGS_EVENT, ());
-                }
-                QUIT_APPLICATION_MENU_ID => {
-                    let listener_ready = app
-                        .try_state::<NativeCloseListenerState>()
-                        .is_some_and(|state| state.ready.load(Ordering::Acquire));
-                    if listener_ready && app.emit(NATIVE_CLOSE_REQUEST_EVENT, "quit").is_ok() {
-                        return;
-                    }
 
-                    shutdown_runtime_processes(app);
-                    app.exit(0);
-                }
-                TOGGLE_FONT_LIGATURES_MENU_ID => {
-                    let _ = app.emit(TOGGLE_FONT_LIGATURES_EVENT, ());
-                }
-                _ => {}
-            });
+                shutdown_runtime_processes(app, &js_test_batch_registry_for_menu);
+                app.exit(0);
+            }
+            TOGGLE_FONT_LIGATURES_MENU_ID => {
+                let _ = app.emit(TOGGLE_FONT_LIGATURES_EVENT, ());
+            }
+            _ => {}
+        });
 
     builder
-        .on_window_event(|window, event| {
+        .on_window_event(move |window, event| {
             #[cfg(target_os = "macos")]
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let listener_ready = window
@@ -5006,7 +4951,7 @@ pub fn run() {
             }
 
             if matches!(event, WindowEvent::Destroyed) {
-                shutdown_runtime_processes(window.app_handle());
+                shutdown_runtime_processes(window.app_handle(), &js_test_batch_registry_for_window);
             }
         })
         .manage(Mutex::new(SmartModeService::new()))
@@ -5029,6 +4974,7 @@ pub fn run() {
             &terminal_task_admission,
         )))
         .manage(js_test_tasks::JsTestTaskRegistry::new())
+        .manage(Arc::clone(&js_test_batch_registry))
         .manage(Arc::new(js_test_watch::JsTestWatchRegistry::new()))
         .manage(terminal_task_admission)
         .manage(WorkspaceRegistry::new())
@@ -5199,8 +5145,10 @@ pub fn run() {
             quality_commands::run_pint_format,
             quality_commands::run_prettier_format,
             quality_commands::run_artisan_route_list,
-            run_js_tests_json,
-            run_js_tests_scoped_json,
+            js_test_commands::run_js_tests_json,
+            js_test_commands::run_js_tests_scoped_json,
+            js_test_commands::run_js_test_batch_json,
+            js_test_commands::stop_js_test_batch,
             js_test_tasks::commands::run_js_test_task_json,
             js_test_tasks::commands::stop_js_test_task,
             js_test_coverage_commands::run_js_test_coverage_json,
@@ -5336,9 +5284,9 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))
-        .run(|app, event| {
+        .run(move |app, event| {
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                shutdown_runtime_processes(app);
+                shutdown_runtime_processes(app, &js_test_batch_registry_for_run);
             }
         });
 }

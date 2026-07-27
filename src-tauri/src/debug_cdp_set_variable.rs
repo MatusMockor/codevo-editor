@@ -2,10 +2,10 @@
 
 use super::super::transport::{CdpClient, CdpShared};
 use super::{
-    assigned_evaluate_name, child_object_mutation, is_writable_data_property,
-    owned_object_reference_for_mutation, owner_is_current, register_child_object_reference,
-    revoke_assigned_property_references, variable_from_remote_object, ObjectReferenceMutation,
-    MAX_CDP_PROPERTY_DESCRIPTORS,
+    assigned_evaluate_name, child_object_mutation, invalidate_all_descriptor_snapshots,
+    is_writable_data_property, owned_object_reference_for_mutation, owner_is_current,
+    register_child_object_reference, revoke_assigned_property_references,
+    variable_from_remote_object, ObjectReferenceMutation, MAX_CDP_PROPERTY_DESCRIPTORS,
 };
 use crate::debug_adapter::variable_name::is_valid_debug_variable_name;
 use crate::debug_adapter::{
@@ -39,7 +39,7 @@ pub(crate) fn set_variable(
 
     let call_frame_id = exact_call_frame_id(shared, &request)?;
     let timeout_ms = u64::try_from(client.request_timeout.as_millis()).unwrap_or(u64::MAX);
-    let evaluation = match client.request(
+    let evaluation_response = client.request(
         "Debugger.evaluateOnCallFrame",
         json!({
             "callFrameId": call_frame_id,
@@ -51,7 +51,12 @@ pub(crate) fn set_variable(
             "timeout": timeout_ms,
             "objectGroup": SET_VALUE_OBJECT_GROUP,
         }),
-    ) {
+    );
+    let _snapshot_invalidation = SnapshotInvalidationGuard {
+        shared,
+        request: owner_request,
+    };
+    let evaluation = match evaluation_response {
         Ok(evaluation) => evaluation,
         Err(_) => {
             release_evaluation_group(client);
@@ -176,6 +181,42 @@ pub(crate) fn set_variable(
         .unwrap_or(0);
     exact_call_frame_id(shared, &request).map_err(|_| indeterminate_error())?;
     Ok(DebugSetVariableResult { value })
+}
+
+fn invalidate_exact_owner_snapshots(
+    shared: &Arc<Mutex<CdpShared>>,
+    request: DebugVariablePageRequest,
+) -> Result<(), String> {
+    let mut state = shared.lock().map_err(|error| error.to_string())?;
+    let pause = state
+        .pause
+        .as_mut()
+        .ok_or_else(|| "The debugger is not paused.".to_string())?;
+    if pause.pause_generation != request.pause_generation
+        || !pause.call_frame_ids.contains_key(&request.frame_id)
+        || !pause
+            .object_ids
+            .get(&request.variables_reference)
+            .is_some_and(|reference| {
+                reference.pause_generation == request.pause_generation
+                    && reference.frame_id == request.frame_id
+            })
+    {
+        return Err("The debug mutation owner changed.".to_string());
+    }
+    invalidate_all_descriptor_snapshots(pause);
+    Ok(())
+}
+
+struct SnapshotInvalidationGuard<'a> {
+    shared: &'a Arc<Mutex<CdpShared>>,
+    request: DebugVariablePageRequest,
+}
+
+impl Drop for SnapshotInvalidationGuard<'_> {
+    fn drop(&mut self) {
+        let _ = invalidate_exact_owner_snapshots(self.shared, self.request);
+    }
 }
 
 fn owner_request(request: &DebugSetVariableRequest) -> DebugVariablePageRequest {

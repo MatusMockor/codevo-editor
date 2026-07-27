@@ -40,6 +40,14 @@ export interface ProblemsView {
   };
 }
 
+/**
+ * Hard UI projection ceiling. The application cache has a larger retention
+ * budget so switching files does not discard useful state, but the Problems
+ * presenter must never construct an unbounded React tree from that cache.
+ */
+export const MAX_PROBLEMS_VIEW_ROWS = 2_000;
+export const DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY = "diagnostics-retention-receipt";
+
 type DiagnosticSource =
   "languageServer" | "javaScriptTypeScript" | "phpLocal" | "jsTest" | "nodePackageTask";
 
@@ -65,9 +73,17 @@ export function buildProblemsView(
   visibility: ProblemsSeverityVisibility,
   filterText: string,
 ): ProblemsView {
-  const deduplicatedNotices = deduplicateDiagnostics(notices);
-  const totals = countSeverities(deduplicatedNotices);
   const normalizedFilter = filterText.trim().toLocaleLowerCase();
+  const projectedNotices = projectProblemsNotices(
+    notices,
+    (notice) =>
+      severityVisible(notice, visibility) &&
+      noticeMatchesFilter(notice, workspaceRoot, normalizedFilter),
+  );
+  const deduplicatedNotices = deduplicateDiagnostics(projectedNotices);
+  const totals = countSeverities(
+    deduplicateDiagnostics(projectProblemsNotices(notices, () => true)),
+  );
   const grouped = new Map<string, ProblemsViewNotice[]>();
   const general: ProblemsViewNotice[] = [];
 
@@ -79,7 +95,7 @@ export function buildProblemsView(
     const path = noticeFilePath(notice);
 
     if (!path) {
-      if (matchesGeneralFilter(notice, normalizedFilter)) {
+      if (isDiagnosticsRetentionReceipt(notice) || matchesGeneralFilter(notice, normalizedFilter)) {
         general.push(notice);
       }
 
@@ -113,6 +129,93 @@ export function buildProblemsView(
   files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 
   return { files, general, totals };
+}
+
+function noticeMatchesFilter(
+  notice: ProblemsViewNotice,
+  workspaceRoot: string | null,
+  normalizedFilter: string,
+): boolean {
+  if (isDiagnosticsRetentionReceipt(notice)) {
+    return true;
+  }
+
+  const path = noticeFilePath(notice);
+  if (!path) {
+    return matchesGeneralFilter(notice, normalizedFilter);
+  }
+
+  return matchesFileFilter(
+    notice,
+    path,
+    problemRelativePath(workspaceRoot, path),
+    normalizedFilter,
+  );
+}
+
+function isDiagnosticsRetentionReceipt(notice: ProblemsViewNotice): boolean {
+  return (
+    notice.groupKey === DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY ||
+    notice.groupKey?.startsWith(`${DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY}:`) === true
+  );
+}
+
+function projectProblemsNotices(
+  notices: readonly ProblemsViewNotice[],
+  include: (notice: ProblemsViewNotice) => boolean,
+): ProblemsViewNotice[] {
+  if (notices.length <= MAX_PROBLEMS_VIEW_ROWS) {
+    return [...notices];
+  }
+
+  const upstreamReceipt = notices.find(
+    (notice) => isDiagnosticsRetentionReceipt(notice) && notice.kind === "overflow",
+  );
+  const retainedRows: ProblemsViewNotice[] = [];
+  const retainedDuplicateIndexes = new Map<string, Map<DiagnosticSource, number>>();
+  let eligibleCount = 0;
+
+  for (let index = 0; index < notices.length; index += 1) {
+    const notice = notices[index]!;
+    if (isDiagnosticsRetentionReceipt(notice)) {
+      continue;
+    }
+
+    if (!include(notice)) {
+      continue;
+    }
+
+    eligibleCount += 1;
+    if (retainedRows.length < MAX_PROBLEMS_VIEW_ROWS - 1) {
+      retainedRows.push(notice);
+      indexRetainedDiagnostic(retainedDuplicateIndexes, notice, retainedRows.length - 1);
+      continue;
+    }
+
+    replaceLowerPriorityRetainedDuplicate(retainedRows, retainedDuplicateIndexes, notice);
+  }
+  const deduplicatedRows = deduplicateDiagnostics(retainedRows);
+  const projectionMessage = `Problems view retained ${deduplicatedRows.length} of ${eligibleCount} input rows.`;
+  const projectionTruncated = eligibleCount > deduplicatedRows.length;
+  const receipt: ProblemsViewNotice | null = upstreamReceipt
+    ? {
+        ...upstreamReceipt,
+        message: projectionTruncated
+          ? `${upstreamReceipt.message} ${projectionMessage}`
+          : upstreamReceipt.message,
+      }
+    : projectionTruncated
+      ? {
+          groupKey: DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY,
+          id: DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY,
+          kind: "overflow",
+          message: projectionMessage,
+          severity: "info",
+          source: "Diagnostics",
+        }
+      : null;
+
+  return receipt ? [...deduplicatedRows, receipt] : deduplicatedRows;
 }
 
 function countSeverities(notices: ProblemsViewNotice[]) {
@@ -276,6 +379,51 @@ function deduplicationRecord(
     notice: { ...notice, message: parsed.message },
     source: diagnosticSource.source,
   };
+}
+
+function replaceLowerPriorityRetainedDuplicate(
+  retained: ProblemsViewNotice[],
+  retainedIndexes: Map<string, Map<DiagnosticSource, number>>,
+  incoming: ProblemsViewNotice,
+): void {
+  const incomingRecord = deduplicationRecord(incoming, -1);
+  if (!incomingRecord) return;
+  const sourceIndexes = retainedIndexes.get(retainedDiagnosticIndexKey(incomingRecord));
+  if (!sourceIndexes || sourceIndexes.has(incomingRecord.source)) return;
+
+  for (const [source, index] of sourceIndexes) {
+    const retainedRecord = deduplicationRecord(retained[index]!, index);
+    if (
+      source === incomingRecord.source ||
+      !retainedRecord ||
+      compareDeduplicationRecords(incomingRecord, retainedRecord) >= 0
+    ) {
+      continue;
+    }
+
+    retained[index] = incoming;
+    sourceIndexes.set(incomingRecord.source, index);
+    return;
+  }
+}
+
+function indexRetainedDiagnostic(
+  retainedIndexes: Map<string, Map<DiagnosticSource, number>>,
+  notice: ProblemsViewNotice,
+  index: number,
+): void {
+  const record = deduplicationRecord(notice, index);
+  if (!record) return;
+  const key = retainedDiagnosticIndexKey(record);
+  const sourceIndexes = retainedIndexes.get(key) ?? new Map();
+  if (!sourceIndexes.has(record.source)) {
+    sourceIndexes.set(record.source, index);
+  }
+  retainedIndexes.set(key, sourceIndexes);
+}
+
+function retainedDiagnosticIndexKey(record: DeduplicationRecord): string {
+  return diagnosticDeduplicationKey(record);
 }
 
 function diagnosticDeduplicationKey(record: DeduplicationRecord): string {

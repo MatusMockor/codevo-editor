@@ -197,6 +197,7 @@ describe("useConfiguredNodeLaunchStarter", () => {
         cwd: `${ROOT}/apps/api`,
         env: { NODE_ENV: "development" },
         justMyCode: "nodeInternals",
+        smartStep: true,
       },
       preLaunchTask: { label: "build api" },
       serverReadyAction: {

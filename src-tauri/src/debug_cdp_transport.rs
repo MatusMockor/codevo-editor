@@ -11,14 +11,15 @@ use super::node_attach_orchestrator::{
 };
 use super::variables::{
     load_variables_page, scope_mutation, set_expression_provenance::SetExpressionReference,
-    ObjectReference, ObjectReferenceAccess, ObjectReferenceKey, MAX_CDP_OBJECT_ID_BYTES,
-    MAX_CDP_OBJECT_REFERENCES_PER_PAUSE,
+    try_reserve_object_reference_bytes, ObjectReference, ObjectReferenceAccess, ObjectReferenceKey,
+    PropertyDescriptorSnapshots, MAX_CDP_OBJECT_ID_BYTES, MAX_CDP_OBJECT_REFERENCES_PER_PAUSE,
 };
 use super::*;
 use crate::debug_adapter::{
     DebugEvaluateContext, DebugEvaluateFailure, DebugEvaluatePolicy, DebugJustMyCodePolicy,
     DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
-    DebugSetVariableResult, DebugVariablePage, DebugVariablePageRequest,
+    DebugSetVariableResult, DebugVariableFilter, DebugVariablePage, DebugVariablePageLimitReason,
+    DebugVariablePageRequest,
 };
 use crate::debug_cdp_breakpoints::{handle_breakpoint_resolved, handle_script_parsed};
 use crate::debug_exception_type_filter::{
@@ -33,6 +34,15 @@ const NODE_INTERNALS_BLACKBOX_PATTERN: &str = r"^(?:node:|internal/)";
 // CDP matches these expressions against the generated script URL. This deliberately
 // covers direct paths and file URLs only; source-map-derived original ranges are not inferred.
 const NODE_DEPENDENCIES_BLACKBOX_PATTERN: &str = r"(?:^|[/\\])node_modules[/\\]";
+
+#[path = "debug_cdp_smart_step.rs"]
+mod smart_step;
+#[path = "debug_cdp_smart_step_runtime.rs"]
+mod smart_step_runtime;
+#[cfg(test)]
+#[path = "debug_cdp_smart_step_runtime_tests.rs"]
+mod smart_step_runtime_tests;
+pub(crate) use smart_step_runtime::begin_smart_step_pause;
 
 mod clipboard {
     include!("debug_cdp_clipboard.rs");
@@ -51,6 +61,11 @@ pub(crate) struct PauseInventory {
     pub(crate) frames: Vec<DebugStackFrame>,
     pub(super) object_ids: HashMap<u64, ObjectReference>,
     pub(super) object_reference_ids: HashMap<ObjectReferenceKey, u64>,
+    pub(super) object_reference_bytes: usize,
+    pub(super) last_object_reference_limit_reason: Option<DebugVariablePageLimitReason>,
+    pub(super) property_descriptor_snapshots: PropertyDescriptorSnapshots,
+    pub(super) property_descriptor_count: usize,
+    pub(super) property_descriptor_bytes: usize,
     pub(super) variable_page_loads: usize,
     pub(super) variable_mutations: usize,
     pub(super) set_expression_references: HashMap<u64, SetExpressionReference>,
@@ -153,6 +168,9 @@ pub(crate) struct CdpShared {
     pub(super) resolution_index: HashMap<String, BreakpointResolutionTarget>,
     pub(crate) suppress_next_resumed: bool,
     pub(crate) source_maps: Option<SourceMapRegistry>,
+    pub(crate) smart_step_dispatch_lease: Option<crate::debug_source_map::SourceMapDispatchLease>,
+    pub(crate) smart_step_fallback: Option<Value>,
+    pub(crate) smart_step_policy: smart_step::StepPolicy,
     pub(crate) startup_validation: Option<StartupEntryValidation>,
 }
 
@@ -372,6 +390,34 @@ impl CdpClient {
         .request_with_timeout_classified(method, params, self.request_timeout)
     }
 
+    fn request_with_reservation(
+        &self,
+        method: &str,
+        params: Value,
+        reserve: impl FnOnce(u64) -> Result<(), String>,
+    ) -> Result<Value, String> {
+        self.request_with_reservation_timeout(method, params, self.request_timeout, reserve)
+    }
+
+    fn request_with_reservation_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+        reserve: impl FnOnce(u64) -> Result<(), String>,
+    ) -> Result<Value, String> {
+        CdpRequestHandle {
+            disconnect_notifier: self.disconnect_notifier.clone(),
+            next_request_id: Arc::clone(&self.next_request_id),
+            outgoing: self.outgoing.clone(),
+            pending: Arc::clone(&self.pending),
+            request_timeout: self.request_timeout,
+            shutdown_requested: Arc::clone(&self.shutdown_requested),
+        }
+        .request_with_timeout_classified_and_reserved(method, params, timeout, reserve)
+        .map_err(CdpRequestFailure::into_message)
+    }
+
     pub(super) fn shutdown(&mut self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         if let Some(handle) = self.io_thread.take() {
@@ -454,6 +500,11 @@ pub(in crate::debug_cdp) struct HeldExternalNodeCdpAttach {
 include!("debug_cdp_connect.rs");
 
 impl NodeCdpAdapter {
+    #[cfg(test)]
+    pub(crate) fn request_for_test(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.client.request(method, params)
+    }
+
     pub(crate) fn bind_exact_watch_entry_url(&mut self, url: String) -> Result<(), String> {
         ensure_startup_current(self.mutation_is_allowed.as_ref())?;
         self.function_breakpoints.bind_exact_watch_entry_url(url)
@@ -903,6 +954,26 @@ impl DebugAdapter for NodeCdpAdapter {
     }
 
     fn step(&mut self, kind: StepKind) -> Result<(), String> {
+        let smart_step = match kind {
+            StepKind::StepOver => Some(smart_step::SmartStepDirection::Over),
+            StepKind::StepInto => Some(smart_step::SmartStepDirection::Into),
+            StepKind::StepOut => Some(smart_step::SmartStepDirection::Out),
+            StepKind::Continue => None,
+        };
+        let smart_step_origin = {
+            let mut shared = self.shared.lock().map_err(|error| error.to_string())?;
+            if smart_step.is_some() {
+                let Some(origin_pause) = shared.pause.as_ref().map(|pause| pause.pause_generation)
+                else {
+                    shared.cancel_smart_step();
+                    return Err("The debugger is not paused.".to_string());
+                };
+                Some(origin_pause)
+            } else {
+                shared.cancel_smart_step();
+                None
+            }
+        };
         let hidden_function_breakpoint_step = if kind == StepKind::Continue {
             let paused = {
                 self.shared
@@ -948,9 +1019,29 @@ impl DebugAdapter for NodeCdpAdapter {
             StepKind::StepInto => "Debugger.stepInto",
             StepKind::StepOut => "Debugger.stepOut",
         };
-        match self.client.request(method, json!({})) {
+        let outcome = match (smart_step, smart_step_origin) {
+            (Some(direction), Some(origin_pause)) => {
+                let shared = Arc::clone(&self.shared);
+                self.client
+                    .request_with_reservation(method, json!({}), move |request_id| {
+                        let mut shared = shared.lock().map_err(|error| error.to_string())?;
+                        let _ = shared.smart_step_policy.begin_user_step(
+                            direction,
+                            origin_pause,
+                            request_id,
+                            Instant::now(),
+                        );
+                        Ok(())
+                    })
+            }
+            _ => self.client.request(method, json!({})),
+        };
+        match outcome {
             Ok(_) => Ok(()),
             Err(error) => {
+                if let Ok(mut shared) = self.shared.lock() {
+                    shared.cancel_smart_step();
+                }
                 if hidden_function_breakpoint_step
                     && self
                         .function_breakpoints
@@ -973,6 +1064,7 @@ impl DebugAdapter for NodeCdpAdapter {
             .is_some();
         let deferred_or_duplicate = {
             let mut shared = self.shared.lock().map_err(|error| error.to_string())?;
+            shared.cancel_smart_step();
             mark_explicit_pause_requested(&mut shared) || exception_filter_pending
         };
         if deferred_or_duplicate {
@@ -990,6 +1082,9 @@ impl DebugAdapter for NodeCdpAdapter {
     }
 
     fn restart_frame(&mut self, pause_generation: u64, frame_id: u64) -> Result<(), String> {
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.cancel_smart_step();
+        }
         super::restart_frame::restart_frame(
             &self.client,
             &self.shared,
@@ -1006,6 +1101,9 @@ impl DebugAdapter for NodeCdpAdapter {
         line_number: u32,
         column_number: u32,
     ) -> Result<(), String> {
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.cancel_smart_step();
+        }
         match super::run_to_location::run_to_location(
             &self.client,
             &self.shared,
@@ -1060,7 +1158,20 @@ impl DebugAdapter for NodeCdpAdapter {
         &mut self,
         request: DebugVariablePageRequest,
     ) -> Result<DebugVariablePage, String> {
-        load_variables_page(&self.client, &self.shared, request)
+        load_variables_page(
+            &self.client,
+            &self.shared,
+            request,
+            DebugVariableFilter::Named,
+        )
+    }
+
+    fn variables_page_filtered(
+        &mut self,
+        request: DebugVariablePageRequest,
+        filter: DebugVariableFilter,
+    ) -> Result<DebugVariablePage, String> {
+        load_variables_page(&self.client, &self.shared, request, filter)
     }
 
     fn set_variable(
@@ -1116,6 +1227,9 @@ impl DebugAdapter for NodeCdpAdapter {
     }
 
     fn disconnect(&mut self) {
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.cancel_smart_step();
+        }
         super::disconnect::continue_and_close(&mut self.client, &self.shared);
         self.ownership = DebuggeeOwnership::External;
     }
@@ -1123,6 +1237,7 @@ impl DebugAdapter for NodeCdpAdapter {
     fn terminate(&mut self) {
         if let Ok(mut shared) = self.shared.lock() {
             shared.pending_restart_frame = None;
+            shared.cancel_smart_step();
             shared.invalidate_pause();
         }
         self.client.shutdown();

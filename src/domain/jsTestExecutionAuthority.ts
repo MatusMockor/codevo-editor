@@ -25,7 +25,7 @@ export function validatedJsTestPackageRootRelativePath(value: string): string {
     new TextEncoder().encode(normalized).byteLength > MAX_JS_TEST_PACKAGE_ROOT_BYTES ||
     normalized.startsWith("/") ||
     /^[A-Za-z]:\//.test(normalized) ||
-    normalized.includes("\0") ||
+    /[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(normalized) ||
     normalized.split("/").some((segment) => segment === "." || segment === "..") ||
     (normalized !== "" && normalized.split("/").some((segment) => segment === ""))
   ) {

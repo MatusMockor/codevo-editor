@@ -2,6 +2,10 @@ import type * as Monaco from "monaco-editor";
 import { describe, expect, it } from "vitest";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import {
+  MAX_MONACO_DIAGNOSTIC_ITEMS,
+  toBoundedDiagnosticOverviewDecorations,
+  toBoundedLocalPhpDiagnosticMarkers,
+  toBoundedMonacoDiagnosticMarkers,
   toDiagnosticOverviewDecoration,
   toLocalPhpDiagnostic,
   toMonacoDiagnosticMarker,
@@ -170,5 +174,65 @@ describe("editor diagnostic Monaco mappings", () => {
       source: "PHP Inspection",
       tags: [1],
     });
+  });
+
+  it("bounds marker and overview projections for 100,000 diagnostics", () => {
+    const diagnostic: LanguageServerDiagnostic = {
+      character: 0,
+      line: 0,
+      message: "Problem",
+      severity: "error",
+      source: "typescript",
+    };
+    const diagnostics = Array<LanguageServerDiagnostic>(100_000).fill(diagnostic);
+
+    expect(toBoundedMonacoDiagnosticMarkers(monaco, diagnostics)).toHaveLength(
+      MAX_MONACO_DIAGNOSTIC_ITEMS,
+    );
+    expect(toBoundedDiagnosticOverviewDecorations(monaco, diagnostics, [])).toHaveLength(
+      MAX_MONACO_DIAGNOSTIC_ITEMS,
+    );
+  });
+
+  it("shares each UI budget across diagnostic sources", () => {
+    const diagnostic: LanguageServerDiagnostic = {
+      character: 0,
+      line: 0,
+      message: "Problem",
+      severity: "error",
+      source: "typescript",
+    };
+    const syntax = {
+      character: 0,
+      endCharacter: 1,
+      endLine: 0,
+      line: 0,
+      message: "Syntax problem",
+    };
+    const inspection = {
+      character: 0,
+      endCharacter: 1,
+      endLine: 0,
+      kind: "unused-variable" as const,
+      line: 0,
+      message: "Unused",
+      severity: "warning" as const,
+      unnecessary: true,
+    };
+
+    expect(
+      toBoundedDiagnosticOverviewDecorations(
+        monaco,
+        Array<LanguageServerDiagnostic>(1_500).fill(diagnostic),
+        Array(1_500).fill(syntax),
+      ),
+    ).toHaveLength(MAX_MONACO_DIAGNOSTIC_ITEMS);
+    expect(
+      toBoundedLocalPhpDiagnosticMarkers(
+        monaco,
+        Array(1_500).fill(syntax),
+        Array(1_500).fill(inspection),
+      ),
+    ).toHaveLength(MAX_MONACO_DIAGNOSTIC_ITEMS);
   });
 });

@@ -9,6 +9,7 @@ import type {
   DebugRuntimeStatus,
   DebugScope,
   DebugVariable,
+  DebugVariableFilter,
   FunctionBreakpoint,
   StepKind,
 } from "../domain/debug";
@@ -94,6 +95,7 @@ export interface DebugVariableMutationRows {
     parentVariablesReference: number,
     pageStart: number,
     index: number,
+    filter?: DebugVariableFilter,
   ): DebugVariableRowMutation | null;
 }
 
@@ -218,6 +220,7 @@ export interface UseDebugSessionResult {
     owner: DebugInspectionOwner,
     variablesReference: number,
     start: number,
+    filter?: DebugVariableFilter,
   ): Promise<void>;
   evaluate(expression: string): Promise<DebugVariable | null>;
   evaluateClipboard(expression: string): Promise<DebugEvaluationResult | null>;

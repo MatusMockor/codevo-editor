@@ -114,6 +114,57 @@ describe("debugVariablePages", () => {
     ).toBe(pending);
   });
 
+  it("keeps persistent reference buckets enumerable and safe for nonnumeric property probes", () => {
+    const initial = createDebugVariablePagesState(owner);
+    const first = request(initial, 2, 0, "two");
+    const second = request(first, 65, 0, "sixty-five");
+
+    expect(initial.references[2]).toBeUndefined();
+    expect(first.references[2]).toBeDefined();
+    expect(first.references[65]).toBeUndefined();
+    expect(second.references[65]).toBeDefined();
+    expect(Object.keys(second.references)).toEqual(["2", "65"]);
+    expect(2 in second.references).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(second.references, "65")).toBe(true);
+    expect("foo" in second.references).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(second.references, "foo")).toBeUndefined();
+  });
+
+  it("settles named and indexed pages at the same start into separate cache keys", () => {
+    let state = request(createDebugVariablePagesState(owner), 20, 0, "named");
+    state = resolve(state, 20, 0, [variable("named")], null, "named");
+    state = reduceDebugVariablePages(state, {
+      type: "request",
+      owner,
+      variablesReference: 20,
+      filter: "indexed",
+      start: 0,
+      requestId: "indexed",
+    });
+    state = reduceDebugVariablePages(state, {
+      type: "resolve",
+      owner,
+      variablesReference: 20,
+      filter: "indexed",
+      start: 0,
+      requestId: "indexed",
+      result: {
+        variablesReference: 20,
+        filter: "indexed",
+        start: 0,
+        variables: [variable("0")],
+        nextStart: null,
+        total: 1,
+        truncated: false,
+        limitReason: null,
+      },
+    });
+
+    expect(state.references[20]?.pages["0"]?.variables[0]?.name).toBe("named");
+    expect(state.references[20]?.pages["indexed:0"]?.variables[0]?.name).toBe("0");
+    expect(state.references[20]?.errors).toEqual({});
+  });
+
   it("requires ordered cursor pages and rejects overlap or non-progressive results", () => {
     let state = request(createDebugVariablePagesState(owner), 20, 0);
     state = resolve(state, 20, 0, [variable("a"), variable("b")], 2);
@@ -144,14 +195,7 @@ describe("debugVariablePages", () => {
 
   it("settles an overlapping current page as a retryable error", () => {
     let state = request(createDebugVariablePagesState(owner), 20, 0, "first");
-    state = resolve(
-      state,
-      20,
-      0,
-      [variable("a"), variable("b")],
-      2,
-      "first",
-    );
+    state = resolve(state, 20, 0, [variable("a"), variable("b")], 2, "first");
     const reference = state.references[20]!;
     const overlappingPending: DebugVariablePagesState = {
       ...state,
@@ -460,7 +504,9 @@ describe("debugVariablePages", () => {
       ...createDebugVariablePagesState(owner),
       references,
     };
-    expect(selectDebugVariableExpansion(referenceCapped, owner, 2_000)).toEqual({
+    expect(
+      selectDebugVariableExpansion(referenceCapped, owner, MAX_DEBUG_VARIABLE_CACHE_REFERENCES + 1),
+    ).toEqual({
       kind: "limit",
       reason: "references",
     });

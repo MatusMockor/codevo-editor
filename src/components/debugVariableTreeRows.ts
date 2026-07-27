@@ -2,7 +2,8 @@ import type {
   DebugVariableMutationRows,
   DebugVariableRowMutation,
 } from "../application/debugSessionContracts";
-import type { DebugVariable } from "../domain/debug";
+import type { DebugVariable, DebugVariableFilter } from "../domain/debug";
+import { buildDebugVariableRanges, debugIndexedRangeExtent } from "../domain/debugVariableRanges";
 import {
   selectDebugVariableExpansion,
   type DebugInspectionOwner,
@@ -26,7 +27,7 @@ export interface TreeRow {
   readonly id: string;
   readonly parentId: string | null;
   readonly depth: number;
-  readonly kind: "node" | "action" | "status";
+  readonly kind: "node" | "range" | "action" | "status";
   readonly label: string;
   readonly value?: string;
   readonly type?: string | null;
@@ -36,6 +37,7 @@ export interface TreeRow {
   readonly owner: DebugInspectionOwner | null;
   readonly variablesReference: number;
   readonly nextStart?: number;
+  readonly filter?: DebugVariableFilter;
   readonly loadOnExpand?: boolean;
   readonly expandable: boolean;
   readonly expanded: boolean;
@@ -77,6 +79,7 @@ export function buildRows({
 }): TreeRow[] {
   const rows: TreeRow[] = [];
   if (maxRows === 0) return rows;
+  const pagedLocations = indexPagedVariableLocations(variablePages);
   let overflowed = false;
   const append = (row: TreeRow) => {
     if (rows.length < maxRows) rows.push(row);
@@ -111,9 +114,28 @@ export function buildRows({
       ancestors,
       depth,
     );
+    const childLimitReason =
+      rowIdentity &&
+      "childrenLimitReason" in rowIdentity &&
+      (rowIdentity.childrenLimitReason === "references" ||
+        rowIdentity.childrenLimitReason === "referenceBytes")
+        ? rowIdentity.childrenLimitReason
+        : null;
     const terminalExpansion =
-      expansion.kind === "circular" || expansion.kind === "limit" || expansion.kind === "stale";
-    const terminal = terminalExpansion ? terminalExpansionLabel(expansion) : undefined;
+      childLimitReason !== null ||
+      expansion.kind === "circular" ||
+      expansion.kind === "limit" ||
+      expansion.kind === "stale";
+    const terminal = childLimitReason
+      ? `Limit reached: ${childLimitReason}`
+      : terminalExpansion
+        ? terminalExpansionLabel(
+            expansion as Extract<
+              DebugVariableExpansionState,
+              { kind: "circular" | "limit" | "stale" }
+            >,
+          )
+        : undefined;
     const expandable = variablesReference > 0 && expansion.kind !== "leaf" && !terminalExpansion;
     const expanded = expandable && expandedIds.has(id);
     append({
@@ -146,16 +168,15 @@ export function buildRows({
         break;
       }
       const variable = variables[index];
-      const location = variablePages
-        ? findPagedVariableLocation(variablePages, variablesReference, variable)
-        : null;
+      const location = pagedLocations.get(variable);
       const mutation =
         owner && location
           ? (variableMutationRows?.forRow(
               owner,
-              variablesReference,
+              location.parentVariablesReference,
               location.pageStart,
               location.index,
+              location.filter,
             ) ?? undefined)
           : undefined;
       visit(
@@ -175,7 +196,115 @@ export function buildRows({
         variable,
       );
     }
-    if (expansion.kind === "idle" || expansion.kind === "loading") {
+    const indexedPages = variablePages?.references[variablesReference]?.pages;
+    const retainedIndexed = debugIndexedRangeExtent(
+      indexedPages ? Object.values(indexedPages).filter((page) => page.filter === "indexed") : [],
+    );
+    if (retainedIndexed !== null) {
+      const ranges = buildDebugVariableRanges("indexed", {
+        total: retainedIndexed,
+        retained: retainedIndexed,
+        truncated: false,
+        limitReason: null,
+      });
+      for (const range of ranges) {
+        if (rows.length >= maxRows) {
+          overflowed = true;
+          break;
+        }
+        const rangeId = `${id}/range:indexed:${range.start}`;
+        const rangePage = indexedPages?.[`indexed:${range.start}`];
+        const rangeReference = variablePages?.references[variablesReference];
+        const rangeError = rangeReference?.errors[`indexed:${range.start}`];
+        const rangePending = Boolean(rangeReference?.pending[`indexed:${range.start}`]);
+        const rangeExpanded = expandedIds.has(rangeId);
+        append({
+          id: rangeId,
+          parentId: id,
+          depth: depth + 1,
+          kind: "range",
+          label: range.label,
+          owner,
+          variablesReference,
+          filter: "indexed",
+          nextStart: range.start,
+          expandable: true,
+          expanded: rangeExpanded,
+          busy: rangeExpanded && rangePending,
+          loadOnExpand: !rangePage,
+        });
+        if (!rangeExpanded) continue;
+        if (!rangePage) {
+          append(
+            rangeError
+              ? actionRow(
+                  rangeId,
+                  depth + 2,
+                  `Retry: ${rangeError}`,
+                  owner,
+                  variablesReference,
+                  range.start,
+                  "indexed",
+                )
+              : statusRow(rangeId, depth + 2, "Loading…"),
+          );
+          continue;
+        }
+        for (let index = 0; index < rangePage.variables.length; index += 1) {
+          const variable = rangePage.variables[index];
+          const mutation =
+            owner && variableMutationRows
+              ? (variableMutationRows.forRow(
+                  owner,
+                  variablesReference,
+                  rangePage.start,
+                  index,
+                  "indexed",
+                ) ?? undefined)
+              : undefined;
+          visit(
+            `${rangeId}/${range.start + index}:${variable.name}`,
+            rangeId,
+            depth + 2,
+            variable.name,
+            variable.value,
+            variable.type,
+            variable.evaluateName,
+            variable.evaluateName,
+            variable.variablesReference,
+            owner,
+            [...ancestors, variablesReference],
+            undefined,
+            mutation,
+            variable,
+          );
+        }
+      }
+    }
+    const namedProjectionLimit = variablePages
+      ? Object.values(variablePages.references[variablesReference]?.pages ?? {}).find(
+          (page) =>
+            (page.filter ?? "named") === "named" && page.truncated === true && page.limitReason,
+        )?.limitReason
+      : undefined;
+    const indexedProjectionLimit = variablePages
+      ? Object.values(variablePages.references[variablesReference]?.pages ?? {}).find(
+          (page) => page.filter === "indexed" && page.truncated === true && page.limitReason,
+        )?.limitReason
+      : undefined;
+    const indexedLoadError = variablePages
+      ? Object.entries(variablePages.references[variablesReference]?.errors ?? {}).find(([key]) =>
+          key.startsWith("indexed:"),
+        )?.[1]
+      : undefined;
+    if (indexedProjectionLimit) {
+      append(statusRow(id, depth + 1, `Indexed limit reached: ${indexedProjectionLimit}`));
+    } else if (indexedLoadError) {
+      append(statusRow(id, depth + 1, `Indexed unavailable: ${indexedLoadError}`));
+    }
+    if (namedProjectionLimit) {
+      append(statusRow(id, depth + 1, `Limit reached: ${namedProjectionLimit}`));
+    } else if (expansion.kind === "idle" || expansion.kind === "loading") {
       append(statusRow(id, depth + 1, "Loading…"));
     } else if (expansion.kind === "error") {
       append(
@@ -216,18 +345,31 @@ export function buildRows({
   return rows;
 }
 
-function findPagedVariableLocation(
-  state: DebugVariablePagesState,
-  parentVariablesReference: number,
-  variable: DebugVariable,
-): { readonly pageStart: number; readonly index: number } | null {
-  const pages = state.references[parentVariablesReference]?.pages;
-  if (!pages) return null;
-  for (const [pageStart, page] of Object.entries(pages)) {
-    const index = page.variables.indexOf(variable);
-    if (index >= 0) return { pageStart: Number(pageStart), index };
+interface PagedVariableLocation {
+  readonly parentVariablesReference: number;
+  readonly pageStart: number;
+  readonly index: number;
+  readonly filter: DebugVariableFilter;
+}
+
+function indexPagedVariableLocations(
+  state: DebugVariablePagesState | undefined,
+): WeakMap<DebugVariable, PagedVariableLocation> {
+  const locations = new WeakMap<DebugVariable, PagedVariableLocation>();
+  if (!state) return locations;
+  for (const [reference, pages] of Object.entries(state.references)) {
+    for (const page of Object.values(pages.pages)) {
+      for (let index = 0; index < page.variables.length; index += 1) {
+        locations.set(page.variables[index]!, {
+          parentVariablesReference: Number(reference),
+          pageStart: page.start,
+          index,
+          filter: page.filter ?? "named",
+        });
+      }
+    }
   }
-  return null;
+  return locations;
 }
 
 function expansionFor(
@@ -271,6 +413,7 @@ function actionRow(
   owner: DebugInspectionOwner | null,
   variablesReference: number,
   nextStart: number,
+  filter: DebugVariableFilter = "named",
 ): TreeRow {
   return {
     id: `${parentId}/action:${nextStart}`,
@@ -281,6 +424,7 @@ function actionRow(
     owner,
     variablesReference,
     nextStart,
+    filter,
     expandable: false,
     expanded: false,
   };

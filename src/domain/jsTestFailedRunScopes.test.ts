@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { JsTestExplorerTestDiscovery } from "./jsTestExplorerTree";
 import {
+  createJsTestFailedRunResolver,
   jsTestFailedRunScopes,
   MAX_JS_TEST_FAILED_RUN_CASES,
   MAX_JS_TEST_FAILED_RUN_DISCOVERIES,
@@ -214,6 +215,31 @@ describe("jsTestFailedRunScopes", () => {
 
     expect(plan.status).toBe("unavailable");
     expect(plan.scopes).toEqual([]);
+  });
+
+  it("builds one immutable discovery index reused across package responses", () => {
+    let targetReads = 0;
+    const base = discovery("a.test.ts", [], "works", 3);
+    const found = {
+      ...base,
+      get target() {
+        targetReads += 1;
+        return base.target;
+      },
+    };
+    const input = snapshot([found], [runtime("works", "a.test.ts", 3, "failed")]);
+    const prepared = createJsTestFailedRunResolver(input);
+    expect(prepared.status).toBe("available");
+    if (prepared.status !== "available") return;
+    const readsAfterIndex = targetReads;
+
+    for (let packageIndex = 0; packageIndex < 8; packageIndex += 1) {
+      expect(prepared.resolver.resolve(input.response).status).toBe("available");
+    }
+
+    expect(targetReads).toBe(readsAfterIndex);
+    expect(Object.isFrozen(prepared)).toBe(true);
+    expect(Object.isFrozen(prepared.resolver)).toBe(true);
   });
 });
 

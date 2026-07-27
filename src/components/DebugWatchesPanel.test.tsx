@@ -299,7 +299,7 @@ describe("DebugWatchesPanel", () => {
     act(() => valueRoot.click());
     expect(host.querySelector('[aria-label="name, Ada"]')).not.toBeNull();
     act(() => host.querySelector<HTMLButtonElement>('[aria-label="Load more"]')?.click());
-    expect(onLoadVariablePage).toHaveBeenCalledWith(evaluationOwner, 99, 100);
+    expect(onLoadVariablePage).toHaveBeenCalledWith(evaluationOwner, 99, 100, "named");
 
     act(() => valueRoot.focus());
     render({

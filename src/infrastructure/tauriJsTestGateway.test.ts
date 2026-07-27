@@ -482,6 +482,135 @@ describe("TauriJsTestGateway", () => {
       "Invalid JavaScript test response",
     );
   });
+
+  it("dispatches and strictly decodes one atomic monorepo batch", async () => {
+    const request = batchRequest();
+    const response = {
+      owner: TASK_OWNER,
+      packages: [
+        {
+          authority: { packageRootRelativePath: "packages/a", runner: "jest" },
+          output: taskOutput("jest output"),
+          response: ok([]),
+        },
+        {
+          authority: { packageRootRelativePath: "packages/b", runner: "vitest" },
+          output: taskOutput("vitest output"),
+          response: ok([]),
+        },
+      ],
+      status: "ok",
+      totals: emptyTotals(),
+    };
+    const invoke = vi.fn(async () => response);
+    const gateway = new TauriJsTestGateway(invoke);
+
+    await expect(gateway.runBatch(request)).resolves.toEqual(response);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("run_js_test_batch_json", {
+      request,
+    });
+  });
+
+  it.each([
+    {
+      owner: TASK_OWNER,
+      packages: [
+        {
+          authority: { packageRootRelativePath: "packages/b", runner: "jest" },
+          output: taskOutput(),
+          response: ok([]),
+        },
+        {
+          authority: { packageRootRelativePath: "packages/a", runner: "vitest" },
+          output: taskOutput(),
+          response: ok([]),
+        },
+      ],
+      status: "ok",
+      totals: emptyTotals(),
+    },
+    {
+      owner: TASK_OWNER,
+      packages: [
+        {
+          authority: { packageRootRelativePath: "packages/a", runner: "jest" },
+          output: taskOutput(),
+          response: { message: "partial", status: "error" },
+        },
+        {
+          authority: { packageRootRelativePath: "packages/b", runner: "vitest" },
+          output: taskOutput(),
+          response: ok([]),
+        },
+      ],
+      status: "ok",
+      totals: emptyTotals(),
+    },
+    {
+      owner: TASK_OWNER,
+      packages: [],
+      status: "ok",
+      totals: emptyTotals(),
+    },
+    {
+      message: "partial",
+      owner: TASK_OWNER,
+      authorities: [],
+      output: taskOutput(),
+      packages: [],
+      status: "error",
+    },
+    {
+      owner: { runId: "foreign", workspaceId: "workspace-1" },
+      packages: [],
+      status: "ok",
+      totals: emptyTotals(),
+    },
+  ])("rejects replaced, partial, or foreign batch response %#", async (response) => {
+    const gateway = new TauriJsTestGateway(async () => response);
+    await expect(gateway.runBatch(batchRequest())).rejects.toThrow(
+      "Invalid JavaScript test response",
+    );
+  });
+
+  it("stops the exact monorepo batch owner", async () => {
+    const invoke = vi.fn(async () => ({ runId: "run-1", stopped: true }));
+    const gateway = new TauriJsTestGateway(invoke);
+
+    await expect(gateway.stopBatch(TASK_OWNER)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("stop_js_test_batch", {
+      request: TASK_OWNER,
+    });
+  });
+
+  it("enforces suite, case, and text budgets across the whole batch rather than per package", async () => {
+    const packageResponse = (name: string) => ({
+      status: "ok",
+      suites: Array.from({ length: 3_000 }, () => suite([], name)),
+      totals: emptyTotals(),
+    });
+    const gateway = new TauriJsTestGateway(async () => ({
+      owner: TASK_OWNER,
+      packages: [
+        {
+          authority: { packageRootRelativePath: "packages/a", runner: "jest" },
+          output: taskOutput(),
+          response: packageResponse("a"),
+        },
+        {
+          authority: { packageRootRelativePath: "packages/b", runner: "vitest" },
+          output: taskOutput(),
+          response: packageResponse("b"),
+        },
+      ],
+      status: "ok",
+      totals: emptyTotals(),
+    }));
+
+    await expect(gateway.runBatch(batchRequest())).rejects.toThrow(
+      "Invalid JavaScript test response at suites",
+    );
+  });
 });
 
 function runResponse(response: unknown) {
@@ -494,11 +623,25 @@ function taskRequest() {
   return { ...TASK_OWNER, scope: { kind: "all" as const } };
 }
 
+function batchRequest() {
+  return {
+    ...TASK_OWNER,
+    packages: [
+      { packageRootRelativePath: "packages/a" },
+      { packageRootRelativePath: "packages/b" },
+    ],
+  };
+}
+
 function taskOutput(stdout = "", stderr = "") {
   return {
     stdout: { text: stdout, truncated: false },
     stderr: { text: stderr, truncated: false },
   };
+}
+
+function emptyTotals() {
+  return { errors: 0, failures: 0, skipped: 0, tests: 0, time: null };
 }
 
 function taskEnvelope(response: unknown, output = taskOutput()) {

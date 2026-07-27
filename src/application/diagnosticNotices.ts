@@ -1,6 +1,5 @@
 import {
   createWorkbenchNotice,
-  capDiagnosticNotices,
   capWorkbenchNotices,
   type WorkbenchNotice,
   type WorkbenchNoticeNavigationTarget,
@@ -30,11 +29,10 @@ import { pathFromLanguageServerUri } from "../domain/languageServerFeatures";
 
 // A single Laravel file can publish hundreds of diagnostics. Mapping every one
 // to a notice and re-rendering the notices panel freezes the main thread, so we
-// cap how many diagnostic notices a document contributes. Editor markers
-// (Monaco `setModelMarkers`) come from a separate, uncapped source, so this cap
-// never hides a squiggle — it only bounds the textual notices list. When the
-// cap trims notices, an `info` indicator carrying the truthful hidden count is
-// appended so diagnostics are never dropped silently.
+// cap how many diagnostic notices a document contributes. Monaco has its own
+// bounded projection; neither surface claims that opening a file reveals an
+// unbounded upstream publication. When the cap trims notices, an `info`
+// indicator carrying the truthful Problems-list count is appended.
 export const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
 
 // Global ceiling on the total diagnostic notices retained in state. The
@@ -42,7 +40,7 @@ export const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
 // project with diagnostics across thousands of files would still grow the list
 // without bound — and each publishDiagnostics runs an O(total) group replace.
 // This caps the head (newest groups are prepended) and appends one truthful
-// overflow indicator. Editor markers come from a separate, uncapped source.
+// overflow indicator.
 export const GLOBAL_NOTICE_LIMIT = 2000;
 
 export const PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX = "php-local-diagnostics:";
@@ -76,7 +74,7 @@ export function buildDiagnosticOverflowNotice(
   return createWorkbenchNotice(
     "info",
     source,
-    `Showing ${shownCount} of ${totalCount} diagnostics — ${hiddenCount} more hidden. Open the file to see all markers.`,
+    `Showing ${shownCount} of ${totalCount} diagnostics in Problems; ${hiddenCount} not shown in this list.`,
     groupKey,
     undefined,
     "overflow",
@@ -265,17 +263,27 @@ function activeLocalDiagnosticNotices(
   if (!identity) return [];
   const { groupKey, uri } = identity;
 
-  return capDiagnosticNotices(
-    diagnostics.map((diagnostic) =>
-      createWorkbenchNotice(
-        languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-        diagnostic.source || fallbackSource,
-        languageServerDiagnosticNoticeMessage(diagnostic, uri),
-        groupKey,
-        diagnosticNoticeNavigationTarget(uri, diagnostic),
-      ),
+  const retainedDiagnostics = diagnostics.slice(0, DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT);
+  const retainedNotices = retainedDiagnostics.map((diagnostic) =>
+    createWorkbenchNotice(
+      languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+      diagnostic.source || fallbackSource,
+      languageServerDiagnosticNoticeMessage(diagnostic, uri),
+      groupKey,
+      diagnosticNoticeNavigationTarget(uri, diagnostic),
     ),
-    DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-    (hiddenCount) => buildDiagnosticOverflowNotice(fallbackSource, groupKey, hiddenCount),
   );
+
+  if (retainedDiagnostics.length === diagnostics.length) {
+    return retainedNotices;
+  }
+
+  return [
+    ...retainedNotices,
+    buildDiagnosticOverflowNotice(
+      fallbackSource,
+      groupKey,
+      diagnostics.length - retainedDiagnostics.length,
+    ),
+  ];
 }

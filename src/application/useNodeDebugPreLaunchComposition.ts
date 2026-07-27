@@ -36,7 +36,7 @@ const PRE_LAUNCH_START_WARNING = "Node debug configuration could not be started.
 const POST_DEBUG_TASK_WARNING = "Debug post-task could not be completed.";
 
 interface NodeDebugPreLaunchBoundary {
-  readonly launchConfigurationVersion: number;
+  readonly launchConfigurationEpoch: number;
   readonly rootPath: string | null;
   readonly workspaceId: string | null;
   readonly workspaceTrusted: boolean;
@@ -92,27 +92,30 @@ export function useNodeDebugPreLaunchComposition(options: {
       mountedRef.current = false;
     };
   }, []);
+  const launchConfigurationVersionRef = useRef(options.launchConfigurationVersion);
+  const launchConfigurationEpochRef = useRef(0);
+  if (launchConfigurationVersionRef.current !== options.launchConfigurationVersion) {
+    launchConfigurationVersionRef.current = options.launchConfigurationVersion;
+    launchConfigurationEpochRef.current = nextEpoch(launchConfigurationEpochRef.current);
+  }
+  const launchConfigurationEpoch = launchConfigurationEpochRef.current;
   const boundaryRef = useRef<NodeDebugPreLaunchBoundary | null>(null);
   const epochRef = useRef(0);
   const boundary = useMemo(
     () => ({
-      launchConfigurationVersion: options.launchConfigurationVersion,
+      launchConfigurationEpoch,
       rootPath: options.rootPath,
       workspaceId: options.workspaceId,
       workspaceTrusted: options.workspaceTrusted,
     }),
-    [
-      options.launchConfigurationVersion,
-      options.rootPath,
-      options.workspaceId,
-      options.workspaceTrusted,
-    ],
+    [launchConfigurationEpoch, options.rootPath, options.workspaceId, options.workspaceTrusted],
   );
-  if (!sameBoundary(boundaryRef.current, boundary)) {
-    boundaryRef.current = boundary;
+  if (!sameWorkspaceAuthority(boundaryRef.current, boundary)) {
     epochRef.current = nextEpoch(epochRef.current);
   }
+  boundaryRef.current = boundary;
   const epoch = epochRef.current;
+  const debugStartCommittedRef = useRef(false);
   const executionRef = useRef(options.processTasks);
   executionRef.current = options.processTasks;
   const ownedPostTaskExecutionRef = useRef<OwnedPostTaskExecution | null>(null);
@@ -198,6 +201,12 @@ export function useNodeDebugPreLaunchComposition(options: {
     refreshPostSnapshot,
     serverReadyCoordinator,
   ]);
+  const appliedLaunchConfigurationEpochRef = useRef(launchConfigurationEpoch);
+  useEffect(() => {
+    if (appliedLaunchConfigurationEpochRef.current === launchConfigurationEpoch) return;
+    appliedLaunchConfigurationEpochRef.current = launchConfigurationEpoch;
+    if (!debugStartCommittedRef.current) void coordinator.invalidate();
+  }, [coordinator, launchConfigurationEpoch]);
   useEffect(
     () => () => {
       void coordinator.invalidate();
@@ -256,7 +265,8 @@ export function useNodeDebugPreLaunchComposition(options: {
               workspaceEpoch: retained.workspaceEpoch,
               workspaceId: retained.boundary.workspaceId,
             },
-            retained.boundary.launchConfigurationVersion,
+            retained.boundary.launchConfigurationEpoch,
+            launchConfigurationEpochRef.current,
             epochRef.current,
           )
         ) {
@@ -302,7 +312,7 @@ export function useNodeDebugPreLaunchComposition(options: {
           serverReadyOpenerRef.current = null;
           if (prepared.serverReadyAction) {
             const owner: ServerReadyActionOwner = Object.freeze({
-              configurationVersion: captured.launchConfigurationVersion,
+              configurationVersion: captured.launchConfigurationEpoch,
               rootPath: capturedRoot,
               workspaceEpoch: capturedEpoch,
               workspaceId: capturedWorkspaceId,
@@ -317,6 +327,7 @@ export function useNodeDebugPreLaunchComposition(options: {
                     workspaceId: candidate.workspaceId,
                   },
                   candidate.configurationVersion,
+                  launchConfigurationEpochRef.current,
                   epochRef.current,
                 ),
               owner,
@@ -330,9 +341,17 @@ export function useNodeDebugPreLaunchComposition(options: {
               };
             }
           }
-          acceptedSessionId = prepared.nativeWatch
-            ? ((await optionsRef.current.startNativeNodeWatch?.(prepared)) ?? null)
-            : await optionsRef.current.startDebug(prepared.launch);
+          if (launchConfigurationEpochRef.current !== captured.launchConfigurationEpoch) {
+            return false;
+          }
+          debugStartCommittedRef.current = true;
+          try {
+            acceptedSessionId = prepared.nativeWatch
+              ? ((await optionsRef.current.startNativeNodeWatch?.(prepared)) ?? null)
+              : await optionsRef.current.startDebug(prepared.launch);
+          } finally {
+            debugStartCommittedRef.current = false;
+          }
           if (serverReadyLease && acceptedSessionId !== null) {
             openServerReady(serverReadyCoordinator.adopt(serverReadyLease, acceptedSessionId));
           } else if (serverReadyLease) {
@@ -341,14 +360,13 @@ export function useNodeDebugPreLaunchComposition(options: {
           return acceptedSessionId !== null;
         },
       );
-      const ownerStillCurrent = postTaskOwnerIsCurrent(
+      const ownerStillCurrent = debugStartOwnerIsCurrent(
         optionsRef.current,
         {
           rootPath: captured.rootPath,
           workspaceEpoch: capturedEpoch,
           workspaceId: captured.workspaceId,
         },
-        captured.launchConfigurationVersion,
         epochRef.current,
       );
       if (acceptedSessionId !== null && (outcome.status !== "started" || !ownerStillCurrent)) {
@@ -369,6 +387,10 @@ export function useNodeDebugPreLaunchComposition(options: {
         return false;
       }
       if (outcome.status === "started" && acceptedSessionId !== null) {
+        if (launchConfigurationEpochRef.current !== captured.launchConfigurationEpoch) {
+          if (serverReadyLease) serverReadyCoordinator.cancel(serverReadyLease);
+          return true;
+        }
         const restartStrategy = createPreparedNodeDebugRestartStrategy(prepared);
         if (!restartStrategy) {
           if (serverReadyLease) serverReadyCoordinator.cancel(serverReadyLease);
@@ -391,7 +413,8 @@ export function useNodeDebugPreLaunchComposition(options: {
               postTaskOwnerIsCurrent(
                 optionsRef.current,
                 identity,
-                captured.launchConfigurationVersion,
+                captured.launchConfigurationEpoch,
+                launchConfigurationEpochRef.current,
                 epochRef.current,
               ),
             rootPath: captured.rootPath,
@@ -502,7 +525,8 @@ export function useNodeDebugPreLaunchComposition(options: {
           workspaceEpoch: retained.workspaceEpoch,
           workspaceId: retained.boundary.workspaceId,
         },
-        retained.boundary.launchConfigurationVersion,
+        retained.boundary.launchConfigurationEpoch,
+        launchConfigurationEpochRef.current,
         epochRef.current,
       ),
     );
@@ -542,7 +566,8 @@ export function useNodeDebugPreLaunchComposition(options: {
             workspaceEpoch: retained.workspaceEpoch,
             workspaceId: retained.boundary.workspaceId,
           },
-          retained.boundary.launchConfigurationVersion,
+          retained.boundary.launchConfigurationEpoch,
+          launchConfigurationEpochRef.current,
           epochRef.current,
         )
       ) {
@@ -631,7 +656,6 @@ async function settleTerminalEvent(
 function postTaskOwnerIsCurrent(
   options: {
     readonly isWorkspaceCurrent: (rootPath: string, workspaceId: string) => boolean;
-    readonly launchConfigurationVersion: number;
     readonly rootPath: string | null;
     readonly workspaceId: string | null;
     readonly workspaceTrusted: boolean;
@@ -641,12 +665,13 @@ function postTaskOwnerIsCurrent(
     readonly workspaceEpoch: number;
     readonly workspaceId: string;
   },
-  launchConfigurationVersion: number,
+  launchConfigurationEpoch: number,
+  currentLaunchConfigurationEpoch: number,
   workspaceEpoch: number,
 ): boolean {
   if (
     !options.workspaceTrusted ||
-    options.launchConfigurationVersion !== launchConfigurationVersion ||
+    currentLaunchConfigurationEpoch !== launchConfigurationEpoch ||
     identity.workspaceEpoch !== workspaceEpoch ||
     options.workspaceId !== identity.workspaceId ||
     !workspaceRootKeysEqual(options.rootPath, identity.rootPath)
@@ -660,13 +685,41 @@ function postTaskOwnerIsCurrent(
   }
 }
 
-function sameBoundary(
+function debugStartOwnerIsCurrent(
+  options: {
+    readonly isWorkspaceCurrent: (rootPath: string, workspaceId: string) => boolean;
+    readonly rootPath: string | null;
+    readonly workspaceId: string | null;
+    readonly workspaceTrusted: boolean;
+  },
+  identity: {
+    readonly rootPath: string;
+    readonly workspaceEpoch: number;
+    readonly workspaceId: string;
+  },
+  workspaceEpoch: number,
+): boolean {
+  if (
+    !options.workspaceTrusted ||
+    identity.workspaceEpoch !== workspaceEpoch ||
+    options.workspaceId !== identity.workspaceId ||
+    !workspaceRootKeysEqual(options.rootPath, identity.rootPath)
+  ) {
+    return false;
+  }
+  try {
+    return options.isWorkspaceCurrent(identity.rootPath, identity.workspaceId);
+  } catch {
+    return false;
+  }
+}
+
+function sameWorkspaceAuthority(
   previous: NodeDebugPreLaunchBoundary | null,
   next: NodeDebugPreLaunchBoundary,
 ): boolean {
   return (
     previous !== null &&
-    previous.launchConfigurationVersion === next.launchConfigurationVersion &&
     workspaceRootKeysEqual(previous.rootPath, next.rootPath) &&
     previous.workspaceId === next.workspaceId &&
     previous.workspaceTrusted === next.workspaceTrusted

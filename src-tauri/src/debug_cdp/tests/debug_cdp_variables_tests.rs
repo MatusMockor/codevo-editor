@@ -1,7 +1,7 @@
 use super::*;
 use crate::debug_adapter::{
-    DebugEvaluateContext, DebugEvaluatePolicy, DebugSetVariableRequest, DebugVariablePageRequest,
-    StepKind,
+    DebugEvaluateContext, DebugEvaluatePolicy, DebugSetVariableRequest, DebugVariableFilter,
+    DebugVariablePageRequest, StepKind,
 };
 use crate::debug_cdp::variables::{
     MutableScopeKind, ObjectReferenceAccess, ObjectReferenceMutation,
@@ -27,6 +27,11 @@ mod set_expression_proof_tests {
 mod multiline_evaluate_name_tests {
     use super::*;
     include!("debug_cdp_multiline_evaluate_name_tests.rs");
+}
+
+mod variable_range_tests {
+    use super::*;
+    include!("debug_cdp_variable_range_tests.rs");
 }
 
 fn variables_responder(properties: Value) -> MockResponder {
@@ -1159,7 +1164,6 @@ fn cdp_pages_build_private_numeric_and_escaped_nested_accessors() {
     assert_eq!(
         paths,
         vec![
-            Some("this[0]"),
             Some("this[\"full name\"]"),
             Some("this[\"a\\\"b\\\\c\"]"),
             Some("this[\"#ordinary\"]"),
@@ -1173,7 +1177,7 @@ fn cdp_pages_build_private_numeric_and_escaped_nested_accessors() {
             adapter.variables_page(DebugVariablePageRequest {
                 pause_generation,
                 frame_id,
-                variables_reference: nested.variables[5].variables_reference,
+                variables_reference: nested.variables[4].variables_reference,
                 start: 0,
                 count: 100,
             })
@@ -1303,7 +1307,8 @@ fn repeated_pages_dedupe_references_and_the_hard_cap_resets_on_the_next_pause() 
     assert!(capped
         .variables
         .iter()
-        .any(|variable| variable.variables_reference == 0));
+        .all(|variable| variable.variables_reference > 0));
+    assert_eq!(server.params_for("Runtime.getProperties").len(), 1);
 
     registry
         .with_session(WORKSPACE_KEY, |adapter| adapter.step(StepKind::Continue))
@@ -1373,11 +1378,16 @@ fn identical_pages_reuse_stable_reference_ids_across_repeated_cdp_loads() {
             .collect::<Vec<_>>();
         assert_eq!(references, expected);
     }
-    let error = registry
+    let references = registry
         .with_session(WORKSPACE_KEY, |adapter| adapter.variables_page(request))
         .expect("session")
-        .expect_err("pause page-load cap");
-    assert!(error.contains("page load limit"));
+        .expect("cached page after repeated reads")
+        .variables
+        .iter()
+        .map(|variable| variable.variables_reference)
+        .collect::<Vec<_>>();
+    assert_eq!(references, expected);
+    assert_eq!(server.params_for("Runtime.getProperties").len(), 1);
 }
 
 #[test]

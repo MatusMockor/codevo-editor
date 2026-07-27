@@ -97,6 +97,7 @@ describe("useJsTestExplorerPanelController problem integration", () => {
     act(() => root.render(<Harness />));
 
     expect(mocks.useJsTestExplorer).toHaveBeenCalledWith({
+      batchGateway: null,
       continuousRunBlocked: true,
       continuousRunVersion: 0,
       continuousRunWatchCommand: null,

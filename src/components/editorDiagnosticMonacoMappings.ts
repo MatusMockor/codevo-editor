@@ -10,6 +10,74 @@ type DiagnosticRange = {
   line: number;
 };
 
+export const MAX_MONACO_DIAGNOSTIC_ITEMS = 2_000;
+
+export function toBoundedMonacoDiagnosticMarkers(
+  monaco: typeof Monaco,
+  diagnostics: readonly LanguageServerDiagnostic[],
+): Monaco.editor.IMarkerData[] {
+  const retainedCount = Math.min(diagnostics.length, MAX_MONACO_DIAGNOSTIC_ITEMS);
+  const markers = new Array<Monaco.editor.IMarkerData>(retainedCount);
+
+  for (let index = 0; index < retainedCount; index += 1) {
+    markers[index] = toMonacoDiagnosticMarker(monaco, diagnostics[index]!);
+  }
+
+  return markers;
+}
+
+export function toBoundedDiagnosticOverviewDecorations(
+  monaco: typeof Monaco,
+  languageServerDiagnostics: readonly LanguageServerDiagnostic[],
+  syntaxDiagnostics: readonly PhpSyntaxDiagnostic[],
+): Monaco.editor.IModelDeltaDecoration[] {
+  const decorations: Monaco.editor.IModelDeltaDecoration[] = [];
+
+  for (
+    let index = 0;
+    index < languageServerDiagnostics.length && decorations.length < MAX_MONACO_DIAGNOSTIC_ITEMS;
+    index += 1
+  ) {
+    decorations.push(toDiagnosticOverviewDecoration(monaco, languageServerDiagnostics[index]!));
+  }
+
+  for (
+    let index = 0;
+    index < syntaxDiagnostics.length && decorations.length < MAX_MONACO_DIAGNOSTIC_ITEMS;
+    index += 1
+  ) {
+    decorations.push(toSyntaxOverviewDecoration(monaco, syntaxDiagnostics[index]!));
+  }
+
+  return decorations;
+}
+
+export function toBoundedLocalPhpDiagnosticMarkers(
+  monaco: typeof Monaco,
+  syntaxDiagnostics: readonly PhpSyntaxDiagnostic[],
+  inspectionDiagnostics: readonly PhpInspectionDiagnostic[],
+): Monaco.editor.IMarkerData[] {
+  const markers: Monaco.editor.IMarkerData[] = [];
+
+  for (
+    let index = 0;
+    index < syntaxDiagnostics.length && markers.length < MAX_MONACO_DIAGNOSTIC_ITEMS;
+    index += 1
+  ) {
+    markers.push(toMonacoSyntaxDiagnosticMarker(monaco, syntaxDiagnostics[index]!));
+  }
+
+  for (
+    let index = 0;
+    index < inspectionDiagnostics.length && markers.length < MAX_MONACO_DIAGNOSTIC_ITEMS;
+    index += 1
+  ) {
+    markers.push(toMonacoInspectionMarker(monaco, inspectionDiagnostics[index]!));
+  }
+
+  return markers;
+}
+
 export function toMonacoDiagnosticMarker(
   monaco: typeof Monaco,
   diagnostic: LanguageServerDiagnostic,

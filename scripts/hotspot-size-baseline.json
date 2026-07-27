@@ -1,9 +1,7 @@
 {
   "productionLineLimit": 2000,
   "productionStructuralTokenLimit": 10000,
-  "trackedTests": [
-    "src/application/useWorkbenchController.preview.test.tsx"
-  ],
+  "trackedTests": ["src/application/useWorkbenchController.preview.test.tsx"],
   "files": {
     "src-tauri/src/debug_cdp.rs": {
       "rawLines": 1458,
@@ -22,16 +20,16 @@
       "structuralTokens": 10277
     },
     "src-tauri/src/lib.rs": {
-      "rawLines": 10232,
-      "structuralTokens": 59177
+      "rawLines": 10180,
+      "structuralTokens": 58967
     },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 4503,
       "structuralTokens": 25032
     },
     "src-tauri/src/lsp_session.rs": {
-      "rawLines": 8266,
-      "structuralTokens": 42134
+      "rawLines": 8157,
+      "structuralTokens": 41567
     },
     "src-tauri/src/lsp.rs": {
       "rawLines": 2364,
@@ -54,16 +52,16 @@
       "structuralTokens": 8820
     },
     "src/application/useWorkbenchController.preview.test.tsx": {
-      "rawLines": 74661,
-      "structuralTokens": 345241
+      "rawLines": 74651,
+      "structuralTokens": 345163
     },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 10165,
-      "structuralTokens": 38633
+      "rawLines": 10089,
+      "structuralTokens": 38250
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 5285,
-      "structuralTokens": 22018
+      "rawLines": 5283,
+      "structuralTokens": 21983
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
       "rawLines": 3846,

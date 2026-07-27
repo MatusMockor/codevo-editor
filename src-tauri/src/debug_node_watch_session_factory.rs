@@ -15,8 +15,8 @@ use crate::debug_adapter::{
     DebugEventEmitter, DebugExceptionPauseMode, DebugFunctionBreakpoint,
     DebugFunctionBreakpointVerification, DebugJustMyCodePolicy, DebugScopeInfo,
     DebugSetExpressionRequest, DebugSetExpressionResult, DebugSetVariableRequest,
-    DebugSetVariableResult, DebugStackFrame, DebugStartResponse, DebugVariableInfo,
-    DebugVariablePage, DebugVariablePageRequest, StepKind,
+    DebugSetVariableResult, DebugStackFrame, DebugStartResponse, DebugVariableFilter,
+    DebugVariableInfo, DebugVariablePage, DebugVariablePageRequest, StepKind,
 };
 use crate::debug_breakpoint_policy::DebugBreakpointAdapterKind;
 use crate::debug_commands::start_debug_session_with_factory;
@@ -46,6 +46,7 @@ pub(crate) struct NativeNodeWatchLaunchAuthority {
     is_current: Arc<dyn Fn() -> bool + Send + Sync>,
     verified_runtime: Option<crate::debug_node_launch::NodeLaunchProgram>,
     source_maps_enabled: bool,
+    smart_step_enabled: bool,
     start_confirm_timeout: Duration,
     #[cfg(test)]
     after_supervisor_started: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -57,6 +58,7 @@ impl NativeNodeWatchLaunchAuthority {
             is_current,
             verified_runtime: None,
             source_maps_enabled: true,
+            smart_step_enabled: true,
             start_confirm_timeout: START_CONFIRM_TIMEOUT,
             #[cfg(test)]
             after_supervisor_started: None,
@@ -77,6 +79,11 @@ impl NativeNodeWatchLaunchAuthority {
 
     pub(crate) fn with_source_maps_enabled(mut self, enabled: bool) -> Self {
         self.source_maps_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_smart_step_enabled(mut self, enabled: bool) -> Self {
+        self.smart_step_enabled = enabled;
         self
     }
 
@@ -162,6 +169,7 @@ pub(crate) fn start_native_node_watch_session(
         WatchDebugCommandWorkerPolicy::new(COMMAND_QUEUE_CAPACITY, COMMAND_TIMEOUT)?,
     )?
     .with_source_maps_enabled(authority.source_maps_enabled);
+    let adapter_policy = adapter_policy.with_smart_step_enabled(authority.smart_step_enabled);
     let generation_policy =
         WatchGenerationPolicy::new(REPLACEMENT_TIMEOUT_TICKS, MAX_ENDPOINT_EVENTS)
             .map_err(|_| "Invalid native Node watch generation policy.".to_string())?;
@@ -413,6 +421,16 @@ impl DebugAdapter for NativeNodeWatchRegistryAdapter {
         self.control.variables_page(request).map_err(Self::failure)
     }
 
+    fn variables_page_filtered(
+        &mut self,
+        request: DebugVariablePageRequest,
+        filter: DebugVariableFilter,
+    ) -> Result<DebugVariablePage, String> {
+        self.control
+            .variables_page_filtered(request, filter)
+            .map_err(Self::failure)
+    }
+
     fn set_variable(
         &mut self,
         request: DebugSetVariableRequest,
@@ -519,13 +537,17 @@ mod tests {
     }
 
     #[test]
-    fn native_watch_authority_defaults_source_maps_on_and_preserves_disabled_policy() {
+    fn native_watch_authority_defaults_runtime_features_on_and_preserves_disables() {
         let enabled = NativeNodeWatchLaunchAuthority::new(Arc::new(|| true));
         assert!(enabled.source_maps_enabled);
+        assert!(enabled.smart_step_enabled);
 
         let disabled =
             NativeNodeWatchLaunchAuthority::new(Arc::new(|| true)).with_source_maps_enabled(false);
         assert!(!disabled.source_maps_enabled);
+        let disabled =
+            NativeNodeWatchLaunchAuthority::new(Arc::new(|| true)).with_smart_step_enabled(false);
+        assert!(!disabled.smart_step_enabled);
     }
 
     fn startup<'a>(

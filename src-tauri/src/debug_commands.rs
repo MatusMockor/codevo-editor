@@ -1,10 +1,13 @@
 use crate::debug_adapter::variable_name::MAX_DEBUG_VARIABLE_NAME_BYTES;
+#[cfg(test)]
+use crate::debug_adapter::DebugVariablePage;
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEvaluateContext, DebugEvaluateErrorKind,
     DebugEvaluateFailure, DebugEvaluatePolicy, DebugEvent, DebugEventSink, DebugExceptionPauseMode,
     DebugFunctionBreakpoint, DebugLaunchTarget, DebugScopeInfo, DebugSessionRegistry,
-    DebugStackFrame, DebugStartResponse, DebugStartupPermit, DebugVariableInfo, DebugVariablePage,
-    DebugVariablePageRequest, StepKind,
+    DebugStackFrame, DebugStartResponse, DebugStartupPermit, DebugVariableFilter,
+    DebugVariableInfo, DebugVariablePageLimitReason, DebugVariablePageRequest,
+    NodeDebugRuntimePolicy, StepKind,
 };
 use crate::debug_breakpoint_policy::{validate_initial_breakpoints, DebugBreakpointAdapterKind};
 use crate::debug_session_registry::{
@@ -12,7 +15,7 @@ use crate::debug_session_registry::{
 };
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
     sync::{Arc, Mutex},
@@ -104,7 +107,7 @@ pub(crate) async fn debug_start(
     function_breakpoints: Vec<DebugFunctionBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
-    source_maps_enabled: bool,
+    runtime_policy: NodeDebugRuntimePolicy,
     stop_on_entry: bool,
     app: AppHandle,
     registry: State<'_, Arc<DebugSessionRegistry>>,
@@ -119,7 +122,7 @@ pub(crate) async fn debug_start(
         function_breakpoints,
         exception_pause_mode,
         exception_type_filter,
-        source_maps_enabled,
+        runtime_policy,
         stop_on_entry,
         DebugStartBackend {
             sink: app_debug_event_sink(app),
@@ -149,7 +152,7 @@ pub(crate) async fn debug_start_with_trust(
         Vec::new(),
         exception_pause_mode,
         Vec::new(),
-        true,
+        NodeDebugRuntimePolicy::default(),
         false,
         DebugStartBackend {
             sink,
@@ -178,7 +181,7 @@ async fn debug_start_with_trust_and_authority(
     function_breakpoints: Vec<DebugFunctionBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
-    source_maps_enabled: bool,
+    runtime_policy: NodeDebugRuntimePolicy,
     stop_on_entry: bool,
     backend: DebugStartBackend<'_>,
 ) -> Result<DebugStartResponse, String> {
@@ -272,7 +275,7 @@ async fn debug_start_with_trust_and_authority(
                 retained_root,
                 stop_on_entry,
             },
-            source_maps_enabled,
+            runtime_policy,
         ))
     })
     .await
@@ -294,7 +297,7 @@ struct DebugSessionStartup<'a> {
 
 fn start_debug_session_blocking(
     startup: DebugSessionStartup<'_>,
-    source_maps_enabled: bool,
+    runtime_policy: NodeDebugRuntimePolicy,
 ) -> DebugStartResponse {
     let DebugSessionStartup {
         root,
@@ -336,7 +339,7 @@ fn start_debug_session_blocking(
                 function_breakpoints,
                 exception_pause_mode,
                 &exception_type_filter,
-                source_maps_enabled,
+                runtime_policy,
                 stop_on_entry,
                 emitter,
                 finish,
@@ -719,7 +722,7 @@ pub(crate) async fn debug_variables(
     request: DebugVariablesRequest,
     registry: State<'_, Arc<DebugSessionRegistry>>,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
-) -> Result<DebugVariablePage, String> {
+) -> Result<DebugVariablesResponse, String> {
     request.validate()?;
     let root = super::canonicalize_workspace_root(&request.root_path)?;
     let root_key = root.to_string_lossy().into_owned();
@@ -736,14 +739,37 @@ pub(crate) async fn debug_variables(
     }
     let registry = Arc::clone(registry.inner());
     let adapter_request = request.adapter_request();
+    let filter = request.filter;
     let session_id = request.session_id;
     super::run_blocking_command(move || {
         let page = registry.inspect_for_session(session_id, &root_key, |adapter| {
-            adapter.variables_page(adapter_request)
+            adapter.variables_page_filtered(adapter_request, filter)
         })??;
-        bound_variable_page(page, adapter_request)
+        bound_variable_page(page, adapter_request).map(|page| DebugVariablesResponse {
+            variables: page.variables,
+            filter,
+            start: page.start,
+            returned: page.returned,
+            total: page.total,
+            next_start: page.next_start,
+            truncated: page.truncated,
+            limit_reason: page.limit_reason,
+        })
     })
     .await
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DebugVariablesResponse {
+    variables: Vec<DebugVariableInfo>,
+    filter: DebugVariableFilter,
+    start: u64,
+    returned: u32,
+    total: Option<u64>,
+    next_start: Option<u64>,
+    truncated: bool,
+    limit_reason: Option<DebugVariablePageLimitReason>,
 }
 
 #[cfg(test)]
@@ -1240,6 +1266,7 @@ mod tests {
             "pauseGeneration": 3,
             "frameId": 11,
             "variablesReference": 21,
+            "filter": "named",
             "start": 0,
             "count": 100
         });
@@ -1250,6 +1277,7 @@ mod tests {
             "pauseGeneration",
             "frameId",
             "variablesReference",
+            "filter",
             "start",
             "count",
         ] {
@@ -1294,6 +1322,7 @@ mod tests {
             pause_generation: 3,
             frame_id: 11,
             variables_reference: 21,
+            filter: DebugVariableFilter::Named,
             start: MAX_DEBUG_VARIABLE_START,
             count: MAX_DEBUG_VARIABLE_PAGE_COUNT,
         };
@@ -1345,6 +1374,7 @@ mod tests {
                 total: Some(4),
                 next_start: Some(3),
                 truncated: false,
+                limit_reason: None,
             },
             request,
         )
@@ -1404,6 +1434,7 @@ mod tests {
             total: None,
             next_start: None,
             truncated: true,
+            limit_reason: Some(DebugVariablePageLimitReason::PageBytes),
         };
         assert!(bound_variable_page(inspectable_long_name.clone(), request).is_ok());
         let mut falsely_writable = inspectable_long_name;
@@ -1430,6 +1461,7 @@ mod tests {
                     total: None,
                     next_start: None,
                     truncated: false,
+                    limit_reason: None,
                 },
                 request,
             )

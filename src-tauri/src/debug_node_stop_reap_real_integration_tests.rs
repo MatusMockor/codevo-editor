@@ -1,5 +1,6 @@
 use crate::debug_adapter::{
     DebugEvent, DebugEventPayload, DebugEventSink, DebugExceptionPauseMode, DebugLaunchTarget,
+    DebugVariableFilter, DebugVariablePageRequest,
 };
 use crate::debug_commands::stop_debug_session_blocking;
 use crate::debug_session_registry::DebugSessionRegistry;
@@ -177,6 +178,163 @@ setInterval(() => {{}}, 1000);
         1,
         "Stop must publish one terminal event"
     );
+}
+
+#[test]
+fn ordinary_node_debugger_pause_stays_live_without_an_explicit_stop() {
+    let _admission = super::real_node_test_admission::acquire();
+    if node_executable_path().is_none() {
+        if std::env::var_os("CI").is_some() {
+            panic!("real Node pause-liveness proof requires the managed Node.js runtime in CI");
+        }
+        eprintln!(
+            "skipping real Node pause-liveness proof: no managed Node.js runtime is available"
+        );
+        return;
+    }
+
+    let workspace = TempWorkspace::new();
+    let script_path = workspace.create_file(
+        "paused.js",
+        br#"
+function run() {
+  const localLarge = Array.from({ length: 10_050 }, (_, i) => ({ i }));
+  debugger;
+  return localLarge.length;
+}
+run();
+setInterval(() => {}, 1000);
+"#,
+    );
+    let script_path = script_path
+        .canonicalize()
+        .expect("canonical pause-liveness target");
+    let root_key = workspace.0.to_string_lossy().into_owned();
+    let sink = Arc::new(CapturingSink::default());
+    let registry = DebugSessionRegistry::new();
+    registry.activate_root(&root_key);
+    let launch = DebugLaunchTarget::NodeScript {
+        script_path: script_path.to_string_lossy().into_owned(),
+    };
+    let startup_current: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(|| true);
+    let session_id = registry
+        .start_session(
+            &root_key,
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            |emitter| {
+                crate::debug_cdp::create_node_cdp_adapter_with_exception_filter(
+                    &workspace.0,
+                    &launch,
+                    &[],
+                    DebugExceptionPauseMode::None,
+                    &[],
+                    true,
+                    false,
+                    emitter,
+                    Box::new(|_| {}),
+                    startup_current,
+                )
+            },
+        )
+        .expect("start paused ordinary Node debug session");
+
+    let (pause_generation, frame_id, large_reference) =
+        paused_large_array_owner(&registry, &root_key, &sink);
+    let large_page = registry
+        .with_session(&root_key, |adapter| {
+            adapter.variables_page_filtered(
+                DebugVariablePageRequest {
+                    pause_generation,
+                    frame_id,
+                    variables_reference: large_reference,
+                    start: 0,
+                    count: 100,
+                },
+                DebugVariableFilter::Indexed,
+            )
+        })
+        .expect("live paused session")
+        .expect("large local variables");
+    assert_eq!(large_page.variables.len(), 100);
+    thread::sleep(Duration::from_secs(3));
+
+    assert!(
+        registry.owns_session(&root_key, session_id),
+        "a visible debugger pause must not retire its session without Stop"
+    );
+    assert!(
+        !lock_recover(&sink.0)
+            .iter()
+            .any(|event| matches!(event.payload, DebugEventPayload::Terminated { .. })),
+        "a visible debugger pause must not emit Terminated without Stop"
+    );
+
+    stop_debug_session_blocking(&registry, session_id).expect("Stop paused ordinary Node session");
+}
+
+fn paused_large_array_owner(
+    registry: &DebugSessionRegistry,
+    root_key: &str,
+    sink: &CapturingSink,
+) -> (u64, u64, u64) {
+    wait_for_event(sink, |payload| {
+        matches!(payload, DebugEventPayload::Stopped { .. })
+    });
+    let (pause_generation, frame_id) = lock_recover(&sink.0)
+        .iter()
+        .find_map(|event| match &event.payload {
+            DebugEventPayload::Stopped {
+                frames,
+                pause_generation,
+                ..
+            } => frames
+                .first()
+                .map(|frame| (*pause_generation, frame.frame_id)),
+            _ => None,
+        })
+        .expect("paused frame owner");
+    let scopes = registry
+        .with_session(root_key, |adapter| adapter.scopes(frame_id))
+        .expect("live paused session")
+        .expect("paused scopes");
+    let local_scope = scopes.first().expect("local scope");
+    let locals = registry
+        .with_session(root_key, |adapter| {
+            adapter.variables_page(DebugVariablePageRequest {
+                pause_generation,
+                frame_id,
+                variables_reference: local_scope.variables_reference,
+                start: 0,
+                count: 100,
+            })
+        })
+        .expect("live paused session")
+        .expect("local variables");
+    let large_reference = locals
+        .variables
+        .iter()
+        .find(|variable| variable.name == "localLarge")
+        .map(|variable| variable.variables_reference)
+        .filter(|reference| *reference > 0)
+        .expect("large local array reference");
+    (pause_generation, frame_id, large_reference)
+}
+
+fn wait_for_event(sink: &CapturingSink, predicate: impl Fn(&DebugEventPayload) -> bool) {
+    let deadline = Instant::now() + MARKER_TIMEOUT;
+    loop {
+        if lock_recover(&sink.0)
+            .iter()
+            .any(|event| predicate(&event.payload))
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the debugger event"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn wait_for_marker(path: &Path) -> ProcessMarker {

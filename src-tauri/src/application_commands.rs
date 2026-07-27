@@ -3,8 +3,11 @@
 use super::*;
 
 #[tauri::command]
-pub(super) fn quit_application(app: AppHandle) {
-    shutdown_runtime_processes(&app);
+pub(super) fn quit_application(
+    app: AppHandle,
+    js_test_batches: State<'_, Arc<JsTestBatchRegistry>>,
+) {
+    shutdown_runtime_processes(&app, &js_test_batches);
     app.exit(0);
 }
 
@@ -29,8 +32,12 @@ pub(super) fn set_native_close_listener_ready(
 }
 
 #[tauri::command]
-pub(super) fn confirm_native_shutdown(app: AppHandle, kind: NativeCloseKind) {
-    shutdown_runtime_processes(&app);
+pub(super) fn confirm_native_shutdown(
+    app: AppHandle,
+    kind: NativeCloseKind,
+    js_test_batches: State<'_, Arc<JsTestBatchRegistry>>,
+) {
+    shutdown_runtime_processes(&app, &js_test_batches);
     match kind {
         NativeCloseKind::Quit => app.exit(0),
         NativeCloseKind::Close => {

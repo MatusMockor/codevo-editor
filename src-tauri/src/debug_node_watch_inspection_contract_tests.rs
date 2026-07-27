@@ -164,6 +164,7 @@ fn variable_pages_preserve_exact_owner_pagination_and_aggregate_bounds() {
             total: Some(1),
             next_start: None,
             truncated: false,
+            limit_reason: None,
         },
     )
     .expect("bounded page");
@@ -180,6 +181,7 @@ fn variable_pages_preserve_exact_owner_pagination_and_aggregate_bounds() {
             total: Some(2),
             next_start: None,
             truncated: false,
+            limit_reason: None,
         },
     )
     .is_err());
@@ -192,6 +194,7 @@ fn variable_pages_preserve_exact_owner_pagination_and_aggregate_bounds() {
             total: Some(1),
             next_start: None,
             truncated: false,
+            limit_reason: None,
         },
     )
     .is_err());

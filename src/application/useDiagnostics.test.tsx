@@ -3,11 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  useDiagnostics,
-  type Diagnostics,
-  type DiagnosticsDependencies,
-} from "./useDiagnostics";
+import { useDiagnostics, type Diagnostics, type DiagnosticsDependencies } from "./useDiagnostics";
 import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import type {
   LanguageServerDiagnostic,
@@ -27,8 +23,7 @@ import {
   transferWorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other-workspace";
@@ -50,18 +45,13 @@ function stateHolder<T>(initial: T): StateHolder<T> {
     value: initial,
     set: (update) => {
       holder.value =
-        typeof update === "function"
-          ? (update as (prev: T) => T)(holder.value)
-          : update;
+        typeof update === "function" ? (update as (prev: T) => T)(holder.value) : update;
     },
   };
   return holder;
 }
 
-function runningStatus(
-  rootPath: string,
-  sessionId: number,
-): LanguageServerRuntimeStatus {
+function runningStatus(rootPath: string, sessionId: number): LanguageServerRuntimeStatus {
   return {
     kind: "running",
     rootPath,
@@ -116,24 +106,16 @@ interface Harness {
   currentRootRef: MutableRef<string | null>;
   activeDocumentRef: MutableRef<EditorDocument | null>;
   documentsRef: MutableRef<Record<string, EditorDocument>>;
-  lsByRootRef: MutableRef<
-    Record<string, Record<string, LanguageServerDiagnostic[]>>
-  >;
-  jstsByRootRef: MutableRef<
-    Record<string, Record<string, LanguageServerDiagnostic[]>>
-  >;
+  lsByRootRef: MutableRef<Record<string, Record<string, LanguageServerDiagnostic[]>>>;
+  jstsByRootRef: MutableRef<Record<string, Record<string, LanguageServerDiagnostic[]>>>;
   lsStatusByRootRef: MutableRef<Record<string, LanguageServerRuntimeStatus>>;
   jstsStatusByRootRef: MutableRef<Record<string, LanguageServerRuntimeStatus>>;
   lastAppliedRef: MutableRef<Record<string, number>>;
   jstsLastAppliedRef: MutableRef<Record<string, number>>;
   lsCoalescer: ReturnType<typeof fakeCoalescer>;
   jstsCoalescer: ReturnType<typeof fakeCoalescer>;
-  languageServerDiagnostics: StateHolder<
-    Record<string, LanguageServerDiagnostic[]>
-  >;
-  javaScriptTypeScriptDiagnostics: StateHolder<
-    Record<string, LanguageServerDiagnostic[]>
-  >;
+  languageServerDiagnostics: StateHolder<Record<string, LanguageServerDiagnostic[]>>;
+  javaScriptTypeScriptDiagnostics: StateHolder<Record<string, LanguageServerDiagnostic[]>>;
   phpLocalDiagnostics: StateHolder<Record<string, LanguageServerDiagnostic[]>>;
   frameworkDiagnostics: StateHolder<Record<string, LanguageServerDiagnostic[]>>;
   notices: StateHolder<WorkbenchNotice[]>;
@@ -141,10 +123,7 @@ interface Harness {
   gatewayValidate: ReturnType<typeof vi.fn>;
   reportError: ReturnType<typeof vi.fn>;
   contextualFilterRef: MutableRef<
-    (
-      path: string,
-      diagnostics: LanguageServerDiagnostic[],
-    ) => Promise<LanguageServerDiagnostic[]>
+    (path: string, diagnostics: LanguageServerDiagnostic[]) => Promise<LanguageServerDiagnostic[]>
   >;
   appSettingsRef: MutableRef<AppSettings>;
   workspaceSettingsRef: MutableRef<WorkspaceSettings>;
@@ -154,12 +133,8 @@ function createHarness(): Harness {
   const currentRootRef = ref<string | null>(ROOT);
   const activeDocumentRef = ref<EditorDocument | null>(null);
   const documentsRef = ref<Record<string, EditorDocument>>({});
-  const lsByRootRef = ref<
-    Record<string, Record<string, LanguageServerDiagnostic[]>>
-  >({});
-  const jstsByRootRef = ref<
-    Record<string, Record<string, LanguageServerDiagnostic[]>>
-  >({});
+  const lsByRootRef = ref<Record<string, Record<string, LanguageServerDiagnostic[]>>>({});
+  const jstsByRootRef = ref<Record<string, Record<string, LanguageServerDiagnostic[]>>>({});
   const lsStatusByRootRef = ref<Record<string, LanguageServerRuntimeStatus>>({
     [ROOT]: runningStatus(ROOT, SESSION),
   });
@@ -171,28 +146,19 @@ function createHarness(): Harness {
   const lsCoalescer = fakeCoalescer();
   const jstsCoalescer = fakeCoalescer();
 
-  const languageServerDiagnostics = stateHolder<
-    Record<string, LanguageServerDiagnostic[]>
-  >({});
-  const javaScriptTypeScriptDiagnostics = stateHolder<
-    Record<string, LanguageServerDiagnostic[]>
-  >({});
-  const phpLocalDiagnostics = stateHolder<
-    Record<string, LanguageServerDiagnostic[]>
-  >({});
-  const frameworkDiagnostics = stateHolder<
-    Record<string, LanguageServerDiagnostic[]>
-  >({});
+  const languageServerDiagnostics = stateHolder<Record<string, LanguageServerDiagnostic[]>>({});
+  const javaScriptTypeScriptDiagnostics = stateHolder<Record<string, LanguageServerDiagnostic[]>>(
+    {},
+  );
+  const phpLocalDiagnostics = stateHolder<Record<string, LanguageServerDiagnostic[]>>({});
+  const frameworkDiagnostics = stateHolder<Record<string, LanguageServerDiagnostic[]>>({});
   const notices = stateHolder<WorkbenchNotice[]>([]);
 
   const removedPaths = new Set<string>();
   const gatewayValidate = vi.fn(async () => []);
   const reportError = vi.fn();
   const contextualFilterRef = ref<
-    (
-      path: string,
-      diagnostics: LanguageServerDiagnostic[],
-    ) => Promise<LanguageServerDiagnostic[]>
+    (path: string, diagnostics: LanguageServerDiagnostic[]) => Promise<LanguageServerDiagnostic[]>
   >(async (_path, diagnostics) => diagnostics);
 
   const appSettingsRef = ref<AppSettings>({
@@ -213,8 +179,7 @@ function createHarness(): Harness {
         ? workspaceSettingsRef.current
         : null,
     setLanguageServerDiagnosticsByPath: languageServerDiagnostics.set,
-    setJavaScriptTypeScriptDiagnosticsByPath:
-      javaScriptTypeScriptDiagnostics.set,
+    setJavaScriptTypeScriptDiagnosticsByPath: javaScriptTypeScriptDiagnostics.set,
     setPhpLocalDiagnosticsByPath: phpLocalDiagnostics.set,
     setFrameworkDiagnosticsByPath: frameworkDiagnostics.set,
     setNotices: notices.set,
@@ -267,11 +232,7 @@ function renderDiagnostics(deps: DiagnosticsDependencies) {
   const root = createRoot(container);
   const captured: { api: Diagnostics | null } = { api: null };
 
-  function Harness({
-    dependencies,
-  }: {
-    dependencies: DiagnosticsDependencies;
-  }) {
+  function Harness({ dependencies }: { dependencies: DiagnosticsDependencies }) {
     captured.api = useDiagnostics(dependencies);
     return null;
   }
@@ -321,8 +282,7 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     expect(harness.lsByRootRef.current[ROOT][USER_PATH]).toHaveLength(1);
     expect(
       harness.notices.value.some(
-        (notice) =>
-          notice.groupKey === `language-server-diagnostics:${USER_URI}`,
+        (notice) => notice.groupKey === `language-server-diagnostics:${USER_URI}`,
       ),
     ).toBe(true);
   });
@@ -331,9 +291,7 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     const harness = createHarness();
     const { api } = renderDiagnostics(harness.deps);
 
-    api().applyLanguageServerDiagnostics(
-      diagnosticEvent({ sessionId: SESSION + 1 }),
-    );
+    api().applyLanguageServerDiagnostics(diagnosticEvent({ sessionId: SESSION + 1 }));
     await flushMicrotasks();
 
     expect(harness.languageServerDiagnostics.value).toEqual({});
@@ -370,10 +328,7 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     const harness = createHarness();
     const firstOwner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
     const selectedAlias = `${ROOT}-selected-alias`;
-    const transferredOwner = transferWorkspaceRuntimeOwner(
-      firstOwner,
-      selectedAlias,
-    );
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, selectedAlias);
     const aliasPath = `${selectedAlias}/app/Alias.php`;
     harness.lsStatusByRootRef.current = {
       [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
@@ -398,15 +353,9 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     await flushMicrotasks();
 
     expect(Object.keys(harness.lsByRootRef.current)).toEqual(["workspace-id"]);
-    expect(harness.lsByRootRef.current[firstOwner.ownerKey][USER_PATH]).toHaveLength(
-      1,
-    );
-    expect(
-      harness.lsByRootRef.current[firstOwner.ownerKey][aliasPath],
-    ).toHaveLength(1);
-    expect(harness.lsStatusByRootRef.current[firstOwner.ownerKey].rootPath).toBe(
-      selectedAlias,
-    );
+    expect(harness.lsByRootRef.current[firstOwner.ownerKey][USER_PATH]).toHaveLength(1);
+    expect(harness.lsByRootRef.current[firstOwner.ownerKey][aliasPath]).toHaveLength(1);
+    expect(harness.lsStatusByRootRef.current[firstOwner.ownerKey].rootPath).toBe(selectedAlias);
   });
 
   it("isolates diagnostics for distinct owners of the same execution root", async () => {
@@ -423,21 +372,14 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     api().applyLanguageServerDiagnostics(diagnosticEvent(), secondOwner);
     await flushMicrotasks();
 
-    expect(harness.lsByRootRef.current[firstOwner.ownerKey][USER_PATH]).toHaveLength(
-      1,
-    );
-    expect(
-      harness.lsByRootRef.current[secondOwner.ownerKey][USER_PATH],
-    ).toHaveLength(1);
+    expect(harness.lsByRootRef.current[firstOwner.ownerKey][USER_PATH]).toHaveLength(1);
+    expect(harness.lsByRootRef.current[secondOwner.ownerKey][USER_PATH]).toHaveLength(1);
   });
 
   it("does not let an old-alias async result revive a closed owner", async () => {
     const harness = createHarness();
     const firstOwner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(
-      firstOwner,
-      `${ROOT}-selected-alias`,
-    );
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, `${ROOT}-selected-alias`);
     harness.lsStatusByRootRef.current = {
       [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
     };
@@ -458,9 +400,7 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     await flushMicrotasks();
 
     expect(harness.lsByRootRef.current[firstOwner.ownerKey]).toBeUndefined();
-    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(
-      firstOwner.ownerKey,
-    );
+    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(firstOwner.ownerKey);
   });
 
   it("resets transient owner diagnostics and accepts the next event", async () => {
@@ -488,8 +428,7 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     await Promise.resolve();
 
     api().resetLanguageServerDiagnosticsForRoot(ROOT, owner);
-    harness.contextualFilterRef.current = async (_path, diagnostics) =>
-      diagnostics;
+    harness.contextualFilterRef.current = async (_path, diagnostics) => diagnostics;
     api().applyLanguageServerDiagnostics(
       diagnosticEvent({
         version: 2,
@@ -501,12 +440,8 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     releaseFirstFilter();
     await flushMicrotasks();
 
-    expect(harness.lsByRootRef.current[owner.ownerKey][USER_PATH][0].message).toBe(
-      "fresh",
-    );
-    expect(harness.languageServerDiagnostics.value[USER_PATH][0].message).toBe(
-      "fresh",
-    );
+    expect(harness.lsByRootRef.current[owner.ownerKey][USER_PATH][0].message).toBe("fresh");
+    expect(harness.languageServerDiagnostics.value[USER_PATH][0].message).toBe("fresh");
     expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(owner.ownerKey);
   });
 
@@ -572,13 +507,10 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     );
     await flushMicrotasks();
 
-    expect(
-      harness.lsByRootRef.current[backgroundOwner.ownerKey][USER_PATH][0]
-        .message,
-    ).toBe("background owner");
-    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
-      visibleDiagnostic,
-    ]);
+    expect(harness.lsByRootRef.current[backgroundOwner.ownerKey][USER_PATH][0].message).toBe(
+      "background owner",
+    );
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([visibleDiagnostic]);
   });
 
   it("rejects an async result captured before runtime-start preparation", async () => {
@@ -625,12 +557,8 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     expect(harness.lsByRootRef.current[secondOwner.ownerKey][USER_PATH]).toEqual([
       secondOwnerDiagnostic,
     ]);
-    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
-      secondOwnerDiagnostic,
-    ]);
-    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(
-      firstOwner.ownerKey,
-    );
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([secondOwnerDiagnostic]);
+    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(firstOwner.ownerKey);
   });
 
   it("keeps owner B visible when owner A finishes a late same-root update", async () => {
@@ -663,23 +591,14 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     };
     api().restoreLanguageServerDiagnosticsForRoot(ROOT, secondOwner);
     harness.notices.value = [
-      createWorkbenchNotice(
-        "error",
-        "PHP",
-        "owner B",
-        `language-server-diagnostics:${USER_URI}`,
-      ),
+      createWorkbenchNotice("error", "PHP", "owner B", `language-server-diagnostics:${USER_URI}`),
     ];
 
     releaseFilter();
     await flushMicrotasks();
 
-    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
-      secondOwnerDiagnostic,
-    ]);
-    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
-      "owner B",
-    ]);
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([secondOwnerDiagnostic]);
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual(["owner B"]);
   });
 
   it("keeps owner B visible when owner A clears a path late at the same root", async () => {
@@ -709,26 +628,17 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     };
     api().restoreLanguageServerDiagnosticsForRoot(ROOT, secondOwner);
     harness.notices.value = [
-      createWorkbenchNotice(
-        "error",
-        "PHP",
-        "owner B",
-        `language-server-diagnostics:${USER_URI}`,
-      ),
+      createWorkbenchNotice("error", "PHP", "owner B", `language-server-diagnostics:${USER_URI}`),
     ];
     harness.removedPaths.add(USER_PATH);
     releaseFilter();
     await flushMicrotasks();
 
-    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
-      secondOwnerDiagnostic,
-    ]);
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([secondOwnerDiagnostic]);
     expect(harness.lsByRootRef.current[secondOwner.ownerKey][USER_PATH]).toEqual([
       secondOwnerDiagnostic,
     ]);
-    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
-      "owner B",
-    ]);
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual(["owner B"]);
   });
 
   it("suppresses owner A late errors after forgetting it for owner B", async () => {
@@ -760,9 +670,222 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     await flushMicrotasks();
 
     expect(harness.reportError).not.toHaveBeenCalled();
-    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
-      secondOwnerDiagnostic,
-    ]);
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([secondOwnerDiagnostic]);
+  });
+});
+
+describe("useDiagnostics - bounded batch projection", () => {
+  it("reduces 10k TypeScript paths into one bounded owner cache and exact receipt", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+    const events = Array.from({ length: 10_000 }, (_, index) => {
+      const path = `${ROOT}/src/file-${index}.ts`;
+      return {
+        event: diagnosticEvent({
+          diagnostics: [
+            errorDiagnostic({
+              message: `Type error ${index}`,
+              source: "tsserver",
+            }),
+          ],
+          uri: fileUriFromPath(path),
+          version: null,
+        }),
+      };
+    });
+
+    act(() => {
+      api().applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch(events);
+    });
+
+    expect(Object.keys(harness.jstsByRootRef.current[ROOT])).toHaveLength(2_000);
+    expect(harness.jstsByRootRef.current[ROOT][`${ROOT}/src/file-8000.ts`]).toHaveLength(1);
+    expect(harness.jstsByRootRef.current[ROOT][`${ROOT}/src/file-7999.ts`]).toBeUndefined();
+    expect(
+      Object.values(harness.jstsByRootRef.current[ROOT]).every(
+        (diagnostics) => diagnostics.length > 0,
+      ),
+    ).toBe(true);
+    expect(
+      harness.notices.value.find((notice) =>
+        notice.groupKey?.startsWith("diagnostics-retention-receipt:"),
+      )?.message,
+    ).toBe("Retained 2000 of 10000 published diagnostics.");
+  });
+
+  it("rejects a PHP batch when its exact session is replaced during filtering", async () => {
+    const harness = createHarness();
+    let releaseFilter = () => {};
+    harness.contextualFilterRef.current = async (_path, diagnostics) => {
+      await new Promise<void>((resolve) => {
+        releaseFilter = resolve;
+      });
+      return diagnostics;
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyLanguageServerDiagnosticsBatch([{ event: diagnosticEvent({ version: 2 }) }]);
+    await Promise.resolve();
+    harness.lsStatusByRootRef.current[ROOT] = runningStatus(ROOT, SESSION + 1);
+    releaseFilter();
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current).toEqual({});
+    expect(harness.languageServerDiagnostics.value).toEqual({});
+    expect(harness.lastAppliedRef.current).toEqual({});
+    expect(
+      harness.notices.value.some((notice) =>
+        notice.groupKey?.startsWith("diagnostics-retention-receipt:"),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects an older null-version PHP publication that resolves last", async () => {
+    const harness = createHarness();
+    const releases = new Map<string, () => void>();
+    harness.contextualFilterRef.current = async (_path, diagnostics) => {
+      await new Promise<void>((resolve) => {
+        releases.set(diagnostics[0]?.message ?? "", resolve);
+      });
+      return diagnostics;
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyLanguageServerDiagnostics(
+      diagnosticEvent({
+        diagnostics: [errorDiagnostic({ message: "older" })],
+        version: null,
+      }),
+    );
+    api().applyLanguageServerDiagnostics(
+      diagnosticEvent({
+        diagnostics: [errorDiagnostic({ message: "newer" })],
+        version: null,
+      }),
+    );
+    await Promise.resolve();
+    releases.get("newer")?.();
+    await flushMicrotasks();
+    releases.get("older")?.();
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[ROOT][USER_PATH][0].message).toBe("newer");
+  });
+
+  it("keeps the newest version when a direct TypeScript batch is reordered", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+    const path = `${ROOT}/src/versioned.ts`;
+
+    act(() => {
+      api().applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch([
+        {
+          event: diagnosticEvent({
+            diagnostics: [errorDiagnostic({ message: "newest" })],
+            uri: fileUriFromPath(path),
+            version: 5,
+          }),
+        },
+        {
+          event: diagnosticEvent({
+            diagnostics: [errorDiagnostic({ message: "stale" })],
+            uri: fileUriFromPath(path),
+            version: 3,
+          }),
+        },
+      ]);
+    });
+
+    expect(harness.jstsByRootRef.current[ROOT][path][0].message).toBe("newest");
+  });
+
+  it("does not let a trailing stale session discard a valid staged event", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+    const validPath = `${ROOT}/src/valid.ts`;
+
+    act(() => {
+      api().applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch([
+        {
+          event: diagnosticEvent({
+            uri: fileUriFromPath(validPath),
+            version: null,
+          }),
+        },
+        {
+          event: diagnosticEvent({
+            sessionId: SESSION + 1,
+            uri: fileUriFromPath(`${ROOT}/src/stale.ts`),
+            version: null,
+          }),
+        },
+      ]);
+    });
+
+    expect(harness.jstsByRootRef.current[ROOT][validPath]).toHaveLength(1);
+    expect(harness.jstsByRootRef.current[ROOT][`${ROOT}/src/stale.ts`]).toBeUndefined();
+  });
+
+  it("keeps PHP and TypeScript owner receipts independent and restores them", async () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+    const events = (extension: string) =>
+      Array.from({ length: 2_001 }, (_, index) => ({
+        event: diagnosticEvent({
+          uri: fileUriFromPath(`${ROOT}/src/file-${index}.${extension}`),
+          version: null,
+        }),
+      }));
+
+    act(() => {
+      api().applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch(events("ts"));
+      api().applyLanguageServerDiagnosticsBatch(events("php"));
+    });
+    await flushMicrotasks();
+
+    const receiptGroups = () =>
+      harness.notices.value
+        .map((notice) => notice.groupKey)
+        .filter((groupKey) => groupKey?.startsWith("diagnostics-retention-receipt:"));
+    expect(receiptGroups()).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(":php:"),
+        expect.stringContaining(":typescript:"),
+      ]),
+    );
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT);
+    api().restoreJavaScriptTypeScriptDiagnosticsForRoot(ROOT);
+    expect(receiptGroups()).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(":php:"),
+        expect.stringContaining(":typescript:"),
+      ]),
+    );
+  });
+
+  it("labels a folded publication aggregate as an upper bound", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+
+    act(() => {
+      api().applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch(
+        Array.from({ length: 20_001 }, (_, index) => ({
+          event: diagnosticEvent({
+            uri: fileUriFromPath(`${ROOT}/src/folded-${index}.ts`),
+            version: null,
+          }),
+        })),
+      );
+    });
+
+    expect(
+      harness.notices.value.find((notice) =>
+        notice.groupKey?.startsWith("diagnostics-retention-receipt:typescript:"),
+      )?.message,
+    ).toBe(
+      "Retained 2000 diagnostics; at most 20001 were published in the bounded tracking window.",
+    );
   });
 });
 
@@ -773,10 +896,7 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     harness.appSettingsRef.current = {
       workspaceTabs: [ROOT, OTHER_ROOT],
     } as AppSettings;
-    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
-      OTHER_ROOT,
-      SESSION,
-    );
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(OTHER_ROOT, SESSION);
     const { api } = renderDiagnostics(harness.deps);
 
     api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
@@ -800,10 +920,7 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     harness.workspaceSettingsRef.current = {
       javaScriptTypeScriptValidation: false,
     } as WorkspaceSettings;
-    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
-      OTHER_ROOT,
-      SESSION,
-    );
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(OTHER_ROOT, SESSION);
     const snapshot = createWorkspaceSettingsByRootSnapshot();
     snapshot.capture(ROOT, harness.workspaceSettingsRef.current);
     harness.deps.workspaceSettingsForRoot = snapshot.resolve;
@@ -838,12 +955,8 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
       workspaceTabs: [ROOT, OTHER_ROOT],
     } as AppSettings;
     harness.workspaceSettingsRef.current = settingsByRoot[ROOT];
-    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
-      OTHER_ROOT,
-      SESSION,
-    );
-    harness.deps.workspaceSettingsForRoot = (rootPath) =>
-      settingsByRoot[rootPath] ?? null;
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(OTHER_ROOT, SESSION);
+    harness.deps.workspaceSettingsForRoot = (rootPath) => settingsByRoot[rootPath] ?? null;
     const { api } = renderDiagnostics(harness.deps);
 
     api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
@@ -855,9 +968,7 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     await flushMicrotasks();
 
     expect(harness.javaScriptTypeScriptDiagnostics.value).toEqual({});
-    expect(
-      harness.jstsByRootRef.current[OTHER_ROOT][backgroundPath],
-    ).toHaveLength(1);
+    expect(harness.jstsByRootRef.current[OTHER_ROOT][backgroundPath]).toHaveLength(1);
   });
 
   it("suppresses background diagnostics when only the event root disables validation", async () => {
@@ -875,12 +986,8 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
       workspaceTabs: [ROOT, OTHER_ROOT],
     } as AppSettings;
     harness.workspaceSettingsRef.current = settingsByRoot[ROOT];
-    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
-      OTHER_ROOT,
-      SESSION,
-    );
-    harness.deps.workspaceSettingsForRoot = (rootPath) =>
-      settingsByRoot[rootPath] ?? null;
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(OTHER_ROOT, SESSION);
+    harness.deps.workspaceSettingsForRoot = (rootPath) => settingsByRoot[rootPath] ?? null;
     const { api } = renderDiagnostics(harness.deps);
 
     api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
@@ -911,8 +1018,7 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     expect(harness.jstsByRootRef.current[ROOT][tsPath]).toHaveLength(1);
     expect(
       harness.notices.value.some(
-        (notice) =>
-          notice.groupKey === `javascript-typescript-diagnostics:${tsUri}`,
+        (notice) => notice.groupKey === `javascript-typescript-diagnostics:${tsUri}`,
       ),
     ).toBe(true);
   });
@@ -1023,10 +1129,7 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     const harness = createHarness();
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
     const selectedAlias = `${ROOT}-selected-alias`;
-    const transferredOwner = transferWorkspaceRuntimeOwner(
-      firstOwner,
-      selectedAlias,
-    );
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, selectedAlias);
     const distinctOwner = createWorkspaceRuntimeOwner("workspace-b", selectedAlias);
     const aliasPath = `${selectedAlias}/src/index.ts`;
     harness.currentRootRef.current = selectedAlias;
@@ -1043,27 +1146,14 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
       uri: fileUriFromPath(aliasPath),
     });
 
-    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
-      event,
-      transferredOwner,
-    );
-    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
-      event,
-      distinctOwner,
-    );
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(event, transferredOwner);
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(event, distinctOwner);
     await flushMicrotasks();
 
-    expect(
-      harness.jstsByRootRef.current[firstOwner.ownerKey][aliasPath],
-    ).toHaveLength(1);
-    expect(
-      harness.jstsByRootRef.current[distinctOwner.ownerKey][aliasPath],
-    ).toHaveLength(1);
+    expect(harness.jstsByRootRef.current[firstOwner.ownerKey][aliasPath]).toHaveLength(1);
+    expect(harness.jstsByRootRef.current[distinctOwner.ownerKey][aliasPath]).toHaveLength(1);
 
-    api().restoreJavaScriptTypeScriptDiagnosticsForRoot(
-      selectedAlias,
-      distinctOwner,
-    );
+    api().restoreJavaScriptTypeScriptDiagnosticsForRoot(selectedAlias, distinctOwner);
     harness.notices.value = [
       createWorkbenchNotice(
         "error",
@@ -1076,15 +1166,9 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
 
     expect(harness.jstsByRootRef.current[firstOwner.ownerKey]).toBeUndefined();
     expect(harness.jstsByRootRef.current[distinctOwner.ownerKey]).toBeDefined();
-    expect(
-      harness.javaScriptTypeScriptDiagnostics.value[aliasPath],
-    ).toHaveLength(1);
-    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
-      "owner B",
-    ]);
-    expect(harness.jstsCoalescer.dropOwner).toHaveBeenCalledWith(
-      firstOwner.ownerKey,
-    );
+    expect(harness.javaScriptTypeScriptDiagnostics.value[aliasPath]).toHaveLength(1);
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual(["owner B"]);
+    expect(harness.jstsCoalescer.dropOwner).toHaveBeenCalledWith(firstOwner.ownerKey);
   });
 });
 
@@ -1112,9 +1196,7 @@ describe("workspace settings root snapshot", () => {
 
     snapshot.capture(OTHER_ROOT, currentSettings);
 
-    expect(
-      snapshot.captureIfRevision(OTHER_ROOT, loadRevision, staleSettings),
-    ).toBe(false);
+    expect(snapshot.captureIfRevision(OTHER_ROOT, loadRevision, staleSettings)).toBe(false);
     expect(snapshot.resolve(OTHER_ROOT)).toBe(currentSettings);
   });
 
@@ -1144,9 +1226,7 @@ describe("workspace settings root snapshot", () => {
 
     snapshot.forget(OTHER_ROOT);
 
-    expect(
-      snapshot.captureIfRevision(OTHER_ROOT, loadRevision, staleSettings),
-    ).toBe(false);
+    expect(snapshot.captureIfRevision(OTHER_ROOT, loadRevision, staleSettings)).toBe(false);
     expect(snapshot.resolve(OTHER_ROOT)).toBeNull();
   });
 });
@@ -1170,8 +1250,7 @@ describe("useDiagnostics - local PHP diagnostics", () => {
     expect(harness.phpLocalDiagnostics.value[USER_PATH]).toHaveLength(1);
     expect(
       harness.notices.value.some(
-        (notice) =>
-          notice.groupKey === `php-local-diagnostics:${USER_URI}`,
+        (notice) => notice.groupKey === `php-local-diagnostics:${USER_URI}`,
       ),
     ).toBe(true);
 
@@ -1180,8 +1259,7 @@ describe("useDiagnostics - local PHP diagnostics", () => {
     expect(harness.phpLocalDiagnostics.value[USER_PATH]).toBeUndefined();
     expect(
       harness.notices.value.some(
-        (notice) =>
-          notice.groupKey === `php-local-diagnostics:${USER_URI}`,
+        (notice) => notice.groupKey === `php-local-diagnostics:${USER_URI}`,
       ),
     ).toBe(false);
   });
@@ -1252,39 +1330,22 @@ describe("useDiagnostics - PHPStan notice groups", () => {
   it("replaces a root group on every analysis run", () => {
     const harness = createHarness();
     const { api } = renderDiagnostics(harness.deps);
-    const first = createWorkbenchNotice(
-      "error",
-      "PHPStan",
-      "first",
-      `phpstan:${ROOT}`,
-    );
-    const second = createWorkbenchNotice(
-      "error",
-      "PHPStan",
-      "second",
-      `phpstan:${ROOT}`,
-    );
+    const first = createWorkbenchNotice("error", "PHPStan", "first", `phpstan:${ROOT}`);
+    const second = createWorkbenchNotice("error", "PHPStan", "second", `phpstan:${ROOT}`);
 
     api().replacePhpstanDiagnostics(ROOT, [first]);
     api().replacePhpstanDiagnostics(ROOT, [second]);
 
-    expect(
-      harness.notices.value.filter(
-        (notice) => notice.groupKey === `phpstan:${ROOT}`,
-      ),
-    ).toEqual([second]);
+    expect(harness.notices.value.filter((notice) => notice.groupKey === `phpstan:${ROOT}`)).toEqual(
+      [second],
+    );
   });
 
   it("caps workspace-wide PHPStan notices with truthful overflow copy", () => {
     const harness = createHarness();
     const { api } = renderDiagnostics(harness.deps);
     const notices = Array.from({ length: 507 }, (_, index) =>
-      createWorkbenchNotice(
-        "error",
-        "PHPStan",
-        `problem ${index + 1}`,
-        `phpstan:${ROOT}`,
-      ),
+      createWorkbenchNotice("error", "PHPStan", `problem ${index + 1}`, `phpstan:${ROOT}`),
     );
 
     api().replacePhpstanDiagnostics(ROOT, notices);
@@ -1295,8 +1356,7 @@ describe("useDiagnostics - PHPStan notice groups", () => {
     expect(phpstanNotices).toHaveLength(501);
     expect(phpstanNotices[phpstanNotices.length - 1]).toMatchObject({
       kind: "overflow",
-      message:
-        "Showing 500 of 507 PHPStan problems — narrow the analysis or fix reported issues.",
+      message: "Showing 500 of 507 PHPStan problems — narrow the analysis or fix reported issues.",
     });
   });
 
@@ -1304,12 +1364,7 @@ describe("useDiagnostics - PHPStan notice groups", () => {
     const harness = createHarness();
     harness.notices.value = [
       createWorkbenchNotice("error", "PHPStan", "A", `phpstan:${ROOT}`),
-      createWorkbenchNotice(
-        "error",
-        "PHPStan",
-        "B",
-        `phpstan:${OTHER_ROOT}`,
-      ),
+      createWorkbenchNotice("error", "PHPStan", "B", `phpstan:${OTHER_ROOT}`),
     ];
     const { api } = renderDiagnostics(harness.deps);
 
@@ -1328,18 +1383,10 @@ describe("useDiagnostics - PHPStan notice groups", () => {
       createWorkbenchNotice("error", "PHPStan", "A", `phpstan:${ROOT}`),
     ]);
     api().replacePhpstanDiagnostics(OTHER_ROOT, [
-      createWorkbenchNotice(
-        "error",
-        "PHPStan",
-        "B",
-        `phpstan:${OTHER_ROOT}`,
-      ),
+      createWorkbenchNotice("error", "PHPStan", "B", `phpstan:${OTHER_ROOT}`),
     ]);
 
-    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
-      "B",
-      "A",
-    ]);
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual(["B", "A"]);
   });
 });
 
@@ -1348,12 +1395,7 @@ describe("useDiagnostics - ESLint notice groups", () => {
     const harness = createHarness();
     const { api } = renderDiagnostics(harness.deps);
     const notices = Array.from({ length: 507 }, (_, index) =>
-      createWorkbenchNotice(
-        "warning",
-        "ESLint",
-        `problem ${index + 1}`,
-        `eslint:${ROOT}`,
-      ),
+      createWorkbenchNotice("warning", "ESLint", `problem ${index + 1}`, `eslint:${ROOT}`),
     );
 
     api().replaceEslintDiagnostics(ROOT, notices);
@@ -1364,16 +1406,13 @@ describe("useDiagnostics - ESLint notice groups", () => {
     expect(eslintNotices).toHaveLength(501);
     expect(eslintNotices[eslintNotices.length - 1]).toMatchObject({
       kind: "overflow",
-      message:
-        "Showing 500 of 507 ESLint problems — narrow the analysis or fix reported issues.",
+      message: "Showing 500 of 507 ESLint problems — narrow the analysis or fix reported issues.",
     });
 
     api().clearEslintDiagnosticsForRoot(ROOT);
-    expect(
-      harness.notices.value.some(
-        (notice) => notice.groupKey === `eslint:${ROOT}`,
-      ),
-    ).toBe(false);
+    expect(harness.notices.value.some((notice) => notice.groupKey === `eslint:${ROOT}`)).toBe(
+      false,
+    );
   });
 });
 
@@ -1399,9 +1438,7 @@ describe("useDiagnostics - delete / rename path cleanup", () => {
     expect(harness.lsByRootRef.current[ROOT]).toBeUndefined();
     expect(harness.jstsByRootRef.current[ROOT]).toBeUndefined();
     expect(harness.languageServerDiagnostics.value[USER_PATH]).toBeUndefined();
-    expect(
-      harness.javaScriptTypeScriptDiagnostics.value[USER_PATH],
-    ).toBeUndefined();
+    expect(harness.javaScriptTypeScriptDiagnostics.value[USER_PATH]).toBeUndefined();
     expect(harness.frameworkDiagnostics.value[USER_PATH]).toBeUndefined();
     expect(harness.phpLocalDiagnostics.value[USER_PATH]).toBeUndefined();
   });
@@ -1416,9 +1453,7 @@ describe("useDiagnostics - stale-version gating", () => {
     await flushMicrotasks();
     const appliedCount = harness.notices.value.length;
 
-    api().applyLanguageServerDiagnostics(
-      diagnosticEvent({ version: 2, diagnostics: [] }),
-    );
+    api().applyLanguageServerDiagnostics(diagnosticEvent({ version: 2, diagnostics: [] }));
     await flushMicrotasks();
 
     // The stale (older-version) empty publish must not clear the applied notice.

@@ -222,17 +222,11 @@ function debugLaunchWithVscodeOptions(
   entry: NodeLaunchConfigurationEntry,
 ): PreparedNodeDebugLaunch["launch"] {
   if (entry.source !== "vscode") return launch;
-  if (
-    entry.justMyCode === undefined &&
-    entry.sourceMaps === undefined &&
-    entry.stopOnEntry === undefined
-  ) {
-    return launch;
-  }
   return Object.freeze({
     ...launch,
     ...(entry.justMyCode ? { justMyCode: entry.justMyCode } : {}),
     ...(entry.sourceMaps !== undefined ? { sourceMaps: entry.sourceMaps } : {}),
+    smartStep: entry.smartStep ?? true,
     ...(entry.stopOnEntry !== undefined ? { stopOnEntry: entry.stopOnEntry } : {}),
   });
 }

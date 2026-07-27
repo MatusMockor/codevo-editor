@@ -5,9 +5,9 @@ import type { PhpInspectionDiagnostic } from "../domain/phpInspections";
 import type { PhpSyntaxDiagnostic } from "../domain/phpSyntaxDiagnostics";
 import type { LocalPhpValidationSnapshot } from "./EditorRuntimeHost";
 import {
+  MAX_MONACO_DIAGNOSTIC_ITEMS,
   toLocalPhpDiagnostic,
-  toMonacoInspectionMarker,
-  toMonacoSyntaxDiagnosticMarker,
+  toBoundedLocalPhpDiagnosticMarkers,
 } from "./editorDiagnosticMonacoMappings";
 
 export function applyLocalPhpValidationSnapshot(
@@ -20,24 +20,29 @@ export function applyLocalPhpValidationSnapshot(
   setInspectionDiagnosticCounts: Dispatch<SetStateAction<Record<string, number>>>,
 ): void {
   const { inspectionDiagnostics, syntaxDiagnostics } = snapshot;
+  const retainedSyntaxDiagnostics = syntaxDiagnostics.slice(0, MAX_MONACO_DIAGNOSTIC_ITEMS);
+  const retainedInspectionDiagnostics = inspectionDiagnostics.slice(
+    0,
+    Math.max(0, MAX_MONACO_DIAGNOSTIC_ITEMS - retainedSyntaxDiagnostics.length),
+  );
 
   onDiagnosticsChange(path, [
-    ...syntaxDiagnostics.map((diagnostic) =>
+    ...retainedSyntaxDiagnostics.map((diagnostic) =>
       toLocalPhpDiagnostic(diagnostic, "PHP Syntax", "error"),
     ),
-    ...inspectionDiagnostics.map((diagnostic) =>
+    ...retainedInspectionDiagnostics.map((diagnostic) =>
       toLocalPhpDiagnostic(diagnostic, "PHP Inspection", "warning"),
     ),
   ]);
   setSyntaxDiagnostics((current) => ({
     ...current,
-    [path]: syntaxDiagnostics,
+    [path]: retainedSyntaxDiagnostics,
   }));
   setInspectionDiagnosticCounts((current) => {
-    if (inspectionDiagnostics.length > 0) {
+    if (retainedInspectionDiagnostics.length > 0) {
       return {
         ...current,
-        [path]: inspectionDiagnostics.length,
+        [path]: retainedInspectionDiagnostics.length,
       };
     }
     if (current[path] === undefined) {
@@ -48,10 +53,13 @@ export function applyLocalPhpValidationSnapshot(
     delete next[path];
     return next;
   });
-  writeMarkers([
-    ...syntaxDiagnostics.map((diagnostic) => toMonacoSyntaxDiagnosticMarker(monaco, diagnostic)),
-    ...inspectionDiagnostics.map((diagnostic) => toMonacoInspectionMarker(monaco, diagnostic)),
-  ]);
+  writeMarkers(
+    toBoundedLocalPhpDiagnosticMarkers(
+      monaco,
+      retainedSyntaxDiagnostics,
+      retainedInspectionDiagnostics,
+    ),
+  );
 }
 
 export function localPhpDiagnosticsFromVisibleMarkers(

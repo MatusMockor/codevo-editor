@@ -10,6 +10,7 @@ import type {
 } from "../domain/languageServerDiagnostics";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import type { DiagnosticsOwnedEvent } from "./useDiagnostics";
 
 export type LanguageServerDiagnosticsRuntimeKind = "php" | "typescript";
 
@@ -28,24 +29,26 @@ export interface LanguageServerDiagnosticsSubscriptionsDependencies {
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
   javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
   createDiagnosticsCoalescer: (
-    sink: (event: LanguageServerDiagnosticEvent) => void,
+    sink: (events: readonly LanguageServerDiagnosticEvent[]) => void,
     scheduler: DiagnosticsFlushScheduler,
   ) => DiagnosticsCoalescer;
   applyLanguageServerDiagnostics: (
     event: LanguageServerDiagnosticEvent,
     owner?: WorkspaceRuntimeOwner,
   ) => void;
+  applyLanguageServerDiagnosticsBatch?: (events: readonly DiagnosticsOwnedEvent[]) => void;
   applyJavaScriptTypeScriptLanguageServerDiagnostics: (
     event: LanguageServerDiagnosticEvent,
     owner?: WorkspaceRuntimeOwner,
+  ) => void;
+  applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch?: (
+    events: readonly DiagnosticsOwnedEvent[],
   ) => void;
   reportLanguageServerError: (error: unknown) => void;
   reportJavaScriptTypeScriptLanguageServerError: (error: unknown) => void;
 }
 
-function isLegacyWorkspaceRuntimeOwner(
-  owner: WorkspaceRuntimeOwner | null | undefined,
-): boolean {
+function isLegacyWorkspaceRuntimeOwner(owner: WorkspaceRuntimeOwner | null | undefined): boolean {
   if (!owner) {
     return false;
   }
@@ -103,7 +106,9 @@ export function useLanguageServerDiagnosticsSubscriptions({
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
   createDiagnosticsCoalescer,
   applyLanguageServerDiagnostics,
+  applyLanguageServerDiagnosticsBatch,
   applyJavaScriptTypeScriptLanguageServerDiagnostics,
+  applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
   reportLanguageServerError,
   reportJavaScriptTypeScriptLanguageServerError,
 }: LanguageServerDiagnosticsSubscriptionsDependencies): void {
@@ -111,23 +116,26 @@ export function useLanguageServerDiagnosticsSubscriptions({
     let active = true;
     let unsubscribe: DiagnosticsUnsubscribeFn | null = null;
     const subscriptionOwner = stableWorkspaceRuntimeOwner(workspaceRuntimeOwner);
-    const ownerByEvent = new WeakMap<
-      LanguageServerDiagnosticEvent,
-      WorkspaceRuntimeOwner
-    >();
+    const ownerByEvent = new WeakMap<LanguageServerDiagnosticEvent, WorkspaceRuntimeOwner>();
     const routedOwnerKeys = new Set<string>();
-    const coalescer = createDiagnosticsCoalescer(
-      (event) => {
-        const eventOwner = ownerByEvent.get(event);
-        if (eventOwner) {
-          applyLanguageServerDiagnostics(event, eventOwner);
+    const coalescer = createDiagnosticsCoalescer((events) => {
+      const ownedEvents = events.map((event) => ({
+        event,
+        owner: ownerByEvent.get(event),
+      }));
+      if (applyLanguageServerDiagnosticsBatch) {
+        applyLanguageServerDiagnosticsBatch(ownedEvents);
+        return;
+      }
+
+      ownedEvents.forEach(({ event, owner }) => {
+        if (owner) {
+          applyLanguageServerDiagnostics(event, owner);
           return;
         }
-
         applyLanguageServerDiagnostics(event);
-      },
-      diagnosticsFlushSchedulerRef.current,
-    );
+      });
+    }, diagnosticsFlushSchedulerRef.current);
     languageServerDiagnosticsCoalescerRef.current = coalescer;
 
     languageServerDiagnosticsGateway
@@ -171,8 +179,7 @@ export function useLanguageServerDiagnosticsSubscriptions({
         if (
           subscriptionOwner &&
           resolveCurrentWorkspaceRuntimeOwner &&
-          resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !==
-            subscriptionOwner.ownerKey
+          resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== subscriptionOwner.ownerKey
         ) {
           return;
         }
@@ -205,6 +212,7 @@ export function useLanguageServerDiagnosticsSubscriptions({
     };
   }, [
     applyLanguageServerDiagnostics,
+    applyLanguageServerDiagnosticsBatch,
     createDiagnosticsCoalescer,
     currentWorkspaceRootRef,
     diagnosticsFlushSchedulerRef,
@@ -221,26 +229,26 @@ export function useLanguageServerDiagnosticsSubscriptions({
     let active = true;
     let unsubscribe: DiagnosticsUnsubscribeFn | null = null;
     const subscriptionOwner = stableWorkspaceRuntimeOwner(workspaceRuntimeOwner);
-    const ownerByEvent = new WeakMap<
-      LanguageServerDiagnosticEvent,
-      WorkspaceRuntimeOwner
-    >();
+    const ownerByEvent = new WeakMap<LanguageServerDiagnosticEvent, WorkspaceRuntimeOwner>();
     const routedOwnerKeys = new Set<string>();
-    const coalescer = createDiagnosticsCoalescer(
-      (event) => {
-        const eventOwner = ownerByEvent.get(event);
-        if (eventOwner) {
-          applyJavaScriptTypeScriptLanguageServerDiagnostics(
-            event,
-            eventOwner,
-          );
+    const coalescer = createDiagnosticsCoalescer((events) => {
+      const ownedEvents = events.map((event) => ({
+        event,
+        owner: ownerByEvent.get(event),
+      }));
+      if (applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch) {
+        applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch(ownedEvents);
+        return;
+      }
+
+      ownedEvents.forEach(({ event, owner }) => {
+        if (owner) {
+          applyJavaScriptTypeScriptLanguageServerDiagnostics(event, owner);
           return;
         }
-
         applyJavaScriptTypeScriptLanguageServerDiagnostics(event);
-      },
-      diagnosticsFlushSchedulerRef.current,
-    );
+      });
+    }, diagnosticsFlushSchedulerRef.current);
     javaScriptTypeScriptDiagnosticsCoalescerRef.current = coalescer;
 
     javaScriptTypeScriptLanguageServerDiagnosticsGateway
@@ -284,8 +292,7 @@ export function useLanguageServerDiagnosticsSubscriptions({
         if (
           subscriptionOwner &&
           resolveCurrentWorkspaceRuntimeOwner &&
-          resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !==
-            subscriptionOwner.ownerKey
+          resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== subscriptionOwner.ownerKey
         ) {
           return;
         }
@@ -314,6 +321,7 @@ export function useLanguageServerDiagnosticsSubscriptions({
     };
   }, [
     applyJavaScriptTypeScriptLanguageServerDiagnostics,
+    applyJavaScriptTypeScriptLanguageServerDiagnosticsBatch,
     createDiagnosticsCoalescer,
     currentWorkspaceRootRef,
     diagnosticsFlushSchedulerRef,

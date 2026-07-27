@@ -14,10 +14,7 @@ import {
   phpLocalDiagnosticFileIdentity,
   phpLocalDiagnosticNoticeGroup,
 } from "./diagnosticNotices";
-import {
-  createWorkbenchNotice,
-  GLOBAL_NOTICE_OVERFLOW_GROUP_KEY,
-} from "./workbenchNotice";
+import { createWorkbenchNotice, GLOBAL_NOTICE_OVERFLOW_GROUP_KEY } from "./workbenchNotice";
 import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 
@@ -25,9 +22,7 @@ describe("diagnostic-notice caps", () => {
   it("keeps the documented per-document and global limits", () => {
     expect(DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT).toBe(100);
     expect(GLOBAL_NOTICE_LIMIT).toBe(2000);
-    expect(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX).toBe(
-      "php-local-diagnostics:",
-    );
+    expect(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX).toBe("php-local-diagnostics:");
   });
 });
 
@@ -39,12 +34,7 @@ describe("isCappableDiagnosticNotice", () => {
   });
 
   it("returns false for a groupKey outside the diagnostic families", () => {
-    const notice = createWorkbenchNotice(
-      "error",
-      "runtime",
-      "server crashed",
-      "php-setup",
-    );
+    const notice = createWorkbenchNotice("error", "runtime", "server crashed", "php-setup");
 
     expect(isCappableDiagnosticNotice(notice)).toBe(false);
   });
@@ -98,7 +88,7 @@ describe("buildDiagnosticOverflowNotice", () => {
     expect(notice.message).toBe(
       `Showing ${DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT} of ${
         DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT + 42
-      } diagnostics — 42 more hidden. Open the file to see all markers.`,
+      } diagnostics in Problems; 42 not shown in this list.`,
     );
   });
 });
@@ -161,10 +151,7 @@ describe("localPhpDiagnosticsFromSource", () => {
   });
 
   it("falls back to the structural syntax scan when no syntax diagnostics are provided", () => {
-    const diagnostics = localPhpDiagnosticsFromSource(
-      "<?php\n\nfunction codevoQaBroken(",
-      [],
-    );
+    const diagnostics = localPhpDiagnosticsFromSource("<?php\n\nfunction codevoQaBroken(", []);
 
     expect(diagnostics).toEqual([
       {
@@ -238,9 +225,7 @@ describe("diagnosticNoticeNavigationTarget", () => {
   };
 
   it("returns undefined for a non-file uri", () => {
-    expect(
-      diagnosticNoticeNavigationTarget("untitled:Untitled-1", diagnostic),
-    ).toBeUndefined();
+    expect(diagnosticNoticeNavigationTarget("untitled:Untitled-1", diagnostic)).toBeUndefined();
   });
 
   it("converts the 0-based diagnostic range to a 1-based navigation target", () => {
@@ -265,9 +250,7 @@ describe("diagnosticNoticeNavigationTarget", () => {
       source: "phpactor",
     };
 
-    expect(
-      diagnosticNoticeNavigationTarget(uri, diagnosticWithoutEnd),
-    ).toEqual({
+    expect(diagnosticNoticeNavigationTarget(uri, diagnosticWithoutEnd)).toEqual({
       path: "/project/app/Foo.php",
       range: {
         end: { column: 5, lineNumber: 2 },
@@ -337,16 +320,10 @@ describe("active local diagnostic notices", () => {
 
   it("returns no active notices for non-matching document languages or empty diagnostics", () => {
     expect(
-      activePhpLocalDiagnosticNotices(
-        { language: "txt", path },
-        { [path]: [diagnostic()] },
-      ),
+      activePhpLocalDiagnosticNotices({ language: "txt", path }, { [path]: [diagnostic()] }),
     ).toEqual([]);
     expect(
-      activeDotenvLocalDiagnosticNotices(
-        { language: "dotenv", path: dotenvPath },
-        {},
-      ),
+      activeDotenvLocalDiagnosticNotices({ language: "dotenv", path: dotenvPath }, {}),
     ).toEqual([]);
   });
 
@@ -377,8 +354,40 @@ describe("active local diagnostic notices", () => {
       kind: "overflow",
       message: `Showing ${DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT} of ${
         DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT + 2
-      } diagnostics — 2 more hidden. Open the file to see all markers.`,
+      } diagnostics in Problems; 2 not shown in this list.`,
       source: "PHP",
+    });
+  });
+
+  it("maps only the bounded Problems projection from 100,000 local diagnostics", () => {
+    let severityReads = 0;
+    const hugeDiagnostic = {
+      character: 0,
+      endCharacter: 1,
+      endLine: 0,
+      line: 0,
+      message: "Problem",
+      source: "PHP",
+      get severity() {
+        severityReads += 1;
+        return "error" as const;
+      },
+    };
+
+    const notices = activePhpLocalDiagnosticNotices(
+      { language: "php", path },
+      {
+        [path]: Array<LanguageServerDiagnostic>(100_000).fill(hugeDiagnostic),
+      },
+    );
+
+    expect(severityReads).toBe(DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT);
+    expect(notices).toHaveLength(DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT + 1);
+    expect(notices[notices.length - 1]).toMatchObject({
+      kind: "overflow",
+      message: `Showing ${DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT} of 100000 diagnostics in Problems; ${
+        100_000 - DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT
+      } not shown in this list.`,
     });
   });
 });
@@ -394,9 +403,7 @@ describe("composeEffectiveDiagnosticNotices", () => {
       composeEffectiveDiagnosticNotices({
         activeDocument: { language: "txt", path },
         activeDotenvDiagnosticNotices: [],
-        activePhpLocalDiagnosticNotices: [
-          createWorkbenchNotice("error", "PHP", "new", groupKey),
-        ],
+        activePhpLocalDiagnosticNotices: [createWorkbenchNotice("error", "PHP", "new", groupKey)],
         notices,
       }),
     ).toBe(notices);
@@ -455,12 +462,7 @@ describe("composeEffectiveDiagnosticNotices", () => {
         ),
     );
     const activeNotice = createWorkbenchNotice("error", "PHP", "active", groupKey);
-    const hiddenActiveNotice = createWorkbenchNotice(
-      "error",
-      "PHP",
-      "hidden active",
-      groupKey,
-    );
+    const hiddenActiveNotice = createWorkbenchNotice("error", "PHP", "hidden active", groupKey);
 
     const effective = composeEffectiveDiagnosticNotices({
       activeDocument: { language: "php", path },
@@ -474,9 +476,7 @@ describe("composeEffectiveDiagnosticNotices", () => {
     expect(effective).not.toContain(hiddenActiveNotice);
     expect(effective).not.toContain(stale);
     expect(
-      effective.filter(
-        (notice) => notice.groupKey === GLOBAL_NOTICE_OVERFLOW_GROUP_KEY,
-      ),
+      effective.filter((notice) => notice.groupKey === GLOBAL_NOTICE_OVERFLOW_GROUP_KEY),
     ).toHaveLength(1);
   });
 });

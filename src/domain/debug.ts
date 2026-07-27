@@ -118,8 +118,15 @@ export interface DebugVariable {
   type?: string | null;
   readonly evaluateName?: string;
   readonly canSetValue?: true;
+  /** Present only when an object child could not receive a bounded backend capability. */
+  readonly childrenLimitReason?: "references" | "referenceBytes";
   variablesReference: number;
 }
+
+export type DebugVariableFilter = "indexed" | "named";
+
+export type DebugVariablePageLimitReason =
+  "descriptor-count" | "descriptor-bytes" | "page-bytes" | "references" | "reference-bytes";
 
 export interface DebugSetVariableRequest {
   readonly rootPath: string;
@@ -155,6 +162,7 @@ export interface DebugVariablePageRequest {
   readonly pauseGeneration: number;
   readonly frameId: number;
   readonly variablesReference: number;
+  readonly filter: DebugVariableFilter;
   readonly start: number;
   readonly count: number;
 }
@@ -200,11 +208,13 @@ export interface DebugSetBreakpointsActiveRequest {
 
 export interface DebugVariablePage {
   readonly variables: DebugVariable[];
+  readonly filter?: DebugVariableFilter;
   readonly start: number;
   readonly returned: number;
-  readonly total?: number;
-  readonly nextStart?: number;
+  readonly total?: number | null;
+  readonly nextStart?: number | null;
   readonly truncated: boolean;
+  readonly limitReason?: DebugVariablePageLimitReason | null;
 }
 
 export type DebugStopReason = "breakpoint" | "step" | "pause" | "entry" | "exception" | "restart";
@@ -247,8 +257,8 @@ export type DebuggerState =
   | { kind: "terminated"; sessionId: number; exitCode: number | null };
 
 export type DebugLaunchTarget =
-  | { kind: "node-attach"; port: number; sourceMaps?: boolean }
-  | { kind: "node-script"; scriptPath: string; sourceMaps?: boolean }
+  | { kind: "node-attach"; port: number; sourceMaps?: boolean; smartStep?: boolean }
+  | { kind: "node-script"; scriptPath: string; sourceMaps?: boolean; smartStep?: boolean }
   | {
       kind: "js-test-file";
       runner: "vitest" | "jest";
@@ -273,6 +283,7 @@ export type DebugLaunchTarget =
       env: Record<string, string>;
       justMyCode?: NodeDebugJustMyCodePolicy;
       sourceMaps?: boolean;
+      smartStep?: boolean;
     }
   | {
       kind: "js-configured-test";
@@ -292,6 +303,7 @@ export type DebugLaunchTarget =
       env: Record<string, string>;
       justMyCode?: NodeDebugJustMyCodePolicy;
       sourceMaps?: boolean;
+      smartStep?: boolean;
     }
   | { kind: "php-script"; scriptPath: string }
   | { kind: "php-test-file"; filePath: string }

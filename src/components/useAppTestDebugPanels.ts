@@ -13,6 +13,7 @@ import type { JsTestWatchGateway } from "../domain/jsTestCommand";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { JsTestGateway } from "../domain/jsTestRunScope";
 import type { JsTestTaskGateway } from "../domain/jsTestTask";
+import type { JsTestBatchGateway } from "../domain/jsTestBatch";
 import { jsTestProblemSnapshotToNotices } from "../domain/jsTestProblems";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import type { PhpTestGateway } from "../domain/phpTestResults";
@@ -73,7 +74,7 @@ export function useAppTestDebugPanels({
   readonly debugTextClipboard?: TextClipboardGateway | null;
   readonly jsTestCoverageGateway: JsTestCoverageGateway;
   readonly jsTestExplorerScopeRunnerBind?: JsTestExplorerScopeRunnerBridge["bind"];
-  readonly jsTestGateway: JsTestGateway & JsTestTaskGateway;
+  readonly jsTestGateway: JsTestGateway & JsTestTaskGateway & JsTestBatchGateway;
   readonly jsTestWatchGateway: JsTestWatchGateway;
   readonly phpTestGateway: PhpTestGateway;
   readonly phpCloverCoveragePort?: PhpCloverCoveragePort;
@@ -143,6 +144,7 @@ export function useAppTestDebugPanels({
         workspace: workbench.workspaceIdentityDescriptor,
         workspaceRoot: workbench.workspaceRoot,
       }),
+      batchGateway: jsTestGateway,
       coverageGateway: jsTestCoverageGateway,
       coverageInvalidationVersion: workbench.jsTestCoverageVersion,
       continuousRunVersion: workbench.jsTestContinuousRunVersion,

@@ -135,13 +135,16 @@ fn context_page(
         depth,
         context_id,
     )?;
+    let truncated = response.properties.len() >= 100;
     Ok(DebugVariablePage {
         returned: variables.len() as u32,
         variables,
         start: request.start,
         total: None,
         next_start: None,
-        truncated: response.properties.len() >= 100,
+        truncated,
+        limit_reason: truncated
+            .then_some(crate::debug_adapter::DebugVariablePageLimitReason::DescriptorCount),
     })
 }
 
@@ -209,6 +212,7 @@ fn property_page(
             .is_some_and(|total| consumed < total)
             .then_some(consumed),
         truncated: false,
+        limit_reason: None,
     })
 }
 

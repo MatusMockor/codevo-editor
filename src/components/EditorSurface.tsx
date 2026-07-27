@@ -168,9 +168,8 @@ import {
   type EditorBreakpointActions,
 } from "./EditorBreakpointInteractionLayer";
 import {
-  toDiagnosticOverviewDecoration,
+  toBoundedDiagnosticOverviewDecorations,
   toMonacoDiagnosticMarker,
-  toSyntaxOverviewDecoration,
 } from "./editorDiagnosticMonacoMappings";
 import {
   applyLocalPhpValidationSnapshot,
@@ -4048,12 +4047,11 @@ function EditorSurfaceComponent({
 
     diagnosticOverviewDecorationIdsRef.current = editorApi.deltaDecorations(
       diagnosticOverviewDecorationIdsRef.current,
-      [
-        ...languageServerDiagnostics.map((diagnostic) =>
-          toDiagnosticOverviewDecoration(monacoApi, diagnostic),
-        ),
-        ...syntaxDiagnostics.map((diagnostic) => toSyntaxOverviewDecoration(monacoApi, diagnostic)),
-      ],
+      toBoundedDiagnosticOverviewDecorations(
+        monacoApi,
+        languageServerDiagnostics,
+        syntaxDiagnostics,
+      ),
     );
 
     return () => {
