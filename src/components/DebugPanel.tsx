@@ -1,6 +1,8 @@
 import {
   ArrowDownToDot,
   ArrowUpFromDot,
+  ChevronDown,
+  ChevronRight,
   CircleCheckBig,
   CircleOff,
   Copy,
@@ -86,11 +88,15 @@ import type { DebugAddToWatchVariableSurface } from "./debugAddToWatchSurface";
 import { FunctionBreakpoints } from "./FunctionBreakpoints";
 import { ExceptionTypeFilter } from "./ExceptionTypeFilter";
 import { useWindowedRows } from "./useWindowedRows";
+import { createBreakpointGroupRows, groupBreakpointsByFile } from "../domain/debugBreakpointGroups";
+import { useBreakpointGroupCollapseState } from "../application/useBreakpointGroupCollapseState";
+import { useBreakpointRowFocus } from "../application/useBreakpointRowFocus";
 
 const DEBUG_LIST_VIRTUALIZATION_THRESHOLD = 50;
 const DEBUG_LIST_VIEWPORT_HEIGHT = 240;
 const CALL_STACK_ROW_HEIGHT = 25;
 const BREAKPOINT_ROW_HEIGHT = 36;
+const BREAKPOINT_GROUP_ROW_HEIGHT = 28;
 
 type NodeLaunchConfigurationsProps = Omit<
   NodeDebugLaunchSelectorProps,
@@ -235,6 +241,22 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     gap: 6,
     padding: "3px 8px",
+  },
+  breakpointGroupHeader: {
+    alignItems: "center",
+    background: "var(--background-active, rgba(127, 127, 127, 0.08))",
+    border: 0,
+    borderBottom: "1px solid var(--border-subtle)",
+    color: "inherit",
+    cursor: "pointer",
+    display: "flex",
+    gap: 4,
+    overflow: "hidden",
+    padding: "4px 8px",
+    textAlign: "left",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    width: "100%",
   },
   exceptionPause: {
     borderBottom: "1px solid var(--border-subtle)",
@@ -1317,24 +1339,46 @@ function Breakpoints({
   supportsLogpoints: boolean;
   rootPath: string | null;
 }) {
-  const [focusedBreakpointId, setFocusedBreakpointId] = useState<string | null>(null);
-  const focusedBreakpointIndex = breakpoints.findIndex(({ id }) => id === focusedBreakpointId);
-  const pinnedBreakpointIndices = useMemo(
-    () => (focusedBreakpointIndex >= 0 ? [focusedBreakpointIndex] : []),
-    [focusedBreakpointIndex],
+  const groups = useMemo(
+    () => groupBreakpointsByFile(breakpoints, rootPath),
+    [breakpoints, rootPath],
   );
-  const estimateBreakpointHeight = useCallback(() => BREAKPOINT_ROW_HEIGHT, []);
-  const keyForBreakpointIndex = useCallback(
-    (index: number) => breakpoints[index]?.id ?? String(index),
-    [breakpoints],
+  const activeFilePaths = useMemo(() => groups.map(({ filePath }) => filePath), [groups]);
+  const { collapsedFilePaths, toggle } = useBreakpointGroupCollapseState(rootPath, activeFilePaths);
+  const rows = useMemo(
+    () => createBreakpointGroupRows(groups, collapsedFilePaths),
+    [collapsedFilePaths, groups],
   );
-  const windowedBreakpoints = useWindowedRows({
-    enabled: breakpoints.length > DEBUG_LIST_VIRTUALIZATION_THRESHOLD,
-    estimateHeight: estimateBreakpointHeight,
+  const breakpointPositionById = useMemo(() => {
+    const positions = new Map<string, number>();
+    let position = 0;
+    for (const row of rows) {
+      if (row.kind === "group") {
+        continue;
+      }
+      positions.set(row.breakpoint.id, position);
+      position += 1;
+    }
+    return positions;
+  }, [rows]);
+  const rowFocus = useBreakpointRowFocus({
+    collapsedFilePaths,
+    rows,
+    toggleGroupCollapse: toggle,
+  });
+  const estimateRowHeight = useCallback(
+    (index: number) =>
+      rows[index]?.kind === "group" ? BREAKPOINT_GROUP_ROW_HEIGHT : BREAKPOINT_ROW_HEIGHT,
+    [rows],
+  );
+  const keyForRowIndex = useCallback((index: number) => rows[index]?.key ?? String(index), [rows]);
+  const windowedRows = useWindowedRows({
+    enabled: rows.length > DEBUG_LIST_VIRTUALIZATION_THRESHOLD,
+    estimateHeight: estimateRowHeight,
     fallbackViewportHeight: DEBUG_LIST_VIEWPORT_HEIGHT,
-    itemCount: breakpoints.length,
-    keyForIndex: keyForBreakpointIndex,
-    pinnedIndices: pinnedBreakpointIndices,
+    itemCount: rows.length,
+    keyForIndex: keyForRowIndex,
+    pinnedIndices: rowFocus.pinnedRowIndices,
     preserveScrollAnchor: true,
   });
 
@@ -1345,32 +1389,69 @@ function Breakpoints({
   return (
     <div
       aria-label="Source breakpoints"
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setFocusedBreakpointId(null);
-        }
-      }}
-      onFocusCapture={(event) => {
-        const row = (event.target as HTMLElement).closest<HTMLElement>("[data-breakpoint-id]");
-        setFocusedBreakpointId(row?.dataset.breakpointId ?? null);
-      }}
-      onScroll={windowedBreakpoints.onScroll}
-      ref={windowedBreakpoints.containerRef}
+      onBlurCapture={rowFocus.handleBlur}
+      onFocusCapture={rowFocus.handleFocus}
+      onScroll={windowedRows.onScroll}
+      ref={windowedRows.containerRef}
       role="list"
       style={styles.windowedList}
     >
-      <div style={{ height: windowedBreakpoints.totalHeight, position: "relative" }}>
-        {windowedBreakpoints.rows.map(({ index, offsetTop }) => {
-          const breakpoint = breakpoints[index];
-          if (!breakpoint) return null;
+      <div style={{ height: windowedRows.totalHeight, position: "relative" }}>
+        {windowedRows.rows.map(({ index, offsetTop }) => {
+          const row = rows[index];
+          if (!row) return null;
+          if (row.kind === "group") {
+            const collapsed = collapsedFilePaths.has(row.group.filePath);
+            const breakpointNoun = row.group.count === 1 ? "breakpoint" : "breakpoints";
+            const pathLabel =
+              row.group.relativePath === null
+                ? row.group.fileName
+                : `${row.group.fileName}, ${row.group.relativePath}`;
+            return (
+              <div
+                key={row.key}
+                ref={(element) => windowedRows.measureRow(row.key, element)}
+                role="listitem"
+                style={{ ...styles.windowedRow, top: offsetTop }}
+              >
+                <button
+                  aria-expanded={!collapsed}
+                  aria-label={`${pathLabel}, ${row.group.count} ${breakpointNoun}`}
+                  data-breakpoint-group=""
+                  data-breakpoint-row-key={row.key}
+                  onClick={() => rowFocus.toggleGroup(row.group.filePath)}
+                  onKeyDown={(event) =>
+                    rowFocus.handleNavigationKey(event, row, windowedRows.scrollToIndex)
+                  }
+                  ref={(element) => rowFocus.registerRowFocusElement(row.key, element)}
+                  style={styles.breakpointGroupHeader}
+                  tabIndex={row.key === rowFocus.effectiveRovingRowKey ? 0 : -1}
+                  type="button"
+                >
+                  {collapsed ? (
+                    <ChevronRight aria-hidden="true" size={12} />
+                  ) : (
+                    <ChevronDown aria-hidden="true" size={12} />
+                  )}
+                  <strong>{row.group.fileName}</strong>
+                  {row.group.relativePath === null ? null : (
+                    <span style={styles.muted}>— {row.group.relativePath}</span>
+                  )}
+                  <span style={styles.muted}>({row.group.count})</span>
+                </button>
+              </div>
+            );
+          }
+          const breakpoint = row.breakpoint;
           return (
             <div
-              aria-posinset={index + 1}
-              aria-setsize={breakpoints.length}
+              aria-posinset={(breakpointPositionById.get(breakpoint.id) ?? 0) + 1}
+              aria-setsize={breakpointPositionById.size}
               data-breakpoint-id={breakpoint.id}
+              data-breakpoint-row-key={row.key}
               data-testid="debug-breakpoint"
-              key={breakpoint.id}
-              ref={(element) => windowedBreakpoints.measureRow(breakpoint.id, element)}
+              key={row.key}
+              ref={(element) => windowedRows.measureRow(row.key, element)}
               role="listitem"
               style={{ ...styles.windowedRow, ...styles.breakpointRow, top: offsetTop }}
             >
@@ -1381,9 +1462,15 @@ function Breakpoints({
                 type="checkbox"
               />
               <button
+                data-breakpoint-row-key={row.key}
                 data-testid="debug-breakpoint-location"
                 onClick={() => onNavigateToBreakpoint(breakpoint)}
+                onKeyDown={(event) =>
+                  rowFocus.handleNavigationKey(event, row, windowedRows.scrollToIndex)
+                }
+                ref={(element) => rowFocus.registerRowFocusElement(row.key, element)}
                 style={styles.location}
+                tabIndex={row.key === rowFocus.effectiveRovingRowKey ? 0 : -1}
                 title={breakpointLocationLabel(breakpoint)}
                 type="button"
               >

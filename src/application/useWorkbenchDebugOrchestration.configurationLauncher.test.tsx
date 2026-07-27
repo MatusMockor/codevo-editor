@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import type { DebugCompoundStartOutcome } from "./debugCompoundStart";
 import type {
   NodeDebugConfigurationLauncher,
   PreparedNodeDebugLaunch,
@@ -30,7 +31,9 @@ const mocks = vi.hoisted(() => {
   const startDebug = vi.fn(async () => undefined);
   const startDebugAccepted = vi.fn(async () => true);
   const startDebugSessionAccepted = vi.fn(async () => 1);
-  const startDebugCompoundAccepted = vi.fn(async () => true);
+  const startDebugCompoundAccepted = vi.fn(
+    async (): Promise<DebugCompoundStartOutcome> => ({ kind: "accepted" }),
+  );
   const restartDebug = vi.fn(async () => undefined);
   const canRestartDebug = vi.fn(() => true);
   const restartPostTask = vi.fn(async () => true);
@@ -157,7 +160,7 @@ describe("workbench named Node debug configuration composition", () => {
     mocks.startDebug.mockClear();
     mocks.startDebugAccepted.mockReset().mockResolvedValue(true);
     mocks.startDebugSessionAccepted.mockReset().mockResolvedValue(1);
-    mocks.startDebugCompoundAccepted.mockReset().mockResolvedValue(true);
+    mocks.startDebugCompoundAccepted.mockReset().mockResolvedValue({ kind: "accepted" });
     mocks.restartDebug.mockReset().mockResolvedValue(undefined);
     mocks.canRestartDebug.mockReset().mockReturnValue(true);
     mocks.restartPostTask.mockReset().mockResolvedValue(true);
@@ -427,7 +430,7 @@ describe("workbench named Node debug configuration composition", () => {
   });
 
   it("holds the same global admission through compound batch acceptance", async () => {
-    const accepted = deferred<boolean>();
+    const accepted = deferred<DebugCompoundStartOutcome>();
     mocks.startDebugCompoundAccepted.mockReturnValueOnce(accepted.promise);
     const root = createRoot(document.createElement("div"));
     let result: ReturnType<typeof useWorkbenchDebugOrchestration> | null = null;
@@ -494,7 +497,7 @@ describe("workbench named Node debug configuration composition", () => {
     await act(async () => result!.debugSession.restartDebug());
     expect(mocks.restartDebug).not.toHaveBeenCalled();
 
-    accepted.resolve(true);
+    accepted.resolve({ kind: "accepted" });
     await expect(running).resolves.toBe(true);
     expect(mocks.startDebugCompoundAccepted).toHaveBeenCalledOnce();
     expect(mocks.nodeDebugTaskComposition.start).not.toHaveBeenCalled();

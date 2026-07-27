@@ -72,7 +72,9 @@ function task(
   executable = true,
 ): VscodeProcessTaskDisplay {
   return {
+    package: ".",
     label,
+    configRevision: "revision-1",
     detail: null,
     group: "none",
     problemMatcher: null,

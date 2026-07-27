@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("./useDebugSession", () => ({
   useWorkbenchDebugSession: () => ({
-    startDebugCompoundAccepted: vi.fn(async () => false),
+    startDebugCompoundAccepted: vi.fn(async () => ({ kind: "rejected" as const })),
     session: {
       breakpoints: [],
       debugAdapterKind: "node",
