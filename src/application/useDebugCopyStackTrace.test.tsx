@@ -11,6 +11,7 @@ import {
 } from "./useDebugCopyStackTrace";
 
 const context: DebugCopyStackTraceContext = {
+  framesTruncated: false,
   rootKey: "/workspace",
   sessionId: 7,
   pauseGeneration: 3,
@@ -78,6 +79,7 @@ describe("useDebugCopyStackTrace", () => {
       { ...context, pauseGeneration: 4 },
       { ...context, rootKey: "/other" },
       { ...context, workspaceOwnerKey: "workspace-owner-b" },
+      { ...context, framesTruncated: true },
       { ...context, frames: [{ ...context.frames[0]!, frameId: 12 }] },
       { ...context, frames: [{ ...context.frames[0]!, name: "renamed" }] },
       { ...context, frames: [{ ...context.frames[0]!, filePath: "/workspace/src/other.ts" }] },
@@ -96,6 +98,20 @@ describe("useDebugCopyStackTrace", () => {
       expect(writeText).not.toHaveBeenCalled();
       harness.unmount();
     }
+  });
+
+  it("copies a deterministic marker when the authoritative stack is truncated", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const harness = renderHook({
+      clipboard: { canWriteText: () => true, writeText },
+      getContext: () => ({ ...context, framesTruncated: true }),
+    });
+
+    expect(harness.hook().copyStackTrace()).toBe(true);
+    expect(writeText).toHaveBeenCalledWith(
+      "main (/workspace/src/index.ts:12)\n[Stack trace truncated to the inspectable frame limit]",
+    );
+    harness.unmount();
   });
 
   it("rejects unavailable, empty, unowned, and malformed contexts before writing", () => {
@@ -183,6 +199,7 @@ describe("useDebugCopyStackTrace", () => {
 
     expect(Object.keys(context).sort()).toEqual([
       "frames",
+      "framesTruncated",
       "pauseGeneration",
       "rootKey",
       "sessionId",

@@ -25,11 +25,28 @@ pub(super) fn run_to_location(
     ensure_pause_owner(shared, pause_generation, "is stale")?;
     let canonical_file = fs::canonicalize(file_path)
         .map_err(|error| format!("Unable to resolve run-to-location source: {error}"))?;
-    let mapped = shared.lock().ok().and_then(|shared| {
+    let mapped_candidate = shared.lock().ok().and_then(|shared| {
         shared.source_maps.as_ref().and_then(|source_maps| {
-            source_maps.map_original_position(&canonical_file, line_number, column_number)
+            source_maps.map_original_position_candidate(&canonical_file, line_number, column_number)
         })
     });
+    let mapped = mapped_candidate
+        .and_then(|candidate| candidate.validate_with_receipt())
+        .and_then(|validated| {
+            shared
+                .lock()
+                .ok()
+                .and_then(|shared| {
+                    shared
+                        .source_maps
+                        .as_ref()
+                        .map(|source_maps| source_maps.is_current_receipt(&validated.receipt))
+                })
+                .unwrap_or(false)
+                .then_some(validated.location)
+        });
+    ensure_startup_current(mutation_is_allowed)?;
+    ensure_pause_owner(shared, pause_generation, "is stale")?;
     let url = mapped
         .as_ref()
         .map(|location| location.url.clone())

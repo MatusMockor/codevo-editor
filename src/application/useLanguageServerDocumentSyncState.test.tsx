@@ -10,8 +10,7 @@ import {
 } from "../domain/languageServerDocumentSync";
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type DocumentSyncState = ReturnType<typeof useLanguageServerDocumentSyncState>;
 
@@ -120,12 +119,9 @@ describe("useLanguageServerDocumentSyncState", () => {
     const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
 
     expect(state.nextJavaScriptTypeScriptDocumentVersion(rootPath, path)).toBe(1);
-    state.javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
-      "uri-key"
-    ] = 1;
+    state.javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current["uri-key"] = 1;
     state.javaScriptTypeScriptSyncedDocumentPathsRef.current.add(key);
-    state.javaScriptTypeScriptSyncedDocumentContentRef.current[key] =
-      "const value = 1;";
+    state.javaScriptTypeScriptSyncedDocumentContentRef.current[key] = "const value = 1;";
     state.javaScriptTypeScriptPendingDocumentChangesRef.current[key] = {
       languageId: "typescript",
       path,
@@ -134,10 +130,8 @@ describe("useLanguageServerDocumentSyncState", () => {
     };
     state.javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef.current[key] = 2;
     state.javaScriptTypeScriptDocumentChangeTimersRef.current[key] = timerId;
-    state.javaScriptTypeScriptDocumentSyncQueuesRef.current[key] =
-      Promise.resolve();
-    state.javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current =
-      "runtime:1";
+    state.javaScriptTypeScriptDocumentSyncQueuesRef.current[key] = Promise.resolve();
+    state.javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current = "runtime:1";
 
     state.resetJavaScriptTypeScriptLanguageServerDocuments();
 
@@ -148,14 +142,10 @@ describe("useLanguageServerDocumentSyncState", () => {
     expect(state.javaScriptTypeScriptSyncedDocumentPathsRef.current.size).toBe(0);
     expect(state.javaScriptTypeScriptSyncedDocumentContentRef.current).toEqual({});
     expect(state.javaScriptTypeScriptPendingDocumentChangesRef.current).toEqual({});
-    expect(
-      state.javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef.current,
-    ).toEqual({});
+    expect(state.javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef.current).toEqual({});
     expect(state.javaScriptTypeScriptDocumentVersionsRef.current).toEqual({});
     expect(state.javaScriptTypeScriptDocumentVersionsByUriRef.current).toEqual({});
-    expect(
-      state.javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current,
-    ).toEqual({});
+    expect(state.javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current).toEqual({});
     expect(state.javaScriptTypeScriptDocumentSyncQueuesRef.current).toEqual({});
   });
 
@@ -179,9 +169,7 @@ describe("useLanguageServerDocumentSyncState", () => {
 
     harness.rerender();
 
-    expect(harness.current.clearDocumentChangeTimer).toBe(
-      initial.clearDocumentChangeTimer,
-    );
+    expect(harness.current.clearDocumentChangeTimer).toBe(initial.clearDocumentChangeTimer);
     expect(harness.current.clearJavaScriptTypeScriptDocumentChangeTimer).toBe(
       initial.clearJavaScriptTypeScriptDocumentChangeTimer,
     );
@@ -189,19 +177,27 @@ describe("useLanguageServerDocumentSyncState", () => {
     expect(harness.current.enqueueJavaScriptTypeScriptDocumentSync).toBe(
       initial.enqueueJavaScriptTypeScriptDocumentSync,
     );
-    expect(harness.current.getPhpDocumentSyncVersion).toBe(
-      initial.getPhpDocumentSyncVersion,
-    );
+    expect(harness.current.getPhpDocumentSyncVersion).toBe(initial.getPhpDocumentSyncVersion);
     expect(harness.current.nextDocumentVersion).toBe(initial.nextDocumentVersion);
     expect(harness.current.nextJavaScriptTypeScriptDocumentVersion).toBe(
       initial.nextJavaScriptTypeScriptDocumentVersion,
     );
-    expect(
-      harness.current.resetJavaScriptTypeScriptLanguageServerDocuments,
-    ).toBe(initial.resetJavaScriptTypeScriptLanguageServerDocuments);
-    expect(harness.current.resetLanguageServerDocuments).toBe(
-      initial.resetLanguageServerDocuments,
+    expect(harness.current.resetJavaScriptTypeScriptLanguageServerDocuments).toBe(
+      initial.resetJavaScriptTypeScriptLanguageServerDocuments,
     );
+    expect(harness.current.resetLanguageServerDocuments).toBe(initial.resetLanguageServerDocuments);
+  });
+
+  it("retires queued JS/TS change mailbox ownership on unmount", () => {
+    const harness = renderHook();
+    const clear = vi.spyOn(harness.current.javaScriptTypeScriptDocumentChangeMailbox, "clear");
+
+    act(() => {
+      root?.unmount();
+    });
+    root = null;
+
+    expect(clear).toHaveBeenCalledOnce();
   });
 
   it("updates path-key and uri-key version maps", () => {
@@ -213,9 +209,7 @@ describe("useLanguageServerDocumentSyncState", () => {
 
     expect(state.nextDocumentVersion(rootPath, phpPath)).toBe(1);
     expect(
-      state.documentVersionsRef.current[
-        languageServerDocumentSyncKey(rootPath, phpPath)
-      ],
+      state.documentVersionsRef.current[languageServerDocumentSyncKey(rootPath, phpPath)],
     ).toBe(1);
     expect(
       state.documentVersionsByUriRef.current[

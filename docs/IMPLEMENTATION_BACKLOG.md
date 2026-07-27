@@ -143,6 +143,17 @@ Scale:
 | P9-01 | Packaged smoke scripts | L | Pending | macOS packaged smoke can be repeated with fixtures. |
 | P9-02 | Signed release dry run | L | Pending | Signing credentials run through CI and produce a verified DMG. |
 
+## Current JavaScript/TypeScript hardening
+
+| Area | Status | Acceptance |
+| --- | --- | --- |
+| LSP latest-value mailbox and session authority | Done | Document notifications carry the captured expected session; stale, dropped, re-entrant and A→B→A work cannot write or publish into a replacement session. |
+| JavaScript coverage viewport projection | Done | One report/path index and binary-search viewport projection cap Monaco output at 256 decorations and 128 inline labels, including bounded visible-range input. |
+| Node variable-page settlement | Done | Malformed settlement is retryable, releases every flight counter and cannot clear newer request ownership. |
+| Bounded stopped-event stack | Done | At most 256 validated unique frames cross the event boundary; truncation stays explicit through the windowed Call Stack UI. |
+| Child-target multiplexer endpoint ABA foundation | Foundation only | Exact target authority prevents endpoint-reuse cross-target sends/disconnects; production wiring and user-visible child debugging remain blocked/off. |
+| Dynamic source-map foundation | Bounded foundation done | Exact `scriptId`/transport/generation receipts fence a 32-job async worker; filesystem work stays outside the shared lock and fail-closed admission caps pending maps (64), committed maps (256), tokens (250,000/map; 1,000,000/session) and retained source-file authorities (256/map; 512/session). `smartStep`, late breakpoint reconciliation and full parity remain pending. |
+
 ## Quality Gates
 
 Before finishing an implementation slice:

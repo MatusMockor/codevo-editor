@@ -167,11 +167,13 @@ pub(crate) struct ChildVariableAuthority {
 pub(crate) struct ChildFrameRoute {
     pub(crate) backend_frame_id: Box<str>,
     pub(crate) endpoint: ChildInspectorEndpoint,
+    pub(crate) target: ChildTargetAuthority,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ChildTargetRoute {
     pub(crate) endpoint: ChildInspectorEndpoint,
+    pub(crate) target: ChildTargetAuthority,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -179,6 +181,7 @@ pub(crate) struct ChildInspectionRoute {
     pub(crate) backend_frame_id: Box<str>,
     pub(crate) backend_variable_reference: u64,
     pub(crate) endpoint: ChildInspectorEndpoint,
+    pub(crate) target: ChildTargetAuthority,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -476,6 +479,7 @@ impl<Reaper: OwnedNodeProcessGroupReaper> NodeChildTargetRegistry<Reaper> {
         Some(ChildFrameRoute {
             backend_frame_id,
             endpoint: target.fingerprint.endpoint.clone(),
+            target: frame.pause.target.clone(),
         })
     }
 
@@ -489,6 +493,7 @@ impl<Reaper: OwnedNodeProcessGroupReaper> NodeChildTargetRegistry<Reaper> {
                 .fingerprint
                 .endpoint
                 .clone(),
+            target: target.clone(),
         })
     }
 
@@ -502,6 +507,7 @@ impl<Reaper: OwnedNodeProcessGroupReaper> NodeChildTargetRegistry<Reaper> {
                 .fingerprint
                 .endpoint
                 .clone(),
+            target: pause.target.clone(),
         })
     }
 
@@ -524,6 +530,7 @@ impl<Reaper: OwnedNodeProcessGroupReaper> NodeChildTargetRegistry<Reaper> {
             backend_frame_id: frame.backend_frame_id.clone(),
             backend_variable_reference: variable_record.backend_reference,
             endpoint: target.fingerprint.endpoint.clone(),
+            target: variable.frame.pause.target.clone(),
         })
     }
 

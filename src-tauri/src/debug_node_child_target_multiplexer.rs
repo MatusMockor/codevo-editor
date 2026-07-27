@@ -330,13 +330,21 @@ where
         &self,
         frame: &ChildFrameAuthority,
     ) -> Result<ChildTargetPendingRequest, String> {
+        self.request_frame_with_route_hook(frame, || {})
+    }
+
+    fn request_frame_with_route_hook(
+        &self,
+        frame: &ChildFrameAuthority,
+        after_route: impl FnOnce(),
+    ) -> Result<ChildTargetPendingRequest, String> {
         let route = self
             .registry
             .resolve_frame(frame)
             .ok_or_else(|| "Stale child frame authority.".to_string())?;
-        let target = self.target_for_endpoint(&route.endpoint)?;
+        after_route();
         self.dispatch(
-            target,
+            route.target,
             route.endpoint,
             PendingResponseAuthority::Frame(frame.clone()),
             ChildTargetTransportRequest::Frame {
@@ -349,13 +357,21 @@ where
         &self,
         variable: &ChildVariableAuthority,
     ) -> Result<ChildTargetPendingRequest, String> {
+        self.request_variables_with_route_hook(variable, || {})
+    }
+
+    fn request_variables_with_route_hook(
+        &self,
+        variable: &ChildVariableAuthority,
+        after_route: impl FnOnce(),
+    ) -> Result<ChildTargetPendingRequest, String> {
         let route = self
             .registry
             .resolve_variable(variable)
             .ok_or_else(|| "Stale child variable authority.".to_string())?;
-        let target = self.target_for_endpoint(&route.endpoint)?;
+        after_route();
         self.dispatch(
-            target,
+            route.target,
             route.endpoint,
             PendingResponseAuthority::Variable(variable.clone()),
             ChildTargetTransportRequest::Variables {
@@ -403,25 +419,37 @@ where
     /// Resume invalidates the complete pause lineage before dispatch. A lost resume response can
     /// never resurrect frames or variables that may already have resumed in the debuggee.
     pub(crate) fn resume(&self, pause: &ChildPauseAuthority) -> Result<(), String> {
+        self.resume_with_route_hook(pause, || {})
+    }
+
+    fn resume_with_route_hook(
+        &self,
+        pause: &ChildPauseAuthority,
+        after_route: impl FnOnce(),
+    ) -> Result<(), String> {
         let route = self
             .registry
             .resolve_pause(pause)
             .ok_or_else(|| "Stale child pause authority.".to_string())?;
+        after_route();
         let (source, request_id, mut transport) = {
             let mut state = self.lock()?;
             ensure_running(&state)?;
-            let index = connection_index_for_endpoint(&state, &route.endpoint)
+            let index = connection_index(&state, &route.target, &route.endpoint)
                 .ok_or_else(|| "Child target transport is disconnected.".to_string())?;
             let source = state.connections[index].response_source.clone();
-            let transport = state.connections[index]
-                .transport
-                .take()
-                .ok_or_else(|| "Child target transport is busy.".to_string())?;
+            if state.connections[index].transport.is_none() {
+                return Err("Child target transport is busy.".to_string());
+            }
+            let request_id = take_counter(&mut state.next_request_id)?;
             self.registry.resume(pause)?;
             state
                 .pending
                 .retain(|_, request| request.response_source.target != source.target);
-            let request_id = take_counter(&mut state.next_request_id)?;
+            let transport = state.connections[index]
+                .transport
+                .take()
+                .expect("validated child target transport");
             (source, request_id, transport)
         };
         let result = send_transport(
@@ -547,9 +575,15 @@ where
     fn install_transport(
         &self,
         intent: &ConnectionIntent,
-        transport: Strategy::Transport,
+        mut transport: Strategy::Transport,
     ) -> Result<Option<Strategy::Transport>, String> {
-        let mut state = self.lock()?;
+        let mut state = match self.lock() {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = disconnect_transport(&mut transport);
+                return Err(error);
+            }
+        };
         if ensure_running(&state).is_err() {
             return Ok(Some(transport));
         }
@@ -631,7 +665,13 @@ where
             return Err(error);
         }
 
-        let mut state = self.lock()?;
+        let mut state = match self.lock() {
+            Ok(state) => state,
+            Err(error) => {
+                let _ = disconnect_transport(&mut transport);
+                return Err(error);
+            }
+        };
         if ensure_running(&state).is_ok() {
             if let Some(connection) = state
                 .connections
@@ -649,24 +689,41 @@ where
         Err("Child target transport changed during request dispatch.".to_string())
     }
 
-    fn target_for_endpoint(
-        &self,
-        endpoint: &ChildInspectorEndpoint,
-    ) -> Result<ChildTargetAuthority, String> {
-        let state = self.lock()?;
-        ensure_running(&state)?;
-        let connection = state
-            .connections
-            .iter()
-            .find(|connection| &connection.endpoint == endpoint)
-            .ok_or_else(|| "Child target transport is disconnected.".to_string())?;
-        Ok(connection.authority.clone())
-    }
-
     fn lock(&self) -> Result<MutexGuard<'_, MultiplexerState<Strategy>>, String> {
         self.state
             .lock()
             .map_err(|_| "Child-target multiplexer is unavailable.".to_string())
+    }
+}
+
+#[cfg(test)]
+impl<Reaper, Strategy> NodeChildTargetMultiplexer<Reaper, Strategy>
+where
+    Reaper: OwnedNodeProcessGroupReaper,
+    Strategy: ChildTargetConnectionStrategy,
+{
+    pub(crate) fn request_frame_after_route_for_test(
+        &self,
+        frame: &ChildFrameAuthority,
+        after_route: impl FnOnce(),
+    ) -> Result<ChildTargetPendingRequest, String> {
+        self.request_frame_with_route_hook(frame, after_route)
+    }
+
+    pub(crate) fn request_variables_after_route_for_test(
+        &self,
+        variable: &ChildVariableAuthority,
+        after_route: impl FnOnce(),
+    ) -> Result<ChildTargetPendingRequest, String> {
+        self.request_variables_with_route_hook(variable, after_route)
+    }
+
+    pub(crate) fn resume_after_route_for_test(
+        &self,
+        pause: &ChildPauseAuthority,
+        after_route: impl FnOnce(),
+    ) -> Result<(), String> {
+        self.resume_with_route_hook(pause, after_route)
     }
 }
 

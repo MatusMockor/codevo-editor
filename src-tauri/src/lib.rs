@@ -2773,48 +2773,68 @@ fn text_document_did_close(
 fn javascript_typescript_document_did_open(
     root_path: String,
     document: TextDocumentContent,
+    expected_session_id: u64,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_open(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_open(&document),
+    )
 }
 
 #[tauri::command]
 fn javascript_typescript_document_did_change(
     root_path: String,
     document: TextDocumentContent,
+    expected_session_id: u64,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_change(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_change(&document),
+    )
 }
 
 #[tauri::command]
 fn javascript_typescript_document_did_save(
     root_path: String,
     document: TextDocumentContent,
+    expected_session_id: u64,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_save(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_save(&document),
+    )
 }
 
 #[tauri::command]
 fn javascript_typescript_document_did_close(
     root_path: String,
     document: TextDocumentPath,
+    expected_session_id: u64,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_path_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_close(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_close(&document),
+    )
 }
 
 #[tauri::command]

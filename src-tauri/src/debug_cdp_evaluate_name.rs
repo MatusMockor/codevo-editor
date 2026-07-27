@@ -248,7 +248,10 @@ mod tests {
             nested_evaluate_name(Some("(\nparent\n)"), "name", false).as_deref(),
             Some("(\nparent\n).name")
         );
-        assert_eq!(nested_evaluate_name(Some("parent\rpath"), "name", false), None);
+        assert_eq!(
+            nested_evaluate_name(Some("parent\rpath"), "name", false),
+            None
+        );
     }
 
     #[test]

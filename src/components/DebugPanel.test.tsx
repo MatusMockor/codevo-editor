@@ -891,6 +891,42 @@ describe("DebugPanel", () => {
     ).toBe(true);
   });
 
+  it("shows a truthful call-stack receipt when retained frames were truncated", () => {
+    render({
+      snapshot: {
+        state: {
+          kind: "stopped",
+          sessionId: 7,
+          reason: "breakpoint",
+          frames: [FRAME_A],
+          topFrame: FRAME_A,
+          framesTruncated: true,
+        },
+        lastSeq: 3,
+      },
+    });
+    expect(host.querySelector('[data-testid="debug-stack-truncated"]')?.textContent).toContain(
+      "Stack trace truncated",
+    );
+
+    render({
+      snapshot: {
+        state: {
+          kind: "stopped",
+          sessionId: 7,
+          reason: "breakpoint",
+          frames: [],
+          topFrame: null,
+          framesTruncated: true,
+        },
+        lastSeq: 4,
+      },
+    });
+    expect(host.querySelector('[data-testid="debug-stack-truncated"]')?.textContent).toContain(
+      "no inspectable frames",
+    );
+  });
+
   it("edits a bounded exception type filter and validates constructor names", () => {
     const filter = Array.from({ length: 7 }, (_, index) => `Error${index}`);
     const props = render({

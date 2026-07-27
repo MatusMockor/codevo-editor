@@ -1,12 +1,10 @@
-import type { JsTestCoverageReport } from "../domain/jsTestCoverage";
-import {
-  jsTestCoverageDecorationsForFile,
-  type JsTestCoverageLineDecoration,
-} from "../domain/jsTestCoverageDecorations";
+import type { JsTestCoverageReport, JsTestFileCoverage } from "../domain/jsTestCoverage";
+import type { JsTestCoverageReportIndex } from "../domain/jsTestCoverageDecorations";
 import { workspaceRelativePath } from "../domain/pathDerivation";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 export interface JsTestCoverageReportSnapshot {
+  readonly index: JsTestCoverageReportIndex;
   readonly report: JsTestCoverageReport;
   readonly rootPath: string;
   readonly workspaceId: string;
@@ -37,13 +35,13 @@ const COVERAGE_EDITOR_EXTENSIONS = [
  * descendant. This makes delayed reports and tab switches fail closed before
  * an editor adapter sees them.
  */
-export function selectActiveJsTestCoverageDecorations({
+export function selectActiveJsTestCoverageFile({
   activeFileDirty,
   activeFilePath,
   rootPath,
   snapshot,
   workspaceId,
-}: ActiveJsTestCoverageDecorationSelection): readonly JsTestCoverageLineDecoration[] {
+}: ActiveJsTestCoverageDecorationSelection): JsTestFileCoverage | null {
   if (
     activeFileDirty ||
     !activeFilePath ||
@@ -54,10 +52,10 @@ export function selectActiveJsTestCoverageDecorations({
     snapshot.workspaceId !== workspaceId ||
     !workspaceRootKeysEqual(snapshot.rootPath, rootPath)
   ) {
-    return [];
+    return null;
   }
   const relativePath = workspaceRelativePath(rootPath, activeFilePath);
-  return jsTestCoverageDecorationsForFile(snapshot.report, relativePath);
+  return snapshot.index.report === snapshot.report ? snapshot.index.find(relativePath) : null;
 }
 
 function isJavaScriptTypeScriptCoveragePath(path: string): boolean {

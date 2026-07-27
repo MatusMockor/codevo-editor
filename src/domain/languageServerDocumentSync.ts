@@ -15,10 +15,22 @@ export interface LanguageServerTextDocument {
 }
 
 export interface LanguageServerDocumentSyncGateway {
-  didOpen(rootPath: string, document: LanguageServerTextDocument): Promise<void>;
-  didChange(rootPath: string, document: LanguageServerTextDocument): Promise<void>;
-  didSave(rootPath: string, document: LanguageServerTextDocument): Promise<void>;
-  didClose(rootPath: string, path: string): Promise<void>;
+  didOpen(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void>;
+  didChange(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void>;
+  didSave(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void>;
+  didClose(rootPath: string, path: string, expectedSessionId: number): Promise<void>;
 }
 
 export const sessionBoundLanguageServerDocumentSyncGateway = Symbol(

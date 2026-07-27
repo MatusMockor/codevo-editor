@@ -1,4 +1,5 @@
 use super::*;
+use crate::debug_cdp::transport::GeneratedScriptIdentity;
 
 #[test]
 fn inline_breakpoint_sends_and_verifies_exact_raw_column_with_existing_features() {
@@ -66,7 +67,11 @@ fn inline_breakpoint_maps_typescript_position_in_both_directions() {
             id,
             json!({
                 "breakpointId": "cdp-inline-mapped",
-                "locations": [{"scriptId": "1", "lineNumber": 0, "columnNumber": 10}]
+                "locations": [{
+                    "scriptId": "preloaded-source-map-1",
+                    "lineNumber": 0,
+                    "columnNumber": 10
+                }]
             }),
         )],
         _ => vec![ok(id)],
@@ -255,6 +260,7 @@ fn breakpoint_resolutions_for_unknown_ids_are_buffered_until_registration() {
         GeneratedPosition {
             line: 14,
             column: 0,
+            script_identity: GeneratedScriptIdentity::Absent,
         },
     );
 
@@ -263,7 +269,8 @@ fn breakpoint_resolutions_for_unknown_ids_are_buffered_until_registration() {
         state.pending_resolutions.get("cdp-early"),
         Some(&GeneratedPosition {
             line: 14,
-            column: 0
+            column: 0,
+            script_identity: GeneratedScriptIdentity::Absent,
         })
     );
 
@@ -287,6 +294,7 @@ fn breakpoint_resolutions_for_unknown_ids_are_buffered_until_registration() {
         GeneratedPosition {
             line: 21,
             column: 0,
+            script_identity: GeneratedScriptIdentity::Absent,
         },
     )
     .expect("resolved breakpoint");
@@ -306,6 +314,7 @@ fn unknown_breakpoint_resolution_buffer_is_strictly_bounded() {
             GeneratedPosition {
                 line: index as u32,
                 column: 0,
+                script_identity: GeneratedScriptIdentity::Absent,
             },
         )
         .is_none());

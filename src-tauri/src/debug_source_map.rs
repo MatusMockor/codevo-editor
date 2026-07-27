@@ -1,252 +1,20 @@
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
-use sourcemap::SourceMap;
 use std::collections::HashSet;
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use crate::debug_support::{file_url_from_path, path_from_file_url};
+use crate::debug_support::file_url_from_path;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct MappedSourceLocation {
-    pub file_path: String,
-    pub line_number: u32,
-    pub column: u32,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct MappedGeneratedLocation {
-    pub url: String,
-    pub line_number: u32,
-    pub column: u32,
-}
-
-struct RegisteredSourceMap {
-    generated_url: String,
-    map: SourceMap,
-    source_base: PathBuf,
-}
-
-pub(crate) struct SourceMapRegistry {
-    root: PathBuf,
-    maps: Vec<RegisteredSourceMap>,
-}
-
-impl SourceMapRegistry {
-    pub(crate) fn new(root: &Path) -> Result<Self, String> {
-        let root = root
-            .canonicalize()
-            .map_err(|error| format!("Unable to resolve debugger workspace root: {error}"))?;
-        Ok(Self {
-            root,
-            maps: Vec::new(),
-        })
-    }
-
-    pub(crate) fn register_script(
-        &mut self,
-        generated_url: &str,
-        source_map_url: &str,
-    ) -> Result<(), String> {
-        self.maps
-            .retain(|entry| entry.generated_url != generated_url);
-        let Some(generated_path) = path_from_file_url(generated_url).map(PathBuf::from) else {
-            return Ok(());
-        };
-        let generated_path = self.workspace_file(&generated_path)?;
-        let (bytes, source_base) = self.read_source_map(&generated_path, source_map_url)?;
-        let map = SourceMap::from_slice(&bytes).map_err(|error| {
-            format!("Unable to parse source map for `{generated_url}`: {error}")
-        })?;
-        if !self.map_has_workspace_source(&source_base, &map) {
-            return Err("Source map does not reference a source inside the workspace.".to_string());
-        }
-        self.maps.push(RegisteredSourceMap {
-            generated_url: generated_url.to_string(),
-            map,
-            source_base,
-        });
-        Ok(())
-    }
-
-    pub(crate) fn evict_script(&mut self, generated_url: &str) {
-        self.maps
-            .retain(|entry| entry.generated_url != generated_url);
-    }
-
-    pub(crate) fn map_generated(
-        &self,
-        generated_url: &str,
-        line_number: u32,
-        column: u32,
-    ) -> Option<MappedSourceLocation> {
-        let entry = self
-            .maps
-            .iter()
-            .find(|entry| entry.generated_url == generated_url)?;
-        let token = entry.map.lookup_token(line_number, column)?;
-        let source = token.get_source()?;
-        let file_path = self.resolve_source(&entry.source_base, source)?;
-        Some(MappedSourceLocation {
-            file_path: file_path.to_string_lossy().to_string(),
-            line_number: token.get_src_line() + 1,
-            column: token.get_src_col() + 1,
-        })
-    }
-
-    pub(crate) fn map_original_line(
-        &self,
-        source_path: &Path,
-        line_number: u32,
-    ) -> Option<MappedGeneratedLocation> {
-        let source_path = source_path.canonicalize().ok()?;
-        if !source_path.starts_with(&self.root) {
-            return None;
-        }
-        for entry in &self.maps {
-            let mut best = None;
-            for token in entry.map.tokens() {
-                let Some(source) = token.get_source() else {
-                    continue;
-                };
-                let Some(candidate) = self.resolve_source(&entry.source_base, source) else {
-                    continue;
-                };
-                if candidate != source_path || token.get_src_line() + 1 != line_number {
-                    continue;
-                }
-                let location = MappedGeneratedLocation {
-                    url: entry.generated_url.clone(),
-                    line_number: token.get_dst_line() + 1,
-                    column: token.get_dst_col() + 1,
-                };
-                let rank = (token.get_src_col(), token.get_dst_col());
-                if best
-                    .as_ref()
-                    .is_some_and(|(best_rank, _)| *best_rank <= rank)
-                {
-                    continue;
-                }
-                best = Some((rank, location));
-            }
-            if let Some((_, location)) = best {
-                return Some(location);
-            }
-        }
-        None
-    }
-
-    /// Maps a one-based editor position to the nearest generated segment whose
-    /// original column is at or before the cursor on the same source line.
-    pub(crate) fn map_original_position(
-        &self,
-        source_path: &Path,
-        line_number: u32,
-        column: u32,
-    ) -> Option<MappedGeneratedLocation> {
-        let source_path = source_path.canonicalize().ok()?;
-        if column == 0 || !source_path.starts_with(&self.root) {
-            return None;
-        }
-        let requested_column = column - 1;
-        for entry in &self.maps {
-            let mut best = None;
-            for token in entry.map.tokens() {
-                let Some(source) = token.get_source() else {
-                    continue;
-                };
-                let Some(candidate) = self.resolve_source(&entry.source_base, source) else {
-                    continue;
-                };
-                let source_column = token.get_src_col();
-                if candidate != source_path
-                    || token.get_src_line() + 1 != line_number
-                    || source_column > requested_column
-                {
-                    continue;
-                }
-                let location = MappedGeneratedLocation {
-                    url: entry.generated_url.clone(),
-                    line_number: token.get_dst_line() + 1,
-                    column: token.get_dst_col() + 1,
-                };
-                let rank = (source_column, std::cmp::Reverse(token.get_dst_col()));
-                if best.as_ref().is_none_or(|(best_rank, _)| *best_rank < rank) {
-                    best = Some((rank, location));
-                }
-            }
-            if let Some((_, location)) = best {
-                return Some(location);
-            }
-        }
-        None
-    }
-
-    fn read_source_map(
-        &self,
-        generated_path: &Path,
-        source_map_url: &str,
-    ) -> Result<(Vec<u8>, PathBuf), String> {
-        if let Some(encoded) = inline_base64_payload(source_map_url) {
-            let bytes = STANDARD
-                .decode(encoded)
-                .map_err(|error| format!("Unable to decode inline source map: {error}"))?;
-            return Ok((
-                bytes,
-                generated_path.parent().unwrap_or(&self.root).to_path_buf(),
-            ));
-        }
-        let map_path = path_from_file_url(source_map_url)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                generated_path
-                    .parent()
-                    .unwrap_or(&self.root)
-                    .join(source_map_url)
-            });
-        let map_path = self.workspace_file(&map_path)?;
-        let bytes = fs::read(&map_path).map_err(|error| {
-            format!(
-                "Unable to read source map `{}`: {error}",
-                map_path.display()
-            )
-        })?;
-        let source_base = map_path.parent().unwrap_or(&self.root).to_path_buf();
-        Ok((bytes, source_base))
-    }
-
-    fn map_has_workspace_source(&self, source_base: &Path, map: &SourceMap) -> bool {
-        map.tokens().any(|token| {
-            token
-                .get_source()
-                .and_then(|source| self.resolve_source(source_base, source))
-                .is_some()
-        })
-    }
-
-    fn resolve_source(&self, source_base: &Path, source: &str) -> Option<PathBuf> {
-        let raw_path = path_from_file_url(source)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| source_base.join(source));
-        self.workspace_file(&raw_path).ok()
-    }
-
-    fn workspace_file(&self, path: &Path) -> Result<PathBuf, String> {
-        let canonical = path.canonicalize().map_err(|error| {
-            format!(
-                "Unable to resolve debugger source `{}`: {error}",
-                path.display()
-            )
-        })?;
-        if !canonical.starts_with(&self.root) || !canonical.is_file() {
-            return Err(format!(
-                "Debugger source `{}` is outside the workspace root.",
-                path.display()
-            ));
-        }
-        Ok(canonical)
-    }
-}
+#[cfg(test)]
+#[path = "debug_source_map_adversarial_tests.rs"]
+mod adversarial_tests;
+#[path = "debug_source_map_registry.rs"]
+mod registry;
+use registry::MAX_SOURCE_MAP_URL_BYTES;
+pub(crate) use registry::{
+    MappedSourceCandidate, MappedSourceLocation, PreparedSourceMap, SourceMapPreparation,
+    SourceMapReceipt, SourceMapRegistry, SourceMapSettlement,
+};
 
 pub(crate) fn emitted_type_script_path(root: &Path, source: &Path) -> Result<PathBuf, String> {
     emitted_type_script_path_with_policy(root, source, true)
@@ -318,9 +86,30 @@ fn emitted_type_script_path_with_policy(
 }
 
 pub(crate) fn source_map_url_from_generated(generated_path: &Path) -> Option<String> {
-    let content = fs::read_to_string(generated_path).ok()?;
-    if let Some(url) = source_mapping_url_comment(&content) {
-        return Some(url.to_string());
+    const DIRECTIVE_OVERHEAD_BYTES: usize = 64;
+    let mut file = fs::File::open(generated_path).ok()?;
+    let length = file.metadata().ok()?.len();
+    let tail_limit = MAX_SOURCE_MAP_URL_BYTES.checked_add(DIRECTIVE_OVERHEAD_BYTES)?;
+    let start = length.saturating_sub(tail_limit as u64);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(length.saturating_sub(start))
+            .ok()?
+            .min(tail_limit),
+    );
+    file.take(tail_limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > tail_limit {
+        return None;
+    }
+    if start > 0 {
+        let newline = bytes.iter().position(|byte| *byte == b'\n')?;
+        bytes.drain(..=newline);
+    }
+    let content = std::str::from_utf8(&bytes).ok()?;
+    if let Some(url) = source_mapping_url_comment(content) {
+        return (url.len() <= MAX_SOURCE_MAP_URL_BYTES).then(|| url.to_string());
     }
     let map_path = PathBuf::from(format!("{}.map", generated_path.to_string_lossy()));
     map_path
@@ -647,12 +436,6 @@ fn source_mapping_url_comment(content: &str) -> Option<&str> {
             .or_else(|| line.strip_prefix("//@ sourceMappingURL="))?;
         (!value.trim().is_empty()).then(|| value.trim())
     })
-}
-
-fn inline_base64_payload(url: &str) -> Option<&str> {
-    let (metadata, payload) = url.split_once(',')?;
-    (metadata.starts_with("data:application/json") && metadata.ends_with(";base64"))
-        .then_some(payload)
 }
 
 #[cfg(test)]
@@ -1060,6 +843,42 @@ mod tests {
         assert!(source_map_url_from_generated(&generated)
             .expect("inline map url")
             .starts_with("data:application/json;base64,"));
+    }
+
+    #[test]
+    fn source_map_directive_discovery_reads_only_the_bounded_generated_tail() {
+        let root = fixture("bounded-generated-tail");
+        let generated = root.join("dist/large.js");
+        if let Some(parent) = generated.parent() {
+            fs::create_dir_all(parent).expect("generated parent");
+        }
+        let mut file = fs::File::create(&generated).expect("generated file");
+        use std::io::{Seek, SeekFrom, Write};
+        file.seek(SeekFrom::Start(
+            super::MAX_SOURCE_MAP_URL_BYTES as u64 + 1024,
+        ))
+        .expect("sparse generated body");
+        file.write_all(b"\n//# sourceMappingURL=large.js.map\n")
+            .expect("tail directive");
+        drop(file);
+
+        assert_eq!(
+            source_map_url_from_generated(&generated),
+            Some("large.js.map".to_string())
+        );
+    }
+
+    #[test]
+    fn oversized_source_map_directive_is_not_retained() {
+        let root = fixture("oversized-generated-directive");
+        let generated = root.join("dist/large.js");
+        let directive = format!(
+            "//# sourceMappingURL=data:application/json;base64,{}\n",
+            "A".repeat(super::MAX_SOURCE_MAP_URL_BYTES + 1)
+        );
+        write(&generated, &directive);
+
+        assert!(source_map_url_from_generated(&generated).is_none());
     }
 
     #[test]

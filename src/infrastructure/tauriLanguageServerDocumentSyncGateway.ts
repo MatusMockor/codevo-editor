@@ -6,10 +6,7 @@ import type {
 } from "../domain/languageServerDocumentSync";
 import { sessionBoundLanguageServerDocumentSyncGateway } from "../domain/languageServerDocumentSync";
 
-type InvokeCommand = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<void>;
+type InvokeCommand = (command: string, args?: Record<string, unknown>) => Promise<void>;
 type RuntimeDetector = () => boolean;
 
 const invokeCommand: InvokeCommand = (command, args) => invoke<void>(command, args);
@@ -59,9 +56,7 @@ class TauriDocumentSyncInvoker {
   }
 }
 
-export class TauriSessionBoundLanguageServerDocumentSyncGateway
-  implements SessionBoundLanguageServerDocumentSyncGateway
-{
+export class TauriSessionBoundLanguageServerDocumentSyncGateway implements SessionBoundLanguageServerDocumentSyncGateway {
   readonly #invoker: TauriDocumentSyncInvoker;
   readonly [sessionBoundLanguageServerDocumentSyncGateway] = true as const;
 
@@ -112,11 +107,7 @@ export class TauriSessionBoundLanguageServerDocumentSyncGateway
     });
   }
 
-  didClose(
-    rootPath: string,
-    path: string,
-    expectedSessionId: number,
-  ): Promise<void> {
+  didClose(rootPath: string, path: string, expectedSessionId: number): Promise<void> {
     return this.#invoker.invokeWhenAvailable("didClose", {
       document: { path },
       expectedSessionId,
@@ -125,9 +116,7 @@ export class TauriSessionBoundLanguageServerDocumentSyncGateway
   }
 }
 
-export class TauriLanguageServerDocumentSyncGateway
-  implements LanguageServerDocumentSyncGateway
-{
+export class TauriLanguageServerDocumentSyncGateway implements LanguageServerDocumentSyncGateway {
   readonly #invoker: TauriDocumentSyncInvoker;
 
   constructor(
@@ -141,24 +130,46 @@ export class TauriLanguageServerDocumentSyncGateway
     );
   }
 
-  didOpen(rootPath: string, document: LanguageServerTextDocument): Promise<void> {
-    return this.#invoker.invokeWhenAvailable("didOpen", { document, rootPath });
-  }
-
-  didChange(rootPath: string, document: LanguageServerTextDocument): Promise<void> {
-    return this.#invoker.invokeWhenAvailable("didChange", {
+  didOpen(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void> {
+    return this.#invoker.invokeWhenAvailable("didOpen", {
       document,
+      expectedSessionId,
       rootPath,
     });
   }
 
-  didSave(rootPath: string, document: LanguageServerTextDocument): Promise<void> {
-    return this.#invoker.invokeWhenAvailable("didSave", { document, rootPath });
+  didChange(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void> {
+    return this.#invoker.invokeWhenAvailable("didChange", {
+      document,
+      expectedSessionId,
+      rootPath,
+    });
   }
 
-  didClose(rootPath: string, path: string): Promise<void> {
+  didSave(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void> {
+    return this.#invoker.invokeWhenAvailable("didSave", {
+      document,
+      expectedSessionId,
+      rootPath,
+    });
+  }
+
+  didClose(rootPath: string, path: string, expectedSessionId: number): Promise<void> {
     return this.#invoker.invokeWhenAvailable("didClose", {
       document: { path },
+      expectedSessionId,
       rootPath,
     });
   }

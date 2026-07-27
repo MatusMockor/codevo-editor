@@ -65,6 +65,29 @@ struct DisconnectGate {
     wake: Condvar,
 }
 
+impl DisconnectGate {
+    fn enter_and_wait(&self) {
+        self.entered.fetch_add(1, Ordering::SeqCst);
+        let mut released = self.released.lock().expect("operation gate");
+        while !*released {
+            released = self.wake.wait(released).expect("operation gate wait");
+        }
+    }
+
+    fn wait_until_entered(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self.entered.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert_eq!(self.entered.load(Ordering::SeqCst), 1);
+    }
+
+    fn release(&self) {
+        *self.released.lock().expect("operation gate") = true;
+        self.wake.notify_all();
+    }
+}
+
 struct FakeStrategy {
     state: Arc<Mutex<FakeTransportState>>,
 }
@@ -194,11 +217,7 @@ impl ChildTargetTransport for FakeTransport {
             .disconnect_gate
             .clone();
         if let Some(gate) = gate {
-            gate.entered.fetch_add(1, Ordering::SeqCst);
-            let mut released = gate.released.lock().expect("disconnect gate");
-            while !*released {
-                released = gate.wake.wait(released).expect("disconnect gate wait");
-            }
+            gate.enter_and_wait();
         }
         if panic_after_gate {
             std::panic::panic_any(PanicPayloadWithPanickingDrop);
@@ -522,6 +541,183 @@ fn target_replacement_disconnects_the_old_transport_and_rejects_its_late_respons
     assert!(events
         .iter()
         .any(|event| matches!(event, FakeEvent::Connected { connection: 2, .. })));
+}
+
+#[test]
+fn frame_route_rejects_same_endpoint_target_replacement_before_dispatch() {
+    let (multiplexer, transport_state, _reaper) = harness();
+    let multiplexer = Arc::new(multiplexer);
+    let shared_endpoint = endpoint(9229, "shared-target");
+    let original = multiplexer
+        .reconcile(1, vec![observation(101, 11, shared_endpoint.clone())])
+        .expect("original inventory")
+        .remove(0);
+    let pause = multiplexer.begin_pause(&original).expect("original pause");
+    let frame = multiplexer
+        .admit_frame(&pause, "stale-frame")
+        .expect("original frame");
+    let gate = Arc::new(DisconnectGate::default());
+    let request = {
+        let multiplexer = Arc::clone(&multiplexer);
+        let gate = Arc::clone(&gate);
+        thread::spawn(move || {
+            multiplexer.request_frame_after_route_for_test(&frame, || gate.enter_and_wait())
+        })
+    };
+    gate.wait_until_entered();
+
+    let replacement = multiplexer
+        .reconcile(2, vec![observation(102, 12, shared_endpoint)])
+        .expect("replacement inventory")
+        .remove(0);
+    gate.release();
+    assert_eq!(
+        request.join().expect("frame request thread"),
+        Err("Child target transport is disconnected.".to_string())
+    );
+    assert_eq!(
+        transport_state
+            .lock()
+            .expect("events")
+            .events
+            .iter()
+            .filter(|event| matches!(event, FakeEvent::Sent { connection: 2, .. }))
+            .count(),
+        0,
+        "a stale frame route must never execute on the replacement target"
+    );
+
+    let pause = multiplexer
+        .begin_pause(&replacement)
+        .expect("replacement pause");
+    let frame = multiplexer
+        .admit_frame(&pause, "fresh-frame")
+        .expect("replacement frame");
+    assert!(multiplexer.request_frame(&frame).is_ok());
+}
+
+#[test]
+fn variable_route_rejects_same_endpoint_target_replacement_before_dispatch() {
+    let (multiplexer, transport_state, _reaper) = harness();
+    let multiplexer = Arc::new(multiplexer);
+    let shared_endpoint = endpoint(9229, "shared-target");
+    let original = multiplexer
+        .reconcile(1, vec![observation(101, 11, shared_endpoint.clone())])
+        .expect("original inventory")
+        .remove(0);
+    let pause = multiplexer.begin_pause(&original).expect("original pause");
+    let frame = multiplexer
+        .admit_frame(&pause, "stale-frame")
+        .expect("original frame");
+    let variable = multiplexer
+        .admit_variable(&frame, 77)
+        .expect("original variable");
+    let gate = Arc::new(DisconnectGate::default());
+    let request = {
+        let multiplexer = Arc::clone(&multiplexer);
+        let gate = Arc::clone(&gate);
+        thread::spawn(move || {
+            multiplexer.request_variables_after_route_for_test(&variable, || gate.enter_and_wait())
+        })
+    };
+    gate.wait_until_entered();
+
+    let replacement = multiplexer
+        .reconcile(2, vec![observation(102, 12, shared_endpoint)])
+        .expect("replacement inventory")
+        .remove(0);
+    gate.release();
+    assert_eq!(
+        request.join().expect("variables request thread"),
+        Err("Child target transport is disconnected.".to_string())
+    );
+    assert_eq!(
+        transport_state
+            .lock()
+            .expect("events")
+            .events
+            .iter()
+            .filter(|event| matches!(event, FakeEvent::Sent { connection: 2, .. }))
+            .count(),
+        0,
+        "a stale variable route must never execute on the replacement target"
+    );
+
+    let pause = multiplexer
+        .begin_pause(&replacement)
+        .expect("replacement pause");
+    let frame = multiplexer
+        .admit_frame(&pause, "fresh-frame")
+        .expect("replacement frame");
+    let variable = multiplexer
+        .admit_variable(&frame, 88)
+        .expect("replacement variable");
+    assert!(multiplexer.request_variables(&variable).is_ok());
+}
+
+#[test]
+fn stale_resume_preserves_same_endpoint_replacement_transport() {
+    let (multiplexer, transport_state, _reaper) = harness();
+    let multiplexer = Arc::new(multiplexer);
+    let shared_endpoint = endpoint(9229, "shared-target");
+    let original = multiplexer
+        .reconcile(1, vec![observation(101, 11, shared_endpoint.clone())])
+        .expect("original inventory")
+        .remove(0);
+    let pause = multiplexer.begin_pause(&original).expect("original pause");
+    let gate = Arc::new(DisconnectGate::default());
+    let request = {
+        let multiplexer = Arc::clone(&multiplexer);
+        let gate = Arc::clone(&gate);
+        thread::spawn(move || {
+            multiplexer.resume_after_route_for_test(&pause, || gate.enter_and_wait())
+        })
+    };
+    gate.wait_until_entered();
+
+    let replacement = multiplexer
+        .reconcile(2, vec![observation(102, 12, shared_endpoint)])
+        .expect("replacement inventory")
+        .remove(0);
+    gate.release();
+    assert_eq!(
+        request.join().expect("resume request thread"),
+        Err("Child target transport is disconnected.".to_string())
+    );
+    {
+        let events = &transport_state.lock().expect("events").events;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    FakeEvent::Sent {
+                        connection: 2,
+                        request: ChildTargetTransportRequest::Resume,
+                        ..
+                    }
+                ))
+                .count(),
+            0,
+            "a stale resume must never execute on the replacement target"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, FakeEvent::Disconnected { connection: 2 }))
+                .count(),
+            0,
+            "a stale resume must not drop or disconnect the replacement transport"
+        );
+    }
+    let pause = multiplexer
+        .begin_pause(&replacement)
+        .expect("replacement pause");
+    assert!(
+        multiplexer.request_pause(&replacement).is_ok(),
+        "the replacement transport must remain installed and usable"
+    );
+    multiplexer.resume(&pause).expect("fresh resume");
 }
 
 #[test]

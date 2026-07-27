@@ -25,9 +25,10 @@ pub(super) fn expire_pending(shared: &mut CdpShared, now: Instant) {
 pub(super) fn install_visible_pause(
     params: &Value,
     shared: &mut CdpShared,
-) -> Result<(Vec<DebugStackFrame>, u64, DebugStopReason), String> {
+) -> Result<(Vec<DebugStackFrame>, u64, DebugStopReason, bool), String> {
     let inventory = build_pause_inventory(params, shared)?;
     let frames = inventory.frames.clone();
+    let frames_truncated = inventory.frames_truncated;
     let pause_generation = inventory.pause_generation;
     let reason = if shared.pending_restart_frame.take().is_some() {
         DebugStopReason::Restart
@@ -40,7 +41,7 @@ pub(super) fn install_visible_pause(
         )
     };
     shared.pause = Some(inventory);
-    Ok((frames, pause_generation, reason))
+    Ok((frames, pause_generation, reason, frames_truncated))
 }
 
 pub(super) fn restart_frame(

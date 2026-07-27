@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import type * as Monaco from "monaco-editor";
-import { selectActiveJsTestCoverageDecorations } from "../application/jsTestCoverageDecorationSelection";
+import { selectActiveJsTestCoverageFile } from "../application/jsTestCoverageDecorationSelection";
 import type { JsTestCoverageReport } from "../domain/jsTestCoverage";
+import { createJsTestCoverageReportIndex } from "../domain/jsTestCoverageDecorations";
 import { isDirty, type EditorDocument } from "../domain/workspace";
 import { modelMatchesWorkspacePath, modelPath } from "./phpMonacoDocumentContext";
 import { toJsTestCoverageDecoration } from "./editorJsTestCoverageMonacoMappings";
@@ -30,21 +31,28 @@ export function useJsTestCoverageEditorDecorations({
   } | null>(null);
   const activeFilePath = activeDocument?.path ?? null;
   const activeFileDirty = activeDocument ? isDirty(activeDocument) : false;
-  const decorations = useMemo(
+  const reportIndex = useMemo(
+    () => (report ? createJsTestCoverageReportIndex(report) : null),
+    [report],
+  );
+  const coverageFile = useMemo(
     () =>
-      selectActiveJsTestCoverageDecorations({
+      selectActiveJsTestCoverageFile({
         activeFileDirty,
         activeFilePath,
         rootPath,
-        snapshot: report && rootPath && workspaceId ? { report, rootPath, workspaceId } : null,
+        snapshot:
+          report && reportIndex && rootPath && workspaceId
+            ? { index: reportIndex, report, rootPath, workspaceId }
+            : null,
         workspaceId,
       }),
-    [activeFileDirty, activeFilePath, report, rootPath, workspaceId],
+    [activeFileDirty, activeFilePath, report, reportIndex, rootPath, workspaceId],
   );
 
   useEffect(() => {
     const path = activeFilePath;
-    if (!path || !editor || !monaco) return;
+    if (!path || !coverageFile || !editor || !monaco) return;
     let animationFrame: number | null = null;
     const clearDecorationOwner = (): void => {
       const owner = decorationOwnerRef.current;
@@ -70,7 +78,7 @@ export function useJsTestCoverageEditorDecorations({
       const visibleRanges =
         typeof editor.getVisibleRanges === "function" ? editor.getVisibleRanges() : [];
       const visibleDecorations = selectVisibleJsTestCoverageDecorations(
-        decorations,
+        coverageFile.lines,
         visibleRanges,
         model.getLineCount(),
       );
@@ -100,5 +108,5 @@ export function useJsTestCoverageEditorDecorations({
       for (const disposable of disposables) disposable?.dispose();
       clearDecorationOwner();
     };
-  }, [activeFilePath, decorations, editor, monaco, rootPath]);
+  }, [activeFilePath, coverageFile, editor, monaco, rootPath]);
 }

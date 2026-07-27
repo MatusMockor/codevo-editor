@@ -113,4 +113,18 @@ describe("JavaScript test coverage Monaco mappings", () => {
       }).options.after,
     ).toBeUndefined();
   });
+
+  it("truthfully surfaces a bounded visible-range projection", () => {
+    expect(
+      toJsTestCoverageDecoration(monaco, model, {
+        hits: 3,
+        lineNumber: 7,
+        status: "covered",
+        visibleRangesTruncated: true,
+      }).options.hoverMessage,
+    ).toEqual({
+      value:
+        "Test coverage: covered (3 hits). Coverage decorations are limited because the editor reported too many visible ranges.",
+    });
+  });
 });

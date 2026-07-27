@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { StackFrame } from "./debug";
-import { formatDebugStackTrace, MAX_DEBUG_STACK_TRACE_FRAMES } from "./debugStackTrace";
+import {
+  DEBUG_STACK_TRACE_TRUNCATION_MARKER,
+  formatDebugStackTrace,
+  MAX_DEBUG_STACK_TRACE_FRAMES,
+} from "./debugStackTrace";
 
 const frame: StackFrame = {
   frameId: 1,
@@ -23,6 +27,12 @@ describe("formatDebugStackTrace", () => {
   it("uses the full path and line while intentionally ignoring column", () => {
     expect(formatDebugStackTrace([{ ...frame, column: 999 }])).toBe(
       "main (/workspace/src/index.ts:12)",
+    );
+  });
+
+  it("marks a bounded partial stack explicitly when copied", () => {
+    expect(formatDebugStackTrace([frame], true)).toBe(
+      `main (/workspace/src/index.ts:12)\n${DEBUG_STACK_TRACE_TRUNCATION_MARKER}`,
     );
   });
 

@@ -164,8 +164,7 @@ pub(crate) fn create_node_cdp_adapter_with_startup_function_breakpoints(
     let (disconnected_tx, disconnected_rx) = mpsc::channel();
     let finish = shared_debug_session_finish(finish);
     let retained_process = process.process.clone();
-    let mut adapter =
-        match NodeCdpAdapter::connect_with_startup_function_breakpoints(
+    let mut adapter = match NodeCdpAdapter::connect_with_startup_function_breakpoints(
         &process.ws_url,
         emitter,
         initial_breakpoints,

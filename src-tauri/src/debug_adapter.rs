@@ -474,6 +474,8 @@ pub enum DebugEventPayload {
         reason: DebugStopReason,
         frames: Vec<DebugStackFrame>,
         pause_generation: u64,
+        #[serde(default, skip_serializing_if = "is_false")]
+        frames_truncated: bool,
     },
     Resumed,
     #[serde(rename_all = "camelCase")]
@@ -496,6 +498,10 @@ pub enum DebugEventPayload {
         generation: u64,
         breakpoints: Vec<DebugFunctionBreakpointVerification>,
     },
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

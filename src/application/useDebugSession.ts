@@ -1559,6 +1559,15 @@ export function useWorkbenchDebugSession({
           }),
         );
       } finally {
+        setVariablePages((current) =>
+          reduceDebugVariablePages(current, {
+            type: "cancel",
+            owner,
+            variablesReference,
+            start,
+            requestId,
+          }),
+        );
         if (variablePageRequestsRef.current.get(requestKey) === requestId) {
           variablePageRequestsRef.current.delete(requestKey);
         }

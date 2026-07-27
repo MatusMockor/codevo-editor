@@ -424,9 +424,11 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().navigationHistory.forwardStack).not.toContainEqual(
       expect.objectContaining({ path: previewPath }),
     );
-    expect(dependencies.languageServerDocumentSyncGateway.didOpen).not.toHaveBeenCalledWith(
-      expect.objectContaining({ path: expect.stringContaining("markdown-preview") }),
-    );
+    expect(
+      vi
+        .mocked(dependencies.languageServerDocumentSyncGateway.didOpen)
+        .mock.calls.some(([, document]) => document.path.includes("markdown-preview")),
+    ).toBe(false);
     expect(
       [
         ...vi.mocked(dependencies.languageServerDocumentSyncGateway.didChange).mock.calls,
@@ -1809,6 +1811,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(javaScriptTypeScriptDocumentSyncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace",
         expect.objectContaining({ path }),
+        902,
       );
     });
     vi.mocked(javaScriptTypeScriptDocumentSyncGateway.didClose).mockRejectedValueOnce(
@@ -1824,6 +1827,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(javaScriptTypeScriptDocumentSyncGateway.didClose).toHaveBeenCalledWith(
       "/workspace",
       path,
+      902,
     );
     expect(phpDocumentSyncGateway.didClose).not.toHaveBeenCalled();
     expect(
@@ -5379,6 +5383,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
+      44,
     );
 
     await act(async () => {
@@ -5389,7 +5394,11 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
     ).not.toHaveBeenCalledWith("/workspace-a");
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+      44,
+    );
   });
 
   it("closes synced JavaScript and TypeScript documents before stopping an active project runtime", async () => {
@@ -5419,6 +5428,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
+      45,
     );
 
     await act(async () => {
@@ -5427,7 +5437,11 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(24);
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+      45,
+    );
     expect(dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
       "/workspace-a",
     );
@@ -6740,7 +6754,7 @@ describe("useWorkbenchController preview tabs", () => {
     ).not.toHaveBeenCalled();
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
-    ).toHaveBeenCalledWith("/workspace", path);
+    ).toHaveBeenCalledWith("/workspace", path, 742);
   });
 
   it("applies a phpactor clear carrying the analysis version after the document version advanced", async () => {
@@ -7443,7 +7457,7 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(24);
 
     expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(path);
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path, 702);
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
     expect(getWorkbench().diagnosticsSummary).toEqual({
       errors: 0,
@@ -7757,7 +7771,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
-    ).toHaveBeenCalledWith("/workspace-b", expect.objectContaining({ path: workspaceBPath }));
+    ).toHaveBeenCalledWith("/workspace-b", expect.objectContaining({ path: workspaceBPath }), 202);
   });
 
   it("syncs JSX and TSX documents through the JavaScript and TypeScript language server", async () => {
@@ -7820,6 +7834,7 @@ describe("useWorkbenchController preview tabs", () => {
           path: entry.path,
           text: entry.originalContent,
         }),
+        205,
       );
 
       act(() => {
@@ -7836,6 +7851,7 @@ describe("useWorkbenchController preview tabs", () => {
           path: entry.path,
           text: entry.changedContent,
         }),
+        205,
       );
 
       await act(async () => {
@@ -7850,6 +7866,7 @@ describe("useWorkbenchController preview tabs", () => {
           path: entry.path,
           text: entry.changedContent,
         }),
+        205,
       );
     }
   });
@@ -7926,7 +7943,7 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
-    ).toHaveBeenCalledWith("/workspace", expect.objectContaining({ path }));
+    ).toHaveBeenCalledWith("/workspace", expect.objectContaining({ path }), 211);
   });
 
   it("ignores PHP runtime status events without an explicit workspace root", async () => {
@@ -8503,6 +8520,7 @@ describe("useWorkbenchController preview tabs", () => {
         path,
         text: "export const value = 2;\n",
       }),
+      302,
     );
     expect(
       getWorkbench().notices.some(
@@ -8566,6 +8584,7 @@ describe("useWorkbenchController preview tabs", () => {
           path,
           text: "export const value = 2;\n",
         }),
+        311,
       );
     });
 
@@ -8574,8 +8593,10 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    didChange.reject(new Error("stale did change"));
-    await flushAsyncTurns(24);
+    await act(async () => {
+      didChange.reject(new Error("stale did change"));
+      await flushAsyncTurns(24);
+    });
 
     expect(
       getWorkbench().notices.some(
@@ -8642,6 +8663,7 @@ describe("useWorkbenchController preview tabs", () => {
           path,
           text: "export const value = 1;\n",
         }),
+        321,
       );
     });
 
@@ -8862,7 +8884,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
-      expect.any(Number),
+      352,
     );
   });
 
@@ -9745,6 +9767,7 @@ describe("useWorkbenchController preview tabs", () => {
           path,
           text: unformatted,
         }),
+        920,
       );
       expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
         "/workspace",
@@ -11094,6 +11117,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        60,
       );
     });
 
@@ -11171,7 +11195,7 @@ describe("useWorkbenchController preview tabs", () => {
     await waitForReact(() => {
       expect(
         dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
-      ).toHaveBeenCalledWith("/workspace", path);
+      ).toHaveBeenCalledWith("/workspace", path, 331);
     });
 
     act(() => {
@@ -11234,6 +11258,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        361,
       );
     });
 
@@ -11243,7 +11268,7 @@ describe("useWorkbenchController preview tabs", () => {
       await Promise.resolve();
     });
     await waitForReact(() => {
-      expect(syncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path);
+      expect(syncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path, 361);
     });
 
     act(() => {
@@ -11346,6 +11371,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace-c",
       expect.objectContaining({ path: workspaceCPath }),
+      363,
     );
 
     await act(async () => {
@@ -11369,13 +11395,13 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(vi.mocked(syncGateway.didClose).mock.calls).toEqual(
       expect.arrayContaining([
-        ["/workspace-a", workspaceAFirstPath],
-        ["/workspace-a", workspaceASecondPath],
+        ["/workspace-a", workspaceAFirstPath, 363],
+        ["/workspace-a", workspaceASecondPath, 363],
       ]),
     );
     expect(syncGateway.didClose).toHaveBeenCalledTimes(2);
-    expect(syncGateway.didClose).not.toHaveBeenCalledWith(expect.anything(), workspaceBPath);
-    expect(syncGateway.didClose).not.toHaveBeenCalledWith(expect.anything(), workspaceCPath);
+    expect(syncGateway.didClose).not.toHaveBeenCalledWith("/workspace-b", workspaceBPath, 363);
+    expect(syncGateway.didClose).not.toHaveBeenCalledWith("/workspace-c", workspaceCPath, 363);
   });
 
   it("does not send queued JavaScript and TypeScript didOpen after switching project tabs while didClose is pending", async () => {
@@ -11408,6 +11434,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        353,
       );
     });
 
@@ -11416,7 +11443,7 @@ describe("useWorkbenchController preview tabs", () => {
       getWorkbench().closeDocument(path);
     });
     await waitForReact(() => {
-      expect(syncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path);
+      expect(syncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path, 353);
     });
     vi.mocked(syncGateway.didOpen).mockClear();
 
@@ -11445,6 +11472,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
+      353,
     );
   });
 
@@ -11678,7 +11706,7 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
-    ).toHaveBeenCalledWith("/workspace-a", workspaceAPath);
+    ).toHaveBeenCalledWith("/workspace-a", workspaceAPath, 101);
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange,
     ).not.toHaveBeenCalledWith("/workspace-a", expect.objectContaining({ path: workspaceAPath }));
@@ -11691,7 +11719,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
-    ).toHaveBeenCalledWith("/workspace-b", expect.objectContaining({ path: workspaceBPath }));
+    ).toHaveBeenCalledWith("/workspace-b", expect.objectContaining({ path: workspaceBPath }), 202);
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
     ).not.toHaveBeenCalledWith("/workspace-b", workspaceBPath);
@@ -11860,6 +11888,7 @@ describe("useWorkbenchController preview tabs", () => {
         path,
         text: "export const value = 1;\n",
       }),
+      53,
     );
     expect(initialFlushResolved).toBe(false);
 
@@ -11892,6 +11921,7 @@ describe("useWorkbenchController preview tabs", () => {
         path,
         text: "export const value = 2;\n",
       }),
+      53,
     );
     expect(vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
@@ -12261,7 +12291,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
-      expect.any(Number),
+      68,
     );
   });
 
@@ -12427,7 +12457,11 @@ describe("useWorkbenchController preview tabs", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 180));
     });
 
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+      52,
+    );
     expect(dependencies.documentSyncGateway.didChange).not.toHaveBeenCalled();
   });
 
@@ -12463,6 +12497,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        55,
       );
     });
 
@@ -12524,6 +12559,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        58,
       );
     });
 
@@ -18265,7 +18301,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activeDocument?.content).toBe("export class User { dirty = true }\n");
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
-    ).toHaveBeenCalledWith("/workspace", oldDocumentPath);
+    ).toHaveBeenCalledWith("/workspace", oldDocumentPath, 626);
     await flushAsyncTurns(24);
     expect(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
@@ -18275,6 +18311,7 @@ describe("useWorkbenchController preview tabs", () => {
         path: newDocumentPath,
         text: "export class User { dirty = true }\n",
       }),
+      626,
     );
   });
 
@@ -20368,10 +20405,15 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activeDocument?.path).toBe(newPath);
     expect(getWorkbench().activeDocument?.name).toBe("Account.ts");
     expect(getWorkbench().activeDocument?.content).toBe("export class Account {}\n");
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", oldPath);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      27,
+    );
     expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
       "/workspace",
       deletedPath,
+      27,
     );
     expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace",
@@ -20379,6 +20421,7 @@ describe("useWorkbenchController preview tabs", () => {
         path: newPath,
         text: "export class Account {}\n",
       }),
+      27,
     );
   });
 
@@ -21220,7 +21263,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(path);
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path, 26);
     expect(
       javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
     ).toHaveBeenCalledWith("/workspace", [
@@ -21298,7 +21341,7 @@ describe("useWorkbenchController preview tabs", () => {
       [path],
     );
     expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(path);
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path, 26);
     expect(javaScriptTypeScriptLanguageServerFeaturesGateway.didDeleteFiles).toHaveBeenCalledWith(
       "/workspace",
       path,
@@ -21350,7 +21393,11 @@ describe("useWorkbenchController preview tabs", () => {
       path,
     );
     expect(dependencies.workspaceGateways.files.deletePath).not.toHaveBeenCalled();
-    expect(dependencies.documentSyncGateway.didClose).not.toHaveBeenCalledWith("/workspace", path);
+    expect(dependencies.documentSyncGateway.didClose).not.toHaveBeenCalledWith(
+      "/workspace",
+      path,
+      26,
+    );
     expect(javaScriptTypeScriptLanguageServerFeaturesGateway.didDeleteFiles).not.toHaveBeenCalled();
     expect(
       getWorkbench().notices.some(
@@ -26948,6 +26995,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
         "/workspace",
         expect.objectContaining({ path: externalPath }),
+        801,
       );
     }
   });
@@ -27037,6 +27085,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
         "/workspace",
         expect.objectContaining({ path: externalPath }),
+        804,
       );
     }
   });
@@ -27127,16 +27176,19 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path: externalPath }),
+      802,
     );
     expect(syncGateway.didChange).not.toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path: externalPath }),
+      802,
     );
     expect(syncGateway.didSave).not.toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path: externalPath }),
+      802,
     );
-    expect(syncGateway.didClose).not.toHaveBeenCalledWith("/workspace", externalPath);
+    expect(syncGateway.didClose).not.toHaveBeenCalledWith("/workspace", externalPath, 802);
   });
 
   it("external JavaScript TypeScript document sync skips active external target during runtime resync", async () => {
@@ -27225,10 +27277,12 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path: sourcePath }),
+      804,
     );
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path: externalPath }),
+      804,
     );
     expect(getWorkbench().activePath).toBe(externalPath);
   });
@@ -72575,7 +72629,7 @@ MissingClass::class;
     await flushAsyncTurns(12);
     expect(getWorkbench().openDocuments).toEqual([]);
     expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledOnce();
-    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith("/workspace", path, 91);
   });
 
   it("routes previous and next commands from a directly focused same-file group", async () => {

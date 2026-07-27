@@ -6,6 +6,7 @@ import {
   MAX_DEBUG_VARIABLE_VALUE_BYTES,
   MAX_DEBUG_COMPOUND_MEMBERS,
   MAX_DEBUG_OUTPUT_EVENT_BYTES,
+  MAX_DEBUG_STACK_FRAMES,
   decodeDebugEvent,
   decodeDebugIpcResult,
   decodeDebugStartResponse,
@@ -1032,6 +1033,49 @@ describe("debug Tauri IPC contract", () => {
       { kind: "stopped", reason: "breakpoint", frames: [] },
       { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 0 },
       { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 3, extra: true },
+    ]) {
+      expect(() => decodeDebugEvent({ ...event, payload })).toThrow(
+        /^Invalid debug IPC value at debug event.payload/,
+      );
+    }
+  });
+
+  it("accepts only the bounded closed stopped-stack projection and truncation receipt", () => {
+    const frame = (frameId: number) => ({
+      frameId,
+      name: "main",
+      filePath: "/workspace/app.js",
+      lineNumber: 1,
+      column: 1,
+    });
+    const event = {
+      rootPath: "/workspace",
+      sessionId: 8,
+      seq: 4,
+      payload: {
+        kind: "stopped",
+        reason: "breakpoint",
+        frames: Array.from({ length: MAX_DEBUG_STACK_FRAMES }, (_, index) => frame(index + 1)),
+        pauseGeneration: 3,
+        framesTruncated: true,
+      },
+    };
+    expect(decodeDebugEvent(event)).toEqual(event);
+    expect(() =>
+      decodeDebugEvent({
+        ...event,
+        payload: { ...event.payload, frames: [...event.payload.frames, frame(257)] },
+      }),
+    ).toThrow(`at most ${MAX_DEBUG_STACK_FRAMES} entries`);
+    for (const payload of [
+      { ...event.payload, framesTruncated: false },
+      { ...event.payload, framesTruncated: "true" },
+      { ...event.payload, frames: [{ ...frame(1), name: "bad\nframe" }] },
+      { ...event.payload, frames: [{ ...frame(1), extra: true }] },
+      { ...event.payload, frames: [{ ...frame(1), frameId: 0 }] },
+      { ...event.payload, frames: [{ ...frame(1), lineNumber: 0 }] },
+      { ...event.payload, frames: [{ ...frame(1), column: 0 }] },
+      { ...event.payload, frames: [frame(1), frame(1)] },
     ]) {
       expect(() => decodeDebugEvent({ ...event, payload })).toThrow(
         /^Invalid debug IPC value at debug event.payload/,

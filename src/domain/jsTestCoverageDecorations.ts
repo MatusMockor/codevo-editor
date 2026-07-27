@@ -1,13 +1,21 @@
-import type { JsTestCoverageReport } from "./jsTestCoverage";
+import type {
+  JsTestCoverageLine,
+  JsTestCoverageReport,
+  JsTestFileCoverage,
+} from "./jsTestCoverage";
 
 export type JsTestCoverageDecorationStatus = "covered" | "uncovered";
 
-export const MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS = 500;
+export interface JsTestCoverageReportIndex {
+  readonly report: JsTestCoverageReport;
+  find(relativePath: string | null): JsTestFileCoverage | null;
+}
 
 interface JsTestCoverageLineDecorationBase {
   readonly hits: number;
   readonly lineNumber: number;
   readonly status: JsTestCoverageDecorationStatus;
+  readonly visibleRangesTruncated?: boolean;
 }
 
 export type JsTestCoverageLineDecoration = JsTestCoverageLineDecorationBase &
@@ -23,41 +31,32 @@ export type JsTestCoverageLineDecoration = JsTestCoverageLineDecorationBase &
   );
 
 /**
- * Projects a decoded coverage report to editor-neutral line markers for one
- * workspace-relative file. The report decoder owns numeric/path validation;
- * this projection still fails closed for unsafe lookup paths so callers cannot
- * accidentally match a file outside the active workspace.
+ * Builds one immutable lookup facade for one decoded report. Callers own the
+ * facade for exactly the report identity they captured, so tab and viewport
+ * changes never rescan the full file list.
  */
-export function jsTestCoverageDecorationsForFile(
-  report: JsTestCoverageReport | null,
-  relativePath: string | null,
-): readonly JsTestCoverageLineDecoration[] {
-  const path = normalizedRelativePath(relativePath);
-  if (!report || !path) return [];
-  const file = report.files.find((candidate) => candidate.path === path);
-  if (!file) return [];
-  const lines = [...file.lines].sort((left, right) => left.lineNumber - right.lineNumber);
-  const hitCountsTruncated = lines.length > MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS;
-  return lines.map((line, index) => {
-    const decoration: JsTestCoverageLineDecoration = {
-      hits: line.hits,
-      lineNumber: line.lineNumber,
-      status: line.hits > 0 ? "covered" : "uncovered",
-    };
-    if (!hitCountsTruncated) return decoration;
-    if (index < MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS) {
-      return {
-        ...decoration,
-        hitCountsTruncated: true,
-        renderInlineHitCount: true,
-      };
-    }
-    return {
-      ...decoration,
-      hitCountsTruncated: true,
-      renderInlineHitCount: false,
-    };
+export function createJsTestCoverageReportIndex(
+  report: JsTestCoverageReport,
+): JsTestCoverageReportIndex {
+  const files = new Map<string, JsTestFileCoverage>();
+  for (const file of report.files) files.set(file.path, file);
+  return Object.freeze({
+    report,
+    find(relativePath: string | null): JsTestFileCoverage | null {
+      const path = normalizedRelativePath(relativePath);
+      return path ? (files.get(path) ?? null) : null;
+    },
   });
+}
+
+export function jsTestCoverageDecorationForLine(
+  line: JsTestCoverageLine,
+): JsTestCoverageLineDecoration {
+  return {
+    hits: line.hits,
+    lineNumber: line.lineNumber,
+    status: line.hits > 0 ? "covered" : "uncovered",
+  };
 }
 
 function normalizedRelativePath(path: string | null): string | null {

@@ -6649,6 +6649,136 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("settles malformed current variable pages and releases the outer flight for retry", async () => {
+    const harness = createGateway();
+    const malformedPages: DebugVariablePage[] = [
+      {
+        variables: [],
+        start: 1,
+        returned: 0,
+        truncated: false,
+      },
+      {
+        variables: [
+          {
+            name: "value",
+            value: "1",
+            variablesReference: 0,
+            extra: true,
+          } as unknown as DebugVariable,
+        ],
+        start: 0,
+        returned: 1,
+        truncated: false,
+      },
+      {
+        variables: [],
+        start: 0,
+        returned: 0,
+        truncated: true,
+        nextStart: 1,
+      },
+    ];
+    const attempts = new Map<number, number>();
+    harness.variablesPage.mockImplementation(async (request) => {
+      const attempt = (attempts.get(request.variablesReference) ?? 0) + 1;
+      attempts.set(request.variablesReference, attempt);
+      if (attempt === 1) return malformedPages[request.variablesReference - 21]!;
+      return {
+        variables: [
+          {
+            name: `fresh-${request.variablesReference}`,
+            value: "2",
+            variablesReference: 0,
+          },
+        ],
+        start: request.start,
+        returned: 1,
+        truncated: false,
+      };
+    });
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    await startStoppedNodeSession(ui, harness);
+    const owner = ui.hook().inspectionOwner!;
+
+    for (const variablesReference of [21, 22, 23]) {
+      await act(async () => ui.hook().loadVariablePage(owner, variablesReference, 0));
+      expect(ui.hook().variablePages.pendingCount).toBe(0);
+      expect(ui.hook().variablePages.references[variablesReference]?.pending).toEqual({});
+      expect(ui.hook().variablePages.references[variablesReference]?.errors[0]).toBe(
+        "The debug adapter returned an invalid variable page.",
+      );
+
+      await act(async () => ui.hook().loadVariablePage(owner, variablesReference, 0));
+      expect(ui.hook().variablesByReference[variablesReference]).toEqual([
+        {
+          name: `fresh-${variablesReference}`,
+          value: "2",
+          variablesReference: 0,
+        },
+      ]);
+      expect(attempts.get(variablesReference)).toBe(2);
+    }
+    ui.unmount();
+  });
+
+  it("drops a late variable page across a workspace A to B to A replacement", async () => {
+    const harness = createGateway();
+    const stalePage = deferred<DebugVariablePage>();
+    harness.start
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 4 })
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 5 });
+    harness.variablesPage.mockReturnValueOnce(stalePage.promise).mockResolvedValueOnce({
+      variables: [{ name: "fresh", value: "2", variablesReference: 0 }],
+      start: 0,
+      returned: 1,
+      truncated: false,
+    });
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-a");
+    await startStoppedNodeSession(ui, harness);
+    const staleOwner = ui.hook().inspectionOwner!;
+    let staleFlight!: Promise<void>;
+    act(() => {
+      staleFlight = ui.hook().loadVariablePage(staleOwner, 21, 0);
+    });
+
+    ui.set({ workspaceId: "owner-b", workspaceRoot: "/workspace/two" });
+    expect(ui.hook().inspectionOwner).toBeNull();
+    ui.set({ workspaceId: "owner-a", workspaceRoot: "/workspace/one" });
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 5,
+        seq: 1,
+        payload: {
+          kind: "stopped",
+          reason: "breakpoint",
+          frames: [frame],
+          pauseGeneration: 1,
+        },
+      });
+    });
+    const currentOwner = ui.hook().inspectionOwner!;
+    expect(currentOwner).toMatchObject({ sessionId: 5 });
+    await act(async () => ui.hook().loadVariablePage(currentOwner, 21, 0));
+
+    await act(async () => {
+      stalePage.resolve({
+        variables: [{ name: "stale", value: "1", variablesReference: 0 }],
+        start: 0,
+        returned: 1,
+        truncated: false,
+      });
+      await staleFlight;
+    });
+    expect(ui.hook().variablesByReference[21]).toEqual([
+      { name: "fresh", value: "2", variablesReference: 0 },
+    ]);
+    expect(ui.hook().variablePages.pendingCount).toBe(0);
+    ui.unmount();
+  });
+
   it("admits at most sixteen concurrent variable requests before invoking the gateway", async () => {
     const harness = createGateway();
     harness.variablesPage.mockImplementation(async (request) => ({

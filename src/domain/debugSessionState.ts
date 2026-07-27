@@ -9,9 +9,7 @@ export function initialDebuggerSnapshot(): DebuggerSessionSnapshot {
   return { state: { kind: "inactive" }, lastSeq: 0 };
 }
 
-export function startingDebuggerSnapshot(
-  sessionId: number,
-): DebuggerSessionSnapshot {
+export function startingDebuggerSnapshot(sessionId: number): DebuggerSessionSnapshot {
   return { state: { kind: "starting", sessionId }, lastSeq: 0 };
 }
 
@@ -39,6 +37,7 @@ function nextState(state: SessionBoundState, event: DebugEvent): DebuggerState {
       reason: payload.reason,
       frames: payload.frames,
       topFrame: payload.frames[0] ?? null,
+      ...(payload.framesTruncated === true ? { framesTruncated: true as const } : {}),
     };
   }
 

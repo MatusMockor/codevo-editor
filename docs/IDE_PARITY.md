@@ -343,6 +343,18 @@ The current integrated checkpoint is green: 1,065 of 1,065 frontend test files a
 
 Targeted desktop QA on a fresh debug build confirms automatic top-frame Variables loading, manual Watch refresh, retained Debug Console copy after Continue, expandable keyboard-navigable Console trees, strict `runtimeExecutable: "node"`/`outputCapture: "std"` launch import and exact Express route navigation. The fixture did not contain an installed Vitest/Jest runner, so continuous Test Explorer watch remains covered by focused application tests and retained-process Rust proofs rather than a new visual receipt.
 
+The latest hardening checkpoint keeps JavaScript/TypeScript LSP synchronization on exact session authority. A latest-value mailbox coalesces superseded document changes without allowing dropped, cleared, re-entrant or A→B→A work to publish errors or notifications into a replacement server. `didOpen`, `didChange`, `didSave` and `didClose` all carry the captured expected session through the Rust write boundary.
+
+JavaScript coverage decorations are now projected viewport-first. One immutable report/path index removes repeated full-report lookup, while binary search over the decoder-validated sorted line records constructs at most 256 Monaco decorations and 128 inline hit-count labels even for a 500,000-line report. Visible-range processing is independently bounded; an over-budget Monaco range set keeps its retained projection explicit through the coverage hover rather than doing unbounded main-thread work.
+
+Variable paging now treats malformed settlement as an explicit retryable state and releases both local and outer request admission on every terminal path. Exact request identity prevents stale, reordered and A→B→A responses from clearing a newer page flight.
+
+Stopped debug events accept at most 256 strictly validated, uniquely identified frames. Truncation is explicit from the Rust emitter through the TypeScript boundary and reducer to a windowed Call Stack receipt, including the no-inspectable-frame case.
+
+An independently reviewed child-debug multiplexer foundation now binds frame, variable and resume routing to exact target authority, closing endpoint-reuse A→B replacement races. It remains private, fail-closed and disconnected from production composition, so child/multi-process debugging is still unsupported.
+
+The dynamic source-map registry foundation is independently clean and fail-closed. Exact `scriptId`, transport and registration generation fence async preparation and lookup receipts; one worker with a 32-job queue performs filesystem reads and path-authority validation without holding shared debugger state. Admission is capped at 64 pending and 256 committed maps, 250,000 tokens per map and 1,000,000 per session, plus 256 retained source-file authorities per map and 512 per session. This is a bounded foundation, not a claim for `smartStep`, late breakpoint reconciliation or full source-map parity.
+
 ## Next parity implementation slice
 
 Prioritize exact child/multi-process debug ownership and the next audit-ranked daily-workflow gaps. Keep `tsx --watch`, nodemon, npm watch, Windows native watch and generic `restart: true` unimported until their distinct ownership and platform strategies are proven. Resume the deferred Nette quick-fix only after this JS/TS/Node phase and only through a synchronous renderer-owned template/owner Monaco lease.

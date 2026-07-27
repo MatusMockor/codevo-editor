@@ -186,6 +186,7 @@ fn debug_event_payload_serializes_with_kind_tag() {
     let stopped = DebugEventPayload::Stopped {
         reason: DebugStopReason::Entry,
         pause_generation: 1,
+        frames_truncated: false,
         frames: vec![DebugStackFrame {
             frame_id: 4,
             name: "handleRequest".to_string(),

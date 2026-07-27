@@ -15,6 +15,7 @@ import {
   languageServerUriSyncKey,
   sessionBoundLanguageServerDocumentSyncGateway,
   type LanguageServerDocumentSyncGateway,
+  type LanguageServerTextDocument,
   type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
@@ -25,6 +26,7 @@ import {
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
+import { LatestValueDrainMailbox } from "./latestValueDrainMailbox";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -40,11 +42,13 @@ function ref<T>(value: T): MutableRef<T> {
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
 
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 function runningStatus(rootPath: string, sessionId: number): LanguageServerRuntimeStatus {
@@ -316,6 +320,8 @@ function createHarness(): Harness {
     javaScriptTypeScriptDocumentOpenSyncAttemptIdRef: jsts.openAttemptId,
     javaScriptTypeScriptDocumentChangeTimersRef: jsts.changeTimers,
     javaScriptTypeScriptDocumentSyncQueuesRef: jsts.syncQueues,
+    javaScriptTypeScriptDocumentChangeMailbox:
+      new LatestValueDrainMailbox<LanguageServerTextDocument>(),
     javaScriptTypeScriptDocumentSyncGenerationRef: jsts.generation,
     javaScriptTypeScriptDocumentVersionsRef: jsts.versions,
     javaScriptTypeScriptDocumentVersionsByUriRef: jsts.versionsByUri,
@@ -1258,12 +1264,16 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     await api().syncOpenJavaScriptTypeScriptDocument(document);
 
     const key = languageServerDocumentSyncKey(ROOT, document.path);
-    expect(harness.jstsGateway.didOpen).toHaveBeenCalledWith(ROOT, {
-      languageId: "typescript",
-      path: document.path,
-      text: "a",
-      version: 1,
-    });
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledWith(
+      ROOT,
+      {
+        languageId: "typescript",
+        path: document.path,
+        text: "a",
+        version: 1,
+      },
+      SESSION,
+    );
     expect(harness.jsts.syncedPaths.current.has(key)).toBe(true);
     expect(harness.warmUp).not.toHaveBeenCalled();
   });
@@ -1376,7 +1386,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
     expect(harness.jstsGateway.didSave).not.toHaveBeenCalled();
     expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
-    expect(harness.jstsGateway.didClose).toHaveBeenCalledWith(ROOT, large.path);
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledWith(ROOT, large.path, SESSION);
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, large.path)).toBeNull();
 
     harness.activeDocumentRef.current = shrunken;
@@ -1390,6 +1400,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.jstsGateway.didOpen).toHaveBeenLastCalledWith(
       ROOT,
       expect.objectContaining({ text: shrunken.content, version: 1 }),
+      SESSION,
     );
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, shrunken.path)).toBe(2);
   });
@@ -1591,6 +1602,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.jstsGateway.didOpen).toHaveBeenLastCalledWith(
       ROOT,
       expect.objectContaining({ text: replacement.content }),
+      SESSION + 1,
     );
   });
 
@@ -1703,6 +1715,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.jstsGateway.didOpen).toHaveBeenLastCalledWith(
       ROOT,
       expect.objectContaining({ text: fresh.content }),
+      SESSION,
     );
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, fresh.path)).toBe(3);
   });
@@ -1826,6 +1839,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.jstsGateway.didChange).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "ab", version: 2 }),
+      SESSION,
     );
 
     await api().syncSavedJavaScriptTypeScriptDocument(ROOT, tsDocument({ content: "ab" }));
@@ -1835,8 +1849,96 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
 
     await api().syncClosedJavaScriptTypeScriptDocument(tsDocument({ content: "ab" }));
     await flushMicrotasks();
-    expect(harness.jstsGateway.didClose).toHaveBeenCalledWith(ROOT, path);
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledWith(ROOT, path, SESSION);
     expect(harness.jsts.syncedPaths.current.has(key)).toBe(false);
+  });
+
+  it("sends only the in-flight and latest JS/TS snapshots during a slow IPC drain", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const firstChange = deferred<void>();
+    let changeCount = 0;
+    vi.mocked(harness.jstsGateway.didChange).mockImplementation(async () => {
+      changeCount += 1;
+      if (changeCount === 1) {
+        await firstChange.promise;
+      }
+    });
+
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument());
+
+    for (let version = 2; version <= 101; version += 1) {
+      api().scheduleJavaScriptTypeScriptDocumentChange(
+        tsDocument({ content: `snapshot-${version}` }),
+      );
+      await vi.advanceTimersByTimeAsync(150);
+    }
+
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledOnce();
+    expect(harness.jstsGateway.didChange).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ text: "snapshot-2", version: 2 }),
+      SESSION,
+    );
+
+    firstChange.resolve();
+    await flushMicrotasks();
+    await harness.jsts.syncQueues.current[
+      languageServerDocumentSyncKey(ROOT, `${ROOT}/src/index.ts`)
+    ];
+
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledTimes(2);
+    expect(harness.jstsGateway.didChange).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ text: "snapshot-101", version: 101 }),
+      SESSION,
+    );
+  });
+
+  it.each(["resolve", "reject"] as const)(
+    "does not publish or report an in-flight JS/TS change after mailbox unmount retirement (%s)",
+    async (settlement) => {
+      const harness = createHarness();
+      const { api } = renderDocumentSync(harness.deps);
+      const change = deferred<void>();
+      vi.mocked(harness.jstsGateway.didChange).mockReturnValueOnce(change.promise);
+      const path = `${ROOT}/src/index.ts`;
+      const syncKey = languageServerDocumentSyncKey(ROOT, path);
+
+      await api().syncOpenJavaScriptTypeScriptDocument(tsDocument());
+      api().scheduleJavaScriptTypeScriptDocumentChange(tsDocument({ content: "retired snapshot" }));
+      await vi.advanceTimersByTimeAsync(150);
+
+      harness.deps.javaScriptTypeScriptDocumentChangeMailbox.clear();
+      if (settlement === "resolve") {
+        change.resolve();
+      } else {
+        change.reject(new Error("retired failure"));
+      }
+      await flushMicrotasks();
+
+      expect(harness.jsts.syncedContent.current[syncKey]).toBe("a");
+      expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not report a rejected old JS/TS drain after a workspace A-B-A generation change", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const change = deferred<void>();
+    vi.mocked(harness.jstsGateway.didChange).mockReturnValueOnce(change.promise);
+
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument());
+    api().scheduleJavaScriptTypeScriptDocumentChange(tsDocument({ content: "old generation" }));
+    await vi.advanceTimersByTimeAsync(150);
+
+    harness.currentRootRef.current = OTHER_ROOT;
+    harness.jsts.generation.current += 1;
+    harness.currentRootRef.current = ROOT;
+    change.reject(new Error("stale generation failure"));
+    await flushMicrotasks();
+
+    expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
   });
 
   it("does not let a deferred debounced JavaScript/TypeScript didChange complete into a reopened lifecycle", async () => {
@@ -1915,12 +2017,17 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     await vi.advanceTimersByTimeAsync(150);
     await flushMicrotasks();
 
-    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(1, ROOT, {
-      languageId: "typescript",
-      path: editedDocument.path,
-      text: "ab",
-      version: 2,
-    });
+    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(
+      1,
+      ROOT,
+      {
+        languageId: "typescript",
+        path: editedDocument.path,
+        text: "ab",
+        version: 2,
+      },
+      SESSION,
+    );
     expect(harness.jsts.syncedContent.current[syncKey]).toBe("a");
     expect(harness.jsts.pendingChanges.current[syncKey]).toEqual(
       expect.objectContaining({ text: "ab", version: 3 }),
@@ -1928,15 +2035,21 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
 
     await api().syncSavedJavaScriptTypeScriptDocument(ROOT, editedDocument);
 
-    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
-      languageId: "typescript",
-      path: editedDocument.path,
-      text: "ab",
-      version: 3,
-    });
+    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      {
+        languageId: "typescript",
+        path: editedDocument.path,
+        text: "ab",
+        version: 3,
+      },
+      SESSION,
+    );
     expect(harness.jstsGateway.didSave).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "ab", version: 3 }),
+      SESSION,
     );
     expect(harness.jsts.syncedContent.current[syncKey]).toBe("ab");
     expect(harness.jsts.pendingChanges.current[syncKey]).toBeUndefined();
@@ -2010,21 +2123,32 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     await api().syncSavedJavaScriptTypeScriptDocument(ROOT, savedDocument);
 
     expect(harness.jstsGateway.didChange).toHaveBeenCalledTimes(2);
-    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(1, ROOT, {
-      languageId: "typescript",
-      path: savedDocument.path,
-      text: "formatted",
-      version: 2,
-    });
-    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
-      languageId: "typescript",
-      path: savedDocument.path,
-      text: "formatted",
-      version: 3,
-    });
+    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(
+      1,
+      ROOT,
+      {
+        languageId: "typescript",
+        path: savedDocument.path,
+        text: "formatted",
+        version: 2,
+      },
+      SESSION,
+    );
+    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      {
+        languageId: "typescript",
+        path: savedDocument.path,
+        text: "formatted",
+        version: 3,
+      },
+      SESSION,
+    );
     expect(harness.jstsGateway.didSave).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "formatted", version: 3 }),
+      SESSION,
     );
     expect(harness.jsts.syncedContent.current[syncKey]).toBe("formatted");
     expect(harness.jsts.versions.current[syncKey]).toBe(3);
@@ -2079,18 +2203,28 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     await save;
     await flushMicrotasks();
 
-    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(1, ROOT, {
-      languageId: "typescript",
-      path: savedDocument.path,
-      text: "formatted",
-      version: 2,
-    });
-    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
-      languageId: "typescript",
-      path: newerDocument.path,
-      text: "formatted later",
-      version: 3,
-    });
+    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(
+      1,
+      ROOT,
+      {
+        languageId: "typescript",
+        path: savedDocument.path,
+        text: "formatted",
+        version: 2,
+      },
+      SESSION,
+    );
+    expect(harness.jstsGateway.didChange).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      {
+        languageId: "typescript",
+        path: newerDocument.path,
+        text: "formatted later",
+        version: 3,
+      },
+      SESSION,
+    );
     expect(harness.jstsGateway.didSave).not.toHaveBeenCalled();
     expect(harness.jsts.versions.current[syncKey]).toBe(3);
     expect(harness.jsts.syncedContent.current[syncKey]).toBe("formatted later");

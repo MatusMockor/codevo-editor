@@ -84,10 +84,7 @@ describe("TauriSessionBoundLanguageServerDocumentSyncGateway", () => {
 describe("TauriLanguageServerDocumentSyncGateway", () => {
   it("delegates JavaScript and TypeScript document sync with the requested workspace root", async () => {
     const invokeCommand = vi.fn<InvokeCommand>(async () => undefined);
-    const gateway = new TauriLanguageServerDocumentSyncGateway(
-      invokeCommand,
-      () => true,
-    );
+    const gateway = new TauriLanguageServerDocumentSyncGateway(invokeCommand, () => true);
     const syncedDocument: LanguageServerTextDocument = {
       languageId: "typescript",
       path: "/workspace-a/src/App.ts",
@@ -95,39 +92,31 @@ describe("TauriLanguageServerDocumentSyncGateway", () => {
       version: 3,
     };
 
-    await gateway.didOpen("/workspace-a", syncedDocument);
-    await gateway.didChange("/workspace-a", syncedDocument);
-    await gateway.didSave("/workspace-a", syncedDocument);
-    await gateway.didClose("/workspace-a", syncedDocument.path);
+    await gateway.didOpen("/workspace-a", syncedDocument, 11);
+    await gateway.didChange("/workspace-a", syncedDocument, 11);
+    await gateway.didSave("/workspace-a", syncedDocument, 11);
+    await gateway.didClose("/workspace-a", syncedDocument.path, 11);
 
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_document_did_open",
-      {
-        document: syncedDocument,
-        rootPath: "/workspace-a",
-      },
-    );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_document_did_change",
-      {
-        document: syncedDocument,
-        rootPath: "/workspace-a",
-      },
-    );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_document_did_save",
-      {
-        document: syncedDocument,
-        rootPath: "/workspace-a",
-      },
-    );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_document_did_close",
-      {
-        document: { path: "/workspace-a/src/App.ts" },
-        rootPath: "/workspace-a",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_document_did_open", {
+      document: syncedDocument,
+      expectedSessionId: 11,
+      rootPath: "/workspace-a",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_document_did_change", {
+      document: syncedDocument,
+      expectedSessionId: 11,
+      rootPath: "/workspace-a",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_document_did_save", {
+      document: syncedDocument,
+      expectedSessionId: 11,
+      rootPath: "/workspace-a",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_document_did_close", {
+      document: { path: "/workspace-a/src/App.ts" },
+      expectedSessionId: 11,
+      rootPath: "/workspace-a",
+    });
   });
 
   it("does not expose legacy command selection", () => {
@@ -157,19 +146,35 @@ describe("TauriLanguageServerDocumentSyncGateway", () => {
       commands: { didOpen: "text_document_did_open" },
     });
 
-    await gateway.didOpen("/workspace-a", document());
+    await gateway.didOpen("/workspace-a", document(), 11);
 
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_document_did_open",
-      {
-        document: document(),
-        rootPath: "/workspace-a",
-      },
-    );
-    expect(invokeCommand).not.toHaveBeenCalledWith(
-      "text_document_did_open",
-      expect.anything(),
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_document_did_open", {
+      document: document(),
+      expectedSessionId: 11,
+      rootPath: "/workspace-a",
+    });
+    expect(invokeCommand).not.toHaveBeenCalledWith("text_document_did_open", expect.anything());
+  });
+
+  it("requires an exact session identity for every JavaScript and TypeScript sync method", () => {
+    const gateway = new TauriLanguageServerDocumentSyncGateway();
+
+    expectTypeOf(gateway.didOpen).parameters.toEqualTypeOf<
+      [string, LanguageServerTextDocument, number]
+    >();
+    expectTypeOf(gateway.didChange).parameters.toEqualTypeOf<
+      [string, LanguageServerTextDocument, number]
+    >();
+    expectTypeOf(gateway.didSave).parameters.toEqualTypeOf<
+      [string, LanguageServerTextDocument, number]
+    >();
+    expectTypeOf(gateway.didClose).parameters.toEqualTypeOf<[string, string, number]>();
+
+    const invokeWithoutSessionIdentity = () => {
+      // @ts-expect-error JS/TS document sync must always carry a session identity.
+      void gateway.didOpen("/workspace-a", document());
+    };
+    void invokeWithoutSessionIdentity;
   });
 });
 

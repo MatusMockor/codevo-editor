@@ -120,6 +120,7 @@ fn stopped(pause_generation: u64) -> DebugEventPayload {
         reason: DebugStopReason::Pause,
         frames: Vec::new(),
         pause_generation,
+        frames_truncated: false,
     }
 }
 

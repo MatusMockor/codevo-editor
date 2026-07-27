@@ -48,6 +48,38 @@ describe("startingDebuggerSnapshot", () => {
 });
 
 describe("reduceDebuggerSnapshot", () => {
+  it("retains truncation only from the exact newer stopped event owner", () => {
+    const running = runningSnapshot();
+    const truncated = reduceDebuggerSnapshot(
+      running,
+      event(2, {
+        kind: "stopped",
+        reason: "breakpoint",
+        frames: [frame()],
+        pauseGeneration: 2,
+        framesTruncated: true,
+      }),
+    );
+
+    expect(truncated.state).toMatchObject({ kind: "stopped", framesTruncated: true });
+    expect(reduceDebuggerSnapshot(truncated, event(1, { kind: "resumed" }))).toBe(truncated);
+    expect(
+      reduceDebuggerSnapshot(
+        truncated,
+        event(
+          3,
+          {
+            kind: "stopped",
+            reason: "breakpoint",
+            frames: [frame({ frameId: 9 })],
+            pauseGeneration: 3,
+          },
+          9,
+        ),
+      ),
+    ).toBe(truncated);
+  });
+
   it("ignores every event while inactive", () => {
     const snapshot = initialDebuggerSnapshot();
     const payloads: DebugEventPayload[] = [

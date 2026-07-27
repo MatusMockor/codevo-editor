@@ -10,9 +10,12 @@ export function toJsTestCoverageDecoration(
     decoration.status === "covered"
       ? `Test coverage: covered (${decoration.hits} ${decoration.hits === 1 ? "hit" : "hits"}).`
       : "Test coverage: uncovered (0 hits).";
-  const tooltip = decoration.hitCountsTruncated
+  const hitCountNotice = decoration.hitCountsTruncated
     ? `${coverageTooltip} Inline hit counts are limited in large coverage reports.`
     : coverageTooltip;
+  const tooltip = decoration.visibleRangesTruncated
+    ? `${hitCountNotice} Coverage decorations are limited because the editor reported too many visible ranges.`
+    : hitCountNotice;
   const className = `js-test-coverage-${decoration.status}`;
   const column = model.getLineLength(decoration.lineNumber) + 1;
   const after =

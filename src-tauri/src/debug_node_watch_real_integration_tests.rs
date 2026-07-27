@@ -1068,6 +1068,7 @@ fn wait_for_breakpoint_state(
                     reason: DebugStopReason::Breakpoint,
                     frames,
                     pause_generation,
+                    ..
                 } => frames
                     .iter()
                     .find(|frame| frame.line_number == line_number)

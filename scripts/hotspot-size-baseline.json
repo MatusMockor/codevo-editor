@@ -6,12 +6,12 @@
   ],
   "files": {
     "src-tauri/src/debug_cdp.rs": {
-      "rawLines": 1492,
-      "structuralTokens": 8992
+      "rawLines": 1458,
+      "structuralTokens": 8709
     },
     "src-tauri/src/debug_dbgp.rs": {
-      "rawLines": 2622,
-      "structuralTokens": 15578
+      "rawLines": 2623,
+      "structuralTokens": 15582
     },
     "src-tauri/src/git.rs": {
       "rawLines": 7113,
@@ -22,16 +22,16 @@
       "structuralTokens": 10277
     },
     "src-tauri/src/lib.rs": {
-      "rawLines": 10212,
-      "structuralTokens": 59153
+      "rawLines": 10232,
+      "structuralTokens": 59177
     },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 4503,
       "structuralTokens": 25032
     },
     "src-tauri/src/lsp_session.rs": {
-      "rawLines": 8168,
-      "structuralTokens": 41662
+      "rawLines": 8266,
+      "structuralTokens": 42134
     },
     "src-tauri/src/lsp.rs": {
       "rawLines": 2364,
@@ -46,20 +46,20 @@
       "structuralTokens": 8496
     },
     "src/application/useDocumentSync.ts": {
-      "rawLines": 1830,
-      "structuralTokens": 6340
+      "rawLines": 1877,
+      "structuralTokens": 6499
     },
     "src/application/useLanguageServerRuntimeLifecycle.ts": {
       "rawLines": 2455,
       "structuralTokens": 8820
     },
     "src/application/useWorkbenchController.preview.test.tsx": {
-      "rawLines": 74607,
-      "structuralTokens": 345129
+      "rawLines": 74661,
+      "structuralTokens": 345241
     },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 10142,
-      "structuralTokens": 38629
+      "rawLines": 10165,
+      "structuralTokens": 38633
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 5285,

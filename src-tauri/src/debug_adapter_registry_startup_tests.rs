@@ -503,6 +503,49 @@ fn pending_byte_overflow_is_bounded_and_marked_once() {
 }
 
 #[test]
+fn bounded_truncated_stop_event_is_delivered_instead_of_the_overflow_diagnostic() {
+    let registry = DebugSessionRegistry::new();
+    let sink = Arc::new(RecordingSink::default());
+    let frames = (1..=crate::debug_cdp::transport::MAX_CDP_STACK_FRAMES)
+        .map(|frame_id| DebugStackFrame {
+            frame_id: frame_id as u64,
+            name: "f".repeat(256),
+            file_path: Some(format!("/workspace/src/frame-{frame_id}.js")),
+            line_number: frame_id as u32,
+            column: 1,
+        })
+        .collect::<Vec<_>>();
+    let payload = DebugEventPayload::Stopped {
+        reason: crate::debug_adapter::DebugStopReason::Breakpoint,
+        frames,
+        pause_generation: 1,
+        frames_truncated: true,
+    };
+    assert!(
+        payload_bytes(&payload) <= MAX_BUFFERED_EVENT_BYTES - RESERVED_DELIVERY_BYTES,
+        "the bounded stopped payload must fit the normal delivery budget"
+    );
+
+    registry
+        .start_session("/workspace/bounded-stop", sink.clone(), |emitter| {
+            emitter.emit(payload);
+            Ok(MinimalAdapter::boxed(Arc::new(AtomicBool::new(false))))
+        })
+        .expect("bounded start");
+
+    let events = lock_recover(&sink.events);
+    assert_eq!(diagnostic_count(&events), 0);
+    assert!(matches!(
+        &events[1].payload,
+        DebugEventPayload::Stopped {
+            frames,
+            frames_truncated: true,
+            ..
+        } if frames.len() == crate::debug_cdp::transport::MAX_CDP_STACK_FRAMES
+    ));
+}
+
+#[test]
 fn oversized_pending_output_is_utf8_bounded_and_truthfully_marked() {
     let registry = DebugSessionRegistry::new();
     let sink = Arc::new(RecordingSink::default());

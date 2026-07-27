@@ -3640,6 +3640,104 @@ mod tests {
     }
 
     #[test]
+    fn repeated_replacement_rejects_every_stale_document_notification_generation() {
+        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+
+        supervisor
+            .start_with_auto_restart(
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                LanguageServerEventSinks::new(
+                    sink,
+                    noop_diagnostics_sink(),
+                    Arc::new(NoopWorkspaceEditSink),
+                    Arc::new(NoopRefreshSink),
+                ),
+                test_restart_controller(),
+            )
+            .expect("start");
+        wait_for(&rx, &running_status());
+
+        *held.lock().expect("held writer lock") = None;
+        wait_for(
+            &rx,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 2,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
+        *held.lock().expect("replacement writer lock") = None;
+        wait_for(
+            &rx,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 3,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
+
+        for stale_session_id in [1, 2] {
+            for method in [
+                "textDocument/didOpen",
+                "textDocument/didChange",
+                "textDocument/didSave",
+                "textDocument/didClose",
+            ] {
+                supervisor
+                    .send_notification_for_session(
+                        stale_session_id,
+                        &JsonRpcNotification {
+                            jsonrpc: "2.0".to_string(),
+                            method: method.to_string(),
+                            params: json!({
+                                "textDocument": {
+                                    "uri": format!(
+                                        "file:///tmp/stale-{stale_session_id}-{method}.ts"
+                                    )
+                                }
+                            }),
+                        },
+                    )
+                    .expect("stale notification is rejected without failing the caller");
+            }
+        }
+        supervisor
+            .send_notification_for_session(
+                3,
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/didOpen".to_string(),
+                    params: json!({
+                        "textDocument": { "uri": "file:///tmp/current.ts" }
+                    }),
+                },
+            )
+            .expect("current notification");
+
+        let document_notifications = captured_messages(&capture)
+            .into_iter()
+            .filter(|message| {
+                message["method"]
+                    .as_str()
+                    .is_some_and(|method| method.starts_with("textDocument/did"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(document_notifications.len(), 1);
+        assert_eq!(
+            document_notifications[0]["params"]["textDocument"]["uri"],
+            "file:///tmp/current.ts"
+        );
+        assert!(matches!(
+            supervisor.status(),
+            LanguageServerRuntimeStatus::Running { session_id: 3, .. }
+        ));
+    }
+
+    #[test]
     fn registry_keeps_workspace_sessions_isolated() {
         let registry = LanguageServerRegistry::new_with_label("Test server");
         let spawner_a = FakeSpawner::new(ready_script(), true);

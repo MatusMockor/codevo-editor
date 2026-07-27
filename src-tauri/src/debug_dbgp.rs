@@ -854,6 +854,7 @@ fn handle_break(
         reason,
         frames,
         pause_generation,
+        frames_truncated: false,
     });
 }
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { JsTestCoverageReport } from "./jsTestCoverage";
 import {
-  jsTestCoverageDecorationsForFile,
-  MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS,
+  createJsTestCoverageReportIndex,
+  jsTestCoverageDecorationForLine,
 } from "./jsTestCoverageDecorations";
 
 const report: JsTestCoverageReport = {
@@ -26,74 +26,60 @@ const report: JsTestCoverageReport = {
   truncated: false,
 };
 
-describe("jsTestCoverageDecorationsForFile", () => {
-  it("projects covered and uncovered lines without Monaco details", () => {
-    expect(jsTestCoverageDecorationsForFile(report, "src/math.ts")).toEqual([
-      { hits: 4, lineNumber: 1, status: "covered" },
-      { hits: 0, lineNumber: 3, status: "uncovered" },
-      { hits: 1, lineNumber: 8, status: "covered" },
-    ]);
+describe("JavaScript test coverage decoration domain", () => {
+  it("indexes one immutable report and projects individual lines without Monaco details", () => {
+    const index = createJsTestCoverageReportIndex(report);
+
+    expect(index.report).toBe(report);
+    expect(index.find("src/math.ts")).toBe(report.files[0]);
+    expect(jsTestCoverageDecorationForLine(report.files[0]!.lines[0]!)).toEqual({
+      hits: 4,
+      lineNumber: 1,
+      status: "covered",
+    });
+    expect(jsTestCoverageDecorationForLine(report.files[0]!.lines[1]!)).toEqual({
+      hits: 0,
+      lineNumber: 3,
+      status: "uncovered",
+    });
   });
 
   it("normalizes safe Windows separators for lookup", () => {
-    expect(jsTestCoverageDecorationsForFile(report, "src\\math.ts")).toHaveLength(3);
+    expect(createJsTestCoverageReportIndex(report).find("src\\math.ts")).toBe(report.files[0]);
   });
 
   it.each([null, "", "src/other.ts", "/workspace/src/math.ts", "../math.ts", "src//math.ts"])(
     "fails closed for absent or unsafe lookup path %s",
     (path) => {
-      expect(jsTestCoverageDecorationsForFile(report, path)).toEqual([]);
+      expect(createJsTestCoverageReportIndex(report).find(path)).toBeNull();
     },
   );
 
-  it("returns a detached projection and never mutates report lines", () => {
-    const decorations = jsTestCoverageDecorationsForFile(report, "src/math.ts");
-    expect(decorations).not.toBe(report.files[0]?.lines);
-    expect(report.files[0]?.lines[0]).toEqual({ hits: 4, lineNumber: 1 });
-  });
-
-  it("a file exceeding the inline hit-count cap keeps band decorations, truncates hit-count content deterministically, and reports truncation", () => {
-    const lineCount = MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS + 2;
-    const lines = Array.from({ length: lineCount }, (_, index) => ({
-      hits: index + 1,
-      lineNumber: lineCount - index,
+  it("builds a 20k-file index once and performs later lookups without rescanning report files", () => {
+    const files = Array.from({ length: 20_000 }, (_, index) => ({
+      ...report.files[0]!,
+      path: `src/file-${index}.ts`,
     }));
-    const overflowingReport: JsTestCoverageReport = {
+    let indexReads = 0;
+    let built = false;
+    const guardedFiles = new Proxy(files, {
+      get(target, property, receiver) {
+        if (built && typeof property === "string" && /^\d+$/.test(property)) {
+          indexReads += 1;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const largeReport: JsTestCoverageReport = {
       ...report,
-      files: [
-        {
-          ...report.files[0]!,
-          lines,
-          summary: { covered: lineCount, percentage: 100, total: lineCount },
-        },
-      ],
+      files: guardedFiles,
     };
 
-    const decorations = jsTestCoverageDecorationsForFile(overflowingReport, "src/math.ts");
-
-    expect(decorations).toHaveLength(lineCount);
-    expect(decorations.map(({ lineNumber }) => lineNumber)).toEqual(
-      Array.from({ length: lineCount }, (_, index) => index + 1),
-    );
-    expect(decorations.every(({ hitCountsTruncated }) => hitCountsTruncated)).toBe(true);
-    expect(
-      decorations
-        .filter(({ renderInlineHitCount }) => renderInlineHitCount !== false)
-        .map(({ lineNumber }) => lineNumber),
-    ).toEqual(
-      Array.from(
-        { length: MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS },
-        (_, index) => index + 1,
-      ),
-    );
-    expect(
-      decorations
-        .filter(({ renderInlineHitCount }) => renderInlineHitCount === false)
-        .map(({ lineNumber }) => lineNumber),
-    ).toEqual([
-      MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS + 1,
-      MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS + 2,
-    ]);
-    expect(overflowingReport.files[0]?.lines).toEqual(lines);
+    const index = createJsTestCoverageReportIndex(largeReport);
+    built = true;
+    for (let lookup = 0; lookup < 1_000; lookup += 1) {
+      expect(index.find("src/file-19999.ts")?.path).toBe("src/file-19999.ts");
+    }
+    expect(indexReads).toBe(0);
   });
 });

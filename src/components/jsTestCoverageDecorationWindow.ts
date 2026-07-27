@@ -1,8 +1,13 @@
 import type * as Monaco from "monaco-editor";
-import type { JsTestCoverageLineDecoration } from "../domain/jsTestCoverageDecorations";
+import type { JsTestCoverageLine } from "../domain/jsTestCoverage";
+import {
+  jsTestCoverageDecorationForLine,
+  type JsTestCoverageLineDecoration,
+} from "../domain/jsTestCoverageDecorations";
 
 export const MAX_VISIBLE_JS_TEST_COVERAGE_DECORATIONS = 256;
 export const MAX_VISIBLE_JS_TEST_COVERAGE_HIT_COUNTS = 128;
+export const MAX_JS_TEST_COVERAGE_VISIBLE_RANGES = 64;
 export const JS_TEST_COVERAGE_DECORATION_OVERSCAN_LINES = 40;
 
 interface LineWindow {
@@ -10,27 +15,35 @@ interface LineWindow {
   readonly startLineNumber: number;
 }
 
+interface LineWindowProjection {
+  readonly truncated: boolean;
+  readonly windows: readonly LineWindow[];
+}
+
 export function selectVisibleJsTestCoverageDecorations(
-  decorations: readonly JsTestCoverageLineDecoration[],
+  lines: readonly JsTestCoverageLine[],
   visibleRanges: readonly Pick<Monaco.Range, "endLineNumber" | "startLineNumber">[],
   lineCount: number,
 ): readonly JsTestCoverageLineDecoration[] {
-  if (decorations.length === 0 || lineCount <= 0) return [];
-  const visibleWindows = normalizedLineWindows(visibleRanges, lineCount, 0);
-  const overscannedWindows = normalizedLineWindows(
+  if (lines.length === 0 || lineCount <= 0) return [];
+  const visibleProjection = normalizedLineWindows(visibleRanges, lineCount, 0);
+  const overscannedProjection = normalizedLineWindows(
     visibleRanges,
     lineCount,
     JS_TEST_COVERAGE_DECORATION_OVERSCAN_LINES,
   );
+  const visibleWindows = visibleProjection.windows;
+  const overscannedWindows = overscannedProjection.windows;
+  const visibleRangesTruncated = visibleProjection.truncated || overscannedProjection.truncated;
   const selected: JsTestCoverageLineDecoration[] = [];
   const selectedLines = new Set<number>();
 
-  appendDecorationsFromWindows(decorations, visibleWindows, selected, selectedLines);
-  appendDecorationsFromWindows(decorations, overscannedWindows, selected, selectedLines);
+  appendDecorationsFromWindows(lines, visibleWindows, selected, selectedLines);
+  appendDecorationsFromWindows(lines, overscannedWindows, selected, selectedLines);
   selected.sort((left, right) => left.lineNumber - right.lineNumber);
 
   const hitCountsTruncated =
-    decorations.length > MAX_VISIBLE_JS_TEST_COVERAGE_HIT_COUNTS ||
+    lines.length > MAX_VISIBLE_JS_TEST_COVERAGE_HIT_COUNTS ||
     selected.length > MAX_VISIBLE_JS_TEST_COVERAGE_HIT_COUNTS;
   const hitCountLines = selected
     .filter(({ lineNumber }) => lineBelongsToWindows(lineNumber, visibleWindows))
@@ -43,8 +56,11 @@ export function selectVisibleJsTestCoverageDecorations(
           ...decoration,
           hitCountsTruncated: true,
           renderInlineHitCount: hitCountLineNumbers.has(decoration.lineNumber),
+          ...(visibleRangesTruncated ? { visibleRangesTruncated: true } : {}),
         }
-      : decoration,
+      : visibleRangesTruncated
+        ? { ...decoration, visibleRangesTruncated: true }
+        : decoration,
   );
 }
 
@@ -56,22 +72,19 @@ function lineBelongsToWindows(lineNumber: number, windows: readonly LineWindow[]
 }
 
 function appendDecorationsFromWindows(
-  decorations: readonly JsTestCoverageLineDecoration[],
+  lines: readonly JsTestCoverageLine[],
   windows: readonly LineWindow[],
   selected: JsTestCoverageLineDecoration[],
   selectedLines: Set<number>,
 ): void {
   for (const window of windows) {
-    let index = lowerBoundByLine(decorations, window.startLineNumber);
-    while (
-      index < decorations.length &&
-      selected.length < MAX_VISIBLE_JS_TEST_COVERAGE_DECORATIONS
-    ) {
-      const decoration = decorations[index];
-      if (!decoration || decoration.lineNumber > window.endLineNumber) break;
-      if (!selectedLines.has(decoration.lineNumber)) {
-        selected.push(decoration);
-        selectedLines.add(decoration.lineNumber);
+    let index = lowerBoundByLine(lines, window.startLineNumber);
+    while (index < lines.length && selected.length < MAX_VISIBLE_JS_TEST_COVERAGE_DECORATIONS) {
+      const line = lines[index];
+      if (!line || line.lineNumber > window.endLineNumber) break;
+      if (!selectedLines.has(line.lineNumber)) {
+        selected.push(jsTestCoverageDecorationForLine(line));
+        selectedLines.add(line.lineNumber);
       }
       index += 1;
     }
@@ -83,21 +96,27 @@ function normalizedLineWindows(
   visibleRanges: readonly Pick<Monaco.Range, "endLineNumber" | "startLineNumber">[],
   lineCount: number,
   overscan: number,
-): readonly LineWindow[] {
+): LineWindowProjection {
   const boundedLineCount = Math.max(1, Math.trunc(lineCount));
   const source =
     visibleRanges.length > 0
       ? visibleRanges
       : [{ endLineNumber: Math.min(boundedLineCount, 80), startLineNumber: 1 }];
-  const windows = source
-    .map(({ endLineNumber, startLineNumber }) => ({
+  const retainedCount = Math.min(source.length, MAX_JS_TEST_COVERAGE_VISIBLE_RANGES);
+  const windows: LineWindow[] = [];
+  for (let index = 0; index < retainedCount; index += 1) {
+    const range = source[index];
+    if (!range) continue;
+    const { endLineNumber, startLineNumber } = range;
+    windows.push({
       endLineNumber: Math.min(
         boundedLineCount,
         Math.max(startLineNumber, endLineNumber) + overscan,
       ),
       startLineNumber: Math.max(1, Math.min(startLineNumber, endLineNumber) - overscan),
-    }))
-    .sort((left, right) => left.startLineNumber - right.startLineNumber);
+    });
+  }
+  windows.sort((left, right) => left.startLineNumber - right.startLineNumber);
   const merged: LineWindow[] = [];
 
   for (const window of windows) {
@@ -112,18 +131,18 @@ function normalizedLineWindows(
     };
   }
 
-  return merged;
+  return {
+    truncated: source.length > MAX_JS_TEST_COVERAGE_VISIBLE_RANGES,
+    windows: merged,
+  };
 }
 
-function lowerBoundByLine(
-  decorations: readonly JsTestCoverageLineDecoration[],
-  lineNumber: number,
-): number {
+function lowerBoundByLine(lines: readonly JsTestCoverageLine[], lineNumber: number): number {
   let lower = 0;
-  let upper = decorations.length;
+  let upper = lines.length;
   while (lower < upper) {
     const middle = Math.floor((lower + upper) / 2);
-    if ((decorations[middle]?.lineNumber ?? Number.POSITIVE_INFINITY) < lineNumber) {
+    if ((lines[middle]?.lineNumber ?? Number.POSITIVE_INFINITY) < lineNumber) {
       lower = middle + 1;
     } else {
       upper = middle;

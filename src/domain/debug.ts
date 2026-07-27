@@ -241,6 +241,8 @@ export type DebuggerState =
       reason: DebugStopReason;
       frames: StackFrame[];
       topFrame: StackFrame | null;
+      /** The adapter retained only the bounded, inspectable prefix of the stack. */
+      framesTruncated?: true;
     }
   | { kind: "terminated"; sessionId: number; exitCode: number | null };
 
@@ -326,6 +328,8 @@ export type DebugEventPayload =
       reason: DebugStopReason;
       frames: StackFrame[];
       pauseGeneration: number;
+      /** Present only when the adapter omitted or bounded stack-frame data. */
+      framesTruncated?: true;
     }
   | { kind: "resumed" }
   | {

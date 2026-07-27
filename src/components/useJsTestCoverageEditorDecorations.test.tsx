@@ -14,7 +14,7 @@ describe("useJsTestCoverageEditorDecorations", () => {
     const lineCount = 20_000;
     const lines = Array.from({ length: lineCount }, (_, index) => ({
       hits: 1,
-      lineNumber: lineCount - index,
+      lineNumber: index + 1,
     }));
     const report: JsTestCoverageReport = {
       branches: { covered: 0, percentage: null, total: 0 },
@@ -196,6 +196,68 @@ describe("useJsTestCoverageEditorDecorations", () => {
     await act(async () => root.render(<Harness activeDocument={documentA} />));
     expect(modelB.deltaDecorations).toHaveBeenLastCalledWith(["b-0"], []);
     expect(modelA.deltaDecorations).toHaveBeenLastCalledWith([], expect.any(Array));
+
+    act(() => root.unmount());
+  });
+
+  it("clears the exact owning model when the active document becomes dirty", async () => {
+    const cleanDocument = editorDocument("/workspace/a.ts");
+    const dirtyDocument = { ...cleanDocument, content: "dirty" };
+    const report: JsTestCoverageReport = {
+      branches: { covered: 0, percentage: null, total: 0 },
+      files: [
+        {
+          branches: { covered: 0, percentage: null, total: 0 },
+          firstUncoveredLine: null,
+          functions: { covered: 0, percentage: null, total: 0 },
+          lines: [{ hits: 1, lineNumber: 1 }],
+          path: "a.ts",
+          summary: { covered: 1, percentage: 100, total: 1 },
+        },
+      ],
+      functions: { covered: 0, percentage: null, total: 0 },
+      summary: { covered: 1, percentage: 100, total: 1 },
+      truncated: false,
+    };
+    const coverage = coverageModel(cleanDocument.path, "dirty-clear");
+    const editor = {
+      getModel: vi.fn(() => coverage.model),
+      getVisibleRanges: vi.fn(() => [{ endLineNumber: 1, startLineNumber: 1 }]),
+      onDidChangeModel: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidLayoutChange: vi.fn(() => ({ dispose: vi.fn() })),
+      onDidScrollChange: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as Monaco.editor.IStandaloneCodeEditor;
+    class Range {
+      constructor(
+        readonly startLineNumber: number,
+        readonly startColumn: number,
+        readonly endLineNumber: number,
+        readonly endColumn: number,
+      ) {}
+    }
+    const monaco = {
+      Range,
+      editor: { TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 } },
+    } as unknown as typeof Monaco;
+    const root = createRoot(window.document.createElement("div"));
+
+    function Harness({ activeDocument }: { readonly activeDocument: EditorDocument }) {
+      useJsTestCoverageEditorDecorations({
+        activeDocument,
+        editor,
+        monaco,
+        report,
+        rootPath: "/workspace",
+        workspaceId: "workspace-a",
+      });
+      return null;
+    }
+
+    await act(async () => root.render(<Harness activeDocument={cleanDocument} />));
+    expect(coverage.deltaDecorations).toHaveBeenLastCalledWith([], expect.any(Array));
+
+    await act(async () => root.render(<Harness activeDocument={dirtyDocument} />));
+    expect(coverage.deltaDecorations).toHaveBeenLastCalledWith(["dirty-clear-0"], []);
 
     act(() => root.unmount());
   });

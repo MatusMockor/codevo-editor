@@ -127,7 +127,13 @@ describe("debugVariablePages", () => {
       requestId: "request-20-2",
       result: { variablesReference: 20, start: 2, variables: [variable("c")], nextStart: 2 },
     });
-    expect(malformed).toBe(state);
+    expect(malformed.pendingCount).toBe(0);
+    expect(selectDebugVariableExpansion(malformed, owner, 20)).toMatchObject({
+      kind: "error",
+      nextStart: 2,
+      message: "The debug adapter returned an invalid variable page.",
+    });
+    state = request(malformed, 20, 2);
     state = resolve(state, 20, 2, [variable("c")], null);
     expect(selectDebugVariableExpansion(state, owner, 20)).toMatchObject({
       kind: "ready",
@@ -136,12 +142,55 @@ describe("debugVariablePages", () => {
     });
   });
 
-  it("rejects malformed, oversized, extra-key and mismatched page results", () => {
-    const pending = request(createDebugVariablePagesState(owner), 20, 0, "page");
+  it("settles an overlapping current page as a retryable error", () => {
+    let state = request(createDebugVariablePagesState(owner), 20, 0, "first");
+    state = resolve(
+      state,
+      20,
+      0,
+      [variable("a"), variable("b")],
+      2,
+      "first",
+    );
+    const reference = state.references[20]!;
+    const overlappingPending: DebugVariablePagesState = {
+      ...state,
+      pendingCount: 1,
+      references: {
+        ...state.references,
+        20: {
+          ...reference,
+          pending: { 1: "overlap" },
+        },
+      },
+    };
+    const settled = reduceDebugVariablePages(overlappingPending, {
+      type: "resolve",
+      owner,
+      variablesReference: 20,
+      start: 1,
+      requestId: "overlap",
+      result: {
+        variablesReference: 20,
+        start: 1,
+        variables: [variable("overlap")],
+        nextStart: null,
+      },
+    });
+    expect(settled.pendingCount).toBe(0);
+    expect(settled.references[20]?.pages).toEqual(reference.pages);
+    expect(settled.references[20]?.errors[1]).toBe(
+      "The debug adapter returned an invalid variable page.",
+    );
+  });
+
+  it("settles malformed, oversized, extra-key and mismatched current pages as retryable errors", () => {
     const malformed: unknown[] = [
       null,
       { variablesReference: 20, start: 0, variables: [], nextStart: null, extra: true },
       { variablesReference: 21, start: 0, variables: [], nextStart: null },
+      { variablesReference: 20, start: 1, variables: [], nextStart: null },
+      { variablesReference: 20, start: 0, variables: [], nextStart: 1 },
       {
         variablesReference: 20,
         start: 0,
@@ -188,6 +237,7 @@ describe("debugVariablePages", () => {
       },
     ];
     for (const result of malformed) {
+      const pending = request(createDebugVariablePagesState(owner), 20, 0, "page");
       const next = reduceDebugVariablePages(pending, {
         type: "resolve",
         owner,
@@ -196,8 +246,60 @@ describe("debugVariablePages", () => {
         requestId: "page",
         result,
       });
-      expect(next).toBe(pending);
+      expect(next.pendingCount).toBe(0);
+      expect(next.references[20]?.pending).toEqual({});
+      expect(selectDebugVariableExpansion(next, owner, 20)).toEqual({
+        kind: "error",
+        variables: [],
+        nextStart: 0,
+        message: "The debug adapter returned an invalid variable page.",
+      });
+      expect(request(next, 20, 0, "retry").pendingCount).toBe(1);
     }
+  });
+
+  it("ignores reordered late replies after an owner A to B to A transition", () => {
+    const ownerB = { ...owner, frameId: 12 };
+    const pendingA = request(createDebugVariablePagesState(owner), 20, 0, "old-a");
+    const ownedB = reduceDebugVariablePages(pendingA, { type: "own", owner: ownerB });
+    const currentA = request(
+      reduceDebugVariablePages(ownedB, { type: "own", owner }),
+      20,
+      0,
+      "new-a",
+    );
+    const lateOldA = reduceDebugVariablePages(currentA, {
+      type: "resolve",
+      owner,
+      variablesReference: 20,
+      start: 0,
+      requestId: "old-a",
+      result: {
+        variablesReference: 20,
+        start: 0,
+        variables: [variable("stale")],
+        nextStart: null,
+      },
+    });
+    expect(lateOldA).toBe(currentA);
+    expect(lateOldA.pendingCount).toBe(1);
+    const freshA = reduceDebugVariablePages(lateOldA, {
+      type: "resolve",
+      owner,
+      variablesReference: 20,
+      start: 0,
+      requestId: "new-a",
+      result: {
+        variablesReference: 20,
+        start: 0,
+        variables: [variable("fresh")],
+        nextStart: null,
+      },
+    });
+    expect(selectDebugVariableExpansion(freshA, owner, 20)).toMatchObject({
+      kind: "ready",
+      variables: [variable("fresh")],
+    });
   });
 
   it("immutably preserves evaluate names and charges their UTF-8 bytes to the cache", () => {

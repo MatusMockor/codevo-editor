@@ -1,10 +1,11 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   fileUriFromPath,
   languageServerDocumentSyncKey,
   languageServerUriSyncKey,
   type LanguageServerTextDocument,
 } from "../domain/languageServerDocumentSync";
+import { LatestValueDrainMailbox } from "./latestValueDrainMailbox";
 
 export function useLanguageServerDocumentSyncState() {
   const documentVersionsRef = useRef<Record<string, number>>({});
@@ -16,14 +17,10 @@ export function useLanguageServerDocumentSyncState() {
   // publications against this monotonic per-uri value (instead of the live
   // document version) lets in-order clears through while still dropping genuinely
   // out-of-order publications. Isolated per workspace root via the sync key.
-  const lastAppliedDiagnosticVersionByUriRef = useRef<Record<string, number>>(
-    {},
-  );
+  const lastAppliedDiagnosticVersionByUriRef = useRef<Record<string, number>>({});
   const syncedDocumentPathsRef = useRef<Set<string>>(new Set());
   const syncedDocumentContentRef = useRef<Record<string, string>>({});
-  const pendingDocumentChangesRef = useRef<
-    Record<string, LanguageServerTextDocument>
-  >({});
+  const pendingDocumentChangesRef = useRef<Record<string, LanguageServerTextDocument>>({});
   const pendingDocumentOpenSyncAttemptsRef = useRef<Record<string, number>>({});
   const documentOpenSyncAttemptIdRef = useRef(0);
   const documentChangeTimersRef = useRef<Record<string, number>>({});
@@ -32,70 +29,59 @@ export function useLanguageServerDocumentSyncState() {
   const documentSyncRuntimeSignatureRef = useRef<string | null>(null);
   const nextDocumentLifecycleIdentityRef = useRef(0);
   const documentLifecycleIdentitiesRef = useRef<Record<string, number>>({});
-  const pendingDocumentLifecycleIdentitiesRef = useRef<Record<string, number>>(
-    {},
-  );
+  const pendingDocumentLifecycleIdentitiesRef = useRef<Record<string, number>>({});
   // Cold first-nav fix: tracks which workspace roots have already had their
   // phpactor index force-warmed (one low-priority documentSymbol request fired
   // after the first PHP didOpen). Keyed by the workspace root so each open
   // project tab warms exactly once and the warm-up never leaks across tabs.
   const phpLanguageServerIndexWarmedRootsRef = useRef<Set<string>>(new Set());
 
-  const javaScriptTypeScriptDocumentVersionsRef = useRef<Record<string, number>>(
-    {},
-  );
-  const javaScriptTypeScriptDocumentVersionsByUriRef = useRef<
-    Record<string, number>
-  >({});
+  const javaScriptTypeScriptDocumentVersionsRef = useRef<Record<string, number>>({});
+  const javaScriptTypeScriptDocumentVersionsByUriRef = useRef<Record<string, number>>({});
   // JS/TS counterpart of lastAppliedDiagnosticVersionByUriRef: the analysis
   // version of the last diagnostic applied per root/uri sync key.
-  const javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef = useRef<
-    Record<string, number>
-  >({});
-  const javaScriptTypeScriptSyncedDocumentPathsRef = useRef<Set<string>>(
-    new Set(),
+  const javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef = useRef<Record<string, number>>(
+    {},
   );
-  const javaScriptTypeScriptSyncedDocumentContentRef = useRef<
-    Record<string, string>
-  >({});
+  const javaScriptTypeScriptSyncedDocumentPathsRef = useRef<Set<string>>(new Set());
+  const javaScriptTypeScriptSyncedDocumentContentRef = useRef<Record<string, string>>({});
   const javaScriptTypeScriptPendingDocumentChangesRef = useRef<
     Record<string, LanguageServerTextDocument>
   >({});
-  const javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef = useRef<
-    Record<string, number>
-  >({});
+  const javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef = useRef<Record<string, number>>({});
   const javaScriptTypeScriptDocumentOpenSyncAttemptIdRef = useRef(0);
-  const javaScriptTypeScriptDocumentChangeTimersRef = useRef<
-    Record<string, number>
-  >({});
-  const javaScriptTypeScriptDocumentSyncQueuesRef = useRef<
-    Record<string, Promise<void>>
-  >({});
+  const javaScriptTypeScriptDocumentChangeTimersRef = useRef<Record<string, number>>({});
+  const javaScriptTypeScriptDocumentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const javaScriptTypeScriptDocumentChangeMailboxRef = useRef(
+    new LatestValueDrainMailbox<LanguageServerTextDocument>(),
+  );
   const javaScriptTypeScriptDocumentSyncGenerationRef = useRef(0);
-  const javaScriptTypeScriptDocumentSyncRuntimeSignatureRef = useRef<
-    string | null
-  >(null);
+  const javaScriptTypeScriptDocumentSyncRuntimeSignatureRef = useRef<string | null>(null);
+
+  useEffect(
+    () => () => {
+      javaScriptTypeScriptDocumentChangeMailboxRef.current.clear();
+    },
+    [],
+  );
 
   const nextDocumentVersion = useCallback((rootPath: string, path: string): number => {
     const key = languageServerDocumentSyncKey(rootPath, path);
     const next = (documentVersionsRef.current[key] || 0) + 1;
     documentVersionsRef.current[key] = next;
-    documentVersionsByUriRef.current[
-      languageServerUriSyncKey(rootPath, fileUriFromPath(path))
-    ] = next;
+    documentVersionsByUriRef.current[languageServerUriSyncKey(rootPath, fileUriFromPath(path))] =
+      next;
     return next;
   }, []);
 
   const nextJavaScriptTypeScriptDocumentVersion = useCallback(
     (rootPath: string, path: string): number => {
       const key = languageServerDocumentSyncKey(rootPath, path);
-      const next =
-        (javaScriptTypeScriptDocumentVersionsRef.current[key] || 0) + 1;
+      const next = (javaScriptTypeScriptDocumentVersionsRef.current[key] || 0) + 1;
       javaScriptTypeScriptDocumentVersionsRef.current[key] = next;
       javaScriptTypeScriptDocumentVersionsByUriRef.current[
         languageServerUriSyncKey(rootPath, fileUriFromPath(path))
-      ] =
-        next;
+      ] = next;
       return next;
     },
     [],
@@ -112,45 +98,37 @@ export function useLanguageServerDocumentSyncState() {
     delete documentChangeTimersRef.current[key];
   }, []);
 
-  const clearJavaScriptTypeScriptDocumentChangeTimer = useCallback(
-    (key: string) => {
-      const timer = javaScriptTypeScriptDocumentChangeTimersRef.current[key];
+  const clearJavaScriptTypeScriptDocumentChangeTimer = useCallback((key: string) => {
+    const timer = javaScriptTypeScriptDocumentChangeTimersRef.current[key];
 
-      if (!timer) {
+    if (!timer) {
+      return;
+    }
+
+    window.clearTimeout(timer);
+    delete javaScriptTypeScriptDocumentChangeTimersRef.current[key];
+  }, []);
+
+  const enqueueDocumentSync = useCallback((path: string, operation: () => Promise<void>) => {
+    const previous = documentSyncQueuesRef.current[path] || Promise.resolve();
+    const next = previous.then(operation, operation);
+    const queued = next.catch(() => undefined);
+    documentSyncQueuesRef.current[path] = queued;
+
+    queued.finally(() => {
+      if (documentSyncQueuesRef.current[path] !== queued) {
         return;
       }
 
-      window.clearTimeout(timer);
-      delete javaScriptTypeScriptDocumentChangeTimersRef.current[key];
-    },
-    [],
-  );
+      delete documentSyncQueuesRef.current[path];
+    });
 
-  const enqueueDocumentSync = useCallback(
-    (path: string, operation: () => Promise<void>) => {
-      const previous = documentSyncQueuesRef.current[path] || Promise.resolve();
-      const next = previous.then(operation, operation);
-      const queued = next.catch(() => undefined);
-      documentSyncQueuesRef.current[path] = queued;
-
-      queued.finally(() => {
-        if (documentSyncQueuesRef.current[path] !== queued) {
-          return;
-        }
-
-        delete documentSyncQueuesRef.current[path];
-      });
-
-      return next;
-    },
-    [],
-  );
+    return next;
+  }, []);
 
   const enqueueJavaScriptTypeScriptDocumentSync = useCallback(
     (key: string, operation: () => Promise<void>) => {
-      const previous =
-        javaScriptTypeScriptDocumentSyncQueuesRef.current[key] ||
-        Promise.resolve();
+      const previous = javaScriptTypeScriptDocumentSyncQueuesRef.current[key] || Promise.resolve();
       const next = previous.then(operation, operation);
       const queued = next.catch(() => undefined);
       javaScriptTypeScriptDocumentSyncQueuesRef.current[key] = queued;
@@ -198,6 +176,7 @@ export function useLanguageServerDocumentSyncState() {
     javaScriptTypeScriptSyncedDocumentContentRef.current = {};
     javaScriptTypeScriptPendingDocumentChangesRef.current = {};
     javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef.current = {};
+    javaScriptTypeScriptDocumentChangeMailboxRef.current.clear();
     javaScriptTypeScriptDocumentVersionsRef.current = {};
     javaScriptTypeScriptDocumentVersionsByUriRef.current = {};
     javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current = {};
@@ -206,9 +185,7 @@ export function useLanguageServerDocumentSyncState() {
 
   const getPhpDocumentSyncVersion = useCallback(
     (rootPath: string, path: string): number | null =>
-      documentVersionsRef.current[
-        languageServerDocumentSyncKey(rootPath, path)
-      ] ?? null,
+      documentVersionsRef.current[languageServerDocumentSyncKey(rootPath, path)] ?? null,
     [],
   );
 
@@ -239,6 +216,7 @@ export function useLanguageServerDocumentSyncState() {
     javaScriptTypeScriptDocumentOpenSyncAttemptIdRef,
     javaScriptTypeScriptDocumentChangeTimersRef,
     javaScriptTypeScriptDocumentSyncQueuesRef,
+    javaScriptTypeScriptDocumentChangeMailbox: javaScriptTypeScriptDocumentChangeMailboxRef.current,
     javaScriptTypeScriptDocumentSyncGenerationRef,
     javaScriptTypeScriptDocumentSyncRuntimeSignatureRef,
     nextDocumentVersion,

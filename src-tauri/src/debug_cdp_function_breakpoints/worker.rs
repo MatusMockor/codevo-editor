@@ -243,11 +243,12 @@ pub(super) fn resume_after_hidden_continue_pause(
             }
         };
         match pause {
-            Ok((frames, pause_generation, _)) => {
+            Ok((frames, pause_generation, _, frames_truncated)) => {
                 (context.emit)(DebugEventPayload::Stopped {
                     reason: DebugStopReason::Breakpoint,
                     frames,
                     pause_generation,
+                    frames_truncated,
                 });
             }
             Err(_) => (context.fail_closed)(),
@@ -336,7 +337,7 @@ pub(super) fn resume_after_hidden_continue_pause(
             return;
         }
     };
-    let Ok((frames, pause_generation, reason)) = pause else {
+    let Ok((frames, pause_generation, reason, frames_truncated)) = pause else {
         (context.fail_closed)();
         return;
     };
@@ -350,6 +351,7 @@ pub(super) fn resume_after_hidden_continue_pause(
         reason,
         frames,
         pause_generation,
+        frames_truncated,
     });
 }
 

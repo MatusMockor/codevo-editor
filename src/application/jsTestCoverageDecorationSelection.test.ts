@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { JsTestCoverageReport } from "../domain/jsTestCoverage";
+import { createJsTestCoverageReportIndex } from "../domain/jsTestCoverageDecorations";
 import {
-  selectActiveJsTestCoverageDecorations,
+  selectActiveJsTestCoverageFile,
   type ActiveJsTestCoverageDecorationSelection,
 } from "./jsTestCoverageDecorationSelection";
 
@@ -29,27 +30,34 @@ const selection: ActiveJsTestCoverageDecorationSelection = {
   activeFileDirty: false,
   activeFilePath: "/workspace/src/example.ts",
   rootPath: "/workspace",
-  snapshot: { report, rootPath: "/workspace", workspaceId: "workspace-a" },
+  snapshot: {
+    index: createJsTestCoverageReportIndex(report),
+    report,
+    rootPath: "/workspace",
+    workspaceId: "workspace-a",
+  },
   workspaceId: "workspace-a",
 };
 
-describe("selectActiveJsTestCoverageDecorations", () => {
-  it("selects decorations for the unchanged active workspace file", () => {
-    expect(selectActiveJsTestCoverageDecorations(selection)).toEqual([
-      { hits: 1, lineNumber: 1, status: "covered" },
-      { hits: 0, lineNumber: 2, status: "uncovered" },
-    ]);
+describe("selectActiveJsTestCoverageFile", () => {
+  it("selects the indexed file for the unchanged active workspace file", () => {
+    expect(selectActiveJsTestCoverageFile(selection)).toBe(report.files[0]);
   });
 
   it("accepts equivalent roots with trailing or Windows separators", () => {
     expect(
-      selectActiveJsTestCoverageDecorations({
+      selectActiveJsTestCoverageFile({
         ...selection,
         activeFilePath: "C:\\workspace\\src\\example.ts",
         rootPath: "C:\\workspace\\",
-        snapshot: { report, rootPath: "C:\\workspace", workspaceId: "workspace-a" },
+        snapshot: {
+          index: createJsTestCoverageReportIndex(report),
+          report,
+          rootPath: "C:\\workspace",
+          workspaceId: "workspace-a",
+        },
       }),
-    ).toHaveLength(2);
+    ).toBe(report.files[0]);
   });
 
   it.each([
@@ -64,19 +72,24 @@ describe("selectActiveJsTestCoverageDecorations", () => {
   ] satisfies readonly [string, Partial<ActiveJsTestCoverageDecorationSelection>][])(
     "fails closed for %s",
     (_name, overrides) => {
-      expect(selectActiveJsTestCoverageDecorations({ ...selection, ...overrides })).toEqual([]);
+      expect(selectActiveJsTestCoverageFile({ ...selection, ...overrides })).toBeNull();
     },
   );
 
   it("supports a filesystem-root workspace without prefix confusion", () => {
     expect(
-      selectActiveJsTestCoverageDecorations({
+      selectActiveJsTestCoverageFile({
         ...selection,
         activeFilePath: "/src/example.ts",
         rootPath: "/",
-        snapshot: { report, rootPath: "/", workspaceId: "workspace-a" },
+        snapshot: {
+          index: createJsTestCoverageReportIndex(report),
+          report,
+          rootPath: "/",
+          workspaceId: "workspace-a",
+        },
       }),
-    ).toHaveLength(2);
+    ).toBe(report.files[0]);
   });
 
   it.each(["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"])(
@@ -88,12 +101,32 @@ describe("selectActiveJsTestCoverageDecorations", () => {
         files: [{ ...report.files[0]!, path }],
       };
       expect(
-        selectActiveJsTestCoverageDecorations({
+        selectActiveJsTestCoverageFile({
           ...selection,
           activeFilePath: `/workspace/${path}`,
-          snapshot: { report: extensionReport, rootPath: "/workspace", workspaceId: "workspace-a" },
+          snapshot: {
+            index: createJsTestCoverageReportIndex(extensionReport),
+            report: extensionReport,
+            rootPath: "/workspace",
+            workspaceId: "workspace-a",
+          },
         }),
-      ).toHaveLength(2);
+      ).toBe(extensionReport.files[0]);
     },
   );
+
+  it("rejects an index retained from an A owner after report identity changes A-B-A", () => {
+    const replacement = { ...report, files: [...report.files] };
+    expect(
+      selectActiveJsTestCoverageFile({
+        ...selection,
+        snapshot: {
+          index: createJsTestCoverageReportIndex(report),
+          report: replacement,
+          rootPath: "/workspace",
+          workspaceId: "workspace-a",
+        },
+      }),
+    ).toBeNull();
+  });
 });

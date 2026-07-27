@@ -5,6 +5,7 @@ import type { TextClipboardGateway } from "../domain/textClipboard";
 
 export interface DebugCopyStackTraceContext {
   readonly frames: readonly StackFrame[];
+  readonly framesTruncated: boolean;
   readonly pauseGeneration: number;
   readonly rootKey: string;
   readonly sessionId: number;
@@ -82,12 +83,13 @@ function capture(getContext: () => DebugCopyStackTraceContext | null): {
       !isPositiveInteger(value.pauseGeneration) ||
       !isCleanRootKey(value.rootKey) ||
       !isCleanRootKey(value.workspaceOwnerKey) ||
-      !Array.isArray(value.frames)
+      !Array.isArray(value.frames) ||
+      typeof value.framesTruncated !== "boolean"
     ) {
       return null;
     }
     const frames = value.frames.map((frame) => ({ ...frame }));
-    const text = formatDebugStackTrace(frames);
+    const text = formatDebugStackTrace(frames, value.framesTruncated);
     return text === null ? null : { context: { ...value, frames }, text };
   } catch {
     return null;
@@ -103,6 +105,7 @@ function contextsEqual(
     left.sessionId === right.sessionId &&
     left.pauseGeneration === right.pauseGeneration &&
     left.workspaceOwnerKey === right.workspaceOwnerKey &&
+    left.framesTruncated === right.framesTruncated &&
     left.frames.length === right.frames.length &&
     left.frames.every((frame, index) => {
       const other = right.frames[index];

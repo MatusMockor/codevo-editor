@@ -7,6 +7,7 @@ import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntim
 import {
   closeJavaScriptTypeScriptDocumentsForRoot,
   closePhpDocumentsForRoot,
+  retireJavaScriptTypeScriptDocument,
 } from "./documentSyncCloseLifecycle";
 
 const ROOT = "/workspace";
@@ -153,7 +154,7 @@ describe("document sync root-close lifecycle", () => {
 
     expect(syncGenerationRef.current).toBe(5);
     expect(didClose).toHaveBeenCalledOnce();
-    expect(didClose).toHaveBeenCalledWith(ROOT, path);
+    expect(didClose).toHaveBeenCalledWith(ROOT, path, SESSION);
     expect(syncedPathsRef.current).toEqual(new Set([rejectedKey]));
     expect(lifecycleIdentitiesRef.current).toEqual({ [rejectedKey]: 3 });
     expect(authorityVersionsRef.current).toEqual({ [rejectedKey]: 30 });
@@ -205,5 +206,52 @@ describe("document sync root-close lifecycle", () => {
     await close;
 
     expect(didClose).not.toHaveBeenCalled();
+  });
+
+  it("binds a retired JS/TS document close to the session captured before queue admission", async () => {
+    const path = `${ROOT}/src/index.ts`;
+    const key = languageServerDocumentSyncKey(ROOT, path);
+    const queueAdmission = deferred<void>();
+    const didClose = vi.fn(async () => undefined);
+    let ownerIsCurrent = true;
+
+    const close = retireJavaScriptTypeScriptDocument({
+      rootPath: ROOT,
+      path,
+      expectedLifecycleIdentity: 3,
+      state: {
+        syncedPathsRef: ref(new Set([key])),
+        syncedContentRef: ref({ [key]: "a" }),
+        pendingChangesRef: ref({}),
+        pendingOpenAttemptsRef: ref({}),
+        lifecycleIdentitiesRef: ref({ [key]: 3 }),
+        authorityVersionsRef: ref({ [key]: 9 }),
+        closingLifecycleReceiptsRef: ref(new Set()),
+        uncertainCloseSessionIdsRef: ref({}),
+        versionState: versionState(key),
+      },
+      sessionId: SESSION,
+      clearChangeTimer: vi.fn(),
+      enqueueSync: async (_syncKey, operation) => {
+        await queueAdmission.promise;
+        await operation();
+      },
+      gateway: {
+        didOpen: vi.fn(),
+        didChange: vi.fn(),
+        didSave: vi.fn(),
+        didClose,
+      },
+      isOwnerCurrent: () => ownerIsCurrent,
+      reportError: vi.fn(),
+    });
+
+    queueAdmission.resolve();
+    await close;
+
+    expect(didClose).toHaveBeenCalledWith(ROOT, path, SESSION);
+
+    ownerIsCurrent = false;
+    expect(didClose).toHaveBeenCalledOnce();
   });
 });

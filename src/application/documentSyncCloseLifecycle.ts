@@ -77,11 +77,11 @@ export async function retireJavaScriptTypeScriptDocument({
 
   try {
     await enqueueSync(key, async () => {
-      if (!canSend()) {
+      if (sessionId === null || !canSend()) {
         return;
       }
       didSend = true;
-      await gateway.didClose(rootPath, path);
+      await gateway.didClose(rootPath, path, sessionId);
     });
   } catch (error) {
     if (didSend && sessionId !== null) {
@@ -250,7 +250,7 @@ export async function closeJavaScriptTypeScriptDocumentsForRoot({
           if (requestedSessionId === null || !isSessionCurrent(rootPath, requestedSessionId)) {
             return Promise.resolve();
           }
-          return gateway.didClose(rootPath, document.path);
+          return gateway.didClose(rootPath, document.path, requestedSessionId);
         });
       } catch (error) {
         if (requestedSessionId !== null && !isSessionCurrent(rootPath, requestedSessionId)) {

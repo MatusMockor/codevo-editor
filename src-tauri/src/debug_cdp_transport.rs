@@ -45,6 +45,7 @@ mod this_receiver {
 #[derive(Default)]
 pub(crate) struct PauseInventory {
     pub(crate) pause_generation: u64,
+    pub(crate) frames_truncated: bool,
     pub(crate) call_frame_ids: HashMap<u64, String>,
     pub(super) call_frame_this_object_ids: HashMap<u64, String>,
     pub(crate) frames: Vec<DebugStackFrame>,
@@ -60,7 +61,8 @@ pub(crate) struct PauseInventory {
     pub(super) scopes: HashMap<u64, Vec<DebugScopeInfo>>,
 }
 
-pub(super) struct BreakpointResolutionTarget {
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct BreakpointResolutionTarget {
     pub(super) breakpoint_id: String,
     pub(super) column_number: Option<u32>,
     pub(super) file_path: String,
@@ -106,10 +108,33 @@ pub(crate) struct PendingExplicitPause {
     pub(crate) resume_confirmed: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GeneratedPosition {
     pub(crate) line: u32,
     pub(crate) column: u32,
+    pub(crate) script_identity: GeneratedScriptIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum GeneratedScriptIdentity {
+    Absent,
+    Exact(String),
+    Invalid,
+}
+
+pub(crate) fn generated_script_identity(value: Option<&Value>) -> GeneratedScriptIdentity {
+    let Some(value) = value else {
+        return GeneratedScriptIdentity::Absent;
+    };
+    let Some(script_id) = value.as_str() else {
+        return GeneratedScriptIdentity::Invalid;
+    };
+    if script_id.is_empty() || script_id.len() > 4 * 1024 || script_id.chars().any(char::is_control)
+    {
+        GeneratedScriptIdentity::Invalid
+    } else {
+        GeneratedScriptIdentity::Exact(script_id.to_string())
+    }
 }
 
 pub(crate) struct CdpShared {
@@ -717,20 +742,35 @@ impl DebugAdapter for NodeCdpAdapter {
                 continue;
             }
             ensure_startup_current(self.mutation_is_allowed.as_ref())?;
-            let mapped =
-                self.shared.lock().ok().and_then(|shared| {
-                    shared.source_maps.as_ref().and_then(|source_maps| {
-                        match breakpoint.column_number {
-                            Some(column_number) => source_maps.map_original_position(
-                                canonical_file,
-                                breakpoint.line_number,
-                                column_number,
-                            ),
-                            None => source_maps
-                                .map_original_line(canonical_file, breakpoint.line_number),
-                        }
+            let mapped_candidate = self.shared.lock().ok().and_then(|shared| {
+                shared
+                    .source_maps
+                    .as_ref()
+                    .and_then(|source_maps| match breakpoint.column_number {
+                        Some(column_number) => source_maps.map_original_position_candidate(
+                            canonical_file,
+                            breakpoint.line_number,
+                            column_number,
+                        ),
+                        None => source_maps
+                            .map_original_line_candidate(canonical_file, breakpoint.line_number),
                     })
+            });
+            let mapped = mapped_candidate
+                .and_then(|candidate| candidate.validate_with_receipt())
+                .and_then(|validated| {
+                    self.shared
+                        .lock()
+                        .ok()
+                        .and_then(|shared| {
+                            shared.source_maps.as_ref().map(|source_maps| {
+                                source_maps.is_current_receipt(&validated.receipt)
+                            })
+                        })
+                        .unwrap_or(false)
+                        .then_some(validated.location)
                 });
+            ensure_startup_current(self.mutation_is_allowed.as_ref())?;
             let url = mapped
                 .as_ref()
                 .map(|location| location.url.clone())
@@ -764,12 +804,19 @@ impl DebugAdapter for NodeCdpAdapter {
                     let resolved_position = result
                         .pointer("/locations/0/lineNumber")
                         .and_then(Value::as_u64)
-                        .map(|line| GeneratedPosition {
-                            line: line as u32,
-                            column: result
+                        .and_then(|line| u32::try_from(line).ok())
+                        .and_then(|line| {
+                            let column = result
                                 .pointer("/locations/0/columnNumber")
                                 .and_then(Value::as_u64)
-                                .unwrap_or(0) as u32,
+                                .map_or(Some(0), |column| u32::try_from(column).ok())?;
+                            Some(GeneratedPosition {
+                                line,
+                                column,
+                                script_identity: generated_script_identity(
+                                    result.pointer("/locations/0/scriptId"),
+                                ),
+                            })
                         });
                     let target = BreakpointResolutionTarget {
                         breakpoint_id: breakpoint.id.clone(),
@@ -781,29 +828,58 @@ impl DebugAdapter for NodeCdpAdapter {
                     match resolved_position {
                         Some(position) => {
                             updated.verified = true;
-                            let shared = self.shared.lock().map_err(|error| error.to_string())?;
-                            let (line_number, column_number) =
-                                original_breakpoint_position(&shared, &target, position);
-                            updated.line_number = line_number;
+                            let prepared = {
+                                let shared =
+                                    self.shared.lock().map_err(|error| error.to_string())?;
+                                prepare_original_breakpoint_resolution(&shared, &target, &position)
+                            };
+                            let resolved = prepared.resolve();
+                            let resolved = {
+                                let shared =
+                                    self.shared.lock().map_err(|error| error.to_string())?;
+                                resolved.revalidate_map(&shared)
+                            };
+                            updated.line_number = resolved.line;
                             if target.column_number.is_some() {
-                                updated.column_number = Some(column_number);
+                                updated.column_number = Some(resolved.column);
                             }
                         }
                         None => {
-                            let mut shared =
-                                self.shared.lock().map_err(|error| error.to_string())?;
-                            match shared.pending_resolutions.remove(breakpoint_id) {
+                            let pending = self
+                                .shared
+                                .lock()
+                                .map_err(|error| error.to_string())?
+                                .pending_resolutions
+                                .remove(breakpoint_id);
+                            match pending {
                                 Some(position) => {
                                     updated.verified = true;
-                                    let (line_number, column_number) =
-                                        original_breakpoint_position(&shared, &target, position);
-                                    updated.line_number = line_number;
+                                    let prepared = {
+                                        let shared = self
+                                            .shared
+                                            .lock()
+                                            .map_err(|error| error.to_string())?;
+                                        prepare_original_breakpoint_resolution(
+                                            &shared, &target, &position,
+                                        )
+                                    };
+                                    let resolved = prepared.resolve();
+                                    let resolved = {
+                                        let shared = self
+                                            .shared
+                                            .lock()
+                                            .map_err(|error| error.to_string())?;
+                                        resolved.revalidate_map(&shared)
+                                    };
+                                    updated.line_number = resolved.line;
                                     if target.column_number.is_some() {
-                                        updated.column_number = Some(column_number);
+                                        updated.column_number = Some(resolved.column);
                                     }
                                 }
                                 None => {
-                                    shared
+                                    self.shared
+                                        .lock()
+                                        .map_err(|error| error.to_string())?
                                         .resolution_index
                                         .insert(breakpoint_id.to_string(), target);
                                 }

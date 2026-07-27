@@ -451,7 +451,9 @@ impl NodeCdpAdapter {
         if !initial_function_breakpoints.is_empty() {
             if let Some(entry) = startup_entry {
                 let canonical_entry = entry.canonicalize().map_err(|error| {
-                    format!("Unable to resolve the Node debug entry for function breakpoints: {error}")
+                    format!(
+                        "Unable to resolve the Node debug entry for function breakpoints: {error}"
+                    )
                 })?;
                 ensure_startup_current(startup_is_current.as_ref())?;
                 adapter.bind_exact_startup_entry_url(file_url_from_path(

@@ -273,6 +273,9 @@ pub(crate) fn handle_paused(params: &Value, context: &SocketLoopContext) -> Opti
     if !(context.mutation_is_allowed)() {
         return None;
     }
+    let prepared_params =
+        crate::debug_cdp::transport::prepare_pause_source_mappings(params, context);
+    let params = &prepared_params;
     let startup_entry_reason = context
         .exception_filter
         .lock()
@@ -478,7 +481,7 @@ fn resume_hidden_exception(params: &Value, context: &SocketLoopContext) -> Optio
 }
 
 fn handle_filtered_exception_pause(params: &Value, context: &SocketLoopContext) -> Option<String> {
-    let (frames, pause_generation, reason) = {
+    let (frames, pause_generation, reason, frames_truncated) = {
         let Ok(mut shared) = context.shared.lock() else {
             return None;
         };
@@ -497,6 +500,7 @@ fn handle_filtered_exception_pause(params: &Value, context: &SocketLoopContext) 
             reason,
             frames,
             pause_generation,
+            frames_truncated,
         },
     );
     complete_startup_for_early_exception(context);
@@ -724,7 +728,7 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
             }
         }
     }
-    let (frames, pause_generation, reason) = {
+    let (frames, pause_generation, reason, frames_truncated) = {
         let Ok(mut shared) = context.shared.lock() else {
             return None;
         };
@@ -739,6 +743,7 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
             reason,
             frames,
             pause_generation,
+            frames_truncated,
         },
     );
     None
@@ -767,14 +772,16 @@ fn handle_startup_entry_pause(
     context: &SocketLoopContext,
     reason: DebugStopReason,
 ) -> Option<String> {
-    let (frames, pause_generation) = {
+    let (frames, pause_generation, frames_truncated) = {
         let Ok(mut shared) = context.shared.lock() else {
             return None;
         };
-        let Ok((frames, pause_generation, _)) = install_visible_pause(params, &mut shared) else {
+        let Ok((frames, pause_generation, _, frames_truncated)) =
+            install_visible_pause(params, &mut shared)
+        else {
             return None;
         };
-        (frames, pause_generation)
+        (frames, pause_generation, frames_truncated)
     };
     emit_debug_event(
         context,
@@ -782,6 +789,7 @@ fn handle_startup_entry_pause(
             reason,
             frames,
             pause_generation,
+            frames_truncated,
         },
     );
     None

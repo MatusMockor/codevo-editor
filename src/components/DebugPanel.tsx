@@ -1024,7 +1024,17 @@ function CallStack({
       : (state.frames[0]?.frameId ?? null);
 
   if (state.frames.length === 0) {
-    return <div style={styles.message}>No stack frames</div>;
+    return (
+      <div
+        data-testid={state.framesTruncated ? "debug-stack-truncated" : undefined}
+        role={state.framesTruncated ? "status" : undefined}
+        style={styles.message}
+      >
+        {state.framesTruncated
+          ? "Stack trace truncated; no inspectable frames were retained."
+          : "No stack frames"}
+      </div>
+    );
   }
 
   const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, frameId: number) => {
@@ -1061,91 +1071,98 @@ function CallStack({
   };
 
   return (
-    <div
-      aria-label="Call stack frames"
-      onScroll={windowedFrames.onScroll}
-      ref={windowedFrames.containerRef}
-      role="list"
-      style={styles.windowedList}
-    >
-      <div style={{ height: windowedFrames.totalHeight, position: "relative" }}>
-        {windowedFrames.rows.map(({ index, offsetTop }) => {
-          const frame = state.frames[index];
-          if (!frame) return null;
-          const selected = frame.frameId === highlightedFrameId;
-          const showRestart =
-            selected &&
-            index === state.frames.findIndex(({ frameId }) => frameId === highlightedFrameId) &&
-            debugAdapterKind === "node" &&
-            !debugControlPending &&
-            workspaceTrusted &&
-            frameAllowsInlineActions(frame) &&
-            canRestartFrame(debugRestartFrame);
-          return (
-            <div
-              aria-posinset={index + 1}
-              aria-setsize={state.frames.length}
-              key={frame.frameId}
-              ref={(element) => windowedFrames.measureRow(String(frame.frameId), element)}
-              role="listitem"
-              style={
-                selected
-                  ? {
-                      ...styles.windowedRow,
-                      ...styles.breakpointRow,
-                      ...styles.frameActive,
-                      top: offsetTop,
-                    }
-                  : { ...styles.windowedRow, ...styles.breakpointRow, top: offsetTop }
-              }
-            >
-              <button
-                aria-current={selected ? "true" : undefined}
-                data-testid="debug-frame"
-                onClick={() => activateFrame(frame, onSelectFrame, onNavigateToFrame)}
-                onBlur={(event) => {
-                  const next = event.relatedTarget;
-                  if (!(next instanceof HTMLElement) || next.dataset.testid !== "debug-frame") {
-                    frameFocusOwnedRef.current = false;
-                  }
-                }}
-                onFocus={() => {
-                  frameFocusOwnedRef.current = true;
-                  setRovingFrameId(frame.frameId);
-                }}
-                onKeyDown={(event) => moveFocus(event, frame.frameId)}
-                ref={(element) => {
-                  if (element) frameButtonRefs.current.set(frame.frameId, element);
-                  else frameButtonRefs.current.delete(frame.frameId);
-                }}
-                style={{ ...styles.frame, padding: 0 }}
-                tabIndex={frame.frameId === rovingFrame ? 0 : -1}
-                type="button"
+    <>
+      {state.framesTruncated ? (
+        <div data-testid="debug-stack-truncated" role="status" style={styles.message}>
+          Stack trace truncated to the inspectable frame limit.
+        </div>
+      ) : null}
+      <div
+        aria-label="Call stack frames"
+        onScroll={windowedFrames.onScroll}
+        ref={windowedFrames.containerRef}
+        role="list"
+        style={styles.windowedList}
+      >
+        <div style={{ height: windowedFrames.totalHeight, position: "relative" }}>
+          {windowedFrames.rows.map(({ index, offsetTop }) => {
+            const frame = state.frames[index];
+            if (!frame) return null;
+            const selected = frame.frameId === highlightedFrameId;
+            const showRestart =
+              selected &&
+              index === state.frames.findIndex(({ frameId }) => frameId === highlightedFrameId) &&
+              debugAdapterKind === "node" &&
+              !debugControlPending &&
+              workspaceTrusted &&
+              frameAllowsInlineActions(frame) &&
+              canRestartFrame(debugRestartFrame);
+            return (
+              <div
+                aria-posinset={index + 1}
+                aria-setsize={state.frames.length}
+                key={frame.frameId}
+                ref={(element) => windowedFrames.measureRow(String(frame.frameId), element)}
+                role="listitem"
+                style={
+                  selected
+                    ? {
+                        ...styles.windowedRow,
+                        ...styles.breakpointRow,
+                        ...styles.frameActive,
+                        top: offsetTop,
+                      }
+                    : { ...styles.windowedRow, ...styles.breakpointRow, top: offsetTop }
+                }
               >
-                {frame.name}{" "}
-                <span style={styles.muted}>
-                  {frame.filePath
-                    ? `${displayPath(rootPath, frame.filePath)}:${frame.lineNumber}`
-                    : `line ${frame.lineNumber}`}
-                </span>
-              </button>
-              {showRestart ? (
-                <ToolbarButton
-                  disabled={false}
-                  label="Restart Frame"
-                  onClick={() => {
-                    if (canRestartFrame(debugRestartFrame)) debugRestartFrame?.restartFrame();
+                <button
+                  aria-current={selected ? "true" : undefined}
+                  data-testid="debug-frame"
+                  onClick={() => activateFrame(frame, onSelectFrame, onNavigateToFrame)}
+                  onBlur={(event) => {
+                    const next = event.relatedTarget;
+                    if (!(next instanceof HTMLElement) || next.dataset.testid !== "debug-frame") {
+                      frameFocusOwnedRef.current = false;
+                    }
                   }}
-                  title="Restart Frame"
+                  onFocus={() => {
+                    frameFocusOwnedRef.current = true;
+                    setRovingFrameId(frame.frameId);
+                  }}
+                  onKeyDown={(event) => moveFocus(event, frame.frameId)}
+                  ref={(element) => {
+                    if (element) frameButtonRefs.current.set(frame.frameId, element);
+                    else frameButtonRefs.current.delete(frame.frameId);
+                  }}
+                  style={{ ...styles.frame, padding: 0 }}
+                  tabIndex={frame.frameId === rovingFrame ? 0 : -1}
+                  type="button"
                 >
-                  <RotateCw aria-hidden="true" size={12} />
-                </ToolbarButton>
-              ) : null}
-            </div>
-          );
-        })}
+                  {frame.name}{" "}
+                  <span style={styles.muted}>
+                    {frame.filePath
+                      ? `${displayPath(rootPath, frame.filePath)}:${frame.lineNumber}`
+                      : `line ${frame.lineNumber}`}
+                  </span>
+                </button>
+                {showRestart ? (
+                  <ToolbarButton
+                    disabled={false}
+                    label="Restart Frame"
+                    onClick={() => {
+                      if (canRestartFrame(debugRestartFrame)) debugRestartFrame?.restartFrame();
+                    }}
+                    title="Restart Frame"
+                  >
+                    <RotateCw aria-hidden="true" size={12} />
+                  </ToolbarButton>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 

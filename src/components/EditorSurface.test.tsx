@@ -752,9 +752,10 @@ describe("EditorSurface", () => {
       await Promise.resolve();
     });
 
-    // Coverage viewport ownership revalidates its model subscription when the
-    // same-path document revision changes, alongside the stable folding owner.
-    expect(editor.onDidChangeModel).toHaveBeenCalledTimes(modelSubscriberCount + 1);
+    // A same-path content revision keeps the existing model listeners. Coverage
+    // has no active report/file in this fixture, while the folding owner already
+    // observes the model replacement through its stable subscription.
+    expect(editor.onDidChangeModel).toHaveBeenCalledTimes(modelSubscriberCount);
     expect(getFoldingModel).toHaveBeenCalledTimes(1);
     expect(editor.setPosition).toHaveBeenCalledTimes(1);
 

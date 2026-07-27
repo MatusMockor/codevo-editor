@@ -90,7 +90,7 @@ export const MAX_DEBUG_VARIABLE_PAGE_COUNT = 100;
 export const MAX_DEBUG_VARIABLE_PAGE_START = 1_000_000;
 export const MAX_DEBUG_SCOPES = MAX_DEBUG_SCOPE_COUNT;
 export const MAX_DEBUG_VARIABLES = 10_000;
-export const MAX_DEBUG_STACK_FRAMES = 1_000;
+export const MAX_DEBUG_STACK_FRAMES = 256;
 const MAX_DEBUG_ROOT_PATH_BYTES = 4_096;
 export const MIN_DEBUG_COMPOUND_MEMBERS = 2;
 export const MAX_DEBUG_COMPOUND_MEMBERS = 4;
@@ -1112,12 +1112,37 @@ function decodeBreakpointFields(
 
 function decodeStackFrame(value: unknown, path: string): StackFrame {
   const record = requireRecord(value, path);
-  requireUnsignedInteger(record.frameId, `${path}.frameId`, U64_MAX);
-  requireString(record.name, `${path}.name`);
-  if (record.filePath !== null) requireString(record.filePath, `${path}.filePath`);
-  requireUnsignedInteger(record.lineNumber, `${path}.lineNumber`, U32_MAX);
-  requireUnsignedInteger(record.column, `${path}.column`, U32_MAX);
+  requireExactKeys(record, ["frameId", "name", "filePath", "lineNumber", "column"], path);
+  requirePositiveSafeInteger(record.frameId, `${path}.frameId`);
+  const name = requireBoundedString(
+    record.name,
+    `${path}.name`,
+    MAX_DEBUG_VARIABLE_NAME_BYTES,
+    false,
+  );
+  requireNoControlCharacters(name, `${path}.name`, false);
+  if (record.filePath !== null) {
+    const filePath = requireBoundedString(
+      record.filePath,
+      `${path}.filePath`,
+      MAX_DEBUG_ROOT_PATH_BYTES,
+      false,
+    );
+    requireNoControlCharacters(filePath, `${path}.filePath`, false);
+  }
+  requireIntegerInRange(record.lineNumber, `${path}.lineNumber`, 1, U32_MAX);
+  requireIntegerInRange(record.column, `${path}.column`, 1, U32_MAX);
   return record as unknown as StackFrame;
+}
+
+function requireUniqueStackFrameIds(frames: readonly StackFrame[], path: string): void {
+  const ids = new Set<number>();
+  for (const [index, frame] of frames.entries()) {
+    if (ids.has(frame.frameId)) {
+      throw invalidDebugWire(`${path}[${index}].frameId`, "a unique frame id");
+    }
+    ids.add(frame.frameId);
+  }
 }
 
 function decodeScope(value: unknown, path: string): DebugScope {
@@ -1461,20 +1486,37 @@ function decodeDebugEventPayload(value: unknown): DebugEventPayload {
         kind: "started",
         sessionId: requirePositiveSafeInteger(record.sessionId, `${path}.sessionId`),
       };
-    case "stopped":
-      requireExactKeys(record, ["kind", "reason", "frames", "pauseGeneration"], path);
+    case "stopped": {
+      requireObjectShape(
+        record,
+        ["kind", "reason", "frames", "pauseGeneration"],
+        ["framesTruncated"],
+        path,
+      );
       if (!STOP_REASONS.has(record.reason)) {
         throw invalidDebugWire(`${path}.reason`, "a known stop reason");
       }
+      if (record.framesTruncated !== undefined && record.framesTruncated !== true) {
+        throw invalidDebugWire(`${path}.framesTruncated`, "true or omission");
+      }
+      const frames = decodeArray(
+        record.frames,
+        `${path}.frames`,
+        decodeStackFrame,
+        MAX_DEBUG_STACK_FRAMES,
+      );
+      requireUniqueStackFrameIds(frames, `${path}.frames`);
       return {
         kind: "stopped",
         reason: record.reason as Extract<DebugEventPayload, { kind: "stopped" }>["reason"],
-        frames: decodeArray(record.frames, `${path}.frames`, decodeStackFrame),
+        frames,
         pauseGeneration: requirePositiveSafeInteger(
           record.pauseGeneration,
           `${path}.pauseGeneration`,
         ),
+        ...(record.framesTruncated === true ? { framesTruncated: true as const } : {}),
       };
+    }
     case "resumed":
       requireExactKeys(record, ["kind"], path);
       return { kind: "resumed" };

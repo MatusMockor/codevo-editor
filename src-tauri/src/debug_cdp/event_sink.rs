@@ -51,7 +51,7 @@ impl CdpEventEmitter {
         }
     }
 
-    pub(super) fn emit(&self, payload: DebugEventPayload) -> CdpEventDisposition {
+    pub(crate) fn emit(&self, payload: DebugEventPayload) -> CdpEventDisposition {
         let disposition = self.sink.emit(bounded_debug_event_payload(payload));
         if matches!(
             disposition,
@@ -172,6 +172,7 @@ mod tests {
                 reason: DebugStopReason::Pause,
                 frames: Vec::new(),
                 pause_generation: 1,
+                frames_truncated: false,
             }),
             CdpEventDisposition::Dropped(CdpEventDropReason::CapacityExceeded)
         );

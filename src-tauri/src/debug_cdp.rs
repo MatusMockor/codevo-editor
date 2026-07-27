@@ -80,6 +80,11 @@ const MAX_CDP_HANDSHAKE_BYTES: usize = 64 * 1024;
 
 include!("debug_cdp_factory.rs");
 
+#[cfg(test)]
+pub(crate) fn cdp_shared_for_test(source_maps: Option<SourceMapRegistry>) -> transport::CdpShared {
+    transport::CdpShared::new(source_maps)
+}
+
 fn map_stop_reason(reason: &str) -> DebugStopReason {
     match reason {
         "step" => DebugStopReason::Step,
@@ -122,6 +127,8 @@ mod tests {
     mod restart_frame_tests;
     #[path = "debug_cdp_run_to_location_tests.rs"]
     mod run_to_location_tests;
+    #[path = "debug_cdp_source_map_authority_tests.rs"]
+    mod source_map_authority_tests;
     #[path = "debug_cdp_variables_tests.rs"]
     mod variables_tests;
 
@@ -569,47 +576,6 @@ mod tests {
         );
         assert_eq!(inventory.frames[0].line_number, 2);
         assert_eq!(inventory.frames[0].column, 1);
-    }
-
-    #[test]
-    fn immediate_and_async_breakpoint_resolutions_report_typescript_line() {
-        let root = temp_root("typescript-breakpoint-resolution");
-        let source = root.join("src/index.ts");
-        let emitted = root.join("dist/index.js");
-        let map = root.join("dist/index.js.map");
-        write_file(&source, "const first = 1;\nconst second = 2;\n");
-        write_file(&emitted, "const first = 1;\nconst second = 2;\n");
-        write_file(
-            &map,
-            r#"{"version":3,"file":"index.js","sources":["../src/index.ts"],"names":[],"mappings":"AAAA;AACA"}"#,
-        );
-        let source_path = source.to_string_lossy().to_string();
-        let generated_url = file_url_from_path(&emitted.to_string_lossy());
-        let mut source_maps = SourceMapRegistry::new(&root).expect("registry");
-        source_maps
-            .register_script(&generated_url, &file_url_from_path(&map.to_string_lossy()))
-            .expect("source map");
-        let mut state = CdpShared::new(Some(source_maps));
-        let target = BreakpointResolutionTarget {
-            breakpoint_id: "source-bp".to_string(),
-            column_number: None,
-            file_path: source_path.clone(),
-            generated_url: generated_url.clone(),
-            source_path: source_path.clone(),
-        };
-        let generated = GeneratedPosition { line: 1, column: 0 };
-
-        assert_eq!(original_breakpoint_line(&state, &target, generated), 2);
-
-        state.breakpoints_by_file.insert(
-            source_path.clone(),
-            vec![breakpoint(&source_path, "source-bp", 2, None, true)],
-        );
-        state.resolution_index.insert("cdp-bp".to_string(), target);
-        let (_, resolved) =
-            apply_breakpoint_resolution(&mut state, "cdp-bp", generated).expect("async resolution");
-        assert!(resolved[0].verified);
-        assert_eq!(resolved[0].line_number, 2);
     }
 
     #[test]

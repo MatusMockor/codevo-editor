@@ -7,6 +7,7 @@ import type {
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { EditorDocument } from "../domain/workspace";
+import type { LatestValueDrainMailbox } from "./latestValueDrainMailbox";
 
 /** Shell-owned collaborators and mutable state required by document sync. */
 export interface DocumentSyncDependencies {
@@ -45,6 +46,7 @@ export interface DocumentSyncDependencies {
   javaScriptTypeScriptDocumentOpenSyncAttemptIdRef: MutableRefObject<number>;
   javaScriptTypeScriptDocumentChangeTimersRef: MutableRefObject<Record<string, number>>;
   javaScriptTypeScriptDocumentSyncQueuesRef: MutableRefObject<Record<string, Promise<void>>>;
+  javaScriptTypeScriptDocumentChangeMailbox: LatestValueDrainMailbox<LanguageServerTextDocument>;
   javaScriptTypeScriptDocumentSyncGenerationRef: MutableRefObject<number>;
   javaScriptTypeScriptDocumentVersionsRef: MutableRefObject<Record<string, number>>;
   javaScriptTypeScriptDocumentVersionsByUriRef: MutableRefObject<Record<string, number>>;

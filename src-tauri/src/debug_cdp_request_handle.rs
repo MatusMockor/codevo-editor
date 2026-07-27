@@ -99,7 +99,6 @@ impl CdpRequestHandle {
             ))),
         }
     }
-
 }
 
 impl crate::debug_cdp_function_breakpoints::FunctionBreakpointCdp for CdpRequestHandle {

@@ -16,6 +16,7 @@ const MAX_NAME_BYTES = 1_024;
 const MAX_VALUE_BYTES = 64 * 1_024;
 const MAX_TYPE_BYTES = 256;
 const VARIABLE_LOAD_ERROR_FALLBACK = "Variable loading failed.";
+const INVALID_VARIABLE_PAGE_ERROR = "The debug adapter returned an invalid variable page.";
 
 export interface DebugInspectionOwner {
   readonly rootKey: string;
@@ -260,7 +261,7 @@ function resolvePage(
     result.start !== action.start ||
     !pageDoesNotOverlap(reference, result)
   ) {
-    return state;
+    return settleInvalidPage(state, action, reference);
   }
   const addedVariables = result.variables.length;
   const addedBytes = result.variables.reduce(
@@ -331,6 +332,23 @@ function rejectPage(
   );
 }
 
+function settleInvalidPage(
+  state: DebugVariablePagesState,
+  action: Extract<DebugVariablePagesAction, { type: "resolve" }>,
+  reference: DebugVariableReferencePages,
+): DebugVariablePagesState {
+  return replaceReference(
+    state,
+    action.variablesReference,
+    {
+      ...reference,
+      pending: omitNumericKey(reference.pending, action.start),
+      errors: { ...reference.errors, [action.start]: INVALID_VARIABLE_PAGE_ERROR },
+    },
+    { pendingCount: state.pendingCount - 1 },
+  );
+}
+
 function boundedErrorMessage(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) return VARIABLE_LOAD_ERROR_FALLBACK;
   if (debugUtf8ByteLength(value) <= MAX_ERROR_BYTES) return value;
@@ -379,7 +397,8 @@ function decodePageResult(value: unknown): DebugVariablePageResult | null {
   if (!Number.isSafeInteger(minimumNext)) return null;
   if (
     value.nextStart !== null &&
-    (!isNonNegativeSafeInteger(value.nextStart) ||
+    (value.variables.length === 0 ||
+      !isNonNegativeSafeInteger(value.nextStart) ||
       value.nextStart < minimumNext ||
       value.nextStart <= value.start)
   ) {

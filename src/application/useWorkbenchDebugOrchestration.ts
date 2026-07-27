@@ -281,6 +281,7 @@ export function useWorkbenchDebugOrchestration({
       return state.kind === "stopped" && owner && owner.sessionId === state.sessionId
         ? {
             frames: state.frames,
+            framesTruncated: state.framesTruncated === true,
             pauseGeneration: owner.pauseGeneration,
             rootKey: owner.rootKey,
             sessionId: owner.sessionId,
