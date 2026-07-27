@@ -1,4 +1,9 @@
 import { pathFromLanguageServerUri } from "./languageServerFeatures";
+import {
+  NO_PROBLEMS_PACKAGE,
+  type ProblemsPackageAttribution,
+  type ProblemsPackageIdentity,
+} from "./problemsPackageAttribution";
 import { workspaceRelativePath } from "./workspace";
 
 export interface ProblemsSeverityVisibility {
@@ -28,12 +33,29 @@ export interface ProblemsFileView {
   relativePath: string;
   errorCount: number;
   warningCount: number;
-  entries: ProblemsViewNotice[];
+  entries: ProblemsViewRow[];
+  packageIdentity: ProblemsPackageIdentity;
+}
+
+export interface ProblemsViewRow extends ProblemsViewNotice {
+  readonly packageIdentity: ProblemsPackageIdentity;
+}
+
+export type ProblemsPackageCount =
+  | { readonly kind: "complete"; readonly value: number }
+  | { readonly kind: "bounded"; readonly value: number }
+  | { readonly kind: "matching"; readonly value: number };
+
+export interface ProblemsPackageView {
+  readonly count: ProblemsPackageCount;
+  readonly files: readonly ProblemsFileView[];
+  readonly identity: ProblemsPackageIdentity;
 }
 
 export interface ProblemsView {
   files: ProblemsFileView[];
-  general: ProblemsViewNotice[];
+  general: ProblemsViewRow[];
+  packages: ProblemsPackageView[];
   totals: {
     errors: number;
     warnings: number;
@@ -72,20 +94,26 @@ export function buildProblemsView(
   workspaceRoot: string | null,
   visibility: ProblemsSeverityVisibility,
   filterText: string,
+  options: {
+    readonly attribution?: ProblemsPackageAttribution;
+    readonly packageFilterKey?: string | null;
+  } = {},
 ): ProblemsView {
   const normalizedFilter = filterText.trim().toLocaleLowerCase();
-  const projectedNotices = projectProblemsNotices(
+  const projection = projectProblemsNotices(
     notices,
     (notice) =>
       severityVisible(notice, visibility) &&
-      noticeMatchesFilter(notice, workspaceRoot, normalizedFilter),
+      noticeMatchesFilter(notice, workspaceRoot, normalizedFilter) &&
+      noticeMatchesPackageFilter(notice, options),
   );
+  const projectedNotices = projection.notices;
   const deduplicatedNotices = deduplicateDiagnostics(projectedNotices);
   const totals = countSeverities(
-    deduplicateDiagnostics(projectProblemsNotices(notices, () => true)),
+    deduplicateDiagnostics(projectProblemsNotices(notices, () => true).notices),
   );
-  const grouped = new Map<string, ProblemsViewNotice[]>();
-  const general: ProblemsViewNotice[] = [];
+  const grouped = new Map<string, ProblemsViewRow[]>();
+  const general: ProblemsViewRow[] = [];
 
   for (const notice of deduplicatedNotices) {
     if (!severityVisible(notice, visibility)) {
@@ -95,21 +123,28 @@ export function buildProblemsView(
     const path = noticeFilePath(notice);
 
     if (!path) {
-      if (isDiagnosticsRetentionReceipt(notice) || matchesGeneralFilter(notice, normalizedFilter)) {
-        general.push(notice);
+      if (
+        (!options.packageFilterKey || options.packageFilterKey === NO_PROBLEMS_PACKAGE.key) &&
+        (isDiagnosticsRetentionReceipt(notice) || matchesGeneralFilter(notice, normalizedFilter))
+      ) {
+        general.push(problemViewRow(notice, NO_PROBLEMS_PACKAGE));
       }
 
       continue;
     }
 
     const relativePath = problemRelativePath(workspaceRoot, path);
+    const packageIdentity = options.attribution?.packageForPath(path) ?? NO_PROBLEMS_PACKAGE;
 
-    if (!matchesFileFilter(notice, path, relativePath, normalizedFilter)) {
+    if (
+      !matchesFileFilter(notice, path, relativePath, normalizedFilter) ||
+      (options.packageFilterKey && options.packageFilterKey !== packageIdentity.key)
+    ) {
       continue;
     }
 
     const entries = grouped.get(path) ?? [];
-    entries.push(notice);
+    entries.push(problemViewRow(notice, packageIdentity));
     grouped.set(path, entries);
   }
 
@@ -123,12 +158,96 @@ export function buildProblemsView(
       errorCount: counts.errors,
       warningCount: counts.warnings,
       entries,
+      packageIdentity: entries[0]?.packageIdentity ?? NO_PROBLEMS_PACKAGE,
     };
   });
 
   files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const packages = groupProblemsFilesByPackage(
+    files,
+    projection.truncated,
+    Boolean(
+      normalizedFilter || options.packageFilterKey || !visibility.errors || !visibility.warnings,
+    ),
+  );
 
-  return { files, general, totals };
+  return { files, general, packages, totals };
+}
+
+export function problemFilePaths(notices: readonly ProblemsViewNotice[]): string[] {
+  const paths = new Set<string>();
+
+  for (const notice of notices) {
+    const path = noticeFilePath(notice);
+    if (path) {
+      paths.add(path);
+    }
+  }
+
+  return [...paths];
+}
+
+function noticeMatchesPackageFilter(
+  notice: ProblemsViewNotice,
+  options: {
+    readonly attribution?: ProblemsPackageAttribution;
+    readonly packageFilterKey?: string | null;
+  },
+): boolean {
+  if (!options.packageFilterKey) {
+    return true;
+  }
+
+  const path = noticeFilePath(notice);
+  if (!path) {
+    return options.packageFilterKey === NO_PROBLEMS_PACKAGE.key;
+  }
+
+  const identity = options.attribution?.packageForPath(path) ?? NO_PROBLEMS_PACKAGE;
+  return identity.key === options.packageFilterKey;
+}
+
+function problemViewRow(
+  notice: ProblemsViewNotice,
+  packageIdentity: ProblemsPackageIdentity,
+): ProblemsViewRow {
+  return Object.freeze({ ...notice, packageIdentity });
+}
+
+function groupProblemsFilesByPackage(
+  files: readonly ProblemsFileView[],
+  truncated: boolean,
+  filtered: boolean,
+): ProblemsPackageView[] {
+  const grouped = new Map<string, ProblemsFileView[]>();
+
+  for (const file of files) {
+    const packageFiles = grouped.get(file.packageIdentity.key) ?? [];
+    packageFiles.push(file);
+    grouped.set(file.packageIdentity.key, packageFiles);
+  }
+
+  const packages = Array.from(grouped, ([, packageFiles]) => {
+    const entries = packageFiles.flatMap((file) => file.entries);
+
+    return {
+      count: {
+        kind: truncated ? "bounded" : filtered ? "matching" : "complete",
+        value: entries.length,
+      },
+      files: packageFiles,
+      identity: packageFiles[0]?.packageIdentity ?? NO_PROBLEMS_PACKAGE,
+    } satisfies ProblemsPackageView;
+  });
+
+  packages.sort((left, right) => {
+    if (left.identity.kind !== right.identity.kind) {
+      return left.identity.kind === "package" ? -1 : 1;
+    }
+
+    return left.identity.label.localeCompare(right.identity.label);
+  });
+  return packages;
 }
 
 function noticeMatchesFilter(
@@ -163,9 +282,14 @@ function isDiagnosticsRetentionReceipt(notice: ProblemsViewNotice): boolean {
 function projectProblemsNotices(
   notices: readonly ProblemsViewNotice[],
   include: (notice: ProblemsViewNotice) => boolean,
-): ProblemsViewNotice[] {
+): { readonly notices: ProblemsViewNotice[]; readonly truncated: boolean } {
   if (notices.length <= MAX_PROBLEMS_VIEW_ROWS) {
-    return [...notices];
+    return {
+      notices: [...notices],
+      truncated: notices.some(
+        (notice) => isDiagnosticsRetentionReceipt(notice) && notice.kind === "overflow",
+      ),
+    };
   }
 
   const upstreamReceipt = notices.find(
@@ -215,7 +339,10 @@ function projectProblemsNotices(
         }
       : null;
 
-  return receipt ? [...deduplicatedRows, receipt] : deduplicatedRows;
+  return {
+    notices: receipt ? [...deduplicatedRows, receipt] : deduplicatedRows,
+    truncated: projectionTruncated || upstreamReceipt !== undefined,
+  };
 }
 
 function countSeverities(notices: ProblemsViewNotice[]) {

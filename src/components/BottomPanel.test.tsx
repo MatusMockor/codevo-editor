@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
@@ -9,11 +9,17 @@ import { initialIndexProgress } from "../domain/indexProgress";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
 import { terminalThemeForAppTheme } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
+import type {
+  BoundedWorkspaceSourceRead,
+  WorkspaceSourceDiscoveryGateway,
+} from "../domain/workspaceSourceDiscovery";
 import { buildJsTestExplorerTree } from "../domain/jsTestExplorerTree";
 import { buildPackageDependencyTree } from "../domain/packageDependencyTree";
 import type { TestGutterTarget } from "../domain/testGutterTargets";
+import { waitForReact } from "../test/reactTestLifecycle";
 import { BottomPanel } from "./BottomPanel";
 import { DebugPanel } from "./DebugPanel";
+import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./useWorkspaceExpressRoutesWorkbenchPanel";
 
 interface CapturedTerminalPanelProps {
   isActive: boolean;
@@ -390,6 +396,165 @@ describe("BottomPanel terminal links", () => {
     expect(host.querySelector('[aria-label="Symfony workspace"]')).toBeNull();
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Problems");
     expect(host.querySelector('[aria-label="Problems"]')).not.toBeNull();
+  });
+
+  it("keeps Problems package attribution while App's real Express isOpen gate is false", async () => {
+    const problem: WorkbenchNotice = {
+      id: "tsc:packages/api/src/x.ts:1:1",
+      message: "Cannot find name",
+      navigationTarget: {
+        path: "/workspace/packages/api/src/x.ts",
+        range: {
+          end: { column: 1, lineNumber: 1 },
+          start: { column: 1, lineNumber: 1 },
+        },
+      },
+      severity: "error",
+      source: "TypeScript",
+    };
+    const discoveryGateway: WorkspaceSourceDiscoveryGateway = {
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: ["packages/api/src/x.ts"],
+        truncated: false,
+        visited: 4,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["package.json", "packages/api/package.json"],
+        truncated: false,
+        visited: 4,
+      })),
+      readSourceTextBounded: vi.fn(
+        async (_rootPath, relativePath): Promise<BoundedWorkspaceSourceRead> => {
+          if (relativePath === "package.json") {
+            return {
+              status: "ok",
+              content: '{"name":"workspace","workspaces":["packages/*"]}',
+            };
+          }
+          if (relativePath === "packages/api/package.json") {
+            return { status: "ok", content: '{"name":"@repo/api"}' };
+          }
+          return { status: "ok", content: "app.get('/api', handler);" };
+        },
+      ),
+    };
+
+    act(() => {
+      root.render(
+        <ProductionProblemsPanel discoveryGateway={discoveryGateway} problem={problem} />,
+      );
+    });
+    await waitForReact(() =>
+      expect(host.querySelector('option[value="@repo/api"]')).not.toBeNull(),
+    );
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
+    });
+
+    expect(
+      host.querySelector('[data-package-key="@repo/api"] .problem-row')?.textContent,
+    ).toContain("Cannot find name");
+    expect(
+      Array.from(host.querySelectorAll(".problems-package-header"), (header) => header.textContent),
+    ).toEqual([expect.stringContaining("@repo/api")]);
+    expect(discoveryGateway.enumerateJavaScriptSourceFiles).not.toHaveBeenCalled();
+  });
+
+  it("keeps rendered package grouping stable while a save-triggered manifest rescan is pending", async () => {
+    let releaseRescan: () => void = () => undefined;
+    const pendingRescan = new Promise<void>((resolve) => {
+      releaseRescan = resolve;
+    });
+    let enumerationCount = 0;
+    const problem = problemForPackageApi();
+    const discoveryGateway = packageDiscoveryGateway();
+    const enumeratePackageJsonFiles = discoveryGateway.enumeratePackageJsonFiles;
+    expect(enumeratePackageJsonFiles).toBeDefined();
+    vi.mocked(enumeratePackageJsonFiles!).mockImplementation(async () => {
+      enumerationCount += 1;
+      if (enumerationCount === 2) {
+        await pendingRescan;
+      }
+      return {
+        files: ["package.json", "packages/api/package.json"],
+        truncated: false,
+        visited: 4,
+      };
+    });
+
+    act(() => {
+      root.render(
+        <ProductionProblemsPanel discoveryGateway={discoveryGateway} problem={problem} />,
+      );
+    });
+    await waitForReact(() =>
+      expect(host.querySelector('option[value="@repo/api"]')).not.toBeNull(),
+    );
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
+    });
+    const packageHeader = host.querySelector<HTMLButtonElement>(".problems-package-header");
+    packageHeader?.focus();
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Simulate JavaScript save"]')?.click();
+    });
+    await waitForReact(() => expect(enumerationCount).toBe(2));
+
+    expect(host.textContent).not.toContain("Package (degraded)");
+    expect(host.textContent).not.toContain("Package unknown (workspace scan bounded)");
+    expect(host.querySelector(".problems-package-header")?.textContent).toContain("@repo/api");
+    expect(document.activeElement).toBe(packageHeader);
+
+    await act(async () => {
+      releaseRescan();
+      await pendingRescan;
+    });
+  });
+
+  it("reads the root package manifest once per discovery version", async () => {
+    const discoveryGateway = packageDiscoveryGateway();
+
+    act(() => {
+      root.render(
+        <ProductionProblemsPanel
+          discoveryGateway={discoveryGateway}
+          problem={problemForPackageApi()}
+        />,
+      );
+    });
+    await waitForReact(() =>
+      expect(host.querySelector('option[value="@repo/api"]')).not.toBeNull(),
+    );
+    const rootManifestReads = () =>
+      vi
+        .mocked(discoveryGateway.readSourceTextBounded)
+        .mock.calls.filter(([, relativePath]) => relativePath === "package.json");
+
+    expect(rootManifestReads()).toHaveLength(1);
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Simulate JavaScript save"]')?.click();
+    });
+    await waitForReact(() => expect(rootManifestReads()).toHaveLength(2));
+  });
+
+  it("renders non-JavaScript workspace package controls without a degraded scan claim", async () => {
+    await renderPanel(root, "/workspace", vi.fn(async () => true), undefined, {
+      activeView: "problems",
+      hasJsWorkspace: false,
+      notices: [problemForPackageApi()],
+      workspacePackageDiscovery: {
+        authority: "bounded",
+        incompleteDirectories: [],
+        packageManifests: [],
+        unscopedAuthorityUncertain: true,
+      },
+    });
+
+    expect(host.textContent).toContain("No package");
+    expect(host.textContent).not.toContain("Package (degraded)");
+    expect(host.textContent).not.toContain("Package unknown (workspace scan bounded)");
   });
 
   it("offers workspace trust from the Symfony panel", async () => {
@@ -859,6 +1024,110 @@ function expressRoutesPanelProps(
     query: "",
     routes,
     truncated: false,
+  };
+}
+
+function ProductionProblemsPanel({
+  discoveryGateway,
+  problem,
+}: {
+  discoveryGateway: WorkspaceSourceDiscoveryGateway;
+  problem: WorkbenchNotice;
+}) {
+  const bottomPanelVisible = true;
+  const bottomPanelView: string = "problems";
+  const expressWorkspaceManifestSignal = false;
+  const [discoveryVersion, setDiscoveryVersion] = useState(0);
+  const expressRoutesPanel = useOwnedWorkspaceExpressRoutesWorkbenchPanel({
+    activeDocument: null,
+    discoveryGateway,
+    discoveryVersion,
+    hasJavaScriptTypeScriptWorkspace: true,
+    isPanelOpen:
+      (bottomPanelVisible && bottomPanelView === "expressRoutes") || expressWorkspaceManifestSignal,
+    onOpenLocation: async () => true,
+    openDocuments: [],
+    rootPath: "/workspace",
+    workspaceId: "workspace",
+  });
+
+  return (
+    <>
+      <button
+        aria-label="Simulate JavaScript save"
+        onClick={() => setDiscoveryVersion((current) => current + 1)}
+        type="button"
+      />
+      <BottomPanel
+        activeView="problems"
+        expressRoutesPanel={expressRoutesPanel}
+        gitHistoryGateway={{} as GitHistoryGateway}
+        indexHealthLogs={[]}
+        indexProgress={initialIndexProgress()}
+        notices={[problem]}
+        onClearProblems={vi.fn()}
+        onClose={vi.fn()}
+        onHardReindex={vi.fn()}
+        onOpenCommitFileDiff={vi.fn()}
+        onOpenProblem={vi.fn(async () => true)}
+        onPhpReindex={vi.fn()}
+        onResizeStart={vi.fn()}
+        onSelectView={vi.fn()}
+        onSoftReindex={vi.fn()}
+        onTrustWorkspace={vi.fn()}
+        runtimeObservabilityGateway={{} as RuntimeObservabilityGateway}
+        terminalGateway={terminalGateway()}
+        terminalShellIntegrationEnabled={false}
+        terminalTheme={terminalThemeForAppTheme("dark")}
+        workspaceRoot="/workspace"
+        workspaceTrusted
+      />
+    </>
+  );
+}
+
+function problemForPackageApi(): WorkbenchNotice {
+  return {
+    id: "tsc:packages/api/src/x.ts:1:1",
+    message: "Cannot find name",
+    navigationTarget: {
+      path: "/workspace/packages/api/src/x.ts",
+      range: {
+        end: { column: 1, lineNumber: 1 },
+        start: { column: 1, lineNumber: 1 },
+      },
+    },
+    severity: "error",
+    source: "TypeScript",
+  };
+}
+
+function packageDiscoveryGateway(): WorkspaceSourceDiscoveryGateway {
+  return {
+    enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+      files: ["packages/api/src/x.ts"],
+      truncated: false,
+      visited: 4,
+    })),
+    enumeratePackageJsonFiles: vi.fn(async () => ({
+      files: ["package.json", "packages/api/package.json"],
+      truncated: false,
+      visited: 4,
+    })),
+    readSourceTextBounded: vi.fn(
+      async (_rootPath, relativePath): Promise<BoundedWorkspaceSourceRead> => {
+        if (relativePath === "package.json") {
+          return {
+            status: "ok",
+            content: '{"name":"workspace","workspaces":["packages/*"]}',
+          };
+        }
+        if (relativePath === "packages/api/package.json") {
+          return { status: "ok", content: '{"name":"@repo/api"}' };
+        }
+        return { status: "notFound" };
+      },
+    ),
   };
 }
 

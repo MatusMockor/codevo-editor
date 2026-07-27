@@ -16,7 +16,6 @@ import {
 } from "./application/appClosedState";
 import { presentNodeRunWithoutDebugging } from "./application/nodeRunWithoutDebuggingPresentation";
 import { useAppFrameworkBottomPanels } from "./application/useAppFrameworkBottomPanels";
-import { useAppExpressWorkspaceSignals } from "./application/useExpressWorkspaceManifestSignal";
 import { useNoticeToastRenderers } from "./components/useNoticeToastRenderers";
 import { useAppSyntaxHighlighterPreload, useAppWindowTitle } from "./application/useAppBootEffects";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
@@ -46,7 +45,7 @@ import {
   maxBottomPanelHeight,
   toolSourceLabel,
 } from "./components/appPresentation";
-import { useWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspaceExpressRoutesWorkbenchPanel";
+import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspaceExpressRoutesWorkbenchPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
@@ -273,6 +272,7 @@ function App() {
     : null;
   const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
+  const hasJsWorkspace: boolean = !!workbench.workspaceDescriptor?.javaScriptTypeScript;
   const {
     navigateBackward,
     navigateForwardInHistory,
@@ -295,15 +295,14 @@ function App() {
     isOpen: workbench.bottomPanelVisible && (workbench.bottomPanelView as string) === "routes",
     rootPath: workbench.workspaceRoot,
   });
-  const [dirtyExpressRoutesSnapshots, expressWorkspaceManifestSignal] =
-    useAppExpressWorkspaceSignals(workbench, workspaceSourceDiscoveryGateway);
-  const expressRoutesPanel = useWorkspaceExpressRoutesWorkbenchPanel({
-    dirtySnapshots: dirtyExpressRoutesSnapshots,
+  const expressRoutesPanel = useOwnedWorkspaceExpressRoutesWorkbenchPanel({
+    activeDocument: workbench.activeDocument,
     discoveryGateway: workspaceSourceDiscoveryGateway,
     discoveryVersion: workbench.expressRouteDiscoveryVersion,
-    // prettier-ignore
-    isOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes" || expressWorkspaceManifestSignal,
+    hasJavaScriptTypeScriptWorkspace: hasJsWorkspace,
+    isPanelOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes",
     onOpenLocation: workbench.openDebugLocation,
+    openDocuments: workbench.openDocuments,
     rootPath: workbench.workspaceRoot,
     workspaceId,
   });
@@ -1280,8 +1279,6 @@ function App() {
             debug={debugPanel}
             expressRoutesPanel={expressRoutesPanel}
             hasArtisan={workbench.hasArtisan}
-            hasExpressRoutes={!!workbench.workspaceDescriptor?.javaScriptTypeScript}
-            hasJsWorkspace={!!workbench.workspaceDescriptor?.javaScriptTypeScript}
             hasPhpWorkspace={!!workbench.workspaceDescriptor?.php}
             indexHealthLogs={workbench.indexHealthLogs}
             indexProgress={workbench.indexProgress}
@@ -1305,6 +1302,9 @@ function App() {
             onResizeStart={startBottomPanelResize}
             onSelectView={selectBottomPanelView}
             onSoftReindex={workbench.startIndexScan}
+            workspacePackageDiscovery={
+              hasJsWorkspace ? expressRoutesPanel.workspacePackageDiscovery : undefined
+            }
             gitHistoryGateway={gitHistoryGateway}
             runtimeObservabilityGateway={runtimeObservabilityGateway}
             runtimeMode={workbench.intelligenceMode}

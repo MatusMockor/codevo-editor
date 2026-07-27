@@ -4,9 +4,25 @@ import {
   DIAGNOSTICS_RETENTION_RECEIPT_GROUP_KEY,
   MAX_PROBLEMS_VIEW_ROWS,
   buildProblemsView,
+  problemFilePaths,
 } from "./problemsView";
+import {
+  NO_PROBLEMS_PACKAGE,
+  createProblemsPackageAttribution,
+} from "./problemsPackageAttribution";
+import type { WorkspacePackageManifestInput } from "./workspacePackageGraph";
 
 const ROOT = "/workspace";
+const PACKAGE_MANIFESTS: readonly WorkspacePackageManifestInput[] = [
+  {
+    packageJson: { name: "@repo/api" },
+    relativeDirPath: "packages/api",
+  },
+  {
+    packageJson: { name: "@repo/web" },
+    relativeDirPath: "packages/web",
+  },
+];
 
 function notice(
   id: string,
@@ -35,7 +51,127 @@ function notice(
   };
 }
 
+function expectedUnownedRow<T extends WorkbenchNotice>(value: T) {
+  return { ...value, packageIdentity: NO_PROBLEMS_PACKAGE };
+}
+
 describe("buildProblemsView", () => {
+  it("package grouping preserves the same total row count as file grouping", () => {
+    const notices = [
+      notice("api-one", "/workspace/packages/api/src/one.ts", 1, "error", "one"),
+      notice("api-two", "/workspace/packages/api/src/two.ts", 1, "warning", "two"),
+      notice("web", "/workspace/packages/web/src/index.ts", 1, "error", "web"),
+      notice("outside", "/workspace/tools/release.ts", 1, "warning", "outside"),
+    ];
+    const attribution = createProblemsPackageAttribution({
+      filePaths: problemFilePaths(notices),
+      packageManifests: PACKAGE_MANIFESTS,
+      workspaceRoot: ROOT,
+    });
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "", {
+      attribution,
+    });
+
+    const fileRows = view.files.reduce((total, file) => total + file.entries.length, 0);
+    const packageRows = view.packages.reduce(
+      (total, packageView) =>
+        total +
+        packageView.files.reduce((packageTotal, file) => packageTotal + file.entries.length, 0),
+      0,
+    );
+
+    expect(packageRows).toBe(fileRows);
+    expect(
+      view.files.flatMap((file) =>
+        file.entries.map((entry) => [entry.id, entry.packageIdentity.key]),
+      ),
+    ).toEqual([
+      ["api-one", "@repo/api"],
+      ["api-two", "@repo/api"],
+      ["web", "@repo/web"],
+      ["outside", NO_PROBLEMS_PACKAGE.key],
+    ]);
+  });
+
+  it("reports bounded package counts when the row cap truncates", () => {
+    const notices = Array.from({ length: MAX_PROBLEMS_VIEW_ROWS + 50 }, (_, index) =>
+      notice(
+        `api-${index}`,
+        `/workspace/packages/api/src/file-${index}.ts`,
+        1,
+        "error",
+        `Diagnostic ${index}`,
+      ),
+    );
+    const attribution = createProblemsPackageAttribution({
+      filePaths: problemFilePaths(notices),
+      packageManifests: PACKAGE_MANIFESTS,
+      workspaceRoot: ROOT,
+    });
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "", {
+      attribution,
+    });
+
+    expect(view.packages).toEqual([
+      expect.objectContaining({
+        count: {
+          kind: "bounded",
+          value: MAX_PROBLEMS_VIEW_ROWS - 1,
+        },
+        identity: expect.objectContaining({ key: "@repo/api" }),
+      }),
+    ]);
+  });
+
+  it("filters to one package", () => {
+    const notices = [
+      notice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api"),
+      notice("web", "/workspace/packages/web/src/index.ts", 1, "error", "web"),
+      notice("outside", "/workspace/tools/release.ts", 1, "error", "outside"),
+    ];
+    const attribution = createProblemsPackageAttribution({
+      filePaths: problemFilePaths(notices),
+      packageManifests: PACKAGE_MANIFESTS,
+      workspaceRoot: ROOT,
+    });
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "", {
+      attribution,
+      packageFilterKey: "@repo/api",
+    });
+
+    expect(view.files.flatMap((file) => file.entries.map((entry) => entry.id))).toEqual(["api"]);
+    expect(view.packages).toEqual([
+      expect.objectContaining({
+        count: { kind: "matching", value: 1 },
+        identity: expect.objectContaining({ key: "@repo/api" }),
+      }),
+    ]);
+  });
+
+  it("keeps package identity enumerable in copies and serialized rows", () => {
+    const notices = [notice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api")];
+    const attribution = createProblemsPackageAttribution({
+      filePaths: problemFilePaths(notices),
+      packageManifests: PACKAGE_MANIFESTS,
+      workspaceRoot: ROOT,
+    });
+    const view = buildProblemsView(notices, ROOT, { errors: true, warnings: true }, "", {
+      attribution,
+    });
+    const row = view.files[0].entries[0];
+
+    expect({ ...row }).toEqual(
+      expect.objectContaining({
+        packageIdentity: expect.objectContaining({ key: "@repo/api" }),
+      }),
+    );
+    expect(JSON.parse(JSON.stringify(row))).toEqual(
+      expect.objectContaining({
+        packageIdentity: expect.objectContaining({ key: "@repo/api" }),
+      }),
+    );
+  });
+
   it("an identical tsc error from the task matcher and the language server appears once, owned by the language server", () => {
     const path = "/workspace/src/index.ts";
     const taskMatcher = {
@@ -72,7 +208,7 @@ describe("buildProblemsView", () => {
       "",
     );
 
-    expect(view.files[0].entries).toEqual([languageServer]);
+    expect(view.files[0].entries).toEqual([expectedUnownedRow(languageServer)]);
     expect(view.totals).toEqual({ errors: 1, warnings: 0 });
   });
 
@@ -208,14 +344,15 @@ describe("buildProblemsView", () => {
       "",
     );
 
-    expect(view.general).toEqual([overflow]);
+    expect(view.general).toEqual([expectedUnownedRow(overflow)]);
     expect(view.files).toEqual([
       {
         path,
         relativePath: "tests/math.test.ts",
         errorCount: 1,
         warningCount: 0,
-        entries: [testFailure],
+        entries: [expectedUnownedRow(testFailure)],
+        packageIdentity: NO_PROBLEMS_PACKAGE,
       },
     ]);
   });
@@ -241,7 +378,7 @@ describe("buildProblemsView", () => {
       "INDEX",
     );
 
-    expect(view.general).toEqual([indexNotice]);
+    expect(view.general).toEqual([expectedUnownedRow(indexNotice)]);
     expect(view.files).toEqual([]);
   });
 
@@ -264,7 +401,7 @@ describe("buildProblemsView", () => {
     );
 
     expect(view.totals).toEqual({ errors: 0, warnings: 1 });
-    expect(view.general).toEqual([globalOverflow]);
+    expect(view.general).toEqual([expectedUnownedRow(globalOverflow)]);
   });
 
   it("groups by path, uses workspace-relative labels, counts severities, and sorts entries by line", () => {
@@ -302,7 +439,7 @@ describe("buildProblemsView", () => {
         warningCount: 0,
       },
     ]);
-    expect(view.files[0].entries).toEqual([lineTwo, lineNine, overflow]);
+    expect(view.files[0].entries).toEqual([lineTwo, lineNine, overflow].map(expectedUnownedRow));
   });
 
   it.each([
@@ -406,6 +543,7 @@ describe("buildProblemsView", () => {
         ...receipt,
         message:
           "Retained 20000 of 100000 published diagnostics. Problems view retained 1999 of 2000 input rows.",
+        packageIdentity: NO_PROBLEMS_PACKAGE,
       },
     ]);
     expect(view.files).toHaveLength(MAX_PROBLEMS_VIEW_ROWS - 1);
@@ -531,7 +669,7 @@ describe("buildProblemsView", () => {
       "does not match receipt",
     );
 
-    expect(view.general).toEqual([receipt]);
+    expect(view.general).toEqual([expectedUnownedRow(receipt)]);
     expect(view.files).toEqual([]);
   });
 });

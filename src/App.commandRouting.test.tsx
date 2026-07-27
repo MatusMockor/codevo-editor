@@ -38,8 +38,22 @@ const mocks = vi.hoisted(() => ({
   editorSurfaceProps: [] as Record<string, unknown>[],
   renderEditorAreaContent: false,
   expressPanelOptions: null as Record<string, unknown> | null,
+  packageDiscoveryState: {
+    authority: "complete",
+    authorityDirectories: [],
+    incompleteDirectories: [],
+    loaded: true,
+    ownerKey: "workspace-1\u0000/workspace",
+    packageJsonDirs: [],
+    packageManifests: [],
+    packages: [],
+    pnpmWorkspaceYaml: undefined,
+    rootPackageJson: {},
+    unscopedAuthorityUncertain: false,
+  },
   expressPanelProps: {
     error: null,
+    hasJavaScriptTypeScriptWorkspace: false,
     loading: false,
     onOpenRoute: vi.fn(),
     onQueryChange: vi.fn(),
@@ -47,6 +61,7 @@ const mocks = vi.hoisted(() => ({
     query: "",
     routes: [],
     truncated: false,
+    workspacePackageDiscovery: null as unknown,
   },
   packagePanelOptions: null as Record<string, unknown> | null,
   packagePanelProps: {
@@ -68,6 +83,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./application/useWorkbenchController", () => ({
   useWorkbenchController: () => createWorkbench(),
+}));
+
+vi.mock("./application/useWorkspacePackageGraph", () => ({
+  useWorkspacePackageGraph: () => mocks.packageDiscoveryState,
 }));
 
 vi.mock("./application/useArtisanRoutes", () => ({
@@ -150,8 +169,10 @@ vi.mock("./components/useNoticeToastRenderers", () => ({
 }));
 
 vi.mock("./components/useWorkspaceExpressRoutesWorkbenchPanel", () => ({
-  useWorkspaceExpressRoutesWorkbenchPanel: (options: Record<string, unknown>) => {
+  useOwnedWorkspaceExpressRoutesWorkbenchPanel: (options: Record<string, unknown>) => {
     mocks.expressPanelOptions = options;
+    mocks.expressPanelProps.hasJavaScriptTypeScriptWorkspace =
+      options.hasJavaScriptTypeScriptWorkspace === true;
     return mocks.expressPanelProps;
   },
 }));
@@ -168,8 +189,20 @@ vi.mock("./domain/ideProgress", () => ({
 }));
 
 vi.mock("./components/BottomPanel", () => ({
-  BottomPanel: (props: { onSelectView(view: string): void; onTrustWorkspace(): void }) => {
-    mocks.bottomPanelProps = props as unknown as Record<string, unknown>;
+  BottomPanel: (props: {
+    expressRoutesPanel?: { hasJavaScriptTypeScriptWorkspace?: boolean };
+    hasExpressRoutes?: boolean;
+    hasJsWorkspace?: boolean;
+    onSelectView(view: string): void;
+    onTrustWorkspace(): void;
+  }) => {
+    const hasJsWorkspace =
+      props.hasJsWorkspace ?? props.expressRoutesPanel?.hasJavaScriptTypeScriptWorkspace;
+    mocks.bottomPanelProps = {
+      ...props,
+      hasExpressRoutes: props.hasExpressRoutes ?? hasJsWorkspace,
+      hasJsWorkspace,
+    } as unknown as Record<string, unknown>;
     return (
       <div data-testid="bottom-panel">
         {["problems", "index", "runtime", "history", "routes", "testResults", "terminal"].map(
@@ -304,6 +337,8 @@ describe("App command routing", () => {
     mocks.jsCoverageState.report = null;
     mocks.jsCoverageState.unavailable = null;
     mocks.expressPanelOptions = null;
+    mocks.packageDiscoveryState.rootPackageJson = {};
+    mocks.expressPanelProps.workspacePackageDiscovery = mocks.packageDiscoveryState;
     mocks.packagePanelOptions = null;
     mocks.expressPanelProps.onOpenRoute.mockReset();
     mocks.expressPanelProps.onQueryChange.mockReset();
@@ -418,18 +453,21 @@ describe("App command routing", () => {
     expect(mocks.bottomPanelProps?.expressRoutesPanel).toBe(mocks.expressPanelProps);
     expect(mocks.expressPanelOptions).toEqual(
       expect.objectContaining({
-        dirtySnapshots: [
+        activeDocument: expect.objectContaining({
+          content: 'router.get("/users/:id", handler);',
+          path: "/workspace/src/routes.ts",
+        }),
+        isPanelOpen: true,
+        openDocuments: [
           {
-            relativeFilePath: "src/inactive.ts",
-            source: 'router.post("/inactive", handler);',
-          },
-          {
-            relativeFilePath: "src/routes.ts",
-            source: 'router.get("/users/:id", handler);',
+            content: 'router.post("/inactive", handler);',
+            language: "typescript",
+            name: "inactive.ts",
+            path: "/workspace/src/inactive.ts",
+            savedContent: "",
           },
         ],
         discoveryVersion: 4,
-        isOpen: true,
         onOpenLocation: mocks.openDebugLocation,
         rootPath: "/workspace",
         workspaceId: "workspace-1",
@@ -438,6 +476,9 @@ describe("App command routing", () => {
   });
 
   it("keeps Express discovery reactive while its panel is not active", async () => {
+    mocks.packageDiscoveryState.rootPackageJson = {
+      dependencies: { express: "latest" },
+    };
     mocks.workbenchOverrides = {
       activeDocument: {
         content: 'router.get("/users", handler);',
@@ -463,7 +504,44 @@ describe("App command routing", () => {
 
     expect(mocks.bottomPanelProps?.hasExpressRoutes).toBe(true);
     expect(mocks.bottomPanelProps?.expressRoutesPanel).toBe(mocks.expressPanelProps);
-    expect(mocks.expressPanelOptions).toEqual(expect.objectContaining({ isOpen: true }));
+    expect(mocks.expressPanelOptions).toEqual(expect.objectContaining({ isPanelOpen: false }));
+  });
+
+  it("keeps package discovery open while App's real Express gate is closed in Problems", async () => {
+    vi.mocked(
+      workbenchComposition.workspaceSourceDiscoveryGateway.readSourceTextBounded,
+    ).mockResolvedValue({
+      content: JSON.stringify({ devDependencies: { turbo: "latest" } }),
+      status: "ok",
+    });
+    mocks.workbenchOverrides = {
+      activeDocument: null,
+      bottomPanelView: "problems",
+      bottomPanelVisible: true,
+      expressRouteDiscoveryVersion: 7,
+      workspaceIdentityDescriptor: { workspaceId: "workspace-1" },
+      workspaceDescriptor: {
+        javaScriptTypeScript: { frameworks: [] },
+        php: null,
+        rootPath: "/workspace",
+      },
+    };
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(mocks.expressPanelOptions).toEqual(
+      expect.objectContaining({
+        discoveryVersion: 7,
+        hasJavaScriptTypeScriptWorkspace: true,
+        isPanelOpen: false,
+        rootPath: "/workspace",
+        workspaceId: "workspace-1",
+      }),
+    );
+    expect(mocks.bottomPanelProps?.workspacePackageDiscovery).toBe(mocks.packageDiscoveryState);
   });
 
   it("binds the package dependency panel to the active workspace descriptor and navigator", async () => {
@@ -751,7 +829,7 @@ describe("App command routing", () => {
       expect(mocks.bottomPanelProps?.hasExpressRoutes).toBe(true);
       expect(mocks.bottomPanelProps?.expressRoutesPanel).toBe(mocks.expressPanelProps);
       expect(mocks.expressPanelOptions).toEqual(
-        expect.objectContaining({ dirtySnapshots: [], isOpen: true }),
+        expect.objectContaining({ isPanelOpen: true, openDocuments: [] }),
       );
       expect(mocks.runCommand).not.toHaveBeenCalledWith("panel.showProblems");
     },

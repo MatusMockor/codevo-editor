@@ -266,12 +266,19 @@ describe("useExpressWorkspaceManifestSignal", () => {
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledOnce();
   });
 
-  it("pins App to the manual-view or manifest-signal discovery gate", () => {
+  it("pins App to the owned manual gate and the workbench to package manifest evidence", () => {
     const appSource = readFileSync("src/App.tsx", "utf8");
+    const workbenchSource = readFileSync(
+      "src/components/useWorkspaceExpressRoutesWorkbenchPanel.ts",
+      "utf8",
+    );
 
     expect(appSource).toContain(
-      'isOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes" || expressWorkspaceManifestSignal',
+      'isPanelOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes"',
     );
+    expect(appSource).not.toContain("useAppExpressWorkspaceSignals");
+    expect(workbenchSource).toContain("manifest: packageDiscovery.rootPackageJson");
+    expect(workbenchSource).toContain("isOpen: isPanelOpen || manifestSignal");
   });
 
   it("starts route discovery eagerly with Express manifest evidence", async () => {

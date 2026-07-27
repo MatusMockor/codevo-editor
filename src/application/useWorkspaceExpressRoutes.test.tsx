@@ -120,6 +120,47 @@ describe("useWorkspaceExpressRoutes", () => {
     harness.unmount();
   });
 
+  it("publishes the bounded workspace package graph with its routes", async () => {
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: ["packages/api/src/x.ts"],
+        truncated: false,
+        visited: 4,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["package.json", "packages/api/package.json"],
+        truncated: false,
+        visited: 4,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "package.json") {
+          return {
+            status: "ok" as const,
+            content: '{"name":"workspace","workspaces":["packages/*"]}',
+          };
+        }
+        if (path === "packages/api/package.json") {
+          return { status: "ok" as const, content: '{"name":"@repo/api"}' };
+        }
+        return { status: "ok" as const, content: "app.get('/api', handler);" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().workspacePackages).toHaveLength(1));
+
+    expect(harness.hook().workspacePackages).toEqual([
+      {
+        name: "@repo/api",
+        relativeDirPath: "packages/api",
+        status: "unresolved",
+      },
+    ]);
+    expect(harness.hook().routes).toHaveLength(1);
+    expect(harness.hook().truncated).toBe(false);
+    harness.unmount();
+  });
+
   it("does not present malformed-source uncertainty as truncated route results", async () => {
     const gateway = discovery({
       enumerateJavaScriptSourceFiles: vi.fn(async () => ({
@@ -246,6 +287,48 @@ describe("useWorkspaceExpressRoutes", () => {
     harness.set({ rootPath: ROOT_A, workspaceId: "workspace-a" });
     await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/a"));
     expect(gateway.enumerateJavaScriptSourceFiles).toHaveBeenCalledTimes(3);
+    harness.unmount();
+  });
+
+  it("fences workspace packages across an A to B to A ownership switch", async () => {
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async (rootPath) => ({
+        files: [`packages/${rootPath === ROOT_A ? "a" : "b"}/src/x.ts`],
+        truncated: false,
+        visited: 4,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async (rootPath) => ({
+        files: ["package.json", `packages/${rootPath === ROOT_A ? "a" : "b"}/package.json`],
+        truncated: false,
+        visited: 4,
+      })),
+      readSourceTextBounded: vi.fn(async (rootPath, path) => {
+        if (path === "package.json") {
+          return {
+            status: "ok" as const,
+            content: '{"name":"workspace","workspaces":["packages/*"]}',
+          };
+        }
+        if (path.endsWith("package.json")) {
+          return {
+            status: "ok" as const,
+            content: `{"name":"@repo/${rootPath === ROOT_A ? "a" : "b"}"}`,
+          };
+        }
+        return { status: "ok" as const, content: "app.get('/route', handler);" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().workspacePackages[0]?.name).toBe("@repo/a"));
+
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    expect(harness.hook().workspacePackages).toEqual([]);
+    await waitForReact(() => expect(harness.hook().workspacePackages[0]?.name).toBe("@repo/b"));
+
+    harness.set({ rootPath: ROOT_A, workspaceId: "workspace-a" });
+    expect(harness.hook().workspacePackages).toEqual([]);
+    await waitForReact(() => expect(harness.hook().workspacePackages[0]?.name).toBe("@repo/a"));
     harness.unmount();
   });
 

@@ -10,8 +10,25 @@ import {
   type WorkbenchNoticeNavigationTarget,
 } from "../application/workbenchNotice";
 import { ProblemsPanel } from "./ProblemsPanel";
+import type { WorkspacePackageManifestInput } from "../domain/workspacePackageGraph";
+import type { WorkspacePackageAuthority } from "../application/useWorkspacePackageGraph";
 
 const errorIconRenders = vi.fn();
+const packageAttributionBuilds = vi.fn();
+
+vi.mock("../domain/problemsPackageAttribution", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../domain/problemsPackageAttribution")>();
+
+  return {
+    ...actual,
+    createProblemsPackageAttribution: (
+      ...args: Parameters<typeof actual.createProblemsPackageAttribution>
+    ) => {
+      packageAttributionBuilds();
+      return actual.createProblemsPackageAttribution(...args);
+    },
+  };
+});
 
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();
@@ -34,13 +51,7 @@ function navigableNotice(message: string): WorkbenchNotice {
     },
   };
 
-  return createWorkbenchNotice(
-    "error",
-    "phpactor",
-    message,
-    undefined,
-    navigationTarget,
-  );
+  return createWorkbenchNotice("error", "phpactor", message, undefined, navigationTarget);
 }
 
 function problemNotice(
@@ -65,15 +76,23 @@ function problemNotice(
   };
 }
 
+const WORKSPACE_PACKAGE_MANIFESTS: readonly WorkspacePackageManifestInput[] = [
+  {
+    packageJson: { name: "@repo/api" },
+    relativeDirPath: "packages/api",
+  },
+  {
+    packageJson: { name: "@repo/web" },
+    relativeDirPath: "packages/web",
+  },
+];
+
 function setInputValue(input: HTMLInputElement | null, value: string) {
   if (!input) {
     return;
   }
 
-  const setter = Object.getOwnPropertyDescriptor(
-    HTMLInputElement.prototype,
-    "value",
-  )?.set;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
@@ -102,6 +121,10 @@ describe("ProblemsPanel", () => {
     notices: Parameters<typeof ProblemsPanel>[0]["notices"],
     onOpenNotice = vi.fn(),
     workspaceRoot = "/workspace",
+    workspacePackageManifests: readonly WorkspacePackageManifestInput[] = [],
+    workspacePackageAuthority: WorkspacePackageAuthority = "complete",
+    workspacePackageIncompleteDirectories: readonly string[] = [],
+    workspacePackageUnscopedAuthorityUncertain = false,
   ) {
     act(() => {
       root.render(
@@ -109,11 +132,294 @@ describe("ProblemsPanel", () => {
           isActive
           notices={notices}
           onOpenNotice={onOpenNotice}
+          workspacePackageAuthority={workspacePackageAuthority}
+          workspacePackageIncompleteDirectories={workspacePackageIncompleteDirectories}
+          workspacePackageManifests={workspacePackageManifests}
+          workspacePackageUnscopedAuthorityUncertain={
+            workspacePackageUnscopedAuthorityUncertain
+          }
           workspaceRoot={workspaceRoot}
         />,
       );
     });
   }
+
+  it("moves keyboard focus from a package header into its own rows", () => {
+    render(
+      [
+        problemNotice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api"),
+        problemNotice("web", "/workspace/packages/web/src/index.ts", 1, "error", "web"),
+      ],
+      vi.fn(),
+      "/workspace",
+      WORKSPACE_PACKAGE_MANIFESTS,
+    );
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
+    });
+    const headers = Array.from(
+      host.querySelectorAll<HTMLButtonElement>(".problems-package-header"),
+    );
+    headers[0].focus();
+
+    act(() => {
+      headers[0].dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
+    });
+    const apiRow = host.querySelector<HTMLElement>('[data-package-key="@repo/api"] .problem-row');
+    expect(document.activeElement).toBe(apiRow);
+
+    act(() => {
+      headers[0].focus();
+      headers[0].click();
+    });
+
+    expect(headers[0].getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(headers[0]);
+    expect(headers[0].getAttribute("aria-label")).toContain("@repo/api");
+  });
+
+  it("computes package assignment once per invalidation rather than per render", () => {
+    const notices = [
+      problemNotice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api"),
+    ];
+    packageAttributionBuilds.mockClear();
+    render(notices, vi.fn(), "/workspace", WORKSPACE_PACKAGE_MANIFESTS);
+
+    expect(packageAttributionBuilds).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
+    });
+    act(() => {
+      host.querySelector<HTMLButtonElement>(".problems-package-header")?.click();
+    });
+
+    expect(packageAttributionBuilds).toHaveBeenCalledTimes(1);
+
+    render([...notices], vi.fn(), "/workspace", WORKSPACE_PACKAGE_MANIFESTS);
+
+    expect(packageAttributionBuilds).toHaveBeenCalledTimes(2);
+  });
+
+  it("filters the panel to one package", () => {
+    render(
+      [
+        problemNotice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api problem"),
+        problemNotice("web", "/workspace/packages/web/src/index.ts", 1, "error", "web problem"),
+      ],
+      vi.fn(),
+      "/workspace",
+      WORKSPACE_PACKAGE_MANIFESTS,
+    );
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Filter by package"]');
+
+    act(() => {
+      if (!select) {
+        return;
+      }
+
+      select.value = "@repo/api";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(host.textContent).toContain("api problem");
+    expect(host.textContent).not.toContain("web problem");
+  });
+
+  it("filters the panel to the synthesized No package option", () => {
+    render(
+      [
+        problemNotice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api problem"),
+        problemNotice("outside", "/workspace/tools/release.ts", 1, "error", "outside problem"),
+      ],
+      vi.fn(),
+      "/workspace",
+      WORKSPACE_PACKAGE_MANIFESTS,
+    );
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Filter by package"]');
+    const noPackageOption = Array.from(select?.options ?? []).find(
+      (option) => option.textContent === "No package",
+    );
+
+    act(() => {
+      if (!select || !noPackageOption) return;
+      select.value = noPackageOption.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(select?.value).toBe(":no-package");
+    expect(host.textContent).toContain("outside problem");
+    expect(host.textContent).not.toContain("api problem");
+  });
+
+  it("resets an unavailable package filter for both the control and the view", () => {
+    const api = problemNotice(
+      "api",
+      "/workspace/packages/api/src/index.ts",
+      1,
+      "error",
+      "api problem",
+    );
+    const web = problemNotice(
+      "web",
+      "/workspace/packages/web/src/index.ts",
+      1,
+      "error",
+      "web problem",
+    );
+    render([api, web], vi.fn(), "/workspace", WORKSPACE_PACKAGE_MANIFESTS);
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Filter by package"]');
+
+    act(() => {
+      if (!select) return;
+      select.value = "@repo/api";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    render([web], vi.fn(), "/workspace", WORKSPACE_PACKAGE_MANIFESTS);
+
+    expect(select?.value).toBe("");
+    expect(host.textContent).toContain("web problem");
+    expect(host.textContent).not.toContain("No problems match");
+  });
+
+  it("labels bounded package authority as unknown and marks package controls degraded", () => {
+    render(
+      [problemNotice("unknown", "/workspace/tools/release.ts", 1, "error", "unknown owner")],
+      vi.fn(),
+      "/workspace",
+      [],
+      "bounded",
+      [],
+      true,
+    );
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Filter by package"]');
+    const grouping = host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]');
+
+    expect(select?.textContent).toContain("Package unknown (workspace scan bounded)");
+    expect(select?.dataset.degraded).toBe("true");
+    expect(grouping?.dataset.degraded).toBe("true");
+
+    act(() => grouping?.click());
+
+    expect(host.querySelector(".problems-package-header")?.textContent).toContain(
+      "Package unknown (workspace scan bounded)",
+    );
+    expect(host.textContent).not.toContain("No package");
+  });
+
+  it("labels initial package discovery as loading without claiming a bounded scan", () => {
+    render(
+      [problemNotice("pending", "/workspace/tools/release.ts", 1, "error", "pending owner")],
+      vi.fn(),
+      "/workspace",
+      [],
+      "loading",
+    );
+    const grouping = host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]');
+
+    expect(grouping?.textContent).toBe("Package");
+    expect(grouping?.dataset.degraded).toBeUndefined();
+    expect(host.textContent).toContain("Package pending (workspace scan loading)");
+    expect(host.textContent).not.toContain("workspace scan bounded");
+  });
+
+  it("keeps parsed package attribution while degrading only an incomplete manifest directory", () => {
+    render(
+      [
+        problemNotice("api", "/workspace/packages/api/src/index.ts", 1, "error", "api problem"),
+        problemNotice("bad", "/workspace/packages/bad/src/index.ts", 1, "error", "bad problem"),
+        problemNotice("outside", "/workspace/tools/release.ts", 1, "error", "outside problem"),
+      ],
+      vi.fn(),
+      "/workspace",
+      WORKSPACE_PACKAGE_MANIFESTS,
+      "bounded",
+      ["packages/bad"],
+    );
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
+    });
+    const headers = Array.from(
+      host.querySelectorAll(".problems-package-header"),
+      (header) => header.textContent,
+    );
+
+    expect(headers).toEqual([
+      expect.stringContaining("@repo/api"),
+      expect.stringContaining("No package"),
+      expect.stringContaining("Package unknown (workspace scan bounded)"),
+    ]);
+    expect(host.querySelector('[data-package-key="@repo/api"]')?.textContent).toContain(
+      "api problem",
+    );
+    expect(host.querySelector('[data-package-key=":no-package"]')?.textContent).toContain(
+      "outside problem",
+    );
+    expect(host.querySelector('[data-package-key=":package-unknown"]')?.textContent).toContain(
+      "bad problem",
+    );
+  });
+
+  it("bounds mounted problem rows and reports the window truthfully", () => {
+    render(
+      Array.from({ length: 250 }, (_, index) =>
+        problemNotice(
+          `problem-${index}`,
+          "/workspace/src/index.ts",
+          index + 1,
+          "error",
+          `Problem ${index}`,
+        ),
+      ),
+    );
+
+    expect(host.querySelectorAll(".problem-row")).toHaveLength(200);
+    expect(host.textContent).toContain("Showing 200 of 250 problem rows");
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(host.querySelector("button")?.textContent).not.toBe("Show more");
+    const showMore = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "Show more",
+    );
+
+    act(() => showMore?.click());
+
+    expect(host.querySelectorAll(".problem-row")).toHaveLength(250);
+  });
+
+  it("names fully hidden packages before Show more reveals them", () => {
+    const notices = [
+      ...Array.from({ length: 200 }, (_, index) =>
+        problemNotice(
+          `api-${index}`,
+          `/workspace/packages/api/src/file-${index}.ts`,
+          1,
+          "error",
+          `api ${index}`,
+        ),
+      ),
+      ...Array.from({ length: 25 }, (_, index) =>
+        problemNotice(
+          `web-${index}`,
+          `/workspace/packages/web/src/file-${index}.ts`,
+          1,
+          "error",
+          `web ${index}`,
+        ),
+      ),
+    ];
+    render(notices, vi.fn(), "/workspace", WORKSPACE_PACKAGE_MANIFESTS);
+    act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Group by package"]')?.click();
+    });
+
+    expect(host.textContent).toContain("Fully hidden packages: @repo/web.");
+    expect(
+      Array.from(host.querySelectorAll(".problems-package-header"), (header) => header.textContent),
+    ).toEqual([expect.stringContaining("@repo/api"), expect.stringContaining("@repo/web")]);
+    expect(host.querySelector('[data-package-key="@repo/web"] .problem-row')).toBeNull();
+  });
 
   it("renders an empty state when there are no notices", () => {
     render([]);
@@ -129,8 +435,7 @@ describe("ProblemsPanel", () => {
   });
 
   it("visually distinguishes the diagnostics overflow notice", () => {
-    const groupKey =
-      "language-server-diagnostics:file:///workspace/src/User.php";
+    const groupKey = "language-server-diagnostics:file:///workspace/src/User.php";
     render([
       createWorkbenchNotice("error", "phpactor", "boom", groupKey),
       createWorkbenchNotice(
@@ -143,22 +448,16 @@ describe("ProblemsPanel", () => {
       ),
     ]);
 
-    const overflowRow = host.querySelector(
-      '[data-testid="diagnostics-overflow"]',
-    );
+    const overflowRow = host.querySelector('[data-testid="diagnostics-overflow"]');
 
     expect(overflowRow).not.toBeNull();
     expect(overflowRow?.classList.contains("overflow")).toBe(true);
     expect(host.querySelectorAll(".problems-file-header")).toHaveLength(1);
-    expect(host.querySelector(".problems-file-header")?.textContent).toContain(
-      "src/User.php",
-    );
-    expect(host.querySelectorAll(".problems-file-group .problem-row")).toHaveLength(
-      2,
-    );
+    expect(host.querySelector(".problems-file-header")?.textContent).toContain("src/User.php");
+    expect(host.querySelectorAll(".problems-file-group .problem-row")).toHaveLength(2);
     expect(overflowRow?.hasAttribute("role")).toBe(false);
     expect(overflowRow?.hasAttribute("tabindex")).toBe(false);
-    expect(host.querySelectorAll('[role="option"]')).toHaveLength(1);
+    expect(host.querySelectorAll(".problem-row[tabindex]")).toHaveLength(1);
   });
 
   it("renders no-target crash and index notices as flat general rows", () => {
@@ -186,9 +485,7 @@ describe("ProblemsPanel", () => {
       },
     ]);
 
-    expect(
-      host.querySelector('button[aria-label="Warnings (0)"]'),
-    ).not.toBeNull();
+    expect(host.querySelector('button[aria-label="Warnings (0)"]')).not.toBeNull();
     expect(host.textContent).toContain("More notices hidden");
   });
 
@@ -201,7 +498,12 @@ describe("ProblemsPanel", () => {
       host.querySelector<HTMLButtonElement>("button.problem-row")?.click();
     });
 
-    expect(onOpenNotice).toHaveBeenCalledWith(notice);
+    expect(onOpenNotice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: notice.id,
+        packageIdentity: expect.objectContaining({ key: ":no-package" }),
+      }),
+    );
   });
 
   it("copies a problem message", () => {
@@ -241,7 +543,7 @@ describe("ProblemsPanel", () => {
     ]);
     const input = host.querySelector<HTMLInputElement>('input[aria-label="Filter problems"]');
     act(() => setInputValue(input, "matching"));
-    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".problem-row[tabindex]"));
     rows[0].focus();
 
     act(() => {
@@ -257,32 +559,27 @@ describe("ProblemsPanel", () => {
     expect(input).not.toBe(document.activeElement);
   });
 
-  it("keeps one listbox tab stop and labels non-tabbable file groups", () => {
+  it("avoids an invalid listbox hierarchy and labels file groups", () => {
     render([
       problemNotice("first", "/workspace/src/A.php", 1, "error", "first"),
       problemNotice("second", "/workspace/src/B.php", 1, "warning", "second"),
     ]);
 
-    const listbox = host.querySelector<HTMLElement>('[role="listbox"]');
-    const options = Array.from(
-      listbox?.querySelectorAll<HTMLElement>('[role="option"]') ?? [],
-    );
-    const tabStops = Array.from(
-      listbox?.querySelectorAll<HTMLElement>('[tabindex="0"]') ?? [],
-    );
-    const groups = Array.from(
-      listbox?.querySelectorAll<HTMLElement>('.problems-file-group[role="group"]') ?? [],
-    );
+    const list = host.querySelector<HTMLElement>(".problems-list-rows");
+    const options = Array.from(list?.querySelectorAll<HTMLElement>(".problem-row[tabindex]") ?? []);
+    const tabStops = Array.from(list?.querySelectorAll<HTMLElement>('[tabindex="0"]') ?? []);
+    const groups = Array.from(list?.querySelectorAll<HTMLElement>(".problems-file-group") ?? []);
 
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
     expect(options).toHaveLength(2);
     expect(tabStops).toEqual([options[0]]);
     expect(
-      Array.from(listbox?.querySelectorAll(".problems-file-header") ?? []).every(
+      Array.from(list?.querySelectorAll(".problems-file-header") ?? []).every(
         (header) => header.getAttribute("tabindex") === "-1",
       ),
     ).toBe(true);
     expect(
-      Array.from(listbox?.querySelectorAll(".problem-row-copy") ?? []).every(
+      Array.from(list?.querySelectorAll(".problem-row-copy") ?? []).every(
         (copy) => copy.getAttribute("tabindex") === "-1",
       ),
     ).toBe(true);
@@ -305,7 +602,7 @@ describe("ProblemsPanel", () => {
     const second = problemNotice("second", "/workspace/src/B.php", 1, "error", "second");
     const onOpenNotice = vi.fn();
     render([first, second], onOpenNotice);
-    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".problem-row[tabindex]"));
 
     act(() => {
       rows[0].dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
@@ -313,8 +610,20 @@ describe("ProblemsPanel", () => {
       rows[1].dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " " }));
     });
 
-    expect(onOpenNotice).toHaveBeenNthCalledWith(1, second);
-    expect(onOpenNotice).toHaveBeenNthCalledWith(2, second);
+    expect(onOpenNotice).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        id: second.id,
+        packageIdentity: expect.objectContaining({ key: ":no-package" }),
+      }),
+    );
+    expect(onOpenNotice).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: second.id,
+        packageIdentity: expect.objectContaining({ key: ":no-package" }),
+      }),
+    );
   });
 
   it("moves to the first and last visible problems with Home and End", () => {
@@ -323,7 +632,7 @@ describe("ProblemsPanel", () => {
       problemNotice("second", "/workspace/src/A.php", 2, "error", "second"),
       problemNotice("third", "/workspace/src/B.php", 1, "error", "third"),
     ]);
-    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    const rows = Array.from(host.querySelectorAll<HTMLButtonElement>(".problem-row[tabindex]"));
     rows[0].focus();
 
     act(() => {
@@ -371,9 +680,7 @@ describe("ProblemsPanel", () => {
       problemNotice("warning", "/workspace/src/Service.php", 4, "warning", "Unused value"),
     ]);
 
-    const errorsToggle = host.querySelector<HTMLButtonElement>(
-      'button[aria-label="Errors (1)"]',
-    );
+    const errorsToggle = host.querySelector<HTMLButtonElement>('button[aria-label="Errors (1)"]');
     act(() => errorsToggle?.click());
     expect(errorsToggle?.getAttribute("aria-pressed")).toBe("false");
     expect(host.textContent).not.toContain("Missing method");
@@ -401,14 +708,10 @@ describe("ProblemsPanel", () => {
   });
 
   it("uses the filters empty state when severity toggles hide all notices", () => {
-    render([
-      problemNotice("error", "/workspace/src/User.php", 2, "error", "boom"),
-    ]);
+    render([problemNotice("error", "/workspace/src/User.php", 2, "error", "boom")]);
 
     act(() => {
-      host.querySelector<HTMLButtonElement>(
-        'button[aria-label="Errors (1)"]',
-      )?.click();
+      host.querySelector<HTMLButtonElement>('button[aria-label="Errors (1)"]')?.click();
     });
 
     expect(host.textContent).toContain("No problems match the current filters");
@@ -439,13 +742,9 @@ describe("ProblemsPanel", () => {
     expect(host.querySelector(".problem-row-container")).not.toBeNull();
     expect(host.querySelector(".problem-row-copy")).not.toBeNull();
     expect(host.querySelector(".git-branch-row-action")).toBeNull();
-    expect(host.querySelector(".problem-row-container")?.hasAttribute("style")).toBe(
-      false,
-    );
+    expect(host.querySelector(".problem-row-container")?.hasAttribute("style")).toBe(false);
     expect(host.querySelector(".problem-row")?.hasAttribute("style")).toBe(false);
-    expect(host.querySelector(".problem-row-copy")?.hasAttribute("style")).toBe(
-      false,
-    );
+    expect(host.querySelector(".problem-row-copy")?.hasAttribute("style")).toBe(false);
     expect(css).toMatch(/\.problem-row\[aria-selected="true"\]/);
     expect(css).toMatch(/\.problem-row-container:hover \.problem-row-copy/);
   });
@@ -464,9 +763,17 @@ describe("ProblemsPanel", () => {
     const second = problemNotice("second", "/other/src/Other.php", 3, "error", "visible");
     render([second], vi.fn(), "/other");
 
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Filter problems"]')?.value).toBe("");
-    expect(host.querySelector<HTMLButtonElement>('button[aria-label="Errors (1)"]')?.getAttribute("aria-pressed")).toBe("true");
-    expect(host.querySelector<HTMLButtonElement>(".problems-file-header")?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Filter problems"]')?.value).toBe(
+      "",
+    );
+    expect(
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Errors (1)"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      host.querySelector<HTMLButtonElement>(".problems-file-header")?.getAttribute("aria-expanded"),
+    ).toBe("true");
     expect(host.textContent).toContain("visible");
   });
 

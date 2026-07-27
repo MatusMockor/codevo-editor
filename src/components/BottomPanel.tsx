@@ -2,6 +2,7 @@ import { PanelBottomClose, ShieldCheck, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { PointerEvent, ReactNode } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
+import type { WorkspacePackageDiscovery } from "../application/useWorkspacePackageGraph";
 import { bottomPanelLabel } from "../domain/bottomPanel";
 import { hasExpressWorkspaceSignal } from "../domain/expressWorkspaceSignal";
 import type {
@@ -37,6 +38,29 @@ import {
   type NetteOperationalWorkspacePanelProps,
 } from "./NetteOperationalWorkspacePanel";
 
+interface ProblemsExpressRoutesPanelProps extends ExpressRoutesPanelProps {
+  readonly hasJavaScriptTypeScriptWorkspace?: boolean;
+  readonly workspacePackageDiscovery?: ProblemsWorkspacePackageDiscovery;
+}
+
+type ProblemsWorkspacePackageDiscovery = Pick<
+  WorkspacePackageDiscovery,
+  | "authority"
+  | "incompleteDirectories"
+  | "packageManifests"
+  | "unscopedAuthorityUncertain"
+>;
+
+function problemsPackageAuthority(
+  discovery: ProblemsWorkspacePackageDiscovery | undefined,
+): WorkspacePackageDiscovery["authority"] | undefined {
+  if (!discovery) return undefined;
+  if (discovery.authority === "loading") return "loading";
+  if (discovery.unscopedAuthorityUncertain) return "bounded";
+  if (discovery.incompleteDirectories.length > 0) return "bounded";
+  return "complete";
+}
+
 interface BottomPanelProps {
   activeView: WorkbenchBottomPanelView;
   debug?: ReactNode;
@@ -46,7 +70,7 @@ interface BottomPanelProps {
   artisanRoutesQuery?: string;
   artisanRoutesTotal?: number;
   artisanRoutesUnavailable?: string | null;
-  expressRoutesPanel?: ExpressRoutesPanelProps;
+  expressRoutesPanel?: ProblemsExpressRoutesPanelProps;
   packageDependenciesPanel?: PackageDependenciesPanelProps;
   netteWorkspacePanel?: NetteOperationalWorkspacePanelProps;
   symfonyWorkspacePanel?: SymfonyWorkspacePanelProps;
@@ -94,6 +118,7 @@ interface BottomPanelProps {
   terminalShellIntegrationEnabled: boolean;
   terminalTheme: TerminalTheme;
   workspaceTrusted: boolean;
+  workspacePackageDiscovery?: ProblemsWorkspacePackageDiscovery;
   workspaceRoot: string | null;
   phpTestError?: string | null;
   phpTestFilter?: string | null;
@@ -135,8 +160,8 @@ export function BottomPanel({
   netteWorkspacePanel,
   symfonyWorkspacePanel,
   hasArtisan = false,
-  hasExpressRoutes = false,
-  hasJsWorkspace = false,
+  hasJsWorkspace = expressRoutesPanel?.hasJavaScriptTypeScriptWorkspace ?? false,
+  hasExpressRoutes = hasJsWorkspace,
   hasNette = false,
   hasPhpWorkspace = false,
   hasSymfony = false,
@@ -173,6 +198,7 @@ export function BottomPanel({
   terminalShellIntegrationEnabled,
   terminalTheme,
   workspaceTrusted,
+  workspacePackageDiscovery,
   workspaceRoot,
   phpTestError = null,
   phpTestFilter = null,
@@ -301,6 +327,10 @@ export function BottomPanel({
     runtimeMode,
     getLatencySnapshot,
     onSoftReindex,
+    workspacePackageDiscovery:
+      hasJsWorkspace
+        ? (workspacePackageDiscovery ?? expressRoutesPanel?.workspacePackageDiscovery)
+        : undefined,
     workspaceRoot,
   });
 
@@ -496,7 +526,7 @@ interface RenderActivePanelOptions {
   artisanRoutesQuery: string;
   artisanRoutesTotal: number;
   artisanRoutesUnavailable: string | null;
-  expressRoutesPanel?: ExpressRoutesPanelProps;
+  expressRoutesPanel?: ProblemsExpressRoutesPanelProps;
   packageDependenciesPanel?: PackageDependenciesPanelProps;
   netteWorkspacePanel?: NetteOperationalWorkspacePanelProps;
   symfonyWorkspacePanel?: SymfonyWorkspacePanelProps;
@@ -541,6 +571,7 @@ interface RenderActivePanelOptions {
   runtimeObservabilityGateway: RuntimeObservabilityGateway;
   runtimeMode?: string;
   getLatencySnapshot?(): LatencySnapshotEntry[];
+  workspacePackageDiscovery?: ProblemsWorkspacePackageDiscovery;
   workspaceRoot: string | null;
 }
 
@@ -609,6 +640,7 @@ function renderActivePanel({
   runtimeObservabilityGateway,
   runtimeMode,
   getLatencySnapshot,
+  workspacePackageDiscovery,
   workspaceRoot,
 }: RenderActivePanelOptions) {
   if (activeView === "nette") {
@@ -706,6 +738,12 @@ function renderActivePanel({
         isActive
         notices={notices}
         onOpenNotice={onOpenProblem}
+        workspacePackageAuthority={problemsPackageAuthority(workspacePackageDiscovery)}
+        workspacePackageIncompleteDirectories={workspacePackageDiscovery?.incompleteDirectories}
+        workspacePackageManifests={workspacePackageDiscovery?.packageManifests}
+        workspacePackageUnscopedAuthorityUncertain={
+          workspacePackageDiscovery?.unscopedAuthorityUncertain
+        }
         workspaceRoot={workspaceRoot}
       />
     );
