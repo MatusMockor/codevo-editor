@@ -4,6 +4,10 @@ export const DIAGNOSTICS_CACHE_MAX_DIAGNOSTICS = 20_000;
 export const DIAGNOSTICS_CACHE_MAX_NONEMPTY_FILES = 2_000;
 export const DIAGNOSTICS_CACHE_MAX_UTF8_BYTES = 8 * 1024 * 1024;
 export const DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS = 20_000;
+const DIAGNOSTICS_CACHE_MAX_LEDGER_CANDIDATES_BEFORE_REBUILD =
+  DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS * 2;
+const DIAGNOSTICS_CACHE_MAX_CACHED_NON_SERIALIZABLE_IDENTITIES =
+  DIAGNOSTICS_CACHE_MAX_NONEMPTY_FILES;
 
 export interface DiagnosticsCacheUpdate {
   readonly diagnostics: readonly LanguageServerDiagnostic[];
@@ -41,6 +45,22 @@ interface RetainedFile {
   readonly utf8Bytes: number;
 }
 
+interface PublishedLedgerCandidate {
+  readonly order: number;
+  readonly path: string;
+}
+
+interface PublishedLedgerTrimmer {
+  candidates: PublishedLedgerCandidate[];
+  readonly orderByPath: Map<string, number>;
+  nextOrder: number;
+}
+
+interface NonSerializableValueCache {
+  additions: number;
+  values: WeakSet<object>;
+}
+
 /**
  * Applies a whole diagnostics frame with one bounded cache rebuild.
  *
@@ -56,6 +76,10 @@ export function applyBoundedDiagnosticsCacheBatch(
   currentLedger?: DiagnosticsCacheLedger,
 ): BoundedDiagnosticsCacheResult {
   const files = new Map<string, RetainedFile>();
+  const nonSerializableValues: NonSerializableValueCache = {
+    additions: 0,
+    values: new WeakSet(),
+  };
   let retainedCount = 0;
   // Two object braces plus a conservative leading comma per retained property.
   // The final receipt below measures the exact serialized record.
@@ -75,7 +99,13 @@ export function applyBoundedDiagnosticsCacheBatch(
       diagnostics.length <= availableCount &&
       knownUtf8Bytes <= availableUtf8Bytes
         ? { diagnostics: [...diagnostics], utf8Bytes: knownUtf8Bytes }
-        : retainDiagnosticPrefix(path, diagnostics, availableCount, availableUtf8Bytes);
+        : retainDiagnosticPrefix(
+            path,
+            diagnostics,
+            availableCount,
+            availableUtf8Bytes,
+            nonSerializableValues,
+          );
     if (retained.diagnostics.length === 0) {
       continue;
     }
@@ -113,6 +143,12 @@ export function applyBoundedDiagnosticsCacheBatch(
   let publishedCount =
     untrackedPublishedCount +
     Array.from(publishedCountByPath.values()).reduce((total, count) => total + count, 0);
+  const publishedLedgerTrimmer = createPublishedLedgerTrimmer(publishedCountByPath);
+  untrackedPublishedCount += trimPublishedLedger(
+    publishedCountByPath,
+    files,
+    publishedLedgerTrimmer,
+  );
 
   for (const update of updates) {
     const replaced = files.get(update.path);
@@ -120,6 +156,7 @@ export function applyBoundedDiagnosticsCacheBatch(
     if (replacedPublishedCount !== undefined) {
       publishedCount -= replacedPublishedCount;
       publishedCountByPath.delete(update.path);
+      publishedLedgerTrimmer.orderByPath.delete(update.path);
     }
     if (replaced) {
       retainedUtf8Bytes -= replaced.utf8Bytes + (files.size > 1 ? 1 : 0);
@@ -129,13 +166,16 @@ export function applyBoundedDiagnosticsCacheBatch(
     const updatePublishedCount = Math.max(update.publishedCount, update.diagnostics.length);
     if (updatePublishedCount > 0) {
       publishedCountByPath.set(update.path, updatePublishedCount);
+      trackPublishedLedgerPath(publishedLedgerTrimmer, update.path);
       publishedCount += updatePublishedCount;
     }
 
     if (update.diagnostics.length === 0) {
-      trimPublishedLedger(publishedCountByPath, files, (trimmedCount) => {
-        untrackedPublishedCount += trimmedCount;
-      });
+      untrackedPublishedCount += trimPublishedLedger(
+        publishedCountByPath,
+        files,
+        publishedLedgerTrimmer,
+      );
       continue;
     }
 
@@ -152,6 +192,7 @@ export function applyBoundedDiagnosticsCacheBatch(
       retainedUtf8Bytes -= oldest[1].utf8Bytes + (files.size > 1 ? 1 : 0);
       files.delete(oldest[0]);
       retainedCount -= oldest[1].diagnostics.length;
+      markPublishedLedgerPathEvictable(publishedLedgerTrimmer, oldest[0]);
     }
 
     const retained = retainDiagnosticPrefix(
@@ -159,20 +200,25 @@ export function applyBoundedDiagnosticsCacheBatch(
       update.diagnostics,
       DIAGNOSTICS_CACHE_MAX_DIAGNOSTICS - retainedCount,
       DIAGNOSTICS_CACHE_MAX_UTF8_BYTES - retainedUtf8Bytes - (files.size > 0 ? 1 : 0),
+      nonSerializableValues,
     );
     if (retained.diagnostics.length === 0) {
-      trimPublishedLedger(publishedCountByPath, files, (trimmedCount) => {
-        untrackedPublishedCount += trimmedCount;
-      });
+      untrackedPublishedCount += trimPublishedLedger(
+        publishedCountByPath,
+        files,
+        publishedLedgerTrimmer,
+      );
       continue;
     }
 
     files.set(update.path, retained);
     retainedCount += retained.diagnostics.length;
     retainedUtf8Bytes += retained.utf8Bytes + (files.size > 1 ? 1 : 0);
-    trimPublishedLedger(publishedCountByPath, files, (trimmedCount) => {
-      untrackedPublishedCount += trimmedCount;
-    });
+    untrackedPublishedCount += trimPublishedLedger(
+      publishedCountByPath,
+      files,
+      publishedLedgerTrimmer,
+    );
   }
 
   const byPath: Record<string, LanguageServerDiagnostic[]> = {};
@@ -204,20 +250,22 @@ function retainDiagnosticPrefix(
   diagnostics: readonly LanguageServerDiagnostic[],
   availableCount: number,
   availableUtf8Bytes: number,
+  nonSerializableValues: NonSerializableValueCache,
 ): RetainedFile {
   if (availableCount <= 0 || availableUtf8Bytes <= 0) {
     return { diagnostics: [], utf8Bytes: 0 };
   }
 
   const retained: LanguageServerDiagnostic[] = [];
-  let utf8Bytes = jsonUtf8Length(path) + 1 + 2;
+  let utf8Bytes = jsonUtf8Length(path, nonSerializableValues) + 1 + 2;
 
   for (const diagnostic of diagnostics) {
     if (retained.length >= availableCount) {
       break;
     }
 
-    const diagnosticBytes = jsonUtf8Length(diagnostic) + (retained.length > 0 ? 1 : 0);
+    const diagnosticBytes =
+      jsonUtf8Length(diagnostic, nonSerializableValues) + (retained.length > 0 ? 1 : 0);
     if (utf8Bytes + diagnosticBytes > availableUtf8Bytes) {
       break;
     }
@@ -232,28 +280,130 @@ function retainDiagnosticPrefix(
 function trimPublishedLedger(
   publishedCountByPath: Map<string, number>,
   files: ReadonlyMap<string, RetainedFile>,
-  onTrim: (publishedCount: number) => void,
-): void {
+  trimmer: PublishedLedgerTrimmer,
+): number {
+  let trimmedCount = 0;
   while (publishedCountByPath.size > DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS) {
-    let oldestEvicted: [string, number] | undefined;
-    for (const entry of publishedCountByPath) {
-      if (!files.has(entry[0])) {
-        oldestEvicted = entry;
-        break;
+    const candidate = popPublishedLedgerCandidate(trimmer.candidates);
+    if (!candidate) {
+      break;
+    }
+    if (trimmer.orderByPath.get(candidate.path) !== candidate.order || files.has(candidate.path)) {
+      continue;
+    }
+    const publishedCount = publishedCountByPath.get(candidate.path);
+    if (publishedCount === undefined) {
+      continue;
+    }
+    publishedCountByPath.delete(candidate.path);
+    trimmer.orderByPath.delete(candidate.path);
+    trimmedCount += publishedCount;
+  }
+  if (trimmer.candidates.length > DIAGNOSTICS_CACHE_MAX_LEDGER_CANDIDATES_BEFORE_REBUILD) {
+    trimmer.candidates = [];
+    for (const [path, order] of trimmer.orderByPath) {
+      if (!files.has(path)) {
+        pushPublishedLedgerCandidate(trimmer.candidates, { order, path });
       }
     }
-    if (!oldestEvicted) {
-      return;
-    }
-    publishedCountByPath.delete(oldestEvicted[0]);
-    onTrim(oldestEvicted[1]);
   }
+  return trimmedCount;
 }
 
-function jsonUtf8Length(value: unknown): number {
+function createPublishedLedgerTrimmer(
+  publishedCountByPath: ReadonlyMap<string, number>,
+): PublishedLedgerTrimmer {
+  const trimmer: PublishedLedgerTrimmer = {
+    candidates: [],
+    nextOrder: 0,
+    orderByPath: new Map(),
+  };
+  for (const path of publishedCountByPath.keys()) {
+    trackPublishedLedgerPath(trimmer, path);
+  }
+  return trimmer;
+}
+
+function trackPublishedLedgerPath(trimmer: PublishedLedgerTrimmer, path: string): void {
+  const order = trimmer.nextOrder;
+  trimmer.nextOrder += 1;
+  trimmer.orderByPath.set(path, order);
+  pushPublishedLedgerCandidate(trimmer.candidates, { order, path });
+}
+
+function markPublishedLedgerPathEvictable(trimmer: PublishedLedgerTrimmer, path: string): void {
+  const order = trimmer.orderByPath.get(path);
+  if (order === undefined) {
+    return;
+  }
+  pushPublishedLedgerCandidate(trimmer.candidates, { order, path });
+}
+
+function pushPublishedLedgerCandidate(
+  candidates: PublishedLedgerCandidate[],
+  candidate: PublishedLedgerCandidate,
+): void {
+  let index = candidates.length;
+  candidates.push(candidate);
+  while (index > 0) {
+    const parentIndex = Math.floor((index - 1) / 2);
+    const parent = candidates[parentIndex];
+    if (!parent || parent.order <= candidate.order) {
+      break;
+    }
+    candidates[index] = parent;
+    index = parentIndex;
+  }
+  candidates[index] = candidate;
+}
+
+function popPublishedLedgerCandidate(
+  candidates: PublishedLedgerCandidate[],
+): PublishedLedgerCandidate | undefined {
+  const oldest = candidates[0];
+  const newest = candidates.pop();
+  if (!oldest || !newest || candidates.length === 0) {
+    return oldest;
+  }
+
+  let index = 0;
+  while (true) {
+    const leftIndex = index * 2 + 1;
+    if (leftIndex >= candidates.length) {
+      break;
+    }
+    const rightIndex = leftIndex + 1;
+    const left = candidates[leftIndex];
+    const right = candidates[rightIndex];
+    const childIndex = right && left && right.order < left.order ? rightIndex : leftIndex;
+    const child = candidates[childIndex];
+    if (!child || child.order >= newest.order) {
+      break;
+    }
+    candidates[index] = child;
+    index = childIndex;
+  }
+  candidates[index] = newest;
+  return oldest;
+}
+
+function jsonUtf8Length(value: unknown, nonSerializableValues: NonSerializableValueCache): number {
+  if (typeof value === "object" && value !== null && nonSerializableValues.values.has(value)) {
+    return DIAGNOSTICS_CACHE_MAX_UTF8_BYTES + 1;
+  }
   try {
     return utf8Length(JSON.stringify(value));
   } catch {
+    if (typeof value === "object" && value !== null) {
+      if (
+        nonSerializableValues.additions >= DIAGNOSTICS_CACHE_MAX_CACHED_NON_SERIALIZABLE_IDENTITIES
+      ) {
+        nonSerializableValues.additions = 0;
+        nonSerializableValues.values = new WeakSet();
+      }
+      nonSerializableValues.values.add(value);
+      nonSerializableValues.additions += 1;
+    }
     return DIAGNOSTICS_CACHE_MAX_UTF8_BYTES + 1;
   }
 }

@@ -74,6 +74,80 @@ describe("applyBoundedDiagnosticsCacheBatch", () => {
     expect(clearedUntracked.receipt.publishedCount).toBe(100_000);
   });
 
+  it("trims an over-cap incoming ledger before an empty update batch returns", () => {
+    const currentPath = "/workspace/ledger-0.ts";
+    const publishedCountByPath = Object.fromEntries(
+      Array.from({ length: DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS + 1 }, (_, index) => [
+        `/workspace/ledger-${index}.ts`,
+        1,
+      ]),
+    );
+
+    const result = applyBoundedDiagnosticsCacheBatch({ [currentPath]: [diagnostic(0)] }, [], {
+      publishedCount: DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS + 1,
+      publishedCountByPath,
+      untrackedPublishedCount: 0,
+    });
+
+    expect(Object.keys(result.publishedCountByPath).length).toBeLessThanOrEqual(
+      DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS,
+    );
+  });
+
+  it("keeps a truthful upper bound when an update republishes a pre-trimmed path", () => {
+    const currentPath = "/workspace/current.ts";
+    const republishedPath = "/workspace/ledger-1.ts";
+    const publishedCountByPath = Object.fromEntries(
+      Array.from({ length: DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS + 1 }, (_, index) => [
+        index === 0 ? currentPath : `/workspace/ledger-${index}.ts`,
+        index === 0 ? 16 : index === 1 ? 1 : 0,
+      ]),
+    );
+
+    const result = applyBoundedDiagnosticsCacheBatch(
+      { [currentPath]: [diagnostic(0)] },
+      [
+        {
+          diagnostics: [diagnostic(1)],
+          path: republishedPath,
+          publishedCount: 1,
+        },
+      ],
+      {
+        publishedCount: 31,
+        publishedCountByPath,
+        untrackedPublishedCount: 14,
+      },
+    );
+
+    expect(result.receipt).toMatchObject({
+      omittedCount: 30,
+      publishedCount: 32,
+      publishedCountKind: "upperBound",
+      retainedCount: 2,
+      truncated: true,
+    });
+    expect(result.untrackedPublishedCount).toBe(15);
+  });
+
+  it("reports an upper bound after pre-trimming an over-cap ledger without updates", () => {
+    const currentPath = "/workspace/ledger-0.ts";
+    const publishedCountByPath = Object.fromEntries(
+      Array.from({ length: DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS + 1 }, (_, index) => [
+        `/workspace/ledger-${index}.ts`,
+        1,
+      ]),
+    );
+
+    const result = applyBoundedDiagnosticsCacheBatch({ [currentPath]: [diagnostic(0)] }, [], {
+      publishedCount: DIAGNOSTICS_CACHE_MAX_LEDGER_PATHS + 1,
+      publishedCountByPath,
+      untrackedPublishedCount: 0,
+    });
+
+    expect(result.receipt.publishedCountKind).toBe("upperBound");
+  });
+
   it("bounds the ledger for 100k individually non-retainable paths", () => {
     const circularData: { self?: unknown } = {};
     circularData.self = circularData;
