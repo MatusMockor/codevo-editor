@@ -13,9 +13,14 @@ export function workspaceFileChangeInvalidatesExpressRouteDiscovery(
       path &&
       (isJsSourceRelativePath(path) ||
         isPackageJsonRelativePath(path) ||
+        isPnpmWorkspaceRelativePath(path) ||
         isTsconfigRelativePath(path)),
     ),
   );
+}
+
+function isPnpmWorkspaceRelativePath(relativePath: string): boolean {
+  return relativePath.split("\\").join("/") === "pnpm-workspace.yaml";
 }
 
 function isPackageJsonRelativePath(relativePath: string): boolean {

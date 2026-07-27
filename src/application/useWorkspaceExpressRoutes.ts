@@ -17,6 +17,11 @@ import {
   type WorkspaceExpressRoute,
   type WorkspaceExpressRouteSourceSnapshot,
 } from "../domain/workspaceExpressRoutes";
+import {
+  createWorkspacePackageGraph,
+  type WorkspacePackageGraph,
+  type WorkspacePackageManifestInput,
+} from "../domain/workspacePackageGraph";
 import { readExpressRouteTsconfigAliases } from "./expressRouteTsconfigAliases";
 import {
   bindExpressRouteNavigationReceipts,
@@ -30,6 +35,7 @@ import {
 const DISCOVERY_LIMITS = { maxFiles: 2_000, maxVisited: 50_000 } as const;
 const PACKAGE_DISCOVERY_LIMITS = { maxFiles: MAX_ROOTS, maxVisited: 50_000 } as const;
 const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
+const MAX_PNPM_WORKSPACE_BYTES = 256 * 1024;
 const MAX_TOTAL_PACKAGE_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_INTERACTIVE_SOURCE_BYTES = 256 * 1024;
 const MAX_INTERACTIVE_TOTAL_SOURCE_BYTES = 256 * 1024;
@@ -195,15 +201,26 @@ export function useWorkspaceExpressRoutes({
         enumeratePackageJsonFiles(gateway, rootPath),
       ]);
       if (!isCurrent()) return;
-      const packageJsonRead = await readPackageJsonDirs(
-        gateway,
-        rootPath,
-        packageEnumeration.files,
-        isCurrent,
-      );
+      const [packageJsonRead, pnpmWorkspaceRead] = await Promise.all([
+        readPackageJsonDirs(gateway, rootPath, packageEnumeration.files, isCurrent),
+        readPnpmWorkspaceSource(gateway, rootPath, isCurrent),
+      ]);
       if (!packageJsonRead || !isCurrent()) return;
       const packageJsonDirs = packageJsonRead.dirs;
       const packageRoots = expressRoutePackageRoots(packageJsonDirs);
+      const workspacePackageGraph = createWorkspacePackageGraph({
+        authorityComplete:
+          !enumeration.truncated &&
+          !packageEnumeration.truncated &&
+          !packageJsonRead.truncated &&
+          !pnpmWorkspaceRead.truncated,
+        packageManifests: packageJsonRead.manifests,
+        pnpmWorkspaceYaml: pnpmWorkspaceRead.source,
+        rootPackageJson:
+          packageJsonRead.manifests.find(({ relativeDirPath }) => relativeDirPath === "")
+            ?.packageJson ?? {},
+        sourceFilePaths: enumeration.files,
+      });
       const tsconfigRead = await readExpressRouteTsconfigAliases({
         allowUnscopedRoot:
           !packageEnumeration.truncated && !packageJsonRead.unscopedAuthorityUncertain,
@@ -212,8 +229,13 @@ export function useWorkspaceExpressRoutes({
         isCurrent,
         packageDirectories: packageJsonRead.authorityDirectories,
         rootPath,
+        workspacePackageGraph,
       });
       if (!isCurrent() || tsconfigRead.status === "stale") return;
+      const importPathResolver = combineImportPathResolvers(
+        tsconfigRead.importPathResolver,
+        workspacePackageGraph,
+      );
       const scanRoots = expressRouteScanRoots({
         packageJsonDirs,
         relativeFilePaths: enumeration.files,
@@ -272,14 +294,14 @@ export function useWorkspaceExpressRoutes({
       const discovered = workspaceExpressRoutesFromSnapshotsWithResolverBounded(
         snapshots,
         MAX_ROUTES,
-        tsconfigRead.importPathResolver,
+        importPathResolver,
       );
       if (!isCurrent()) return;
 
       setCaches((current) =>
         withBoundedWorkspaceCache(current, workspaceKey, {
           error: null,
-          importPathResolver: tsconfigRead.importPathResolver,
+          importPathResolver,
           loaded: true,
           loading: false,
           packageJsonDirs,
@@ -291,6 +313,8 @@ export function useWorkspaceExpressRoutes({
             enumeration.truncated ||
             packageEnumeration.truncated ||
             packageJsonRead.truncated ||
+            pnpmWorkspaceRead.truncated ||
+            workspacePackageGraph.truncated ||
             tsconfigRead.truncated ||
             packageRoots.truncated ||
             scanRoots.truncated ||
@@ -1024,12 +1048,14 @@ async function readPackageJsonDirs(
   readonly authorityDirectories: readonly string[];
   readonly dirs: readonly ExpressRoutePackageJsonDir[];
   readonly incompleteDirectories: readonly string[];
+  readonly manifests: readonly WorkspacePackageManifestInput[];
   readonly truncated: boolean;
   readonly unscopedAuthorityUncertain: boolean;
 } | null> {
   const authorityDirectories = new Set<string>();
   const dirs: ExpressRoutePackageJsonDir[] = [];
   const incompleteDirectories = new Set<string>();
+  const manifests: WorkspacePackageManifestInput[] = [];
   const candidates: { readonly relativeDirPath: string; readonly relativePath: string }[] = [];
   const seenPaths = new Set<string>();
   let truncated = relativePaths.length > MAX_ROOTS;
@@ -1089,7 +1115,11 @@ async function readPackageJsonDirs(
           const manifest = packageManifestFromJson(read.source);
           if (manifest.valid) {
             dirs.push({
-              packageName: manifest.packageName,
+              packageName: manifest.packageJson.name,
+              relativeDirPath: candidate.relativeDirPath,
+            });
+            manifests.push({
+              packageJson: manifest.packageJson,
               relativeDirPath: candidate.relativeDirPath,
             });
           } else {
@@ -1116,6 +1146,7 @@ async function readPackageJsonDirs(
     authorityDirectories: [...authorityDirectories].sort(compareText),
     dirs,
     incompleteDirectories: [...incompleteDirectories].sort(compareText),
+    manifests,
     truncated,
     unscopedAuthorityUncertain,
   };
@@ -1168,14 +1199,56 @@ function packageJsonDirPath(relativePath: string): string | null {
 
 function packageManifestFromJson(
   source: string,
-): { readonly packageName: unknown; readonly valid: true } | { readonly valid: false } {
+):
+  | { readonly packageJson: Readonly<Record<string, unknown>>; readonly valid: true }
+  | { readonly valid: false } {
   try {
     const parsed: unknown = JSON.parse(source);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { valid: false };
-    return { packageName: (parsed as Record<string, unknown>).name, valid: true };
+    return { packageJson: parsed as Readonly<Record<string, unknown>>, valid: true };
   } catch {
     return { valid: false };
   }
+}
+
+async function readPnpmWorkspaceSource(
+  gateway: WorkspaceSourceDiscoveryGateway,
+  rootPath: string,
+  isCurrent: () => boolean,
+): Promise<{ readonly source: string | undefined; readonly truncated: boolean }> {
+  try {
+    let read = await gateway.readSourceTextBounded(
+      rootPath,
+      "pnpm-workspace.yaml",
+      MAX_PNPM_WORKSPACE_BYTES,
+    );
+    if (!isCurrent()) return { source: undefined, truncated: true };
+    if (read.status === "changed") {
+      read = await gateway.readSourceTextBounded(
+        rootPath,
+        "pnpm-workspace.yaml",
+        MAX_PNPM_WORKSPACE_BYTES,
+      );
+    }
+    if (!isCurrent()) return { source: undefined, truncated: true };
+    if (read.status === "notFound") return { source: undefined, truncated: false };
+    if (read.status !== "ok") return { source: undefined, truncated: true };
+    return { source: read.content, truncated: false };
+  } catch {
+    return { source: undefined, truncated: true };
+  }
+}
+
+function combineImportPathResolvers(
+  aliasResolver: ExpressImportPathResolver | undefined,
+  workspacePackageGraph: WorkspacePackageGraph,
+): ExpressImportPathResolver | undefined {
+  if (!aliasResolver && workspacePackageGraph.packages.length === 0) return undefined;
+  return (specifier, importer) => {
+    const aliases = aliasResolver?.(specifier, importer) ?? [];
+    if (aliases.length > 0) return aliases;
+    return workspacePackageGraph.resolve(specifier);
+  };
 }
 
 function utf8ByteLengthBounded(value: string, maxBytes: number): number | null {

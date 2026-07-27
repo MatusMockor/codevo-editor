@@ -942,6 +942,170 @@ describe("useWorkspaceExpressRoutes", () => {
     harness.unmount();
   });
 
+  it("resolves a bare workspace package mount to its TypeScript source entry", async () => {
+    const sources: Record<string, string> = {
+      "apps/api/src/app.ts": [
+        "const express = require('express');",
+        "const app = express();",
+        "const orders = require('@repo/orders');",
+        "app.use('/orders', orders);",
+      ].join("\n"),
+      "packages/orders/src/index.ts": [
+        "const express = require('express');",
+        "const router = express.Router();",
+        "router.get('/active', handler);",
+        "module.exports = router;",
+      ].join("\n"),
+    };
+    const manifests: Record<string, string> = {
+      "apps/api/package.json": '{"name":"@repo/api"}',
+      "package.json": '{"private":true,"workspaces":["apps/*","packages/*"]}',
+      "packages/orders/package.json":
+        '{"name":"@repo/orders","exports":{".":{"source":"./src/index.ts","default":"./dist/index.js"}}}',
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: Object.keys(manifests),
+        truncated: false,
+        visited: 4,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path in manifests) {
+          return { status: "ok" as const, content: manifests[path] ?? "" };
+        }
+        if (path === "pnpm-workspace.yaml" || path.endsWith("tsconfig.json")) {
+          return { status: "notFound" as const };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(harness.hook().routes).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: "/orders/active",
+        relativeFilePath: "packages/orders/src/index.ts",
+      }),
+    );
+    expect(harness.hook().truncated).toBe(false);
+    harness.unmount();
+  });
+
+  it("builds a pnpm package graph without a root package.json", async () => {
+    const sources: Record<string, string> = {
+      "apps/api/src/app.ts": [
+        "const express = require('express');",
+        "const app = express();",
+        "const orders = require('@repo/orders');",
+        "app.use('/orders', orders);",
+      ].join("\n"),
+      "packages/orders/index.js": [
+        "const express = require('express');",
+        "const router = express.Router();",
+        "router.get('/active', handler);",
+        "module.exports = router;",
+      ].join("\n"),
+    };
+    const manifests: Record<string, string> = {
+      "apps/api/package.json": '{"name":"@repo/api"}',
+      "packages/orders/package.json": '{"name":"@repo/orders","main":"index.js"}',
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 2,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: Object.keys(manifests),
+        truncated: false,
+        visited: 2,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "pnpm-workspace.yaml") {
+          return { status: "ok" as const, content: "packages:\n- 'apps/*'\n- 'packages/*'\n" };
+        }
+        if (path in manifests) {
+          return { status: "ok" as const, content: manifests[path] ?? "" };
+        }
+        if (path.endsWith("tsconfig.json")) return { status: "notFound" as const };
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(harness.hook().routes).toContainEqual(
+      expect.objectContaining({
+        path: "/orders/active",
+        relativeFilePath: "packages/orders/index.js",
+      }),
+    );
+    expect(harness.hook().truncated).toBe(false);
+    harness.unmount();
+  });
+
+  it("does not resolve package mounts from a truncated source enumeration", async () => {
+    const sources: Record<string, string> = {
+      "apps/api/src/app.ts": [
+        "const express = require('express');",
+        "const app = express();",
+        "const orders = require('@repo/orders');",
+        "app.use('/orders', orders);",
+      ].join("\n"),
+      "packages/orders/index.js": [
+        "const express = require('express');",
+        "const router = express.Router();",
+        "router.get('/active', handler);",
+        "module.exports = router;",
+      ].join("\n"),
+    };
+    const manifests: Record<string, string> = {
+      "package.json": '{"workspaces":["apps/*","packages/*"]}',
+      "apps/api/package.json": '{"name":"@repo/api"}',
+      "packages/orders/package.json": '{"name":"@repo/orders","main":"index.js"}',
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: true,
+        visited: 50_000,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: Object.keys(manifests),
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path in manifests) {
+          return { status: "ok" as const, content: manifests[path] ?? "" };
+        }
+        if (path === "pnpm-workspace.yaml" || path.endsWith("tsconfig.json")) {
+          return { status: "notFound" as const };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(harness.hook().routes).not.toContainEqual(
+      expect.objectContaining({ path: "/orders/active" }),
+    );
+    expect(harness.hook().truncated).toBe(true);
+    harness.unmount();
+  });
+
   it("uses root aliases when a package config is confirmed missing", async () => {
     const sources: Record<string, string> = {
       "packages/api/src/app.ts": [
@@ -1843,7 +2007,7 @@ describe("useWorkspaceExpressRoutes", () => {
         expect(harness.hook().routes.some((route) => route.path === "/api/admin")).toBe(true),
       );
 
-      expect(gateway.readSourceTextBounded).toHaveBeenCalledTimes(8);
+      expect(gateway.readSourceTextBounded).toHaveBeenCalledTimes(10);
       harness.unmount();
     } finally {
       vi.useRealTimers();
@@ -1983,6 +2147,7 @@ describe("useWorkspaceExpressRoutes", () => {
         .mockResolvedValueOnce({ files, truncated: false, visited: 17 }),
       readSourceTextBounded: vi.fn(async (_root, path): Promise<BoundedWorkspaceSourceRead> => {
         if (path === "tsconfig.json") return { status: "tooLarge" };
+        if (path === "pnpm-workspace.yaml") return { status: "notFound" };
         if (path === "routes.ts") return { status: "ok", content: routeHeavy };
         activeReads += 1;
         peakReads = Math.max(peakReads, activeReads);

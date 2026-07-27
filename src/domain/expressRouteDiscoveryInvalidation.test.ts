@@ -64,6 +64,23 @@ describe("Express route discovery invalidation", () => {
     ).toBe(true);
   });
 
+  it("invalidates pnpm workspace model changes and renames", () => {
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({ kind: "modified", relativePath: "pnpm-workspace.yaml" }),
+      ),
+    ).toBe(true);
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({
+          kind: "renamed",
+          previousRelativePath: "pnpm-workspace.yaml",
+          relativePath: "pnpm-workspace.yaml.old",
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("invalidates root and nested tsconfig.json edits and renames on either side", () => {
     expect(
       workspaceFileChangeInvalidatesExpressRouteDiscovery(
