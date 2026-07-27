@@ -965,6 +965,29 @@ describe("debug Tauri IPC contract", () => {
     ).toThrow("debug_variables result.variables[0].extra");
   });
 
+  it("decodes a proxy capability page without rejecting its truthful truncation receipt", () => {
+    const page = {
+      variables: [
+        {
+          name: "req",
+          value: "Proxy",
+          type: "proxy",
+          evaluateName: "req",
+          variablesReference: 0,
+        },
+      ],
+      filter: "named",
+      start: 0,
+      returned: 1,
+      total: 1,
+      nextStart: null,
+      truncated: true,
+      limitReason: "capability",
+    };
+
+    expect(decodeDebugIpcResult("debug_variables", page)).toEqual(page);
+  });
+
   it.each([
     {},
     { request: { rootPath: "/workspace", sessionId: 8 } },

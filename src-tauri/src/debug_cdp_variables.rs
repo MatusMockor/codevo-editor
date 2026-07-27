@@ -7,7 +7,9 @@ use crate::debug_adapter::{
     DebugEvaluateFailure, DebugVariableFilter, DebugVariableInfo, DebugVariablePage,
     DebugVariablePageRequest,
 };
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -22,8 +24,12 @@ use evaluate_name::{
 
 #[path = "debug_cdp_descriptor_snapshot_policy.rs"]
 mod descriptor_snapshot_policy;
-use descriptor_snapshot_policy::{
-    is_canonical_array_index, retained_descriptor_prefix_search, validate_property_descriptor,
+use descriptor_snapshot_policy::{retained_descriptor_prefix_search, validate_property_descriptor};
+
+#[path = "debug_cdp_collection_variables.rs"]
+mod collection_variables;
+use collection_variables::{
+    acquire_descriptor_sources, remote_object_access, reserve_variable_page_load,
 };
 
 pub(super) mod set_variable {
@@ -47,6 +53,8 @@ pub(super) mod set_expression_proof {
 }
 
 pub(super) const MAX_CDP_PROPERTY_DESCRIPTORS: usize = 10_000;
+pub(super) const MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION: usize = 512;
+const _: () = assert!(MAX_CDP_COLLECTION_ENTRIES_PER_COLLECTION == 512);
 pub(super) const MAX_CDP_PROPERTY_DESCRIPTOR_BYTES_PER_PAUSE: usize = 4 * 1024 * 1024;
 pub(super) const MAX_CDP_OBJECT_REFERENCES_PER_PAUSE: usize = 4_096;
 pub(super) const MAX_CDP_OBJECT_REFERENCE_BYTES_PER_PAUSE: usize = 4 * 1024 * 1024;
@@ -117,6 +125,7 @@ pub(super) enum ObjectReferenceMutation {
 pub(super) enum ObjectReferenceAccess {
     ScopeRoot,
     Object,
+    Collection,
 }
 
 pub(super) fn scope_mutation(
@@ -170,6 +179,15 @@ pub(super) struct ObjectReferenceKey {
     evaluate_name: Option<String>,
     mutation: ObjectReferenceMutation,
     lineage: Option<ObjectReferenceLineage>,
+    access: ObjectReferenceAccess,
+}
+
+struct ObjectReferenceRegistration<'a> {
+    object_id: &'a str,
+    evaluate_name: Option<String>,
+    mutation: ObjectReferenceMutation,
+    lineage: Option<ObjectReferenceLineage>,
+    access: ObjectReferenceAccess,
 }
 
 pub(super) fn variable_from_remote_object(
@@ -199,17 +217,22 @@ pub(super) fn variable_from_remote_object(
     let variables_reference = remote
         .get("objectId")
         .and_then(Value::as_str)
+        .filter(|_| remote.get("subtype").and_then(Value::as_str) != Some("proxy"))
         .and_then(|object_id| {
             owner.and_then(|(pause_generation, frame_id)| {
-                register_object_reference(
+                register_object_reference_with_lineage(
                     shared,
                     pause_generation,
                     frame_id,
-                    object_id,
-                    evaluate_name
-                        .as_deref()
-                        .and_then(evaluation_parent_accessor),
-                    mutation.clone(),
+                    ObjectReferenceRegistration {
+                        object_id,
+                        evaluate_name: evaluate_name
+                            .as_deref()
+                            .and_then(evaluation_parent_accessor),
+                        mutation: mutation.clone(),
+                        lineage: None,
+                        access: remote_object_access(remote),
+                    },
                 )
             })
         })
@@ -330,7 +353,7 @@ fn mint_watch_set_expression_reference(
 pub(super) fn assigned_evaluate_name(parent: &ObjectReference, name: &str) -> Option<String> {
     match parent.access {
         ObjectReferenceAccess::ScopeRoot => scope_child_evaluate_name(name, false),
-        ObjectReferenceAccess::Object => {
+        ObjectReferenceAccess::Object | ObjectReferenceAccess::Collection => {
             nested_evaluate_name(parent.evaluate_name.as_deref(), name, false)
         }
     }
@@ -355,6 +378,7 @@ pub(super) fn load_variables_page(
     let mut variables = Vec::new();
     let mut aggregate_bytes = 2usize;
     let mut aggregate_truncated = false;
+    let mut capability_truncated = false;
     let mut child_limit_reason = None;
     for descriptor_index in indices
         .iter()
@@ -397,6 +421,8 @@ pub(super) fn load_variables_page(
         )
         .then_some(true);
         let has_child = remote.get("objectId").and_then(Value::as_str).is_some();
+        let proxy = remote.get("subtype").and_then(Value::as_str) == Some("proxy");
+        capability_truncated |= proxy;
         let encoded_bytes = serde_json::to_vec(&variable)
             .map_err(|error| format!("Unable to encode a debug variable: {error}"))?
             .len()
@@ -415,27 +441,38 @@ pub(super) fn load_variables_page(
         variable.variables_reference = remote
             .get("objectId")
             .and_then(Value::as_str)
+            .filter(|_| remote.get("subtype").and_then(Value::as_str) != Some("proxy"))
             .and_then(|object_id| {
                 if !valid_mutation_name {
-                    return register_object_reference(
+                    return register_object_reference_with_lineage(
                         shared,
                         request.pause_generation,
                         request.frame_id,
-                        object_id,
-                        evaluate_name,
-                        ObjectReferenceMutation::ReadOnly,
+                        ObjectReferenceRegistration {
+                            object_id,
+                            evaluate_name,
+                            mutation: ObjectReferenceMutation::ReadOnly,
+                            lineage: None,
+                            access: remote_object_access(remote),
+                        },
                     );
                 }
                 let mutation =
                     child_object_mutation(&parent.mutation, property, remote, private, synthetic);
-                register_child_object_reference(
+                register_object_reference_with_lineage(
                     shared,
-                    (request.pause_generation, request.frame_id),
-                    request.variables_reference,
-                    name,
-                    object_id,
-                    evaluate_name,
-                    mutation,
+                    request.pause_generation,
+                    request.frame_id,
+                    ObjectReferenceRegistration {
+                        object_id,
+                        evaluate_name,
+                        mutation,
+                        lineage: Some(ObjectReferenceLineage {
+                            parent_reference: request.variables_reference,
+                            property_name: name.to_string(),
+                        }),
+                        access: remote_object_access(remote),
+                    },
                 )
             })
             .unwrap_or(0);
@@ -453,20 +490,27 @@ pub(super) fn load_variables_page(
     }
     let returned = u32::try_from(variables.len()).unwrap_or(request.count);
     let consumed = request.start.saturating_add(u64::from(returned));
+    let mut limit_reason = child_limit_reason;
+    if capability_truncated {
+        limit_reason = Some(crate::debug_adapter::DebugVariablePageLimitReason::Capability);
+    }
+    if aggregate_truncated {
+        limit_reason = Some(crate::debug_adapter::DebugVariablePageLimitReason::PageBytes);
+    }
+    if descriptors_truncated {
+        limit_reason = snapshot.limit_reason;
+    }
     Ok(DebugVariablePage {
         variables,
         start: request.start,
         returned,
         total,
         next_start: (child_limit_reason.is_none() && consumed < available).then_some(consumed),
-        truncated: descriptors_truncated || aggregate_truncated || child_limit_reason.is_some(),
-        limit_reason: if descriptors_truncated {
-            snapshot.limit_reason
-        } else if aggregate_truncated {
-            Some(crate::debug_adapter::DebugVariablePageLimitReason::PageBytes)
-        } else {
-            child_limit_reason
-        },
+        truncated: descriptors_truncated
+            || aggregate_truncated
+            || capability_truncated
+            || child_limit_reason.is_some(),
+        limit_reason,
     })
 }
 
@@ -495,53 +539,29 @@ fn descriptor_snapshot(
     request: DebugVariablePageRequest,
     parent: &ObjectReference,
 ) -> Result<Arc<PropertyDescriptorSnapshot>, String> {
-    {
-        let mut state = shared.lock().map_err(|error| error.to_string())?;
+    let cached = {
+        let state = shared.lock().map_err(|error| error.to_string())?;
         let pause = state
             .pause
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| "The debugger is not paused.".to_string())?;
-        if let Some(snapshot) = pause
+        pause
             .property_descriptor_snapshots
             .get(&request.variables_reference)
-        {
-            return Ok(Arc::clone(snapshot));
-        }
-        if pause.variable_page_loads >= MAX_CDP_VARIABLE_PAGE_LOADS_PER_PAUSE {
-            return Err(
-                "The debug variable acquisition limit was reached for this pause.".to_string(),
-            );
-        }
-        pause.variable_page_loads += 1;
+            .cloned()
+    };
+    if let Some(snapshot) = cached {
+        return Ok(snapshot);
     }
 
-    let result = client.request(
-        "Runtime.getProperties",
-        json!({
-            "objectId": parent.object_id,
-            "ownProperties": true,
-            "generatePreview": false,
-        }),
-    )?;
-    let properties = result
-        .get("result")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "Runtime.getProperties returned no descriptor array.".to_string())?;
-    let empty = Vec::new();
-    let private_properties = match result.get("privateProperties") {
-        None => &empty,
-        Some(value) => value.as_array().ok_or_else(|| {
-            "Runtime.getProperties returned invalid private descriptors.".to_string()
-        })?,
-    };
+    reserve_variable_page_load(shared, request)?;
+    let acquisition = acquire_descriptor_sources(client, shared, request, parent)?;
     let mut descriptors = Vec::new();
     let mut snapshot_bytes = 0usize;
-    let mut limit_reason = None;
-    for (property, private) in properties
-        .iter()
-        .map(|property| (property, false))
-        .chain(private_properties.iter().map(|property| (property, true)))
-    {
+    let mut limit_reason = acquisition.limit_reason;
+    for source in acquisition.sources {
+        let property = &source.property;
+        let private = source.private;
         validate_property_descriptor(property)?;
         if descriptors.len() >= MAX_CDP_PROPERTY_DESCRIPTORS {
             limit_reason =
@@ -559,13 +579,11 @@ fn descriptor_snapshot(
             break;
         }
         snapshot_bytes += encoded_bytes;
+        let indexed = source.indexed;
         descriptors.push(CachedPropertyDescriptor {
-            property: property.clone(),
+            property: source.property,
             private,
-            indexed: property
-                .get("name")
-                .and_then(Value::as_str)
-                .is_some_and(is_canonical_array_index),
+            indexed,
             encoded_bytes,
             prefix_bytes: snapshot_bytes,
         });
@@ -749,10 +767,13 @@ pub(super) fn register_object_reference(
         shared,
         pause_generation,
         frame_id,
-        object_id,
-        evaluate_name,
-        mutation,
-        None,
+        ObjectReferenceRegistration {
+            object_id,
+            evaluate_name,
+            mutation,
+            lineage: None,
+            access: ObjectReferenceAccess::Object,
+        },
     )
 }
 
@@ -770,13 +791,16 @@ pub(super) fn register_child_object_reference(
         shared,
         pause_generation,
         frame_id,
-        object_id,
-        evaluate_name,
-        mutation,
-        Some(ObjectReferenceLineage {
-            parent_reference,
-            property_name: property_name.to_string(),
-        }),
+        ObjectReferenceRegistration {
+            object_id,
+            evaluate_name,
+            mutation,
+            lineage: Some(ObjectReferenceLineage {
+                parent_reference,
+                property_name: property_name.to_string(),
+            }),
+            access: ObjectReferenceAccess::Object,
+        },
     )
 }
 
@@ -784,11 +808,15 @@ fn register_object_reference_with_lineage(
     shared: &Arc<Mutex<CdpShared>>,
     pause_generation: u64,
     frame_id: u64,
-    object_id: &str,
-    evaluate_name: Option<String>,
-    mutation: ObjectReferenceMutation,
-    lineage: Option<ObjectReferenceLineage>,
+    registration: ObjectReferenceRegistration<'_>,
 ) -> Option<u64> {
+    let ObjectReferenceRegistration {
+        object_id,
+        evaluate_name,
+        mutation,
+        lineage,
+        access,
+    } = registration;
     if object_id.is_empty() || object_id.len() > MAX_CDP_OBJECT_ID_BYTES {
         return None;
     }
@@ -826,6 +854,7 @@ fn register_object_reference_with_lineage(
         evaluate_name: evaluate_name.clone(),
         mutation: mutation.clone(),
         lineage: lineage.clone(),
+        access,
     };
     if let Some(reference) = state
         .pause
@@ -852,7 +881,7 @@ fn register_object_reference_with_lineage(
         object_id: object_id.to_string(),
         pause_generation,
         evaluate_name,
-        access: ObjectReferenceAccess::Object,
+        access,
         mutation,
         lineage,
     };
@@ -1168,6 +1197,7 @@ mod cache_tests {
             evaluate_name,
             mutation: read_only(),
             lineage: None,
+            access: ObjectReferenceAccess::Object,
         };
         let one_copy = object_reference_retained_bytes(
             &owned.object_id,

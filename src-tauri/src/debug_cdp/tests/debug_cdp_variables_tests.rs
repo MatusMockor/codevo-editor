@@ -34,6 +34,11 @@ mod variable_range_tests {
     include!("debug_cdp_variable_range_tests.rs");
 }
 
+mod collection_variables_tests {
+    use super::*;
+    include!("debug_cdp_collection_variables_tests.rs");
+}
+
 fn variables_responder(properties: Value) -> MockResponder {
     Box::new(move |id, method, _params| match method {
         "Runtime.runIfWaitingForDebugger" => vec![

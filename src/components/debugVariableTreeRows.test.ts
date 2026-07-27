@@ -106,4 +106,44 @@ describe("debugVariableTreeRows", () => {
     );
     expect(resolveActiveRow("missing", previousRows, [])).toBe("root:local");
   });
+
+  it("shows the retained-cap receipt together with the next page action", () => {
+    const variablePages: DebugVariablePagesState = {
+      owner,
+      references: {
+        10: {
+          pages: {
+            0: {
+              start: 0,
+              filter: "named",
+              variables: [{ name: "0", value: "entry", variablesReference: 0 }],
+              nextStart: 100,
+              total: null,
+              truncated: true,
+              limitReason: "descriptor-count",
+            },
+          },
+          pending: {},
+          errors: {},
+          limit: null,
+        },
+      },
+      pendingCount: 0,
+      totalVariables: 1,
+      totalBytes: 0,
+    };
+
+    const rows = buildRows({
+      expandedIds: new Set(["root:local"]),
+      maxRows: 500,
+      paged: true,
+      roots: [{ id: "local", label: "Local", owner, variablesReference: 10 }],
+      variablePages,
+      variableMutationRows: undefined,
+      variablesByReference: {},
+    });
+
+    expect(rows.map((row) => row.label)).toContain("Limit reached: descriptor count");
+    expect(rows.map((row) => row.label)).toContain("Load more");
+  });
 });

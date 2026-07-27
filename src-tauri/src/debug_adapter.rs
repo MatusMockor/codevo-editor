@@ -144,6 +144,8 @@ pub enum DebugVariableFilter {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DebugVariablePageLimitReason {
+    AcquisitionCount,
+    Capability,
     DescriptorCount,
     DescriptorBytes,
     PageBytes,

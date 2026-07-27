@@ -114,6 +114,43 @@ describe("debugVariablePages", () => {
     ).toBe(pending);
   });
 
+  it("accepts the closed capability truncation reason from a proxy page", () => {
+    const pending = request(createDebugVariablePagesState(owner), 20, 0);
+    const settled = reduceDebugVariablePages(pending, {
+      type: "resolve",
+      owner,
+      variablesReference: 20,
+      start: 0,
+      requestId: "request-20-0",
+      result: {
+        variablesReference: 20,
+        filter: "named",
+        start: 0,
+        variables: [
+          {
+            name: "req",
+            value: "Proxy",
+            type: "proxy",
+            variablesReference: 0,
+          },
+        ],
+        nextStart: null,
+        total: 1,
+        truncated: true,
+        limitReason: "capability",
+      },
+    });
+
+    expect(settled.references[20]?.pages[0]).toMatchObject({
+      truncated: true,
+      limitReason: "capability",
+    });
+    expect(selectDebugVariableExpansion(settled, owner, 20)).toMatchObject({
+      kind: "ready",
+      nextStart: null,
+    });
+  });
+
   it("keeps persistent reference buckets enumerable and safe for nonnumeric property probes", () => {
     const initial = createDebugVariablePagesState(owner);
     const first = request(initial, 2, 0, "two");

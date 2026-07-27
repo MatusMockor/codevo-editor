@@ -1,7 +1,4 @@
-//! Side-effect-free Debug Console completion discovery.
-//!
-//! This deliberately never evaluates source text. It walks pause-owned scope
-//! objects and ordinary own data descriptors only.
+//! Discovers pause-owned Debug Console completions through descriptor inspection without evaluating source text or invoking runtime accessors.
 
 use super::transport::{CdpClient, CdpShared};
 use super::variables::{
@@ -15,21 +12,56 @@ use crate::debug_adapter::{
     DebugCompletionResult, DebugCompletionRoot,
 };
 use serde_json::{json, Value};
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::HashSet;
+use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const MAX_COMPLETION_ITEMS: usize = 200;
 const MAX_COMPLETION_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_COMPLETION_QUERY_BYTES: usize = 4 * 1024;
-const MAX_COMPLETION_REQUESTS_PER_PAUSE: usize = 64;
-const MAX_COMPLETION_DESCRIPTORS_PER_PAUSE: usize = 40_000;
+pub(super) const MAX_COMPLETION_REQUESTS_PER_PAUSE: usize =
+    64 * (1 + MAX_COMPLETION_PROTOTYPE_DEPTH);
+pub(super) const MAX_COMPLETION_DESCRIPTORS_PER_PAUSE: usize = 40_000;
 const MAX_COMPLETION_DEPTH: usize = 8;
+pub(super) const MAX_COMPLETION_PROTOTYPE_DEPTH: usize = 4;
+const MAX_COMPLETION_DESCRIPTOR_PAYLOAD_BYTES: usize = 1024 * 1024;
 const COMPLETION_DEADLINE: Duration = Duration::from_millis(300);
+
+#[cfg(test)]
+thread_local! {
+    static TEST_COMPLETION_DEADLINE: Cell<Option<Duration>> = const { Cell::new(None) };
+}
 
 struct PropertyBatch {
     properties: Vec<Value>,
-    incomplete: bool,
+    prototype_object_id: Option<String>,
+    descriptor_incomplete: bool,
+    prototype_incomplete: bool,
+}
+
+struct PayloadByteCounter {
+    written: usize,
+}
+
+impl Write for PayloadByteCounter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let next = self
+            .written
+            .checked_add(buffer.len())
+            .ok_or_else(|| io::Error::other("payload byte count overflowed"))?;
+        if next > MAX_COMPLETION_DESCRIPTOR_PAYLOAD_BYTES {
+            return Err(io::Error::other("descriptor payload byte limit exceeded"));
+        }
+        self.written = next;
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 pub(super) fn complete(
@@ -37,7 +69,7 @@ pub(super) fn complete(
     shared: &Arc<Mutex<CdpShared>>,
     request: DebugCompletionRequest,
 ) -> Result<DebugCompletionResult, String> {
-    let deadline = Instant::now() + COMPLETION_DEADLINE;
+    let deadline = Instant::now() + completion_deadline();
     ensure_owner(shared, request.pause_generation, request.frame_id)?;
     let (labels, kind, mut incomplete) = match &request.query {
         DebugCompletionQuery::Lexical { prefix } => {
@@ -69,11 +101,11 @@ pub(super) fn complete(
         }
     };
     ensure_owner(shared, request.pause_generation, request.frame_id)?;
-    ensure_deadline(deadline)?;
+    incomplete |= Instant::now() >= deadline;
 
     let mut labels = labels;
     labels.sort_unstable();
-    ensure_deadline(deadline)?;
+    incomplete |= Instant::now() >= deadline;
     labels.dedup();
     if labels.len() > MAX_COMPLETION_ITEMS {
         labels.truncate(MAX_COMPLETION_ITEMS);
@@ -83,17 +115,17 @@ pub(super) fn complete(
         .into_iter()
         .map(|label| DebugCompletionItem { label, kind })
         .collect::<Vec<_>>();
-    while serialized_size(&items, incomplete, deadline)? > MAX_COMPLETION_RESPONSE_BYTES {
-        ensure_deadline(deadline)?;
-        if items.pop().is_none() {
-            return Err("Unable to bound the debug completion response.".into());
+    for _ in 0..=MAX_COMPLETION_ITEMS {
+        if serialized_size(&items, incomplete)? <= MAX_COMPLETION_RESPONSE_BYTES {
+            return Ok(DebugCompletionResult {
+                items,
+                is_incomplete: incomplete,
+            });
         }
+        items.pop();
         incomplete = true;
     }
-    Ok(DebugCompletionResult {
-        items,
-        is_incomplete: incomplete,
-    })
+    Err("Unable to bound the debug completion response.".into())
 }
 
 fn lexical_labels(
@@ -121,7 +153,7 @@ fn lexical_labels(
             &object_id,
             deadline,
         )?;
-        incomplete |= batch.incomplete;
+        incomplete |= batch.descriptor_incomplete;
         for descriptor in batch.properties {
             if Instant::now() >= deadline {
                 incomplete = true;
@@ -131,7 +163,6 @@ fn lexical_labels(
                 incomplete = true;
                 continue;
             };
-            // A nearer accessor or malformed descriptor still shadows an outer binding.
             if !seen.insert(name.to_string()) {
                 continue;
             }
@@ -143,9 +174,7 @@ fn lexical_labels(
                 labels.push(name.to_string());
             }
         }
-        // Missing descriptors in a nearer scope may shadow every outer name.
-        // Keep the known nearer results but never guess by falling through.
-        if batch.incomplete {
+        if batch.descriptor_incomplete {
             break;
         }
     }
@@ -178,7 +207,9 @@ fn member_labels(
         }
     };
     for segment in path {
-        ensure_deadline(deadline)?;
+        if Instant::now() >= deadline {
+            return Ok((Vec::new(), true));
+        }
         if segment.len() > MAX_COMPLETION_QUERY_BYTES || segment.chars().any(char::is_control) {
             return Err("Debug completion member path contains an invalid property name.".into());
         }
@@ -190,8 +221,8 @@ fn member_labels(
             &object_id,
             deadline,
         )?;
-        incomplete |= batch.incomplete;
-        if batch.incomplete {
+        incomplete |= batch.descriptor_incomplete;
+        if batch.descriptor_incomplete {
             return Ok((Vec::new(), true));
         }
         object_id = unique_ordinary_data_object_id(&batch.properties, segment)
@@ -200,37 +231,88 @@ fn member_labels(
             })?
             .to_string();
     }
-    let batch = completion_properties(
+    let (labels, prototype_incomplete) = member_property_labels(
         client,
         shared,
         pause_generation,
         frame_id,
-        &object_id,
+        object_id,
+        prefix,
         deadline,
     )?;
-    incomplete |= batch.incomplete;
+    Ok((labels, incomplete | prototype_incomplete))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn member_property_labels(
+    client: &CdpClient,
+    shared: &Arc<Mutex<CdpShared>>,
+    pause_generation: u64,
+    frame_id: u64,
+    mut object_id: String,
+    prefix: &str,
+    deadline: Instant,
+) -> Result<(Vec<String>, bool), String> {
     let mut labels = Vec::new();
-    let mut seen = HashSet::new();
-    for descriptor in batch.properties {
+    let mut seen_names = HashSet::new();
+    let mut seen_objects = HashSet::new();
+    let mut incomplete = false;
+    seen_objects.insert(object_id.clone());
+    for depth in 0..=MAX_COMPLETION_PROTOTYPE_DEPTH {
         if Instant::now() >= deadline {
             incomplete = true;
             break;
         }
-        let Some(name) = descriptor.get("name").and_then(Value::as_str) else {
-            incomplete = true;
-            continue;
-        };
-        if !seen.insert(name.to_string()) {
-            incomplete = true;
-            continue;
-        }
-        if descriptor.get("value").is_some()
-            && is_valid_debug_variable_name(name)
-            && is_ecmascript_identifier_name(name)
-            && name.starts_with(prefix)
-        {
+        let batch = completion_properties(
+            client,
+            shared,
+            pause_generation,
+            frame_id,
+            &object_id,
+            deadline,
+        )?;
+        incomplete |= batch.descriptor_incomplete | batch.prototype_incomplete;
+        let mut level_names = HashSet::new();
+        for descriptor in batch.properties {
+            if Instant::now() >= deadline {
+                incomplete = true;
+                break;
+            }
+            let Some(name) = descriptor.get("name").and_then(Value::as_str) else {
+                incomplete = true;
+                continue;
+            };
+            if !level_names.insert(name.to_string()) {
+                incomplete = true;
+                continue;
+            }
+            if !seen_names.insert(name.to_string()) {
+                continue;
+            }
+            if descriptor.get("value").is_none()
+                || !is_valid_debug_variable_name(name)
+                || !is_ecmascript_identifier_name(name)
+                || !name.starts_with(prefix)
+            {
+                continue;
+            }
             labels.push(name.to_string());
         }
+        if batch.descriptor_incomplete || batch.prototype_incomplete {
+            break;
+        }
+        let Some(prototype_object_id) = batch.prototype_object_id else {
+            break;
+        };
+        if depth == MAX_COMPLETION_PROTOTYPE_DEPTH {
+            incomplete = true;
+            break;
+        }
+        if !seen_objects.insert(prototype_object_id.clone()) {
+            incomplete = true;
+            break;
+        }
+        object_id = prototype_object_id;
     }
     Ok((labels, incomplete))
 }
@@ -257,10 +339,8 @@ fn resolve_binding_object(
             &scope_id,
             deadline,
         )?;
-        incomplete |= batch.incomplete;
-        // A truncated nearer scope may contain the binding (or a duplicate).
-        // Returning an outer/root candidate would violate lexical ownership.
-        if batch.incomplete {
+        incomplete |= batch.descriptor_incomplete;
+        if batch.descriptor_incomplete {
             return Ok((None, true));
         }
         let matches = batch
@@ -318,10 +398,22 @@ fn completion_properties(
     if object_id.is_empty() || object_id.len() > MAX_CDP_OBJECT_ID_BYTES {
         return Err("Debug completion object identity is invalid.".into());
     }
-    reserve_request(shared, pause_generation, frame_id)?;
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .ok_or_else(|| "Debug completion deadline expired.".to_string())?;
+    if !reserve_request(shared, pause_generation, frame_id)? {
+        return Ok(PropertyBatch {
+            properties: Vec::new(),
+            prototype_object_id: None,
+            descriptor_incomplete: true,
+            prototype_incomplete: false,
+        });
+    }
+    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+        return Ok(PropertyBatch {
+            properties: Vec::new(),
+            prototype_object_id: None,
+            descriptor_incomplete: true,
+            prototype_incomplete: false,
+        });
+    };
     let response = client.request_with_timeout(
         "Runtime.getProperties",
         json!({
@@ -332,7 +424,17 @@ fn completion_properties(
         }),
         remaining,
     )?;
-    ensure_deadline(deadline)?;
+    ensure_owner(shared, pause_generation, frame_id)?;
+    let mut descriptor_incomplete = Instant::now() >= deadline;
+    if !descriptor_payload_within_bound(&response) {
+        return Ok(PropertyBatch {
+            properties: Vec::new(),
+            prototype_object_id: None,
+            descriptor_incomplete: true,
+            prototype_incomplete: false,
+        });
+    }
+    descriptor_incomplete |= Instant::now() >= deadline;
     let properties = response
         .get("result")
         .and_then(Value::as_array)
@@ -342,19 +444,69 @@ fn completion_properties(
         .filter_map(|key| response.get(key).and_then(Value::as_array))
         .try_fold(0usize, |count, values| count.checked_add(values.len()))
         .ok_or_else(|| "Debug completion descriptor count overflowed.".to_string())?;
-    ensure_deadline(deadline)?;
-    charge_descriptors(shared, pause_generation, frame_id, descriptor_count)?;
-    let mut incomplete = descriptor_count > MAX_CDP_PROPERTY_DESCRIPTORS;
+    descriptor_incomplete |= Instant::now() >= deadline;
+    if !charge_descriptors(shared, pause_generation, frame_id, descriptor_count)? {
+        return Ok(PropertyBatch {
+            properties: Vec::new(),
+            prototype_object_id: None,
+            descriptor_incomplete: true,
+            prototype_incomplete: false,
+        });
+    }
+    descriptor_incomplete |= descriptor_count > MAX_CDP_PROPERTY_DESCRIPTORS;
+    let (prototype_object_id, prototype_incomplete) = prototype_object_id(&response);
     let mut bounded = Vec::with_capacity(properties.len().min(MAX_CDP_PROPERTY_DESCRIPTORS));
     for property in properties.iter().take(MAX_CDP_PROPERTY_DESCRIPTORS) {
-        ensure_deadline(deadline)?;
-        incomplete |= !is_well_formed_completion_descriptor(property);
+        descriptor_incomplete |= Instant::now() >= deadline;
+        descriptor_incomplete |= !is_well_formed_completion_descriptor(property);
         bounded.push(property.clone());
     }
     Ok(PropertyBatch {
         properties: bounded,
-        incomplete,
+        prototype_object_id,
+        descriptor_incomplete,
+        prototype_incomplete,
     })
+}
+
+fn descriptor_payload_within_bound(response: &Value) -> bool {
+    let mut counter = PayloadByteCounter { written: 0 };
+    serde_json::to_writer(&mut counter, response).is_ok()
+}
+
+fn prototype_object_id(response: &Value) -> (Option<String>, bool) {
+    let Some(internal_properties) = response.get("internalProperties") else {
+        return (None, false);
+    };
+    let Some(internal_properties) = internal_properties.as_array() else {
+        return (None, true);
+    };
+    let mut prototypes = internal_properties.iter().filter(|descriptor| {
+        descriptor.get("name").and_then(Value::as_str) == Some("[[Prototype]]")
+    });
+    let Some(prototype) = prototypes.next() else {
+        return (None, false);
+    };
+    if prototypes.next().is_some() {
+        return (None, true);
+    }
+    let Some(remote) = prototype.get("value") else {
+        return (None, true);
+    };
+    if remote.get("subtype").and_then(Value::as_str) == Some("proxy") {
+        return (None, true);
+    }
+    match remote.get("type").and_then(Value::as_str) {
+        Some("object" | "function") => {}
+        _ => return (None, true),
+    }
+    let Some(object_id) = remote.get("objectId").and_then(Value::as_str) else {
+        return (None, true);
+    };
+    if object_id.is_empty() || object_id.len() > MAX_CDP_OBJECT_ID_BYTES {
+        return (None, true);
+    }
+    (Some(object_id.to_string()), false)
 }
 
 fn is_well_formed_completion_descriptor(descriptor: &Value) -> bool {
@@ -438,7 +590,7 @@ fn reserve_request(
     shared: &Arc<Mutex<CdpShared>>,
     pause_generation: u64,
     frame_id: u64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut state = shared.lock().map_err(|error| error.to_string())?;
     let pause = state
         .pause
@@ -448,10 +600,10 @@ fn reserve_request(
         return Err("The debug completion pause owner changed.".into());
     }
     if pause.completion_requests >= MAX_COMPLETION_REQUESTS_PER_PAUSE {
-        return Err("Debug completion request quota was exhausted for this pause.".into());
+        return Ok(false);
     }
     pause.completion_requests += 1;
-    Ok(())
+    Ok(true)
 }
 
 fn charge_descriptors(
@@ -459,7 +611,7 @@ fn charge_descriptors(
     pause_generation: u64,
     frame_id: u64,
     count: usize,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut state = shared.lock().map_err(|error| error.to_string())?;
     let pause = state
         .pause
@@ -468,36 +620,45 @@ fn charge_descriptors(
     if pause.pause_generation != pause_generation || !pause.call_frame_ids.contains_key(&frame_id) {
         return Err("The debug completion pause owner changed.".into());
     }
-    let next = pause
-        .completion_descriptors
-        .checked_add(count)
-        .ok_or_else(|| "Debug completion descriptor quota overflowed.".to_string())?;
+    let Some(next) = pause.completion_descriptors.checked_add(count) else {
+        pause.completion_descriptors = MAX_COMPLETION_DESCRIPTORS_PER_PAUSE;
+        return Ok(false);
+    };
     if next > MAX_COMPLETION_DESCRIPTORS_PER_PAUSE {
         pause.completion_descriptors = MAX_COMPLETION_DESCRIPTORS_PER_PAUSE;
-        return Err("Debug completion descriptor quota was exhausted for this pause.".into());
+        return Ok(false);
     }
     pause.completion_descriptors = next;
-    Ok(())
+    Ok(true)
 }
 
-fn ensure_deadline(deadline: Instant) -> Result<(), String> {
-    (Instant::now() < deadline)
-        .then_some(())
-        .ok_or_else(|| "Debug completion deadline expired.".to_string())
+fn completion_deadline() -> Duration {
+    #[cfg(test)]
+    if let Some(deadline) = TEST_COMPLETION_DEADLINE.with(Cell::get) {
+        return deadline;
+    }
+    COMPLETION_DEADLINE
 }
 
-fn serialized_size(
-    items: &[DebugCompletionItem],
-    is_incomplete: bool,
-    deadline: Instant,
-) -> Result<usize, String> {
-    ensure_deadline(deadline)?;
+#[cfg(test)]
+pub(super) fn with_test_completion_deadline<T>(
+    deadline: Duration,
+    operation: impl FnOnce() -> T,
+) -> T {
+    TEST_COMPLETION_DEADLINE.with(|slot| {
+        let previous = slot.replace(Some(deadline));
+        let result = operation();
+        slot.set(previous);
+        result
+    })
+}
+
+fn serialized_size(items: &[DebugCompletionItem], is_incomplete: bool) -> Result<usize, String> {
     let encoded = serde_json::to_vec(&DebugCompletionResult {
         items: items.to_vec(),
         is_incomplete,
     })
     .map_err(|_| "Unable to encode the debug completion response.".to_string())?;
-    ensure_deadline(deadline)?;
     Ok(encoded.len())
 }
 
@@ -522,20 +683,77 @@ mod tests {
     }
 
     #[test]
+    fn prototype_policy_blocks_proxies_and_malformed_identity() {
+        for response in [
+            json!({"internalProperties":[{
+                "name":"[[Prototype]]",
+                "value":{"type":"object","subtype":"proxy","objectId":"proxy"}
+            }]}),
+            json!({"internalProperties":[{
+                "name":"[[Prototype]]",
+                "value":{"type":"object","objectId":""}
+            }]}),
+        ] {
+            assert_eq!(prototype_object_id(&response), (None, true));
+        }
+    }
+
+    #[test]
+    fn descriptor_payload_overflow_is_bounded_as_incomplete() {
+        assert!(descriptor_payload_within_bound(&json!({
+            "result":[{"name":"x","value":{"type":"string","value":"x"}}]
+        })));
+        assert!(!descriptor_payload_within_bound(&json!({
+            "result":[{
+                "name":"x",
+                "value":{
+                    "type":"string",
+                    "value":"x".repeat(MAX_COMPLETION_DESCRIPTOR_PAYLOAD_BYTES)
+                }
+            }]
+        })));
+    }
+
+    #[test]
+    fn prototype_fan_out_scales_the_per_pause_request_budget() {
+        let mut state = CdpShared::new(None);
+        let mut pause = super::super::transport::PauseInventory {
+            pause_generation: 1,
+            ..super::super::transport::PauseInventory::default()
+        };
+        pause.call_frame_ids.insert(7, "frame-7".to_string());
+        state.pause = Some(pause);
+        let shared = Arc::new(Mutex::new(state));
+
+        for _ in 0..MAX_COMPLETION_REQUESTS_PER_PAUSE {
+            assert!(reserve_request(&shared, 1, 7).expect("scaled request reservation"));
+        }
+
+        assert!(!reserve_request(&shared, 1, 7).expect("quota signal"));
+    }
+
+    #[test]
+    fn descriptor_quota_exhaustion_is_a_truncation_signal() {
+        let mut state = CdpShared::new(None);
+        let mut pause = super::super::transport::PauseInventory {
+            pause_generation: 1,
+            completion_descriptors: MAX_COMPLETION_DESCRIPTORS_PER_PAUSE - 1,
+            ..super::super::transport::PauseInventory::default()
+        };
+        pause.call_frame_ids.insert(7, "frame-7".to_string());
+        state.pause = Some(pause);
+        let shared = Arc::new(Mutex::new(state));
+
+        assert!(!charge_descriptors(&shared, 1, 7, 2).expect("quota signal"));
+    }
+
+    #[test]
     fn response_cap_accounts_for_utf8_and_shape() {
         let item = DebugCompletionItem {
             label: "é".repeat(512),
             kind: DebugCompletionItemKind::Property,
         };
         let items = vec![item; MAX_COMPLETION_ITEMS];
-        assert!(
-            serialized_size(&items, true, Instant::now() + Duration::from_secs(1)).expect("size")
-                > MAX_COMPLETION_RESPONSE_BYTES
-        );
-    }
-
-    #[test]
-    fn response_work_rejects_an_expired_end_to_end_deadline() {
-        assert!(serialized_size(&[], false, Instant::now() - Duration::from_millis(1)).is_err());
+        assert!(serialized_size(&items, true).expect("size") > MAX_COMPLETION_RESPONSE_BYTES);
     }
 }

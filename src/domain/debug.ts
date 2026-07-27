@@ -126,7 +126,13 @@ export interface DebugVariable {
 export type DebugVariableFilter = "indexed" | "named";
 
 export type DebugVariablePageLimitReason =
-  "descriptor-count" | "descriptor-bytes" | "page-bytes" | "references" | "reference-bytes";
+  | "acquisition-count"
+  | "capability"
+  | "descriptor-count"
+  | "descriptor-bytes"
+  | "page-bytes"
+  | "references"
+  | "reference-bytes";
 
 export interface DebugSetVariableRequest {
   readonly rootPath: string;

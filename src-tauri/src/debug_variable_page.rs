@@ -181,4 +181,27 @@ mod tests {
             Some(DebugVariablePageLimitReason::References)
         );
     }
+
+    #[test]
+    fn proxy_page_passes_command_boundary() {
+        let proxy_page = DebugVariablePage {
+            variables: vec![crate::debug_adapter::DebugVariableInfo {
+                name: "req".to_string(),
+                value: "Proxy".to_string(),
+                value_type: Some("proxy".to_string()),
+                evaluate_name: Some("req".to_string()),
+                variables_reference: 0,
+                can_set_value: None,
+                set_expression_reference: None,
+            }],
+            start: 0,
+            returned: 1,
+            total: Some(1),
+            next_start: None,
+            truncated: true,
+            limit_reason: Some(DebugVariablePageLimitReason::Capability),
+        };
+
+        bound_variable_page(proxy_page, request()).expect("proxy capability page");
+    }
 }

@@ -2,7 +2,11 @@ import type {
   DebugVariableMutationRows,
   DebugVariableRowMutation,
 } from "../application/debugSessionContracts";
-import type { DebugVariable, DebugVariableFilter } from "../domain/debug";
+import type {
+  DebugVariable,
+  DebugVariableFilter,
+  DebugVariablePageLimitReason,
+} from "../domain/debug";
 import { buildDebugVariableRanges, debugIndexedRangeExtent } from "../domain/debugVariableRanges";
 import {
   selectDebugVariableExpansion,
@@ -298,27 +302,52 @@ export function buildRows({
         )?.[1]
       : undefined;
     if (indexedProjectionLimit) {
-      append(statusRow(id, depth + 1, `Indexed limit reached: ${indexedProjectionLimit}`));
-    } else if (indexedLoadError) {
+      append(
+        statusRow(
+          id,
+          depth + 1,
+          `Indexed limit reached: ${variablePageLimitReasonLabel(indexedProjectionLimit)}`,
+        ),
+      );
+    }
+    if (!indexedProjectionLimit && indexedLoadError) {
       append(statusRow(id, depth + 1, `Indexed unavailable: ${indexedLoadError}`));
     }
     if (namedProjectionLimit) {
-      append(statusRow(id, depth + 1, `Limit reached: ${namedProjectionLimit}`));
-    } else if (expansion.kind === "idle" || expansion.kind === "loading") {
-      append(statusRow(id, depth + 1, "Loading…"));
-    } else if (expansion.kind === "error") {
       append(
-        actionRow(
+        statusRow(
           id,
           depth + 1,
-          `Retry: ${expansion.message}`,
-          owner,
-          variablesReference,
-          expansion.nextStart,
+          `Limit reached: ${variablePageLimitReasonLabel(namedProjectionLimit)}`,
         ),
       );
-    } else if (expansion.kind === "ready" && expansion.nextStart !== null) {
-      append(actionRow(id, depth + 1, "Load more", owner, variablesReference, expansion.nextStart));
+    }
+    switch (expansion.kind) {
+      case "idle":
+      case "loading":
+        append(statusRow(id, depth + 1, "Loading…"));
+        break;
+      case "error":
+        append(
+          actionRow(
+            id,
+            depth + 1,
+            `Retry: ${expansion.message}`,
+            owner,
+            variablesReference,
+            expansion.nextStart,
+          ),
+        );
+        break;
+      case "ready":
+        if (expansion.nextStart !== null) {
+          append(
+            actionRow(id, depth + 1, "Load more", owner, variablesReference, expansion.nextStart),
+          );
+        }
+        break;
+      default:
+        expansion satisfies never;
     }
   };
   roots.forEach((root) =>
@@ -445,6 +474,25 @@ function terminalExpansionLabel(
   if (expansion.kind === "circular") return "Circular reference";
   if (expansion.kind === "limit") return `Limit reached: ${expansion.reason}`;
   return "No longer available";
+}
+
+function variablePageLimitReasonLabel(reason: DebugVariablePageLimitReason): string {
+  switch (reason) {
+    case "acquisition-count":
+      return "acquisition quota";
+    case "capability":
+      return "runtime capability";
+    case "descriptor-count":
+      return "descriptor count";
+    case "descriptor-bytes":
+      return "descriptor bytes";
+    case "page-bytes":
+      return "page bytes";
+    case "references":
+      return "references";
+    case "reference-bytes":
+      return "reference bytes";
+  }
 }
 
 export function resolveActiveRow(

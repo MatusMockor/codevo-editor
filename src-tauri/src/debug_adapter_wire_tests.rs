@@ -1,7 +1,7 @@
 use crate::debug_adapter::{
     DebugBreakpoint, DebugEvaluateContext, DebugExceptionPauseMode, DebugJustMyCodePolicy,
-    DebugLaunchTarget, DebugVariableInfo, JsTestDebugNameMatch, JsTestDebugRunner,
-    JsTestDebugSelection,
+    DebugLaunchTarget, DebugVariableInfo, DebugVariablePageLimitReason, JsTestDebugNameMatch,
+    JsTestDebugRunner, JsTestDebugSelection,
 };
 use crate::debug_hit_condition::DebugHitCondition;
 
@@ -29,6 +29,38 @@ fn exception_pause_mode_has_a_closed_typed_wire_contract() {
         DebugExceptionPauseMode::default(),
         DebugExceptionPauseMode::None
     );
+}
+
+#[test]
+fn variable_page_limit_reasons_have_a_closed_outbound_wire_contract() {
+    let expected = [
+        (
+            DebugVariablePageLimitReason::AcquisitionCount,
+            "acquisition-count",
+        ),
+        (DebugVariablePageLimitReason::Capability, "capability"),
+        (
+            DebugVariablePageLimitReason::DescriptorCount,
+            "descriptor-count",
+        ),
+        (
+            DebugVariablePageLimitReason::DescriptorBytes,
+            "descriptor-bytes",
+        ),
+        (DebugVariablePageLimitReason::PageBytes, "page-bytes"),
+        (DebugVariablePageLimitReason::References, "references"),
+        (
+            DebugVariablePageLimitReason::ReferenceBytes,
+            "reference-bytes",
+        ),
+    ];
+
+    for (reason, wire_value) in expected {
+        assert_eq!(
+            serde_json::to_value(reason).expect("serialize variable page limit reason"),
+            serde_json::json!(wire_value)
+        );
+    }
 }
 
 #[test]

@@ -731,6 +731,8 @@ function isValidPageCompletion(
 function isPageLimitReasonOrNull(value: unknown): value is DebugVariablePageLimitReason | null {
   return (
     value === null ||
+    value === "acquisition-count" ||
+    value === "capability" ||
     value === "descriptor-count" ||
     value === "descriptor-bytes" ||
     value === "page-bytes" ||

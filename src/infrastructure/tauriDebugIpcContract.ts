@@ -1326,6 +1326,8 @@ function decodeVariablePage(value: unknown, path: string): DebugVariablePage {
 function decodeVariablePageLimitReason(value: unknown, path: string) {
   if (
     value === null ||
+    value === "acquisition-count" ||
+    value === "capability" ||
     value === "descriptor-count" ||
     value === "descriptor-bytes" ||
     value === "page-bytes" ||
