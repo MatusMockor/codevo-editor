@@ -3,6 +3,8 @@ import type { DebugHoverEvaluationPort } from "../application/useDebugHoverEvalu
 import type { DebugEvaluationResult } from "../domain/debugEvaluationPolicy";
 import {
   createDebugHoverExpressionIndex,
+  MAX_DEBUG_HOVER_SOURCE_BYTES,
+  MAX_DEBUG_HOVER_SOURCE_LINES,
   type DebugHoverExpression,
   type DebugHoverExpressionIndex,
 } from "../domain/debugHoverExpression";
@@ -20,12 +22,14 @@ const debugHoverLanguages = [
 ] as const;
 
 export const MAX_DEBUG_HOVER_IN_FLIGHT = 4;
+export const MAX_DEBUG_HOVER_GLOBAL_UNSETTLED = 16;
+export const MAX_DEBUG_HOVER_COPY_TOKENS = 64;
+export const DEBUG_HOVER_REQUEST_TIMEOUT_MS = 2_000;
 export const MAX_DEBUG_HOVER_RENDERED_VALUE_BYTES = 8 * 1_024;
 export const MAX_DEBUG_HOVER_RENDERED_TYPE_BYTES = 256;
 export const MAX_DEBUG_HOVER_MARKDOWN_BYTES = 9 * 1_024;
 export const DEBUG_HOVER_COPY_EVALUATE_PATH_COMMAND_ID = "debug.hover.copyEvaluatePath";
 const MAX_DEBUG_HOVER_RENDERED_ERROR_BYTES = 1_024;
-let globalDebugHoverInFlight = 0;
 
 export interface DebugHoverMonacoProviderContext {
   readonly debugHover: DebugHoverEvaluationPort;
@@ -43,9 +47,74 @@ interface DebugHoverRequest {
   readonly modelUri: string;
   readonly modelVersion: number;
   readonly owner: DebugInspectionOwner;
+  readonly ownerEpoch: number;
   readonly rootPath: string;
   readonly sequence: number;
 }
+
+interface DebugHoverCopyToken {
+  readonly isCurrent: () => boolean;
+  readonly owner: DebugInspectionOwner;
+}
+
+interface ActiveDebugHoverRequest {
+  readonly cancellation: AbortController;
+  readonly lease: DebugHoverRequestLease;
+}
+
+class DebugHoverRequestLeaseCoordinator {
+  readonly #leasedByOwner = new Map<string, number>();
+  #unsettled = 0;
+
+  acquire(owner: DebugInspectionOwner): DebugHoverRequestLease | null {
+    const ownerKey = debugHoverOwnerKey(owner);
+    const ownerLeases = this.#leasedByOwner.get(ownerKey) ?? 0;
+    if (
+      ownerLeases >= MAX_DEBUG_HOVER_IN_FLIGHT ||
+      this.#unsettled >= MAX_DEBUG_HOVER_GLOBAL_UNSETTLED
+    ) {
+      return null;
+    }
+    this.#leasedByOwner.set(ownerKey, ownerLeases + 1);
+    this.#unsettled += 1;
+    return new DebugHoverRequestLease(this, ownerKey);
+  }
+
+  release(ownerKey: string): void {
+    const ownerLeases = this.#leasedByOwner.get(ownerKey) ?? 0;
+    if (ownerLeases <= 1) this.#leasedByOwner.delete(ownerKey);
+    else this.#leasedByOwner.set(ownerKey, ownerLeases - 1);
+  }
+
+  settle(): void {
+    this.#unsettled = Math.max(0, this.#unsettled - 1);
+  }
+}
+
+class DebugHoverRequestLease {
+  #leased = true;
+  #settled = false;
+
+  constructor(
+    private readonly coordinator: DebugHoverRequestLeaseCoordinator,
+    private readonly ownerKey: string,
+  ) {}
+
+  release(): void {
+    if (!this.#leased) return;
+    this.#leased = false;
+    this.coordinator.release(this.ownerKey);
+  }
+
+  settle(): void {
+    if (this.#settled) return;
+    this.#settled = true;
+    this.release();
+    this.coordinator.settle();
+  }
+}
+
+const debugHoverRequestLeases = new DebugHoverRequestLeaseCoordinator();
 
 export function registerDebugHoverMonacoProviders(
   monaco: typeof Monaco,
@@ -54,7 +123,9 @@ export function registerDebugHoverMonacoProviders(
   let disposed = false;
   const expressionIndexes = new WeakMap<Monaco.editor.ITextModel, CachedExpressionIndex>();
   const modelSequences = new WeakMap<Monaco.editor.ITextModel, number>();
-  const copyTokens = new Set<string>();
+  const copyTokens = new Map<string, DebugHoverCopyToken>();
+  const activeRequests = new Set<ActiveDebugHoverRequest>();
+  let observedOwner: DebugInspectionOwner | null = null;
   const disposables = debugHoverLanguages.map((language) =>
     monaco.languages.registerHoverProvider(language, {
       provideHover: (model, position, token) => provideHover(model, position, token),
@@ -65,8 +136,20 @@ export function registerDebugHoverMonacoProviders(
       id: DEBUG_HOVER_COPY_EVALUATE_PATH_COMMAND_ID,
       run: async (_accessor, ...args: unknown[]) => {
         const token = args[0];
-        if (disposed || args.length !== 1 || typeof token !== "string" || !copyTokens.delete(token))
+        if (disposed || args.length !== 1 || typeof token !== "string") return;
+        const action = copyTokens.get(token);
+        if (!action) return;
+        copyTokens.delete(token);
+        let current = false;
+        try {
+          current = action.isCurrent();
+        } catch {
+          current = false;
+        }
+        if (!current) {
+          context.debugHover.revokeCopyEvaluatePath(token);
           return;
+        }
         await context.debugHover.copyEvaluatePath(token);
       },
     }),
@@ -80,7 +163,8 @@ export function registerDebugHoverMonacoProviders(
     if (disposed || token?.isCancellationRequested) return null;
     const sequence = (modelSequences.get(model) ?? 0) + 1;
     modelSequences.set(model, sequence);
-    const owner = context.debugHover.getOwner();
+    const owner = observeOwner(context.debugHover.getOwner());
+    revokeStaleCopyTokens(owner);
     const rootPath = context.getAdmittedWorkspaceRoot();
     const document = context.resolveDocumentForModel(model);
     if (
@@ -92,43 +176,119 @@ export function registerDebugHoverMonacoProviders(
     ) {
       return null;
     }
-    if (globalDebugHoverInFlight >= MAX_DEBUG_HOVER_IN_FLIGHT) return null;
-
+    const lease = debugHoverRequestLeases.acquire(owner);
+    if (!lease) return null;
     let modelVersion: number;
+    let modelUri: string;
+    let ownerEpoch: number;
     let expression: DebugHoverExpression | null | undefined;
     try {
+      if (model.isDisposed()) throw new Error("Disposed model.");
       modelVersion = model.getVersionId();
+      modelUri = model.uri.toString();
+      ownerEpoch = context.debugHover.getOwnerEpoch();
       expression = expressionIndexForModel(model, modelVersion, expressionIndexes)?.at(position);
     } catch {
+      lease.settle();
       return null;
     }
-    if (!expression) return null;
+    if (!expression) {
+      lease.settle();
+      return null;
+    }
 
     const request: DebugHoverRequest = {
       documentPath: document.path,
-      modelUri: model.uri.toString(),
+      modelUri,
       modelVersion,
       owner,
+      ownerEpoch,
       rootPath,
       sequence,
     };
-    globalDebugHoverInFlight += 1;
+    const cancellation = new AbortController();
+    const activeRequest = { cancellation, lease };
+    activeRequests.add(activeRequest);
+    let resolveCancellation!: () => void;
+    const cancellationResult = new Promise<null>((resolve) => {
+      resolveCancellation = () => resolve(null);
+    });
+    const cancel = () => {
+      cancellation.abort();
+      lease.release();
+      resolveCancellation();
+    };
+    const cancellationDisposable = token?.onCancellationRequested?.(() => {
+      cancel();
+    });
+    if (token?.isCancellationRequested) cancel();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutResult = new Promise<null>((resolve) => {
+      timeout = setTimeout(() => {
+        cancel();
+        resolve(null);
+      }, DEBUG_HOVER_REQUEST_TIMEOUT_MS);
+    });
+    let physicalEvaluation: Promise<DebugEvaluationResult | null>;
     try {
-      const result = await context.debugHover.evaluate(owner, expression.expression, token);
+      physicalEvaluation = context.debugHover.evaluate(
+        owner,
+        expression.expression,
+        cancellation.signal,
+      );
+    } catch {
+      physicalEvaluation = Promise.resolve(null);
+    }
+    const evaluation = physicalEvaluation
+      .then(
+        (result) => result,
+        () => null,
+      )
+      .finally(() => lease.settle());
+    try {
+      const result = await Promise.race([evaluation, timeoutResult, cancellationResult]);
       if (!result || !requestIsCurrent(model, token, request)) return null;
       let copyToken: string | null = null;
       if (result.status === "ok" && result.evaluateName !== undefined) {
-        copyToken = context.debugHover.registerCopyEvaluatePath(request.owner, result, () =>
-          requestIsCurrent(model, undefined, request),
-        );
-        if (copyToken) copyTokens.add(copyToken);
+        const isCurrent = () => requestIsCurrent(model, undefined, request);
+        copyToken = context.debugHover.registerCopyEvaluatePath(request.owner, result, isCurrent);
+        if (copyToken) {
+          while (copyTokens.size >= MAX_DEBUG_HOVER_COPY_TOKENS) {
+            const oldest = copyTokens.keys().next().value as string | undefined;
+            if (!oldest) break;
+            copyTokens.delete(oldest);
+            context.debugHover.revokeCopyEvaluatePath(oldest);
+          }
+          copyTokens.set(copyToken, { isCurrent, owner: { ...request.owner } });
+        }
       }
       return renderDebugHover(expression.range, result, copyToken);
-    } catch {
-      return null;
     } finally {
-      globalDebugHoverInFlight -= 1;
+      if (timeout !== undefined) clearTimeout(timeout);
+      cancellationDisposable?.dispose();
+      activeRequests.delete(activeRequest);
     }
+  }
+
+  function revokeStaleCopyTokens(owner: DebugInspectionOwner | null): void {
+    for (const [token, action] of copyTokens) {
+      let current = false;
+      try {
+        current = action.isCurrent();
+      } catch {
+        current = false;
+      }
+      if (owner && debugInspectionOwnersEqual(action.owner, owner) && current) continue;
+      copyTokens.delete(token);
+      context.debugHover.revokeCopyEvaluatePath(token);
+    }
+  }
+
+  function observeOwner(owner: DebugInspectionOwner | null): DebugInspectionOwner | null {
+    if (!debugInspectionOwnersEqual(observedOwner, owner)) {
+      observedOwner = owner ? { ...owner } : null;
+    }
+    return owner;
   }
 
   function requestIsCurrent(
@@ -136,33 +296,53 @@ export function registerDebugHoverMonacoProviders(
     token: Monaco.CancellationToken | undefined,
     request: DebugHoverRequest,
   ): boolean {
-    if (
-      disposed ||
-      token?.isCancellationRequested ||
-      modelSequences.get(model) !== request.sequence ||
-      model.getVersionId() !== request.modelVersion ||
-      model.uri.toString() !== request.modelUri ||
-      !workspaceRootKeysEqual(context.getAdmittedWorkspaceRoot(), request.rootPath) ||
-      !debugInspectionOwnersEqual(context.debugHover.getOwner(), request.owner)
-    ) {
+    try {
+      if (
+        disposed ||
+        token?.isCancellationRequested ||
+        model.isDisposed() ||
+        modelSequences.get(model) !== request.sequence ||
+        model.getVersionId() !== request.modelVersion ||
+        model.uri.toString() !== request.modelUri ||
+        !workspaceRootKeysEqual(context.getAdmittedWorkspaceRoot(), request.rootPath) ||
+        context.debugHover.getOwnerEpoch() !== request.ownerEpoch ||
+        !debugInspectionOwnersEqual(observeOwner(context.debugHover.getOwner()), request.owner) ||
+        context.debugHover.getOwnerEpoch() !== request.ownerEpoch
+      ) {
+        return false;
+      }
+    } catch {
       return false;
     }
-    const currentDocument = context.resolveDocumentForModel(model);
-    return (
-      currentDocument?.path === request.documentPath &&
-      modelMatchesWorkspacePath(model, request.rootPath, request.documentPath)
-    );
+    try {
+      const currentDocument = context.resolveDocumentForModel(model);
+      return (
+        currentDocument?.path === request.documentPath &&
+        modelMatchesWorkspacePath(model, request.rootPath, request.documentPath)
+      );
+    } catch {
+      return false;
+    }
   }
 
   return {
     dispose() {
       if (disposed) return;
       disposed = true;
-      copyTokens.forEach((token) => context.debugHover.revokeCopyEvaluatePath(token));
+      activeRequests.forEach(({ cancellation, lease }) => {
+        cancellation.abort();
+        lease.release();
+      });
+      activeRequests.clear();
+      copyTokens.forEach((_action, token) => context.debugHover.revokeCopyEvaluatePath(token));
       copyTokens.clear();
       disposables.forEach((disposable) => disposable.dispose());
     },
   };
+}
+
+function debugHoverOwnerKey(owner: DebugInspectionOwner): string {
+  return JSON.stringify([owner.rootKey, owner.sessionId, owner.pauseGeneration, owner.frameId]);
 }
 
 function expressionIndexForModel(
@@ -172,7 +352,28 @@ function expressionIndexForModel(
 ): DebugHoverExpressionIndex | null {
   const cached = cache.get(model);
   if (cached?.version === version) return cached.index;
-  const index = createDebugHoverExpressionIndex(model.getValue());
+  const valueLength = model.getValueLength();
+  const lineCount = model.getLineCount();
+  if (
+    !Number.isSafeInteger(valueLength) ||
+    valueLength < 0 ||
+    valueLength > MAX_DEBUG_HOVER_SOURCE_BYTES ||
+    !Number.isSafeInteger(lineCount) ||
+    lineCount <= 0 ||
+    lineCount > MAX_DEBUG_HOVER_SOURCE_LINES
+  ) {
+    cache.set(model, { index: null, version });
+    return null;
+  }
+  const source = model.getValue();
+  const index =
+    model.isDisposed() ||
+    model.getVersionId() !== version ||
+    model.getValueLength() !== valueLength ||
+    model.getLineCount() !== lineCount ||
+    source.length !== valueLength
+      ? null
+      : createDebugHoverExpressionIndex(source);
   cache.set(model, { index, version });
   return index;
 }

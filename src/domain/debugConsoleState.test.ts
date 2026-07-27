@@ -3,6 +3,7 @@ import {
   MAX_DEBUG_CONSOLE_BYTES,
   MAX_DEBUG_CONSOLE_ENTRIES,
   MAX_DEBUG_CONSOLE_HISTORY,
+  MAX_DEBUG_CONSOLE_OUTPUT_BATCH_ENTRIES,
   MAX_DEBUG_CONSOLE_OUTPUT_BYTES,
   createDebugConsoleState,
   deserializeDebugConsoleHistory,
@@ -105,6 +106,131 @@ describe("debug console state", () => {
     ]);
     expect(state.entries.map(({ sequence }) => sequence)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(state.history).toEqual(["count", "broken()"]);
+  });
+
+  it("appends a bounded output burst in one chronological batch", () => {
+    let state = createDebugConsoleState(owner);
+    state = reduceDebugConsoleState(state, {
+      type: "evaluation-pending",
+      owner,
+      requestId: "pending",
+      expression: "slow()",
+    });
+    state = reduceDebugConsoleState(state, {
+      type: "output-batch",
+      owner,
+      lines: Array.from({ length: 5_000 }, (_, index) => ({
+        stream: index % 2 === 0 ? ("stdout" as const) : ("stderr" as const),
+        text: `line-${index}`,
+        truncated: false,
+      })),
+    });
+
+    expect(state.entries).toHaveLength(MAX_DEBUG_CONSOLE_ENTRIES);
+    expect(state.entries[0]).toMatchObject({
+      kind: "truncated",
+      omittedEntries: 4_002,
+    });
+    expect(state.entries.filter(({ kind }) => kind === "truncated")).toHaveLength(1);
+    expect(state.entries[state.entries.length - 2]).toMatchObject({
+      kind: "stdout",
+      text: "line-4998",
+    });
+    expect(state.entries[state.entries.length - 1]).toMatchObject({
+      kind: "stderr",
+      text: "line-4999",
+    });
+    expect(state.nextSequence).toBe(5_002);
+    expect(state.pendingRequestIds).toEqual([]);
+    expect(state.totalBytes).toBeLessThanOrEqual(MAX_DEBUG_CONSOLE_BYTES);
+  });
+
+  it("keeps batch truncation UTF-8-safe and rejects stale or malformed lines", () => {
+    const state = createDebugConsoleState(owner);
+    const stale = reduceDebugConsoleState(state, {
+      type: "output-batch",
+      owner: { ...owner, pauseGeneration: owner.pauseGeneration + 1 },
+      lines: [{ stream: "stdout", text: "stale", truncated: false }],
+    });
+    expect(stale).toBe(state);
+
+    const malformed = reduceDebugConsoleState(state, {
+      type: "output-batch",
+      owner,
+      lines: [
+        { stream: "stdout", text: "", truncated: false },
+        {
+          stream: "stdout",
+          text: "ž".repeat(MAX_DEBUG_CONSOLE_OUTPUT_BYTES / 2 + 1),
+          truncated: false,
+        },
+        { stream: "stderr", text: "tail", truncated: false },
+      ],
+    });
+
+    expect(malformed.entries).toHaveLength(3);
+    expect(malformed.entries[0]).toMatchObject({
+      kind: "truncated",
+      omittedBytes: 2,
+    });
+    expect(malformed.entries[1]).toMatchObject({ kind: "stdout" });
+    expect(
+      new TextEncoder().encode(
+        malformed.entries[1]?.kind === "stdout" ? malformed.entries[1].text : "",
+      ),
+    ).toHaveLength(MAX_DEBUG_CONSOLE_OUTPUT_BYTES);
+    expect(malformed.entries[2]).toMatchObject({ kind: "stderr", text: "tail" });
+    expect(malformed.nextSequence).toBe(3);
+
+    const oversizedBatch = reduceDebugConsoleState(state, {
+      type: "output-batch",
+      owner,
+      lines: Array.from({ length: MAX_DEBUG_CONSOLE_OUTPUT_BATCH_ENTRIES + 1 }, () => ({
+        stream: "stdout",
+        text: "over limit",
+        truncated: false,
+      })),
+    });
+    expect(oversizedBatch).toBe(state);
+
+    const byteBounded = reduceDebugConsoleState(state, {
+      type: "output-batch",
+      owner,
+      lines: Array.from({ length: 90 }, () => ({
+        stream: "stdout",
+        text: "x".repeat(MAX_DEBUG_CONSOLE_OUTPUT_BYTES),
+        truncated: false,
+      })),
+    });
+    expect(byteBounded.totalBytes).toBeLessThanOrEqual(MAX_DEBUG_CONSOLE_BYTES);
+    expect(byteBounded.entries[0]).toMatchObject({
+      kind: "truncated",
+      omittedEntries: 11,
+    });
+    expect(byteBounded.entries).toHaveLength(80);
+  });
+
+  it("preserves truthful upstream truncation metadata without inventing byte precision", () => {
+    const state = reduceDebugConsoleState(createDebugConsoleState(owner), {
+      type: "output-batch",
+      owner,
+      lines: [
+        {
+          stream: "stdout",
+          text: "partial\n[Debugger output truncated]",
+          truncated: true,
+        },
+      ],
+    });
+
+    expect(state.entries).toEqual([
+      expect.objectContaining({
+        kind: "stdout",
+        text: "partial\n[Debugger output truncated]",
+        truncated: true,
+      }),
+    ]);
+    expect(state.entries[0]).not.toHaveProperty("omittedBytes");
   });
 
   it("drops stale session and pause-generation actions by identity", () => {
@@ -265,7 +391,7 @@ describe("debug console state", () => {
       { status: "error", kind: "exception", message: "boom", extra: true },
       { status: "ok", value: "x".repeat(64 * 1_024 + 1) },
       { status: "ok", value: "1", evaluateName: "" },
-      { status: "ok", value: "1", evaluateName: "bad\npath" },
+      { status: "ok", value: "1", evaluateName: "bad\rpath" },
       { status: "ok", value: "1", evaluateName: "x".repeat(4 * 1_024 + 1) },
     ];
     for (const result of malformedResults) {
@@ -306,6 +432,27 @@ describe("debug console state", () => {
       value: "User",
       valueType: "object",
       variablesReference: 9,
+    });
+  });
+
+  it("preserves an exact bounded multiline adapter evaluate name", () => {
+    let state = createDebugConsoleState(owner);
+    state = reduceDebugConsoleState(state, {
+      type: "evaluation-pending",
+      owner,
+      requestId: "request",
+      expression: "(\n  root\n)",
+    });
+    const evaluateName = "(\n  root\n).nested";
+    state = reduceDebugConsoleState(state, {
+      type: "evaluation-settled",
+      owner,
+      requestId: "request",
+      result: { status: "ok", value: "Object", evaluateName, variablesReference: 9 },
+    });
+    expect(state.entries[state.entries.length - 1]).toMatchObject({
+      kind: "result",
+      evaluateName,
     });
   });
 

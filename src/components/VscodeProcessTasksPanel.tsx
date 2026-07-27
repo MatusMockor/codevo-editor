@@ -1,10 +1,14 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import type { VscodeProcessTaskOutputEntry } from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTasksState } from "../application/useVscodeProcessTasks";
+import type { VscodeProcessTasksConfigurationAction } from "../application/configureVscodeProcessTasks";
 import { vscodeProcessTaskDependencySummary } from "./vscodeProcessTaskDependencySummary";
 
 export type VscodeProcessTasksPanelProps = VscodeProcessTasksState & {
   readonly className?: string;
+  readonly configurationAction: VscodeProcessTasksConfigurationAction | null;
+  readonly configuring: boolean;
+  configure(): Promise<boolean>;
 };
 
 const styles: Record<string, CSSProperties> = {
@@ -51,6 +55,9 @@ const styles: Record<string, CSSProperties> = {
 export function VscodeProcessTasksPanel({
   activeLabel,
   className,
+  configurationAction,
+  configure,
+  configuring,
   currentStep,
   diagnostics,
   discover,
@@ -68,14 +75,17 @@ export function VscodeProcessTasksPanel({
   unavailable,
 }: VscodeProcessTasksPanelProps) {
   const panelRef = useRef<HTMLElement | null>(null);
+  const configurationRef = useRef<HTMLButtonElement | null>(null);
   const statusRef = useRef<HTMLParagraphElement | null>(null);
   const stopRef = useRef<HTMLButtonElement | null>(null);
-  const busy = discovering || occupied || running || stopping;
+  const busy = configuring || discovering || occupied || running || stopping;
   const stdout = streamText(output, "stdout");
   const stderr = streamText(output, "stderr");
   const outputTruncated = output.some(({ kind }) => kind === "truncated");
   const statusText = taskStatusText({
     activeLabel,
+    configurationAction,
+    configuring,
     currentStep,
     discovering,
     error,
@@ -97,6 +107,10 @@ export function VscodeProcessTasksPanel({
       stopRef.current?.focus();
       return;
     }
+    if (configuring && activeElement === configurationRef.current) {
+      statusRef.current?.focus();
+      return;
+    }
     if (stopping && activeElement === stopRef.current) {
       statusRef.current?.focus();
       return;
@@ -108,10 +122,11 @@ export function VscodeProcessTasksPanel({
       );
       (
         runButton ??
+        configurationRef.current ??
         panel.querySelector<HTMLButtonElement>('button[aria-label="Refresh configured tasks"]')
       )?.focus();
     }
-  }, [activeLabel, busy, stopping]);
+  }, [activeLabel, busy, configuring, stopping]);
 
   return (
     <section
@@ -124,6 +139,25 @@ export function VscodeProcessTasksPanel({
       <header style={styles.header}>
         <strong>Configured Tasks</strong>
         <div style={styles.actions}>
+          {configurationAction && (
+            <button
+              aria-label={
+                configurationAction === "create" ? "Create tasks.json" : "Open tasks.json"
+              }
+              disabled={busy || unavailable !== null}
+              onClick={() => void configure()}
+              ref={configurationRef}
+              type="button"
+            >
+              {configuring
+                ? configurationAction === "create"
+                  ? "Creating…"
+                  : "Opening…"
+                : configurationAction === "create"
+                  ? "Create"
+                  : "Open"}
+            </button>
+          )}
           {(occupied || running || stopping) && (
             <button
               aria-label={stopping ? "Stopping configured task" : "Stop configured task"}
@@ -254,6 +288,8 @@ function streamText(
 
 function taskStatusText({
   activeLabel,
+  configurationAction,
+  configuring,
   currentStep,
   discovering,
   error,
@@ -263,6 +299,8 @@ function taskStatusText({
   unavailable,
 }: {
   readonly activeLabel: string | null;
+  readonly configurationAction: VscodeProcessTasksConfigurationAction | null;
+  readonly configuring: boolean;
   readonly currentStep: VscodeProcessTasksState["currentStep"];
   readonly discovering: boolean;
   readonly error: string | null;
@@ -273,6 +311,11 @@ function taskStatusText({
 }): string {
   if (unavailable) return unavailable;
   if (error) return error;
+  if (configuring) {
+    return configurationAction === "create"
+      ? "Creating .vscode/tasks.json…"
+      : "Opening .vscode/tasks.json…";
+  }
   if (stopping) return `Stopping ${activeLabel ?? "configured task"}…`;
   if (running && currentStep) {
     return `Step ${currentStep.index} of ${currentStep.total}: ${currentStep.label}`;

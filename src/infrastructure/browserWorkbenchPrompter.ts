@@ -1,6 +1,9 @@
 import type { WorkbenchPrompter } from "../application/workbenchPrompter";
+import type { QuickInputCoordinator } from "../application/quickInputCoordinator";
 
 export class BrowserWorkbenchPrompter implements WorkbenchPrompter {
+  constructor(private readonly quickInput: QuickInputCoordinator) {}
+
   confirm(message: string): boolean {
     try {
       return window.confirm(message);
@@ -9,11 +12,7 @@ export class BrowserWorkbenchPrompter implements WorkbenchPrompter {
     }
   }
 
-  prompt(message: string, defaultValue = ""): string | null {
-    try {
-      return window.prompt(message, defaultValue);
-    } catch {
-      return null;
-    }
+  prompt(message: string, defaultValue = ""): Promise<string | null> {
+    return this.quickInput.prompt(message, defaultValue);
   }
 }

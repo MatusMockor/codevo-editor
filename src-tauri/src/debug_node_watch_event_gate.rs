@@ -1,10 +1,13 @@
-use crate::debug_adapter::{DebugEventEmitter, DebugEventPayload};
+use crate::debug_adapter::{
+    DebugEventEmitter, DebugEventPayload, DebugFunctionBreakpointVerification,
+};
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 const MAX_STAGED_EVENTS: usize = 256;
 const MAX_STAGED_EVENT_BYTES: usize = 1024 * 1024;
+const MAX_STARTUP_FUNCTION_BREAKPOINT_RECEIPT_BYTES: usize = 32 * 1024;
 const RESERVED_DELIVERY_EVENTS: usize = 3;
 const RESERVED_DELIVERY_BYTES: usize = RESERVED_DELIVERY_EVENTS * MAX_STAGED_EVENT_BYTES;
 
@@ -41,6 +44,13 @@ pub(crate) struct WatchEventFlushLease {
     generation: u64,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct WatchStartupFunctionBreakpointAuthority<'a> {
+    pub(crate) desired_revision: u64,
+    pub(crate) function_generation: u64,
+    pub(crate) ordered_ids: &'a [String],
+}
+
 /// Single logical-session termination capability for one watch event gate.
 ///
 /// The capability is intentionally opaque: transports can revoke their own
@@ -73,7 +83,18 @@ struct ActiveGeneration {
     authority: Arc<GenerationAuthority>,
     generation: u64,
     paused: bool,
+    startup_function_breakpoint_receipt_required: bool,
+    startup_function_breakpoint_receipt: Option<StartupFunctionBreakpointReceipt>,
     publication: PublicationState,
+}
+
+struct StartupFunctionBreakpointReceipt {
+    target_generation: u64,
+    desired_revision: u64,
+    function_generation: u64,
+    payload: DebugEventPayload,
+    serialized_bytes: usize,
+    early_updates: Vec<(DebugEventPayload, usize)>,
 }
 
 struct WatchEventGateState {
@@ -223,6 +244,166 @@ impl WatchDebugEventGate {
         self.flush_publish(&flush)
     }
 
+    /// Retains the exact full ordered generation-1 verification before the
+    /// target becomes visible. Generic CDP events remain rejected while the
+    /// generation is unpublished, so a late-binding partial cannot overtake
+    /// this receipt.
+    pub(crate) fn retain_startup_function_breakpoint_receipt(
+        &self,
+        lease: &WatchEventGenerationLease,
+        target_generation: u64,
+        desired_revision: u64,
+        function_generation: u64,
+        ordered_ids: &[String],
+        breakpoints: Vec<DebugFunctionBreakpointVerification>,
+    ) -> bool {
+        if target_generation != 1
+            || function_generation != 1
+            || lease.generation != target_generation
+            || breakpoints.len() != ordered_ids.len()
+            || !breakpoints
+                .iter()
+                .zip(ordered_ids)
+                .all(|(verification, expected)| verification.id == *expected)
+        {
+            return false;
+        }
+        let payload = DebugEventPayload::FunctionBreakpointsVerified {
+            generation: function_generation,
+            breakpoints,
+        };
+        let Some(serialized_bytes) =
+            serialized_size_within(&payload, MAX_STARTUP_FUNCTION_BREAKPOINT_RECEIPT_BYTES)
+        else {
+            return false;
+        };
+        let _operation = lock_recover(&self.operation);
+        let mut state = lock_recover(&self.state);
+        let Some(active) = state.active.as_mut() else {
+            return false;
+        };
+        if !owns(active, lease)
+            || !matches!(&active.publication, PublicationState::Unpublished)
+            || active.startup_function_breakpoint_receipt.is_some()
+        {
+            return false;
+        }
+        active.startup_function_breakpoint_receipt = Some(StartupFunctionBreakpointReceipt {
+            target_generation,
+            desired_revision,
+            function_generation,
+            payload,
+            serialized_bytes,
+            early_updates: Vec::new(),
+        });
+        active.startup_function_breakpoint_receipt_required = true;
+        true
+    }
+
+    /// Atomically replaces the retained generation-1 receipt after the desired
+    /// function-breakpoint authority changes during pre-publication
+    /// reconciliation. The expected tuple is a compare-and-swap guard: a late
+    /// reconciler cannot overwrite a newer receipt. Partial updates retained
+    /// under the old authority are deliberately discarded.
+    pub(crate) fn replace_startup_function_breakpoint_receipt(
+        &self,
+        lease: &WatchEventGenerationLease,
+        target_generation: u64,
+        expected: WatchStartupFunctionBreakpointAuthority<'_>,
+        replacement: WatchStartupFunctionBreakpointAuthority<'_>,
+        breakpoints: Vec<DebugFunctionBreakpointVerification>,
+    ) -> bool {
+        if target_generation != 1
+            || lease.generation != target_generation
+            || replacement.desired_revision <= expected.desired_revision
+            || replacement.function_generation <= expected.function_generation
+            || breakpoints.len() != replacement.ordered_ids.len()
+            || !breakpoints
+                .iter()
+                .zip(replacement.ordered_ids)
+                .all(|(verification, expected)| verification.id == *expected)
+        {
+            return false;
+        }
+        let payload = DebugEventPayload::FunctionBreakpointsVerified {
+            generation: replacement.function_generation,
+            breakpoints,
+        };
+        let Some(serialized_bytes) =
+            serialized_size_within(&payload, MAX_STARTUP_FUNCTION_BREAKPOINT_RECEIPT_BYTES)
+        else {
+            return false;
+        };
+        let _operation = lock_recover(&self.operation);
+        let mut state = lock_recover(&self.state);
+        let Some(active) = state.active.as_mut() else {
+            return false;
+        };
+        if !owns(active, lease)
+            || !active.startup_function_breakpoint_receipt_required
+            || !matches!(&active.publication, PublicationState::Unpublished)
+        {
+            return false;
+        }
+        let expected_receipt_matches = active
+            .startup_function_breakpoint_receipt
+            .as_ref()
+            .is_some_and(|receipt| {
+                receipt.target_generation == target_generation
+                    && receipt.desired_revision == expected.desired_revision
+                    && receipt.function_generation == expected.function_generation
+                    && payload_has_exact_ordered_ids(&receipt.payload, expected.ordered_ids)
+            });
+        if !expected_receipt_matches {
+            return false;
+        }
+        active.startup_function_breakpoint_receipt = Some(StartupFunctionBreakpointReceipt {
+            target_generation,
+            desired_revision: replacement.desired_revision,
+            function_generation: replacement.function_generation,
+            payload,
+            serialized_bytes,
+            early_updates: Vec::new(),
+        });
+        true
+    }
+
+    pub(crate) fn begin_publish_with_startup_function_breakpoint_receipt(
+        &self,
+        lease: &WatchEventGenerationLease,
+        target_generation: u64,
+        desired_revision: u64,
+        function_generation: u64,
+        ordered_ids: &[String],
+    ) -> Option<WatchEventPublicationLease> {
+        let _operation = lock_recover(&self.operation);
+        let mut state = lock_recover(&self.state);
+        let active = state.active.as_mut()?;
+        if !owns(active, lease)
+            || !active.startup_function_breakpoint_receipt_required
+            || !matches!(&active.publication, PublicationState::Unpublished)
+        {
+            return None;
+        }
+        let receipt_matches = active
+            .startup_function_breakpoint_receipt
+            .as_ref()
+            .is_some_and(|receipt| {
+                receipt.target_generation == target_generation
+                    && receipt.desired_revision == desired_revision
+                    && receipt.function_generation == function_generation
+                    && payload_has_exact_ordered_ids(&receipt.payload, ordered_ids)
+            });
+        if !receipt_matches {
+            return None;
+        };
+        let receipt = active
+            .startup_function_breakpoint_receipt
+            .take()
+            .expect("validated startup receipt");
+        Some(begin_buffering(active, lease, Some(receipt)))
+    }
+
     /// Starts an exact, bounded publication transaction. Transport events are
     /// retained in order but remain invisible until the matching commit.
     pub(crate) fn begin_publish(
@@ -232,21 +413,13 @@ impl WatchDebugEventGate {
         let _operation = lock_recover(&self.operation);
         let mut state = lock_recover(&self.state);
         let active = state.active.as_mut()?;
-        if !owns(active, lease) || !matches!(&active.publication, PublicationState::Unpublished) {
+        if !owns(active, lease)
+            || active.startup_function_breakpoint_receipt_required
+            || !matches!(&active.publication, PublicationState::Unpublished)
+        {
             return None;
         }
-        let publication_authority = Arc::new(PublicationAuthority);
-        active.publication = PublicationState::Buffering(StagedEvents {
-            authority: Arc::clone(&publication_authority),
-            events: Vec::new(),
-            serialized_bytes: 0,
-            overflowed: false,
-        });
-        Some(WatchEventPublicationLease {
-            generation_authority: Arc::clone(&lease.authority),
-            publication_authority,
-            generation: lease.generation,
-        })
+        Some(begin_buffering(active, lease, None))
     }
 
     /// Seals an exact transaction without invoking the external emitter.
@@ -380,7 +553,39 @@ impl WatchDebugEventGate {
             return WatchEventDisposition::DroppedStale;
         }
         if matches!(&active.publication, PublicationState::Unpublished) {
-            return WatchEventDisposition::DroppedStale;
+            let Some(receipt) = active.startup_function_breakpoint_receipt.as_mut() else {
+                return WatchEventDisposition::DroppedStale;
+            };
+            let DebugEventPayload::FunctionBreakpointsVerified {
+                generation,
+                breakpoints,
+            } = &payload
+            else {
+                return WatchEventDisposition::DroppedStale;
+            };
+            if *generation != receipt.function_generation
+                || breakpoints.is_empty()
+                || breakpoints.iter().enumerate().any(|(index, verification)| {
+                    !payload_contains_function_breakpoint_id(&receipt.payload, &verification.id)
+                        || breakpoints[..index]
+                            .iter()
+                            .any(|previous| previous.id == verification.id)
+                })
+                || receipt.early_updates.len() + 1 >= MAX_STAGED_EVENTS
+            {
+                return WatchEventDisposition::DroppedStale;
+            }
+            let retained_bytes = receipt
+                .early_updates
+                .iter()
+                .fold(receipt.serialized_bytes, |total, (_, bytes)| total + bytes);
+            let remaining_bytes = MAX_STAGED_EVENT_BYTES.saturating_sub(retained_bytes);
+            let Some(payload_bytes) = serialized_size_within(&payload, remaining_bytes) else {
+                return WatchEventDisposition::DroppedOverflow;
+            };
+            receipt.early_updates.push((payload, payload_bytes));
+            on_accept.take().expect("single acceptance callback")();
+            return WatchEventDisposition::Buffered;
         }
         if matches!(&active.publication, PublicationState::Published) {
             let pause_state = pause_state_after(&payload);
@@ -590,6 +795,53 @@ impl WatchLogicalFinishGate {
     }
 }
 
+fn begin_buffering(
+    active: &mut ActiveGeneration,
+    lease: &WatchEventGenerationLease,
+    startup_receipt: Option<StartupFunctionBreakpointReceipt>,
+) -> WatchEventPublicationLease {
+    let publication_authority = Arc::new(PublicationAuthority);
+    let mut events = Vec::new();
+    let mut serialized_bytes = 0;
+    if let Some(receipt) = startup_receipt {
+        serialized_bytes = receipt.serialized_bytes;
+        events.push((receipt.payload, receipt.serialized_bytes));
+        for (payload, payload_bytes) in receipt.early_updates {
+            serialized_bytes += payload_bytes;
+            events.push((payload, payload_bytes));
+        }
+    }
+    active.publication = PublicationState::Buffering(StagedEvents {
+        authority: Arc::clone(&publication_authority),
+        events,
+        serialized_bytes,
+        overflowed: false,
+    });
+    WatchEventPublicationLease {
+        generation_authority: Arc::clone(&lease.authority),
+        publication_authority,
+        generation: lease.generation,
+    }
+}
+
+fn payload_has_exact_ordered_ids(payload: &DebugEventPayload, ordered_ids: &[String]) -> bool {
+    let DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } = payload else {
+        return false;
+    };
+    breakpoints.len() == ordered_ids.len()
+        && breakpoints
+            .iter()
+            .zip(ordered_ids)
+            .all(|(verification, expected)| verification.id == *expected)
+}
+
+fn payload_contains_function_breakpoint_id(payload: &DebugEventPayload, id: &str) -> bool {
+    let DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } = payload else {
+        return false;
+    };
+    breakpoints.iter().any(|verification| verification.id == id)
+}
+
 fn activate(state: &mut WatchEventGateState, published: bool) -> WatchEventGenerationLease {
     let authority = Arc::new(GenerationAuthority);
     let generation = state.next_generation;
@@ -597,6 +849,8 @@ fn activate(state: &mut WatchEventGateState, published: bool) -> WatchEventGener
         authority: Arc::clone(&authority),
         generation,
         paused: false,
+        startup_function_breakpoint_receipt_required: false,
+        startup_function_breakpoint_receipt: None,
         publication: if published {
             PublicationState::Published
         } else {

@@ -53,6 +53,49 @@ describe("VS Code Node launch configuration loader", () => {
     expect(reads.readFile).not.toHaveBeenCalled();
   });
 
+  it("drops accepted console and disabled automation compatibility fields at the loader boundary", async () => {
+    const result = await loadVscodeNodeLaunchConfigurations(
+      ROOT,
+      fixtures(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "API",
+              program: "src/server.ts",
+              console: "internalConsole",
+              internalConsoleOptions: "openOnSessionStart",
+              autoAttachChildProcesses: false,
+              smartStep: false,
+              restart: false,
+            },
+          ],
+        }),
+      ),
+      () => true,
+    );
+
+    expect(result).toMatchObject({
+      kind: "loaded",
+      configurations: [{ configuration: { name: "API" } }],
+      diagnostics: [],
+    });
+    if (result.kind !== "loaded") return;
+    const imported = result.configurations[0];
+    for (const field of [
+      "console",
+      "internalConsoleOptions",
+      "autoAttachChildProcesses",
+      "smartStep",
+      "restart",
+    ]) {
+      expect(imported).not.toHaveProperty(field);
+      expect(imported?.configuration).not.toHaveProperty(field);
+    }
+  });
+
   it("returns none when the exact directory or file is absent", async () => {
     const noDirectory = fixtures("{}", false);
     expect(await loadVscodeNodeLaunchConfigurations(ROOT, noDirectory, () => true)).toEqual({

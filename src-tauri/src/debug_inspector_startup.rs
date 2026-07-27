@@ -87,6 +87,12 @@ impl StartupEntryValidation {
     }
 
     pub(crate) fn matches_pause(&self, params: &Value) -> bool {
+        if let Some(breakpoints) = params.get("hitBreakpoints").and_then(Value::as_array) {
+            if !breakpoints.is_empty() {
+                return breakpoints.len() == 1
+                    && breakpoints[0].as_str() == Some(self.breakpoint_id.as_str());
+            }
+        }
         params
             .get("callFrames")
             .and_then(Value::as_array)
@@ -157,6 +163,40 @@ mod tests {
                 Ok(json!({}))
             })
             .expect("accepted probe")
+            .is_none());
+        fs::remove_dir_all(entry.parent().and_then(Path::parent).unwrap()).expect("cleanup");
+    }
+
+    #[test]
+    fn probe_accepts_its_exact_breakpoint_when_node_omits_frame_urls() {
+        let entry = fixture("exact-breakpoint");
+        let (probe, validation) = arm_startup_entry_probe(&entry, |_method, _params| {
+            Ok(json!({"breakpointId": "startup-probe"}))
+        })
+        .expect("probe");
+        assert!(validation.matches_pause(&json!({
+            "reason":"ambiguous",
+            "hitBreakpoints":["startup-probe"],
+            "callFrames":[{"url":""}]
+        })));
+        assert!(!validation.matches_pause(&json!({
+            "reason":"ambiguous",
+            "hitBreakpoints":["startup-probe","user-breakpoint"],
+            "callFrames":[{"url":file_url_from_path(
+                &entry.canonicalize().unwrap().to_string_lossy()
+            )}]
+        })));
+        assert!(!validation.matches_pause(&json!({
+            "reason":"other",
+            "hitBreakpoints":["user-breakpoint"],
+            "callFrames":[{"url":file_url_from_path(
+                &entry.canonicalize().unwrap().to_string_lossy()
+            )}]
+        })));
+        validation.complete(true);
+        assert!(probe
+            .finish(Duration::from_secs(1), |_method, _params| Ok(json!({})))
+            .expect("accepted exact breakpoint")
             .is_none());
         fs::remove_dir_all(entry.parent().and_then(Path::parent).unwrap()).expect("cleanup");
     }

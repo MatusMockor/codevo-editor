@@ -28,6 +28,7 @@ describe("createJsTestFailedRunCoordinator", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
+      packageRootRelativePath: "",
       runId: "run-1",
       scope: scope("b"),
       workspaceId: "workspace-1",
@@ -38,6 +39,7 @@ describe("createJsTestFailedRunCoordinator", () => {
 
     expect(calls).toHaveLength(2);
     expect(calls[1]).toEqual({
+      packageRootRelativePath: "",
       runId: "run-2",
       scope: scope("a"),
       workspaceId: "workspace-1",

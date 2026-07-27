@@ -16,6 +16,10 @@ import {
   type JsTestTaskStopRequest,
 } from "../domain/jsTestTask";
 import type { TestCase, TestGateway, TestRunResponse } from "../domain/testResults";
+import {
+  validatedJsTestExecutionAuthority,
+  type JsTestExecutionAuthority,
+} from "../domain/jsTestExecutionAuthority";
 
 type InvokeCommand = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -38,12 +42,24 @@ interface DecodeContext {
 export class TauriJsTestGateway implements TestGateway, JsTestGateway, JsTestTaskGateway {
   constructor(private readonly invokeTestCommand = invokeCommand) {}
 
+  run(
+    rootPath: string,
+    scope: JsTestRunScope,
+    authority: JsTestExecutionAuthority,
+  ): Promise<TestRunResponse>;
   run(rootPath: string, scope: JsTestRunScope): Promise<TestRunResponse>;
   run(rootPath: string, filter?: string): Promise<TestRunResponse>;
-  async run(rootPath: string, request?: string | JsTestRunScope): Promise<TestRunResponse> {
+  async run(
+    rootPath: string,
+    request?: string | JsTestRunScope,
+    authority?: JsTestExecutionAuthority,
+  ): Promise<TestRunResponse> {
     const response =
       typeof request === "object"
         ? await this.invokeTestCommand("run_js_tests_scoped_json", {
+            packageRootRelativePath: validatedJsTestExecutionAuthority(
+              authority ?? { packageRootRelativePath: "" },
+            ).packageRootRelativePath,
             rootPath,
             scope: validatedJsTestRunScope(request),
           })
@@ -58,6 +74,9 @@ export class TauriJsTestGateway implements TestGateway, JsTestGateway, JsTestTas
     const validatedRequest = {
       runId: validatedJsTestTaskRunId(request.runId),
       workspaceId: validatedJsTestTaskWorkspaceId(request.workspaceId),
+      packageRootRelativePath: validatedJsTestExecutionAuthority({
+        packageRootRelativePath: request.packageRootRelativePath ?? "",
+      }).packageRootRelativePath,
       scope: validatedJsTestRunScope(request.scope),
     };
     const response = await this.invokeTestCommand("run_js_test_task_json", {

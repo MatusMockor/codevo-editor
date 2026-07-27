@@ -9,6 +9,7 @@ const request: NativeNodeWatchDebugStartRequest = {
   scriptPath: "/workspace/server.js",
   watch: true,
   breakpoints: [],
+  functionBreakpoints: [],
   exceptionPauseMode: "none",
   exceptionTypeFilter: ["TypeError"],
   sourceMaps: false,
@@ -40,20 +41,28 @@ describe("TauriDebugGateway native Node watch seam", () => {
         enabled: true,
       },
     ];
+    const functionBreakpoints = [
+      {
+        id: "function-entry",
+        functionName: "startServer",
+        enabled: true,
+      },
+    ];
 
-    await expect(gateway.startNativeNodeWatch({ ...request, breakpoints })).resolves.toEqual({
-      kind: "ok",
-      sessionId: 23,
-    });
+    await expect(
+      gateway.startNativeNodeWatch({ ...request, breakpoints, functionBreakpoints }),
+    ).resolves.toEqual({ kind: "ok", sessionId: 23 });
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_native_node_watch", {
       request: {
         ...request,
         breakpoints,
+        functionBreakpoints,
       },
     });
     const payload = invokeCommand.mock.calls[0]?.[1] as
       { request: NativeNodeWatchDebugStartRequest } | undefined;
     expect(payload?.request.breakpoints).not.toBe(breakpoints);
+    expect(payload?.request.functionBreakpoints).not.toBe(functionBreakpoints);
     expect(payload?.request.exceptionTypeFilter).not.toBe(request.exceptionTypeFilter);
   });
 

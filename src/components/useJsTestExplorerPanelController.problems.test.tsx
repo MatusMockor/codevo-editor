@@ -97,13 +97,14 @@ describe("useJsTestExplorerPanelController problem integration", () => {
     act(() => root.render(<Harness />));
 
     expect(mocks.useJsTestExplorer).toHaveBeenCalledWith({
-      continuousRunBlocked: false,
+      continuousRunBlocked: true,
       continuousRunVersion: 0,
       continuousRunWatchCommand: null,
       discoveryGateway: expect.anything(),
       discoveryVersion: 3,
       isOpen: false,
       resultInvalidationVersion: 17,
+      resolveExecutionRoot: expect.any(Function),
       rootPath: "/workspace",
       runGateway: expect.anything(),
       runRequestVersion: 5,

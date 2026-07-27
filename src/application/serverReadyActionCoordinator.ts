@@ -134,6 +134,10 @@ export class ServerReadyActionCoordinator {
     if (event.payload.kind !== "output" || session.terminated || session.matchedPort !== null) {
       return null;
     }
+    if (event.payload.truncated) {
+      session.retainedByStream[event.payload.stream] = "";
+      return null;
+    }
     session.matchedPort = matchPort(
       active.recipe,
       session,

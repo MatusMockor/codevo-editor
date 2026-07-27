@@ -1,8 +1,8 @@
 use super::{
-    detect_runner, ensure_registered_root_identity, parse_jest_json, read_report_bounded,
-    registered_root_path, scoped_runner_args, selection_for_scope, with_stderr_tail,
-    JsTestRunScope, JsTestRunSelection, JsTestRunner, ERROR_TAIL_BYTES, MAX_REPORT_BYTES,
-    RESULT_LABEL, RESULT_SUBDIRECTORY, RUNNER_TIMEOUT,
+    detect_runner_in_workspace, ensure_registered_root_identity, parse_jest_json,
+    read_report_bounded, registered_root_path, scoped_runner_args, selection_for_scope,
+    with_stderr_tail, JsTestRunScope, JsTestRunSelection, JsTestRunner, ERROR_TAIL_BYTES,
+    MAX_REPORT_BYTES, RESULT_LABEL, RESULT_SUBDIRECTORY, RUNNER_TIMEOUT,
 };
 mod bounded_captured_stream {
     include!("bounded_captured_stream.rs");
@@ -12,6 +12,10 @@ use self::bounded_captured_stream::{
     read_bounded_captured_stream, BoundedCapturedStream, CAPTURED_STREAM_BYTES_LIMIT,
 };
 use crate::{
+    js_test_execution_root::{
+        ensure_js_test_execution_context_identity, resolve_js_test_execution_context,
+        retain_js_test_process_authority, RetainedJsTestProcessAuthority, RetainedJsTestRunnerKind,
+    },
     php_test_run::PhpTestRunResponse,
     terminal_task_process::TerminalTaskOwnership,
     test_run_support::{prepare_result_path_with_extension, ResultFileGuard},
@@ -89,6 +93,7 @@ impl JsTestTaskRunOutcome {
 pub(crate) fn run_registered<F>(
     root: std::fs::File,
     app_data_base: PathBuf,
+    package_root_relative_path: String,
     scope: JsTestRunScope,
     activate: F,
 ) -> JsTestTaskRunOutcome
@@ -104,13 +109,38 @@ where
     if let Err(message) = ensure_registered_root_identity(&root, &root_path) {
         return JsTestTaskRunOutcome::response(PhpTestRunResponse::Error { message });
     }
-    let outcome = run_at_root(
+    let execution =
+        match resolve_js_test_execution_context(&root_path, &package_root_relative_path, scope) {
+            Ok(execution) => execution,
+            Err(message) => {
+                return JsTestTaskRunOutcome::response(PhpTestRunResponse::Error { message })
+            }
+        };
+    if let Err(message) = ensure_js_test_execution_context_identity(&execution) {
+        return JsTestTaskRunOutcome::response(PhpTestRunResponse::Error { message });
+    }
+    let outcome = run_at_roots(
         &root_path,
+        &execution.execution_root,
+        &execution.package_root_path,
         &app_data_base,
-        |runner, current_root_path, result_path| {
-            ensure_registered_root_identity(&root, current_root_path)?;
-            let selection = selection_for_scope(current_root_path, &scope)?;
-            execute_scoped(runner, current_root_path, result_path, &selection, activate)
+        |runner, execution_root, result_path| {
+            ensure_registered_root_identity(&root, &root_path)?;
+            ensure_js_test_execution_context_identity(&execution)?;
+            let selection = selection_for_scope(execution_root, &execution.scope)?;
+            let (binary, runner_kind) = match runner {
+                JsTestRunner::Vitest(binary) => (binary, RetainedJsTestRunnerKind::Vitest),
+                JsTestRunner::Jest(binary) => (binary, RetainedJsTestRunnerKind::Jest),
+            };
+            let authority = retain_js_test_process_authority(&execution, binary, runner_kind)?;
+            execute_scoped_retained(
+                runner,
+                execution_root,
+                result_path,
+                &selection,
+                activate,
+                authority,
+            )
         },
     );
     if let Err(message) = ensure_registered_root_identity(&root, &root_path) {
@@ -125,21 +155,37 @@ where
     outcome
 }
 
+#[cfg(test)]
 pub(super) fn run_at_root<F>(root: &Path, app_data_base: &Path, execute: F) -> JsTestTaskRunOutcome
 where
     F: FnOnce(&JsTestRunner, &Path, &Path) -> Result<JsTestRunnerCompletion, String>,
 {
-    let runner = match detect_runner(root) {
-        Ok(Some(runner)) => runner,
-        Ok(None) => {
-            return JsTestTaskRunOutcome::response(PhpTestRunResponse::Unavailable {
-                message: "No JavaScript test runner is available in this workspace.".to_string(),
-            });
-        }
-        Err(message) => {
-            return JsTestTaskRunOutcome::response(PhpTestRunResponse::Error { message })
-        }
-    };
+    run_at_roots(root, root, root, app_data_base, execute)
+}
+
+pub(super) fn run_at_roots<F>(
+    projection_root: &Path,
+    execution_root: &Path,
+    package_root_path: &Path,
+    app_data_base: &Path,
+    execute: F,
+) -> JsTestTaskRunOutcome
+where
+    F: FnOnce(&JsTestRunner, &Path, &Path) -> Result<JsTestRunnerCompletion, String>,
+{
+    let runner =
+        match detect_runner_in_workspace(execution_root, package_root_path, projection_root) {
+            Ok(Some(runner)) => runner,
+            Ok(None) => {
+                return JsTestTaskRunOutcome::response(PhpTestRunResponse::Unavailable {
+                    message: "No JavaScript test runner is available in this workspace."
+                        .to_string(),
+                });
+            }
+            Err(message) => {
+                return JsTestTaskRunOutcome::response(PhpTestRunResponse::Error { message })
+            }
+        };
     let result_path = match prepare_result_path_with_extension(
         app_data_base,
         RESULT_SUBDIRECTORY,
@@ -152,7 +198,7 @@ where
         }
     };
     let guard = ResultFileGuard(result_path.clone());
-    let process_output = match execute(&runner, root, &result_path) {
+    let process_output = match execute(&runner, execution_root, &result_path) {
         Ok(JsTestRunnerCompletion::Completed(output)) => output,
         Ok(JsTestRunnerCompletion::Cancelled(output)) => {
             return JsTestTaskRunOutcome::Cancelled {
@@ -208,7 +254,7 @@ where
             }
         }
     };
-    let response = match parse_jest_json(&json, root) {
+    let response = match parse_jest_json(&json, projection_root) {
         Ok(response) => response,
         Err(error) => PhpTestRunResponse::Error {
             message: with_stderr_tail(
@@ -224,24 +270,48 @@ where
     }
 }
 
-fn execute_scoped<F>(
+fn execute_scoped_retained<F>(
     runner: &JsTestRunner,
     root: &Path,
     result_path: &Path,
     selection: &JsTestRunSelection,
     activate: F,
+    authority: RetainedJsTestProcessAuthority,
 ) -> Result<JsTestRunnerCompletion, String>
 where
     F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
 {
-    execute_with_args(
+    execute_scoped_retained_optional(
+        runner,
+        root,
+        result_path,
+        selection,
+        activate,
+        Some(authority),
+    )
+}
+
+fn execute_scoped_retained_optional<F>(
+    runner: &JsTestRunner,
+    root: &Path,
+    result_path: &Path,
+    selection: &JsTestRunSelection,
+    activate: F,
+    authority: Option<RetainedJsTestProcessAuthority>,
+) -> Result<JsTestRunnerCompletion, String>
+where
+    F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
+{
+    execute_with_args_retained(
         runner,
         root,
         scoped_runner_args(runner, result_path, selection),
         activate,
+        authority,
     )
 }
 
+#[cfg(test)]
 fn execute_with_args<F>(
     runner: &JsTestRunner,
     root: &Path,
@@ -251,9 +321,23 @@ fn execute_with_args<F>(
 where
     F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
 {
-    execute_with_args_timeout(runner, root, args, RUNNER_TIMEOUT, activate)
+    execute_with_args_retained(runner, root, args, activate, None)
 }
 
+fn execute_with_args_retained<F>(
+    runner: &JsTestRunner,
+    root: &Path,
+    args: Vec<String>,
+    activate: F,
+    authority: Option<RetainedJsTestProcessAuthority>,
+) -> Result<JsTestRunnerCompletion, String>
+where
+    F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
+{
+    execute_with_args_timeout_retained(runner, root, args, RUNNER_TIMEOUT, activate, authority)
+}
+
+#[cfg(test)]
 fn execute_with_args_timeout<F>(
     runner: &JsTestRunner,
     root: &Path,
@@ -264,15 +348,33 @@ fn execute_with_args_timeout<F>(
 where
     F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
 {
+    execute_with_args_timeout_retained(runner, root, args, timeout, activate, None)
+}
+
+fn execute_with_args_timeout_retained<F>(
+    runner: &JsTestRunner,
+    root: &Path,
+    args: Vec<String>,
+    timeout: Duration,
+    activate: F,
+    authority: Option<RetainedJsTestProcessAuthority>,
+) -> Result<JsTestRunnerCompletion, String>
+where
+    F: FnOnce(TerminalTaskOwnership) -> Result<(), String>,
+{
     let binary = match runner {
         JsTestRunner::Vitest(binary) => binary,
         JsTestRunner::Jest(binary) => binary,
     };
-    let mut command = Command::new(binary);
+    let mut command = if let Some(authority) = authority {
+        authority.into_command(args)
+    } else {
+        let mut command = Command::new(binary);
+        command.args(args).current_dir(root);
+        command
+    };
     command
-        .args(args)
         .env("LC_ALL", "C")
-        .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -509,6 +611,71 @@ mod tests {
                 .expect("read results")
                 .count(),
             0
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn nested_package_detection_executes_there_but_projects_workspace_relative_results() {
+        let root = temp_directory("nested-package-root");
+        let package = root.join("packages/web");
+        fs::create_dir_all(root.join("node_modules/.bin")).expect("create hoisted binary");
+        fs::create_dir_all(&package).expect("create nested package");
+        fs::write(package.join("vitest.config.ts"), "export default {}").expect("write config");
+        let binary = root.join("node_modules/.bin/vitest");
+        fs::write(&binary, "").expect("write runner");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755))
+                .expect("runner permissions");
+        }
+        let test_file = package.join("src/app.test.ts");
+        fs::create_dir_all(test_file.parent().expect("test parent")).expect("create test parent");
+        fs::write(&test_file, "test('works', () => {})").expect("write test");
+
+        let outcome = run_at_roots(
+            &root,
+            &package,
+            &package,
+            &root.join("app-data"),
+            |runner, execution_root, result_path| {
+                assert_eq!(execution_root, package);
+                assert_eq!(
+                    runner,
+                    &JsTestRunner::Vitest(fs::canonicalize(&binary).expect("canonical runner"))
+                );
+                fs::write(
+                    result_path,
+                    serde_json::json!({
+                        "testResults": [{
+                            "name": test_file,
+                            "status": "passed",
+                            "assertionResults": [{
+                                "title": "works",
+                                "fullName": "works",
+                                "status": "passed",
+                                "failureMessages": []
+                            }]
+                        }]
+                    })
+                    .to_string(),
+                )
+                .expect("write report");
+                Ok(JsTestRunnerCompletion::Completed(empty_process_output()))
+            },
+        );
+
+        let JsTestTaskRunOutcome::Response {
+            response: PhpTestRunResponse::Ok { suites, .. },
+            ..
+        } = outcome
+        else {
+            panic!("expected successful nested package run");
+        };
+        assert_eq!(
+            suites[0].name.as_deref(),
+            Some("packages/web/src/app.test.ts")
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

@@ -197,6 +197,7 @@ export function useDebugEvaluation({
         name: expression.trim(),
         value: result.value,
         type: result.type,
+        ...(result.evaluateName === undefined ? {} : { evaluateName: result.evaluateName }),
         variablesReference: result.variablesReference ?? 0,
       };
     },

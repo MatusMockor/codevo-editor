@@ -94,8 +94,10 @@ describe("useDebugPanelProps", () => {
       debugAdapterKind: "node",
       debugControlPending: true,
       debugRestartPending: false,
+      debugStartPending: true,
       debugStopPending: false,
       debugSessionAttached: false,
+      debugStartBlockedByOtherOwner: true,
       disconnectDebug: vi.fn().mockResolvedValue(undefined),
       disableAllBreakpoints,
       enableAllBreakpoints,
@@ -237,7 +239,9 @@ describe("useDebugPanelProps", () => {
     expect(panel?.consoleFocusRequest).toBe(consoleFocusRequest);
     expect(panel?.consoleWorkspaceOwnerKey).toBe("workspace-owner");
     expect(panel?.debugRestartPending).toBe(false);
+    expect(panel?.debugStartPending).toBe(true);
     expect(panel?.debugStopPending).toBe(false);
+    expect(panel?.debugStartBlockedByOtherOwner).toBe(true);
     expect(panel?.breakpointBulkMutationPending).toBe(false);
     expect(panel?.breakpointCounts).toEqual({ disabled: 2, enabled: 1 });
     expect(panel?.exceptionTypeFilter).toEqual(["TypeError"]);
@@ -276,6 +280,47 @@ describe("useDebugPanelProps", () => {
     expect(restartDebug).toHaveBeenCalledOnce();
     expect(reportCommandError).toHaveBeenCalledOnce();
     expect(reportCommandError).toHaveBeenCalledWith(restartError);
+    act(() => root.unmount());
+  });
+
+  it("reports every rejected breakpoint row mutation instead of dropping its promise", async () => {
+    const mutationError = new Error("bounded breakpoint failure");
+    const mutations = {
+      removeBreakpoint: vi.fn().mockRejectedValue(mutationError),
+      setBreakpointCondition: vi.fn().mockRejectedValue(mutationError),
+      setBreakpointEnabled: vi.fn().mockRejectedValue(mutationError),
+      setBreakpointHitCondition: vi.fn().mockRejectedValue(mutationError),
+      setBreakpointLogMessage: vi.fn().mockRejectedValue(mutationError),
+    };
+    const reportCommandError = vi.fn();
+    const captured: { current: DebugPanelProps | null } = { current: null };
+    const root = createRoot(document.createElement("div"));
+
+    function Harness() {
+      captured.current = useDebugPanelProps({
+        debugSession: debugSessionStub(mutations) as never,
+        hasJavaScriptTypeScriptWorkspace: true,
+        openDebugLocation: vi.fn(),
+        reportCommandError,
+        workspaceRoot: "/workspace",
+        workspaceTrusted: true,
+      });
+      return null;
+    }
+
+    act(() => root.render(<Harness />));
+    captured.current?.onRemoveBreakpoint("bp");
+    captured.current?.onSetBreakpointCondition("bp", "ready");
+    captured.current?.onSetBreakpointEnabled("bp", false);
+    captured.current?.onSetBreakpointHitCondition("bp", { count: 2, kind: "equals" });
+    captured.current?.onSetBreakpointLogMessage("bp", "value={value}");
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(reportCommandError).toHaveBeenCalledTimes(5);
+    expect(reportCommandError.mock.calls.every(([error]) => error === mutationError)).toBe(true);
     act(() => root.unmount());
   });
 
@@ -460,8 +505,10 @@ function debugSessionStub(overrides: Record<string, unknown> = {}) {
     },
     debugAdapterKind: "node",
     debugRestartPending: false,
+    debugStartPending: false,
     debugStopPending: false,
     debugSessionAttached: false,
+    debugStartBlockedByOtherOwner: false,
     disconnectDebug: vi.fn().mockResolvedValue(undefined),
     disableAllBreakpoints: vi.fn().mockResolvedValue(undefined),
     enableAllBreakpoints: vi.fn().mockResolvedValue(undefined),

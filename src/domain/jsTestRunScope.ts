@@ -1,4 +1,5 @@
 import type { TestRunResponse } from "./testResults";
+import type { JsTestExecutionAuthority } from "./jsTestExecutionAuthority";
 import type {
   JsTestExplorerFileNode,
   JsTestExplorerSuiteNode,
@@ -23,7 +24,11 @@ export type JsTestRunScope =
     };
 
 export interface JsTestGateway {
-  run(rootPath: string, scope: JsTestRunScope): Promise<TestRunResponse>;
+  run(
+    rootPath: string,
+    scope: JsTestRunScope,
+    authority?: JsTestExecutionAuthority,
+  ): Promise<TestRunResponse>;
 }
 
 export type JsTestRunnableExplorerNode =

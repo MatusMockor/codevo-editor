@@ -32,9 +32,11 @@ import { useDebugExceptionPause } from "./useDebugExceptionPause";
 import { useDebugEvaluation } from "./useDebugEvaluation";
 import { useDebugBreakpointManagement } from "./useDebugBreakpointManagement";
 import { useDebugFunctionBreakpointManagement } from "./useDebugFunctionBreakpointManagement";
+import { useDebugFunctionBreakpointSessionAuthority } from "./useDebugFunctionBreakpointSessionAuthority";
 import { createDebugBreakpointSynchronization } from "./debugBreakpointSynchronization";
 import { useDebugRestartFrameSessionLifecycle } from "./useDebugRestartFrameLifecycle";
 import { useDebugSessionEventProjection } from "./useDebugSessionEventProjection";
+import type { DebugOutputOwner } from "./debugOutputBatchCoordinator";
 import { useDebugSetVariable } from "./useDebugSetVariable";
 import { useDebugSetExpression } from "./useDebugSetExpression";
 import { useDebugVariableMutationRows } from "./useDebugVariableMutationRows";
@@ -42,8 +44,9 @@ import {
   useDebugSessionEnd,
   type DebugSessionOwner,
   type PendingActiveStop,
+  type PendingStartOwner,
 } from "./useDebugSessionEnd";
-import { DebugRestartCoordinator, type DebugRestartAttempt } from "./debugRestartCoordinator";
+import { DebugRestartCoordinator, type PendingDebugRestart } from "./debugRestartCoordinator";
 import { useDebugBreakpointActivation } from "./useDebugBreakpointActivation";
 import {
   createDebugVariablePagesState,
@@ -54,10 +57,10 @@ import {
   type DebugInspectionOwner,
   type DebugVariablePagesState,
 } from "../domain/debugVariablePages";
-import type { DebugConsoleCompletionQuery } from "../domain/debugConsoleCompletions";
 import { DebugCompoundSessionProjection } from "./debugCompoundSessionProjection";
 import { NodeDebugCompoundSessionCoordinator } from "./nodeDebugCompoundSessionCoordinator";
 import {
+  COMPOUND_POLICY_SYNC_ERROR,
   startDebugCompoundAccepted as startDebugCompound,
   type ActiveDebugCompound,
 } from "./debugCompoundStart";
@@ -72,9 +75,18 @@ import {
   acceptNodeAttachCandidateStart,
   classifyDebugStartAcceptance,
   legacyDebugStartDescriptor,
+  startDescriptorAuthorized,
   type DebugStartDescriptor,
 } from "./debugStartDescriptor";
-import { confirmDebugStart } from "./debugStartConfirmation";
+import { compensateRejectedDebugStart, confirmDebugStart } from "./debugStartConfirmation";
+import {
+  debugOwnerEpochMatches,
+  debugSessionOwnerMatches,
+  projectDebugSessionOwner,
+  projectPendingDebugOwner,
+  releasePendingDebugStopOwner,
+  retainPendingDebugStopOwner,
+} from "./debugSessionOwnerProjection";
 import {
   emptyBreakpoints,
   emptyCompoundSessionIds,
@@ -83,6 +95,8 @@ import {
   emptyScopes,
   inactiveSnapshot,
 } from "./debugSessionDefaults";
+import { useDebugConsoleCompletion } from "./useDebugConsoleCompletion";
+import { pendingDebugStartEventsForSession } from "./debugPendingStartEvents";
 
 export type {
   ActiveDebugAdapterKind,
@@ -91,16 +105,6 @@ export type {
   UseDebugSessionOptions,
   UseDebugSessionResult,
 } from "./debugSessionContracts";
-
-const COMPOUND_POLICY_SYNC_ERROR = "Unable to synchronize the active debug compound.";
-
-interface PendingRestart {
-  readonly attempt: DebugRestartAttempt;
-  readonly coordinator: DebugRestartCoordinator;
-  cancelled: boolean;
-  promise: Promise<void>;
-  readonly workspaceId: string | null;
-}
 
 export function useDebugSession(options: UseDebugSessionOptions): UseDebugSessionResult {
   return useWorkbenchDebugSession(options).session;
@@ -121,6 +125,7 @@ export function useWorkbenchDebugSession({
     Record<string, boolean>
   >({});
   const [outputBySession, setOutputBySession] = useState<Record<number, DebugOutputLine[]>>({});
+  const outputOwnersBySessionRef = useRef(new Map<number, DebugOutputOwner>());
   const [evaluationHistoryBySession, setEvaluationHistoryBySession] = useState<
     Record<string, string[]>
   >({});
@@ -165,11 +170,13 @@ export function useWorkbenchDebugSession({
   frameSelectionByRootRef.current = frameSelectionByRoot;
   const mountedRef = useRef(true);
   const pendingStartKeysRef = useRef(new Set<string>());
+  const pendingStartOwnersRef = useRef(new Map<string, PendingStartOwner>());
+  const pendingStartStopOwnersRef = useRef(new Map<string, PendingStartOwner>());
   const pendingConfirmedStartKeysRef = useRef(new Set<string>());
   const pendingConfirmedStartEventsRef = useRef(new Map<string, Map<number, DebugEvent[]>>());
   const pendingStopKeysRef = useRef(new Set<string>());
   const pendingActiveStopsRef = useRef(new Map<string, PendingActiveStop>());
-  const pendingRestartsRef = useRef(new Map<string, PendingRestart>());
+  const pendingRestartsRef = useRef(new Map<string, PendingDebugRestart>());
   const pendingControlsRef = useRef(new Map<string, Promise<unknown>>());
   const restartCoordinatorsRef = useRef(new Map<string, DebugRestartCoordinator>());
   const restartOwnerIdsRef = useRef(new Map<string, string | null>());
@@ -189,10 +196,23 @@ export function useWorkbenchDebugSession({
     async (
       _rootPath: string,
       _workspaceId: string | null,
+      _workspaceEpoch: number,
       _sessionId: number,
       _adapterKind: "node" | "php",
+      _startupDesiredRevision?: number,
+      _startupEvents?: readonly DebugEvent[],
+      _startedAtGenerationOne?: boolean,
     ) => false,
   );
+  const functionBreakpointsForStartRef = useRef<
+    (
+      rootPath: string,
+      workspaceId: string | null,
+    ) => readonly [
+      readonly import("../domain/debug").DebugFunctionBreakpointInput[],
+      desiredRevision: number,
+    ]
+  >(() => [[], 0]);
 
   useEffect(() => {
     if (!workspaceRoot) return;
@@ -478,6 +498,7 @@ export function useWorkbenchDebugSession({
     isWorkspaceTrusted,
     mountedRef,
     observeRestartFrameEvent,
+    outputOwnersBySessionRef,
     pendingConfirmedStartEventsRef,
     pendingConfirmedStartKeysRef,
     pendingRestartsRef,
@@ -501,6 +522,7 @@ export function useWorkbenchDebugSession({
     ) => {
       const requestedRoot = currentRootRef.current;
       const requestedWorkspaceId = currentWorkspaceIdRef.current;
+      const requestedWorkspaceEpoch = workspaceOwnerEpochRef.current.epoch;
 
       if (
         !requestedRoot ||
@@ -524,6 +546,10 @@ export function useWorkbenchDebugSession({
       }
 
       pendingStartKeysRef.current.add(key);
+      pendingStartOwnersRef.current.set(key, {
+        workspaceEpoch: requestedWorkspaceEpoch,
+        workspaceId: requestedWorkspaceId,
+      });
       if (descriptor.confirmStart) pendingConfirmedStartKeysRef.current.add(key);
       pendingBreakpointAdaptersRef.current = {
         ...pendingBreakpointAdaptersRef.current,
@@ -534,6 +560,10 @@ export function useWorkbenchDebugSession({
         requestedRoot,
         descriptor.adapterKind,
         descriptor.exceptionTypeFilterSupported,
+      );
+      const functionBreakpointStart = functionBreakpointsForStartRef.current(
+        requestedRoot,
+        requestedWorkspaceId,
       );
 
       try {
@@ -547,10 +577,12 @@ export function useWorkbenchDebugSession({
           ),
           policy.mode,
           policy.exceptionTypeFilter,
+          descriptor.adapterKind === "node" ? functionBreakpointStart[0] : [],
         );
         if (status.kind !== "ok") {
           if (
             !isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) ||
+            workspaceOwnerEpochRef.current.epoch !== requestedWorkspaceEpoch ||
             !trustedWorkspace(isWorkspaceTrusted) ||
             !startDescriptorAuthorized(descriptor) ||
             !mountedRef.current
@@ -567,6 +599,7 @@ export function useWorkbenchDebugSession({
           gateway,
           isAuthorized: () =>
             isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) &&
+            workspaceOwnerEpochRef.current.epoch === requestedWorkspaceEpoch &&
             trustedWorkspace(isWorkspaceTrusted) &&
             startDescriptorAuthorized(descriptor),
           isMounted: () => mountedRef.current,
@@ -579,12 +612,13 @@ export function useWorkbenchDebugSession({
         const supersededSessionId =
           existing.state.kind === "terminated" ? null : debuggerSessionId(existing.state);
 
-        // A successful backend start atomically supersedes the root's previous runtime session.
-        // Do not issue a second stop: the old backend session has already been removed and a
-        // best-effort promise here could reject after the new session has been accepted.
         if (supersededSessionId !== status.sessionId) setPauseGeneration(key, 0);
 
         const previousSessions = sessionsByRootRef.current[key] ?? [];
+        for (const sessionId of previousSessions) {
+          outputOwnersBySessionRef.current.delete(sessionId);
+        }
+        outputOwnersBySessionRef.current.delete(status.sessionId);
         sessionsByRootRef.current = {
           ...sessionsByRootRef.current,
           [key]: [status.sessionId],
@@ -629,8 +663,11 @@ export function useWorkbenchDebugSession({
           snapshotsRef.current = updated;
           setSnapshots(updated);
         }
-        const pendingConfirmedEvents =
-          pendingConfirmedStartEventsRef.current.get(key)?.get(status.sessionId) ?? [];
+        const pendingConfirmedEvents = pendingDebugStartEventsForSession(
+          pendingConfirmedStartEventsRef.current,
+          key,
+          status.sessionId,
+        );
         pendingConfirmedStartEventsRef.current.delete(key);
         let replayedSnapshot = snapshotsRef.current[key] ?? inactiveSnapshot;
         for (const event of pendingConfirmedEvents) {
@@ -668,17 +705,28 @@ export function useWorkbenchDebugSession({
         sessionOwnersRef.current.set(key, {
           sessionId: status.sessionId,
           targetKind: descriptor.targetKind,
+          workspaceEpoch: requestedWorkspaceEpoch,
           workspaceId: requestedWorkspaceId,
         });
-        await syncFunctionBreakpointsForSessionRef.current(
+        const functionBreakpointsSynchronized = await syncFunctionBreakpointsForSessionRef.current(
           requestedRoot,
           requestedWorkspaceId,
+          requestedWorkspaceEpoch,
           status.sessionId,
           descriptor.adapterKind,
+          descriptor.functionBreakpointsAtStart ? functionBreakpointStart[1] : undefined,
+          descriptor.functionBreakpointsAtStart ? pendingConfirmedEvents : undefined,
+          true,
         );
+        if (!functionBreakpointsSynchronized) {
+          await compensateRejectedDebugStart(gateway, status.sessionId);
+          finalizeExactSession(key, status.sessionId);
+          return;
+        }
         if (
           !mountedRef.current ||
           !isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) ||
+          workspaceOwnerEpochRef.current.epoch !== requestedWorkspaceEpoch ||
           sessionOwnersRef.current.get(key)?.sessionId !== status.sessionId
         ) {
           return;
@@ -700,6 +748,23 @@ export function useWorkbenchDebugSession({
         pendingConfirmedStartEventsRef.current.delete(key);
         pendingConfirmedStartKeysRef.current.delete(key);
         pendingStartKeysRef.current.delete(key);
+        const pendingStartOwner = pendingStartOwnersRef.current.get(key);
+        if (
+          pendingStartOwner?.workspaceEpoch === requestedWorkspaceEpoch &&
+          pendingStartOwner.workspaceId === requestedWorkspaceId
+        ) {
+          pendingStartOwnersRef.current.delete(key);
+        }
+        const pendingStartStopOwner = pendingStartStopOwnersRef.current.get(key);
+        if (
+          pendingStartStopOwner?.workspaceEpoch === requestedWorkspaceEpoch &&
+          pendingStartStopOwner.workspaceId === requestedWorkspaceId
+        ) {
+          pendingStartStopOwnersRef.current.delete(key);
+          if (mountedRef.current) {
+            setStopPendingByRoot((current) => ({ ...current, [key]: false }));
+          }
+        }
         const nextPendingAdapters = { ...pendingBreakpointAdaptersRef.current };
         delete nextPendingAdapters[key];
         pendingBreakpointAdaptersRef.current = nextPendingAdapters;
@@ -713,6 +778,7 @@ export function useWorkbenchDebugSession({
       adoptBreakpointsActivation,
       applyBreakpointsVerifiedEvent,
       exceptionPauseStartPolicyForAdapter,
+      finalizeExactSession,
       gateway,
       isExactWorkspaceOwnerCurrent,
       isWorkspaceTrusted,
@@ -815,10 +881,13 @@ export function useWorkbenchDebugSession({
     pendingControlsRef,
     pendingRestartsRef,
     pendingStartKeysRef,
+    pendingStartOwnersRef,
+    pendingStartStopOwnersRef,
     pendingStopKeysRef,
     restartCoordinatorsRef,
     sessionOwnersRef,
     setStopPendingByRoot,
+    workspaceOwnerEpochRef,
   });
 
   const stopDebug = useCallback(async () => {
@@ -831,6 +900,7 @@ export function useWorkbenchDebugSession({
     if (
       !root ||
       !workspaceRootKeysEqual(root, compound.owner.rootPath) ||
+      compound.owner.workspaceEpoch !== workspaceOwnerEpochRef.current.epoch ||
       !isExactWorkspaceOwnerCurrent(compound.owner.rootPath, compound.owner.workspaceId)
     ) {
       return;
@@ -851,12 +921,15 @@ export function useWorkbenchDebugSession({
         if (compound.stopPromise) await compound.stopPromise;
       })();
       compound.cancelPromise = cancellation;
+      retainPendingDebugStopOwner(pendingStartStopOwnersRef.current, key, compound.owner);
       setStopPendingByRoot((current) => ({ ...current, [key]: true }));
       try {
         await cancellation;
       } finally {
-        if (mountedRef.current) {
-          setStopPendingByRoot((current) => ({ ...current, [key]: false }));
+        if (releasePendingDebugStopOwner(pendingStartStopOwnersRef.current, key, compound.owner)) {
+          if (mountedRef.current) {
+            setStopPendingByRoot((current) => ({ ...current, [key]: false }));
+          }
         }
       }
       return;
@@ -867,6 +940,7 @@ export function useWorkbenchDebugSession({
     const key = normalizedWorkspaceRootKey(root);
     const operation = gateway.stop(representative);
     compound.stopPromise = operation;
+    retainPendingDebugStopOwner(pendingStartStopOwnersRef.current, key, compound.owner);
     setStopPendingByRoot((current) => ({ ...current, [key]: true }));
     try {
       await operation;
@@ -887,8 +961,10 @@ export function useWorkbenchDebugSession({
       }
       throw error;
     } finally {
-      if (mountedRef.current) {
-        setStopPendingByRoot((current) => ({ ...current, [key]: false }));
+      if (releasePendingDebugStopOwner(pendingStartStopOwnersRef.current, key, compound.owner)) {
+        if (mountedRef.current) {
+          setStopPendingByRoot((current) => ({ ...current, [key]: false }));
+        }
       }
     }
   }, [
@@ -918,8 +994,7 @@ export function useWorkbenchDebugSession({
       try {
         await stopDebug();
       } catch {
-        // Keep the exact group owned for an explicit Stop retry, but block every
-        // non-stop control while its policy state is unknown.
+        // Retain exact compound ownership for an explicit Stop retry.
       }
     },
     [stopDebug],
@@ -968,6 +1043,10 @@ export function useWorkbenchDebugSession({
       const representative = live[0] ?? compound.representativeSessionId;
       if (representative !== null && compound.stopPromise === null) {
         compound.stopPromise = gateway.stop(representative).catch(() => undefined);
+      }
+      if (representative === null) {
+        compound.cancelRequested = true;
+        return;
       }
       activeCompoundRef.current = null;
       if (mountedRef.current) {
@@ -1050,7 +1129,7 @@ export function useWorkbenchDebugSession({
     });
     if (!coordinator || !attempt) return;
 
-    const pending: PendingRestart = {
+    const pending: PendingDebugRestart = {
       attempt,
       coordinator,
       cancelled: false,
@@ -1145,19 +1224,18 @@ export function useWorkbenchDebugSession({
     if (sessionId === null) return null;
     const owner = sessionOwnersRef.current.get(key);
     if (
-      !owner ||
-      owner.sessionId !== sessionId ||
-      owner.workspaceId !== currentWorkspaceIdRef.current
+      !debugSessionOwnerMatches(
+        owner,
+        sessionId,
+        workspaceOwnerEpochRef.current.epoch,
+        currentWorkspaceIdRef.current,
+      )
     ) {
       return null;
     }
-    if (!workspaceRootKeysEqual(root, currentRootRef.current)) return null;
     if (
       !trustedWorkspace(isWorkspaceTrusted) ||
-      !isExactWorkspaceOwnerCurrent(root, owner.workspaceId) ||
-      pendingActiveStopsRef.current.has(key) ||
-      pendingRestartsRef.current.has(key) ||
-      pendingControlsRef.current.has(key)
+      !isExactWorkspaceOwnerCurrent(root, currentWorkspaceIdRef.current)
     )
       return null;
     const state = (snapshotsRef.current[key] ?? inactiveSnapshot).state;
@@ -1178,11 +1256,15 @@ export function useWorkbenchDebugSession({
     return (
       mountedRef.current &&
       currentWorkspaceIdRef.current !== null &&
-      owner?.sessionId === state.sessionId &&
-      owner.workspaceId === currentWorkspaceIdRef.current &&
+      debugSessionOwnerMatches(
+        owner,
+        state.sessionId,
+        workspaceOwnerEpochRef.current.epoch,
+        currentWorkspaceIdRef.current,
+      ) &&
       adapterKindForSession(root, state.sessionId) === "node" &&
       (pauseGenerationByRootRef.current[key] ?? 0) > 0 &&
-      isExactWorkspaceOwnerCurrent(root, owner.workspaceId) &&
+      isExactWorkspaceOwnerCurrent(root, currentWorkspaceIdRef.current) &&
       !pendingStartKeysRef.current.has(key) &&
       !pendingRestartsRef.current.has(key) &&
       !pendingActiveStopsRef.current.has(key) &&
@@ -1295,6 +1377,7 @@ export function useWorkbenchDebugSession({
     commitBreakpoints,
     createBreakpointId,
     currentRootRef,
+    currentWorkspaceEpochRef: workspaceOwnerEpochRef,
     currentWorkspaceIdRef,
     exactLiveCompoundSessionIds,
     failClosedCompoundPolicy,
@@ -1310,21 +1393,14 @@ export function useWorkbenchDebugSession({
     setBreakpointBulkPendingByRoot,
   });
 
-  const activeFunctionBreakpointSession = useCallback(() => {
-    const root = currentRootRef.current;
-    if (!root) return null;
-    const sessionId = activeControlSessionId();
-    if (sessionId === null) return null;
-    const owner = sessionOwnersRef.current.get(normalizedWorkspaceRootKey(root));
-    const adapterKind = adapterKindForSession(root, sessionId);
-    if (!owner || !adapterKind || owner.sessionId !== sessionId) return null;
-    return {
-      adapterKind,
-      rootPath: root,
-      sessionId,
-      workspaceId: owner.workspaceId,
-    };
-  }, [activeControlSessionId, adapterKindForSession]);
+  const functionBreakpointSessionAuthority = useDebugFunctionBreakpointSessionAuthority({
+    adapterKindForSession,
+    currentRootRef,
+    pendingAdapterByRootRef: pendingBreakpointAdaptersRef,
+    sessionOwnersRef,
+    snapshotsRef,
+    workspaceOwnerEpochRef,
+  });
   const subscribeToFunctionBreakpointVerification = useCallback(
     (handler: (event: DebugEvent) => void) => gateway.subscribe(handler),
     [gateway],
@@ -1335,17 +1411,22 @@ export function useWorkbenchDebugSession({
     remove: removeFunctionBreakpoint,
     setEnabled: setFunctionBreakpointEnabled,
     synchronizeSession: synchronizeFunctionBreakpointsForSession,
+    snapshotForStart: snapshotFunctionBreakpointsForStart,
   } = useDebugFunctionBreakpointManagement({
+    canMutate: () => activeCompoundRef.current === null,
     gateway,
-    getActiveSession: activeFunctionBreakpointSession,
+    getActiveSession: functionBreakpointSessionAuthority.getActiveSession,
+    isSessionCurrent: functionBreakpointSessionAuthority.isSessionCurrent,
     isWorkspaceCurrent: (rootPath, requestedWorkspaceId) =>
       isExactWorkspaceOwnerCurrent(rootPath, requestedWorkspaceId),
     isWorkspaceTrusted,
     rootPath: workspaceRoot,
     subscribe: subscribeToFunctionBreakpointVerification,
+    workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
     workspaceId,
   });
   syncFunctionBreakpointsForSessionRef.current = synchronizeFunctionBreakpointsForSession;
+  functionBreakpointsForStartRef.current = snapshotFunctionBreakpointsForStart;
 
   const selectFrame = useCallback(
     (frameId: number) =>
@@ -1585,49 +1666,47 @@ export function useWorkbenchDebugSession({
   const activeKey = normalizedWorkspaceRootKey(workspaceRoot);
   const snapshot = snapshots[activeKey] ?? inactiveSnapshot;
   const pendingCompound = activeCompoundRef.current;
-  const compoundStartPendingForActiveRoot =
-    debugCompoundStartPending &&
+  const activeOwnerOwnsCompound =
     pendingCompound !== null &&
-    pendingCompound.owner.workspaceId === workspaceId &&
+    debugOwnerEpochMatches(
+      pendingCompound.owner,
+      workspaceOwnerEpochRef.current.epoch,
+      workspaceId,
+    ) &&
     workspaceRootKeysEqual(pendingCompound.owner.rootPath, workspaceRoot);
+  const compoundStartPendingForActiveRoot = debugCompoundStartPending && activeOwnerOwnsCompound;
   const sessionId = debuggerSessionId(snapshot.state);
   const selection = frameSelectionByRoot[activeKey] ?? null;
   const activePauseGeneration = pauseGenerationByRoot[activeKey] ?? 0;
-  const activeSessionOwner = sessionOwnersRef.current.get(activeKey);
-  const debugSessionAttached =
-    snapshot.state.kind !== "inactive" &&
-    snapshot.state.kind !== "terminated" &&
-    activeSessionOwner?.sessionId === sessionId &&
-    activeSessionOwner.workspaceId === workspaceId &&
-    activeSessionOwner.targetKind === "node-attach";
-  const activePauseOwnedByCurrentWorkspace =
-    snapshot.state.kind === "stopped" &&
-    activeSessionOwner?.sessionId === snapshot.state.sessionId &&
-    activeSessionOwner.workspaceId === workspaceId;
-  const pauseOwner =
-    snapshot.state.kind === "stopped" &&
-    activeSessionOwner !== undefined &&
-    activeSessionOwner.sessionId === snapshot.state.sessionId &&
-    activeSessionOwner.workspaceId === workspaceId &&
-    activePauseGeneration > 0 &&
-    activeSessionOwner.workspaceId !== null
-      ? {
-          rootKey: activeKey,
-          sessionId: activeSessionOwner.sessionId,
-          pauseGeneration: activePauseGeneration,
-          workspaceOwnerKey: activeSessionOwner.workspaceId,
-        }
-      : null;
+  const pendingOwnerProjection = projectPendingDebugOwner({
+    activeStopOwner: pendingActiveStopsRef.current.get(activeKey),
+    compoundStartOwned: compoundStartPendingForActiveRoot,
+    pendingStartOwner: pendingStartOwnersRef.current.get(activeKey),
+    pendingStartStopOwner: pendingStartStopOwnersRef.current.get(activeKey),
+    stopPending: stopPendingByRoot[activeKey] ?? false,
+    workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
+    workspaceId: currentWorkspaceIdRef.current,
+  });
+  const ownerProjection = projectDebugSessionOwner({
+    activePauseGeneration,
+    compoundStartOwned: compoundStartPendingForActiveRoot,
+    owner: sessionOwnersRef.current.get(activeKey),
+    pendingStartOwned: pendingOwnerProjection.pendingStartOwned,
+    rootKey: activeKey,
+    snapshot,
+    workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
+    workspaceId,
+  });
   let inspectionWorkspaceTrusted = false;
   try {
     inspectionWorkspaceTrusted = isWorkspaceTrusted();
   } catch {
-    // A failed trust lookup must invalidate all pause-owned inspection data.
+    // Failed trust lookup invalidates pause-owned inspection data.
   }
   const inspectionOwner = useMemo<DebugInspectionOwner | null>(() => {
     if (
       !inspectionWorkspaceTrusted ||
-      !activePauseOwnedByCurrentWorkspace ||
+      !ownerProjection.pauseOwned ||
       snapshot.state.kind !== "stopped" ||
       activePauseGeneration <= 0
     )
@@ -1643,47 +1722,20 @@ export function useWorkbenchDebugSession({
         };
   }, [
     activeKey,
-    activePauseOwnedByCurrentWorkspace,
+    ownerProjection.pauseOwned,
     activePauseGeneration,
     inspectionWorkspaceTrusted,
     selection?.frameId,
     snapshot.state,
   ]);
-  const inspectionOwnerRef = useRef(inspectionOwner);
-  inspectionOwnerRef.current = inspectionOwner;
-  const completeDebugConsole = useCallback(
-    async (owner: DebugInspectionOwner, query: DebugConsoleCompletionQuery) => {
-      const rootPath = currentRootRef.current;
-      const requestedWorkspaceId = currentWorkspaceIdRef.current;
-      const requestedOwnerEpoch = workspaceOwnerEpochRef.current.epoch;
-      const complete = gateway.completions;
-      if (
-        !rootPath ||
-        !complete ||
-        !debugInspectionOwnersEqual(owner, inspectionOwnerRef.current) ||
-        !isExactWorkspaceOwnerCurrent(rootPath, requestedWorkspaceId)
-      ) {
-        return null;
-      }
-      try {
-        const response = await complete.call(gateway, {
-          rootPath,
-          sessionId: owner.sessionId,
-          pauseGeneration: owner.pauseGeneration,
-          frameId: owner.frameId,
-          query,
-        });
-        return workspaceOwnerEpochRef.current.epoch === requestedOwnerEpoch &&
-          isExactWorkspaceOwnerCurrent(rootPath, requestedWorkspaceId) &&
-          debugInspectionOwnersEqual(owner, inspectionOwnerRef.current)
-          ? response
-          : null;
-      } catch {
-        return null;
-      }
-    },
-    [gateway, isExactWorkspaceOwnerCurrent],
-  );
+  const completeDebugConsole = useDebugConsoleCompletion({
+    currentRootRef,
+    currentWorkspaceIdRef,
+    gateway,
+    inspectionOwner,
+    isExactWorkspaceOwnerCurrent,
+    workspaceOwnerEpochRef,
+  });
 
   useEffect(() => {
     setVariablePages((current) =>
@@ -1706,40 +1758,59 @@ export function useWorkbenchDebugSession({
 
   const activeBreakpoints = breakpointsByRoot[activeKey] ?? emptyBreakpoints;
   const breakpointsActivated = breakpointsActivatedFor(activeKey, sessionId);
+  const debugStartBlockedByOtherOwner =
+    pendingOwnerProjection.blockedByForeignStart ||
+    (pendingCompound !== null && !activeOwnerOwnsCompound) ||
+    ownerProjection.foreignActive;
+  const visibleOutputOwner =
+    ownerProjection.sessionId === null
+      ? undefined
+      : outputOwnersBySessionRef.current.get(ownerProjection.sessionId);
+  const visibleOutput =
+    ownerProjection.sessionId !== null &&
+    visibleOutputOwner?.rootKey === activeKey &&
+    visibleOutputOwner.workspaceEpoch === workspaceOwnerEpochRef.current.epoch &&
+    visibleOutputOwner.workspaceId === workspaceId
+      ? (outputBySession[ownerProjection.sessionId] ?? emptyOutput)
+      : emptyOutput;
 
   return {
     startDebugCompoundAccepted,
     startNodeAttachCandidateAccepted,
     session: {
       debugAdapterKind,
-      debugCompoundActive,
+      debugCompoundActive: debugCompoundActive && activeOwnerOwnsCompound,
       debugCompoundStartPending: compoundStartPendingForActiveRoot,
       debugRestartPending: restartPendingByRoot[activeKey] ?? false,
       debugControlPending: controlPendingByRoot[activeKey] ?? false,
       debugInspectionRevision,
-      debugStopPending: stopPendingByRoot[activeKey] ?? false,
-      debugSessionAttached,
-      debugStartPending: startPendingByRoot[activeKey] ?? false,
-      snapshot,
+      debugStopPending: pendingOwnerProjection.stopPending,
+      debugSessionAttached: ownerProjection.attached,
+      debugStartBlockedByOtherOwner,
+      debugStartPending:
+        (startPendingByRoot[activeKey] ?? false) &&
+        (pendingOwnerProjection.pendingStartOwned || compoundStartPendingForActiveRoot),
+      snapshot: ownerProjection.snapshot,
       breakpoints: activeBreakpoints,
       functionBreakpoints,
       breakpointCounts: countBreakpoints(activeBreakpoints),
       breakpointsActivated,
       breakpointBulkMutationPending: breakpointBulkPendingByRoot[activeKey] ?? false,
       evaluationHistory:
-        sessionId === null
+        ownerProjection.sessionId === null
           ? emptyEvaluationHistory
-          : (evaluationHistoryBySession[`${activeKey}\0${sessionId}`] ?? emptyEvaluationHistory),
-      pauseGeneration: activePauseGeneration,
-      pauseOwner,
+          : (evaluationHistoryBySession[`${activeKey}\0${ownerProjection.sessionId}`] ??
+            emptyEvaluationHistory),
+      pauseGeneration: ownerProjection.pauseOwned ? activePauseGeneration : 0,
+      pauseOwner: ownerProjection.pauseOwner,
       exceptionPauseError,
       exceptionPauseMode,
       exceptionPausePending,
       exceptionTypeFilter,
-      output: sessionId === null ? emptyOutput : (outputBySession[sessionId] ?? emptyOutput),
+      output: visibleOutput,
       lastStartError: startErrors[activeKey] ?? null,
-      selectedFrameId: selection?.frameId ?? null,
-      scopes: selection?.scopes ?? emptyScopes,
+      selectedFrameId: ownerProjection.pauseOwned ? (selection?.frameId ?? null) : null,
+      scopes: ownerProjection.pauseOwned ? (selection?.scopes ?? emptyScopes) : emptyScopes,
       variablesByReference,
       inspectionOwner,
       variablePages: visibleVariablePages,
@@ -1790,12 +1861,4 @@ export function useWorkbenchDebugSession({
       completeDebugConsole,
     },
   };
-}
-
-function startDescriptorAuthorized(descriptor: DebugStartDescriptor): boolean {
-  try {
-    return descriptor.isStartAuthorized?.() !== false;
-  } catch {
-    return false;
-  }
 }

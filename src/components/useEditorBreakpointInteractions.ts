@@ -33,6 +33,7 @@ interface Options {
   readonly modelIdentity: object | null;
   readonly hitConditionSupported?: boolean;
   readonly logMessageSupported?: boolean;
+  readonly onMutationError?: (error: unknown) => void;
   readonly onRemoveBreakpoint?: (id: string) => void | Promise<void>;
   readonly onSetBreakpointCondition?: (
     id: string,
@@ -79,6 +80,7 @@ export function useEditorBreakpointInteractions({
   modelIdentity,
   hitConditionSupported = false,
   logMessageSupported = false,
+  onMutationError,
   onRemoveBreakpoint,
   onSetBreakpointCondition,
   onSetBreakpointHitCondition,
@@ -96,6 +98,16 @@ export function useEditorBreakpointInteractions({
   const currentContextRef = useRef({ activeDocumentPath, modelIdentity, workspaceRoot });
   currentContextRef.current = { activeDocumentPath, modelIdentity, workspaceRoot };
   const mountedRef = useRef(true);
+  const reportMutationError = useCallback(
+    (error: unknown) => {
+      try {
+        onMutationError?.(error);
+      } catch {
+        // Reporting is best effort and must not create another unhandled rejection.
+      }
+    },
+    [onMutationError],
+  );
 
   const cancelOperation = useCallback((operation: PendingConditionOperation) => {
     if (pendingOperationsRef.current.get(operation.key)?.token !== operation.token) return;
@@ -219,17 +231,19 @@ export function useEditorBreakpointInteractions({
     const current = popover;
     if (!current?.breakpoint || !onRemoveBreakpoint) return;
     invalidatePopover(current.operationToken);
-    void onRemoveBreakpoint(current.breakpoint.id);
+    void Promise.resolve(onRemoveBreakpoint(current.breakpoint.id)).catch(reportMutationError);
     restoreFocus?.();
-  }, [invalidatePopover, onRemoveBreakpoint, popover, restoreFocus]);
+  }, [invalidatePopover, onRemoveBreakpoint, popover, reportMutationError, restoreFocus]);
 
   const removeLogpoint = useCallback(() => {
     const current = popover;
     if (!current?.breakpoint?.logMessage || !onSetBreakpointLogMessage) return;
     invalidatePopover(current.operationToken);
-    void onSetBreakpointLogMessage(current.breakpoint.id, null);
+    void Promise.resolve(onSetBreakpointLogMessage(current.breakpoint.id, null)).catch(
+      reportMutationError,
+    );
     restoreFocus?.();
-  }, [invalidatePopover, onSetBreakpointLogMessage, popover, restoreFocus]);
+  }, [invalidatePopover, onSetBreakpointLogMessage, popover, reportMutationError, restoreFocus]);
 
   const save = useCallback(
     async (rawCondition: string): Promise<boolean> => {
@@ -280,7 +294,8 @@ export function useEditorBreakpointInteractions({
           invalidatePopover(popoverToken);
           restoreFocus?.();
           return true;
-        } catch {
+        } catch (error) {
+          reportMutationError(error);
           return false;
         }
       } else if (onToggleBreakpoint) {
@@ -370,12 +385,16 @@ export function useEditorBreakpointInteractions({
                 pendingOperationsRef.current.delete(key);
                 operation.ownership = null;
                 operation.resolve(true);
-              } catch {
+              } catch (error) {
+                reportMutationError(error);
                 await rollback();
                 cancelOperation(operation);
               }
             },
-            () => cancelOperation(operation),
+            (error) => {
+              reportMutationError(error);
+              cancelOperation(operation);
+            },
           );
         });
         const result = await applied;
@@ -395,6 +414,7 @@ export function useEditorBreakpointInteractions({
       onSetBreakpointLogMessage,
       onToggleBreakpoint,
       popover,
+      reportMutationError,
       restoreFocus,
       workspaceRoot,
     ],

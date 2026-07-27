@@ -10,6 +10,7 @@ describe("VscodeProcessTasksPanel", () => {
   let host: HTMLDivElement;
   let root: Root;
   const discover = vi.fn(async () => true);
+  const configure = vi.fn(async () => true);
   const start = vi.fn(async () => true);
   const stop = vi.fn(async () => true);
   let props: VscodeProcessTasksPanelProps;
@@ -20,6 +21,7 @@ describe("VscodeProcessTasksPanel", () => {
     document.body.append(host);
     root = createRoot(host);
     discover.mockClear();
+    configure.mockClear();
     start.mockClear();
     stop.mockClear();
     props = defaultProps();
@@ -84,6 +86,37 @@ describe("VscodeProcessTasksPanel", () => {
     expect(host.querySelector('[aria-label="Active configured task"]')?.textContent).toContain(
       "Build",
     );
+  });
+
+  it("offers exact create/open configuration actions and respects busy state", async () => {
+    rerender({ configurationAction: "create" });
+    await click("Create tasks.json");
+    expect(configure).toHaveBeenCalledOnce();
+    expect(host.querySelector('[aria-label="Open tasks.json"]')).toBeNull();
+
+    rerender({ configurationAction: "open", configuring: true });
+    expect(button("Open tasks.json").disabled).toBe(true);
+    expect(button("Open tasks.json").textContent).toBe("Opening…");
+    expect(button("Refresh configured tasks").disabled).toBe(true);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Opening .vscode/tasks.json…");
+
+    rerender({ configurationAction: null, configuring: false });
+    expect(host.querySelector('[aria-label="Create tasks.json"]')).toBeNull();
+    expect(host.querySelector('[aria-label="Open tasks.json"]')).toBeNull();
+  });
+
+  it("moves focus to the live status while creating and restores it to configuration", () => {
+    rerender({ configurationAction: "create" });
+    const create = button("Create tasks.json");
+    create.focus();
+
+    rerender({ configurationAction: "create", configuring: true });
+    expect(create.textContent).toBe("Creating…");
+    expect(document.activeElement).toBe(host.querySelector('[role="status"]'));
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Creating .vscode/tasks.json…");
+
+    rerender({ configurationAction: "open", configuring: false });
+    expect(document.activeElement).toBe(button("Open tasks.json"));
   });
 
   it("moves focus from a newly disabled Run action to the available Stop action", () => {
@@ -306,6 +339,9 @@ describe("VscodeProcessTasksPanel", () => {
     return {
       activeLabel: null,
       configRevision: "revision-1",
+      configurationAction: "open",
+      configure,
+      configuring: false,
       currentStep: null,
       diagnostics: [],
       discover,

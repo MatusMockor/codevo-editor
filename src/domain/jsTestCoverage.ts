@@ -1,4 +1,5 @@
 import { workspaceRelativePath } from "./workspace";
+import type { JsTestExecutionAuthority } from "./jsTestExecutionAuthority";
 
 export const JS_TEST_COVERAGE_LIMITS = {
   maxFiles: 20_000,
@@ -42,7 +43,7 @@ export type JsTestCoverageResponse =
   | { readonly status: "unavailable" | "error"; readonly message: string };
 
 export interface JsTestCoverageGateway {
-  run(rootPath: string): Promise<JsTestCoverageResponse>;
+  run(rootPath: string, authority: JsTestExecutionAuthority): Promise<JsTestCoverageResponse>;
 }
 
 export interface LcovParseLimits {

@@ -29,13 +29,17 @@ describe("useJsTestCoverage", () => {
       switchOwner = owner;
     });
     await act(async () => void (await latest.run()));
-    expect(gateway.run).toHaveBeenCalledWith("/workspace-1");
+    expect(gateway.run).toHaveBeenCalledWith("/workspace-1", {
+      packageRootRelativePath: "",
+    });
     expect(latest.report?.summary.percentage).toBe(75);
 
     await act(async () => switchOwner());
     expect(latest.report).toBeNull();
     await act(async () => void (await latest.run()));
-    expect(gateway.run).toHaveBeenLastCalledWith("/workspace-2");
+    expect(gateway.run).toHaveBeenLastCalledWith("/workspace-2", {
+      packageRootRelativePath: "",
+    });
     await act(async () => switchOwner());
     expect(latest.report?.summary.percentage).toBe(75);
   });
@@ -74,8 +78,9 @@ describe("useJsTestCoverage", () => {
     };
     await render(gateway);
     let first!: Promise<boolean>;
-    act(() => {
+    await act(async () => {
       first = latest.run();
+      await Promise.resolve();
     });
     expect(latest.isRunning).toBe(true);
     expect(await latest.run()).toBe(false);
@@ -124,8 +129,9 @@ describe("useJsTestCoverage", () => {
     };
     await render(gateway);
     let first!: Promise<boolean>;
-    act(() => {
+    await act(async () => {
       first = latest.run();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
     act(() => latest.clear());
     expect(latest.isRunning).toBe(true);

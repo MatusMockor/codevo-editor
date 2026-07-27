@@ -224,6 +224,40 @@ fn evaluation_contract_enforces_watch_clipboard_and_repl_side_effect_policy() {
             },
         )
         .is_err());
+        for expression in [
+            "({root:\n{child:{value:42}}})",
+            "(() => {\r\n\treturn 42;\r\n})()",
+        ] {
+            assert!(WatchEvaluateRequest::new(
+                7,
+                3,
+                expression.to_string(),
+                DebugEvaluatePolicy {
+                    context,
+                    allow_side_effects,
+                },
+            )
+            .is_ok());
+        }
+    }
+    for expression in [
+        "before\rafter",
+        "before\r\u{b}after",
+        "before\u{b}after",
+        "before\u{c}after",
+        "before\u{85}after",
+        "before\0after",
+    ] {
+        assert!(WatchEvaluateRequest::new(
+            7,
+            3,
+            expression.to_string(),
+            DebugEvaluatePolicy {
+                context: DebugEvaluateContext::Repl,
+                allow_side_effects: true,
+            },
+        )
+        .is_err());
     }
 }
 
@@ -264,6 +298,38 @@ fn evaluation_result_is_owner_bound_and_preserves_bounded_side_effect_failures()
         )),
     )
     .is_err());
+
+    let multiline_expression = "({root:\n{child:{value:42}}})";
+    let multiline_request = WatchEvaluateRequest::new(
+        7,
+        3,
+        multiline_expression.to_string(),
+        DebugEvaluatePolicy {
+            context: DebugEvaluateContext::Repl,
+            allow_side_effects: true,
+        },
+    )
+    .expect("multiline request");
+    let multiline_result = WatchEvaluateResult::new(
+        &multiline_request,
+        Ok(DebugVariableInfo {
+            name: multiline_expression.to_string(),
+            value: "Object".to_string(),
+            value_type: Some("object".to_string()),
+            evaluate_name: None,
+            variables_reference: 11,
+            can_set_value: None,
+            set_expression_reference: None,
+        }),
+    )
+    .expect("bounded multiline evaluation result");
+    assert_eq!(
+        multiline_result
+            .into_outcome()
+            .expect("multiline value")
+            .name,
+        multiline_expression
+    );
 }
 
 #[test]

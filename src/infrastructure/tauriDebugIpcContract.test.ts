@@ -5,6 +5,7 @@ import {
   MAX_DEBUG_VARIABLE_NAME_BYTES,
   MAX_DEBUG_VARIABLE_VALUE_BYTES,
   MAX_DEBUG_COMPOUND_MEMBERS,
+  MAX_DEBUG_OUTPUT_EVENT_BYTES,
   decodeDebugEvent,
   decodeDebugIpcResult,
   decodeDebugStartResponse,
@@ -156,6 +157,7 @@ describe("debug Tauri IPC contract", () => {
       readonly request: {
         readonly rootPath: string;
         readonly sessionId: number;
+        readonly generation: number;
         readonly breakpoints: readonly {
           readonly id: string;
           readonly functionName: string;
@@ -218,6 +220,7 @@ describe("debug Tauri IPC contract", () => {
     const request = {
       rootPath: "/workspace",
       sessionId: 7,
+      generation: 1,
       breakpoints: [{ id: "fn-1", functionName: "app.render", enabled: true }],
     } as const;
     await expect(
@@ -510,6 +513,54 @@ describe("debug Tauri IPC contract", () => {
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_evaluate", args);
   });
 
+  it.each([
+    "({root:\n{child:{value:42}}, list:[1,2,3]})",
+    "(() => {\r\n\treturn { nested: true };\r\n})()",
+  ])("forwards a bounded multiline evaluation expression exactly", async (expression) => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
+      status: "ok",
+      value: { name: expression, value: "Object", type: "object", variablesReference: 7 },
+    });
+    const args: DebugIpcCommandArgs<"debug_evaluate"> = {
+      request: {
+        rootPath: "/workspace",
+        sessionId: 8,
+        frameId: 11,
+        pauseGeneration: 3,
+        expression,
+        context: "repl",
+        allowSideEffects: true,
+      },
+    };
+
+    await expect(invokeDebugIpc(invokeCommand, "debug_evaluate", args)).resolves.toMatchObject({
+      status: "ok",
+    });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_evaluate", args);
+  });
+
+  it.each(["before\rafter", "before\u000bafter", "before\u0085after", "before\0after"])(
+    "rejects unsafe evaluation expression control characters %#",
+    async (expression) => {
+      const invokeCommand = vi.fn<InvokeDebugCommand>();
+
+      await expect(
+        invokeDebugIpc(invokeCommand, "debug_evaluate", {
+          request: {
+            rootPath: "/workspace",
+            sessionId: 8,
+            frameId: 11,
+            pauseGeneration: 3,
+            expression,
+            context: "repl",
+            allowSideEffects: true,
+          },
+        }),
+      ).rejects.toThrow("debug_evaluate args.request.expression");
+      expect(invokeCommand).not.toHaveBeenCalled();
+    },
+  );
+
   it("forwards the exact side-effectful clipboard evaluation policy", async () => {
     const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
       status: "ok",
@@ -664,6 +715,27 @@ describe("debug Tauri IPC contract", () => {
   });
 
   it("strictly decodes both evaluation result variants", () => {
+    for (const name of ["({root:\n{child:{value:42}}})", "(() => {\r\n\treturn 42;\r\n})()"]) {
+      expect(
+        decodeDebugIpcResult("debug_evaluate", {
+          status: "ok",
+          value: { name, value: "Object", type: "object", variablesReference: 7 },
+        }),
+      ).toMatchObject({ status: "ok", value: { name } });
+    }
+    for (const name of [
+      "before\rafter",
+      "before\u000bafter",
+      "before\u0085after",
+      "before\0after",
+    ]) {
+      expect(() =>
+        decodeDebugIpcResult("debug_evaluate", {
+          status: "ok",
+          value: { name, value: "Object", type: "object", variablesReference: 7 },
+        }),
+      ).toThrow("debug_evaluate result.value.name");
+    }
     expect(
       decodeDebugIpcResult("debug_evaluate", {
         status: "error",
@@ -710,6 +782,13 @@ describe("debug Tauri IPC contract", () => {
     expect(
       decodeDebugIpcResult("debug_evaluate", { status: "ok", value: withEvaluateName }),
     ).toEqual({ status: "ok", value: withEvaluateName });
+    const multilineEvaluateName = { ...base, evaluateName: "(\n  root\n).user" };
+    expect(
+      decodeDebugIpcResult("debug_evaluate", {
+        status: "ok",
+        value: multilineEvaluateName,
+      }),
+    ).toEqual({ status: "ok", value: multilineEvaluateName });
     expect(
       decodeDebugIpcResult("debug_evaluate", {
         status: "ok",
@@ -717,7 +796,13 @@ describe("debug Tauri IPC contract", () => {
       }),
     ).toMatchObject({ status: "ok" });
 
-    for (const evaluateName of ["", "   ", "user\nname", "x".repeat(4 * 1_024 + 1)]) {
+    for (const evaluateName of [
+      "",
+      "   ",
+      "user\rname",
+      "user\u000bname",
+      "x".repeat(4 * 1_024 + 1),
+    ]) {
       expect(() =>
         decodeDebugIpcResult("debug_evaluate", {
           status: "ok",
@@ -771,6 +856,10 @@ describe("debug Tauri IPC contract", () => {
     expect(decodeDebugIpcResult("debug_variables", page(withEvaluateName))).toEqual(
       page(withEvaluateName),
     );
+    const multilineEvaluateName = { ...base, evaluateName: "(\n  items\n)[0]" };
+    expect(decodeDebugIpcResult("debug_variables", page(multilineEvaluateName))).toEqual(
+      page(multilineEvaluateName),
+    );
     expect(
       decodeDebugIpcResult(
         "debug_variables",
@@ -778,7 +867,13 @@ describe("debug Tauri IPC contract", () => {
       ),
     ).toMatchObject({ returned: 1 });
 
-    for (const evaluateName of ["", "   ", "items\u0000name", "x".repeat(4 * 1_024 + 1)]) {
+    for (const evaluateName of [
+      "",
+      "   ",
+      "items\u0000name",
+      "items\rname",
+      "x".repeat(4 * 1_024 + 1),
+    ]) {
       expect(() =>
         decodeDebugIpcResult("debug_variables", page({ ...base, evaluateName })),
       ).toThrow("debug_variables result.variables[0].evaluateName");
@@ -942,6 +1037,40 @@ describe("debug Tauri IPC contract", () => {
         /^Invalid debug IPC value at debug event.payload/,
       );
     }
+  });
+
+  it("accepts only bounded well-formed UTF-8 debug output events", () => {
+    const event = (text: string, truncated = false) => ({
+      rootPath: "/workspace",
+      sessionId: 8,
+      seq: 4,
+      payload: { kind: "output", stream: "stdout", text, truncated },
+    });
+    const exactMultibyte = "ž".repeat(MAX_DEBUG_OUTPUT_EVENT_BYTES / 2);
+    expect(decodeDebugEvent(event(exactMultibyte))).toEqual(event(exactMultibyte));
+    expect(decodeDebugEvent(event("line one\n\tline two"))).toEqual(event("line one\n\tline two"));
+
+    for (const malformed of [
+      `${exactMultibyte}ž`,
+      "x".repeat(MAX_DEBUG_OUTPUT_EVENT_BYTES * 16),
+      "before\0after",
+      "\ud800",
+    ]) {
+      expect(() => decodeDebugEvent(event(malformed))).toThrow(
+        "Invalid debug IPC value at debug event.payload.text",
+      );
+    }
+    for (const malformed of [
+      { kind: "output", stream: "stdout", text: "missing flag" },
+      { kind: "output", stream: "stdout", text: "wrong flag", truncated: "false" },
+    ]) {
+      expect(() => decodeDebugEvent({ ...event("valid"), payload: malformed })).toThrow(
+        "Invalid debug IPC value at debug event.payload",
+      );
+    }
+    expect(decodeDebugEvent(event("bounded partial", true))).toEqual(
+      event("bounded partial", true),
+    );
   });
 
   it("accepts the exact restart stop reason and rejects unknown reason drift", () => {
@@ -1293,6 +1422,7 @@ describe("debug Tauri IPC contract", () => {
       scriptPath: "/workspace/app.js",
       watch: true as const,
       breakpoints: [],
+      functionBreakpoints: [],
       exceptionPauseMode: "none" as const,
       exceptionTypeFilter: [],
       sourceMaps: false,
@@ -2195,7 +2325,7 @@ describe("debug Tauri IPC contract", () => {
     const payloads = [
       { kind: "started", sessionId: 2, extra: true },
       { kind: "resumed", extra: true },
-      { kind: "output", stream: "stdout", text: "ready", extra: true },
+      { kind: "output", stream: "stdout", text: "ready", truncated: false, extra: true },
       { kind: "terminated", exitCode: null, extra: true },
       {
         kind: "breakpointsVerified",

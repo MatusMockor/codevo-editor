@@ -66,6 +66,14 @@ export interface DebugRestartAttempt {
   readonly targetKind: NodeDebugLaunchKind;
 }
 
+export interface PendingDebugRestart {
+  readonly attempt: DebugRestartAttempt;
+  readonly coordinator: DebugRestartCoordinator;
+  cancelled: boolean;
+  promise: Promise<void>;
+  readonly workspaceId: string | null;
+}
+
 interface RetainedLaunch {
   readonly launch: NodeDebugLaunchTarget;
   readonly rootKey: string;

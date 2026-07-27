@@ -1,7 +1,11 @@
 import { useEffect, useRef } from "react";
 import type * as Monaco from "monaco-editor";
 import type { DebugInlineValueContext } from "../application/debugInlineValueContext";
-import { selectDebugInlineValues } from "../domain/debugInlineValues";
+import {
+  MAX_DEBUG_INLINE_SOURCE_BYTES,
+  MAX_DEBUG_INLINE_SOURCE_LINES,
+  selectDebugInlineValues,
+} from "../domain/debugInlineValues";
 import { isDirty, type EditorDocument } from "../domain/workspace";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import {
@@ -24,6 +28,11 @@ interface DebugInlineDecorationSelection {
   readonly workspaceRoot: string | null;
 }
 
+interface DebugInlineModelSnapshot {
+  readonly source: string;
+  readonly version: number;
+}
+
 export function createDebugInlineValueDecorations({
   activeDocument,
   context,
@@ -40,12 +49,32 @@ export function createDebugInlineValueDecorations({
     !supportedLanguages.has(activeDocument.language) ||
     isDirty(activeDocument) ||
     activeDocument.path !== context.filePath ||
-    normalizedWorkspaceRootKey(workspaceRoot) !== context.owner.rootKey ||
-    model.getValue() !== activeDocument.content ||
-    context.lineNumber > model.getLineCount()
+    normalizedWorkspaceRootKey(workspaceRoot) !== context.owner.rootKey
   ) {
     return [];
   }
+  const snapshot = captureDebugInlineModelSnapshot(model);
+  return createDebugInlineValueDecorationsFromSnapshot(
+    { activeDocument, context, model, monaco, workspaceRoot },
+    snapshot,
+  );
+}
+
+function createDebugInlineValueDecorationsFromSnapshot(
+  {
+    activeDocument,
+    context,
+    monaco,
+  }: DebugInlineDecorationSelection & {
+    readonly activeDocument: EditorDocument;
+    readonly context: DebugInlineValueContext;
+    readonly model: Monaco.editor.ITextModel;
+    readonly monaco: typeof Monaco;
+    readonly workspaceRoot: string;
+  },
+  snapshot: DebugInlineModelSnapshot | null,
+): Monaco.editor.IModelDeltaDecoration[] {
+  if (!snapshot || snapshot.source !== activeDocument.content) return [];
   return selectDebugInlineValues({
     lineNumber: context.lineNumber,
     owner: context.owner,
@@ -64,6 +93,39 @@ export function createDebugInlineValueDecorations({
       range.endColumn,
     ),
   }));
+}
+
+function captureDebugInlineModelSnapshot(
+  model: Monaco.editor.ITextModel,
+): DebugInlineModelSnapshot | null {
+  try {
+    const version = model.getVersionId();
+    const valueLength = model.getValueLength();
+    const lineCount = model.getLineCount();
+    if (
+      !Number.isSafeInteger(version) ||
+      !Number.isSafeInteger(valueLength) ||
+      valueLength < 0 ||
+      valueLength > MAX_DEBUG_INLINE_SOURCE_BYTES ||
+      !Number.isSafeInteger(lineCount) ||
+      lineCount <= 0 ||
+      lineCount > MAX_DEBUG_INLINE_SOURCE_LINES
+    ) {
+      return null;
+    }
+    const source = model.getValue();
+    if (
+      model.getVersionId() !== version ||
+      model.getValueLength() !== valueLength ||
+      model.getLineCount() !== lineCount ||
+      source.length !== valueLength
+    ) {
+      return null;
+    }
+    return { source, version };
+  } catch {
+    return null;
+  }
 }
 
 export function useDebugInlineValueDecorations({
@@ -86,7 +148,7 @@ export function useDebugInlineValueDecorations({
       if (decorationIds.current.length === 0) return;
       decorationIds.current = editor.deltaDecorations(decorationIds.current, []);
     };
-    if (!model || editor.getModel() !== model) {
+    if (!model || !monaco || editor.getModel() !== model) {
       clear();
       return;
     }
@@ -97,15 +159,17 @@ export function useDebugInlineValueDecorations({
       activeDocument.path === context.filePath &&
       normalizedWorkspaceRootKey(workspaceRoot) === context.owner.rootKey,
     );
-    if (!targetsStoppedSource || !activeDocument || !context) {
+    if (!targetsStoppedSource || !activeDocument || !context || !workspaceRoot) {
       clear();
       return;
     }
+    const snapshot = captureDebugInlineModelSnapshot(model);
     if (
+      !snapshot ||
       !coordinator.admit({
         dirty: isDirty(activeDocument),
         model,
-        modelSource: model.getValue(),
+        modelSource: snapshot.source,
         owner: context.owner,
         path: context.filePath,
         source: activeDocument.content,
@@ -114,13 +178,16 @@ export function useDebugInlineValueDecorations({
       clear();
       return;
     }
-    const decorations = createDebugInlineValueDecorations({
-      activeDocument,
-      context,
-      model,
-      monaco,
-      workspaceRoot,
-    });
+    const decorations = createDebugInlineValueDecorationsFromSnapshot(
+      {
+        activeDocument,
+        context,
+        model,
+        monaco,
+        workspaceRoot,
+      },
+      snapshot,
+    );
     if (decorationIds.current.length === 0 && decorations.length === 0) return;
     decorationIds.current = editor.deltaDecorations(decorationIds.current, decorations);
     return clear;

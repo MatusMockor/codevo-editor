@@ -22,15 +22,6 @@ const VITEST_CONFIG_FILES = [
   "vitest.config.cjs",
 ];
 
-const VITE_CONFIG_FILES = [
-  "vite.config.ts",
-  "vite.config.js",
-  "vite.config.mts",
-  "vite.config.mjs",
-  "vite.config.cts",
-  "vite.config.cjs",
-];
-
 const JEST_CONFIG_FILES = [
   "jest.config.js",
   "jest.config.ts",
@@ -38,6 +29,8 @@ const JEST_CONFIG_FILES = [
   "jest.config.mjs",
   "jest.config.json",
 ];
+
+const MAX_PACKAGE_JSON_BYTES = 2 * 1024 * 1024;
 
 export async function detectJsTestRunner(
   rootPath: string,
@@ -162,10 +155,7 @@ async function detectRunnerAtRoot(
     return "vitest";
   }
 
-  if (
-    hasDependency(packageJson, "vitest") &&
-    (await hasAnyFile(rootPath, VITE_CONFIG_FILES, readFileIfExists))
-  ) {
+  if (hasDependency(packageJson, "vitest")) {
     return "vitest";
   }
 
@@ -201,6 +191,13 @@ function parsePackageJson(content: string | null): Record<string, unknown> | nul
     return null;
   }
 
+  if (
+    content.length > MAX_PACKAGE_JSON_BYTES ||
+    new TextEncoder().encode(content).byteLength > MAX_PACKAGE_JSON_BYTES
+  ) {
+    return null;
+  }
+
   try {
     const parsed: unknown = JSON.parse(content);
 
@@ -222,10 +219,10 @@ function hasDependency(packageJson: Record<string, unknown> | null, name: string
   return ["dependencies", "devDependencies"].some((section) => {
     const dependencies = packageJson[section];
 
-    if (!dependencies || typeof dependencies !== "object") {
+    if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies)) {
       return false;
     }
 
-    return name in dependencies;
+    return Object.prototype.hasOwnProperty.call(dependencies, name);
   });
 }

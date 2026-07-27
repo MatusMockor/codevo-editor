@@ -336,6 +336,88 @@ fn snapshot_matches_identity(
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    struct BoundNonListeningSocket {
+        _fd: OwnedFd,
+        port: u16,
+    }
+
+    fn bind_non_listening_ipv4(port: u16) -> BoundNonListeningSocket {
+        // SAFETY: socket returns a newly owned descriptor on success.
+        let raw_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, libc::IPPROTO_TCP) };
+        assert!(raw_fd >= 0, "create non-listening IPv4 socket");
+        // SAFETY: raw_fd was just returned by socket and ownership is transferred once.
+        let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+        // SAFETY: zero is a valid initial representation for sockaddr_in before
+        // every field consumed by bind is populated below.
+        let mut address: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        address.sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+        address.sin_family = libc::AF_INET as libc::sa_family_t;
+        address.sin_port = port.to_be();
+        address.sin_addr = libc::in_addr {
+            s_addr: u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets()),
+        };
+        // SAFETY: fd is live and address points to a fully initialized IPv4 sockaddr.
+        let status = unsafe {
+            libc::bind(
+                std::os::fd::AsRawFd::as_raw_fd(&fd),
+                std::ptr::from_ref(&address).cast(),
+                std::mem::size_of_val(&address) as libc::socklen_t,
+            )
+        };
+        assert_eq!(status, 0, "bind non-listening IPv4 socket");
+        let port = bound_ipv4_port(&fd);
+        BoundNonListeningSocket { _fd: fd, port }
+    }
+
+    fn bind_non_listening_ipv6(port: u16) -> BoundNonListeningSocket {
+        // SAFETY: socket returns a newly owned descriptor on success.
+        let raw_fd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_STREAM, libc::IPPROTO_TCP) };
+        assert!(raw_fd >= 0, "create non-listening IPv6 socket");
+        // SAFETY: raw_fd was just returned by socket and ownership is transferred once.
+        let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+        // SAFETY: zero is a valid initial representation for sockaddr_in6 before
+        // every field consumed by bind is populated below.
+        let mut address: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+        address.sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
+        address.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+        address.sin6_port = port.to_be();
+        address.sin6_addr = libc::in6_addr {
+            s6_addr: Ipv6Addr::LOCALHOST.octets(),
+        };
+        // SAFETY: fd is live and address points to a fully initialized IPv6 sockaddr.
+        let status = unsafe {
+            libc::bind(
+                std::os::fd::AsRawFd::as_raw_fd(&fd),
+                std::ptr::from_ref(&address).cast(),
+                std::mem::size_of_val(&address) as libc::socklen_t,
+            )
+        };
+        assert_eq!(status, 0, "bind non-listening IPv6 socket");
+        BoundNonListeningSocket { _fd: fd, port }
+    }
+
+    fn bound_ipv4_port(fd: &OwnedFd) -> u16 {
+        // SAFETY: zero initializes the output buffer accepted by getsockname.
+        let mut address: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        let mut address_len = std::mem::size_of_val(&address) as libc::socklen_t;
+        // SAFETY: fd is live and both output pointers remain valid for the call.
+        let status = unsafe {
+            libc::getsockname(
+                std::os::fd::AsRawFd::as_raw_fd(fd),
+                std::ptr::from_mut(&mut address).cast(),
+                &mut address_len,
+            )
+        };
+        assert_eq!(status, 0, "read non-listening IPv4 socket port");
+        assert_eq!(
+            address_len as usize,
+            std::mem::size_of_val(&address),
+            "IPv4 socket address size"
+        );
+        u16::from_be(address.sin_port)
+    }
 
     fn snapshot_for_process(process_id: i32) -> VerifiedProcessSnapshot {
         // SAFETY: querying an existing PID's process group has no preconditions.
@@ -395,6 +477,8 @@ mod tests {
     fn wrong_pid_port_and_family_fail_closed() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind loopback listener");
         let port = listener.local_addr().expect("listener address").port();
+        let wrong_port = bind_non_listening_ipv4(0);
+        let wrong_family = bind_non_listening_ipv6(port);
         let snapshot = current_snapshot();
 
         // SAFETY: querying the parent PID has no preconditions.
@@ -405,15 +489,15 @@ mod tests {
             port
         )
         .is_err());
-        let wrong_port = if port == u16::MAX { port - 1 } else { port + 1 };
         assert!(matches!(
             verify_process_owns_loopback_listener(
                 &snapshot,
                 KernelLoopbackFamily::Ipv4,
-                wrong_port
+                wrong_port.port
             ),
             Err(KernelListenerOwnershipFailure::NoMatchingListener)
         ));
+        assert_eq!(wrong_family.port, port);
         assert!(matches!(
             verify_process_owns_loopback_listener(&snapshot, KernelLoopbackFamily::Ipv6, port),
             Err(KernelListenerOwnershipFailure::NoMatchingListener)

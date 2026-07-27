@@ -272,7 +272,17 @@ One deterministically selected live child is projected through the existing Debu
 
 The supported scope is intentionally narrower than arbitrary VS Code/DAP compounds: attach members, member pre/post tasks, `stopAll: false`, compound Restart, Run Without Debugging and extension-defined launch types are not interpreted.
 
-Name-based function breakpoints are consciously excluded from the VS Code JavaScript parity target. The current VS Code JavaScript debugger advertises `supportsFunctionBreakpoints: false`; CDP's experimental `Debugger.setBreakpointOnFunctionCall` instead requires a concrete runtime object ID and is not a safe or reliable name-resolution primitive. A future beyond-VS-Code action may target an already materialized function-valued Variables row under exact pause ownership, but arbitrary function-name evaluation is not planned.
+Codevo provides a deliberately narrower, beyond-VS-Code function-breakpoint action for Node
+sessions even though the current VS Code JavaScript debugger does not advertise generic DAP
+function-breakpoint support. It accepts only a bounded JavaScript identifier or dotted runtime path
+such as `globalThis.server.handle`, evaluates that closed path with CDP side effects forbidden, and
+installs `Debugger.setBreakpointOnFunctionCall` only after it resolves to a concrete function object.
+Unresolved paths remain visibly pending/unverified and are retried through a bounded `scriptParsed`
+policy. Arbitrary expressions, regex-style name matching, anonymous functions, and ordinary
+CommonJS/ES-module lexical names that are not reachable through a global runtime path are not
+claimed as supported. Function-breakpoint mutation is also unavailable during compound debugging:
+Codevo does not silently apply a desired function breakpoint to only the currently projected child,
+and does not claim compound fan-out until an exact all-child transactional policy exists.
 
 The strict VS Code `skipFiles` subset now covers direct dependency URLs as well as Node internals. Imported configurations accept only the exact `<node_internals>/**` and `**/node_modules/**` forms and reduce them to a closed typed policy; raw globs and regular expressions never cross IPC. Rust maps the policy to fixed bounded CDP patterns and waits for their acknowledgement before running the debuggee. An absent field keeps the Node-internals default, an empty array disables filtering, and Restart plus compounds retain the immutable policy. This first slice does not claim source-map-derived `node_modules` blackboxed ranges.
 

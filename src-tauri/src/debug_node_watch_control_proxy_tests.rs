@@ -139,18 +139,21 @@ fn response_for(command: WatchDebugControlCommand) -> WatchDebugControlResponse 
 
 #[test]
 fn function_breakpoint_response_matching_is_closed_and_ordered() {
-    let request = WatchSetFunctionBreakpointsRequest::new(vec![
-        DebugFunctionBreakpoint {
-            id: "fn-one".to_string(),
-            function_name: "app.one".to_string(),
-            enabled: true,
-        },
-        DebugFunctionBreakpoint {
-            id: "fn-two".to_string(),
-            function_name: "app.two".to_string(),
-            enabled: false,
-        },
-    ]);
+    let request = WatchSetFunctionBreakpointsRequest::new(
+        vec![
+            DebugFunctionBreakpoint {
+                id: "fn-one".to_string(),
+                function_name: "app.one".to_string(),
+                enabled: true,
+            },
+            DebugFunctionBreakpoint {
+                id: "fn-two".to_string(),
+                function_name: "app.two".to_string(),
+                enabled: false,
+            },
+        ],
+        7,
+    );
     let command = WatchDebugControlCommand::SetFunctionBreakpoints(request);
     let matching = WatchDebugControlResponse::FunctionBreakpointsVerified(vec![
         DebugFunctionBreakpointVerification {

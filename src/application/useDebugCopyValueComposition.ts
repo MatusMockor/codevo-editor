@@ -45,12 +45,14 @@ export interface DebugCopyValueComposition
   copyEvaluatePathOnce(target: DebugCopyEvaluatePathTarget): Promise<boolean>;
 }
 
-export interface DebugCopyDisplayedValueSurfaceAdapter extends DebugCopyDisplayedValueCommands {
+export interface DebugCopyDisplayedValueSurfaceAdapter
+  extends DebugCopyDisplayedValueCommands, DebugCopyEvaluatePathCommands {
   readonly source: "console";
   readonly workspaceOwnerKey: string;
   readonly generation: number;
   readonly epoch: number;
   copyDisplayedValueFromMenu(): Promise<boolean>;
+  copyEvaluatePathFromMenu(): Promise<boolean>;
   isOwnerCurrent(owner: DebugInspectionOwner): boolean;
   onCandidateChange(candidate: DebugCopyValueCandidate | null): void;
 }
@@ -310,6 +312,8 @@ export function useDebugCopyValueComposition({
     clearFocusedCandidate,
     console: {
       ...copyDisplayedValue,
+      ...copyEvaluatePath,
+      copyEvaluatePathFromMenu,
       copyDisplayedValueFromMenu,
       source: "console",
       workspaceOwnerKey: ownerRef.current.owner?.workspaceOwnerKey ?? "",

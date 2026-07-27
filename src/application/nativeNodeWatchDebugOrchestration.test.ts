@@ -86,7 +86,7 @@ describe("native Node watch debug orchestration recipes", () => {
       },
     );
 
-    expect(descriptor.exceptionTypeFilterSupported).toBe(false);
+    expect(descriptor.exceptionTypeFilterSupported).toBe(true);
     await expect(
       descriptor.start(
         "/workspace",
@@ -100,6 +100,7 @@ describe("native Node watch debug orchestration recipes", () => {
         ],
         "uncaught",
         ["TypeError", "app.DomainError"],
+        [{ id: "function-entry", functionName: "startServer", enabled: true }],
       ),
     ).resolves.toEqual({ kind: "ok", sessionId: 31 });
     expect(descriptor.restartLaunch).toBeNull();
@@ -118,6 +119,7 @@ describe("native Node watch debug orchestration recipes", () => {
           enabled: true,
         },
       ],
+      functionBreakpoints: [{ id: "function-entry", functionName: "startServer", enabled: true }],
       exceptionPauseMode: "uncaught",
       exceptionTypeFilter: ["TypeError", "app.DomainError"],
       justMyCode: "nodeInternals",

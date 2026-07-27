@@ -33,6 +33,7 @@ interface Props {
   readonly editor: Monaco.editor.IStandaloneCodeEditor | null;
   readonly modelIdentity: object | null;
   readonly monaco: typeof Monaco | null;
+  readonly onMutationError?: (error: unknown) => void;
   readonly workspaceRoot: string | null;
 }
 
@@ -43,6 +44,7 @@ export function EditorBreakpointInteractionLayer({
   editor,
   modelIdentity,
   monaco,
+  onMutationError,
   workspaceRoot,
 }: Props) {
   const restoreFocus = useCallback(() => editor?.focus(), [editor]);
@@ -50,6 +52,7 @@ export function EditorBreakpointInteractionLayer({
     activeDocumentPath,
     breakpoints,
     modelIdentity,
+    onMutationError,
     onRemoveBreakpoint: actions?.removeBreakpoint,
     onSetBreakpointCondition: actions?.setBreakpointCondition,
     onSetBreakpointHitCondition: actions?.setBreakpointHitCondition,

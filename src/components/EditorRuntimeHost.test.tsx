@@ -24,6 +24,8 @@ const runtimeMocks = vi.hoisted(() => ({
   debugHoverDispose: vi.fn(),
   javaScriptContext: null as {
     getActiveDocument(): EditorDocument | null;
+    getActiveJavaScriptTypeScriptOwnerEpoch(): number;
+    getActiveJavaScriptTypeScriptOwnerIdentity(): object | null;
   } | null,
   providerContext: null as {
     getActiveDocument(): EditorDocument | null;
@@ -134,12 +136,64 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
   });
 
+  it("advances the JS/TS owner epoch across A-B-A without an intermediate provider call", async () => {
+    const fixture = runtimeFixture();
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface {...fixture} groupId="left" key="left" name="left.ts" />
+          <RuntimeSurface {...fixture} groupId="right" key="right" name="right.ts" />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    const initialEpoch =
+      runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerEpoch() ?? -1;
+    const initialIdentity =
+      runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerIdentity();
+    expect(initialEpoch).toBeGreaterThan(0);
+    expect(Number.isSafeInteger(initialEpoch)).toBe(true);
+    expect(initialIdentity).not.toBeNull();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-group='right']")?.click();
+    });
+    const rightIdentity =
+      runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerIdentity();
+    expect(rightIdentity).not.toBe(initialIdentity);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-group='left']")?.click();
+    });
+
+    expect(runtimeMocks.javaScriptContext?.getActiveDocument()?.name).toBe("left.ts");
+    expect(runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerEpoch()).toBe(
+      initialEpoch + 2,
+    );
+    expect(runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerIdentity()).toBe(
+      initialIdentity,
+    );
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-update='left']")?.click();
+    });
+
+    expect(runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerEpoch()).toBe(
+      initialEpoch + 3,
+    );
+    expect(runtimeMocks.javaScriptContext?.getActiveJavaScriptTypeScriptOwnerIdentity()).toBe(
+      initialIdentity,
+    );
+  });
+
   it("registers debug hover against the admitted workspace model resolver", async () => {
     const fixture = runtimeFixture();
     const debugHover = {
       copyEvaluatePath: vi.fn(async () => false),
       evaluate: vi.fn(),
       getOwner: vi.fn(() => null),
+      getOwnerEpoch: vi.fn(() => 0),
       registerCopyEvaluatePath: vi.fn(() => null),
       revokeCopyEvaluatePath: vi.fn(),
     };
@@ -918,6 +972,10 @@ function RuntimeSurface({
         javaScriptTypeScriptProviderContext: {
           featuresGateway,
           flushPendingDocumentChange: vi.fn(async () => undefined),
+          getActiveJavaScriptTypeScriptOwnerEpoch: () =>
+            runtime?.getActiveJavaScriptTypeScriptOwnerEpoch() ?? 0,
+          getActiveJavaScriptTypeScriptOwnerIdentity: () =>
+            runtime?.getActiveJavaScriptTypeScriptOwnerIdentity() ?? null,
           getActiveDocument: () => currentRef.current,
           getRuntimeStatus: () => null,
           getWorkspaceRoot: () => workspaceRoot,

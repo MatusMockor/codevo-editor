@@ -3,6 +3,7 @@ import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import { initialDebuggerSnapshot } from "../domain/debugSessionState";
 import type { CommandContext } from "./commandRegistry";
 import {
+  hasDebuggableNodeWorkspace,
   isDebuggableNodeScriptPath,
   isDebuggablePhpScriptPath,
   workbenchDebugCommands,
@@ -134,6 +135,38 @@ function command(commands: ReturnType<typeof workbenchDebugCommands>, id: string
 }
 
 describe("workbenchDebugCommands", () => {
+  it("recognizes a bare Node script inside an otherwise uninferred workspace", () => {
+    expect(
+      hasDebuggableNodeWorkspace({
+        activeDocument: { path: "/workspace/launch.json" },
+        detectedJavaScriptTypeScript: false,
+        openedDocuments: [{ path: "/workspace/server.js" }],
+        workspaceRoot: "/workspace",
+      }),
+    ).toBe(true);
+    expect(
+      hasDebuggableNodeWorkspace({
+        activeDocument: { path: "/outside/server.js" },
+        detectedJavaScriptTypeScript: false,
+        workspaceRoot: "/workspace",
+      }),
+    ).toBe(false);
+    expect(
+      hasDebuggableNodeWorkspace({
+        activeDocument: { path: "/workspace/readme.md" },
+        detectedJavaScriptTypeScript: false,
+        workspaceRoot: "/workspace",
+      }),
+    ).toBe(false);
+    expect(
+      hasDebuggableNodeWorkspace({
+        activeDocument: { path: "/workspace/server.js" },
+        detectedJavaScriptTypeScript: true,
+        workspaceRoot: null,
+      }),
+    ).toBe(false);
+  });
+
   it("routes Set Value only through the live focused writable-row capability", () => {
     let writableRowFocused = true;
     const debugSetVariable = {

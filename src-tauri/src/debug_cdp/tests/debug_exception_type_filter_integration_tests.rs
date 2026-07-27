@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
 
 const FILTER_TIMEOUT: Duration = Duration::from_millis(80);
@@ -119,6 +119,147 @@ fn wait_for_disconnect(disconnected: &Receiver<()>) {
     disconnected
         .recv_timeout(EVENT_WAIT_TIMEOUT)
         .expect("transport disconnect");
+}
+
+#[test]
+fn rejected_live_policy_command_preserves_the_previous_active_type_filter() {
+    let policy_commands = Arc::new(AtomicUsize::new(0));
+    let responder_policy_commands = Arc::clone(&policy_commands);
+    let server = MockCdpServer::start(Box::new(move |id, method, _params| match method {
+        "Debugger.setPauseOnExceptions"
+            if responder_policy_commands.fetch_add(1, Ordering::SeqCst) == 1 =>
+        {
+            vec![error_reply(id, "live policy rejected")]
+        }
+        "Debugger.setBreakpointsActive" => vec![
+            ok(id),
+            event("Debugger.paused", exception_pause(Some("RangeError"), None)),
+        ],
+        "Debugger.resume" => vec![ok(id), event("Debugger.resumed", json!({}))],
+        _ => vec![ok(id)],
+    }));
+    let sink = Arc::new(CollectingSink::default());
+    let (registry, session_id) =
+        start_filtered_session(&server, sink.clone(), FILTER_TIMEOUT, None, None);
+
+    let error = registry
+        .with_session_by_id(session_id, |adapter| {
+            adapter.set_exception_pause_filter(
+                DebugExceptionPauseMode::All,
+                &["RangeError".to_string()],
+            )
+        })
+        .expect("known session")
+        .expect_err("mock rejects replacement policy");
+
+    assert!(error.contains("live policy rejected"));
+    registry
+        .with_session_by_id(session_id, |adapter| adapter.set_breakpoints_active(true))
+        .expect("known session")
+        .expect("session remains usable after definite rejection");
+    wait_for_method_count(&server, "Debugger.resume", 1);
+    thread::sleep(FILTER_TIMEOUT);
+    assert_eq!(stopped_count(&sink), 0);
+    assert_eq!(resumed_count(&sink), 0);
+    assert!(registry.stop_by_id(session_id));
+}
+
+#[test]
+fn live_policy_command_timeout_fails_closed_on_uncertain_remote_settlement() {
+    let policy_commands = Arc::new(AtomicUsize::new(0));
+    let responder_policy_commands = Arc::clone(&policy_commands);
+    let server = MockCdpServer::start(Box::new(move |id, method, _params| {
+        if method == "Debugger.setPauseOnExceptions"
+            && responder_policy_commands.fetch_add(1, Ordering::SeqCst) == 1
+        {
+            thread::sleep(FILTER_TIMEOUT * 3);
+        }
+        vec![ok(id)]
+    }));
+    let sink = Arc::new(CollectingSink::default());
+    let (disconnected_tx, disconnected_rx) = mpsc::channel();
+    let (registry, session_id) =
+        start_filtered_session(&server, sink, FILTER_TIMEOUT, None, Some(disconnected_tx));
+
+    let error = registry
+        .with_session_by_id(session_id, |adapter| {
+            adapter.set_exception_pause_filter(
+                DebugExceptionPauseMode::All,
+                &["RangeError".to_string()],
+            )
+        })
+        .expect("known session")
+        .expect_err("uncertain timeout must fail closed");
+
+    assert!(error.contains("timed out"));
+    wait_for_disconnect(&disconnected_rx);
+    assert!(registry.stop_by_id(session_id));
+}
+
+#[test]
+fn authority_loss_after_live_policy_command_fails_closed_before_policy_commit() {
+    let policy_commands = Arc::new(AtomicUsize::new(0));
+    let authority = Arc::new(AtomicBool::new(true));
+    let responder_policy_commands = Arc::clone(&policy_commands);
+    let responder_authority = Arc::clone(&authority);
+    let server = MockCdpServer::start(Box::new(move |id, method, _params| {
+        if method == "Debugger.setPauseOnExceptions"
+            && responder_policy_commands.fetch_add(1, Ordering::SeqCst) == 1
+        {
+            responder_authority.store(false, Ordering::SeqCst);
+        }
+        vec![ok(id)]
+    }));
+    let sink = Arc::new(CollectingSink::default());
+    let (disconnected_tx, disconnected_rx) = mpsc::channel();
+    let registry = DebugSessionRegistry::new();
+    let url = server.url.clone();
+    let session_authority = Arc::clone(&authority);
+    let session_id = registry
+        .start_session(WORKSPACE_KEY, sink, move |emitter| {
+            NodeCdpAdapter::connect_with_source_maps_and_exception_filter(
+                &url,
+                emitter,
+                &[],
+                &["TypeError".to_string()],
+                NodeCdpConnectOptions {
+                    exception_pause_mode: DebugExceptionPauseMode::All,
+                    request_timeout: FILTER_TIMEOUT,
+                    ownership: DebuggeeOwnership::External,
+                    source_maps: None,
+                    startup: CdpStartupPolicy::SpawnedWaiting {
+                        startup_entry: None,
+                    },
+                    disconnected: Some(disconnected_tx),
+                    startup_is_current: Arc::new(move || session_authority.load(Ordering::SeqCst)),
+                    internal_step_filter: None,
+                },
+            )
+            .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+        })
+        .expect("start filtered mock session");
+
+    let error = registry
+        .with_session_by_id(session_id, |adapter| {
+            adapter.set_exception_pause_filter(
+                DebugExceptionPauseMode::All,
+                &["RangeError".to_string()],
+            )
+        })
+        .expect("known session")
+        .expect_err("authority loss must reject replacement policy");
+
+    assert!(error.contains("lifecycle changed"));
+    wait_for_disconnect(&disconnected_rx);
+    assert_eq!(
+        server
+            .methods()
+            .into_iter()
+            .filter(|method| method == "Debugger.setPauseOnExceptions")
+            .count(),
+        2
+    );
+    assert!(registry.stop_by_id(session_id));
 }
 
 fn start_late_resumed_server() -> (MockCdpServer, Receiver<()>, Receiver<()>) {

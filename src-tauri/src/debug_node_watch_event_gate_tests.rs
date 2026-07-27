@@ -111,6 +111,7 @@ fn output(text: &str) -> DebugEventPayload {
     DebugEventPayload::Output {
         stream: DebugOutputStream::Stdout,
         text: text.to_string(),
+        truncated: false,
     }
 }
 
@@ -124,6 +125,454 @@ fn stopped(pause_generation: u64) -> DebugEventPayload {
 
 fn events(sink: &CollectingSink) -> Vec<DebugEvent> {
     lock_recover(&sink.0).clone()
+}
+
+fn function_verification(generation: u64, entries: &[(&str, bool)]) -> DebugEventPayload {
+    DebugEventPayload::FunctionBreakpointsVerified {
+        generation,
+        breakpoints: entries
+            .iter()
+            .map(
+                |(id, verified)| crate::debug_adapter::DebugFunctionBreakpointVerification {
+                    id: (*id).to_string(),
+                    verified: *verified,
+                },
+            )
+            .collect(),
+    }
+}
+
+fn function_authority(
+    desired_revision: u64,
+    function_generation: u64,
+    ordered_ids: &[String],
+) -> WatchStartupFunctionBreakpointAuthority<'_> {
+    WatchStartupFunctionBreakpointAuthority {
+        desired_revision,
+        function_generation,
+        ordered_ids,
+    }
+}
+
+#[test]
+fn startup_function_receipt_is_full_and_ordered_before_late_partial_updates() {
+    let (_registry, gate, sink, _session_id) = fixture("/workspace/function-receipt");
+    let lease = gate.prepare_initial().expect("initial unpublished lease");
+    let ordered_ids = vec!["resolved".to_string(), "pending".to_string()];
+
+    assert!(gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        7,
+        1,
+        &ordered_ids,
+        match function_verification(1, &[("resolved", true), ("pending", false)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+    assert_eq!(
+        gate.emit(&lease, function_verification(1, &[("pending", true)])),
+        WatchEventDisposition::Buffered
+    );
+    assert_eq!(
+        gate.emit(&lease, output("not a function update")),
+        WatchEventDisposition::DroppedStale
+    );
+    assert!(gate.begin_publish(&lease).is_none());
+
+    let publication = gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 7, 1, &ordered_ids)
+        .expect("exact receipt publication starts");
+    let flush = gate.seal_publish(&publication).expect("publication seals");
+    assert!(gate.flush_publish(&flush));
+
+    let payloads: Vec<_> = events(&sink)
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            DebugEventPayload::FunctionBreakpointsVerified {
+                generation,
+                breakpoints,
+            } => Some((generation, breakpoints)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(payloads.len(), 2);
+    assert_eq!(payloads[0].0, 1);
+    assert_eq!(
+        payloads[0]
+            .1
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.verified))
+            .collect::<Vec<_>>(),
+        [("resolved", true), ("pending", false)]
+    );
+    assert_eq!(
+        payloads[1]
+            .1
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.verified))
+            .collect::<Vec<_>>(),
+        [("pending", true)]
+    );
+}
+
+#[test]
+fn startup_function_receipt_rejects_stale_order_duplicate_and_oversize_authority() {
+    let (_registry, gate, _sink, _session_id) = fixture("/workspace/function-receipt-stale");
+    let lease = gate.prepare_initial().expect("initial unpublished lease");
+    let ordered_ids = vec!["a".to_string(), "b".to_string()];
+    let mixed = || match function_verification(1, &[("a", true), ("b", false)]) {
+        DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+        _ => unreachable!(),
+    };
+
+    assert!(!gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        2,
+        4,
+        1,
+        &ordered_ids,
+        mixed(),
+    ));
+    assert!(!gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        4,
+        1,
+        &ordered_ids,
+        match function_verification(1, &[("b", false), ("a", true)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+    let huge_id = "x".repeat(MAX_STARTUP_FUNCTION_BREAKPOINT_RECEIPT_BYTES);
+    assert!(!gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        4,
+        1,
+        std::slice::from_ref(&huge_id),
+        vec![crate::debug_adapter::DebugFunctionBreakpointVerification {
+            id: huge_id.clone(),
+            verified: false,
+        }],
+    ));
+    assert!(gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        4,
+        1,
+        &ordered_ids,
+        mixed(),
+    ));
+    assert!(!gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        4,
+        1,
+        &ordered_ids,
+        mixed(),
+    ));
+    let (_other_registry, other_gate, _other_sink, _other_session_id) =
+        fixture("/workspace/function-receipt-foreign");
+    let foreign_lease = other_gate
+        .prepare_initial()
+        .expect("foreign unpublished lease");
+    assert!(gate
+        .begin_publish_with_startup_function_breakpoint_receipt(
+            &foreign_lease,
+            1,
+            4,
+            1,
+            &ordered_ids,
+        )
+        .is_none());
+    assert!(gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 5, 1, &ordered_ids,)
+        .is_none());
+    assert!(gate.begin_publish(&lease).is_none());
+    let publication = gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 4, 1, &ordered_ids)
+        .expect("exact receipt is consumed once");
+    assert!(gate.abort_publish(&publication));
+    assert!(gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 4, 1, &ordered_ids,)
+        .is_none());
+    assert!(gate.begin_publish(&lease).is_none());
+}
+
+#[test]
+fn startup_function_receipt_accepts_the_legal_maximum_without_duplicate_id_retention() {
+    let (_registry, gate, _sink, _session_id) = fixture("/workspace/function-receipt-max");
+    let lease = gate.prepare_initial().expect("initial unpublished lease");
+    let ordered_ids: Vec<_> = (0..128)
+        .map(|index| format!("id-{index:03}-{}", "x".repeat(121)))
+        .collect();
+    assert!(ordered_ids.iter().all(|id| id.len() == 128));
+    let verification = ordered_ids
+        .iter()
+        .map(
+            |id| crate::debug_adapter::DebugFunctionBreakpointVerification {
+                id: id.clone(),
+                verified: false,
+            },
+        )
+        .collect();
+
+    assert!(gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        9,
+        1,
+        &ordered_ids,
+        verification,
+    ));
+    assert!(gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 9, 1, &ordered_ids,)
+        .is_some());
+}
+
+#[test]
+fn startup_function_receipt_replacement_is_atomic_and_discards_old_partial_authority() {
+    let (_registry, gate, sink, _session_id) = fixture("/workspace/function-receipt-replace");
+    let lease = gate.prepare_initial().expect("initial unpublished lease");
+    let old_ids = vec!["old-a".to_string(), "old-b".to_string()];
+    let new_ids = vec!["new-a".to_string(), "new-b".to_string()];
+
+    assert!(gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        7,
+        1,
+        &old_ids,
+        match function_verification(1, &[("old-a", true), ("old-b", false)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+    assert_eq!(
+        gate.emit(&lease, function_verification(1, &[("old-b", true)])),
+        WatchEventDisposition::Buffered
+    );
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(7, 1, &old_ids),
+        function_authority(8, 2, &new_ids),
+        match function_verification(2, &[("new-b", true), ("new-a", false)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+    assert!(gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(7, 1, &old_ids),
+        function_authority(8, 2, &new_ids),
+        match function_verification(2, &[("new-a", false), ("new-b", true)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+
+    assert!(gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 7, 1, &old_ids)
+        .is_none());
+    assert_eq!(
+        gate.emit(&lease, function_verification(1, &[("old-a", false)])),
+        WatchEventDisposition::DroppedStale
+    );
+    assert_eq!(
+        gate.emit(&lease, function_verification(2, &[("new-a", true)])),
+        WatchEventDisposition::Buffered
+    );
+    let publication = gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 8, 2, &new_ids)
+        .expect("replacement authority publishes");
+    let flush = gate.seal_publish(&publication).expect("publication seals");
+    assert!(gate.flush_publish(&flush));
+
+    let payloads: Vec<_> = events(&sink)
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            DebugEventPayload::FunctionBreakpointsVerified {
+                generation,
+                breakpoints,
+            } => Some((generation, breakpoints)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(payloads.len(), 2);
+    assert_eq!(payloads[0].0, 2);
+    assert_eq!(
+        payloads[0]
+            .1
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.verified))
+            .collect::<Vec<_>>(),
+        [("new-a", false), ("new-b", true)]
+    );
+    assert_eq!(
+        payloads[1]
+            .1
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.verified))
+            .collect::<Vec<_>>(),
+        [("new-a", true)]
+    );
+}
+
+#[test]
+fn startup_function_receipt_replacement_rejects_stale_foreign_and_invalid_authority() {
+    let (_registry, gate, _sink, _session_id) =
+        fixture("/workspace/function-receipt-replace-reject");
+    let lease = gate.prepare_initial().expect("initial unpublished lease");
+    let old_ids = vec!["old".to_string()];
+    let new_ids = vec!["new".to_string()];
+    let replacement = || match function_verification(2, &[("new", true)]) {
+        DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+        _ => unreachable!(),
+    };
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(10, 1, &old_ids),
+        function_authority(11, 2, &new_ids),
+        replacement(),
+    ));
+    assert!(gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        10,
+        1,
+        &old_ids,
+        match function_verification(1, &[("old", false)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(9, 1, &old_ids),
+        function_authority(11, 2, &new_ids),
+        replacement(),
+    ));
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(10, 2, &old_ids),
+        function_authority(11, 2, &new_ids),
+        replacement(),
+    ));
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(10, 1, &new_ids),
+        function_authority(11, 2, &new_ids),
+        replacement(),
+    ));
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        2,
+        function_authority(10, 1, &old_ids),
+        function_authority(11, 2, &new_ids),
+        replacement(),
+    ));
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(10, 1, &old_ids),
+        function_authority(10, 2, &new_ids),
+        replacement(),
+    ));
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(10, 1, &old_ids),
+        function_authority(11, 1, &new_ids),
+        replacement(),
+    ));
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(10, 1, &old_ids),
+        function_authority(11, 2, &new_ids),
+        match function_verification(2, &[("wrong", true)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+
+    let (_foreign_registry, foreign_gate, _foreign_sink, _foreign_session_id) =
+        fixture("/workspace/function-receipt-replace-foreign");
+    let foreign_lease = foreign_gate
+        .prepare_initial()
+        .expect("foreign unpublished lease");
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &foreign_lease,
+        1,
+        function_authority(10, 1, &old_ids),
+        function_authority(11, 2, &new_ids),
+        replacement(),
+    ));
+}
+
+#[test]
+fn startup_function_receipt_replacement_rejects_oversize_and_published_state() {
+    let (_registry, gate, _sink, _session_id) =
+        fixture("/workspace/function-receipt-replace-bounds");
+    let lease = gate.prepare_initial().expect("initial unpublished lease");
+    let old_ids = vec!["old".to_string()];
+    assert!(gate.retain_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        12,
+        1,
+        &old_ids,
+        match function_verification(1, &[("old", false)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+    let huge_id = "x".repeat(MAX_STARTUP_FUNCTION_BREAKPOINT_RECEIPT_BYTES);
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(12, 1, &old_ids),
+        function_authority(13, 2, std::slice::from_ref(&huge_id)),
+        vec![crate::debug_adapter::DebugFunctionBreakpointVerification {
+            id: huge_id.clone(),
+            verified: false,
+        }],
+    ));
+    let publication = gate
+        .begin_publish_with_startup_function_breakpoint_receipt(&lease, 1, 12, 1, &old_ids)
+        .expect("old receipt begins publication");
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(12, 1, &old_ids),
+        function_authority(13, 2, &["new".to_string()]),
+        match function_verification(2, &[("new", true)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
+    let flush = gate.seal_publish(&publication).expect("publication seals");
+    assert!(gate.flush_publish(&flush));
+    assert!(!gate.replace_startup_function_breakpoint_receipt(
+        &lease,
+        1,
+        function_authority(12, 1, &old_ids),
+        function_authority(13, 2, &["new".to_string()]),
+        match function_verification(2, &[("new", true)]) {
+            DebugEventPayload::FunctionBreakpointsVerified { breakpoints, .. } => breakpoints,
+            _ => unreachable!(),
+        },
+    ));
 }
 
 #[test]

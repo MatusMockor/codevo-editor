@@ -1,6 +1,6 @@
 use super::{
-    detect_runner, ensure_registered_root_identity, execute_runner_with_timeout,
-    registered_root_path, JsTestRunner,
+    detect_runner_in_workspace, ensure_registered_root_identity,
+    execute_runner_with_timeout_retained, registered_root_path, JsTestRunner,
 };
 use crate::test_run_support::{ensure_private_directory, prepare_result_path_with_extension};
 use serde::Serialize;
@@ -19,6 +19,7 @@ const MAX_COVERAGE_FILES: usize = 20_000;
 const MAX_COVERAGE_LINES: usize = 500_000;
 const MAX_BRANCH_RECORDS: usize = 500_000;
 const MAX_FUNCTION_RECORDS: usize = 500_000;
+const MAX_FUNCTION_OVERFLOW_DEFINITIONS: usize = 1_024;
 const MAX_WIRE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_PATH_BYTES: usize = 16 * 1024;
 const COVERAGE_SUBDIRECTORY: &str = "js-test-coverage";
@@ -71,20 +72,45 @@ pub struct JsTestCoverageLine {
 pub async fn run_registered(
     root: File,
     app_data_base: PathBuf,
+    package_root_relative_path: String,
 ) -> Result<JsTestCoverageResponse, String> {
     crate::run_blocking_command(move || {
         let root_path = registered_root_path(&root)?;
         ensure_registered_root_identity(&root, &root_path)?;
-        let response = run_at_root(
+        let execution = crate::js_test_execution_root::resolve_js_test_execution_context(
             &root_path,
+            &package_root_relative_path,
+            super::JsTestRunScope::All,
+        )?;
+        crate::js_test_execution_root::ensure_js_test_execution_context_identity(&execution)?;
+        let response = run_at_roots(
+            &root_path,
+            &execution.execution_root,
+            &execution.package_root_path,
             &app_data_base,
-            |runner, current_root, output| {
-                ensure_registered_root_identity(&root, current_root)?;
-                execute_runner_with_timeout(
+            |runner, execution_root, output| {
+                ensure_registered_root_identity(&root, &root_path)?;
+                crate::js_test_execution_root::ensure_js_test_execution_context_identity(
+                    &execution,
+                )?;
+                let authority = crate::js_test_execution_root::retain_js_test_process_authority(
+                    &execution,
                     runner_binary(runner),
-                    current_root,
+                    match runner {
+                        JsTestRunner::Vitest(_) => {
+                            crate::js_test_execution_root::RetainedJsTestRunnerKind::Vitest
+                        }
+                        JsTestRunner::Jest(_) => {
+                            crate::js_test_execution_root::RetainedJsTestRunnerKind::Jest
+                        }
+                    },
+                )?;
+                execute_runner_with_timeout_retained(
+                    runner_binary(runner),
+                    execution_root,
                     coverage_args(runner, output),
                     COVERAGE_TIMEOUT,
+                    Some(authority),
                 )?;
                 Ok(())
             },
@@ -95,7 +121,21 @@ pub async fn run_registered(
     .await
 }
 
+#[cfg(test)]
 fn run_at_root<F>(root: &Path, app_data_base: &Path, execute: F) -> JsTestCoverageResponse
+where
+    F: FnOnce(&JsTestRunner, &Path, &Path) -> Result<(), String>,
+{
+    run_at_roots(root, root, root, app_data_base, execute)
+}
+
+fn run_at_roots<F>(
+    projection_root: &Path,
+    execution_root: &Path,
+    package_root_path: &Path,
+    app_data_base: &Path,
+    execute: F,
+) -> JsTestCoverageResponse
 where
     F: FnOnce(&JsTestRunner, &Path, &Path) -> Result<(), String>,
 {
@@ -107,15 +147,17 @@ where
             };
         }
     };
-    let runner = match detect_runner(root) {
-        Ok(Some(runner)) => runner,
-        Ok(None) => {
-            return JsTestCoverageResponse::Unavailable {
-                message: "No JavaScript test runner is available in this workspace.".to_string(),
-            };
-        }
-        Err(message) => return JsTestCoverageResponse::Error { message },
-    };
+    let runner =
+        match detect_runner_in_workspace(execution_root, package_root_path, projection_root) {
+            Ok(Some(runner)) => runner,
+            Ok(None) => {
+                return JsTestCoverageResponse::Unavailable {
+                    message: "No JavaScript test runner is available in this workspace."
+                        .to_string(),
+                };
+            }
+            Err(message) => return JsTestCoverageResponse::Error { message },
+        };
     let output = match prepare_coverage_directory(app_data_base) {
         Ok(output) => output,
         Err(message) => return JsTestCoverageResponse::Error { message },
@@ -129,7 +171,7 @@ where
             };
         }
     };
-    let canonical_root = match fs::canonicalize(root) {
+    let canonical_root = match fs::canonicalize(projection_root) {
         Ok(path) => path,
         Err(error) => {
             return JsTestCoverageResponse::Error {
@@ -142,10 +184,10 @@ where
             message: "JavaScript coverage output must stay outside the workspace.".to_string(),
         };
     }
-    if let Err(message) = execute(&runner, root, &output) {
+    if let Err(message) = execute(&runner, execution_root, &output) {
         return JsTestCoverageResponse::Error { message };
     }
-    let result = parse_lcov_file(root, &output.join("lcov.info"))
+    let result = parse_lcov_file(projection_root, execution_root, &output.join("lcov.info"))
         .map(|report| JsTestCoverageResponse::Ok { report })
         .unwrap_or_else(|message| JsTestCoverageResponse::Error { message });
     drop(cleanup);
@@ -187,7 +229,11 @@ fn runner_binary(runner: &JsTestRunner) -> &Path {
     }
 }
 
-fn parse_lcov_file(root: &Path, path: &Path) -> Result<JsTestCoverageReport, String> {
+fn parse_lcov_file(
+    projection_root: &Path,
+    source_root: &Path,
+    path: &Path,
+) -> Result<JsTestCoverageReport, String> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("JavaScript coverage report was not produced: {error}"))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
@@ -221,15 +267,47 @@ fn parse_lcov_file(root: &Path, path: &Path) -> Result<JsTestCoverageReport, Str
     }
     let source = std::str::from_utf8(&bytes)
         .map_err(|_| "JavaScript coverage report is not valid UTF-8.".to_string())?;
-    parse_lcov(root, source)
+    parse_lcov_at_roots(projection_root, source_root, source)
 }
 
+#[cfg(test)]
 fn parse_lcov(root: &Path, source: &str) -> Result<JsTestCoverageReport, String> {
-    parse_lcov_with_record_limits(root, source, MAX_BRANCH_RECORDS, MAX_FUNCTION_RECORDS)
+    parse_lcov_at_roots(root, root, source)
 }
 
+fn parse_lcov_at_roots(
+    projection_root: &Path,
+    source_root: &Path,
+    source: &str,
+) -> Result<JsTestCoverageReport, String> {
+    parse_lcov_with_record_limits_at_roots(
+        projection_root,
+        source_root,
+        source,
+        MAX_BRANCH_RECORDS,
+        MAX_FUNCTION_RECORDS,
+    )
+}
+
+#[cfg(test)]
 fn parse_lcov_with_record_limits(
     root: &Path,
+    source: &str,
+    max_branch_records: usize,
+    max_function_records: usize,
+) -> Result<JsTestCoverageReport, String> {
+    parse_lcov_with_record_limits_at_roots(
+        root,
+        root,
+        source,
+        max_branch_records,
+        max_function_records,
+    )
+}
+
+fn parse_lcov_with_record_limits_at_roots(
+    projection_root: &Path,
+    source_root: &Path,
     source: &str,
     max_branch_records: usize,
     max_function_records: usize,
@@ -239,7 +317,11 @@ fn parse_lcov_with_record_limits(
     let mut current = FileCounts::default();
     let mut line_entries = 0usize;
     let mut branch_records = 0usize;
-    let mut function_records = 0usize;
+    let mut function_definitions = BTreeMap::<String, BTreeMap<String, FunctionDefinition>>::new();
+    let max_pairing_definitions = max_function_records
+        .saturating_add(max_function_records.min(MAX_FUNCTION_OVERFLOW_DEFINITIONS));
+    let mut pairing_definitions = 0usize;
+    let mut retained_functions = 0usize;
     let mut truncated = false;
     for line in source.lines() {
         if line.is_empty() || line.starts_with("TN:") {
@@ -251,7 +333,7 @@ fn parse_lcov_with_record_limits(
                     "JavaScript coverage report contains an unterminated record.".to_string(),
                 );
             }
-            current_path = Some(coverage_relative_path(root, path)?);
+            current_path = Some(coverage_relative_path(projection_root, source_root, path)?);
             current = FileCounts::default();
         } else if line == "end_of_record" {
             let path = current_path.take().ok_or_else(|| {
@@ -263,7 +345,9 @@ fn parse_lcov_with_record_limits(
                 ));
             }
             files.entry(path).or_default().merge(&current)?;
+            current = FileCounts::default();
         } else if let Some(value) = line.strip_prefix("DA:") {
+            source_record_path(&current_path, "DA")?;
             let fields = value.split(',').collect::<Vec<_>>();
             if !(2..=3).contains(&fields.len())
                 || fields.get(2).is_some_and(|checksum| checksum.is_empty())
@@ -280,17 +364,8 @@ fn parse_lcov_with_record_limits(
             }
             add_line_hits(&mut current.lines, line_number, hits)?;
         } else if let Some(value) = line.strip_prefix("BRDA:") {
-            if current_path.is_none() {
-                return Err(
-                    "JavaScript coverage report contains a BRDA record outside a source record."
-                        .to_string(),
-                );
-            }
+            source_record_path(&current_path, "BRDA")?;
             branch_records = branch_records.saturating_add(1);
-            if branch_records > max_branch_records {
-                truncated = true;
-                continue;
-            }
             let fields = value.split(',').collect::<Vec<_>>();
             if fields.len() != 4 {
                 return Err("JavaScript coverage report has an invalid BRDA record.".to_string());
@@ -303,6 +378,10 @@ fn parse_lcov_with_record_limits(
             } else {
                 count(fields[3], "BRDA hits")?
             };
+            if branch_records > max_branch_records {
+                truncated = true;
+                continue;
+            }
             add_hits(
                 &mut current.branches,
                 (line_number, block, branch),
@@ -310,59 +389,90 @@ fn parse_lcov_with_record_limits(
                 "branch",
             )?;
         } else if let Some(value) = line.strip_prefix("FN:") {
-            if current_path.is_none() {
-                return Err(
-                    "JavaScript coverage report contains an FN record outside a source record."
-                        .to_string(),
-                );
-            }
-            function_records = function_records.saturating_add(1);
-            if function_records > max_function_records {
-                truncated = true;
-                continue;
-            }
+            let source_path = source_record_path(&current_path, "FN")?;
             let (line_number, name) = value.split_once(',').ok_or_else(|| {
                 "JavaScript coverage report has an invalid FN record.".to_string()
             })?;
-            if positive_count(line_number, "FN line").is_err() || name.is_empty() {
+            let line_number = positive_count(line_number, "FN line");
+            if line_number.is_err() || name.is_empty() {
                 return Err("JavaScript coverage report has an invalid FN record.".to_string());
             }
-            current.functions.entry(name.to_string()).or_insert(0);
-        } else if let Some(value) = line.strip_prefix("FNDA:") {
-            if current_path.is_none() {
-                return Err(
-                    "JavaScript coverage report contains an FNDA record outside a source record."
-                        .to_string(),
-                );
+            let line_number = line_number?;
+            let definitions = function_definitions
+                .entry(source_path.to_string())
+                .or_default();
+            if let Some(definition) = definitions.get(name) {
+                if definition.line_number != line_number {
+                    return Err(
+                        "JavaScript coverage report defines one function name at multiple lines."
+                            .to_string(),
+                    );
+                }
+                if definition.retained {
+                    current.functions.entry(name.to_string()).or_insert(0);
+                } else {
+                    truncated = true;
+                }
+                continue;
             }
-            function_records = function_records.saturating_add(1);
-            if function_records > max_function_records {
+            pairing_definitions = pairing_definitions.saturating_add(1);
+            if pairing_definitions > max_pairing_definitions {
+                return Err(format!(
+                    "JavaScript coverage report exceeded the {max_pairing_definitions} function pairing safety limit."
+                ));
+            }
+            let retained = retained_functions < max_function_records;
+            definitions.insert(
+                name.to_string(),
+                FunctionDefinition {
+                    line_number,
+                    retained,
+                },
+            );
+            if !retained {
                 truncated = true;
                 continue;
             }
+            retained_functions = retained_functions.saturating_add(1);
+            current.functions.entry(name.to_string()).or_insert(0);
+        } else if let Some(value) = line.strip_prefix("FNDA:") {
+            let source_path = source_record_path(&current_path, "FNDA")?;
             let (hits, name) = value.split_once(',').ok_or_else(|| {
                 "JavaScript coverage report has an invalid FNDA record.".to_string()
             })?;
             if name.is_empty() {
                 return Err("JavaScript coverage report has an invalid FNDA record.".to_string());
             }
-            add_hits(
-                &mut current.functions,
-                name.to_string(),
-                count(hits, "FNDA hits")?,
-                "function",
-            )?;
+            let hits = count(hits, "FNDA hits")?;
+            let definition = function_definitions
+                .get(source_path)
+                .and_then(|definitions| definitions.get(name))
+                .ok_or_else(|| {
+                    "JavaScript coverage report contains FNDA without a corresponding FN record."
+                        .to_string()
+                })?;
+            if !definition.retained {
+                truncated = true;
+                continue;
+            }
+            add_hits(&mut current.functions, name.to_string(), hits, "function")?;
         } else if let Some(value) = line.strip_prefix("LF:") {
+            source_record_path(&current_path, "LF")?;
             let _ = count(value, "LF")?;
         } else if let Some(value) = line.strip_prefix("LH:") {
+            source_record_path(&current_path, "LH")?;
             let _ = count(value, "LH")?;
         } else if let Some(value) = line.strip_prefix("FNF:") {
+            source_record_path(&current_path, "FNF")?;
             let _ = count(value, "FNF")?;
         } else if let Some(value) = line.strip_prefix("FNH:") {
+            source_record_path(&current_path, "FNH")?;
             let _ = count(value, "FNH")?;
         } else if let Some(value) = line.strip_prefix("BRF:") {
+            source_record_path(&current_path, "BRF")?;
             let _ = count(value, "BRF")?;
         } else if let Some(value) = line.strip_prefix("BRH:") {
+            source_record_path(&current_path, "BRH")?;
             let _ = count(value, "BRH")?;
         } else {
             return Err("JavaScript coverage report contains an unsupported record.".to_string());
@@ -415,7 +525,17 @@ fn parse_lcov_with_record_limits(
     })
 }
 
-fn coverage_relative_path(root: &Path, value: &str) -> Result<String, String> {
+fn source_record_path<'a>(current_path: &'a Option<String>, kind: &str) -> Result<&'a str, String> {
+    current_path.as_deref().ok_or_else(|| {
+        format!("JavaScript coverage report contains a {kind} record outside a source record.")
+    })
+}
+
+fn coverage_relative_path(
+    projection_root: &Path,
+    source_root: &Path,
+    value: &str,
+) -> Result<String, String> {
     if value.is_empty()
         || value.len() > MAX_PATH_BYTES
         || value.bytes().any(|byte| matches!(byte, 0x00..=0x1f | 0x7f))
@@ -423,24 +543,24 @@ fn coverage_relative_path(root: &Path, value: &str) -> Result<String, String> {
         return Err("JavaScript coverage source path is invalid or too long.".to_string());
     }
     let path = Path::new(value);
-    let relative = if path.is_absolute() {
-        path.strip_prefix(root)
-            .map_err(|_| "JavaScript coverage source escaped the workspace root.".to_string())?
+    let source = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        path
+        source_root.join(path)
     };
-    if relative.as_os_str().is_empty()
-        || relative
+    if path.as_os_str().is_empty()
+        || path
             .components()
             .any(|part| !matches!(part, Component::Normal(_)))
+            && !path.is_absolute()
     {
         return Err(
             "JavaScript coverage source path is not a safe workspace descendant.".to_string(),
         );
     }
-    let canonical_root = fs::canonicalize(root)
+    let canonical_root = fs::canonicalize(projection_root)
         .map_err(|error| format!("Failed to resolve coverage workspace root: {error}"))?;
-    let canonical_source = fs::canonicalize(root.join(relative))
+    let canonical_source = fs::canonicalize(source)
         .map_err(|error| format!("Failed to resolve covered source path: {error}"))?;
     let confined = canonical_source
         .strip_prefix(&canonical_root)
@@ -527,6 +647,12 @@ struct FileCounts {
     lines: BTreeMap<u64, u64>,
     branches: BTreeMap<(u64, u64, u64), u64>,
     functions: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Copy)]
+struct FunctionDefinition {
+    line_number: u64,
+    retained: bool,
 }
 
 impl FileCounts {
@@ -624,6 +750,20 @@ mod tests {
     }
 
     #[test]
+    fn nested_relative_source_paths_resolve_from_execution_root_and_project_from_workspace() {
+        let root = fixture("nested-relative-source");
+        let package = root.join("packages/web");
+        fs::create_dir_all(package.join("src")).expect("create package source");
+        fs::write(package.join("src/app.ts"), "export const app = true;").expect("write source");
+
+        let report = parse_lcov_at_roots(&root, &package, "SF:src/app.ts\nDA:1,1\nend_of_record\n")
+            .expect("parse nested report");
+
+        assert_eq!(report.files[0].path, "packages/web/src/app.ts");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn parses_sorted_unique_lines_and_typed_summaries() {
         let root = fixture("parse");
         fs::create_dir_all(root.join("src")).unwrap();
@@ -690,7 +830,7 @@ mod tests {
             &root,
             "SF:safe.ts\nBRDA:1,0,0,1\nBRDA:1,0,1,1\nFN:1,kept\nFNDA:1,kept\nFN:1,discarded\nend_of_record\n",
             1,
-            2,
+            1,
         )
         .unwrap();
         assert!(report.truncated);
@@ -717,9 +857,114 @@ mod tests {
             "BRDA:1,0,0,1\n",
             "FN:1,fn\n",
             "FNDA:1,fn\n",
+            "SF:safe.ts\nFNDA:1,orphan\nend_of_record\n",
+            "SF:safe.ts\nFNDA:1,later\nFN:1,later\nend_of_record\n",
         ] {
             assert!(parse_lcov(&root, source).is_err(), "{source}");
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_data_and_summary_records_outside_source_records() {
+        let root = fixture("record-order");
+        fs::write(root.join("safe.ts"), "safe").unwrap();
+        for source in [
+            "DA:1,1\n",
+            "LF:1\n",
+            "LH:1\n",
+            "FNF:1\n",
+            "FNH:1\n",
+            "BRF:1\n",
+            "BRH:1\n",
+            "SF:safe.ts\nend_of_record\nDA:1,1\n",
+            "SF:safe.ts\nend_of_record\nLF:1\n",
+            "SF:safe.ts\nend_of_record\nend_of_record\n",
+        ] {
+            assert!(parse_lcov(&root, source).is_err(), "{source}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn truncation_does_not_hide_malformed_branch_or_function_records() {
+        let root = fixture("truncated-malformed");
+        fs::write(root.join("safe.ts"), "safe").unwrap();
+        for source in [
+            "SF:safe.ts\nBRDA:1,0,0,1\nBRDA:bad\nend_of_record\n",
+            "SF:safe.ts\nFN:1,kept\nFN:bad\nend_of_record\n",
+            "SF:safe.ts\nFN:1,kept\nFNDA:bad,kept\nend_of_record\n",
+        ] {
+            assert!(
+                parse_lcov_with_record_limits(&root, source, 1, 1).is_err(),
+                "{source}"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn function_cap_retains_complete_pairs_and_omits_complete_overflow_pairs() {
+        let root = fixture("function-pair-cap");
+        fs::write(root.join("safe.ts"), "one\ntwo\n").unwrap();
+        let report = parse_lcov_with_record_limits(
+            &root,
+            "SF:safe.ts\nFN:1,kept\nFN:2,discarded\nFNDA:3,kept\nFNDA:9,discarded\nend_of_record\n",
+            MAX_BRANCH_RECORDS,
+            1,
+        )
+        .unwrap();
+        assert!(report.truncated);
+        assert_eq!(report.functions, metric(1, 1));
+        assert_eq!(report.files[0].functions, metric(1, 1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn function_pairing_state_has_a_hard_bound_beyond_the_retention_cap() {
+        let root = fixture("function-pair-hard-cap");
+        fs::write(root.join("safe.ts"), "one\ntwo\nthree\n").unwrap();
+        let failure = parse_lcov_with_record_limits(
+            &root,
+            "SF:safe.ts\nFN:1,kept\nFN:2,overflow\nFN:3,rejected\nFNDA:1,kept\nend_of_record\n",
+            MAX_BRANCH_RECORDS,
+            1,
+        )
+        .unwrap_err();
+        assert!(failure.contains("function pairing safety limit"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_function_names_are_counted_once_and_conflicting_lines_fail_closed() {
+        let root = fixture("duplicate-function");
+        fs::write(root.join("safe.ts"), "one\ntwo\n").unwrap();
+        let report = parse_lcov(
+            &root,
+            "SF:safe.ts\nFN:1,same\nFN:1,same\nFNDA:2,same\nFNDA:3,same\nend_of_record\n",
+        )
+        .unwrap();
+        assert_eq!(report.functions, metric(1, 1));
+        assert_eq!(report.files[0].functions, metric(1, 1));
+
+        assert!(parse_lcov(
+            &root,
+            "SF:safe.ts\nFN:1,same\nFN:2,same\nFNDA:1,same\nend_of_record\n"
+        )
+        .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn function_counts_can_follow_a_definition_in_a_repeated_source_record() {
+        let root = fixture("function-repeated-source");
+        fs::write(root.join("safe.ts"), "safe").unwrap();
+        let report = parse_lcov(
+            &root,
+            "SF:safe.ts\nFN:1,split\nend_of_record\nSF:safe.ts\nFNDA:4,split\nend_of_record\n",
+        )
+        .unwrap();
+        assert_eq!(report.functions, metric(1, 1));
         fs::remove_dir_all(root).unwrap();
     }
 

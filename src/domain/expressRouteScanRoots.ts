@@ -18,6 +18,16 @@ export interface ExpressRouteScanRootsResult {
   readonly truncated: boolean;
 }
 
+export interface ExpressRoutePackageRoot {
+  readonly packageLabel: string;
+  readonly relativeDirPath: string;
+}
+
+export interface ExpressRoutePackageRootsResult {
+  readonly roots: readonly ExpressRoutePackageRoot[];
+  readonly truncated: boolean;
+}
+
 export function expressRouteScanRoots({
   packageJsonDirs,
   relativeFilePaths,
@@ -25,49 +35,45 @@ export function expressRouteScanRoots({
   readonly packageJsonDirs: readonly ExpressRoutePackageJsonDir[];
   readonly relativeFilePaths: readonly string[];
 }): ExpressRouteScanRootsResult {
-  const roots = normalizedPackageRoots(packageJsonDirs);
+  const { roots, truncated } = expressRoutePackageRoots(packageJsonDirs);
   return {
     files: relativeFilePaths.map((relativeFilePath) => ({
       relativeFilePath,
-      packageLabel: nearestPackageLabel(relativeFilePath, roots.accepted),
+      packageLabel: nearestPackageLabel(relativeFilePath, roots),
     })),
-    truncated: roots.truncated,
+    truncated,
   };
 }
 
-function normalizedPackageRoots(packageJsonDirs: readonly ExpressRoutePackageJsonDir[]): {
-  readonly accepted: readonly NormalizedPackageRoot[];
-  readonly truncated: boolean;
-} {
-  const rootsByDir = new Map<string, NormalizedPackageRoot>();
+export function expressRoutePackageRoots(
+  packageJsonDirs: readonly ExpressRoutePackageJsonDir[],
+): ExpressRoutePackageRootsResult {
+  const rootsByDir = new Map<string, ExpressRoutePackageRoot>();
   for (const candidate of packageJsonDirs) {
     const relativeDirPath = normalizeRelativeDirPath(candidate.relativeDirPath);
     const packageLabel = normalizePackageName(candidate.packageName);
-    if (!relativeDirPath || packageLabel === undefined) continue;
+    if (relativeDirPath === null || packageLabel === undefined) continue;
     rootsByDir.set(relativeDirPath, { packageLabel, relativeDirPath });
   }
-  const roots = [...rootsByDir.values()].sort((left, right) =>
+  const root = rootsByDir.get("");
+  rootsByDir.delete("");
+  const nestedRoots = [...rootsByDir.values()].sort((left, right) =>
     compareText(left.relativeDirPath, right.relativeDirPath),
   );
   return {
-    accepted: roots.slice(0, MAX_ROOTS),
-    truncated: roots.length > MAX_ROOTS,
+    roots: [...(root ? [root] : []), ...nestedRoots.slice(0, MAX_ROOTS)],
+    truncated: nestedRoots.length > MAX_ROOTS,
   };
-}
-
-interface NormalizedPackageRoot {
-  readonly packageLabel: string;
-  readonly relativeDirPath: string;
 }
 
 function nearestPackageLabel(
   relativeFilePath: string,
-  roots: readonly NormalizedPackageRoot[],
+  roots: readonly ExpressRoutePackageRoot[],
 ): string | undefined {
-  let nearest: NormalizedPackageRoot | undefined;
+  let nearest: ExpressRoutePackageRoot | undefined;
   for (const root of roots) {
-    if (!root.relativeDirPath) continue;
     if (
+      root.relativeDirPath &&
       relativeFilePath !== root.relativeDirPath &&
       !relativeFilePath.startsWith(`${root.relativeDirPath}/`)
     ) {

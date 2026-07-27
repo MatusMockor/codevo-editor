@@ -15,6 +15,7 @@ describe("createJsTestSingleRunCoordinator", () => {
 
     expect(outcome.status).toBe("settled");
     expect(runTask).toHaveBeenCalledExactlyOnceWith({
+      packageRootRelativePath: "",
       runId: "run-1",
       scope: { kind: "file", relativeFilePath: "a.test.ts" },
       workspaceId: "workspace-1",

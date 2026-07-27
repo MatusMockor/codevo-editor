@@ -9,9 +9,11 @@ import { ExpressRoutesPanel, type ExpressRoutesPanelProps } from "./ExpressRoute
 describe("ExpressRoutesPanel", () => {
   let host: HTMLDivElement;
   let root: Root;
+  let geometry: ReturnType<typeof installGeometry>;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    geometry = installGeometry();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -20,6 +22,7 @@ describe("ExpressRoutesPanel", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    geometry.restore();
   });
 
   it("renders workspace route details and emits the complete route on click", async () => {
@@ -91,6 +94,41 @@ describe("ExpressRoutesPanel", () => {
     await key("Enter");
     expect(onOpenRoute).toHaveBeenCalledExactlyOnceWith(routes[1]);
     expect(routeOptions().map((option) => option.tabIndex)).toEqual([-1, -1]);
+  });
+
+  it("windows twenty thousand routes while preserving exact keyboard navigation", async () => {
+    const manyRoutes = Array.from({ length: 20_000 }, (_, index) => route(index));
+    const onOpenRoute = vi.fn();
+    await render({ onOpenRoute, routes: manyRoutes });
+
+    expect(routeOptions().length).toBeGreaterThan(0);
+    expect(routeOptions().length).toBeLessThan(40);
+    expect(routeOptions()[0]?.getAttribute("aria-posinset")).toBe("1");
+    expect(routeOptions()[0]?.getAttribute("aria-setsize")).toBe("20000");
+    expect(spacer().style.height).toBe(`${20_000 * 32}px`);
+    expect(host.textContent).not.toContain("/route-10000");
+
+    await key("PageDown");
+    expect(queryInput().getAttribute("aria-activedescendant")).toContain(manyRoutes[10].id);
+    expect(
+      routeOptions().find((option) => option.getAttribute("aria-selected") === "true")?.textContent,
+    ).toContain("/route-10");
+
+    await key("End");
+    expect(queryInput().getAttribute("aria-activedescendant")).toContain(manyRoutes[19_999].id);
+    expect(
+      routeOptions().find((option) => option.getAttribute("aria-selected") === "true")?.textContent,
+    ).toContain("/route-19999");
+
+    await key("PageUp");
+    expect(queryInput().getAttribute("aria-activedescendant")).toContain(manyRoutes[19_989].id);
+    expect(
+      routeOptions().find((option) => option.getAttribute("aria-selected") === "true")?.textContent,
+    ).toContain("/route-19989");
+
+    await key("End");
+    await key("Enter");
+    expect(onOpenRoute).toHaveBeenCalledExactlyOnceWith(manyRoutes[19_999]);
   });
 
   it("guards route opening while asynchronous navigation is pending", async () => {
@@ -195,6 +233,12 @@ describe("ExpressRoutesPanel", () => {
     if (!element) throw new Error(`Button is missing: ${label}`);
     return element;
   }
+
+  function spacer(): HTMLDivElement {
+    const element = host.querySelector<HTMLDivElement>('[data-testid="express-routes-spacer"]');
+    if (!element) throw new Error("Express route spacer is missing");
+    return element;
+  }
 });
 
 const routes = workspaceExpressRoutesFromSnapshots([
@@ -208,3 +252,60 @@ const routes = workspaceExpressRoutesFromSnapshots([
     source: "\n\napp.post('/admin/health', handler);",
   },
 ]);
+
+function route(index: number) {
+  return {
+    column: 1,
+    id: `route-${index}`,
+    line: index + 1,
+    method: "GET",
+    occurrence: 1,
+    path: `/route-${index}`,
+    receiver: "router",
+    relativeFilePath: `src/route-${index}.ts`,
+  } as const;
+}
+
+function installGeometry() {
+  const descriptors = {
+    cancelAnimationFrame: Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame"),
+    clientHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight"),
+    clientWidth: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth"),
+    offsetHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight"),
+    requestAnimationFrame: Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame"),
+  };
+  let nextHandle = 1;
+  const callbacks = new Map<number, FrameRequestCallback>();
+  Object.defineProperties(HTMLElement.prototype, {
+    clientHeight: { configurable: true, get: () => 320 },
+    clientWidth: { configurable: true, get: () => 800 },
+    offsetHeight: { configurable: true, get: () => 32 },
+  });
+  Object.defineProperties(globalThis, {
+    cancelAnimationFrame: {
+      configurable: true,
+      value: (handle: number) => callbacks.delete(handle),
+    },
+    requestAnimationFrame: {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        const handle = nextHandle++;
+        callbacks.set(handle, callback);
+        return handle;
+      },
+    },
+  });
+
+  return {
+    restore() {
+      for (const [property, descriptor] of Object.entries(descriptors)) {
+        const target =
+          property === "requestAnimationFrame" || property === "cancelAnimationFrame"
+            ? globalThis
+            : HTMLElement.prototype;
+        if (descriptor) Object.defineProperty(target, property, descriptor);
+        else Reflect.deleteProperty(target, property);
+      }
+    },
+  };
+}

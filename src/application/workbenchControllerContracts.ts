@@ -9,6 +9,7 @@ import type {
   TextSearchGateway,
   WorkspaceDetectionGateway,
   WorkspaceFileGateway,
+  WorkspaceOwnerFileGateway,
 } from "../domain/workspace";
 import type { WorkspaceFileChangeGateway } from "../domain/workspaceFileChange";
 import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
@@ -30,6 +31,7 @@ export interface WorkbenchWorkspaceGateways {
   fileChanges: WorkspaceFileChangeGateway;
   fileSearch: FileSearchGateway;
   files: WorkspaceFileGateway;
+  ownerFiles?: WorkspaceOwnerFileGateway;
   identity: WorkspaceIdentityGateway;
   phpTools: PhpToolGateway;
   projectSymbols: ProjectSymbolSearchGateway;

@@ -65,6 +65,23 @@ export function validateDebugExpression(value: unknown): DebugExpressionValidati
   return { ok: true, expression: value };
 }
 
+export function isBoundedDebugEvaluateName(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    debugUtf8ByteLength(value) > MAX_DEBUG_EVALUATION_EXPRESSION_BYTES
+  ) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "\t" || character === "\n") continue;
+    if (character === "\r" && value[index + 1] === "\n") continue;
+    if (/\p{Cc}/u.test(character)) return false;
+  }
+  return true;
+}
+
 export function isDebugEvaluationOwner(value: unknown): value is DebugEvaluationOwner {
   if (!isRecord(value) || !hasExactKeys(value, ["sessionId", "pauseGeneration"])) return false;
   return isPositiveSafeInteger(value.sessionId) && isPositiveSafeInteger(value.pauseGeneration);

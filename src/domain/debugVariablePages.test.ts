@@ -177,7 +177,7 @@ describe("debugVariablePages", () => {
       {
         variablesReference: 20,
         start: 0,
-        variables: [variable("a", 0, "a", "bad\npath")],
+        variables: [variable("a", 0, "a", "bad\rpath")],
         nextStart: null,
       },
       {
@@ -232,6 +232,17 @@ describe("debugVariablePages", () => {
     capped = resolve(capped, 21, 0, [variable("a", 0, "a", exact)], null, "capped");
     expect(capped.references[21]?.limit).toBe("bytes");
     expect(capped.references[21]?.pages).toEqual({});
+  });
+
+  it("preserves an exact bounded multiline property expression and rejects lone CR", () => {
+    const evaluateName = "(\n  root\n).nested.b";
+    let state = request(createDebugVariablePagesState(owner), 20, 0, "multiline");
+    state = resolve(state, 20, 0, [variable("b", 0, "1", evaluateName)], null, "multiline");
+    expect(state.references[20]?.pages[0]?.variables[0]?.evaluateName).toBe(evaluateName);
+
+    let invalid = request(createDebugVariablePagesState(owner), 21, 0, "invalid");
+    invalid = resolve(invalid, 21, 0, [variable("b", 0, "1", "root\r.b")], null, "invalid");
+    expect(invalid.references[21]?.pages).toEqual({});
   });
 
   it("accepts exactly 100 variables and exposes the next load-more cursor", () => {

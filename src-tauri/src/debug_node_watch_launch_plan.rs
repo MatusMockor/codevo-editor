@@ -46,7 +46,7 @@ pub(crate) fn build_native_node_watch_launch_plan(
         environment: HashMap::new(),
         isolated_environment: false,
         inspect_via_environment: false,
-        startup_entry: None,
+        startup_entry: Some(script_path),
     })
 }
 
@@ -141,7 +141,10 @@ mod tests {
         assert!(plan.environment.is_empty());
         assert!(!plan.isolated_environment);
         assert!(!plan.inspect_via_environment);
-        assert_eq!(plan.startup_entry, None);
+        assert_eq!(
+            plan.startup_entry.as_deref(),
+            Some(fixture.script.as_path())
+        );
     }
 
     #[test]

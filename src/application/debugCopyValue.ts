@@ -1,7 +1,7 @@
 import {
-  MAX_DEBUG_EVALUATION_EXPRESSION_BYTES,
   MAX_DEBUG_EVALUATION_VALUE_BYTES,
   debugUtf8ByteLength,
+  isBoundedDebugEvaluateName,
 } from "../domain/debugEvaluationPolicy";
 
 const MAX_DEBUG_COPY_VALUE_IDENTITY_BYTES = 1_024;
@@ -120,12 +120,9 @@ function hasCandidateShape(value: Record<string, unknown>): boolean {
     ) &&
     typeof value.displayedValue === "string" &&
     debugUtf8ByteLength(value.displayedValue) <= MAX_DEBUG_EVALUATION_VALUE_BYTES &&
-    (value.evaluateName === undefined ||
-      (isBoundedCleanText(value.evaluateName, MAX_DEBUG_EVALUATION_EXPRESSION_BYTES) &&
-        value.evaluateName.trim().length > 0)) &&
+    (value.evaluateName === undefined || isBoundedDebugEvaluateName(value.evaluateName)) &&
     (value.adapterEvaluateName === undefined ||
-      (isBoundedCleanText(value.adapterEvaluateName, MAX_DEBUG_EVALUATION_EXPRESSION_BYTES) &&
-        value.adapterEvaluateName.trim().length > 0))
+      isBoundedDebugEvaluateName(value.adapterEvaluateName))
   );
 }
 

@@ -1322,7 +1322,7 @@ describe("VS Code Node launch configuration import", () => {
     });
   });
 
-  it.each(["console"])("rejects unsupported execution field %s instead of ignoring it", (field) => {
+  it("accepts only the internal console behavior already owned by configured starts", () => {
     const parsed = parseVscodeNodeLaunchConfigurations(
       JSON.stringify({
         version: "0.2.0",
@@ -1332,15 +1332,121 @@ describe("VS Code Node launch configuration import", () => {
             request: "launch",
             name: "API",
             program: "src/server.ts",
-            [field]: "payload",
+            console: "internalConsole",
+            internalConsoleOptions: "openOnSessionStart",
           },
         ],
       }),
     );
+
     expect(parsed).toMatchObject({
       kind: "ok",
+      configurations: [{ configuration: { name: "API" } }],
+      diagnostics: [],
+    });
+    if (parsed.kind !== "ok") return;
+    expect(parsed.configurations[0]).not.toHaveProperty("console");
+    expect(parsed.configurations[0]).not.toHaveProperty("internalConsoleOptions");
+    expect(parsed.configurations[0]?.configuration).not.toHaveProperty("console");
+    expect(parsed.configurations[0]?.configuration).not.toHaveProperty("internalConsoleOptions");
+  });
+
+  it.each([
+    ["console", "integratedTerminal", 'console must be exactly "internalConsole"'],
+    ["console", "externalTerminal", 'console must be exactly "internalConsole"'],
+    [
+      "internalConsoleOptions",
+      "neverOpen",
+      'internalConsoleOptions must be exactly "openOnSessionStart"',
+    ],
+    [
+      "internalConsoleOptions",
+      "openOnFirstSessionStart",
+      'internalConsoleOptions must be exactly "openOnSessionStart"',
+    ],
+  ])("rejects unsupported console behavior: %s=%s", (field, value, diagnostic) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "API",
+            program: "src/server.ts",
+            [field]: value,
+          },
+        ],
+      }),
+    );
+    expect(parsed).toEqual({
+      kind: "ok",
       configurations: [],
-      diagnostics: [{ message: expect.stringContaining(`unsupported field "${field}"`) }],
+      diagnostics: [{ configurationIndex: 0, message: `configurations[0].${diagnostic}.` }],
+    });
+  });
+
+  it("accepts exact false compatibility flags without retaining executable metadata", () => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "API",
+            program: "src/server.ts",
+            autoAttachChildProcesses: false,
+            smartStep: false,
+            restart: false,
+          },
+        ],
+      }),
+    );
+
+    expect(parsed).toMatchObject({
+      kind: "ok",
+      configurations: [{ configuration: { name: "API" } }],
+      diagnostics: [],
+    });
+    if (parsed.kind !== "ok") return;
+    for (const field of ["autoAttachChildProcesses", "smartStep", "restart"]) {
+      expect(parsed.configurations[0]).not.toHaveProperty(field);
+      expect(parsed.configurations[0]?.configuration).not.toHaveProperty(field);
+    }
+  });
+
+  it.each([
+    ["autoAttachChildProcesses", true],
+    ["autoAttachChildProcesses", 0],
+    ["smartStep", true],
+    ["smartStep", "false"],
+    ["restart", true],
+    ["restart", null],
+  ])("rejects unsupported compatibility flag %s=%j", (field, value) => {
+    const parsed = parseVscodeNodeLaunchConfigurations(
+      JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "API",
+            program: "src/server.ts",
+            [field]: value,
+          },
+        ],
+      }),
+    );
+    expect(parsed).toEqual({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [
+        {
+          configurationIndex: 0,
+          message: `configurations[0].${field} must be exactly false.`,
+        },
+      ],
     });
   });
 

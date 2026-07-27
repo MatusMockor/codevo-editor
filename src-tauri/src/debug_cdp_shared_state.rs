@@ -70,3 +70,8 @@ impl CdpShared {
         let _ = self.advance_pause_generation();
     }
 }
+
+#[cfg(test)]
+pub(crate) fn exhausted_pause_generation_shared_state_for_test() -> CdpShared {
+    CdpShared::new_at_pause_generation_floor(None, PauseGenerationFloor(MAX_SAFE_INTEGER))
+}

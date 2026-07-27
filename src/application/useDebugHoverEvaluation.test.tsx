@@ -69,6 +69,7 @@ describe("useDebugHoverEvaluation", () => {
 
     const port = ui.port();
     expect(port.getOwner()).toEqual(owner);
+    expect(port.getOwnerEpoch()).toBe(1);
     await expect(port.evaluate(owner, "  value.member  ")).resolves.toBe(expected);
     expect(evaluateWatch).toHaveBeenCalledWith("  value.member  ");
     ui.unmount();
@@ -84,6 +85,75 @@ describe("useDebugHoverEvaluation", () => {
     ui.set({ evaluateWatch: vi.fn(), inspectionOwner: { ...owner } });
     expect(ui.port()).toBe(port);
     expect(port.getOwner()).toEqual(owner);
+    ui.unmount();
+  });
+
+  it("exposes a monotonic activation epoch across an owner A-B-A transition", () => {
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch: vi.fn(),
+      inspectionOwner: owner,
+    });
+    const port = ui.port();
+    const firstEpoch = port.getOwnerEpoch();
+    ui.set({ inspectionOwner: { ...owner, sessionId: 5 } });
+    const secondEpoch = port.getOwnerEpoch();
+    ui.set({ inspectionOwner: owner });
+
+    expect(secondEpoch).toBeGreaterThan(firstEpoch);
+    expect(port.getOwnerEpoch()).toBeGreaterThan(secondEpoch);
+    ui.unmount();
+    expect(port.getOwnerEpoch()).toBe(-1);
+  });
+
+  it("forwards an AbortSignal to the physical evaluator", async () => {
+    const pending = deferred<DebugEvaluationResult | null>();
+    const evaluateWatch = vi.fn().mockReturnValue(pending.promise);
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      inspectionOwner: owner,
+    });
+    const cancellation = new AbortController();
+
+    const evaluation = ui.port().evaluate(owner, "value", cancellation.signal);
+    await Promise.resolve();
+    cancellation.abort();
+
+    expect(evaluateWatch).toHaveBeenCalledWith("value", cancellation.signal);
+    pending.resolve({ status: "ok", value: "late" });
+    await expect(evaluation).resolves.toBeNull();
+    ui.unmount();
+  });
+
+  it("drops trust and adapter A-null-A results with the same inspection owner", async () => {
+    let trusted = true;
+    const trustPending = deferred<DebugEvaluationResult | null>();
+    const adapterPending = deferred<DebugEvaluationResult | null>();
+    const evaluateWatch = vi
+      .fn()
+      .mockReturnValueOnce(trustPending.promise)
+      .mockReturnValueOnce(adapterPending.promise);
+    const ui = renderHook({
+      debugAdapterKind: "node",
+      evaluateWatch,
+      inspectionOwner: owner,
+      isWorkspaceTrusted: () => trusted,
+    });
+
+    const trustEvaluation = ui.port().evaluate(owner, "trust");
+    trusted = false;
+    ui.set({});
+    trusted = true;
+    ui.set({});
+    trustPending.resolve({ status: "ok", value: "stale" });
+    await expect(trustEvaluation).resolves.toBeNull();
+
+    const adapterEvaluation = ui.port().evaluate(owner, "adapter");
+    ui.set({ debugAdapterKind: "php" });
+    ui.set({ debugAdapterKind: "node" });
+    adapterPending.resolve({ status: "ok", value: "stale" });
+    await expect(adapterEvaluation).resolves.toBeNull();
     ui.unmount();
   });
 

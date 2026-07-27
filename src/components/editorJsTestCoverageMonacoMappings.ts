@@ -1,8 +1,5 @@
 import type * as Monaco from "monaco-editor";
-import {
-  MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS,
-  type JsTestCoverageLineDecoration,
-} from "../domain/jsTestCoverageDecorations";
+import type { JsTestCoverageLineDecoration } from "../domain/jsTestCoverageDecorations";
 
 export function toJsTestCoverageDecoration(
   monaco: typeof Monaco,
@@ -14,7 +11,7 @@ export function toJsTestCoverageDecoration(
       ? `Test coverage: covered (${decoration.hits} ${decoration.hits === 1 ? "hit" : "hits"}).`
       : "Test coverage: uncovered (0 hits).";
   const tooltip = decoration.hitCountsTruncated
-    ? `${coverageTooltip} Inline hit counts are limited to the first ${MAX_JS_TEST_COVERAGE_INLINE_HIT_COUNT_DECORATIONS} coverage lines.`
+    ? `${coverageTooltip} Inline hit counts are limited in large coverage reports.`
     : coverageTooltip;
   const className = `js-test-coverage-${decoration.status}`;
   const column = model.getLineLength(decoration.lineNumber) + 1;

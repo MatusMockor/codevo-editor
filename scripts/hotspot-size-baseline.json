@@ -1,15 +1,17 @@
 {
   "productionLineLimit": 2000,
   "productionStructuralTokenLimit": 10000,
-  "trackedTests": ["src/application/useWorkbenchController.preview.test.tsx"],
+  "trackedTests": [
+    "src/application/useWorkbenchController.preview.test.tsx"
+  ],
   "files": {
     "src-tauri/src/debug_cdp.rs": {
       "rawLines": 1492,
       "structuralTokens": 8992
     },
     "src-tauri/src/debug_dbgp.rs": {
-      "rawLines": 2623,
-      "structuralTokens": 15581
+      "rawLines": 2622,
+      "structuralTokens": 15578
     },
     "src-tauri/src/git.rs": {
       "rawLines": 7113,
@@ -20,8 +22,8 @@
       "structuralTokens": 10277
     },
     "src-tauri/src/lib.rs": {
-      "rawLines": 10214,
-      "structuralTokens": 59154
+      "rawLines": 10212,
+      "structuralTokens": 59153
     },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 4503,
@@ -40,32 +42,32 @@
       "structuralTokens": 26158
     },
     "src/App.tsx": {
-      "rawLines": 1693,
-      "structuralTokens": 8618
+      "rawLines": 1654,
+      "structuralTokens": 8496
     },
     "src/application/useDocumentSync.ts": {
       "rawLines": 1831,
-      "structuralTokens": 6395
+      "structuralTokens": 6358
     },
     "src/application/useLanguageServerRuntimeLifecycle.ts": {
       "rawLines": 2455,
       "structuralTokens": 8820
     },
     "src/application/useWorkbenchController.preview.test.tsx": {
-      "rawLines": 74609,
-      "structuralTokens": 345131
+      "rawLines": 74607,
+      "structuralTokens": 345129
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 10142,
-      "structuralTokens": 38630
+      "structuralTokens": 38629
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 5348,
-      "structuralTokens": 22413
+      "rawLines": 5285,
+      "structuralTokens": 22018
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
-      "rawLines": 3906,
-      "structuralTokens": 17461
+      "rawLines": 3846,
+      "structuralTokens": 17172
     },
     "src/components/languageServerMonacoProviders.ts": {
       "rawLines": 5907,

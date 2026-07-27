@@ -58,7 +58,9 @@ describe("useJsTestExplorerPanelController coverage integration", () => {
     const coverageGateway = createCoverageGateway();
     await render(coverageGateway);
     await act(async () => latest.onRunCoverage());
-    expect(coverageGateway.run).toHaveBeenCalledWith("/workspace");
+    expect(coverageGateway.run).toHaveBeenCalledWith("/workspace", {
+      packageRootRelativePath: "",
+    });
     expect(latest.coverageReport?.files[0]?.firstUncoveredLine).toBe(9);
     act(() => latest.onClearCoverage());
     expect(latest.coverageReport).toBeNull();

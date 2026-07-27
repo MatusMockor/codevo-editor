@@ -22,7 +22,10 @@ import type {
   NodeDebugCompoundOwner,
   NodeDebugCompoundSessionCoordinator,
 } from "./nodeDebugCompoundSessionCoordinator";
+import type { DebugOutputLine } from "./debugSessionContracts";
 import type { DebugSessionOwner } from "./useDebugSessionEnd";
+
+export const COMPOUND_POLICY_SYNC_ERROR = "Unable to synchronize the active debug compound.";
 
 interface PendingRegistry {
   has(key: string): boolean;
@@ -84,9 +87,7 @@ export interface DebugCompoundStartContext {
   setDebugCompoundActive(active: boolean): void;
   setDebugCompoundStartPending(pending: boolean): void;
   clearFrameSelection(key: string): void;
-  readonly setOutputBySession: Dispatch<
-    SetStateAction<Record<number, { stream: "stdout" | "stderr"; text: string }[]>>
-  >;
+  readonly setOutputBySession: Dispatch<SetStateAction<Record<number, DebugOutputLine[]>>>;
   setPauseGeneration(key: string, generation: number): void;
   readonly setSnapshots: Dispatch<SetStateAction<Record<string, DebuggerSessionSnapshot>>>;
   readonly setStartErrors: Dispatch<SetStateAction<Record<string, string>>>;
@@ -252,6 +253,7 @@ export async function startDebugCompoundAccepted(
     context.sessionOwnersRef.current.set(key, {
       sessionId: selectedSessionId,
       targetKind: "node-script",
+      workspaceEpoch: owner.workspaceEpoch,
       workspaceId: requestedWorkspaceId,
     });
     context.setOutputBySession((current) => ({

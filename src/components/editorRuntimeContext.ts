@@ -47,6 +47,8 @@ export interface EditorRuntimeSurfaceRegistration {
 }
 
 export interface EditorRuntimeContextValue {
+  getActiveJavaScriptTypeScriptOwnerEpoch(): number;
+  getActiveJavaScriptTypeScriptOwnerIdentity(): object | null;
   coordinatePhpDocumentSymbols(
     request: PhpDocumentSymbolRequest,
     load: () => Promise<LanguageServerDocumentSymbol[]>,

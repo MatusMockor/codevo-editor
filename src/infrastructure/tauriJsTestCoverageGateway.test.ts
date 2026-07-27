@@ -34,8 +34,24 @@ describe("TauriJsTestCoverageGateway", () => {
       validResponse,
     );
     expect(invoke).toHaveBeenCalledExactlyOnceWith("run_js_test_coverage_json", {
+      packageRootRelativePath: "",
       rootPath: "/workspace",
     });
+  });
+
+  it("dispatches only the validated workspace-relative package authority", async () => {
+    const invoke = vi.fn(async () => validResponse);
+    const gateway = new TauriJsTestCoverageGateway(invoke);
+
+    await gateway.run("/workspace", { packageRootRelativePath: "packages/web" });
+
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("run_js_test_coverage_json", {
+      packageRootRelativePath: "packages/web",
+      rootPath: "/workspace",
+    });
+    await expect(
+      gateway.run("/workspace", { packageRootRelativePath: "../outside" }),
+    ).rejects.toThrow("workspace-confined relative path");
   });
 
   it.each(["", "bad\0root", "bad\nroot"])('rejects unsafe root "%s" before IPC', async (root) => {

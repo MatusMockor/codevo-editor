@@ -6,6 +6,10 @@ import {
   type JsTestTaskRunResponse,
 } from "../domain/jsTestTask";
 import { validatedJsTestRunScope, type JsTestRunScope } from "../domain/jsTestRunScope";
+import {
+  validatedJsTestExecutionAuthority,
+  type JsTestExecutionAuthority,
+} from "../domain/jsTestExecutionAuthority";
 
 export type JsTestSingleRunOutcome =
   | { readonly envelope: JsTestTaskRunResponse; readonly status: "settled" }
@@ -19,6 +23,7 @@ export interface JsTestSingleRunCoordinator {
   invalidate(): Promise<boolean>;
   start(request: {
     readonly activation: number;
+    readonly authority?: JsTestExecutionAuthority;
     readonly scope: JsTestRunScope;
     readonly workspaceId: string;
   }): Promise<JsTestSingleRunOutcome>;
@@ -66,6 +71,7 @@ export function createJsTestSingleRunCoordinator(options: {
     invalidate: () => stop(true),
     start: async (request: {
       readonly activation: number;
+      readonly authority?: JsTestExecutionAuthority;
       readonly scope: JsTestRunScope;
       readonly workspaceId: string;
     }): Promise<JsTestSingleRunOutcome> => {
@@ -90,6 +96,9 @@ export function createJsTestSingleRunCoordinator(options: {
           envelope = await options.gateway.runTask(
             Object.freeze({
               ...candidate.owner,
+              ...validatedJsTestExecutionAuthority(
+                request.authority ?? { packageRootRelativePath: "" },
+              ),
               scope: immutableScope(request.scope),
             }),
           );
@@ -113,12 +122,18 @@ export function createJsTestSingleRunCoordinator(options: {
 }
 
 function validRequest(
-  request: { activation: number; scope: JsTestRunScope; workspaceId: string },
+  request: {
+    activation: number;
+    authority?: JsTestExecutionAuthority;
+    scope: JsTestRunScope;
+    workspaceId: string;
+  },
   isCurrent: (activation: number, workspaceId: string) => boolean,
 ): boolean {
   try {
     validatedJsTestTaskWorkspaceId(request.workspaceId);
     validatedJsTestRunScope(request.scope);
+    validatedJsTestExecutionAuthority(request.authority ?? { packageRootRelativePath: "" });
     return (
       Number.isSafeInteger(request.activation) &&
       request.activation >= 0 &&

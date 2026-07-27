@@ -14,7 +14,15 @@ const MAX_MOUNT_DEPTH = 64;
 const MAX_EXPORT_DEPTH = 64;
 const MAX_IMPORT_PATH_CANDIDATES = 4;
 
-export type ExpressImportPathResolver = (specifier: string) => readonly string[];
+export interface ExpressImportPathImporter {
+  readonly packageLabel?: string;
+  readonly relativeFilePath: string;
+}
+
+export type ExpressImportPathResolver = (
+  specifier: string,
+  importer: ExpressImportPathImporter,
+) => readonly string[];
 
 export interface ExpressRouteMountSnapshot {
   readonly packageLabel?: string;
@@ -28,7 +36,10 @@ export interface ResolvedExpressRouteCandidate extends ExpressRoute {
 }
 
 export interface BoundedResolvedExpressRoutes {
+  /** True only when a deterministic resource/result bound omitted analysis or route output. */
+  readonly capacityTruncated: boolean;
   readonly routes: ResolvedExpressRouteCandidate[];
+  /** Includes both capacity truncation and malformed source that cannot be analyzed completely. */
   readonly truncated: boolean;
 }
 
@@ -50,8 +61,15 @@ interface MountDeclaration {
   readonly target: string;
 }
 
+interface StaticMountArguments {
+  readonly prefix: string;
+  readonly targets: readonly string[];
+  readonly truncated: boolean;
+}
+
 interface FileAnalysis {
   readonly appReceivers: ReadonlySet<string>;
+  readonly capacityTruncated: boolean;
   readonly exports: ReadonlyMap<string, string>;
   readonly filePath: string;
   readonly imports: ReadonlyMap<string, { imported: string; specifier: string }>;
@@ -115,12 +133,14 @@ export function resolveExpressRouteMountsBounded(
   const symbolResolution: SymbolResolutionContext = { exhausted: false, traversals: 0 };
   let bindingCount = 0;
   let truncated = analyses.some((analysis) => analysis.truncated);
+  let capacityTruncated = analyses.some((analysis) => analysis.capacityTruncated);
 
   for (const analysis of analyses) {
     for (const mount of analysis.mounts) {
       bindingCount += 1;
       if (bindingCount > MAX_BINDINGS) {
         truncated = true;
+        capacityTruncated = true;
         break;
       }
       const target = resolveLocalSymbol(
@@ -149,6 +169,7 @@ export function resolveExpressRouteMountsBounded(
     if (bindingCount > MAX_BINDINGS) break;
   }
   truncated ||= symbolResolution.exhausted;
+  capacityTruncated ||= symbolResolution.exhausted;
 
   const routes: ResolvedExpressRouteCandidate[] = [];
   for (const analysis of analyses) {
@@ -167,13 +188,16 @@ export function resolveExpressRouteMountsBounded(
             Math.max(0, limit - routes.length),
           );
       truncated ||= resolvedPrefixes.truncated;
+      capacityTruncated ||= resolvedPrefixes.truncated;
       const prefixes = resolvedPrefixes.prefixes;
       const paths =
         prefixes.length === 0
           ? [route.path]
           : prefixes.map((prefix) => joinPaths(prefix, route.path));
       for (const path of paths) {
-        if (routes.length >= limit) return { routes, truncated: true };
+        if (routes.length >= limit) {
+          return { capacityTruncated: true, routes, truncated: true };
+        }
         routes.push({
           ...route,
           path,
@@ -183,7 +207,7 @@ export function resolveExpressRouteMountsBounded(
       }
     }
   }
-  return { routes, truncated };
+  return { capacityTruncated, routes, truncated };
 }
 
 function analyzeFile(
@@ -198,6 +222,7 @@ function analyzeFile(
   ) {
     return {
       appReceivers: new Set(),
+      capacityTruncated: false,
       exports: new Map(),
       filePath: snapshot.relativeFilePath,
       imports: new Map(),
@@ -213,7 +238,6 @@ function analyzeFile(
   const topLevelScan = collectTopLevelOffsets(masked);
   const topLevelOffsets = topLevelScan.offsets;
   const bindingBudget: BindingBudget = { truncated: false, used: 0 };
-  if (topLevelScan.malformed) bindingBudget.truncated = true;
   const expressFactories = new Set<string>();
   const routerFactories = new Set<string>();
   const routerReceivers = new Set<string>();
@@ -255,25 +279,35 @@ function analyzeFile(
     receivers,
     Number.POSITIVE_INFINITY,
   );
+  const exports = collectExports(source, masked, topLevelOffsets, bindingBudget);
+  const mounts = collectMounts(
+    source,
+    masked,
+    topLevelOffsets,
+    receivers,
+    stringConstants,
+    bindingBudget,
+  );
+  const reExports = collectReExports(
+    source,
+    masked,
+    topLevelOffsets,
+    bindingBudget,
+    importPathResolver,
+  );
 
   return {
     appReceivers,
-    exports: collectExports(source, masked, topLevelOffsets, bindingBudget),
+    capacityTruncated: bindingBudget.truncated,
+    exports,
     filePath: snapshot.relativeFilePath,
     imports,
-    mounts: collectMounts(
-      source,
-      masked,
-      topLevelOffsets,
-      receivers,
-      stringConstants,
-      bindingBudget,
-    ),
+    mounts,
     ...(packageLabel ? { packageLabel } : {}),
     routes: parsed.routes,
-    reExports: collectReExports(source, masked, topLevelOffsets, bindingBudget, importPathResolver),
+    reExports,
     routerReceivers,
-    truncated: bindingBudget.truncated,
+    truncated: topLevelScan.malformed || bindingBudget.truncated,
   };
 }
 
@@ -728,20 +762,67 @@ function collectMounts(
     }
     if (!isStandaloneReceiver(masked, receiverOffset)) continue;
     const openOffset = matchOffset + match[0].lastIndexOf("(");
-    const literal =
-      staticJavaScriptStringArgumentAt(source, openOffset + 1) ??
-      staticMountPrefixArgumentAt(source, openOffset + 1, stringConstants);
-    if (!literal || source[literal.endOffset] !== ",") continue;
-    const targetStart = skipTrivia(source, literal.endOffset + 1);
-    const target = source.slice(targetStart).match(/^([A-Za-z_$][\w$]*)/)?.[1];
-    if (!target) continue;
-    const targetEnd = skipTrivia(source, targetStart + target.length);
-    if (source[targetEnd] !== ")" && source[targetEnd] !== ",") continue;
-    if (consumeBinding(budget)) {
-      mounts.push({ owner: match[2] ?? "", prefix: literal.value, target });
+    const parsed = staticMountArgumentsAt(
+      source,
+      openOffset + 1,
+      stringConstants,
+      Math.max(0, MAX_BINDINGS - budget.used),
+    );
+    if (!parsed) continue;
+    if (parsed.truncated) {
+      budget.truncated = true;
+      continue;
+    }
+    for (const target of parsed.targets) {
+      if (!consumeBinding(budget)) break;
+      mounts.push({ owner: match[2] ?? "", prefix: parsed.prefix, target });
     }
   }
   return mounts;
+}
+
+function staticMountArgumentsAt(
+  source: string,
+  from: number,
+  stringConstants: ReadonlyMap<string, string>,
+  maxTargets: number,
+): StaticMountArguments | null {
+  const literal =
+    staticJavaScriptStringArgumentAt(source, from) ??
+    staticMountPrefixArgumentAt(source, from, stringConstants);
+  const prefix = literal?.value ?? "";
+  let offset = skipTrivia(source, literal ? literal.endOffset + 1 : from);
+  const targets: string[] = [];
+
+  while (offset < source.length) {
+    if (targets.length >= maxTargets) {
+      return { prefix, targets: [], truncated: true };
+    }
+    const target = bareIdentifierAt(source, offset);
+    if (!target) return null;
+    targets.push(target.value);
+    offset = skipTrivia(source, target.endOffset);
+    if (source[offset] === ")") break;
+    if (source[offset] !== ",") return null;
+    offset = skipTrivia(source, offset + 1);
+    if (source[offset] === ")") return null;
+  }
+
+  if (source[offset] !== ")" || targets.length === 0) return null;
+  // Two bare identifiers without a literal prefix are indistinguishable from
+  // app.use(dynamicPrefix, router). Resolve that syntax fail-closed.
+  if (!literal && targets.length !== 1) return null;
+  return { prefix, targets, truncated: false };
+}
+
+function bareIdentifierAt(
+  source: string,
+  offset: number,
+): { readonly endOffset: number; readonly value: string } | null {
+  if (!/[A-Za-z_$]/.test(source[offset] ?? "")) return null;
+  let endOffset = offset + 1;
+  while (/[\w$]/.test(source[endOffset] ?? "")) endOffset += 1;
+  return { endOffset, value: source.slice(offset, endOffset) };
 }
 
 function resolveLocalSymbol(
@@ -868,7 +949,13 @@ function resolveModuleAnalysis(
     }
   }
   const matches = [...candidates]
-    .map((candidate) => files.get(moduleKey(from.packageLabel, candidate)))
+    .map((candidate) =>
+      files.get(
+        specifier.startsWith(".")
+          ? moduleKey(from.packageLabel, candidate)
+          : workspacePathModuleKey(candidate),
+      ),
+    )
     .filter((candidate): candidate is FileAnalysis => candidate !== undefined);
   return matches.length === 1 ? (matches[0] ?? null) : null;
 }
@@ -882,7 +969,11 @@ function resolveModuleBases(
     const relative = normalizeRelativeModulePath(`${directoryName(from.filePath)}/${specifier}`);
     return relative ? [relative] : [];
   }
-  const candidates = importPathResolver?.(specifier) ?? [];
+  const candidates =
+    importPathResolver?.(specifier, {
+      relativeFilePath: from.filePath,
+      ...(from.packageLabel ? { packageLabel: from.packageLabel } : {}),
+    }) ?? [];
   const bases: string[] = [];
   for (const candidate of candidates.slice(0, MAX_IMPORT_PATH_CANDIDATES)) {
     if (candidate.startsWith("/") || /^[A-Za-z]:[\\/]/.test(candidate)) continue;
@@ -1005,16 +1096,24 @@ function moduleKey(packageLabel: string | undefined, filePath: string): string {
   return `${normalizeExpressPackageLabel(packageLabel) ?? ""}\u0000${filePath}`;
 }
 
+function workspacePathModuleKey(filePath: string): string {
+  return `\u0001${filePath}`;
+}
+
 function uniqueAnalysesByModule(analyses: readonly FileAnalysis[]): Map<string, FileAnalysis> {
   const files = new Map<string, FileAnalysis>();
   const ambiguous = new Set<string>();
   for (const analysis of analyses) {
-    const key = moduleKey(analysis.packageLabel, analysis.filePath);
-    if (files.has(key) || ambiguous.has(key)) {
-      files.delete(key);
-      ambiguous.add(key);
-    } else {
-      files.set(key, analysis);
+    for (const key of [
+      moduleKey(analysis.packageLabel, analysis.filePath),
+      workspacePathModuleKey(analysis.filePath),
+    ]) {
+      if (files.has(key) || ambiguous.has(key)) {
+        files.delete(key);
+        ambiguous.add(key);
+      } else {
+        files.set(key, analysis);
+      }
     }
   }
   return files;

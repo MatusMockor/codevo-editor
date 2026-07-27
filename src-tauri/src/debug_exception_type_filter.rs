@@ -38,6 +38,10 @@ impl DebugExceptionTypeFilter {
         self.0.is_empty()
     }
 
+    pub(crate) fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+
     pub(crate) fn matches_class_names<'a>(&self, names: impl IntoIterator<Item = &'a str>) -> bool {
         names.into_iter().any(|name| {
             self.0
@@ -192,9 +196,15 @@ fn timeout_decision(phase: PendingExceptionPhase) -> ExceptionTimeoutDecision {
 pub(crate) struct ExceptionFilterState {
     pub(crate) active: DebugExceptionTypeFilter,
     pub(crate) pending: Option<PendingExceptionClassification>,
+    policy_update: Option<ExceptionFilterPolicyUpdate>,
     pub(crate) revision: u64,
     pub(crate) startup_breakpoint_to_ignore: Option<String>,
     startup_entry_pause_pending: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExceptionFilterPolicyUpdate {
+    revision: u64,
 }
 
 impl ExceptionFilterState {
@@ -212,14 +222,50 @@ impl ExceptionFilterState {
         .then_some(DebugStopReason::Entry)
     }
 
-    pub(crate) fn begin_policy_update(&mut self) {
-        self.active = DebugExceptionTypeFilter::default();
-        self.revision = self.revision.wrapping_add(1);
+    pub(crate) fn prepare_policy_update(&mut self) -> Result<ExceptionFilterPolicyUpdate, String> {
+        if self.policy_update.is_some() {
+            return Err("Debug exception filter policy update is already in progress.".to_string());
+        }
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| "Debug exception filter revision is exhausted.".to_string())?;
+        let update = ExceptionFilterPolicyUpdate { revision };
+        self.revision = revision;
+        self.policy_update = Some(update);
+        Ok(update)
     }
 
-    pub(crate) fn finish_policy_update(&mut self, filter: DebugExceptionTypeFilter) {
+    pub(crate) fn abort_policy_update(
+        &mut self,
+        update: ExceptionFilterPolicyUpdate,
+    ) -> Result<(), String> {
+        if self.policy_update != Some(update) || self.revision != update.revision {
+            return Err("Debug exception filter policy update is stale.".to_string());
+        }
+        self.policy_update = None;
+        Ok(())
+    }
+
+    pub(crate) fn commit_policy_update(
+        &mut self,
+        update: ExceptionFilterPolicyUpdate,
+        filter: DebugExceptionTypeFilter,
+    ) -> Result<(), String> {
+        if self.policy_update != Some(update) || self.revision != update.revision {
+            return Err("Debug exception filter policy update is stale.".to_string());
+        }
         self.active = filter;
-        self.revision = self.revision.wrapping_add(1);
+        self.policy_update = None;
+        Ok(())
+    }
+
+    fn pause_decision<'a>(&self, params: &'a Value) -> PauseFilterDecision<'a> {
+        if self.policy_update.is_some() {
+            PauseFilterDecision::Visible
+        } else {
+            direct_pause_decision(&self.active, params)
+        }
     }
 }
 
@@ -241,7 +287,7 @@ pub(crate) fn handle_paused(params: &Value, context: &SocketLoopContext) -> Opti
     let Ok(mut state) = context.exception_filter.lock() else {
         return handle_filtered_exception_pause(params, context);
     };
-    let object_id = match direct_pause_decision(&state.active, params) {
+    let object_id = match state.pause_decision(params) {
         PauseFilterDecision::Visible => {
             drop(state);
             return handle_filtered_exception_pause(params, context);
@@ -518,18 +564,30 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
                 }
                 shared.suppress_next_resumed = true;
                 let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-                return Some(
-                    json!({"id": id, "method": "Debugger.resume", "params": {}}).to_string(),
-                );
+                let method = match hidden_startup_resume_method(context, params) {
+                    Ok(method) => method,
+                    Err(()) => {
+                        drop(shared);
+                        crate::debug_cdp::transport::fail_closed_socket_loop(context);
+                        return None;
+                    }
+                };
+                return Some(json!({"id": id, "method": method, "params": {}}).to_string());
             }
             let is_entry_pause =
                 !hit_user_breakpoint && matches!(reason_text, "other" | "Break on start");
             if is_entry_pause {
                 shared.suppress_next_resumed = true;
                 let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-                return Some(
-                    json!({"id": id, "method": "Debugger.resume", "params": {}}).to_string(),
-                );
+                let method = match hidden_startup_resume_method(context, params) {
+                    Ok(method) => method,
+                    Err(()) => {
+                        drop(shared);
+                        crate::debug_cdp::transport::fail_closed_socket_loop(context);
+                        return None;
+                    }
+                };
+                return Some(json!({"id": id, "method": method, "params": {}}).to_string());
             }
         }
     }
@@ -541,11 +599,21 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
     if let Some(validation) = startup_validation {
         let accepted = validation.matches_pause(params);
         validation.complete(accepted);
-        if let Ok(mut shared) = context.shared.lock() {
-            shared.suppress_next_resumed = true;
+        if accepted {
+            if let Ok(mut shared) = context.shared.lock() {
+                shared.suppress_next_resumed = true;
+            }
+            let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
+            match hidden_startup_resume_method(context, params) {
+                Ok(method) => {
+                    return Some(json!({"id": id, "method": method, "params": {}}).to_string())
+                }
+                Err(()) => {
+                    crate::debug_cdp::transport::fail_closed_socket_loop(context);
+                    return None;
+                }
+            }
         }
-        let id = context.next_request_id.fetch_add(1, Ordering::SeqCst);
-        return Some(json!({"id": id, "method": "Debugger.resume", "params": {}}).to_string());
     }
     let explicit_pause_requested = context
         .shared
@@ -639,6 +707,7 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
                             DebugEventPayload::Output {
                                 stream: DebugOutputStream::Stdout,
                                 text,
+                                truncated: false,
                             },
                         );
                     }
@@ -649,6 +718,7 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
                     DebugEventPayload::Output {
                         stream: DebugOutputStream::Stderr,
                         text: "[logpoint] No call frame is available for evaluation.\n".into(),
+                        truncated: false,
                     },
                 );
             }
@@ -672,6 +742,24 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
         },
     );
     None
+}
+
+fn hidden_startup_resume_method(
+    context: &SocketLoopContext,
+    params: &Value,
+) -> Result<&'static str, ()> {
+    match context
+        .function_breakpoints
+        .begin_hidden_startup_step(params)?
+    {
+        crate::debug_cdp_function_breakpoints::HiddenStartupStep::None => Ok("Debugger.resume"),
+        crate::debug_cdp_function_breakpoints::HiddenStartupStep::StepInto => {
+            Ok("Debugger.stepInto")
+        }
+        crate::debug_cdp_function_breakpoints::HiddenStartupStep::StepOver => {
+            Ok("Debugger.stepOver")
+        }
+    }
 }
 
 fn handle_startup_entry_pause(
@@ -936,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn policy_update_preserves_pending_work_and_invalid_input_changes_nothing() {
+    fn policy_update_is_transactional_and_invalid_input_changes_nothing() {
         let mut state = ExceptionFilterState {
             active: DebugExceptionTypeFilter::parse(vec!["Error".to_string()]).expect("filter"),
             pending: Some(PendingExceptionClassification {
@@ -946,6 +1034,7 @@ mod tests {
                 params: json!({"reason": "exception"}),
                 request_id: 3,
             }),
+            policy_update: None,
             revision: 0,
             startup_breakpoint_to_ignore: None,
             startup_entry_pause_pending: false,
@@ -953,19 +1042,84 @@ mod tests {
         assert!(DebugExceptionTypeFilter::parse(vec!["not-valid!".to_string()]).is_err());
         assert_eq!(state.revision, 0);
         assert!(state.pending.is_some());
-        state.begin_policy_update();
+        let update = state.prepare_policy_update().expect("prepare update");
         assert_eq!(state.revision, 1);
-        assert!(state.active.is_empty());
+        assert!(state.active.matches_class_names(["Error"]));
         assert_eq!(
             state.pending.as_ref().map(|pending| pending.request_id),
             Some(3)
         );
-        state.finish_policy_update(
-            DebugExceptionTypeFilter::parse(vec!["TypeError".to_string()]).expect("filter"),
-        );
-        assert_eq!(state.revision, 2);
+        state
+            .commit_policy_update(
+                update,
+                DebugExceptionTypeFilter::parse(vec!["TypeError".to_string()]).expect("filter"),
+            )
+            .expect("commit update");
+        assert_eq!(state.revision, 1);
         assert!(state.pending.is_some());
         assert!(state.active.matches_class_names(["TypeError"]));
+    }
+
+    #[test]
+    fn stale_and_exhausted_policy_updates_fail_closed_without_replacing_active_filter() {
+        let original =
+            DebugExceptionTypeFilter::parse(vec!["TypeError".to_string()]).expect("filter");
+        let replacement =
+            DebugExceptionTypeFilter::parse(vec!["RangeError".to_string()]).expect("filter");
+        let mut state = ExceptionFilterState {
+            active: original.clone(),
+            ..ExceptionFilterState::default()
+        };
+        let stale = state.prepare_policy_update().expect("prepare stale update");
+        state
+            .abort_policy_update(stale)
+            .expect("abort stale update");
+        let winner = state
+            .prepare_policy_update()
+            .expect("prepare winning update");
+        state
+            .commit_policy_update(winner, replacement)
+            .expect("commit winning update");
+
+        assert!(state
+            .commit_policy_update(stale, DebugExceptionTypeFilter::default())
+            .is_err());
+        assert!(state.active.matches_class_names(["RangeError"]));
+        assert_eq!(state.revision, 2);
+
+        state.revision = u64::MAX;
+        state.policy_update = None;
+        state.active = original;
+        assert!(state.prepare_policy_update().is_err());
+        assert!(state.active.matches_class_names(["TypeError"]));
+        assert_eq!(state.revision, u64::MAX);
+    }
+
+    #[test]
+    fn in_flight_policy_update_surfaces_exception_instead_of_using_old_filter() {
+        let mut state = ExceptionFilterState {
+            active: DebugExceptionTypeFilter::parse(vec!["TypeError".to_string()]).expect("filter"),
+            ..ExceptionFilterState::default()
+        };
+        let range_error = json!({
+            "reason": "exception",
+            "data": {"className": "RangeError"}
+        });
+        assert_eq!(
+            state.pause_decision(&range_error),
+            PauseFilterDecision::Resume
+        );
+
+        let update = state.prepare_policy_update().expect("prepare update");
+        assert_eq!(
+            state.pause_decision(&range_error),
+            PauseFilterDecision::Visible
+        );
+        state.abort_policy_update(update).expect("abort update");
+        assert_eq!(
+            state.pause_decision(&range_error),
+            PauseFilterDecision::Resume
+        );
     }
 
     #[test]

@@ -55,10 +55,11 @@ pub(crate) fn create_node_cdp_adapter(
     finish: DebugSessionFinish,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Box<dyn DebugAdapter>, String> {
-    create_node_cdp_adapter_with_exception_filter(
+    create_node_cdp_adapter_with_startup_function_breakpoints(
         root,
         launch_target,
         initial_breakpoints,
+        &[],
         exception_pause_mode,
         &[],
         true,
@@ -82,6 +83,35 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
     finish: DebugSessionFinish,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<Box<dyn DebugAdapter>, String> {
+    create_node_cdp_adapter_with_startup_function_breakpoints(
+        root,
+        launch_target,
+        initial_breakpoints,
+        &[],
+        exception_pause_mode,
+        exception_type_filter,
+        source_maps_enabled,
+        stop_on_entry,
+        emitter,
+        finish,
+        startup_is_current,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_node_cdp_adapter_with_startup_function_breakpoints(
+    root: &Path,
+    launch_target: &DebugLaunchTarget,
+    initial_breakpoints: &[DebugBreakpoint],
+    initial_function_breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+    exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: &[String],
+    source_maps_enabled: bool,
+    stop_on_entry: bool,
+    emitter: DebugEventEmitter,
+    finish: DebugSessionFinish,
+    startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
+) -> Result<Box<dyn DebugAdapter>, String> {
     let internal_step_filter = launch_target.just_my_code();
     if let DebugLaunchTarget::NodeAttach { port, .. } = launch_target {
         ensure_startup_current(startup_is_current.as_ref())?;
@@ -90,11 +120,11 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
         let source_maps =
             optional_source_maps(source_maps_enabled, || SourceMapRegistry::new(root))?;
         let (disconnected_tx, disconnected_rx) = mpsc::channel();
-        let adapter =
-            NodeCdpAdapter::connect_with_source_maps_exception_filter_and_stop_on_entry(
+        let adapter = NodeCdpAdapter::connect_with_startup_function_breakpoints(
             &target.web_socket_url,
             emitter,
             initial_breakpoints,
+            initial_function_breakpoints,
             exception_type_filter,
             NodeCdpConnectOptions {
                 exception_pause_mode,
@@ -133,17 +163,18 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
         spawn_node_inspector(&launch, emitter.clone(), Arc::clone(&startup_is_current))?;
     let (disconnected_tx, disconnected_rx) = mpsc::channel();
     let finish = shared_debug_session_finish(finish);
-    let retained_process = process.process;
+    let retained_process = process.process.clone();
     let mut adapter =
-        match NodeCdpAdapter::connect_with_source_maps_exception_filter_and_stop_on_entry(
+        match NodeCdpAdapter::connect_with_startup_function_breakpoints(
         &process.ws_url,
         emitter,
         initial_breakpoints,
+        initial_function_breakpoints,
         exception_type_filter,
         NodeCdpConnectOptions {
             exception_pause_mode,
             request_timeout: CDP_REQUEST_TIMEOUT,
-            ownership: DebuggeeOwnership::Spawned(process.process),
+            ownership: DebuggeeOwnership::Spawned(process.process.clone()),
             source_maps,
             startup: CdpStartupPolicy::SpawnedWaiting {
                 startup_entry: launch.startup_entry.as_deref(),
@@ -166,9 +197,12 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
         return Err(error);
     }
     let process_finish = Arc::clone(&finish);
-    process.spawn_waiter(Box::new(move |exit_code| {
+    if let Err(error) = process.spawn_waiter(Box::new(move |exit_code| {
         complete_debug_session_once(&process_finish, exit_code);
-    }));
+    })) {
+        adapter.terminate();
+        return Err(error);
+    }
     drop(spawn_debug_transport_finish(
         disconnected_rx,
         finish,

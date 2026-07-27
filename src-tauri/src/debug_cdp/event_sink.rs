@@ -1,4 +1,5 @@
 use crate::debug_adapter::{DebugEventEmitter, DebugEventPayload};
+use crate::debug_session_registry::bounded_debug_event_payload;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -51,7 +52,7 @@ impl CdpEventEmitter {
     }
 
     pub(super) fn emit(&self, payload: DebugEventPayload) -> CdpEventDisposition {
-        let disposition = self.sink.emit(payload);
+        let disposition = self.sink.emit(bounded_debug_event_payload(payload));
         if matches!(
             disposition,
             CdpEventDisposition::Dropped(CdpEventDropReason::CapacityExceeded)
@@ -106,7 +107,44 @@ mod tests {
         DebugEventPayload::Output {
             stream: DebugOutputStream::Stdout,
             text: "event".to_string(),
+            truncated: false,
         }
+    }
+
+    struct CapturingSink(Mutex<Option<DebugEventPayload>>);
+
+    impl CdpEventSinkPort for CapturingSink {
+        fn emit(&self, payload: DebugEventPayload) -> CdpEventDisposition {
+            *lock_recover(&self.0) = Some(payload);
+            CdpEventDisposition::Delivered
+        }
+    }
+
+    #[test]
+    fn output_is_bounded_before_entering_the_cdp_sink() {
+        let sink = Arc::new(CapturingSink(Mutex::new(None)));
+        let emitter = CdpEventEmitter::new(sink.clone());
+
+        assert_eq!(
+            emitter.emit(DebugEventPayload::Output {
+                stream: DebugOutputStream::Stdout,
+                text: "ž".repeat(crate::debug_session_registry::MAX_DEBUG_OUTPUT_EVENT_BYTES),
+                truncated: false,
+            }),
+            CdpEventDisposition::Delivered
+        );
+
+        let payload = lock_recover(&sink.0).take().expect("captured payload");
+        let DebugEventPayload::Output {
+            text, truncated, ..
+        } = payload
+        else {
+            panic!("captured output");
+        };
+        assert!(text.len() <= crate::debug_session_registry::MAX_DEBUG_OUTPUT_EVENT_BYTES);
+        assert!(text.capacity() <= crate::debug_session_registry::MAX_DEBUG_OUTPUT_EVENT_BYTES);
+        assert!(text.ends_with(crate::debug_session_registry::OUTPUT_TRUNCATION_SUFFIX));
+        assert!(truncated);
     }
 
     #[test]

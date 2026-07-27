@@ -7,6 +7,7 @@ use crate::debug_adapter::{
     DebugSetExpressionResult, DebugSetVariableRequest, DebugSetVariableResult, DebugVariableInfo,
     DebugVariablePage, DebugVariablePageRequest, StepKind,
 };
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use std::sync::Arc;
 
 /// Stable, internal control surface for the logical Node.js watch session.
@@ -64,11 +65,12 @@ impl WatchNodeDebugAdapter {
     pub(crate) fn set_function_breakpoints(
         &self,
         breakpoints: &[DebugFunctionBreakpoint],
+        generation: u64,
     ) -> Result<Vec<DebugFunctionBreakpointVerification>, WatchNodeDebugAdapterFailure> {
         self.breakpoints
             .as_ref()
             .ok_or(WatchNodeDebugAdapterFailure::BreakpointSyncUnavailable)?
-            .set_function_breakpoints(breakpoints)
+            .set_function_breakpoints(breakpoints, generation)
             .map_err(Into::into)
     }
 
@@ -76,10 +78,18 @@ impl WatchNodeDebugAdapter {
         &self,
         mode: DebugExceptionPauseMode,
     ) -> Result<(), WatchNodeDebugAdapterFailure> {
+        self.set_exception_pause_filter(mode, DebugExceptionTypeFilter::default())
+    }
+
+    pub(crate) fn set_exception_pause_filter(
+        &self,
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: DebugExceptionTypeFilter,
+    ) -> Result<(), WatchNodeDebugAdapterFailure> {
         self.breakpoints
             .as_ref()
             .ok_or(WatchNodeDebugAdapterFailure::BreakpointSyncUnavailable)?
-            .set_exception_pause(mode)
+            .set_exception_pause_filter(mode, exception_type_filter)
             .map_err(Into::into)
     }
 

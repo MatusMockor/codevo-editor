@@ -93,6 +93,10 @@ describe("debug command registration", () => {
     expect(registration).toContain("clearDebugConsole: debugState.consoleSurface.clear,");
     expect(registration).toContain("focusDebugConsole: debugState.consoleSurface.focus,");
     expect(registration).toContain("snapshot: debugState.snapshot,");
+    expect(source).toContain("const hasJsDebugWorkspace = hasDebuggableNodeWorkspace({");
+    expect(source).toContain("openedDocuments: openDocuments,");
+    expect(source).toContain("hasJsWorkspace: hasJsDebugWorkspace,");
+    expect(source).toContain("(hasJsDebugWorkspace &&");
   });
 
   it("projects Run Without Debugging only through the owner-safe lifecycle capability", () => {

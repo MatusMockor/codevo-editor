@@ -2,8 +2,9 @@ use crate::debug_adapter::variable_name::MAX_DEBUG_VARIABLE_NAME_BYTES;
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEvaluateContext, DebugEvaluateErrorKind,
     DebugEvaluateFailure, DebugEvaluatePolicy, DebugEvent, DebugEventSink, DebugExceptionPauseMode,
-    DebugLaunchTarget, DebugScopeInfo, DebugSessionRegistry, DebugStackFrame, DebugStartResponse,
-    DebugStartupPermit, DebugVariableInfo, DebugVariablePage, DebugVariablePageRequest, StepKind,
+    DebugFunctionBreakpoint, DebugLaunchTarget, DebugScopeInfo, DebugSessionRegistry,
+    DebugStackFrame, DebugStartResponse, DebugStartupPermit, DebugVariableInfo, DebugVariablePage,
+    DebugVariablePageRequest, StepKind,
 };
 use crate::debug_breakpoint_policy::{validate_initial_breakpoints, DebugBreakpointAdapterKind};
 use crate::debug_session_registry::{
@@ -61,6 +62,13 @@ pub(crate) use session_factory::{start_debug_session_with_factory, DebugSessionF
 #[path = "debug_compound_start.rs"]
 mod compound_start;
 pub(crate) use compound_start::debug_start_compound;
+#[path = "debug_commands_wire.rs"]
+mod command_wire;
+use command_wire::{bound_scopes, is_unsafe_debug_path_character};
+pub(crate) use command_wire::{
+    DebugRestartFrameRequest, DebugRunToLocationRequest, DebugScopesRequest,
+    DebugSetBreakpointsRequest, DebugSetExceptionPauseRequest, DebugVariablesRequest,
+};
 
 const DEBUG_EVENT: &str = "debug://event";
 const MAX_DEBUG_EVALUATE_EXPRESSION_BYTES: usize = 4_096;
@@ -93,6 +101,7 @@ pub(crate) async fn debug_start(
     root_path: String,
     launch: DebugLaunchTarget,
     breakpoints: Vec<DebugBreakpoint>,
+    function_breakpoints: Vec<DebugFunctionBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     source_maps_enabled: bool,
@@ -107,6 +116,7 @@ pub(crate) async fn debug_start(
         root_path,
         launch,
         breakpoints,
+        function_breakpoints,
         exception_pause_mode,
         exception_type_filter,
         source_maps_enabled,
@@ -136,6 +146,7 @@ pub(crate) async fn debug_start_with_trust(
         root_path,
         launch,
         breakpoints,
+        Vec::new(),
         exception_pause_mode,
         Vec::new(),
         true,
@@ -164,6 +175,7 @@ async fn debug_start_with_trust_and_authority(
     root_path: String,
     launch: DebugLaunchTarget,
     breakpoints: Vec<DebugBreakpoint>,
+    function_breakpoints: Vec<DebugFunctionBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     source_maps_enabled: bool,
@@ -228,6 +240,17 @@ async fn debug_start_with_trust_and_authority(
         Ok(breakpoints) => breakpoints,
         Err(message) => return Ok(DebugStartResponse::Error { message }),
     };
+    if let Err(message) =
+        crate::debug_cdp_function_breakpoints::validate_function_breakpoints(&function_breakpoints)
+    {
+        return Ok(DebugStartResponse::Error { message });
+    }
+    if !launch.is_node() && !function_breakpoints.is_empty() {
+        return Ok(DebugStartResponse::Error {
+            message: "Function breakpoints are only available for Node.js debug sessions."
+                .to_string(),
+        });
+    }
 
     let permit = match registry.begin_start_with_authority(&root_key, workspace_authority) {
         Ok(permit) => permit,
@@ -241,6 +264,7 @@ async fn debug_start_with_trust_and_authority(
                 permit,
                 launch: &launch,
                 breakpoints: &breakpoints,
+                function_breakpoints: &function_breakpoints,
                 exception_pause_mode,
                 exception_type_filter,
                 sink,
@@ -259,6 +283,7 @@ struct DebugSessionStartup<'a> {
     permit: DebugStartupPermit,
     launch: &'a DebugLaunchTarget,
     breakpoints: &'a [DebugBreakpoint],
+    function_breakpoints: &'a [DebugFunctionBreakpoint],
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     sink: Arc<dyn DebugEventSink>,
@@ -276,6 +301,7 @@ fn start_debug_session_blocking(
         permit,
         launch,
         breakpoints,
+        function_breakpoints,
         exception_pause_mode,
         exception_type_filter,
         sink,
@@ -303,10 +329,11 @@ fn start_debug_session_blocking(
                 Some(retained) => retained.live_path()?,
                 None => root.to_path_buf(),
             };
-            create_debug_adapter_with_exception_filter(
+            adapter_factory::create_debug_adapter_with_startup_function_breakpoints(
                 &adapter_root,
                 launch,
                 breakpoints,
+                function_breakpoints,
                 exception_pause_mode,
                 &exception_type_filter,
                 source_maps_enabled,
@@ -494,15 +521,6 @@ pub(crate) fn with_debug_session<R>(
     registry.with_session_by_id(session_id, operation)?
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DebugSetBreakpointsRequest {
-    root_path: String,
-    session_id: u64,
-    file_path: String,
-    breakpoints: Vec<DebugBreakpoint>,
-}
-
 #[tauri::command]
 pub(crate) async fn debug_set_breakpoints(
     request: DebugSetBreakpointsRequest,
@@ -537,15 +555,6 @@ pub(crate) async fn debug_set_exception_pause(
         set_exception_pause_for_session(&registry, &root_key, &request)
     })
     .await
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DebugSetExceptionPauseRequest {
-    root_path: String,
-    session_id: u64,
-    mode: DebugExceptionPauseMode,
-    exception_type_filter: Vec<String>,
 }
 
 fn set_exception_pause_for_session(
@@ -583,42 +592,6 @@ pub(crate) async fn debug_pause(
     .await
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DebugRestartFrameRequest {
-    pub(crate) root_path: String,
-    pub(crate) session_id: u64,
-    pub(crate) pause_generation: u64,
-    pub(crate) frame_id: u64,
-}
-
-impl DebugRestartFrameRequest {
-    fn validate(&self) -> Result<(), String> {
-        validate_evaluate_text(
-            &self.root_path,
-            MAX_DEBUG_EVALUATE_ROOT_BYTES,
-            false,
-            "Debug workspace root",
-        )
-        .map_err(|failure| failure.message)?;
-        if self.root_path.chars().any(is_unsafe_debug_path_character) {
-            return Err("Debug workspace root contains an unsafe character.".to_string());
-        }
-        for (value, label) in [
-            (self.session_id, "session id"),
-            (self.pause_generation, "pause generation"),
-            (self.frame_id, "frame id"),
-        ] {
-            if value == 0 || value > MAX_JAVASCRIPT_SAFE_INTEGER {
-                return Err(format!(
-                    "Debug {label} must be a positive JavaScript-safe integer."
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
 #[tauri::command]
 pub(crate) async fn debug_restart_frame(
     request: DebugRestartFrameRequest,
@@ -649,61 +622,6 @@ pub(crate) async fn debug_restart_frame(
         })?
     })
     .await
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DebugRunToLocationRequest {
-    pub(crate) root_path: String,
-    pub(crate) session_id: u64,
-    pub(crate) pause_generation: u64,
-    pub(crate) file_path: String,
-    pub(crate) line_number: u64,
-    pub(crate) column_number: u64,
-}
-
-impl DebugRunToLocationRequest {
-    fn validate(&self) -> Result<(u32, u32), String> {
-        validate_evaluate_text(
-            &self.root_path,
-            MAX_DEBUG_EVALUATE_ROOT_BYTES,
-            false,
-            "Debug workspace root",
-        )
-        .map_err(|failure| failure.message)?;
-        if self
-            .root_path
-            .chars()
-            .chain(self.file_path.chars())
-            .any(is_unsafe_debug_path_character)
-        {
-            return Err("Run-to-location paths contain an unsafe character.".to_string());
-        }
-        validate_evaluate_text(
-            &self.file_path,
-            MAX_DEBUG_RUN_TO_LOCATION_PATH_BYTES,
-            false,
-            "Run-to-location file path",
-        )
-        .map_err(|failure| failure.message)?;
-        for (value, label) in [
-            (self.session_id, "session id"),
-            (self.pause_generation, "pause generation"),
-            (self.line_number, "line number"),
-            (self.column_number, "column number"),
-        ] {
-            if value == 0 || value > MAX_JAVASCRIPT_SAFE_INTEGER {
-                return Err(format!(
-                    "Debug {label} must be a positive JavaScript-safe integer."
-                ));
-            }
-        }
-        let line_number = u32::try_from(self.line_number)
-            .map_err(|_| "Run-to-location line number is out of range.".to_string())?;
-        let column_number = u32::try_from(self.column_number)
-            .map_err(|_| "Run-to-location column number is out of range.".to_string())?;
-        Ok((line_number, column_number))
-    }
 }
 
 #[tauri::command]
@@ -746,19 +664,6 @@ pub(crate) async fn debug_run_to_location(
         })?
     })
     .await
-}
-
-fn is_unsafe_debug_path_character(character: char) -> bool {
-    matches!(
-        character,
-        '\u{061c}'
-            | '\u{200e}'
-            | '\u{200f}'
-            | '\u{2028}'
-            | '\u{2029}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2066}'..='\u{2069}'
-    )
 }
 
 #[tauri::command]
@@ -807,111 +712,6 @@ pub(crate) async fn debug_scopes(
         bound_scopes(scopes)
     })
     .await
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DebugScopesRequest {
-    pub(crate) root_path: String,
-    pub(crate) session_id: u64,
-    pub(crate) pause_generation: u64,
-    pub(crate) frame_id: u64,
-}
-
-impl DebugScopesRequest {
-    fn validate(&self) -> Result<(), String> {
-        validate_evaluate_text(
-            &self.root_path,
-            MAX_DEBUG_EVALUATE_ROOT_BYTES,
-            false,
-            "Debug workspace root",
-        )
-        .map_err(|failure| failure.message)?;
-        for (value, label) in [
-            (self.session_id, "session id"),
-            (self.pause_generation, "pause generation"),
-            (self.frame_id, "frame id"),
-        ] {
-            if value == 0 || value > MAX_JAVASCRIPT_SAFE_INTEGER {
-                return Err(format!(
-                    "Debug {label} must be a positive JavaScript-safe integer."
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-fn bound_scopes(scopes: Vec<DebugScopeInfo>) -> Result<Vec<DebugScopeInfo>, String> {
-    if scopes.len() > MAX_DEBUG_SCOPES
-        || scopes.iter().any(|scope| {
-            scope.name.is_empty()
-                || scope.name.len() > MAX_DEBUG_VARIABLE_NAME_BYTES
-                || scope.name.chars().any(char::is_control)
-                || scope.variables_reference == 0
-                || scope.variables_reference > MAX_JAVASCRIPT_SAFE_INTEGER
-        })
-    {
-        return Err("The debug adapter returned out-of-bounds scopes.".to_string());
-    }
-    Ok(scopes)
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DebugVariablesRequest {
-    pub(crate) root_path: String,
-    pub(crate) session_id: u64,
-    pub(crate) pause_generation: u64,
-    pub(crate) frame_id: u64,
-    pub(crate) variables_reference: u64,
-    pub(crate) start: u64,
-    pub(crate) count: u32,
-}
-
-impl DebugVariablesRequest {
-    fn validate(&self) -> Result<(), String> {
-        validate_evaluate_text(
-            &self.root_path,
-            MAX_DEBUG_EVALUATE_ROOT_BYTES,
-            false,
-            "Debug workspace root",
-        )
-        .map_err(|failure| failure.message)?;
-        for (value, label) in [
-            (self.session_id, "session id"),
-            (self.pause_generation, "pause generation"),
-            (self.frame_id, "frame id"),
-            (self.variables_reference, "variables reference"),
-        ] {
-            if value == 0 || value > MAX_JAVASCRIPT_SAFE_INTEGER {
-                return Err(format!(
-                    "Debug {label} must be a positive JavaScript-safe integer."
-                ));
-            }
-        }
-        if self.start > MAX_DEBUG_VARIABLE_START {
-            return Err(format!(
-                "Debug variable page start must not exceed {MAX_DEBUG_VARIABLE_START}."
-            ));
-        }
-        if self.count == 0 || self.count > MAX_DEBUG_VARIABLE_PAGE_COUNT {
-            return Err(format!(
-                "Debug variable page count must be between 1 and {MAX_DEBUG_VARIABLE_PAGE_COUNT}."
-            ));
-        }
-        Ok(())
-    }
-
-    fn adapter_request(&self) -> DebugVariablePageRequest {
-        DebugVariablePageRequest {
-            pause_generation: self.pause_generation,
-            frame_id: self.frame_id,
-            variables_reference: self.variables_reference,
-            start: self.start,
-            count: self.count,
-        }
-    }
 }
 
 #[tauri::command]
@@ -1226,6 +1026,17 @@ mod tests {
     #[test]
     fn evaluate_request_enforces_text_id_and_side_effect_bounds() {
         assert!(evaluate_request().validate().is_ok());
+        for expression in [
+            "({root:\n{child:{value:42}}, list:[1,2,3]})",
+            "(() => {\r\n\treturn { nested: true };\r\n})()",
+        ] {
+            let mut multiline = evaluate_request();
+            multiline.expression = expression.to_string();
+            assert!(
+                multiline.validate().is_ok(),
+                "legitimate multiline expression must be accepted"
+            );
+        }
         let mut request = evaluate_request();
         request.context = DebugEvaluateContext::Repl;
         request.allow_side_effects = true;
@@ -1248,7 +1059,8 @@ mod tests {
             String::new(),
             "x".repeat(MAX_DEBUG_EVALUATE_EXPRESSION_BYTES + 1),
             "ž".repeat((MAX_DEBUG_EVALUATE_EXPRESSION_BYTES / 2) + 1),
-            "bad\nexpression".to_string(),
+            "bad\rexpression".to_string(),
+            "bad\u{b}expression".to_string(),
             "bad\u{85}expression".to_string(),
             "bad\0expression".to_string(),
         ] {
@@ -1306,6 +1118,35 @@ mod tests {
                 "value": {"name":"user.name", "value":"Ada", "type":"string", "variablesReference":0}
             })
         );
+        for name in [
+            "({root:\n{child:{value:42}}})",
+            "(() => {\r\n\treturn 42;\r\n})()",
+        ] {
+            assert!(matches!(
+                bounded_evaluate_value(DebugVariableInfo {
+                    name: name.to_string(),
+                    ..value.clone()
+                }),
+                DebugEvaluateResponse::Ok { .. }
+            ));
+        }
+        for name in [
+            "before\rafter",
+            "before\u{b}after",
+            "before\u{85}after",
+            "before\0after",
+        ] {
+            assert!(matches!(
+                bounded_evaluate_value(DebugVariableInfo {
+                    name: name.to_string(),
+                    ..value.clone()
+                }),
+                DebugEvaluateResponse::Error {
+                    kind: DebugEvaluateErrorKind::Unsupported,
+                    ..
+                }
+            ));
+        }
         assert_eq!(
             serde_json::to_value(failure_response(DebugEvaluateFailure {
                 kind: DebugEvaluateErrorKind::SideEffect,
@@ -1338,10 +1179,28 @@ mod tests {
                 }
             })
         );
+        let multiline_evaluate_name = "(\n\tuser\r\n).name";
+        let with_multiline_evaluate_name = DebugVariableInfo {
+            evaluate_name: Some(multiline_evaluate_name.to_string()),
+            ..value.clone()
+        };
+        assert_eq!(
+            serde_json::to_value(bounded_evaluate_value(with_multiline_evaluate_name)).unwrap(),
+            serde_json::json!({
+                "status":"ok",
+                "value": {
+                    "name":"user.name", "value":"Ada", "type":"string",
+                    "evaluateName":multiline_evaluate_name, "variablesReference":0
+                }
+            })
+        );
         for evaluate_name in [
             String::new(),
             "   ".to_string(),
-            "user\nname".to_string(),
+            "user\rname".to_string(),
+            "user\u{000b}name".to_string(),
+            "user\u{0085}name".to_string(),
+            "user\0name".to_string(),
             "x".repeat(MAX_DEBUG_EVALUATE_EXPRESSION_BYTES + 1),
         ] {
             assert!(matches!(

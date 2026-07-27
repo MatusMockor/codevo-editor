@@ -15,6 +15,13 @@ const request: NativeNodeWatchDebugStartRequest = {
       enabled: true,
     },
   ],
+  functionBreakpoints: [
+    {
+      id: "function-entry",
+      functionName: "startServer",
+      enabled: true,
+    },
+  ],
   exceptionPauseMode: "uncaught",
   exceptionTypeFilter: ["TypeError", "app.DomainError"],
   justMyCode: "nodeInternalsAndDependencies",
@@ -56,6 +63,13 @@ describe("native Node watch debug IPC contract", () => {
     ["unsafe root", { ...request, rootPath: "/work\nspace" }],
     ["unsafe script", { ...request, scriptPath: "/workspace/\0server.js" }],
     ["invalid pause mode", { ...request, exceptionPauseMode: "caught" }],
+    [
+      "invalid function breakpoint",
+      {
+        ...request,
+        functionBreakpoints: [{ id: "function-entry", functionName: "", enabled: true }],
+      },
+    ],
     ["missing exception filter", withoutExceptionTypeFilter(request)],
     ["duplicate exception filter", { ...request, exceptionTypeFilter: ["Error", "Error"] }],
     ["invalid exception filter", { ...request, exceptionTypeFilter: ["invalid-name"] }],

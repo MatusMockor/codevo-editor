@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, State};
 #[tauri::command]
 pub(crate) async fn run_js_test_coverage_json(
     root_path: String,
+    package_root_relative_path: String,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
     registry: State<'_, WorkspaceRegistry>,
@@ -28,5 +29,5 @@ pub(crate) async fn run_js_test_coverage_json(
         .path()
         .app_local_data_dir()
         .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
-    coverage::run_registered(root, app_data_base).await
+    coverage::run_registered(root, app_data_base, package_root_relative_path).await
 }

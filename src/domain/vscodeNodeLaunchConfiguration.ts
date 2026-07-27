@@ -391,9 +391,16 @@ function parseConfiguration(
     "justMyCode",
     "sourceMaps",
     "stopOnEntry",
+    "console",
+    "internalConsoleOptions",
+    "autoAttachChildProcesses",
+    "smartStep",
+    "restart",
     "serverReadyAction",
   ]);
   if (unknown) return rejected(`${path} contains unsupported field "${unknown}"`);
+  const compatibility = validateNoopLaunchCompatibility(value, path);
+  if (compatibility.kind === "error") return compatibility;
   if (value.sourceMaps !== undefined && typeof value.sourceMaps !== "boolean") {
     return rejected(`${path}.sourceMaps must be a boolean`);
   }
@@ -520,6 +527,35 @@ function parseConfiguration(
     justMyCode.value,
     serverReadyAction.value,
   );
+}
+
+/**
+ * Accepts only VS Code settings whose exact value matches behavior Codevo already owns.
+ *
+ * These values deliberately produce no parser output: Codevo has one internal Debug Console and
+ * reveals the Debug panel for every configured start, while explicit `false` keeps unsupported
+ * automation disabled. Dropping them here prevents inert compatibility metadata from reaching
+ * prepared recipes or IPC.
+ */
+function validateNoopLaunchCompatibility(
+  value: Record<string, unknown>,
+  path: string,
+): { readonly kind: "ok" } | { readonly kind: "error"; readonly message: string } {
+  if (value.console !== undefined && value.console !== "internalConsole") {
+    return rejected(`${path}.console must be exactly "internalConsole"`);
+  }
+  if (
+    value.internalConsoleOptions !== undefined &&
+    value.internalConsoleOptions !== "openOnSessionStart"
+  ) {
+    return rejected(`${path}.internalConsoleOptions must be exactly "openOnSessionStart"`);
+  }
+  for (const field of ["autoAttachChildProcesses", "smartStep", "restart"] as const) {
+    if (value[field] !== undefined && value[field] !== false) {
+      return rejected(`${path}.${field} must be exactly false`);
+    }
+  }
+  return { kind: "ok" };
 }
 
 function parseScriptLaunchConfiguration(

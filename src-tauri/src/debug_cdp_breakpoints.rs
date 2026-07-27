@@ -1,5 +1,5 @@
 use crate::{
-    debug_adapter::{DebugBreakpoint, DebugExceptionPauseMode},
+    debug_adapter::DebugBreakpoint,
     debug_cdp::{ensure_startup_current, transport::CdpClient},
     debug_hit_condition::DebugHitCondition,
     debug_logpoint::{parse_debug_log_template, DebugLogTemplate, MAX_DEBUG_LOGPOINTS_PER_PAUSE},
@@ -82,21 +82,6 @@ pub(crate) fn set_breakpoints_active(
 ) -> Result<(), String> {
     ensure_startup_current(mutation_is_allowed)?;
     client.request("Debugger.setBreakpointsActive", json!({ "active": active }))?;
-    Ok(())
-}
-
-pub(crate) fn set_exception_pause(
-    client: &CdpClient,
-    mutation_is_allowed: &(dyn Fn() -> bool + Send + Sync),
-    mode: DebugExceptionPauseMode,
-) -> Result<(), String> {
-    ensure_startup_current(mutation_is_allowed)?;
-    let state = match mode {
-        DebugExceptionPauseMode::None => "none",
-        DebugExceptionPauseMode::Uncaught => "uncaught",
-        DebugExceptionPauseMode::All => "all",
-    };
-    client.request("Debugger.setPauseOnExceptions", json!({ "state": state }))?;
     Ok(())
 }
 

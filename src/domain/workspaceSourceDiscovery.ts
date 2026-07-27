@@ -13,7 +13,8 @@ export interface WorkspacePackageJsonFileEnumeration {
 export type BoundedWorkspaceSourceRead =
   | { readonly status: "ok"; readonly content: string }
   | { readonly status: "tooLarge" }
-  | { readonly status: "changed" };
+  | { readonly status: "changed" }
+  | { readonly status: "notFound" };
 
 export interface WorkspaceSourceDiscoveryGateway {
   enumeratePackageJsonFiles?(

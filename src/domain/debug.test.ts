@@ -142,7 +142,7 @@ describe("DebugGateway", () => {
       rootPath: "/root",
       sessionId: 1,
       seq: 1,
-      payload: { kind: "output", stream: "stdout", text: "hello" },
+      payload: { kind: "output", stream: "stdout", text: "hello", truncated: false },
     };
     handlers.forEach((handler) => handler(event));
     unsubscribe();

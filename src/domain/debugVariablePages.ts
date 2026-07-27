@@ -1,8 +1,5 @@
 import type { DebugVariable } from "./debug";
-import {
-  MAX_DEBUG_EVALUATION_EXPRESSION_BYTES,
-  debugUtf8ByteLength,
-} from "./debugEvaluationPolicy";
+import { debugUtf8ByteLength, isBoundedDebugEvaluateName } from "./debugEvaluationPolicy";
 
 export const DEBUG_VARIABLE_PAGE_SIZE = 100;
 export const MAX_DEBUG_VARIABLE_PAGE_SIZE = 100;
@@ -18,7 +15,6 @@ const MAX_ERROR_BYTES = 4 * 1_024;
 const MAX_NAME_BYTES = 1_024;
 const MAX_VALUE_BYTES = 64 * 1_024;
 const MAX_TYPE_BYTES = 256;
-const MAX_EVALUATE_NAME_BYTES = MAX_DEBUG_EVALUATION_EXPRESSION_BYTES;
 const VARIABLE_LOAD_ERROR_FALLBACK = "Variable loading failed.";
 
 export interface DebugInspectionOwner {
@@ -503,12 +499,7 @@ function isBoundedText(value: unknown, maximum: number, allowControl: boolean): 
 }
 
 function isBoundedEvaluateName(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.trim().length > 0 &&
-    debugUtf8ByteLength(value) <= MAX_EVALUATE_NAME_BYTES &&
-    !/\p{Cc}/u.test(value)
-  );
+  return isBoundedDebugEvaluateName(value);
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {

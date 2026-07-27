@@ -276,6 +276,7 @@ fn emitter_seq_stays_monotonic_across_threads() {
                     emitter.emit(DebugEventPayload::Output {
                         stream: DebugOutputStream::Stdout,
                         text: format!("{thread_index}:{message_index}"),
+                        truncated: false,
                     });
                 }
             })

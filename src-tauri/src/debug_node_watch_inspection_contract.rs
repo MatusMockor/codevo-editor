@@ -313,7 +313,7 @@ impl WatchEvaluateRequest {
     ) -> Result<Self, ()> {
         validate_nonzero_safe_integer(expected_pause_epoch)?;
         validate_nonzero_safe_integer(frame_id)?;
-        validate_evaluate_text(&expression, MAX_EVALUATE_EXPRESSION_BYTES)?;
+        validate_evaluate_expression_text(&expression, MAX_EVALUATE_EXPRESSION_BYTES)?;
         let valid_policy = match policy.context {
             DebugEvaluateContext::Watch => !policy.allow_side_effects,
             DebugEvaluateContext::Repl | DebugEvaluateContext::Clipboard => {
@@ -646,9 +646,10 @@ fn validate_variable(variable: &DebugVariableInfo) -> Result<(), ()> {
 
 fn validate_evaluate_value(variable: &DebugVariableInfo) -> Result<(), ()> {
     validate_variable(variable)?;
-    (variable.name.len() <= MAX_EVALUATE_EXPRESSION_BYTES)
-        .then_some(())
-        .ok_or(())
+    (variable.name.len() <= MAX_EVALUATE_EXPRESSION_BYTES
+        && has_valid_evaluate_expression_characters(&variable.name))
+    .then_some(())
+    .ok_or(())
 }
 
 fn validate_nonzero_safe_integer(value: u64) -> Result<(), ()> {
@@ -665,6 +666,27 @@ fn validate_evaluate_text(value: &str, maximum_bytes: usize) -> Result<(), ()> {
             .any(|character| character.is_control() && character != '\t'))
     .then_some(())
     .ok_or(())
+}
+
+fn validate_evaluate_expression_text(value: &str, maximum_bytes: usize) -> Result<(), ()> {
+    (!value.is_empty()
+        && value.len() <= maximum_bytes
+        && has_valid_evaluate_expression_characters(value))
+    .then_some(())
+    .ok_or(())
+}
+
+fn has_valid_evaluate_expression_characters(value: &str) -> bool {
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\t' | '\n' => {}
+            '\r' if characters.peek() == Some(&'\n') => {}
+            _ if character.is_control() => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 fn validate_mutation_value(value: &str, maximum_bytes: usize) -> Result<(), ()> {

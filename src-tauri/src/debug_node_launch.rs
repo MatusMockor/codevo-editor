@@ -359,6 +359,7 @@ fn script_plan(
     if is_type_script && source_maps_enabled {
         arguments.push("--enable-source-maps".to_string());
     }
+    let startup_entry = PathBuf::from(&launched);
     arguments.push(launched);
     arguments.extend(args.iter().cloned());
     Ok(NodeLaunchPlan {
@@ -368,7 +369,7 @@ fn script_plan(
         environment,
         isolated_environment,
         inspect_via_environment: false,
-        startup_entry: None,
+        startup_entry: Some(startup_entry),
     })
 }
 
@@ -574,6 +575,7 @@ fn npm_script_plan(
             );
         }
         validate_node_script_path(Path::new(&script))?;
+        let startup_entry = PathBuf::from(&script);
         let mut arguments = vec![INSPECT_FLAG.to_string(), script];
         arguments.extend(tokens.into_iter().skip(2));
         arguments.extend(configured_args.iter().cloned());
@@ -587,7 +589,7 @@ fn npm_script_plan(
             environment,
             isolated_environment: true,
             inspect_via_environment: false,
-            startup_entry: None,
+            startup_entry: Some(startup_entry),
         });
     }
     if !ALLOWED_NPM_NODE_WRAPPERS.contains(&tool.as_str())
@@ -945,6 +947,7 @@ mod tests {
         )
         .expect("plan");
         assert_eq!(plan.arguments[2..], ["--port", "4100"]);
+        assert_eq!(plan.startup_entry.as_deref(), Some(script.as_path()));
         assert_eq!(plan.working_directory, root.join("src"));
         assert_eq!(
             plan.environment.get("PORT").map(String::as_str),
@@ -1393,6 +1396,7 @@ mod tests {
             root.join("src/server.js").to_string_lossy()
         );
         assert_eq!(plan.arguments[2..], ["--watch", "--port", "4100"]);
+        assert_eq!(plan.startup_entry.unwrap(), root.join("src/server.js"));
     }
 
     #[test]

@@ -22,6 +22,40 @@ const frame = {
 };
 
 describe("TauriDebugGateway", () => {
+  it("preserves a multiline REPL expression exactly across the IPC gateway", async () => {
+    const expression = "(() => {\r\n\treturn { root: { child: 42 } };\r\n})()";
+    const invokeCommand = vi.fn<InvokeCommand>().mockResolvedValue({
+      status: "ok",
+      value: {
+        name: expression,
+        value: "Object",
+        type: "object",
+        variablesReference: 7,
+      },
+    });
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+
+    await expect(
+      gateway.evaluate("/workspace/one", 4, 11, expression, "repl", true, 3),
+    ).resolves.toEqual({
+      status: "ok",
+      value: "Object",
+      type: "object",
+      variablesReference: 7,
+    });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_evaluate", {
+      request: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        frameId: 11,
+        pauseGeneration: 3,
+        expression,
+        context: "repl",
+        allowSideEffects: true,
+      },
+    });
+  });
+
   it("keeps compound startup private, bounded, and unavailable outside Tauri", async () => {
     const invokeCommand = vi.fn<InvokeCommand>();
     const request: DebugCompoundStartRequest = {
@@ -199,6 +233,7 @@ describe("TauriDebugGateway", () => {
     const request = {
       rootPath: "/workspace",
       sessionId: 7,
+      generation: 1,
       breakpoints: [{ id: "fn-1", functionName: "app.render", enabled: true }],
     } as const;
     await expect(gateway.setFunctionBreakpoints(request)).resolves.toEqual([
@@ -359,6 +394,7 @@ describe("TauriDebugGateway", () => {
       rootPath: "/workspace/one",
       launch: { kind: "node-script", scriptPath: "/workspace/one/index.js" },
       breakpoints: [breakpoint],
+      functionBreakpoints: [],
       exceptionPauseMode: "none",
       exceptionTypeFilter: [],
     });
@@ -515,9 +551,49 @@ describe("TauriDebugGateway", () => {
       rootPath: "/workspace/one",
       launch: { kind: "node-script", scriptPath: "/workspace/one/index.js" },
       breakpoints: [],
+      functionBreakpoints: [],
       exceptionPauseMode: "all",
       exceptionTypeFilter: ["Error", "app.DomainError"],
     });
+  });
+
+  it("copies persisted function breakpoints into the ordinary Node startup payload", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => ({ status: "ok", sessionId: 4 }));
+    const gateway = new TauriDebugGateway(invokeCommand, vi.fn(), () => true);
+    const functionBreakpoints = [
+      {
+        id: "function-1",
+        functionName: "globalThis.handleRequest",
+        enabled: true,
+        verified: true,
+      },
+    ];
+
+    await gateway.start(
+      "/workspace/one",
+      { kind: "node-script", scriptPath: "/workspace/one/index.js" },
+      [],
+      "none",
+      [],
+      functionBreakpoints,
+    );
+
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start", {
+      rootPath: "/workspace/one",
+      launch: { kind: "node-script", scriptPath: "/workspace/one/index.js" },
+      breakpoints: [],
+      functionBreakpoints: [
+        {
+          id: "function-1",
+          functionName: "globalThis.handleRequest",
+          enabled: true,
+        },
+      ],
+      exceptionPauseMode: "none",
+      exceptionTypeFilter: [],
+    });
+    const payload = invokeCommand.mock.calls[0]?.[1]?.functionBreakpoints;
+    expect(payload).not.toBe(functionBreakpoints);
   });
 
   it("forwards an exact Node attach launch", async () => {
@@ -535,6 +611,7 @@ describe("TauriDebugGateway", () => {
       rootPath: "/workspace/one",
       launch,
       breakpoints: [],
+      functionBreakpoints: [],
       exceptionPauseMode: "uncaught",
       exceptionTypeFilter: ["TypeError"],
     });
@@ -598,6 +675,7 @@ describe("TauriDebugGateway", () => {
       rootPath: "/workspace",
       launch,
       breakpoints: [],
+      functionBreakpoints: [],
       exceptionPauseMode: "none",
       exceptionTypeFilter: [],
     });
@@ -633,6 +711,7 @@ describe("TauriDebugGateway", () => {
       seq: 2,
       payload: {
         kind: "functionBreakpointsVerified",
+        generation: 1,
         breakpoints: [{ id: "fn-1", verified: true }],
       },
     };

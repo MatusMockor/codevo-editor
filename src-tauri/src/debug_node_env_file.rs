@@ -1,6 +1,6 @@
 use crate::debug_adapter::{
-    DebugBreakpoint, DebugExceptionPauseMode, DebugJustMyCodePolicy, DebugLaunchTarget,
-    DebugSessionRegistry, DebugStartResponse, NodeConfiguredScriptRuntime,
+    DebugBreakpoint, DebugExceptionPauseMode, DebugFunctionBreakpoint, DebugJustMyCodePolicy,
+    DebugLaunchTarget, DebugSessionRegistry, DebugStartResponse, NodeConfiguredScriptRuntime,
 };
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
@@ -95,6 +95,7 @@ pub(crate) async fn debug_start(
     root_path: String,
     launch: NodeDebugLaunchWire,
     breakpoints: Vec<DebugBreakpoint>,
+    function_breakpoints: Vec<DebugFunctionBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     app: AppHandle,
@@ -114,6 +115,7 @@ pub(crate) async fn debug_start(
         root_path,
         launch,
         breakpoints,
+        function_breakpoints,
         exception_pause_mode,
         exception_type_filter,
         source_maps_enabled,

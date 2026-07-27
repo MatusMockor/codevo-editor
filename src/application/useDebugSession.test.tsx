@@ -61,6 +61,9 @@ interface GatewayHarness {
   stop: ReturnType<typeof vi.fn<DebugGateway["stop"]>>;
   disconnect: ReturnType<typeof vi.fn<DebugGateway["disconnect"]>>;
   setBreakpoints: ReturnType<typeof vi.fn<DebugGateway["setBreakpoints"]>>;
+  setFunctionBreakpoints: ReturnType<
+    typeof vi.fn<NonNullable<DebugGateway["setFunctionBreakpoints"]>>
+  >;
   setBreakpointsActive: ReturnType<
     typeof vi.fn<(request: DebugSetBreakpointsActiveRequest) => Promise<void>>
   >;
@@ -85,6 +88,11 @@ function createGateway(
   const stop = vi.fn<DebugGateway["stop"]>().mockResolvedValue(undefined);
   const disconnect = vi.fn<DebugGateway["disconnect"]>().mockResolvedValue(undefined);
   const setBreakpoints = vi.fn<DebugGateway["setBreakpoints"]>().mockResolvedValue([]);
+  const setFunctionBreakpoints = vi
+    .fn<NonNullable<DebugGateway["setFunctionBreakpoints"]>>()
+    .mockImplementation(async ({ breakpoints }) =>
+      breakpoints.map(({ id }) => ({ id, verified: true })),
+    );
   const setBreakpointsActive = vi.fn(
     async (_request: DebugSetBreakpointsActiveRequest): Promise<void> => undefined,
   );
@@ -114,6 +122,7 @@ function createGateway(
     stop,
     disconnect,
     setBreakpoints,
+    setFunctionBreakpoints,
     setBreakpointsActive,
     step,
     pause,
@@ -148,6 +157,7 @@ function createGateway(
     runToLocation,
     restartFrame,
     setBreakpoints,
+    setFunctionBreakpoints,
     setBreakpointsActive,
     setExceptionPause,
     step,
@@ -178,8 +188,10 @@ function renderHook(
     >;
   const captured: { value: TestDebugSession | null } = { value: null };
   let props = { isWorkspaceCurrent, isWorkspaceTrusted, workspaceId, workspaceRoot };
+  let renderCount = 0;
 
   function Harness() {
+    renderCount += 1;
     const internal = useWorkbenchDebugSession({
       gateway,
       nodeDebugAttachCandidateStart,
@@ -213,6 +225,7 @@ function renderHook(
       expect(value).not.toBeNull();
       return value as TestDebugSession;
     },
+    renders: () => renderCount,
     set(next: Partial<typeof props>) {
       props = { ...props, ...next };
       render();
@@ -249,6 +262,12 @@ function restartFrameCandidate(
     workspaceOwnerKey: "owner-1",
     ...overrides,
   };
+}
+
+async function flushDebugOutputBatch(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
 }
 
 describe("useDebugSession", () => {
@@ -318,6 +337,68 @@ describe("useDebugSession", () => {
 
     await act(async () => void (await ui.hook().pauseDebug()));
     expect(harness.pause).toHaveBeenCalledWith(42);
+    ui.unmount();
+  });
+
+  it("flushes selected compound output before another child changes the projection", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+    });
+    expect(ui.hook().snapshot.state).toMatchObject({ kind: "running", sessionId: 41 });
+
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 41,
+        seq: 1,
+        payload: { kind: "started", sessionId: 41 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 42,
+        seq: 1,
+        payload: { kind: "started", sessionId: 42 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 41,
+        seq: 2,
+        payload: {
+          kind: "output",
+          stream: "stdout",
+          text: "child 41 output",
+          truncated: false,
+        },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 42,
+        seq: 2,
+        payload: {
+          kind: "stopped",
+          reason: "breakpoint",
+          frames: [frame],
+          pauseGeneration: 1,
+        },
+      });
+    });
+    expect(ui.hook().snapshot.state).toMatchObject({ kind: "stopped", sessionId: 42 });
+    expect(ui.hook().output).toEqual([]);
+
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 42,
+        seq: 3,
+        payload: { kind: "resumed" },
+      });
+    });
+    expect(ui.hook().snapshot.state).toMatchObject({ kind: "running", sessionId: 41 });
+    expect(ui.hook().output).toEqual([
+      { stream: "stdout", text: "child 41 output", truncated: false },
+    ]);
     ui.unmount();
   });
 
@@ -405,6 +486,11 @@ describe("useDebugSession", () => {
     });
 
     await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.compoundOnly")).toBe(false);
+    });
+    expect(ui.hook().functionBreakpoints).toEqual([]);
+
+    await act(async () => {
       await ui.hook().toggleBreakpoint("/workspace/one/index.js", 9);
     });
     expect(harness.setBreakpoints.mock.calls.map((call) => call[1])).toEqual([41, 42]);
@@ -442,11 +528,11 @@ describe("useDebugSession", () => {
     });
 
     await act(async () => {
-      await ui.hook().toggleBreakpoint("/workspace/one/index.js", 9);
+      await expect(ui.hook().toggleBreakpoint("/workspace/one/index.js", 9)).rejects.toThrow(
+        "Breakpoint update was cancelled because the debug session changed.",
+      );
     });
-    expect(ui.hook().breakpoints).toMatchObject([
-      { enabled: true, filePath: "/workspace/one/index.js", lineNumber: 9 },
-    ]);
+    expect(ui.hook().breakpoints).toEqual([]);
     expect(JSON.stringify(harness.setBreakpoints.mock.calls)).not.toContain("secret");
     expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
     expect(ui.hook().debugCompoundActive).toBe(false);
@@ -573,6 +659,33 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("projects and coalesces an active compound Stop until settlement", async () => {
+    const harness = createGateway();
+    const pending = deferred<void>();
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+    });
+    harness.stop.mockReturnValueOnce(pending.promise);
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = ui.hook().stopDebug();
+      second = ui.hook().stopDebug();
+    });
+    await act(async () => Promise.resolve());
+    expect(ui.hook().debugStopPending).toBe(true);
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
+
+    pending.resolve();
+    await act(async () => {
+      await Promise.all([first, second]);
+    });
+    expect(ui.hook().debugStopPending).toBe(false);
+    expect(ui.hook().debugCompoundActive).toBe(false);
+    ui.unmount();
+  });
+
   it("keeps an exact compound active and retries Stop All after a transient failure", async () => {
     const harness = createGateway();
     harness.stop
@@ -658,6 +771,53 @@ describe("useDebugSession", () => {
     expect(harness.stop).not.toHaveBeenCalled();
     expect(ui.hook().debugCompoundStartPending).toBe(false);
     expect(ui.hook().debugStopPending).toBe(false);
+    ui.unmount();
+  });
+
+  it("does not project an old compound cancellation after an A-B-A owner replacement", async () => {
+    const harness = createGateway();
+    const status = deferred<{ readonly kind: "ok"; readonly sessionIds: readonly number[] }>();
+    harness.startCompound.mockReturnValueOnce(status.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    let starting!: Promise<boolean>;
+    let stopping!: Promise<void>;
+
+    act(() => {
+      starting = ui.hook().startDebugCompoundAccepted(compoundMembers);
+    });
+    await act(async () => Promise.resolve());
+    expect(ui.hook().debugCompoundStartPending).toBe(true);
+    act(() => {
+      stopping = ui.hook().stopDebug();
+    });
+    await act(async () => Promise.resolve());
+    expect(ui.hook().debugStopPending).toBe(true);
+
+    ui.set({ workspaceId: "owner-2", workspaceRoot: "/workspace/two" });
+    expect(ui.hook().debugStopPending).toBe(false);
+    expect(ui.hook().debugCompoundStartPending).toBe(false);
+    expect(ui.hook().debugStartPending).toBe(false);
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(true);
+    expect(ui.hook().isDebugStartBlocked()).toBe(true);
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    expect(harness.start).not.toHaveBeenCalled();
+    ui.set({ workspaceId: "owner-1", workspaceRoot: "/workspace/one" });
+    expect(ui.hook().debugCompoundStartPending).toBe(false);
+    expect(ui.hook().debugStartPending).toBe(false);
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(true);
+    expect(ui.hook().isDebugStartBlocked()).toBe(true);
+    expect(ui.hook().debugStopPending).toBe(false);
+    expect(harness.stop).not.toHaveBeenCalled();
+
+    status.resolve({ kind: "ok", sessionIds: [41, 42] });
+    await act(async () => {
+      await Promise.all([starting, stopping]);
+    });
+    await expect(starting).resolves.toBe(false);
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(false);
     ui.unmount();
   });
 
@@ -804,7 +964,8 @@ describe("useDebugSession", () => {
       await ui.hook().startDebug(launch);
     });
 
-    expect(harness.start).toHaveBeenCalledWith("/workspace/one", launch, [], "none", []);
+    expect(harness.start).toHaveBeenCalledWith("/workspace/one", launch, [], "none", [], []);
+    expect(harness.setFunctionBreakpoints).not.toHaveBeenCalled();
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 4 });
     expect(ui.hook().isDebugStartBlocked()).toBe(true);
 
@@ -851,6 +1012,395 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("installs the captured function-breakpoint snapshot only once during a fast start", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "fast-start-owner");
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.startServer")).toBe(true);
+      await ui.hook().startDebug(launch);
+    });
+
+    expect(harness.start).toHaveBeenCalledWith(
+      "/workspace/one",
+      launch,
+      [],
+      "none",
+      [],
+      [
+        expect.objectContaining({
+          enabled: true,
+          functionName: "globalThis.startServer",
+        }),
+      ],
+    );
+    expect(harness.setFunctionBreakpoints).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
+  it("replays the exact startup function-breakpoint receipt and later generation-one upgrades", async () => {
+    const harness = createGateway();
+    harness.start.mockImplementationOnce(
+      async (_rootPath, _launch, _lines, _mode, _filter, list) => {
+        const breakpoints = list ?? [];
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 99,
+          seq: 1,
+          payload: {
+            kind: "functionBreakpointsVerified",
+            generation: 1,
+            breakpoints: breakpoints.map(({ id }) => ({ id, verified: true })),
+          },
+        });
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 1,
+          payload: {
+            kind: "functionBreakpointsVerified",
+            generation: 1,
+            breakpoints: breakpoints.map(({ id }, index) => ({ id, verified: index === 0 })),
+          },
+        });
+        return { kind: "ok", sessionId: 4 };
+      },
+    );
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "startup-receipt-owner",
+    );
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.immediate")).toBe(true);
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.late")).toBe(true);
+      await ui.hook().startDebug(launch);
+    });
+
+    expect(ui.hook().functionBreakpoints.map(({ verified }) => verified)).toEqual([true, false]);
+    expect(harness.setFunctionBreakpoints).not.toHaveBeenCalled();
+    const lateId = ui.hook().functionBreakpoints[1]?.id ?? "";
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          generation: 1,
+          breakpoints: [{ id: lateId, verified: true }],
+        },
+      });
+    });
+    expect(ui.hook().functionBreakpoints.map(({ verified }) => verified)).toEqual([true, true]);
+    ui.unmount();
+  });
+
+  it("rejects a partial startup verification that precedes the exact full receipt", async () => {
+    const harness = createGateway();
+    harness.start.mockImplementationOnce(
+      async (_rootPath, _launch, _lines, _mode, _filter, list) => {
+        const breakpoints = list ?? [];
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 1,
+          payload: {
+            kind: "functionBreakpointsVerified",
+            generation: 1,
+            breakpoints: breakpoints.slice(0, 1).map(({ id }) => ({ id, verified: true })),
+          },
+        });
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 2,
+          payload: {
+            kind: "functionBreakpointsVerified",
+            generation: 1,
+            breakpoints: breakpoints.map(({ id }) => ({ id, verified: true })),
+          },
+        });
+        return { kind: "ok", sessionId: 4 };
+      },
+    );
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "partial-before-full-owner",
+    );
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.first")).toBe(true);
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.second")).toBe(true);
+      await ui.hook().startDebug(launch);
+    });
+
+    expect(ui.hook().functionBreakpoints.map(({ verified }) => verified)).toEqual([false, false]);
+    expect(harness.setFunctionBreakpoints).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
+  it("fails closed when the bounded startup-verification receipt queue overflows", async () => {
+    const harness = createGateway();
+    harness.start.mockImplementationOnce(
+      async (_rootPath, _launch, _lines, _mode, _filter, list) => {
+        const breakpoints = list ?? [];
+        for (let seq = 1; seq <= 33; seq += 1) {
+          harness.emit({
+            rootPath: "/workspace/one",
+            sessionId: 4,
+            seq,
+            payload: {
+              kind: "functionBreakpointsVerified",
+              generation: 1,
+              breakpoints: breakpoints.map(({ id }) => ({ id, verified: true })),
+            },
+          });
+        }
+        return { kind: "ok", sessionId: 4 };
+      },
+    );
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "overflow-receipt-owner",
+    );
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.overflow")).toBe(true);
+      await ui.hook().startDebug(launch);
+    });
+
+    expect(ui.hook().functionBreakpoints[0]?.verified).not.toBe(true);
+    expect(harness.setFunctionBreakpoints).not.toHaveBeenCalled();
+    const id = ui.hook().functionBreakpoints[0]?.id ?? "";
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 34,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          generation: 1,
+          breakpoints: [{ id, verified: true }],
+        },
+      });
+    });
+    expect(ui.hook().functionBreakpoints[0]?.verified).not.toBe(true);
+    ui.unmount();
+  });
+
+  it("rejects verification older than a lifecycle event replayed during start", async () => {
+    const harness = createGateway();
+    harness.start.mockImplementationOnce(
+      async (_rootPath, _launch, _lines, _mode, _filter, list) => {
+        const breakpoints = list ?? [];
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 1,
+          payload: {
+            kind: "functionBreakpointsVerified",
+            generation: 1,
+            breakpoints: breakpoints.map(({ id }) => ({ id, verified: false })),
+          },
+        });
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 10,
+          payload: { kind: "started", sessionId: 4 },
+        });
+        return { kind: "ok", sessionId: 4 };
+      },
+    );
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "lifecycle-sequence-owner",
+    );
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.sequence")).toBe(true);
+      await ui.hook().startDebug(launch);
+    });
+    const id = ui.hook().functionBreakpoints[0]?.id ?? "";
+
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 9,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          generation: 1,
+          breakpoints: [{ id, verified: true }],
+        },
+      });
+    });
+
+    expect(ui.hook().functionBreakpoints[0]?.verified).toBe(false);
+    ui.unmount();
+  });
+
+  it("rejects a buffered startup verification after an A-B-A workspace replacement", async () => {
+    const harness = createGateway();
+    const startResult = deferred<DebugRuntimeStatus>();
+    harness.start.mockReturnValueOnce(startResult.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "receipt-owner-a");
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.stale")).toBe(true);
+    });
+    const id = ui.hook().functionBreakpoints[0]?.id ?? "";
+    let pending!: Promise<void>;
+    act(() => {
+      pending = ui.hook().startDebug(launch);
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: {
+          kind: "functionBreakpointsVerified",
+          generation: 1,
+          breakpoints: [{ id, verified: true }],
+        },
+      });
+    });
+    ui.set({ workspaceId: "receipt-owner-b" });
+    ui.set({ workspaceId: "receipt-owner-a" });
+    await act(async () => {
+      startResult.resolve({ kind: "ok", sessionId: 4 });
+      await pending;
+    });
+
+    expect(ui.hook().functionBreakpoints).toEqual([expect.objectContaining({ id })]);
+    expect(ui.hook().functionBreakpoints[0]?.verified).not.toBe(true);
+    expect(harness.setFunctionBreakpoints).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
+  it("synchronizes the exact latest function-breakpoint snapshot when it changes during start", async () => {
+    const harness = createGateway();
+    const startResult = deferred<DebugRuntimeStatus>();
+    harness.start.mockReturnValueOnce(startResult.promise);
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "changed-start-owner",
+    );
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.first")).toBe(true);
+    });
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = ui.hook().startDebug(launch);
+    });
+    expect(harness.start.mock.calls[0]?.[5]).toEqual([
+      expect.objectContaining({ functionName: "globalThis.first" }),
+    ]);
+
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.latest")).toBe(true);
+      startResult.resolve({ kind: "ok", sessionId: 4 });
+      await pending;
+    });
+
+    expect(harness.setFunctionBreakpoints).toHaveBeenCalledExactlyOnceWith({
+      rootPath: "/workspace/one",
+      sessionId: 4,
+      generation: 2,
+      breakpoints: [
+        expect.objectContaining({ functionName: "globalThis.first" }),
+        expect.objectContaining({ functionName: "globalThis.latest" }),
+      ],
+    });
+    ui.unmount();
+  });
+
+  it("compensates and rejects a start when the changed snapshot cannot be synchronized", async () => {
+    const harness = createGateway();
+    const startResult = deferred<DebugRuntimeStatus>();
+    harness.start.mockReturnValueOnce(startResult.promise);
+    harness.setFunctionBreakpoints.mockRejectedValueOnce(new Error("rejected"));
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "rejected-start-sync-owner",
+    );
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.first")).toBe(true);
+    });
+
+    let accepted: number | null = 4;
+    let pending!: Promise<number | null>;
+    act(() => {
+      pending = ui.hook().startDebugSessionAccepted(launch);
+    });
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.latest")).toBe(true);
+      startResult.resolve({ kind: "ok", sessionId: 4 });
+      accepted = await pending;
+    });
+
+    expect(accepted).toBeNull();
+    expect(harness.setFunctionBreakpoints).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ generation: 2, sessionId: 4 }),
+    );
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(4);
+    expect(ui.hook().snapshot.state).toEqual({
+      exitCode: null,
+      kind: "terminated",
+      sessionId: 4,
+    });
+    ui.unmount();
+  });
+
+  it("resynchronizes after an A-B-A function-breakpoint edit during start", async () => {
+    const harness = createGateway();
+    const startResult = deferred<DebugRuntimeStatus>();
+    harness.start.mockReturnValueOnce(startResult.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "aba-start-owner");
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.same")).toBe(true);
+    });
+    const id = ui.hook().functionBreakpoints[0]?.id ?? "";
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = ui.hook().startDebug(launch);
+    });
+    await act(async () => {
+      expect(await ui.hook().setFunctionBreakpointEnabled(id, false)).toBe(true);
+      expect(await ui.hook().setFunctionBreakpointEnabled(id, true)).toBe(true);
+      startResult.resolve({ kind: "ok", sessionId: 4 });
+      await pending;
+    });
+
+    expect(harness.setFunctionBreakpoints).toHaveBeenCalledExactlyOnceWith({
+      rootPath: "/workspace/one",
+      sessionId: 4,
+      generation: 2,
+      breakpoints: [
+        expect.objectContaining({
+          enabled: true,
+          functionName: "globalThis.same",
+          id,
+        }),
+      ],
+    });
+    ui.unmount();
+  });
+
   it("keeps a per-workspace Node exception preference and forces PHP starts to none", async () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
@@ -858,16 +1408,21 @@ describe("useDebugSession", () => {
     await act(async () => void (await ui.hook().setExceptionTypeFilter(["TypeError"])));
     expect(harness.setExceptionPause).not.toHaveBeenCalled();
     await act(async () => void (await ui.hook().startDebug(launch)));
-    expect(harness.start).toHaveBeenLastCalledWith("/workspace/one", launch, [], "all", [
-      "TypeError",
-    ]);
+    expect(harness.start).toHaveBeenLastCalledWith(
+      "/workspace/one",
+      launch,
+      [],
+      "all",
+      ["TypeError"],
+      [],
+    );
     expect(ui.hook().debugAdapterKind).toBe("node");
 
     ui.set({ workspaceRoot: "/workspace/two" });
     await act(async () => void (await ui.hook().setExceptionPauseMode("all")));
     const phpLaunch = { kind: "php-script", scriptPath: "/workspace/two/index.php" } as const;
     await act(async () => void (await ui.hook().startDebug(phpLaunch)));
-    expect(harness.start).toHaveBeenLastCalledWith("/workspace/two", phpLaunch, [], "none", []);
+    expect(harness.start).toHaveBeenLastCalledWith("/workspace/two", phpLaunch, [], "none", [], []);
     expect(ui.hook().debugAdapterKind).toBe("php");
 
     ui.set({ workspaceRoot: "/workspace/one" });
@@ -876,24 +1431,25 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
-  it("does not send a stored exception filter to a native watch descriptor", async () => {
+  it("sends a stored exception filter to a supporting native watch descriptor", async () => {
     const harness = createGateway();
     const start = vi.fn(async () => ({ kind: "ok" as const, sessionId: 19 }));
     const descriptor: DebugStartDescriptor = {
       adapterKind: "node",
-      exceptionTypeFilterSupported: false,
+      exceptionTypeFilterSupported: true,
       restartLaunch: null,
       targetKind: "node-configured-script",
       start,
     };
     const ui = renderHook(harness.gateway, "/workspace/one");
 
+    await act(async () => void (await ui.hook().setExceptionPauseMode("all")));
     await act(async () => void (await ui.hook().setExceptionTypeFilter(["TypeError"])));
     await act(async () => {
       await ui.hook().startDebugDescriptorSessionAccepted(descriptor);
     });
 
-    expect(start).toHaveBeenCalledExactlyOnceWith("/workspace/one", [], "none", []);
+    expect(start).toHaveBeenCalledExactlyOnceWith("/workspace/one", [], "all", ["TypeError"], []);
     ui.unmount();
   });
 
@@ -1069,7 +1625,7 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
-  it("routes background root events into that root's state without leaking into the active root", async () => {
+  it("routes background lifecycle state without leaking output across a replaced workspace epoch", async () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one");
 
@@ -1084,7 +1640,12 @@ describe("useDebugSession", () => {
         rootPath: "/workspace/one",
         sessionId: 4,
         seq: 1,
-        payload: { kind: "output", stream: "stdout", text: "background" },
+        payload: {
+          kind: "output",
+          stream: "stdout",
+          text: "background",
+          truncated: false,
+        },
       });
       harness.emit({
         rootPath: "/workspace/one",
@@ -1103,7 +1664,7 @@ describe("useDebugSession", () => {
       sessionId: 4,
       exitCode: 0,
     });
-    expect(ui.hook().output).toEqual([{ stream: "stdout", text: "background" }]);
+    expect(ui.hook().output).toEqual([]);
     ui.unmount();
   });
 
@@ -1171,9 +1732,10 @@ describe("useDebugSession", () => {
         rootPath: "/workspace/one",
         sessionId: 4,
         seq: 1,
-        payload: { kind: "output", stream: "stdout", text: "old" },
+        payload: { kind: "output", stream: "stdout", text: "old", truncated: false },
       });
     });
+    await flushDebugOutputBatch();
     expect(ui.hook().output).toHaveLength(1);
 
     await act(async () => {
@@ -1222,10 +1784,87 @@ describe("useDebugSession", () => {
       [],
       "none",
       [],
+      [],
     );
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 9 });
     expect(ui.hook().debugRestartPending).toBe(false);
     expect(ui.hook().canRestartDebug()).toBe(true);
+    ui.unmount();
+  });
+
+  it("queues a function-breakpoint edit made during replacement-start synchronization", async () => {
+    const harness = createGateway();
+    const replacementStart = deferred<DebugRuntimeStatus>();
+    const firstSync = deferred<readonly { readonly id: string; readonly verified: boolean }[]>();
+    const secondSync = deferred<readonly { readonly id: string; readonly verified: boolean }[]>();
+    harness.start
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 4 })
+      .mockReturnValueOnce(replacementStart.promise);
+    harness.setFunctionBreakpoints
+      .mockReturnValueOnce(firstSync.promise)
+      .mockReturnValueOnce(secondSync.promise);
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "restart-sync-edit-owner",
+    );
+    await act(async () => {
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.initial")).toBe(true);
+      await ui.hook().startDebug(launch);
+    });
+    harness.setFunctionBreakpoints.mockClear();
+
+    let restart!: Promise<void>;
+    act(() => {
+      restart = ui.hook().restartDebug();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.beforeSync")).toBe(true);
+      replacementStart.resolve({ kind: "ok", sessionId: 9 });
+      await Promise.resolve();
+    });
+    expect(harness.setFunctionBreakpoints).toHaveBeenCalledTimes(1);
+    expect(harness.setFunctionBreakpoints.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        generation: 2,
+        sessionId: 9,
+        breakpoints: [
+          expect.objectContaining({ functionName: "globalThis.initial" }),
+          expect.objectContaining({ functionName: "globalThis.beforeSync" }),
+        ],
+      }),
+    );
+
+    let edit!: Promise<boolean>;
+    act(() => {
+      edit = ui.hook().addFunctionBreakpoint("globalThis.duringSync");
+    });
+    await act(async () => {
+      firstSync.resolve([]);
+      await Promise.resolve();
+    });
+    expect(harness.setFunctionBreakpoints).toHaveBeenCalledTimes(2);
+    expect(harness.setFunctionBreakpoints.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        generation: 3,
+        sessionId: 9,
+        breakpoints: [
+          expect.objectContaining({ functionName: "globalThis.initial" }),
+          expect.objectContaining({ functionName: "globalThis.beforeSync" }),
+          expect.objectContaining({ functionName: "globalThis.duringSync" }),
+        ],
+      }),
+    );
+    await act(async () => {
+      secondSync.resolve([]);
+      await expect(edit).resolves.toBe(true);
+      await restart;
+    });
+
+    expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 9 });
     ui.unmount();
   });
 
@@ -1326,6 +1965,7 @@ describe("useDebugSession", () => {
       ]);
       await ui.hook().setExceptionPauseMode("all");
       await ui.hook().setExceptionTypeFilter(["TypeError"]);
+      expect(await ui.hook().addFunctionBreakpoint("globalThis.attached")).toBe(true);
     });
 
     let accepted: number | null = null;
@@ -1349,6 +1989,16 @@ describe("useDebugSession", () => {
       exceptionTypeFilter: ["TypeError"],
     });
     expect(harness.start).not.toHaveBeenCalled();
+    expect(harness.setFunctionBreakpoints).toHaveBeenCalledExactlyOnceWith({
+      rootPath: "/workspace/one",
+      sessionId: 23,
+      generation: 2,
+      breakpoints: [
+        expect.objectContaining({
+          functionName: "globalThis.attached",
+        }),
+      ],
+    });
     expect(ui.hook().snapshot.state).toMatchObject({
       kind: "stopped",
       sessionId: 23,
@@ -2334,7 +2984,7 @@ describe("useDebugSession", () => {
         rootPath: "/workspace/one",
         sessionId: 4,
         seq: 101,
-        payload: { kind: "output", stream: "stderr", text: "stale" },
+        payload: { kind: "output", stream: "stderr", text: "stale", truncated: false },
       });
     });
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 9 });
@@ -2361,6 +3011,8 @@ describe("useDebugSession", () => {
       await ui.hook().stopDebug();
     });
     expect(harness.stop).not.toHaveBeenCalled();
+    expect(ui.hook().debugStartPending).toBe(true);
+    expect(ui.hook().debugStopPending).toBe(true);
 
     await act(async () => {
       captured.resolve?.({ kind: "ok", sessionId: 9 });
@@ -2368,7 +3020,85 @@ describe("useDebugSession", () => {
     });
 
     expect(harness.stop).toHaveBeenCalledWith(9);
+    expect(ui.hook().debugStartPending).toBe(false);
+    expect(ui.hook().debugStopPending).toBe(false);
     expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+    ui.unmount();
+  });
+
+  it("does not project an old pending-start cancellation into a replacement owner", async () => {
+    const harness = createGateway();
+    const captured: { resolve: ((status: DebugRuntimeStatus) => void) | null } = { resolve: null };
+    harness.start.mockImplementation(
+      () =>
+        new Promise<DebugRuntimeStatus>((resolve) => {
+          captured.resolve = resolve;
+        }),
+    );
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+
+    let pendingStart: Promise<void> | null = null;
+    act(() => {
+      pendingStart = ui.hook().startDebug(launch);
+    });
+    await act(async () => {
+      await ui.hook().stopDebug();
+    });
+    expect(ui.hook().debugStopPending).toBe(true);
+
+    ui.set({ workspaceId: "owner-2", workspaceRoot: "/workspace/two" });
+    expect(ui.hook().debugStopPending).toBe(false);
+    ui.set({ workspaceId: "owner-1", workspaceRoot: "/workspace/one" });
+    expect(ui.hook().debugStartPending).toBe(false);
+    expect(ui.hook().debugStopPending).toBe(false);
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(true);
+    expect(ui.hook().isDebugStartBlocked()).toBe(true);
+
+    await act(async () => {
+      await ui.hook().stopDebug();
+      await ui.hook().startDebug(launch);
+    });
+    expect(harness.start).toHaveBeenCalledOnce();
+    expect(ui.hook().debugStopPending).toBe(false);
+
+    await act(async () => {
+      captured.resolve?.({ kind: "ok", sessionId: 9 });
+      await pendingStart;
+    });
+    expect(harness.stop).toHaveBeenCalledWith(9);
+    expect(ui.hook().debugStopPending).toBe(false);
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(false);
+    ui.unmount();
+  });
+
+  it("compensates an un-cancelled start after an A-B-A owner replacement", async () => {
+    const harness = createGateway();
+    const captured: { resolve: ((status: DebugRuntimeStatus) => void) | null } = { resolve: null };
+    harness.start.mockImplementation(
+      () =>
+        new Promise<DebugRuntimeStatus>((resolve) => {
+          captured.resolve = resolve;
+        }),
+    );
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    let pendingStart: Promise<void> | null = null;
+
+    act(() => {
+      pendingStart = ui.hook().startDebug(launch);
+    });
+    ui.set({ workspaceId: "owner-2", workspaceRoot: "/workspace/two" });
+    ui.set({ workspaceId: "owner-1", workspaceRoot: "/workspace/one" });
+    expect(ui.hook().debugStartPending).toBe(false);
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(true);
+
+    await act(async () => {
+      captured.resolve?.({ kind: "ok", sessionId: 9 });
+      await pendingStart;
+    });
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(9);
+    expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(false);
+    expect(ui.hook().isDebugStartBlocked()).toBe(false);
     ui.unmount();
   });
 
@@ -2495,7 +3225,12 @@ describe("useDebugSession", () => {
         rootPath: "/workspace/one",
         sessionId: 19,
         seq: 2,
-        payload: { kind: "output", stream: "stdout", text: "premature user output" },
+        payload: {
+          kind: "output",
+          stream: "stdout",
+          text: "premature user output",
+          truncated: false,
+        },
       });
     });
     expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
@@ -2662,7 +3397,12 @@ describe("useDebugSession", () => {
           rootPath: "/workspace/one",
           sessionId: 19,
           seq: 3,
-          payload: { kind: "output", stream: "stdout", text: "still hidden" },
+          payload: {
+            kind: "output",
+            stream: "stdout",
+            text: "still hidden",
+            truncated: false,
+          },
         });
         return { kind: "ok", sessionId: 19 };
       },
@@ -2851,7 +3591,7 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
-  it("hides pause and inspection ownership across a same-root A to B to A switch", async () => {
+  it("hides the full active-session projection across a same-root A to B to A switch", async () => {
     const harness = createGateway();
     let currentWorkspaceId = "workspace-a";
     const ui = renderHook(
@@ -2882,17 +3622,33 @@ describe("useDebugSession", () => {
 
     expect(ui.hook().pauseOwner).toMatchObject({ workspaceOwnerKey: "workspace-a" });
     expect(ui.hook().inspectionOwner).toMatchObject({ sessionId: 4, pauseGeneration: 1 });
+    harness.scopesAtPause.mockResolvedValueOnce([
+      { expensive: false, name: "Local", variablesReference: 21 },
+    ]);
+    await act(async () => {
+      await ui.hook().selectFrame(11);
+    });
+    expect(ui.hook().selectedFrameId).toBe(11);
+    expect(ui.hook().scopes).toHaveLength(1);
 
     currentWorkspaceId = "workspace-b";
     ui.set({ workspaceId: currentWorkspaceId });
-    expect(ui.hook().snapshot.state.kind).toBe("stopped");
+    expect(ui.hook().snapshot.state.kind).toBe("inactive");
     expect(ui.hook().pauseOwner).toBeNull();
     expect(ui.hook().inspectionOwner).toBeNull();
+    expect(ui.hook().pauseGeneration).toBe(0);
+    expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().scopes).toEqual([]);
 
     currentWorkspaceId = "workspace-a";
     ui.set({ workspaceId: currentWorkspaceId });
-    expect(ui.hook().pauseOwner).toMatchObject({ workspaceOwnerKey: "workspace-a" });
-    expect(ui.hook().inspectionOwner).toMatchObject({ sessionId: 4, pauseGeneration: 1 });
+    expect(ui.hook().snapshot.state.kind).toBe("inactive");
+    expect(ui.hook().pauseOwner).toBeNull();
+    expect(ui.hook().inspectionOwner).toBeNull();
+    expect(ui.hook().pauseGeneration).toBe(0);
+    expect(ui.hook().selectedFrameId).toBeNull();
+    expect(ui.hook().scopes).toEqual([]);
+    expect(ui.hook().debugStartBlockedByOtherOwner).toBe(true);
     ui.unmount();
   });
 
@@ -3211,6 +3967,70 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("invalidates queued row edits when a later bulk mutation commits", async () => {
+    const harness = createGateway();
+    const firstReply = deferred<Breakpoint[]>();
+    harness.setBreakpoints
+      .mockReturnValueOnce(firstReply.promise)
+      .mockImplementation(async (_root, _session, _file, breakpoints) => [...breakpoints]);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      await ui
+        .hook()
+        .restoreBreakpoints([
+          { enabled: true, filePath: "/workspace/one/a.ts", id: "bp", lineNumber: 1 },
+        ]);
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+
+    let first!: Promise<void>;
+    let queued!: Promise<void>;
+    act(() => {
+      first = ui.hook().setBreakpointCondition("bp", "pending");
+      queued = ui.hook().setBreakpointEnabled("bp", true);
+    });
+    const firstRejected = expect(first).rejects.toThrow(
+      "Breakpoint update was cancelled because the debug session changed.",
+    );
+    const queuedRejected = expect(queued).rejects.toThrow(
+      "Breakpoint update was cancelled because the debug session changed.",
+    );
+    await act(async () => Promise.resolve());
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(1);
+
+    await act(async () => ui.hook().disableAllBreakpoints());
+    expect(ui.hook().breakpoints).toEqual([
+      expect.objectContaining({ condition: "pending", enabled: false }),
+    ]);
+    await act(async () => {
+      firstReply.resolve([
+        {
+          condition: "pending",
+          enabled: true,
+          filePath: "/workspace/one/a.ts",
+          id: "bp",
+          lineNumber: 1,
+        },
+      ]);
+      await firstRejected;
+      await queuedRejected;
+    });
+
+    expect(ui.hook().breakpoints).toEqual([
+      expect.objectContaining({ condition: "pending", enabled: false }),
+    ]);
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(2);
+    ui.unmount();
+  });
+
   it.each(["trust", "owner", "stop", "restart"] as const)(
     "does not send an individual breakpoint sync after the %s boundary is already stale",
     async (boundary) => {
@@ -3257,9 +4077,13 @@ describe("useDebugSession", () => {
           lifecycle = boundary === "stop" ? ui.hook().stopDebug() : ui.hook().restartDebug();
         });
       }
-      await act(async () => ui.hook().setBreakpointEnabled("bp", false));
+      await act(async () => {
+        await expect(ui.hook().setBreakpointEnabled("bp", false)).rejects.toThrow(
+          "Breakpoint update was cancelled because the debug session changed.",
+        );
+      });
       expect(harness.setBreakpoints).not.toHaveBeenCalled();
-      expect(ui.hook().breakpoints[0]?.enabled).toBe(false);
+      expect(ui.hook().breakpoints[0]?.enabled).toBe(true);
       if (lifecycle) {
         await act(async () => {
           pendingStop.resolve();
@@ -3307,6 +4131,10 @@ describe("useDebugSession", () => {
       act(() => {
         mutation = ui.hook().setBreakpointEnabled("bp", false);
       });
+      const rejectedMutation = expect(mutation).rejects.toThrow(
+        "Breakpoint update was cancelled because the debug session changed.",
+      );
+      await act(async () => Promise.resolve());
       if (boundary === "trust") trusted = false;
       if (boundary === "owner") {
         activeOwner = "owner-b";
@@ -3321,10 +4149,10 @@ describe("useDebugSession", () => {
         reply.resolve([
           { id: "bp", filePath: "/workspace/one/a.ts", lineNumber: 99, enabled: false },
         ]);
-        await mutation;
+        await rejectedMutation;
       });
       expect(ui.hook().breakpoints).toEqual([
-        expect.objectContaining({ enabled: false, lineNumber: 1 }),
+        expect.objectContaining({ enabled: true, lineNumber: 1 }),
       ]);
       ui.unmount();
     },
@@ -3369,6 +4197,12 @@ describe("useDebugSession", () => {
       act(() => {
         mutation = ui.hook().setBreakpointEnabled("bp", false);
       });
+      const rejectedMutation = expect(mutation).rejects.toThrow(
+        boundary === "newer-token"
+          ? "Unable to synchronize the breakpoint."
+          : "Breakpoint update was cancelled because the debug session changed.",
+      );
+      await act(async () => Promise.resolve());
       if (boundary === "trust") trusted = false;
       if (boundary === "owner") {
         activeOwner = "owner-b";
@@ -3379,16 +4213,16 @@ describe("useDebugSession", () => {
         harness.start.mockResolvedValueOnce({ kind: "ok", sessionId: 5 });
         await act(async () => ui.hook().restartDebug());
       }
-      if (boundary === "newer-token") {
-        await act(async () => ui.hook().setBreakpointEnabled("bp", true));
-      }
+      const newerMutation =
+        boundary === "newer-token" ? ui.hook().setBreakpointEnabled("bp", true) : null;
       await act(async () => {
         reply.reject(new Error("obsolete individual failure"));
-        await expect(mutation).resolves.toBeUndefined();
+        await rejectedMutation;
+        await newerMutation;
       });
       expect(ui.hook().breakpoints[0]).toEqual(
         expect.objectContaining({
-          enabled: boundary === "newer-token",
+          enabled: true,
           lineNumber: 1,
         }),
       );
@@ -3656,6 +4490,101 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("rolls back and bounds an inline breakpoint synchronization rejection", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+    harness.setBreakpoints
+      .mockRejectedValueOnce(new Error("private adapter details"))
+      .mockResolvedValueOnce([]);
+
+    await act(async () => {
+      await expect(
+        ui.hook().addInlineBreakpoint({
+          columnNumber: 7,
+          filePath: "/workspace/one/index.js",
+          isCurrent: () => true,
+          lineNumber: 4,
+          workspaceOwnerKey: "owner-1",
+          workspaceRoot: "/workspace/one",
+        }),
+      ).rejects.toThrow("Unable to synchronize the breakpoint.");
+    });
+
+    expect(ui.hook().breakpoints).toEqual([]);
+    ui.unmount();
+  });
+
+  it("rolls back a stale inline add without synchronizing into an A to B to A replacement", async () => {
+    const harness = createGateway();
+    const reply = deferred<Breakpoint[]>();
+    let activeOwner = "owner-a";
+    harness.setBreakpoints.mockReturnValueOnce(reply.promise);
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "owner-a",
+      (_rootPath, candidateOwner) => candidateOwner === activeOwner,
+    );
+    await act(async () => ui.hook().startDebug(launch));
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+
+    let addition!: Promise<BreakpointCreationOwnership | null>;
+    act(() => {
+      addition = ui.hook().addInlineBreakpoint({
+        columnNumber: 7,
+        filePath: "/workspace/one/index.js",
+        isCurrent: () => true,
+        lineNumber: 4,
+        workspaceOwnerKey: "owner-a",
+        workspaceRoot: "/workspace/one",
+      });
+    });
+    const rejectedAddition = expect(addition).rejects.toThrow(
+      "Breakpoint update was cancelled because the debug session changed.",
+    );
+    await act(async () => Promise.resolve());
+    activeOwner = "owner-b";
+    ui.set({ workspaceId: "owner-b" });
+    activeOwner = "owner-a";
+    ui.set({ workspaceId: "owner-a" });
+
+    await act(async () => {
+      reply.resolve([
+        {
+          columnNumber: 7,
+          enabled: true,
+          filePath: "/workspace/one/index.js",
+          id: "inline",
+          lineNumber: 4,
+          verified: true,
+        },
+      ]);
+      await rejectedAddition;
+    });
+
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(1);
+    expect(ui.hook().breakpoints).toEqual([]);
+    ui.unmount();
+  });
+
   it("relocates an inline entity by id and sync verification preserves line siblings", async () => {
     const harness = createGateway();
     harness.setBreakpoints.mockImplementation(async (_root, _session, _file, breakpoints) =>
@@ -3730,6 +4659,166 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("serializes a condition edit before relocation on the same breakpoint file", async () => {
+    const harness = createGateway();
+    const conditionReply = deferred<Breakpoint[]>();
+    harness.setBreakpoints
+      .mockReturnValueOnce(conditionReply.promise)
+      .mockImplementation(async (_root, _session, _file, breakpoints) => [...breakpoints]);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      await ui.hook().restoreBreakpoints([
+        {
+          columnNumber: 7,
+          enabled: true,
+          filePath: "/workspace/one/index.js",
+          id: "inline",
+          lineNumber: 4,
+        },
+      ]);
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+
+    let condition!: Promise<void>;
+    let relocation!: Promise<boolean>;
+    act(() => {
+      condition = ui.hook().setBreakpointCondition("inline", "ready");
+      relocation = ui.hook().relocateBreakpoint({
+        breakpointId: "inline",
+        columnNumber: 9,
+        filePath: "/workspace/one/index.js",
+        isCurrent: () => true,
+        lineNumber: 5,
+        workspaceOwnerKey: "owner-1",
+        workspaceRoot: "/workspace/one",
+      });
+    });
+    await act(async () => Promise.resolve());
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      conditionReply.resolve([
+        {
+          columnNumber: 7,
+          condition: "ready",
+          enabled: true,
+          filePath: "/workspace/one/index.js",
+          id: "inline",
+          lineNumber: 4,
+          verified: true,
+        },
+      ]);
+      await condition;
+      await expect(relocation).resolves.toBe(true);
+    });
+
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(2);
+    expect(ui.hook().breakpoints).toEqual([
+      expect.objectContaining({
+        columnNumber: 9,
+        condition: "ready",
+        id: "inline",
+        lineNumber: 5,
+      }),
+    ]);
+    ui.unmount();
+  });
+
+  it("rolls back relocation after an A to B to A epoch replacement without new-session IPC", async () => {
+    const harness = createGateway();
+    const relocationReply = deferred<Breakpoint[]>();
+    let activeOwner = "owner-a";
+    harness.setBreakpoints.mockReturnValueOnce(relocationReply.promise);
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "owner-a",
+      (_rootPath, candidateOwner) => candidateOwner === activeOwner,
+    );
+    await act(async () => {
+      await ui.hook().restoreBreakpoints([
+        {
+          columnNumber: 7,
+          enabled: true,
+          filePath: "/workspace/one/index.js",
+          id: "inline",
+          lineNumber: 4,
+        },
+      ]);
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+
+    let relocation!: Promise<boolean>;
+    act(() => {
+      relocation = ui.hook().relocateBreakpoint({
+        breakpointId: "inline",
+        columnNumber: 9,
+        filePath: "/workspace/one/index.js",
+        isCurrent: () => true,
+        lineNumber: 5,
+        workspaceOwnerKey: "owner-a",
+        workspaceRoot: "/workspace/one",
+      });
+    });
+    const rejectedRelocation = expect(relocation).rejects.toThrow(
+      "Breakpoint update was cancelled because the debug session changed.",
+    );
+    await act(async () => Promise.resolve());
+    activeOwner = "owner-b";
+    ui.set({ workspaceId: "owner-b" });
+    activeOwner = "owner-a";
+    ui.set({ workspaceId: "owner-a" });
+
+    await act(async () => {
+      relocationReply.resolve([
+        {
+          columnNumber: 9,
+          enabled: true,
+          filePath: "/workspace/one/index.js",
+          id: "inline",
+          lineNumber: 5,
+          verified: true,
+        },
+      ]);
+      await rejectedRelocation;
+    });
+
+    expect(harness.setBreakpoints).toHaveBeenCalledExactlyOnceWith(
+      "/workspace/one",
+      4,
+      "/workspace/one/index.js",
+      [
+        expect.objectContaining({
+          columnNumber: 9,
+          id: "inline",
+          lineNumber: 5,
+        }),
+      ],
+    );
+    expect(ui.hook().breakpoints).toEqual([
+      expect.objectContaining({ columnNumber: 7, id: "inline", lineNumber: 4 }),
+    ]);
+    ui.unmount();
+  });
+
   it("rolls back only its relocation when the tracked capture becomes stale", async () => {
     const harness = createGateway();
     const pending = deferred<Breakpoint[]>();
@@ -3760,6 +4849,7 @@ describe("useDebugSession", () => {
         workspaceRoot: "/workspace/one",
       });
     });
+    await act(async () => Promise.resolve());
     expect(ui.hook().breakpoints).toEqual([
       expect.objectContaining({ id: "inline", columnNumber: 9, lineNumber: 5 }),
     ]);
@@ -3794,6 +4884,39 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("does not let stale inline ownership remove a same-ID restored replacement", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    let ownership!: BreakpointCreationOwnership;
+    await act(async () => {
+      ownership = (await ui.hook().addInlineBreakpoint({
+        columnNumber: 7,
+        filePath: "/workspace/one/index.js",
+        isCurrent: () => true,
+        lineNumber: 4,
+        workspaceOwnerKey: "owner-1",
+        workspaceRoot: "/workspace/one",
+      }))!;
+    });
+    const replacement: Breakpoint = {
+      columnNumber: 7,
+      condition: "replacement",
+      enabled: true,
+      filePath: "/workspace/one/index.js",
+      id: ownership.breakpointId,
+      lineNumber: 4,
+    };
+
+    await act(async () => {
+      await ui.hook().restoreBreakpoints([replacement]);
+      await ownership.rollback();
+    });
+
+    expect(ui.hook().breakpoints).toEqual([replacement]);
+    expect(harness.setBreakpoints).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
   it("removes a locally created breakpoint when its initial synchronization fails", async () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one");
@@ -3809,7 +4932,7 @@ describe("useDebugSession", () => {
     harness.setBreakpoints.mockRejectedValueOnce(new Error("sync failed"));
     await act(async () =>
       expect(ui.hook().toggleBreakpoint("/workspace/one/index.js", 4)).rejects.toThrow(
-        "sync failed",
+        "Unable to synchronize the breakpoint.",
       ),
     );
     expect(ui.hook().breakpoints).toEqual([]);
@@ -3918,6 +5041,168 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it.each(["enabled", "condition", "hitCondition", "logMessage", "remove"] as const)(
+    "rolls back a rejected %s mutation and exposes only a bounded error",
+    async (kind) => {
+      const harness = createGateway();
+      const original: Breakpoint = {
+        condition: "ready",
+        enabled: true,
+        filePath: "/workspace/one/index.js",
+        hitCondition: { count: 3, kind: "multiple" },
+        id: "bp",
+        lineNumber: 4,
+        logMessage: "old={value}",
+      };
+      const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+      await act(async () => {
+        await ui.hook().restoreBreakpoints([original]);
+        await ui.hook().startDebug(launch);
+      });
+      act(() => {
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 1,
+          payload: { kind: "started", sessionId: 4 },
+        });
+      });
+      harness.setBreakpoints.mockRejectedValueOnce(new Error("private adapter details"));
+
+      await act(async () => {
+        const mutation =
+          kind === "enabled"
+            ? ui.hook().setBreakpointEnabled("bp", false)
+            : kind === "condition"
+              ? ui.hook().setBreakpointCondition("bp", "changed")
+              : kind === "hitCondition"
+                ? ui.hook().setBreakpointHitCondition("bp", { count: 9, kind: "equals" })
+                : kind === "logMessage"
+                  ? ui.hook().setBreakpointLogMessage("bp", "new={value}")
+                  : ui.hook().removeBreakpoint("bp");
+        await expect(mutation).rejects.toThrow("Unable to synchronize the breakpoint.");
+      });
+
+      expect(ui.hook().breakpoints).toEqual([original]);
+      expect(JSON.stringify(harness.setBreakpoints.mock.calls)).not.toContain("private");
+      ui.unmount();
+    },
+  );
+
+  it("continues queued edits from rolled-back state after a rejection", async () => {
+    const harness = createGateway();
+    const firstReply = deferred<Breakpoint[]>();
+    harness.setBreakpoints
+      .mockReturnValueOnce(firstReply.promise)
+      .mockImplementation(async (_root, _session, _file, breakpoints) => [...breakpoints]);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      await ui
+        .hook()
+        .restoreBreakpoints([
+          { enabled: true, filePath: "/workspace/one/index.js", id: "bp", lineNumber: 4 },
+        ]);
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = ui.hook().setBreakpointCondition("bp", "rejected");
+      second = ui.hook().setBreakpointLogMessage("bp", "kept={value}");
+    });
+    const firstRejection = expect(first).rejects.toThrow("Unable to synchronize the breakpoint.");
+    await act(async () => Promise.resolve());
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstReply.reject(new Error("private"));
+      await firstRejection;
+      await second;
+    });
+
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(2);
+    expect(ui.hook().breakpoints).toEqual([
+      expect.objectContaining({
+        id: "bp",
+        logMessage: "kept={value}",
+      }),
+    ]);
+    expect(ui.hook().breakpoints[0]).not.toHaveProperty("condition");
+    ui.unmount();
+  });
+
+  it("rolls back a late mutation ACK across a same-root A to B to A epoch replacement", async () => {
+    const harness = createGateway();
+    const reply = deferred<Breakpoint[]>();
+    let activeOwner = "owner-a";
+    harness.setBreakpoints.mockReturnValueOnce(reply.promise);
+    const ui = renderHook(
+      harness.gateway,
+      "/workspace/one",
+      () => true,
+      false,
+      "owner-a",
+      (_rootPath, candidateOwner) => candidateOwner === activeOwner,
+    );
+    await act(async () => {
+      await ui
+        .hook()
+        .restoreBreakpoints([
+          { enabled: true, filePath: "/workspace/one/index.js", id: "bp", lineNumber: 4 },
+        ]);
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+
+    let mutation!: Promise<void>;
+    act(() => {
+      mutation = ui.hook().setBreakpointCondition("bp", "stale");
+    });
+    const rejectedMutation = expect(mutation).rejects.toThrow(
+      "Breakpoint update was cancelled because the debug session changed.",
+    );
+    await act(async () => Promise.resolve());
+    activeOwner = "owner-b";
+    ui.set({ workspaceId: "owner-b" });
+    activeOwner = "owner-a";
+    ui.set({ workspaceId: "owner-a" });
+
+    await act(async () => {
+      reply.resolve([
+        {
+          condition: "stale",
+          enabled: true,
+          filePath: "/workspace/one/index.js",
+          id: "bp",
+          lineNumber: 4,
+          verified: true,
+        },
+      ]);
+      await rejectedMutation;
+    });
+
+    expect(ui.hook().breakpoints).toEqual([
+      expect.not.objectContaining({ condition: expect.anything() }),
+    ]);
+    ui.unmount();
+  });
+
   it("filters initial and live breakpoints by adapter capability and workspace", async () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one");
@@ -3934,6 +5219,7 @@ describe("useDebugSession", () => {
       expect.objectContaining({ kind: "php-script" }),
       [expect.objectContaining({ id: "php" })],
       "none",
+      [],
       [],
     );
     act(() => {
@@ -3960,7 +5246,7 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
-  it("ignores an older overlapping breakpoint synchronization response", async () => {
+  it("serializes overlapping breakpoint mutations for one exact file", async () => {
     const harness = createGateway();
     const first = deferred<Breakpoint[]>();
     const second = deferred<Breakpoint[]>();
@@ -3981,14 +5267,24 @@ describe("useDebugSession", () => {
       firstMutation = ui.hook().toggleBreakpoint("/workspace/one/index.js", 4);
       secondMutation = ui.hook().toggleBreakpoint("/workspace/one/index.js", 8);
     });
-    const latest = ui.hook().breakpoints;
+    await act(async () => Promise.resolve());
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      first.resolve([
+        {
+          ...harness.setBreakpoints.mock.calls[0]![3][0]!,
+          lineNumber: 40,
+          verified: true,
+        },
+      ]);
+      await firstMutation;
+      await Promise.resolve();
+    });
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(2);
+    const latest = harness.setBreakpoints.mock.calls[1]![3];
     await act(async () => {
       second.resolve(latest.map((entry) => ({ ...entry, verified: true })));
       await secondMutation;
-    });
-    await act(async () => {
-      first.resolve([{ ...latest[0]!, lineNumber: 40, verified: true }]);
-      await firstMutation;
     });
     expect(ui.hook().breakpoints.map(({ lineNumber }) => lineNumber)).toEqual([4, 8]);
     expect(ui.hook().breakpoints.every(({ verified }) => verified)).toBe(true);
@@ -4025,7 +5321,7 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
-  it("ignores a live synchronization response after the workspace root changes", async () => {
+  it("rolls back a live breakpoint creation after the workspace root changes", async () => {
     const harness = createGateway();
     const response = deferred<Breakpoint[]>();
     harness.setBreakpoints.mockReturnValueOnce(response.promise);
@@ -4043,14 +5339,18 @@ describe("useDebugSession", () => {
     act(() => {
       mutation = ui.hook().toggleBreakpoint("/workspace/one/index.js", 4);
     });
+    const rejectedMutation = expect(mutation).rejects.toThrow(
+      "Breakpoint update was cancelled because the debug session changed.",
+    );
+    await act(async () => Promise.resolve());
     const created = ui.hook().breakpoints[0]!;
     ui.set({ workspaceRoot: "/workspace/two" });
     await act(async () => {
       response.resolve([{ ...created, lineNumber: 40, verified: true }]);
-      await mutation;
+      await rejectedMutation;
     });
     ui.set({ workspaceRoot: "/workspace/one" });
-    expect(ui.hook().breakpoints).toEqual([expect.objectContaining({ lineNumber: 4 })]);
+    expect(ui.hook().breakpoints).toEqual([]);
     ui.unmount();
   });
 
@@ -4095,7 +5395,7 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
-  it("buffers session output with an amortized cap", async () => {
+  it("coalesces 50k session output events into one bounded React render", async () => {
     const harness = createGateway();
     const ui = renderHook(harness.gateway, "/workspace/one");
 
@@ -4109,22 +5409,208 @@ describe("useDebugSession", () => {
         seq: 1,
         payload: { kind: "started", sessionId: 4 },
       });
-      for (let line = 0; line < 5505; line += 1) {
+    });
+    const rendersBeforeBurst = ui.renders();
+    act(() => {
+      for (let line = 0; line < 50_000; line += 1) {
         harness.emit({
           rootPath: "/workspace/one",
           sessionId: 4,
           seq: 2 + line,
-          payload: { kind: "output", stream: "stdout", text: `line ${line}` },
+          payload: {
+            kind: "output",
+            stream: "stdout",
+            text: `line ${line}`,
+            truncated: false,
+          },
         });
       }
     });
 
-    expect(ui.hook().output.length).toBeLessThanOrEqual(5500);
-    expect(ui.hook().output[0]).toEqual({ stream: "stdout", text: "line 501" });
+    expect(ui.renders()).toBe(rendersBeforeBurst);
+    await flushDebugOutputBatch();
+    expect(ui.renders() - rendersBeforeBurst).toBe(1);
+    expect(ui.hook().output).toHaveLength(5000);
+    expect(ui.hook().output[0]).toEqual({
+      stream: "stderr",
+      text: "[Earlier debugger output was omitted because the retained output limit was reached.]",
+      truncated: true,
+    });
+    expect(ui.hook().output[1]).toEqual({
+      stream: "stdout",
+      text: "line 45001",
+      truncated: false,
+    });
     expect(ui.hook().output[ui.hook().output.length - 1]).toEqual({
       stream: "stdout",
-      text: "line 5504",
+      text: "line 49999",
+      truncated: false,
     });
+    ui.unmount();
+  });
+
+  it("flushes the final ordered output batch before exact-session termination", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: {
+          kind: "output",
+          stream: "stdout",
+          text: "final stdout",
+          truncated: false,
+        },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: {
+          kind: "output",
+          stream: "stderr",
+          text: "final stderr",
+          truncated: false,
+        },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 3,
+        payload: { kind: "terminated", exitCode: 0 },
+      });
+    });
+
+    expect(ui.hook().snapshot.state).toEqual({
+      kind: "terminated",
+      sessionId: 4,
+      exitCode: 0,
+    });
+    expect(ui.hook().output).toEqual([
+      { stream: "stdout", text: "final stdout", truncated: false },
+      { stream: "stderr", text: "final stderr", truncated: false },
+    ]);
+    ui.unmount();
+  });
+
+  it("rejects a delayed output batch after an A-B-A workspace epoch replacement", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: {
+          kind: "output",
+          stream: "stdout",
+          text: "stale after replacement",
+          truncated: false,
+        },
+      });
+    });
+    ui.set({ workspaceRoot: "/workspace/two" });
+    ui.set({ workspaceRoot: "/workspace/one" });
+    await flushDebugOutputBatch();
+
+    expect(ui.hook().output).toEqual([]);
+    ui.unmount();
+  });
+
+  it("does not re-expose accepted terminated output after an A-B-A owner replacement", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-a");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: {
+          kind: "output",
+          stream: "stdout",
+          text: "owned by the first A generation",
+          truncated: false,
+        },
+      });
+    });
+    await flushDebugOutputBatch();
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "terminated", exitCode: 0 },
+      });
+    });
+    expect(ui.hook().output).toEqual([
+      {
+        stream: "stdout",
+        text: "owned by the first A generation",
+        truncated: false,
+      },
+    ]);
+
+    ui.set({ workspaceId: "owner-b", workspaceRoot: "/workspace/two" });
+    ui.set({ workspaceId: "owner-a", workspaceRoot: "/workspace/one" });
+
+    expect(ui.hook().snapshot.state).toEqual({
+      kind: "terminated",
+      sessionId: 4,
+      exitCode: 0,
+    });
+    expect(ui.hook().output).toEqual([]);
+    ui.unmount();
+  });
+
+  it("preserves upstream output truncation in the session projection", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: {
+          kind: "output",
+          stream: "stderr",
+          text: "bounded output\n[Debugger output truncated]",
+          truncated: true,
+        },
+      });
+    });
+    await flushDebugOutputBatch();
+
+    expect(ui.hook().output).toEqual([
+      {
+        stream: "stderr",
+        text: "bounded output\n[Debugger output truncated]",
+        truncated: true,
+      },
+    ]);
     ui.unmount();
   });
 
@@ -4143,7 +5629,13 @@ describe("useDebugSession", () => {
       returned: 1,
       truncated: false,
     });
-    harness.evaluate.mockResolvedValue({ status: "ok", value: "3", variablesReference: 0 });
+    harness.evaluate.mockResolvedValue({
+      status: "ok",
+      value: "Object",
+      type: "object",
+      evaluateName: "state",
+      variablesReference: 31,
+    });
     const ui = renderHook(harness.gateway, "/workspace/one");
 
     await act(async () => {
@@ -4190,26 +5682,46 @@ describe("useDebugSession", () => {
     });
     expect(ui.hook().variablesByReference[21]).toEqual([variable]);
 
-    let evaluated = null;
+    let evaluated: DebugVariable | null = null;
     await act(async () => {
-      evaluated = await ui.hook().evaluate("count");
+      evaluated = await ui.hook().evaluate("state");
     });
     expect(harness.evaluate).toHaveBeenCalledWith(
       "/workspace/one",
       4,
       11,
-      "count",
+      "state",
       "repl",
       true,
       1,
     );
-    expect(evaluated).toEqual(variable);
-    expect(ui.hook().evaluationHistory).toEqual(["count"]);
+    expect(evaluated).toEqual({
+      name: "state",
+      value: "Object",
+      type: "object",
+      evaluateName: "state",
+      variablesReference: 31,
+    });
+    expect(ui.hook().evaluationHistory).toEqual(["state"]);
+
+    const evaluationOwner = ui.hook().inspectionOwner!;
+    await act(async () => {
+      await ui.hook().loadVariablePage(evaluationOwner, 31, 0);
+    });
+    expect(harness.variablesPage).toHaveBeenLastCalledWith({
+      rootPath: "/workspace/one",
+      sessionId: 4,
+      pauseGeneration: 1,
+      frameId: 11,
+      variablesReference: 31,
+      start: 0,
+      count: 100,
+    });
 
     ui.set({ workspaceRoot: "/workspace/two" });
     expect(ui.hook().evaluationHistory).toEqual([]);
     ui.set({ workspaceRoot: "/workspace/one" });
-    expect(ui.hook().evaluationHistory).toEqual(["count"]);
+    expect(ui.hook().evaluationHistory).toEqual([]);
 
     act(() => {
       harness.emit({
@@ -4228,7 +5740,7 @@ describe("useDebugSession", () => {
       await ui.hook().loadVariables(21);
     });
     expect(harness.scopesAtPause).toHaveBeenCalledTimes(1);
-    expect(harness.variablesPage).toHaveBeenCalledTimes(1);
+    expect(harness.variablesPage).toHaveBeenCalledTimes(2);
     ui.unmount();
   });
 
@@ -4279,7 +5791,7 @@ describe("useDebugSession", () => {
     expect(ui.hook().evaluationHistory).toEqual(["rootASecond"]);
 
     ui.set({ workspaceRoot: "/workspace/one-extra" });
-    expect(ui.hook().evaluationHistory).toEqual(["rootB"]);
+    expect(ui.hook().evaluationHistory).toEqual([]);
 
     ui.set({ workspaceRoot: "/workspace/one" });
     await act(async () => ui.hook().startDebug(launch));
@@ -5603,6 +7115,103 @@ describe("useDebugSession", () => {
 
       expect(harness.stop).not.toHaveBeenCalled();
       expect(harness.disconnect).not.toHaveBeenCalled();
+      ui.unmount();
+    },
+  );
+
+  it.each(["stop", "disconnect"] as const)(
+    "does not expose or %s an active session after an A-B-A owner replacement",
+    async (intent) => {
+      const harness = createGateway();
+      const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-a");
+      await act(async () =>
+        ui
+          .hook()
+          .startDebug(intent === "disconnect" ? { kind: "node-attach", port: 9229 } : launch),
+      );
+      act(() => {
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 1,
+          payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 1 },
+        });
+      });
+
+      ui.set({ workspaceId: "owner-b", workspaceRoot: "/workspace/two" });
+      ui.set({ workspaceId: "owner-a", workspaceRoot: "/workspace/one" });
+      expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+      expect(ui.hook().debugSessionAttached).toBe(false);
+      expect(ui.hook().debugStartBlockedByOtherOwner).toBe(true);
+      expect(ui.hook().isDebugStartBlocked()).toBe(true);
+      expect(ui.hook().pauseOwner).toBeNull();
+      expect(ui.hook().output).toEqual([]);
+
+      await act(async () => {
+        await ui.hook().pauseDebug();
+        await ui.hook().stepDebug("continue");
+        await ui.hook().runToLocation({
+          filePath: "/workspace/one/index.js",
+          lineNumber: 5,
+          columnNumber: 1,
+          isCurrent: () => true,
+        });
+        if (intent === "disconnect") {
+          await ui.hook().disconnectDebug();
+        } else {
+          await ui.hook().stopDebug();
+        }
+      });
+
+      expect(harness.pause).not.toHaveBeenCalled();
+      expect(harness.step).not.toHaveBeenCalled();
+      expect(harness.runToLocation).not.toHaveBeenCalled();
+      expect(harness.stop).not.toHaveBeenCalled();
+      expect(harness.disconnect).not.toHaveBeenCalled();
+      ui.unmount();
+    },
+  );
+
+  it.each(["stop", "disconnect"] as const)(
+    "does not project or coalesce an in-flight %s into an A-B-A replacement owner",
+    async (intent) => {
+      const harness = createGateway();
+      const pending = deferred<void>();
+      if (intent === "disconnect") {
+        harness.disconnect.mockReturnValueOnce(pending.promise);
+      } else {
+        harness.stop.mockReturnValueOnce(pending.promise);
+      }
+      const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-a");
+      await act(async () =>
+        ui
+          .hook()
+          .startDebug(intent === "disconnect" ? { kind: "node-attach", port: 9229 } : launch),
+      );
+      let ending!: Promise<void>;
+      act(() => {
+        ending = intent === "disconnect" ? ui.hook().disconnectDebug() : ui.hook().stopDebug();
+      });
+      await act(async () => Promise.resolve());
+      expect(ui.hook().debugStopPending).toBe(true);
+
+      ui.set({ workspaceId: "owner-b", workspaceRoot: "/workspace/two" });
+      ui.set({ workspaceId: "owner-a", workspaceRoot: "/workspace/one" });
+      expect(ui.hook().debugStopPending).toBe(false);
+      await act(async () => {
+        if (intent === "disconnect") {
+          await ui.hook().disconnectDebug();
+        } else {
+          await ui.hook().stopDebug();
+        }
+      });
+      expect(intent === "disconnect" ? harness.disconnect : harness.stop).toHaveBeenCalledOnce();
+
+      pending.resolve();
+      await act(async () => {
+        await ending;
+      });
+      expect(ui.hook().debugStopPending).toBe(false);
       ui.unmount();
     },
   );

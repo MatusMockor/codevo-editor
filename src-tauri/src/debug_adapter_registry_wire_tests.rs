@@ -233,17 +233,29 @@ fn debug_event_payload_serializes_with_kind_tag() {
         serde_json::to_value(DebugEventPayload::Output {
             stream: DebugOutputStream::Stderr,
             text: "boom".to_string(),
+            truncated: false,
         })
         .expect("serialize output"),
-        serde_json::json!({"kind": "output", "stream": "stderr", "text": "boom"})
+        serde_json::json!({
+            "kind": "output",
+            "stream": "stderr",
+            "text": "boom",
+            "truncated": false
+        })
     );
     assert_eq!(
         serde_json::to_value(DebugEventPayload::Output {
             stream: DebugOutputStream::Stdout,
             text: "ready".to_string(),
+            truncated: false,
         })
         .expect("serialize stdout output"),
-        serde_json::json!({"kind": "output", "stream": "stdout", "text": "ready"})
+        serde_json::json!({
+            "kind": "output",
+            "stream": "stdout",
+            "text": "ready",
+            "truncated": false
+        })
     );
     assert_eq!(
         serde_json::to_value(DebugEventPayload::Terminated { exit_code: Some(1) })

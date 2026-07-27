@@ -73179,9 +73179,7 @@ MissingClass::class;
     const expectDefaultDebugStart = (
       start: DebugGatewayHarness["start"],
       launch: Parameters<DebugGateway["start"]>[1],
-    ): void => {
-      void expect(start).toHaveBeenCalledWith("/workspace", launch, [], "none", []);
-    };
+    ) => expect(start).toHaveBeenCalledWith("/workspace", launch, [], "none", [], []);
 
     it("starts a vitest debug session for the active JS test file via debug.start", async () => {
       const testPath = "/workspace/packages/math/src/sum.test.ts";

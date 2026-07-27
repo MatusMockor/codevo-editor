@@ -1,4 +1,5 @@
 import type { JsTestRunScope } from "./jsTestRunScope";
+import type { JsTestExecutionAuthority } from "./jsTestExecutionAuthority";
 import type { TestRunResponse } from "./testResults";
 
 export const MAX_JS_TEST_TASK_ID_BYTES = 64;
@@ -10,6 +11,7 @@ export interface JsTestTaskOwner {
 }
 
 export interface JsTestTaskRunRequest extends JsTestTaskOwner {
+  readonly packageRootRelativePath?: JsTestExecutionAuthority["packageRootRelativePath"];
   readonly scope: JsTestRunScope;
 }
 

@@ -50,7 +50,6 @@ import { useWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspa
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
-import { DirtyCloseDecisionDialogHost } from "./components/DirtyCloseDecisionDialogHost";
 import { ScopedEditorSurface } from "./components/ScopedEditorSurface";
 import { EditorArea } from "./components/EditorArea";
 import type { EditorGroupSurface } from "./components/EditorGroupView";
@@ -68,7 +67,6 @@ import { GitDiffPreview } from "./components/GitDiffPreview";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
-import { NoticeToastHost } from "./components/NoticeToastHost";
 import { NodeRunConfigurationPickerHost } from "./components/NodeRunConfigurationPickerHost";
 import { NodeDebugAttachProcessPickerHost } from "./components/NodeDebugAttachProcessPickerHost";
 import { PhpChangeSignatureDialog } from "./components/PhpChangeSignatureDialog";
@@ -78,6 +76,7 @@ import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
 import { RecentLocationsPanel } from "./components/RecentLocationsPanel";
 import { SearchEverywhere } from "./components/SearchEverywhere";
 import { WorkbenchSettingsDialogHost } from "./components/WorkbenchSettingsDialogHost";
+import { WorkbenchOverlayHosts } from "./components/WorkbenchOverlayHosts";
 import { StatusBar } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
 import { ReferencesPanel } from "./components/ReferencesPanel";
@@ -86,13 +85,9 @@ import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
 import { WorkbenchSidebar } from "./components/WorkbenchSidebar";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
-import {
-  languageServerStatusLabel,
-  type LanguageServerRuntimeStatus,
-} from "./domain/languageServerRuntime";
+import { languageServerStatusLabel } from "./domain/languageServerRuntime";
 import { largeSmartDocumentStatus } from "./domain/largeDocumentPolicy";
 import type { EditorPosition } from "./domain/languageServerFeatures";
-import type { LanguageServerPlan } from "./domain/languageServer";
 import { ideProgressIndicator } from "./domain/ideProgress";
 import {
   ideActivityDetail,
@@ -104,11 +99,12 @@ import type { GitChangeStatus } from "./domain/git";
 import { createWorkspaceEditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import { monacoThemeForAppTheme, terminalThemeForAppTheme } from "./domain/settings";
 import { isDirty, javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
-import type { EditorDocument, ImageTab, IntelligenceMode } from "./domain/workspace";
+import type { EditorDocument, ImageTab } from "./domain/workspace";
 import { createInitialEditorGroupsState, type EditorGroupId } from "./domain/editorGroups";
 import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
+import { smartModeSummary } from "./components/appSmartModeSummary";
 import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
 
@@ -882,6 +878,7 @@ function App() {
           bookmarkedLineNumbers={groupIsActive ? activeBookmarkedLineNumbers : []}
           breakpoints={workbench.debugSession.breakpoints}
           breakpointActions={workbench.debugSession}
+          onBreakpointMutationError={workbench.reportCommandError}
           debugStoppedLocation={workbench.debugStoppedLocation}
           debugInlineValueContext={workbench.debugSession.inlineValueContext}
           changeHunks={groupIsActive ? activeEditorChangeHunks : []}
@@ -1359,9 +1356,11 @@ function App() {
         }
       />
 
-      <NoticeToastHost notices={workbench.notices} renderNotice={renderNoticeToast} />
-
-      <DirtyCloseDecisionDialogHost coordinator={dirtyCloseDecisionCoordinator} />
+      <WorkbenchOverlayHosts
+        composition={workbenchComposition}
+        renderNotice={renderNoticeToast}
+        workbench={workbench}
+      />
       <NodeRunConfigurationPickerHost
         launcher={workbench.nodeRunWithoutDebugging.configurationLauncher}
       />
@@ -1620,42 +1619,6 @@ function App() {
       />
     </main>
   );
-}
-
-function smartModeSummary(
-  workspaceRoot: string | null,
-  mode: IntelligenceMode,
-  runtimeStatus: LanguageServerRuntimeStatus | null,
-  plan: LanguageServerPlan | null,
-  trusted: boolean,
-): string {
-  if (!workspaceRoot) return "No workspace";
-
-  if (mode === "basic") {
-    return "Lightweight";
-  }
-
-  if (mode === "lightSmart") {
-    return "Smart Index";
-  }
-
-  if (!trusted) {
-    return "Untrusted";
-  }
-
-  const runtimeLabel = languageServerStatusLabel(runtimeStatus, "PHPactor", {
-    workspaceRoot,
-  });
-
-  if (runtimeLabel) {
-    return runtimeLabel;
-  }
-
-  if (plan?.status === "ready") {
-    return "IDE ready";
-  }
-
-  return "IDE setup needed";
 }
 
 function usePrefersLightTheme(): boolean {

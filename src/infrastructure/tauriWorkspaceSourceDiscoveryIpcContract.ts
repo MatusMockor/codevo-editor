@@ -151,7 +151,11 @@ function decodeBoundedRead(value: unknown): BoundedWorkspaceSourceRead {
     exactKeys(result, ["status"], "bounded read result");
     return { status: "changed" };
   }
-  return invalid("bounded read result.status", '"ok", "tooLarge", or "changed"');
+  if (result.status === "notFound") {
+    exactKeys(result, ["status"], "bounded read result");
+    return { status: "notFound" };
+  }
+  return invalid("bounded read result.status", '"ok", "tooLarge", "changed", or "notFound"');
 }
 
 function validateWorkspaceId(value: unknown, path: string): string {
@@ -174,9 +178,14 @@ function workspaceRelativePath(value: unknown, path: string): string {
 }
 
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[], path: string): void {
-  const unexpected = Object.keys(value).find((key) => !allowed.includes(key));
-  if (unexpected) invalid(`${path}.${unexpected}`, "no unknown field");
-  const missing = allowed.find((key) => !(key in value));
+  const unexpected = Reflect.ownKeys(value).find(
+    (key) => typeof key !== "string" || !allowed.includes(key),
+  );
+  if (unexpected !== undefined) {
+    const field = typeof unexpected === "symbol" ? unexpected.toString() : unexpected;
+    invalid(`${path}.${field}`, "no unknown field");
+  }
+  const missing = allowed.find((key) => !Object.prototype.hasOwnProperty.call(value, key));
   if (missing) invalid(`${path}.${missing}`, "a required field");
 }
 
@@ -186,7 +195,9 @@ function record(value: unknown, path: string): Record<string, unknown> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function string(value: unknown, path: string): string {

@@ -93,10 +93,14 @@ impl WatchDebugCommandRuntime for NodeCdpCommandRuntime {
                 ensure_current(deadline, revoked)?;
                 Ok(WatchDebugControlResponse::Ack)
             }
-            WatchDebugControlCommand::SetExceptionPause(mode) => {
+            WatchDebugControlCommand::SetExceptionPause(request) => {
                 ensure_current(deadline, revoked)?;
-                DebugAdapter::set_exception_pause(&mut self.adapter, mode)
-                    .map_err(|_| classify_failure(deadline, revoked))?;
+                DebugAdapter::set_exception_pause_filter(
+                    &mut self.adapter,
+                    request.mode(),
+                    request.exception_type_filter(),
+                )
+                .map_err(|_| classify_failure(deadline, revoked))?;
                 ensure_current(deadline, revoked)?;
                 Ok(WatchDebugControlResponse::Ack)
             }
@@ -116,7 +120,7 @@ impl WatchDebugCommandRuntime for NodeCdpCommandRuntime {
                 ensure_current(deadline, revoked)?;
                 let verification = self
                     .adapter
-                    .set_function_breakpoints(request.breakpoints())
+                    .set_function_breakpoints(request.breakpoints(), request.generation())
                     .map_err(|_| classify_failure(deadline, revoked))?;
                 ensure_current(deadline, revoked)?;
                 Ok(WatchDebugControlResponse::FunctionBreakpointsVerified(

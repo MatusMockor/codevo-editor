@@ -8,6 +8,10 @@ import {
   type JsTestCoverageReport,
   type JsTestCoverageResponse,
 } from "../domain/jsTestCoverage";
+import {
+  validatedJsTestExecutionAuthority,
+  type JsTestExecutionAuthority,
+} from "../domain/jsTestExecutionAuthority";
 
 type InvokeCommand = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -19,11 +23,18 @@ const PERCENTAGE_EPSILON = 1e-9;
 export class TauriJsTestCoverageGateway implements JsTestCoverageGateway {
   constructor(private readonly invokeCoverageCommand: InvokeCommand = invokeCommand) {}
 
-  async run(rootPath: string): Promise<JsTestCoverageResponse> {
+  async run(
+    rootPath: string,
+    authority: JsTestExecutionAuthority = { packageRootRelativePath: "" },
+  ): Promise<JsTestCoverageResponse> {
     if (!rootPath || hasControlCharacter(rootPath)) {
       throw new TypeError("JavaScript coverage workspace root must be a non-empty path.");
     }
-    return decodeJsTestCoverageResponse(await this.invokeCoverageCommand(COMMAND, { rootPath }));
+    const packageRootRelativePath =
+      validatedJsTestExecutionAuthority(authority).packageRootRelativePath;
+    return decodeJsTestCoverageResponse(
+      await this.invokeCoverageCommand(COMMAND, { packageRootRelativePath, rootPath }),
+    );
   }
 }
 

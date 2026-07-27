@@ -52,7 +52,7 @@ fn logpoint_evaluates_in_order_outputs_and_resumes_without_ui_pause_events() {
                 .iter()
                 .any(|payload| {
                     matches!(payload,
-            DebugEventPayload::Output { stream: DebugOutputStream::Stdout, text }
+            DebugEventPayload::Output { stream: DebugOutputStream::Stdout, text, .. }
                 if text == "count=7, next=9\n")
                 })
                 .then_some(())
@@ -106,7 +106,7 @@ fn evaluation_failure_emits_diagnostic_and_surfaces_original_pause() {
     assert!(!frames.is_empty());
     assert!(!server.methods().contains(&"Debugger.resume".to_string()));
     assert!(sink.payloads().iter().any(|payload| matches!(payload,
-        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text }
+        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text, .. }
             if text.contains("threw an exception"))));
 }
 
@@ -132,10 +132,10 @@ fn failed_resume_keeps_output_but_falls_back_to_visible_stop() {
 
     assert_eq!(reason, DebugStopReason::Breakpoint);
     assert!(sink.payloads().iter().any(|payload| matches!(payload,
-        DebugEventPayload::Output { stream: DebugOutputStream::Stdout, text }
+        DebugEventPayload::Output { stream: DebugOutputStream::Stdout, text, .. }
             if text == "literal only\n")));
     assert!(sink.payloads().iter().any(|payload| matches!(payload,
-        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text }
+        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text, .. }
             if text.contains("Unable to resume"))));
 }
 
@@ -208,7 +208,7 @@ fn evaluation_timeout_surfaces_the_real_pause_and_releases_pause_control() {
     assert_eq!(reason, DebugStopReason::Breakpoint);
     assert!(!frames.is_empty());
     assert!(sink.payloads().iter().any(|payload| matches!(payload,
-        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text }
+        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text, .. }
             if text.contains("Timed out while evaluating"))));
 
     registry
@@ -342,7 +342,7 @@ fn resume_timeout_reissues_pause_and_waits_for_authoritative_frames() {
     assert_eq!(frames[0].name, "authoritativePause");
     assert_eq!(server.params_for("Debugger.pause").len(), 1);
     assert!(sink.payloads().iter().any(|payload| matches!(payload,
-        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text }
+        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text, .. }
             if text.contains("Timed out while resuming internally"))));
     assert!(!sink
         .payloads()
@@ -399,7 +399,7 @@ fn resume_timeout_restores_original_pause_when_recovery_pause_is_rejected() {
     assert_eq!(frames[0].name, "handleRequest");
     assert_eq!(server.params_for("Debugger.pause").len(), 1);
     assert!(sink.payloads().iter().any(|payload| matches!(payload,
-        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text }
+        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text, .. }
             if text.contains("Unable to pause after an internal resume"))));
     assert_eq!(
         sink.payloads()
@@ -434,7 +434,7 @@ fn resume_timeout_restores_original_pause_when_recovery_has_no_paused_event() {
     assert_eq!(frames[0].name, "handleRequest");
     assert_eq!(server.params_for("Debugger.pause").len(), 1);
     assert!(sink.payloads().iter().any(|payload| matches!(payload,
-        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text }
+        DebugEventPayload::Output { stream: DebugOutputStream::Stderr, text, .. }
             if text.contains("Timed out while pausing after an internal resume"))));
     assert_eq!(
         sink.payloads()
@@ -485,7 +485,7 @@ fn hit_condition_filters_before_logging_and_resets_no_ui_state() {
                 .iter()
                 .any(|payload| {
                     matches!(payload,
-                    DebugEventPayload::Output { stream: DebugOutputStream::Stdout, text }
+                    DebugEventPayload::Output { stream: DebugOutputStream::Stdout, text, .. }
                         if text == "hit=2\n")
                 })
                 .then_some(())

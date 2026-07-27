@@ -169,7 +169,7 @@ fn desired_function_breakpoints(
         .steps()
         .iter()
         .find_map(|step| match step {
-            DesiredDebuggerReplayStep::SetFunctionBreakpoints { breakpoints } => {
+            DesiredDebuggerReplayStep::SetFunctionBreakpoints { breakpoints, .. } => {
                 Some(breakpoints.clone())
             }
             _ => None,
@@ -187,7 +187,7 @@ fn initial_function_breakpoint_install_commits_verified_replay_state() {
     ];
 
     let verified = synchronizer
-        .set_function_breakpoints(&requested)
+        .set_function_breakpoints(&requested, 7)
         .expect("install function breakpoints");
 
     assert_eq!(
@@ -214,8 +214,12 @@ fn active_toggle_and_exception_mode_commit_into_replacement_replay_state() {
     synchronizer
         .set_breakpoints_active(false)
         .expect("disable breakpoints");
+    let filter = crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(vec![
+        "TypeError".to_string(),
+    ])
+    .expect("valid exception filter");
     synchronizer
-        .set_exception_pause(DebugExceptionPauseMode::All)
+        .set_exception_pause_filter(DebugExceptionPauseMode::All, filter.clone())
         .expect("exception mode");
 
     let plan = lock_recover(&desired).replay_plan();
@@ -224,9 +228,56 @@ fn active_toggle_and_exception_mode_commit_into_replacement_replay_state() {
         .contains(&DesiredDebuggerReplayStep::SetBreakpointsActive(false)));
     assert!(plan
         .steps()
-        .contains(&DesiredDebuggerReplayStep::SetExceptionPause(
-            DebugExceptionPauseMode::All
-        )));
+        .contains(&DesiredDebuggerReplayStep::SetExceptionPause {
+            mode: DebugExceptionPauseMode::All,
+            exception_type_filter: filter,
+        }));
+}
+
+#[derive(Default)]
+struct ExceptionPolicyRecordingPort(Mutex<Option<(DebugExceptionPauseMode, Vec<String>)>>);
+
+impl WatchDebugControlPort for ExceptionPolicyRecordingPort {
+    fn execute(
+        &self,
+        command: WatchDebugControlCommand,
+    ) -> Result<WatchDebugControlResponse, WatchDebugCommandFailure> {
+        let WatchDebugControlCommand::SetExceptionPause(request) = command else {
+            return Err(WatchDebugCommandFailure::TargetRejected);
+        };
+        *lock_recover(&self.0) = Some((request.mode(), request.exception_type_filter().to_vec()));
+        Ok(WatchDebugControlResponse::Ack)
+    }
+}
+
+#[test]
+fn live_exception_policy_sends_and_commits_the_same_bounded_filter() {
+    let fixture = Fixture::new();
+    let port = Arc::new(ExceptionPolicyRecordingPort::default());
+    let (desired, synchronizer, _control) = setup(&fixture, port.clone());
+    let filter = crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(vec![
+        "TypeError".to_string(),
+        "app.DomainError".to_string(),
+    ])
+    .expect("valid exception filter");
+
+    synchronizer
+        .set_exception_pause_filter(DebugExceptionPauseMode::Uncaught, filter.clone())
+        .expect("live exception policy");
+
+    assert_eq!(
+        *lock_recover(&port.0),
+        Some((
+            DebugExceptionPauseMode::Uncaught,
+            vec!["TypeError".to_string(), "app.DomainError".to_string()],
+        ))
+    );
+    assert!(lock_recover(&desired).replay_plan().steps().contains(
+        &DesiredDebuggerReplayStep::SetExceptionPause {
+            mode: DebugExceptionPauseMode::Uncaught,
+            exception_type_filter: filter,
+        }
+    ));
 }
 
 #[test]
@@ -444,7 +495,7 @@ fn stale_function_commit_closes_generation_without_orphaning_desired_state() {
     );
 
     assert_eq!(
-        synchronizer.set_function_breakpoints(&[function_breakpoint("fn-one", "app.one", true)]),
+        synchronizer.set_function_breakpoints(&[function_breakpoint("fn-one", "app.one", true)], 7),
         Err(WatchBreakpointSyncFailure::StaleAuthority)
     );
     assert!(port.closed.load(Ordering::Acquire));
@@ -528,9 +579,11 @@ fn uncertain_policy_mutations_revoke_without_committing_replay_state() {
             .contains(&DesiredDebuggerReplayStep::SetBreakpointsActive(true)));
         assert!(plan
             .steps()
-            .contains(&DesiredDebuggerReplayStep::SetExceptionPause(
-                DebugExceptionPauseMode::None
-            )));
+            .contains(&DesiredDebuggerReplayStep::SetExceptionPause {
+                mode: DebugExceptionPauseMode::None,
+                exception_type_filter:
+                    crate::debug_exception_type_filter::DebugExceptionTypeFilter::default(),
+            }));
     }
 }
 

@@ -164,11 +164,14 @@ impl FakeSocket {
 }
 
 fn function_request() -> WatchSetFunctionBreakpointsRequest {
-    WatchSetFunctionBreakpointsRequest::new(vec![DebugFunctionBreakpoint {
-        id: "fn-render".to_string(),
-        function_name: "app.render".to_string(),
-        enabled: true,
-    }])
+    WatchSetFunctionBreakpointsRequest::new(
+        vec![DebugFunctionBreakpoint {
+            id: "fn-render".to_string(),
+            function_name: "app.render".to_string(),
+            enabled: true,
+        }],
+        7,
+    )
 }
 
 #[test]

@@ -72,7 +72,20 @@ fn bounded(value: String) -> Option<String> {
 fn is_safe_text(value: &str) -> bool {
     !value.trim().is_empty()
         && value.len() <= MAX_EVALUATE_NAME_BYTES
-        && !value.chars().any(char::is_control)
+        && has_valid_expression_characters(value)
+}
+
+fn has_valid_expression_characters(value: &str) -> bool {
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\t' | '\n' => {}
+            '\r' if characters.peek() == Some(&'\n') => {}
+            _ if character.is_control() => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 fn is_internal_name(name: &str) -> bool {
@@ -232,9 +245,10 @@ mod tests {
         );
         assert_eq!(nested_evaluate_name(Some("parent"), "name", true), None);
         assert_eq!(
-            nested_evaluate_name(Some("parent\npath"), "name", false),
-            None
+            nested_evaluate_name(Some("(\nparent\n)"), "name", false).as_deref(),
+            Some("(\nparent\n).name")
         );
+        assert_eq!(nested_evaluate_name(Some("parent\rpath"), "name", false), None);
     }
 
     #[test]
@@ -260,12 +274,17 @@ mod tests {
     }
 
     #[test]
-    fn every_result_is_control_free_and_bounded_by_utf8_bytes() {
+    fn every_result_has_bounded_expression_controls() {
         assert_eq!(
             evaluation_evaluate_name("count + 1").as_deref(),
             Some("count + 1")
         );
-        assert_eq!(evaluation_evaluate_name("count\t+ 1"), None);
+        assert_eq!(
+            evaluation_evaluate_name("(\ncount\t+ 1\r\n)").as_deref(),
+            Some("(\ncount\t+ 1\r\n)")
+        );
+        assert_eq!(evaluation_evaluate_name("count\revil"), None);
+        assert_eq!(evaluation_evaluate_name("count\u{000b}evil"), None);
         assert_eq!(evaluation_evaluate_name("   "), None);
         assert!(evaluation_evaluate_name(&"é".repeat(2048)).is_some());
         assert!(evaluation_evaluate_name(&"é".repeat(2049)).is_none());

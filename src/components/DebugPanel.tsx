@@ -14,8 +14,11 @@ import {
   X,
 } from "lucide-react";
 import {
+  useCallback,
   useId,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -79,6 +82,12 @@ import type { DebugSetVariableSurface } from "./debugSetVariableSurface";
 import type { DebugAddToWatchVariableSurface } from "./debugAddToWatchSurface";
 import { FunctionBreakpoints } from "./FunctionBreakpoints";
 import { ExceptionTypeFilter } from "./ExceptionTypeFilter";
+import { useWindowedRows } from "./useWindowedRows";
+
+const DEBUG_LIST_VIRTUALIZATION_THRESHOLD = 50;
+const DEBUG_LIST_VIEWPORT_HEIGHT = 240;
+const CALL_STACK_ROW_HEIGHT = 25;
+const BREAKPOINT_ROW_HEIGHT = 36;
 
 type NodeLaunchConfigurationsProps = Omit<
   NodeDebugLaunchSelectorProps,
@@ -128,14 +137,17 @@ export interface DebugPanelProps {
   debugAdapterKind: ActiveDebugAdapterKind;
   debugAddToWatch?: DebugAddToWatchVariableSurface;
   debugControlPending?: boolean;
+  debugCompoundActive?: boolean;
   debugCompoundStartPending?: boolean;
   debugCopyValue?: DebugCopyValuePanelSurfaces;
   debugSetVariable?: DebugSetVariableSurface;
   debugCopyStackTrace?: DebugCopyStackTraceCommand;
   debugRestartFrame?: DebugRestartFrameCommand;
   debugRestartPending?: boolean;
+  debugStartPending?: boolean;
   debugStopPending?: boolean;
   debugSessionAttached?: boolean;
+  debugStartBlockedByOtherOwner?: boolean;
   lastStartError: string | null;
   latencyTracker?: LatencyTracker;
   exceptionPauseError: string | null;
@@ -226,6 +238,11 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0,
     overflow: "auto",
   },
+  variableColumn: {
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+  },
   columnTitle: {
     borderBottom: "1px solid var(--border-subtle)",
     display: "block",
@@ -280,6 +297,18 @@ const styles: Record<string, CSSProperties> = {
   frameActive: {
     background: "var(--background-active, rgba(127, 127, 127, 0.2))",
   },
+  windowedList: {
+    maxHeight: DEBUG_LIST_VIEWPORT_HEIGHT,
+    minHeight: 0,
+    overflow: "auto",
+    position: "relative",
+  },
+  windowedRow: {
+    boxSizing: "border-box",
+    left: 0,
+    position: "absolute",
+    width: "100%",
+  },
   location: {
     background: "transparent",
     border: 0,
@@ -330,14 +359,17 @@ export function DebugPanel({
   debugAdapterKind,
   debugAddToWatch,
   debugControlPending = false,
+  debugCompoundActive = false,
   debugCompoundStartPending = false,
   debugCopyValue,
   debugSetVariable,
   debugCopyStackTrace,
   debugRestartFrame,
   debugRestartPending = false,
+  debugStartPending = false,
   debugStopPending = false,
   debugSessionAttached = false,
+  debugStartBlockedByOtherOwner = false,
   exceptionPauseError,
   exceptionPauseMode,
   exceptionPausePending,
@@ -393,7 +425,12 @@ export function DebugPanel({
   const stopped = state.kind === "stopped";
   const running = state.kind === "running";
   const sessionActive =
-    running || stopped || state.kind === "starting" || debugCompoundStartPending;
+    running ||
+    stopped ||
+    state.kind === "starting" ||
+    debugStartPending ||
+    debugStartBlockedByOtherOwner ||
+    debugCompoundStartPending;
   const copyStackTraceVisible = canCopyStackTrace(debugCopyStackTrace);
   const nodeConfigurationPickerVisible =
     hasJavaScriptTypeScriptWorkspace &&
@@ -473,7 +510,11 @@ export function DebugPanel({
           disabled={
             debugRestartPending ||
             debugStopPending ||
-            (!running && !stopped && state.kind !== "starting" && !debugCompoundStartPending)
+            (!running &&
+              !stopped &&
+              state.kind !== "starting" &&
+              !debugStartPending &&
+              !debugCompoundStartPending)
           }
           label={debugSessionAttached ? "Disconnect debugging" : "Stop debugging"}
           onClick={debugSessionAttached ? onDisconnect : onStop}
@@ -508,7 +549,12 @@ export function DebugPanel({
           <NodeLaunchConfigurationsAction onOpen={onOpenNodeLaunchConfigurations} />
         ) : null}
         <span data-testid="debug-status" style={styles.muted}>
-          {debuggerStatusLabel(snapshot)}
+          {debuggerStatusLabel(
+            snapshot,
+            debugStartPending || debugCompoundStartPending,
+            debugStopPending,
+            debugStartBlockedByOtherOwner,
+          )}
         </span>
         {lastStartError ? (
           <span role="alert" style={styles.stderr}>
@@ -553,7 +599,7 @@ export function DebugPanel({
             workspaceTrusted={workspaceTrusted}
           />
         </section>
-        <section aria-label="Variables" style={styles.column}>
+        <section aria-label="Variables" style={{ ...styles.column, ...styles.variableColumn }}>
           <strong style={styles.columnTitle}>Variables</strong>
           <Variables
             addToWatchSurface={debugAddToWatch}
@@ -696,12 +742,15 @@ export function DebugPanel({
             rootPath={rootPath}
           />
           {debugAdapterKind !== "php" &&
+          !debugCompoundActive &&
+          !debugCompoundStartPending &&
           hasJavaScriptTypeScriptWorkspace &&
           onAddFunctionBreakpoint &&
           onRemoveFunctionBreakpoint &&
           onSetFunctionBreakpointEnabled ? (
             <FunctionBreakpoints
               breakpoints={functionBreakpoints}
+              disabled={!workspaceTrusted}
               onAdd={onAddFunctionBreakpoint}
               onRemove={onRemoveFunctionBreakpoint}
               onSetEnabled={onSetFunctionBreakpointEnabled}
@@ -813,11 +862,24 @@ function ToolbarButton({
   );
 }
 
-function debuggerStatusLabel(snapshot: DebuggerSessionSnapshot): string {
+function debuggerStatusLabel(
+  snapshot: DebuggerSessionSnapshot,
+  startPending: boolean,
+  stopPending: boolean,
+  startBlockedByOtherOwner: boolean,
+): string {
   const state = snapshot.state;
 
-  if (state.kind === "starting") {
+  if (startPending && stopPending) {
+    return "Stopping";
+  }
+
+  if (startPending || state.kind === "starting") {
     return "Starting";
+  }
+
+  if (startBlockedByOtherOwner) {
+    return "Waiting for another debug session";
   }
 
   if (state.kind === "running") {
@@ -825,7 +887,8 @@ function debuggerStatusLabel(snapshot: DebuggerSessionSnapshot): string {
   }
 
   if (state.kind === "stopped") {
-    return `Paused (${state.reason})`;
+    const reason = state.reason === "entry" ? "Entry" : state.reason;
+    return `Paused (${reason})`;
   }
 
   if (state.kind === "terminated") {
@@ -884,6 +947,28 @@ function CallStack({
   const highlightedFrameId =
     state.kind === "stopped" ? (selectedFrameId ?? state.topFrame?.frameId ?? null) : null;
   const visibleFrameIds = visibleFrames.map(({ frameId }) => frameId).join(":");
+  const rovingFrameIndex = visibleFrames.findIndex(({ frameId }) => frameId === rovingFrameId);
+  const highlightedFrameIndex = visibleFrames.findIndex(
+    ({ frameId }) => frameId === highlightedFrameId,
+  );
+  const pinnedFrameIndices = useMemo(
+    () => [...new Set([rovingFrameIndex, highlightedFrameIndex].filter((index) => index >= 0))],
+    [highlightedFrameIndex, rovingFrameIndex],
+  );
+  const estimateFrameHeight = useCallback(() => CALL_STACK_ROW_HEIGHT, []);
+  const keyForFrameIndex = useCallback(
+    (index: number) => String(visibleFrames[index]?.frameId ?? index),
+    [visibleFrames],
+  );
+  const windowedFrames = useWindowedRows({
+    enabled: visibleFrames.length > DEBUG_LIST_VIRTUALIZATION_THRESHOLD,
+    estimateHeight: estimateFrameHeight,
+    fallbackViewportHeight: DEBUG_LIST_VIEWPORT_HEIGHT,
+    itemCount: visibleFrames.length,
+    keyForIndex: keyForFrameIndex,
+    pinnedIndices: pinnedFrameIndices,
+  });
+  const scrollToFrameIndex = windowedFrames.scrollToIndex;
 
   useEffect(() => {
     const selectionChanged = previousSelectedFrameIdRef.current !== selectedFrameId;
@@ -914,6 +999,12 @@ function CallStack({
       frameButtonRefs.current.get(nextFrameId)?.focus();
     }
   }, [highlightedFrameId, rovingFrameId, selectedFrameId, visibleFrameIds, visibleFrames]);
+
+  useLayoutEffect(() => {
+    if (highlightedFrameIndex >= 0) {
+      scrollToFrameIndex(highlightedFrameIndex, "nearest");
+    }
+  }, [highlightedFrameIndex, scrollToFrameIndex]);
 
   if (state.kind !== "stopped") {
     return <div style={styles.message}>Not paused</div>;
@@ -953,73 +1044,100 @@ function CallStack({
     const nextFrameId = state.frames[nextIndex]?.frameId;
     if (nextFrameId === undefined) return;
     setRovingFrameId(nextFrameId);
-    frameButtonRefs.current.get(nextFrameId)?.focus();
+    scrollToFrameIndex(nextIndex, "nearest");
+    const mountedFrame = frameButtonRefs.current.get(nextFrameId);
+    if (mountedFrame) {
+      mountedFrame.focus();
+    } else {
+      requestAnimationFrame(() => frameButtonRefs.current.get(nextFrameId)?.focus());
+    }
   };
 
   return (
-    <div>
-      {state.frames.map((frame, index) => {
-        const selected = frame.frameId === highlightedFrameId;
-        const showRestart =
-          selected &&
-          index === state.frames.findIndex(({ frameId }) => frameId === highlightedFrameId) &&
-          debugAdapterKind === "node" &&
-          !debugControlPending &&
-          workspaceTrusted &&
-          frameAllowsInlineActions(frame) &&
-          canRestartFrame(debugRestartFrame);
-        return (
-          <div
-            key={frame.frameId}
-            style={
-              selected ? { ...styles.breakpointRow, ...styles.frameActive } : styles.breakpointRow
-            }
-          >
-            <button
-              aria-current={selected ? "true" : undefined}
-              data-testid="debug-frame"
-              onClick={() => activateFrame(frame, onSelectFrame, onNavigateToFrame)}
-              onBlur={(event) => {
-                const next = event.relatedTarget;
-                if (!(next instanceof HTMLElement) || next.dataset.testid !== "debug-frame") {
-                  frameFocusOwnedRef.current = false;
-                }
-              }}
-              onFocus={() => {
-                frameFocusOwnedRef.current = true;
-                setRovingFrameId(frame.frameId);
-              }}
-              onKeyDown={(event) => moveFocus(event, frame.frameId)}
-              ref={(element) => {
-                if (element) frameButtonRefs.current.set(frame.frameId, element);
-                else frameButtonRefs.current.delete(frame.frameId);
-              }}
-              style={{ ...styles.frame, padding: 0 }}
-              tabIndex={frame.frameId === rovingFrame ? 0 : -1}
-              type="button"
+    <div
+      aria-label="Call stack frames"
+      onScroll={windowedFrames.onScroll}
+      ref={windowedFrames.containerRef}
+      role="list"
+      style={styles.windowedList}
+    >
+      <div style={{ height: windowedFrames.totalHeight, position: "relative" }}>
+        {windowedFrames.rows.map(({ index, offsetTop }) => {
+          const frame = state.frames[index];
+          if (!frame) return null;
+          const selected = frame.frameId === highlightedFrameId;
+          const showRestart =
+            selected &&
+            index === state.frames.findIndex(({ frameId }) => frameId === highlightedFrameId) &&
+            debugAdapterKind === "node" &&
+            !debugControlPending &&
+            workspaceTrusted &&
+            frameAllowsInlineActions(frame) &&
+            canRestartFrame(debugRestartFrame);
+          return (
+            <div
+              aria-posinset={index + 1}
+              aria-setsize={state.frames.length}
+              key={frame.frameId}
+              ref={(element) => windowedFrames.measureRow(String(frame.frameId), element)}
+              role="listitem"
+              style={
+                selected
+                  ? {
+                      ...styles.windowedRow,
+                      ...styles.breakpointRow,
+                      ...styles.frameActive,
+                      top: offsetTop,
+                    }
+                  : { ...styles.windowedRow, ...styles.breakpointRow, top: offsetTop }
+              }
             >
-              {frame.name}{" "}
-              <span style={styles.muted}>
-                {frame.filePath
-                  ? `${displayPath(rootPath, frame.filePath)}:${frame.lineNumber}`
-                  : `line ${frame.lineNumber}`}
-              </span>
-            </button>
-            {showRestart ? (
-              <ToolbarButton
-                disabled={false}
-                label="Restart Frame"
-                onClick={() => {
-                  if (canRestartFrame(debugRestartFrame)) debugRestartFrame?.restartFrame();
+              <button
+                aria-current={selected ? "true" : undefined}
+                data-testid="debug-frame"
+                onClick={() => activateFrame(frame, onSelectFrame, onNavigateToFrame)}
+                onBlur={(event) => {
+                  const next = event.relatedTarget;
+                  if (!(next instanceof HTMLElement) || next.dataset.testid !== "debug-frame") {
+                    frameFocusOwnedRef.current = false;
+                  }
                 }}
-                title="Restart Frame"
+                onFocus={() => {
+                  frameFocusOwnedRef.current = true;
+                  setRovingFrameId(frame.frameId);
+                }}
+                onKeyDown={(event) => moveFocus(event, frame.frameId)}
+                ref={(element) => {
+                  if (element) frameButtonRefs.current.set(frame.frameId, element);
+                  else frameButtonRefs.current.delete(frame.frameId);
+                }}
+                style={{ ...styles.frame, padding: 0 }}
+                tabIndex={frame.frameId === rovingFrame ? 0 : -1}
+                type="button"
               >
-                <RotateCw aria-hidden="true" size={12} />
-              </ToolbarButton>
-            ) : null}
-          </div>
-        );
-      })}
+                {frame.name}{" "}
+                <span style={styles.muted}>
+                  {frame.filePath
+                    ? `${displayPath(rootPath, frame.filePath)}:${frame.lineNumber}`
+                    : `line ${frame.lineNumber}`}
+                </span>
+              </button>
+              {showRestart ? (
+                <ToolbarButton
+                  disabled={false}
+                  label="Restart Frame"
+                  onClick={() => {
+                    if (canRestartFrame(debugRestartFrame)) debugRestartFrame?.restartFrame();
+                  }}
+                  title="Restart Frame"
+                >
+                  <RotateCw aria-hidden="true" size={12} />
+                </ToolbarButton>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1134,63 +1252,116 @@ function Breakpoints({
   supportsLogpoints: boolean;
   rootPath: string | null;
 }) {
+  const [focusedBreakpointId, setFocusedBreakpointId] = useState<string | null>(null);
+  const focusedBreakpointIndex = breakpoints.findIndex(({ id }) => id === focusedBreakpointId);
+  const pinnedBreakpointIndices = useMemo(
+    () => (focusedBreakpointIndex >= 0 ? [focusedBreakpointIndex] : []),
+    [focusedBreakpointIndex],
+  );
+  const estimateBreakpointHeight = useCallback(() => BREAKPOINT_ROW_HEIGHT, []);
+  const keyForBreakpointIndex = useCallback(
+    (index: number) => breakpoints[index]?.id ?? String(index),
+    [breakpoints],
+  );
+  const windowedBreakpoints = useWindowedRows({
+    enabled: breakpoints.length > DEBUG_LIST_VIRTUALIZATION_THRESHOLD,
+    estimateHeight: estimateBreakpointHeight,
+    fallbackViewportHeight: DEBUG_LIST_VIEWPORT_HEIGHT,
+    itemCount: breakpoints.length,
+    keyForIndex: keyForBreakpointIndex,
+    pinnedIndices: pinnedBreakpointIndices,
+    preserveScrollAnchor: true,
+  });
+
   if (breakpoints.length === 0) {
     return <div style={styles.message}>No breakpoints</div>;
   }
 
   return (
-    <div>
-      {breakpoints.map((breakpoint) => (
-        <div data-testid="debug-breakpoint" key={breakpoint.id} style={styles.breakpointRow}>
-          <input
-            aria-label={`Enable breakpoint ${breakpointLocationLabel(breakpoint)}`}
-            checked={breakpoint.enabled}
-            onChange={(event) => onSetBreakpointEnabled(breakpoint.id, event.target.checked)}
-            type="checkbox"
-          />
-          <button
-            data-testid="debug-breakpoint-location"
-            onClick={() => onNavigateToBreakpoint(breakpoint)}
-            style={styles.location}
-            title={breakpointLocationLabel(breakpoint)}
-            type="button"
-          >
-            {breakpointLocationLabel(breakpoint, rootPath)}
-            {breakpoint.verified === false ? <span style={styles.muted}> (unverified)</span> : null}
-          </button>
-          <BreakpointConditionInput
-            breakpoint={breakpoint}
-            key={`condition:${breakpoint.id}:${breakpoint.condition ?? ""}`}
-            onSetBreakpointCondition={onSetBreakpointCondition}
-          />
-          {supportsHitConditions &&
-          rootPath &&
-          isBreakpointPathSupported(rootPath, "node", breakpoint.filePath) ? (
-            <BreakpointHitConditionInput
-              breakpoint={breakpoint}
-              key={`hit:${breakpoint.id}:${formatBreakpointHitCondition(breakpoint.hitCondition)}`}
-              onSetBreakpointHitCondition={onSetBreakpointHitCondition}
-            />
-          ) : null}
-          {supportsLogpoints &&
-          rootPath &&
-          isBreakpointPathSupported(rootPath, "node", breakpoint.filePath) ? (
-            <BreakpointLogMessageInput
-              breakpoint={breakpoint}
-              key={`log:${breakpoint.id}:${breakpoint.logMessage ?? ""}`}
-              onSetBreakpointLogMessage={onSetBreakpointLogMessage}
-            />
-          ) : null}
-          <button
-            aria-label="Remove breakpoint"
-            onClick={() => onRemoveBreakpoint(breakpoint.id)}
-            style={styles.action}
-            type="button"
-          >
-            <X aria-hidden="true" size={12} />
-          </button>
-        </div>
-      ))}
+    <div
+      aria-label="Source breakpoints"
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setFocusedBreakpointId(null);
+        }
+      }}
+      onFocusCapture={(event) => {
+        const row = (event.target as HTMLElement).closest<HTMLElement>("[data-breakpoint-id]");
+        setFocusedBreakpointId(row?.dataset.breakpointId ?? null);
+      }}
+      onScroll={windowedBreakpoints.onScroll}
+      ref={windowedBreakpoints.containerRef}
+      role="list"
+      style={styles.windowedList}
+    >
+      <div style={{ height: windowedBreakpoints.totalHeight, position: "relative" }}>
+        {windowedBreakpoints.rows.map(({ index, offsetTop }) => {
+          const breakpoint = breakpoints[index];
+          if (!breakpoint) return null;
+          return (
+            <div
+              aria-posinset={index + 1}
+              aria-setsize={breakpoints.length}
+              data-breakpoint-id={breakpoint.id}
+              data-testid="debug-breakpoint"
+              key={breakpoint.id}
+              ref={(element) => windowedBreakpoints.measureRow(breakpoint.id, element)}
+              role="listitem"
+              style={{ ...styles.windowedRow, ...styles.breakpointRow, top: offsetTop }}
+            >
+              <input
+                aria-label={`Enable breakpoint ${breakpointLocationLabel(breakpoint)}`}
+                checked={breakpoint.enabled}
+                onChange={(event) => onSetBreakpointEnabled(breakpoint.id, event.target.checked)}
+                type="checkbox"
+              />
+              <button
+                data-testid="debug-breakpoint-location"
+                onClick={() => onNavigateToBreakpoint(breakpoint)}
+                style={styles.location}
+                title={breakpointLocationLabel(breakpoint)}
+                type="button"
+              >
+                {breakpointLocationLabel(breakpoint, rootPath)}
+                {breakpoint.verified === false ? (
+                  <span style={styles.muted}> (unverified)</span>
+                ) : null}
+              </button>
+              <BreakpointConditionInput
+                breakpoint={breakpoint}
+                key={`condition:${breakpoint.id}:${breakpoint.condition ?? ""}`}
+                onSetBreakpointCondition={onSetBreakpointCondition}
+              />
+              {supportsHitConditions &&
+              rootPath &&
+              isBreakpointPathSupported(rootPath, "node", breakpoint.filePath) ? (
+                <BreakpointHitConditionInput
+                  breakpoint={breakpoint}
+                  key={`hit:${breakpoint.id}:${formatBreakpointHitCondition(breakpoint.hitCondition)}`}
+                  onSetBreakpointHitCondition={onSetBreakpointHitCondition}
+                />
+              ) : null}
+              {supportsLogpoints &&
+              rootPath &&
+              isBreakpointPathSupported(rootPath, "node", breakpoint.filePath) ? (
+                <BreakpointLogMessageInput
+                  breakpoint={breakpoint}
+                  key={`log:${breakpoint.id}:${breakpoint.logMessage ?? ""}`}
+                  onSetBreakpointLogMessage={onSetBreakpointLogMessage}
+                />
+              ) : null}
+              <button
+                aria-label="Remove breakpoint"
+                onClick={() => onRemoveBreakpoint(breakpoint.id)}
+                style={styles.action}
+                type="button"
+              >
+                <X aria-hidden="true" size={12} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

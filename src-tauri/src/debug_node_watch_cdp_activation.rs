@@ -79,24 +79,31 @@ impl Drop for WatchTargetActivationRollback<'_> {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "keeps exact generation confirmation adjacent to the activation boundary"
+)]
 pub(super) fn publish_and_activate_control(
     control_proxy: &WatchDebugControlProxy,
     generation: TargetGeneration,
     port: Arc<dyn WatchDebugControlPort>,
     gate: &WatchDebugEventGate,
-    event_lease: &WatchEventGenerationLease,
     cancellation: &WatchSupervisorCancellation,
+    begin_event_publication: impl FnOnce()
+        -> Option<super::watch_event_gate::WatchEventPublicationLease>,
+    confirm_entry_generation: impl FnOnce() -> Result<(), ()>,
     rollback: &mut WatchTargetActivationRollback<'_>,
 ) -> Result<(), ()> {
     let pending = control_proxy
         .prepare_install(generation, Arc::clone(&port))
         .map_err(|_| ())?;
-    let Some(event_publication) = gate.begin_publish(event_lease) else {
+    let Some(event_publication) = begin_event_publication() else {
         let _ = control_proxy.abort_pending(&pending);
         return Err(());
     };
     let mut event_flush = None;
     let activation = control_proxy.activate_exact_with(&pending, || {
+        confirm_entry_generation()?;
         match port
             .execute(WatchDebugControlCommand::RunIfWaitingForDebugger)
             .map_err(|_| ())?

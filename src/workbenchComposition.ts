@@ -1,4 +1,5 @@
 import { DirtyCloseDecisionCoordinator } from "./application/dirtyCloseDecisionCoordinator";
+import { QuickInputCoordinator } from "./application/quickInputCoordinator";
 import { WorkspaceNetteServicesGateway } from "./application/workspaceNetteServicesGateway";
 import { WorkspaceNettePresentersGateway } from "./application/workspaceNettePresentersGateway";
 import { WorkspaceNetteRoutesGateway } from "./application/workspaceNetteRoutesGateway";
@@ -73,6 +74,7 @@ export function createWorkbenchComposition() {
   const workspaceGateway = new TauriWorkspaceGateway(workspaceIdentityGateway);
   const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
   const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
+  const quickInputCoordinator = new QuickInputCoordinator();
 
   return {
     artisanRoutesGateway: new TauriArtisanRoutesGateway(),
@@ -135,6 +137,7 @@ export function createWorkbenchComposition() {
     phpTestGateway: new TauriPhpTestGateway(),
     phpTreeGateway: new TauriPhpTreeGateway(),
     runtimeObservabilityGateway: new TauriRuntimeObservabilityGateway(),
+    quickInputCoordinator,
     serverReadyExternalUrlOpener: new TauriServerReadyExternalUrlOpener(),
     settingsGateway: new BrowserSettingsGateway(),
     smartModeGateway: new TauriSmartModeGateway(),
@@ -142,13 +145,14 @@ export function createWorkbenchComposition() {
     symfonyWorkspaceIntelligenceGateway: new TauriSymfonyWorkspaceIntelligenceGateway(),
     terminalGateway: new TauriTerminalGateway(),
     vscodeProcessTasksGateway: new TauriVscodeProcessTasksGateway(),
-    workbenchPrompter: new BrowserWorkbenchPrompter(),
+    workbenchPrompter: new BrowserWorkbenchPrompter(quickInputCoordinator),
     workspaceGateways: {
       detection: workspaceGateway,
       fileChanges: workspaceFileChangeGateway,
       fileSearch: workspaceGateway,
       files: workspaceGateway,
       identity: workspaceIdentityGateway,
+      ownerFiles: workspaceGateway,
       phpTools: workspaceGateway,
       projectSymbols: projectSymbolSearchGateway,
       textSearch: workspaceGateway,

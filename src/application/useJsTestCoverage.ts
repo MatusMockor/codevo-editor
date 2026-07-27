@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { JsTestCoverageGateway, JsTestCoverageReport } from "../domain/jsTestCoverage";
+import type { JsTestRunScope } from "../domain/jsTestRunScope";
+import type { JsTestExecutionRootResolver } from "./jsTestExecutionRootResolver";
 
 interface WorkspaceCoverageState {
   readonly error: string | null;
@@ -10,8 +12,10 @@ interface WorkspaceCoverageState {
 
 export interface UseJsTestCoverageOptions {
   readonly gateway: JsTestCoverageGateway;
+  readonly executionScope?: JsTestRunScope;
   readonly invalidationVersion: number;
   readonly rootPath: string | null;
+  readonly resolveExecutionRoot?: JsTestExecutionRootResolver;
   readonly workspaceId: string | null;
   readonly workspaceTrusted: boolean;
 }
@@ -34,8 +38,10 @@ const EMPTY_STATE: WorkspaceCoverageState = {
 
 export function useJsTestCoverage({
   gateway,
+  executionScope = ALL_TESTS,
   invalidationVersion,
   rootPath,
+  resolveExecutionRoot = workspaceExecutionRoot,
   workspaceId,
   workspaceTrusted,
 }: UseJsTestCoverageOptions): JsTestCoverageState {
@@ -45,6 +51,8 @@ export function useJsTestCoverage({
   currentKeyRef.current = workspaceKey;
   const trustedRef = useRef(workspaceTrusted);
   trustedRef.current = workspaceTrusted;
+  const executionScopeRef = useRef(executionScope);
+  executionScopeRef.current = executionScope;
   const previousKeyRef = useRef(workspaceKey);
   const invalidationVersionsRef = useRef(new Map<string, number>());
   const sequencesRef = useRef(new Map<string, number>());
@@ -80,9 +88,20 @@ export function useJsTestCoverage({
     }));
 
     try {
-      const response = await gateway.run(capturedRoot);
+      const capturedScope = executionScope;
+      const authority = await resolveExecutionRoot(capturedScope);
       if (
         currentKeyRef.current !== capturedKey ||
+        executionScopeRef.current !== capturedScope ||
+        !trustedRef.current ||
+        sequencesRef.current.get(capturedKey) !== sequence
+      ) {
+        return false;
+      }
+      const response = await gateway.run(capturedRoot, authority);
+      if (
+        currentKeyRef.current !== capturedKey ||
+        executionScopeRef.current !== capturedScope ||
         !trustedRef.current ||
         sequencesRef.current.get(capturedKey) !== sequence
       ) {
@@ -116,6 +135,8 @@ export function useJsTestCoverage({
     } catch (error) {
       if (
         currentKeyRef.current === capturedKey &&
+        executionScopeRef.current === executionScope &&
+        trustedRef.current &&
         sequencesRef.current.get(capturedKey) === sequence
       ) {
         setStates((current) => ({
@@ -136,7 +157,7 @@ export function useJsTestCoverage({
         return { ...current, [capturedKey]: { ...previous, running: false } };
       });
     }
-  }, [gateway, rootPath, workspaceKey, workspaceTrusted]);
+  }, [executionScope, gateway, resolveExecutionRoot, rootPath, workspaceKey, workspaceTrusted]);
 
   const clear = useCallback(() => {
     if (!workspaceKey) return;
@@ -206,6 +227,12 @@ export function useJsTestCoverage({
     run,
     unavailable: state.unavailable,
   };
+}
+
+const ALL_TESTS: JsTestRunScope = Object.freeze({ kind: "all" });
+
+async function workspaceExecutionRoot(): Promise<{ readonly packageRootRelativePath: "" }> {
+  return Object.freeze({ packageRootRelativePath: "" });
 }
 
 function errorMessage(error: unknown): string {

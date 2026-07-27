@@ -37,12 +37,14 @@ describe("TauriWorkspaceSourceDiscoveryGateway", () => {
         truncated: false,
         visited: 8,
       })
-      .mockResolvedValueOnce({ status: "changed" });
+      .mockResolvedValueOnce({ status: "notFound" });
     const gateway = new TauriWorkspaceSourceDiscoveryGateway(identities(), invokeCommand);
 
     await gateway.enumerateJavaScriptSourceFiles(ROOT, { maxFiles: 2_000, maxVisited: 50_000 });
     await gateway.enumeratePackageJsonFiles(ROOT, { maxFiles: 256, maxVisited: 50_000 });
-    await gateway.readSourceTextBounded(ROOT, "src/a.ts", 2_097_152);
+    await expect(gateway.readSourceTextBounded(ROOT, "src/a.ts", 2_097_152)).resolves.toEqual({
+      status: "notFound",
+    });
 
     expect(invokeCommand).toHaveBeenNthCalledWith(1, "workspace_enumerate_js_source_files", {
       workspaceId: "ws-1",
@@ -92,6 +94,20 @@ describe("TauriWorkspaceSourceDiscoveryGateway", () => {
 
     owner = npmOwner({ nodePackageScriptDiscoveryVersion: 8 });
     expect(result.isCurrent()).toBe(false);
+  });
+
+  it("maps a missing workspace source to the npm manifest missing status", async () => {
+    const invokeCommand = vi
+      .fn<InvokeWorkspaceSourceDiscoveryCommand>()
+      .mockResolvedValue({ status: "notFound" });
+    const reader = new TauriWorkspaceSourceDiscoveryGateway(
+      identities(),
+      invokeCommand,
+    ).bindNpmOpenScriptNavigation(() => npmOwner());
+
+    await expect(reader.readManifestBounded(npmRequest())).resolves.toEqual({
+      status: "missing",
+    });
   });
 
   it("rejects an in-flight A to B to A return even when the visible path returns", async () => {

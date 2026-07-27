@@ -95,11 +95,11 @@ describe("JavaScript test coverage Monaco mappings", () => {
         className: "js-test-coverage-line js-test-coverage-covered-line",
         hoverMessage: {
           value:
-            "Test coverage: covered (2 hits). Inline hit counts are limited to the first 500 coverage lines.",
+            "Test coverage: covered (2 hits). Inline hit counts are limited in large coverage reports.",
         },
         linesDecorationsClassName: "js-test-coverage-gutter js-test-coverage-covered-gutter",
         linesDecorationsTooltip:
-          "Test coverage: covered (2 hits). Inline hit counts are limited to the first 500 coverage lines.",
+          "Test coverage: covered (2 hits). Inline hit counts are limited in large coverage reports.",
       },
       range: new FakeRange(11, 19, 11, 19),
     });

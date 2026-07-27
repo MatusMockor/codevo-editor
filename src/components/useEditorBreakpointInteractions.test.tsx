@@ -21,12 +21,14 @@ describe("useEditorBreakpointInteractions", () => {
     workspaceRoot: "/workspace" as string | null,
   };
   const setCondition = vi.fn();
+  const mutationError = vi.fn();
   const remove = vi.fn();
   const restoreFocus = vi.fn();
   const setHitCondition = vi.fn();
   const setLogMessage = vi.fn();
   let setList!: Dispatch<SetStateAction<Breakpoint[]>>;
   let currentBreakpoints: Breakpoint[] = [];
+  let removeImplementation: (id: string) => void | Promise<void>;
   let setConditionImplementation: (id: string, condition: string | null) => void | Promise<void>;
   let setHitConditionImplementation: (
     id: string,
@@ -45,10 +47,8 @@ describe("useEditorBreakpointInteractions", () => {
     captured.current = useEditorBreakpointInteractions({
       ...props,
       breakpoints,
-      onRemoveBreakpoint: (id) => {
-        remove(id);
-        setBreakpoints((current) => current.filter((entry) => entry.id !== id));
-      },
+      onMutationError: mutationError,
+      onRemoveBreakpoint: removeImplementation,
       onSetBreakpointCondition: setConditionImplementation,
       onSetBreakpointHitCondition: setHitConditionImplementation,
       onSetBreakpointLogMessage: setLogMessageImplementation,
@@ -74,10 +74,15 @@ describe("useEditorBreakpointInteractions", () => {
       workspaceRoot: "/workspace",
     };
     setCondition.mockClear();
+    mutationError.mockClear();
     remove.mockClear();
     restoreFocus.mockClear();
     setHitCondition.mockClear();
     setLogMessage.mockClear();
+    removeImplementation = (id) => {
+      remove(id);
+      setList((current) => current.filter((entry) => entry.id !== id));
+    };
     setConditionImplementation = (id, condition) => {
       setCondition(id, condition);
       setList((current) =>
@@ -261,6 +266,42 @@ describe("useEditorBreakpointInteractions", () => {
     act(() => hook().edit("logMessage"));
     await act(async () => expect(await hook().save("value={value}")).toBe(false));
     expect(hookBreakpoints().some((entry) => entry.lineNumber === 9)).toBe(false);
+    expect(mutationError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "configure failed" }),
+    );
+  });
+
+  it("reports rejected remove actions without leaving an unhandled promise", async () => {
+    const removeError = new Error("remove failed");
+    const clearError = new Error("clear failed");
+    removeImplementation = async () => {
+      throw removeError;
+    };
+    setLogMessageImplementation = async () => {
+      throw clearError;
+    };
+    render();
+    act(() =>
+      setList([
+        {
+          enabled: true,
+          filePath: "/workspace/app.ts",
+          id: "existing",
+          lineNumber: 3,
+          logMessage: "value={value}",
+        },
+      ]),
+    );
+
+    act(() => hook().open("/workspace/app.ts", 3, { x: 1, y: 2 }));
+    act(() => hook().remove());
+    await act(async () => Promise.resolve());
+    act(() => hook().open("/workspace/app.ts", 3, { x: 1, y: 2 }));
+    act(() => hook().removeLogpoint());
+    await act(async () => Promise.resolve());
+
+    expect(mutationError).toHaveBeenNthCalledWith(1, removeError);
+    expect(mutationError).toHaveBeenNthCalledWith(2, clearError);
   });
 
   it("rejects empty and malformed messages when creating a logpoint", async () => {
@@ -412,6 +453,7 @@ describe("useEditorBreakpointInteractions", () => {
     act(() => hook().edit("hitCondition"));
     await act(async () => expect(await hook().save(">=2")).toBe(false));
     expect(hookBreakpoints()).toEqual([]);
+    expect(mutationError).toHaveBeenCalledWith(expect.objectContaining({ message: "sync failed" }));
   });
 
   it("keeps ownership when verification relocates the created breakpoint", async () => {

@@ -24,6 +24,11 @@ mod set_expression_proof_tests {
     include!("debug_cdp_set_expression_proof_tests.rs");
 }
 
+mod multiline_evaluate_name_tests {
+    use super::*;
+    include!("debug_cdp_multiline_evaluate_name_tests.rs");
+}
+
 fn variables_responder(properties: Value) -> MockResponder {
     Box::new(move |id, method, _params| match method {
         "Runtime.runIfWaitingForDebugger" => vec![
@@ -1377,7 +1382,11 @@ fn identical_pages_reuse_stable_reference_ids_across_repeated_cdp_loads() {
 
 #[test]
 fn evaluation_preserves_only_a_safe_owner_bound_expression_as_evaluate_name() {
-    for (expression, expected) in [("count + 1", Some("count + 1")), ("count\t+ 1", None)] {
+    for (expression, expected) in [
+        ("count + 1", Some("count + 1")),
+        ("(\ncount\t+ 1\r\n)", Some("(\ncount\t+ 1\r\n)")),
+        ("count\revil", None),
+    ] {
         let server = MockCdpServer::start(flow_responder());
         let (registry, sink) =
             start_session_with_mock(&server.url, Vec::new(), MOCK_REQUEST_TIMEOUT);

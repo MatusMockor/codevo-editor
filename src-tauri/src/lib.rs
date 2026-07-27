@@ -42,6 +42,7 @@ mod javascript_typescript_real_integration_tests;
 pub mod job_scheduler;
 mod js_test_commands;
 mod js_test_coverage_commands;
+mod js_test_execution_root;
 mod js_test_run;
 mod js_test_tasks;
 mod js_test_watch;
@@ -130,9 +131,6 @@ pub(crate) use blocking_command::run_blocking_command;
 use debug_commands::*;
 use debug_node_attach_list_command::debug_list_node_attach_candidates;
 use debug_node_attach_start_command::debug_start_node_attach_candidate;
-use debug_node_watch_start_command::{
-    debug_confirm_native_node_watch, debug_start_native_node_watch,
-};
 use runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
 use settings_fonts::cached_monospace_font_families;
 
@@ -5102,8 +5100,8 @@ pub fn run() {
             debug_set_expression,
             debug_stack_trace,
             debug_node_env_file::debug_start,
-            debug_start_native_node_watch,
-            debug_confirm_native_node_watch,
+            debug_node_watch_start_command::debug_start_native_node_watch,
+            debug_node_watch_start_command::debug_confirm_native_node_watch,
             debug_start_compound,
             debug_step,
             debug_stop,

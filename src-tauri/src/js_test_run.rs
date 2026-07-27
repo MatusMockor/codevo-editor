@@ -1,9 +1,8 @@
 use crate::php_test_run::{
     PhpTestCase, PhpTestRunResponse, PhpTestStatus, PhpTestSuite, PhpTestTotals,
 };
-use crate::test_run_support::{bounded_output_tail, is_executable_file};
+use crate::test_run_support::bounded_output_tail;
 use serde::Deserialize;
-use serde_json::Value;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -15,51 +14,28 @@ use std::time::{Duration, Instant};
 pub(crate) mod coverage;
 #[path = "js_test_projection.rs"]
 mod projection;
+#[path = "js_test_runner.rs"]
+mod runner;
 #[path = "js_test_task_runner.rs"]
 pub(crate) mod task_runner;
 
+use crate::js_test_execution_root::{
+    retain_js_test_process_authority, RetainedJsTestProcessAuthority, RetainedJsTestRunnerKind,
+};
 use projection::validate_projected_test_text;
-use task_runner::{run_at_root as run_js_test_task_at_root, JsTestRunnerCompletion};
+#[cfg(test)]
+use runner::{detect_runner, MAX_PACKAGE_JSON_BYTES};
+use runner::{detect_runner_in_workspace, JsTestRunner};
+use task_runner::{run_at_roots as run_js_test_task_at_roots, JsTestRunnerCompletion};
 pub(crate) use task_runner::{run_registered as run_js_test_task_registered, JsTestTaskRunOutcome};
 
 const MAX_CASES: usize = 5_000;
 const MAX_SUITES: usize = 5_000;
 const ERROR_TAIL_BYTES: usize = 4_000;
-const MAX_PACKAGE_JSON_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_REPORT_BYTES: u64 = 16 * 1024 * 1024;
 const RUNNER_TIMEOUT: Duration = Duration::from_secs(300);
 const RESULT_SUBDIRECTORY: &str = "js-test-results";
 const RESULT_LABEL: &str = "JavaScript test result";
-const VITEST_CONFIG_FILES: [&str; 6] = [
-    "vitest.config.ts",
-    "vitest.config.js",
-    "vitest.config.mts",
-    "vitest.config.mjs",
-    "vitest.config.cts",
-    "vitest.config.cjs",
-];
-const VITE_CONFIG_FILES: [&str; 6] = [
-    "vite.config.ts",
-    "vite.config.js",
-    "vite.config.mts",
-    "vite.config.mjs",
-    "vite.config.cts",
-    "vite.config.cjs",
-];
-const JEST_CONFIG_FILES: [&str; 5] = [
-    "jest.config.js",
-    "jest.config.ts",
-    "jest.config.cjs",
-    "jest.config.mjs",
-    "jest.config.json",
-];
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum JsTestRunner {
-    Vitest(PathBuf),
-    Jest(PathBuf),
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum JsTestNameMatch {
@@ -171,20 +147,42 @@ pub async fn run_js_tests_registered(
 pub async fn run_js_tests_scoped_registered(
     root: std::fs::File,
     app_data_base: PathBuf,
+    package_root_relative_path: String,
     scope: JsTestRunScope,
 ) -> Result<PhpTestRunResponse, String> {
     crate::run_blocking_command(move || {
         let root_path = registered_root_path(&root)?;
         ensure_registered_root_identity(&root, &root_path)?;
-        Ok(run_js_tests_at_root(
+        let execution = crate::js_test_execution_root::resolve_js_test_execution_context(
             &root_path,
+            &package_root_relative_path,
+            scope,
+        )?;
+        crate::js_test_execution_root::ensure_js_test_execution_context_identity(&execution)?;
+        Ok(run_js_tests_at_roots(
+            &root_path,
+            &execution.execution_root,
+            &execution.package_root_path,
             &app_data_base,
-            |runner, current_root_path, result_path| {
-                ensure_registered_root_identity(&root, current_root_path)?;
-                let selection = selection_for_scope(current_root_path, &scope)?;
-                let result =
-                    execute_scoped_runner(runner, current_root_path, result_path, &selection);
-                ensure_registered_root_identity(&root, current_root_path)?;
+            |runner, execution_root, result_path| {
+                ensure_registered_root_identity(&root, &root_path)?;
+                crate::js_test_execution_root::ensure_js_test_execution_context_identity(
+                    &execution,
+                )?;
+                let selection = selection_for_scope(execution_root, &execution.scope)?;
+                let (binary, runner_kind) = match runner {
+                    JsTestRunner::Vitest(binary) => (binary, RetainedJsTestRunnerKind::Vitest),
+                    JsTestRunner::Jest(binary) => (binary, RetainedJsTestRunnerKind::Jest),
+                };
+                let authority = retain_js_test_process_authority(&execution, binary, runner_kind)?;
+                let result = execute_scoped_runner_retained(
+                    runner,
+                    execution_root,
+                    result_path,
+                    &selection,
+                    authority,
+                );
+                ensure_registered_root_identity(&root, &root_path)?;
                 result
             },
         ))
@@ -278,13 +276,32 @@ fn run_js_tests_at_root<F>(root: &Path, app_data_base: &Path, execute: F) -> Php
 where
     F: FnOnce(&JsTestRunner, &Path, &Path) -> Result<Vec<u8>, String>,
 {
-    match run_js_test_task_at_root(root, app_data_base, |runner, root, result_path| {
-        execute(runner, root, result_path).map(|stderr| {
-            JsTestRunnerCompletion::Completed(task_runner::JsTestProcessOutput::diagnostic_only(
-                stderr,
-            ))
-        })
-    }) {
+    run_js_tests_at_roots(root, root, root, app_data_base, execute)
+}
+
+fn run_js_tests_at_roots<F>(
+    projection_root: &Path,
+    execution_root: &Path,
+    package_root_path: &Path,
+    app_data_base: &Path,
+    execute: F,
+) -> PhpTestRunResponse
+where
+    F: FnOnce(&JsTestRunner, &Path, &Path) -> Result<Vec<u8>, String>,
+{
+    match run_js_test_task_at_roots(
+        projection_root,
+        execution_root,
+        package_root_path,
+        app_data_base,
+        |runner, root, result_path| {
+            execute(runner, root, result_path).map(|stderr| {
+                JsTestRunnerCompletion::Completed(
+                    task_runner::JsTestProcessOutput::diagnostic_only(stderr),
+                )
+            })
+        },
+    ) {
         JsTestTaskRunOutcome::Response { response, .. } => response,
         JsTestTaskRunOutcome::Cancelled { .. } => PhpTestRunResponse::Error {
             message: "JavaScript test run was cancelled unexpectedly.".to_string(),
@@ -365,7 +382,9 @@ fn validated_test_file(root: &Path, relative: &str) -> Result<PathBuf, String> {
         .join(relative_path)
         .canonicalize()
         .map_err(|error| format!("Failed to resolve JavaScript test file: {error}"))?;
-    if !canonical.starts_with(root) || !canonical.is_file() {
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| format!("Failed to resolve JavaScript test package root: {error}"))?;
+    if !canonical.starts_with(canonical_root) || !canonical.is_file() {
         return Err("JavaScript test file path must stay inside the workspace.".to_string());
     }
     Ok(relative_path.to_path_buf())
@@ -377,19 +396,31 @@ fn execute_runner(
     result_path: &Path,
     filter: Option<&str>,
 ) -> Result<Vec<u8>, String> {
-    execute_runner_with_args(runner, root, runner_args(runner, result_path, filter))
+    execute_runner_with_args(runner, root, runner_args(runner, result_path, filter), None)
 }
 
-fn execute_scoped_runner(
+fn execute_scoped_runner_retained(
     runner: &JsTestRunner,
     root: &Path,
     result_path: &Path,
     selection: &JsTestRunSelection,
+    authority: RetainedJsTestProcessAuthority,
+) -> Result<Vec<u8>, String> {
+    execute_scoped_runner_with_authority(runner, root, result_path, selection, Some(authority))
+}
+
+fn execute_scoped_runner_with_authority(
+    runner: &JsTestRunner,
+    root: &Path,
+    result_path: &Path,
+    selection: &JsTestRunSelection,
+    authority: Option<RetainedJsTestProcessAuthority>,
 ) -> Result<Vec<u8>, String> {
     execute_runner_with_args(
         runner,
         root,
         scoped_runner_args(runner, result_path, selection),
+        authority,
     )
 }
 
@@ -397,25 +428,41 @@ fn execute_runner_with_args(
     runner: &JsTestRunner,
     root: &Path,
     args: Vec<String>,
+    authority: Option<RetainedJsTestProcessAuthority>,
 ) -> Result<Vec<u8>, String> {
     let binary = match runner {
         JsTestRunner::Vitest(binary) => binary,
         JsTestRunner::Jest(binary) => binary,
     };
-    execute_runner_with_timeout(binary, root, args, RUNNER_TIMEOUT)
+    execute_runner_with_timeout_retained(binary, root, args, RUNNER_TIMEOUT, authority)
 }
 
+#[cfg(test)]
 fn execute_runner_with_timeout(
     binary: &Path,
     root: &Path,
     args: Vec<String>,
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
-    let mut command = Command::new(binary);
+    execute_runner_with_timeout_retained(binary, root, args, timeout, None)
+}
+
+pub(super) fn execute_runner_with_timeout_retained(
+    binary: &Path,
+    root: &Path,
+    args: Vec<String>,
+    timeout: Duration,
+    authority: Option<RetainedJsTestProcessAuthority>,
+) -> Result<Vec<u8>, String> {
+    let mut command = if let Some(authority) = authority {
+        authority.into_command(args)
+    } else {
+        let mut command = Command::new(binary);
+        command.args(args).current_dir(root);
+        command
+    };
     command
-        .args(args)
         .env("LC_ALL", "C")
-        .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -520,88 +567,6 @@ fn is_valid_filter(filter: &str) -> bool {
     !filter
         .bytes()
         .any(|byte| matches!(byte, 0x00..=0x1f | 0x7f))
-}
-
-fn detect_runner(root: &Path) -> Result<Option<JsTestRunner>, String> {
-    let package = read_package_json(root)?;
-    if uses_vitest(root, package.as_ref()) {
-        return resolve_binary(root, "vitest").map(|binary| binary.map(JsTestRunner::Vitest));
-    }
-    if uses_jest(root, package.as_ref()) {
-        return resolve_binary(root, "jest").map(|binary| binary.map(JsTestRunner::Jest));
-    }
-    Ok(None)
-}
-
-fn read_package_json(root: &Path) -> Result<Option<Value>, String> {
-    let path = root.join("package.json");
-    let file = match fs::File::open(&path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Failed to open package.json: {error}")),
-    };
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("Failed to inspect package.json: {error}"))?;
-    if metadata.len() > MAX_PACKAGE_JSON_BYTES {
-        return Err(format!(
-            "package.json exceeds the {MAX_PACKAGE_JSON_BYTES} byte safety limit."
-        ));
-    }
-    let mut contents = Vec::with_capacity((metadata.len() as usize).min(64 * 1024));
-    file.take(MAX_PACKAGE_JSON_BYTES + 1)
-        .read_to_end(&mut contents)
-        .map_err(|error| format!("Failed to read package.json: {error}"))?;
-    if contents.len() as u64 > MAX_PACKAGE_JSON_BYTES {
-        return Err(format!(
-            "package.json grew past the {MAX_PACKAGE_JSON_BYTES} byte safety limit while being read."
-        ));
-    }
-    Ok(serde_json::from_slice(&contents).ok())
-}
-
-fn uses_vitest(root: &Path, package: Option<&Value>) -> bool {
-    if has_config_file(root, &VITEST_CONFIG_FILES) {
-        return true;
-    }
-    has_config_file(root, &VITE_CONFIG_FILES) && has_dependency(package, "vitest")
-}
-
-fn uses_jest(root: &Path, package: Option<&Value>) -> bool {
-    if has_config_file(root, &JEST_CONFIG_FILES) {
-        return true;
-    }
-    if package.is_some_and(|package| package.get("jest").is_some()) {
-        return true;
-    }
-    has_dependency(package, "jest")
-}
-
-fn has_config_file(root: &Path, names: &[&str]) -> bool {
-    names.iter().any(|name| root.join(name).is_file())
-}
-
-fn has_dependency(package: Option<&Value>, name: &str) -> bool {
-    let Some(package) = package else {
-        return false;
-    };
-    ["dependencies", "devDependencies"].iter().any(|section| {
-        package
-            .get(section)
-            .and_then(|dependencies| dependencies.get(name))
-            .is_some()
-    })
-}
-
-fn resolve_binary(root: &Path, name: &str) -> Result<Option<PathBuf>, String> {
-    let candidate = root.join("node_modules").join(".bin").join(name);
-    if !is_executable_file(&candidate) {
-        return Ok(None);
-    }
-    candidate
-        .canonicalize()
-        .map(Some)
-        .map_err(|error| format!("Failed to resolve {name} binary: {error}"))
 }
 
 fn parse_jest_json(json: &[u8], root: &Path) -> Result<PhpTestRunResponse, String> {
@@ -1129,6 +1094,26 @@ mod tests {
     }
 
     #[test]
+    fn js_test_detects_vitest_dependency_without_config() {
+        for section in ["dependencies", "devDependencies"] {
+            let root = temp_directory(&format!("vitest-{section}-only"));
+            fs::write(
+                root.join("package.json"),
+                format!(r#"{{"{section}":{{"vitest":"^3.0.0"}}}}"#),
+            )
+            .expect("write package.json");
+            install_fake_binary(&root, "vitest");
+
+            assert!(matches!(
+                detect_runner(&root).expect("detect"),
+                Some(JsTestRunner::Vitest(_))
+            ));
+
+            fs::remove_dir_all(root).expect("cleanup");
+        }
+    }
+
+    #[test]
     fn js_test_ignores_vite_config_without_vitest_dependency() {
         let root = temp_directory("vite-without-vitest");
         fs::write(root.join("vite.config.ts"), "export default {}").expect("write config");
@@ -1150,6 +1135,21 @@ mod tests {
 
         assert!(error.contains("package.json"));
         assert!(error.contains("byte safety limit"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn js_test_ignores_malformed_package_json_for_manifest_detection() {
+        let root = temp_directory("malformed-package-json");
+        fs::write(
+            root.join("package.json"),
+            r#"{"devDependencies":{"vitest":"#,
+        )
+        .expect("write package.json");
+        install_fake_binary(&root, "vitest");
+
+        assert_eq!(detect_runner(&root).expect("detect"), None);
+
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1208,6 +1208,25 @@ mod tests {
             detect_runner(&root).expect("detect"),
             Some(JsTestRunner::Vitest(_))
         ));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn js_test_prefers_explicit_jest_config_over_vitest_dependency() {
+        let root = temp_directory("jest-config-with-vitest-dependency");
+        fs::write(
+            root.join("package.json"),
+            r#"{"devDependencies":{"vitest":"^3.0.0"}}"#,
+        )
+        .expect("write package.json");
+        fs::write(root.join("jest.config.js"), "module.exports = {};").expect("write jest config");
+        install_fake_binary(&root, "jest");
+
+        assert!(matches!(
+            detect_runner(&root).expect("detect"),
+            Some(JsTestRunner::Jest(_))
+        ));
+
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1417,11 +1436,7 @@ mod tests {
     fn js_test_runner_capture_is_bounded_and_timeout_kills_the_process() {
         let root = temp_directory("runner-bounds");
         let noisy = root.join("noisy.sh");
-        fs::write(
-            &noisy,
-            "#!/bin/sh\ni=0; while [ $i -lt 10000 ]; do printf x >&2; i=$((i+1)); done\n",
-        )
-        .expect("write noisy runner");
+        fs::write(&noisy, "#!/bin/sh\nprintf '%010000d' 0 >&2\n").expect("write noisy runner");
         make_executable(&noisy);
         let stderr =
             execute_runner_with_timeout(&noisy, &root, vec![], std::time::Duration::from_secs(2))

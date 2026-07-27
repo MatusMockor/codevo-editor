@@ -26,6 +26,7 @@ import { useGitStatusSurface } from "./useGitStatusSurface";
 import { useGitOperationCurrency } from "./useGitOperationCurrency";
 import { runEslintDisableAtCursor } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
+import { useWorkbenchCommandContext } from "./useWorkbenchCommandContext";
 import { useWorkbenchDebugOrchestration } from "./useWorkbenchDebugOrchestration";
 import { useWorkbenchNodePackageScripts } from "./useNodePackageScriptWorkbench";
 import { useWorkbenchNpmOpenScriptNavigation } from "./useWorkbenchNpmOpenScriptNavigation";
@@ -34,6 +35,7 @@ import { useOptionalWorkspaceTextReader } from "./useOptionalWorkspaceTextReader
 import { useActiveWorkspaceOwners } from "./useActiveWorkspaceOwners";
 import { useWorkbenchNodeRunWithoutDebugging } from "./useWorkbenchNodeRunWithoutDebugging";
 import { useWorkbenchVscodeProcessTasks } from "./useWorkbenchVscodeProcessTasks";
+import { useConfigureVscodeProcessTasks } from "./useConfigureVscodeProcessTasks";
 import { unavailableNodeRunTaskGateway } from "./workbenchUnavailableTaskGateways";
 import { createNodeLaunchPickerCoordinator } from "./useNodeLaunchConfigurationPicker";
 import { useNodeLaunchWorkspaceCurrent } from "./useNodeLaunchWorkspaceCurrent";
@@ -548,6 +550,7 @@ export function useWorkbenchController(
     fileChanges: workspaceFileChangeGateway,
     fileSearch,
     files: workspaceFiles,
+    ownerFiles: workspaceOwnerFiles,
     phpTools: phpToolGateway,
     projectSymbols: projectSymbolSearch,
     textSearch,
@@ -6197,17 +6200,11 @@ export function useWorkbenchController(
       editorSurfaceCommandRunner,
     ],
   );
-  const commandContext = useMemo(
-    () => ({
-      hasWorkspace: !!workspaceRoot,
-      hasActiveDocument: !!activeDocument,
-      activeDocumentDirty: !!activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
-      editorSurfaceScope: captureNavigationCommandScope(),
-    }),
-    [activeDocument, captureNavigationCommandScope, workspaceRoot],
-  );
-  const commandContextRef = useRef(commandContext);
-  commandContextRef.current = commandContext;
+  const { commandContext, commandContextRef } = useWorkbenchCommandContext({
+    activeDocument,
+    captureEditorSurfaceScope: captureNavigationCommandScope,
+    workspaceRoot,
+  });
 
   const {
     activateSearchEverywhereItem,
@@ -6281,8 +6278,21 @@ export function useWorkbenchController(
     workspaceRoot,
     workspaceRuntimeOwner,
   });
+  const configureTasks = useConfigureVscodeProcessTasks({
+    currentWorkspaceRootRef,
+    openFile,
+    workspaceFiles,
+    workspaceOwnerFiles,
+    workspaceIdentity: workspaceIdentityDescriptor,
+    workspaceRoot,
+    workspaceRuntimeOwner,
+    workspaceRuntimeOwnerClaimsRef,
+    workspaceRuntimeOwnerRef,
+    workspaceTrustedRef,
+  });
   const vscodeProcessTaskComposition = useWorkbenchVscodeProcessTasks({
     configurationVersion: workspaceDiscoveryVersions.vscodeProcessTasksVersion,
+    configureTasks,
     gateway: options.vscodeProcessTasksGateway,
     requestTerminalSession: requestActiveTerminalSession,
     rootPath: workspaceRoot,
@@ -8518,6 +8528,7 @@ export function useWorkbenchController(
     canShowNette: hasNetteApplicationFramework,
     canShowSymfony: hasSymfonyFramework,
     activeDocument,
+    openDocuments,
     captureNavigationCommandScope,
     activeEslintBufferClean,
     activeEslintFixes,

@@ -5,6 +5,7 @@ import {
   MAX_DEBUG_EVALUATION_VALUE_BYTES,
   debugEvaluationOwnersEqual,
   debugUtf8ByteLength,
+  isBoundedDebugEvaluateName,
   validateDebugExpression,
   type DebugEvaluationErrorKind,
   type DebugEvaluationOwner,
@@ -15,6 +16,7 @@ export const MAX_DEBUG_CONSOLE_ENTRIES = 1_000;
 export const MAX_DEBUG_CONSOLE_BYTES = 5 * 1_024 * 1_024;
 export const MAX_DEBUG_CONSOLE_HISTORY = 100;
 export const MAX_DEBUG_CONSOLE_OUTPUT_BYTES = 64 * 1_024;
+export const MAX_DEBUG_CONSOLE_OUTPUT_BATCH_ENTRIES = 5_500;
 export const MAX_DEBUG_CONSOLE_REQUEST_ID_BYTES = 128;
 
 export interface DebugConsoleResultOwner extends DebugEvaluationOwner {
@@ -36,7 +38,11 @@ interface DebugConsoleEntryBase {
 }
 
 export type DebugConsoleEntry =
-  | (DebugConsoleEntryBase & { readonly kind: "stdout" | "stderr"; readonly text: string })
+  | (DebugConsoleEntryBase & {
+      readonly kind: "stdout" | "stderr";
+      readonly text: string;
+      readonly truncated: boolean;
+    })
   | (DebugConsoleEntryBase & {
       readonly kind: "pending";
       readonly requestId: string;
@@ -73,6 +79,12 @@ export interface DebugConsoleState {
   readonly totalBytes: number;
 }
 
+export interface DebugConsoleOutputLine {
+  readonly stream: "stdout" | "stderr";
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
 export type DebugConsoleAction =
   | { readonly type: "own"; readonly owner: DebugEvaluationOwner | null }
   | { readonly type: "replace-history"; readonly history: readonly string[] }
@@ -81,6 +93,12 @@ export type DebugConsoleAction =
       readonly owner: DebugEvaluationOwner;
       readonly stream: "stdout" | "stderr";
       readonly text: string;
+      readonly truncated?: boolean;
+    }
+  | {
+      readonly type: "output-batch";
+      readonly owner: DebugEvaluationOwner;
+      readonly lines: readonly DebugConsoleOutputLine[];
     }
   | {
       readonly type: "evaluation-pending";
@@ -123,10 +141,14 @@ export function reduceDebugConsoleState(
       ? state
       : { ...state, entries: [], pendingRequestIds: [], totalBytes: 0 };
   }
-  if (action.type === "output") {
-    if (typeof action.text !== "string" || action.text.length === 0) return state;
-    const bounded = truncateUtf8(action.text, MAX_DEBUG_CONSOLE_OUTPUT_BYTES);
-    return appendEntry(state, { kind: action.stream, text: bounded.value }, bounded.omittedBytes);
+  if (action.type === "output" || action.type === "output-batch") {
+    const lines =
+      action.type === "output"
+        ? [{ stream: action.stream, text: action.text, truncated: action.truncated ?? false }]
+        : Array.isArray(action.lines)
+          ? action.lines
+          : [];
+    return appendOutputBatch(state, lines);
   }
   if (!isRequestId(action.requestId)) return state;
   if (action.type === "evaluation-pending") {
@@ -244,7 +266,11 @@ function removePendingRequestId(state: DebugConsoleState, requestId: string): De
 }
 
 type NewDebugConsoleEntry =
-  | { readonly kind: "stdout" | "stderr"; readonly text: string }
+  | {
+      readonly kind: "stdout" | "stderr";
+      readonly text: string;
+      readonly truncated: boolean;
+    }
   | {
       readonly kind: "pending";
       readonly requestId: string;
@@ -272,48 +298,105 @@ function appendEntry(
   value: NewDebugConsoleEntry,
   newlyOmittedBytes: number,
 ): DebugConsoleState {
+  return appendEntries(state, [{ omittedBytes: newlyOmittedBytes, value }]);
+}
+
+function appendOutputBatch(
+  state: DebugConsoleState,
+  lines: readonly DebugConsoleOutputLine[],
+): DebugConsoleState {
+  if (lines.length > MAX_DEBUG_CONSOLE_OUTPUT_BATCH_ENTRIES) return state;
+
+  return appendEntries(state, boundedOutputAdditions(lines));
+}
+
+function* boundedOutputAdditions(
+  lines: readonly DebugConsoleOutputLine[],
+): Generator<{ readonly omittedBytes: number; readonly value: NewDebugConsoleEntry }> {
+  for (const line of lines) {
+    if (
+      !isRecord(line) ||
+      (line.stream !== "stdout" && line.stream !== "stderr") ||
+      typeof line.text !== "string" ||
+      line.text.length === 0 ||
+      typeof line.truncated !== "boolean"
+    ) {
+      continue;
+    }
+    const bounded = truncateUtf8(line.text, MAX_DEBUG_CONSOLE_OUTPUT_BYTES);
+    yield {
+      omittedBytes: bounded.omittedBytes,
+      value: { kind: line.stream, text: bounded.value, truncated: line.truncated },
+    };
+  }
+}
+
+function appendEntries(
+  state: DebugConsoleState,
+  additions: Iterable<{
+    readonly omittedBytes: number;
+    readonly value: NewDebugConsoleEntry;
+  }>,
+): DebugConsoleState {
   const owner = state.owner!;
-  const entry: DebugConsoleEntry = {
-    ...value,
-    id: `console-${state.nextSequence}`,
-    owner,
-    sequence: state.nextSequence,
-  };
   const previousMarker = state.entries.find((candidate) => candidate.kind === "truncated");
-  const entries = state.entries.filter((candidate) => candidate.kind !== "truncated");
-  entries.push(entry);
+  const entries: (DebugConsoleEntry | undefined)[] = state.entries.filter(
+    (candidate) => candidate.kind !== "truncated",
+  );
+  let retainedStart = 0;
+  let nextSequence = state.nextSequence;
+  let addedEntries = 0;
   let omittedEntries = previousMarker?.omittedEntries ?? 0;
-  let omittedBytes = (previousMarker?.omittedBytes ?? 0) + newlyOmittedBytes;
-  let totalBytes = entries.reduce((total, candidate) => total + consoleEntryBytes(candidate), 0);
+  let omittedBytes = previousMarker?.omittedBytes ?? 0;
+  let totalBytes = state.totalBytes - (previousMarker ? consoleEntryBytes(previousMarker) : 0);
   const needsMarker = () => omittedEntries > 0 || omittedBytes > 0;
-  while (entries.length > MAX_DEBUG_CONSOLE_ENTRIES - (needsMarker() ? 1 : 0)) {
-    const removed = entries.shift()!;
+  const evictFirstEntry = () => {
+    const removed = entries[retainedStart]!;
+    entries[retainedStart] = undefined;
+    retainedStart += 1;
     const removedBytes = consoleEntryBytes(removed);
     totalBytes -= removedBytes;
     omittedEntries += 1;
     omittedBytes += removedBytes;
+  };
+
+  for (const addition of additions) {
+    const entry: DebugConsoleEntry = {
+      ...addition.value,
+      id: `console-${nextSequence}`,
+      owner,
+      sequence: nextSequence,
+    };
+    entries.push(entry);
+    nextSequence += 1;
+    addedEntries += 1;
+    totalBytes += consoleEntryBytes(entry);
+    omittedBytes += addition.omittedBytes;
+
+    while (entries.length - retainedStart > MAX_DEBUG_CONSOLE_ENTRIES - (needsMarker() ? 1 : 0)) {
+      evictFirstEntry();
+    }
+    while (totalBytes + (needsMarker() ? truncationMarkerBytes() : 0) > MAX_DEBUG_CONSOLE_BYTES) {
+      if (retainedStart >= entries.length) break;
+      evictFirstEntry();
+    }
   }
-  while (totalBytes + (needsMarker() ? truncationMarkerBytes() : 0) > MAX_DEBUG_CONSOLE_BYTES) {
-    const removed = entries.shift();
-    if (!removed) break;
-    const removedBytes = consoleEntryBytes(removed);
-    totalBytes -= removedBytes;
-    omittedEntries += 1;
-    omittedBytes += removedBytes;
-  }
+  if (addedEntries === 0) return state;
+
+  const retainedEntries = entries.slice(retainedStart) as DebugConsoleEntry[];
   const boundedEntries: DebugConsoleEntry[] = needsMarker()
     ? [
         {
           kind: "truncated",
           id: "console-truncated",
           owner,
-          sequence: entries[0]?.sequence ?? entry.sequence,
+          sequence: retainedEntries[0]?.sequence ?? nextSequence - 1,
           omittedEntries,
           omittedBytes,
         },
-        ...entries,
+        ...retainedEntries,
       ]
-    : entries;
+    : retainedEntries;
   const retainedRequestIds = new Set(
     boundedEntries.flatMap((candidate) =>
       candidate.kind === "pending" ? [candidate.requestId] : [],
@@ -325,11 +408,8 @@ function appendEntry(
     pendingRequestIds: state.pendingRequestIds.filter((requestId) =>
       retainedRequestIds.has(requestId),
     ),
-    nextSequence: state.nextSequence + 1,
-    totalBytes: boundedEntries.reduce(
-      (total, candidate) => total + consoleEntryBytes(candidate),
-      0,
-    ),
+    nextSequence,
+    totalBytes: totalBytes + (needsMarker() ? truncationMarkerBytes() : 0),
   };
 }
 
@@ -499,10 +579,7 @@ function isDebugEvaluationResult(value: unknown): value is DebugEvaluationResult
   if (
     hasOwn(value, "evaluateName") &&
     value.evaluateName !== undefined &&
-    (typeof value.evaluateName !== "string" ||
-      value.evaluateName.trim().length === 0 ||
-      /\p{Cc}/u.test(value.evaluateName) ||
-      debugUtf8ByteLength(value.evaluateName) > MAX_DEBUG_EVALUATION_EXPRESSION_BYTES)
+    !isBoundedDebugEvaluateName(value.evaluateName)
   ) {
     return false;
   }

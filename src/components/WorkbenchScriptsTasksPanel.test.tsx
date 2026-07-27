@@ -182,6 +182,9 @@ function defaultProps(): WorkbenchScriptsTasksPanelProps {
     vscodeProcessTasks: {
       activeLabel: null,
       configRevision: "sha256:revision",
+      configurationAction: "open",
+      configure: vi.fn(async () => true),
+      configuring: false,
       currentStep: null,
       diagnostics: [],
       discover: vi.fn(async () => true),

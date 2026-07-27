@@ -13,7 +13,6 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -170,15 +169,13 @@ fn spawn_node_inspector_with_workspace_directory(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Unable to launch the Node.js debug process: {error}"))?;
-    let process = DebugProcessHandle::from_process_id(child.id());
+    let process = DebugProcessHandle::supervised(child.id());
     let Some(stdout) = child.stdout.take() else {
-        process.terminate();
-        let _ = child.wait();
+        hard_kill_child_group_and_reap(&mut child);
         return Err("The Node.js debug process has no stdout pipe.".to_string());
     };
     let Some(stderr) = child.stderr.take() else {
-        process.terminate();
-        let _ = child.wait();
+        hard_kill_child_group_and_reap(&mut child);
         return Err("The Node.js debug process has no stderr pipe.".to_string());
     };
     let (url_tx, endpoint_feed) = inspector_endpoint_feed();
@@ -192,8 +189,7 @@ fn spawn_node_inspector_with_workspace_directory(
     ) {
         Ok(pump) => pump,
         Err(error) => {
-            process.terminate();
-            let _ = child.wait();
+            hard_kill_child_group_and_reap(&mut child);
             return Err(format!(
                 "Unable to start the Node.js debugger stdout owner: {error}"
             ));
@@ -208,8 +204,7 @@ fn spawn_node_inspector_with_workspace_directory(
     ) {
         Ok(pump) => pump,
         Err(error) => {
-            process.terminate();
-            let _ = child.wait();
+            hard_kill_child_group_and_reap(&mut child);
             let _ = stdout_pump.join();
             return Err(format!(
                 "Unable to start the Node.js debugger stderr owner: {error}"
@@ -223,8 +218,7 @@ fn spawn_node_inspector_with_workspace_directory(
     ) {
         Ok(url) => url,
         Err(error) => {
-            process.terminate();
-            let _ = child.wait();
+            hard_kill_child_group_and_reap(&mut child);
             let _ = stdout_pump.join();
             let _ = stderr_pump.join();
             return Err(discovery_error_message(error));
@@ -306,19 +300,7 @@ impl SpawnedNodeInspector {
         let Some(mut child) = self.child.take() else {
             return;
         };
-        #[cfg(unix)]
-        if let Ok(process_group_id) = i32::try_from(child.id()) {
-            unsafe {
-                libc::kill(-process_group_id, libc::SIGKILL);
-            }
-        }
-        let _ = child.kill();
-        loop {
-            match child.wait() {
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Ok(_) | Err(_) => break,
-            }
-        }
+        hard_kill_child_group_and_reap(&mut child);
     }
 
     fn into_watch_supervisor_parts(mut self) -> (Child, InspectorEndpointFeed) {
@@ -345,8 +327,8 @@ impl SpawnedNodeInspector {
     pub(crate) fn spawn_waiter_with_endpoint_feed(
         mut self,
         finish: Box<dyn FnOnce(Option<i32>) + Send>,
-    ) -> InspectorEndpointFeed {
-        let mut child = self
+    ) -> Result<InspectorEndpointFeed, String> {
+        let child = self
             .child
             .take()
             .expect("spawned Node inspector process ownership");
@@ -355,16 +337,38 @@ impl SpawnedNodeInspector {
             .take()
             .expect("spawned Node inspector endpoint ownership");
         let cancellation = endpoints.cancellation_handle();
-        thread::spawn(move || {
-            let exit_code = child.wait().ok().and_then(|status| status.code());
-            cancellation.cancel();
-            finish(exit_code);
-        });
-        endpoints
+        self.process.supervise(
+            child,
+            Box::new(move |exit_code| {
+                cancellation.cancel();
+                finish(exit_code);
+            }),
+        )?;
+        Ok(endpoints)
     }
 
-    pub(crate) fn spawn_waiter(self, finish: Box<dyn FnOnce(Option<i32>) + Send>) {
-        drop(self.spawn_waiter_with_endpoint_feed(finish));
+    pub(crate) fn spawn_waiter(
+        self,
+        finish: Box<dyn FnOnce(Option<i32>) + Send>,
+    ) -> Result<(), String> {
+        drop(self.spawn_waiter_with_endpoint_feed(finish)?);
+        Ok(())
+    }
+}
+
+fn hard_kill_child_group_and_reap(child: &mut Child) {
+    #[cfg(unix)]
+    if let Ok(process_group_id) = i32::try_from(child.id()) {
+        unsafe {
+            libc::kill(-process_group_id, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    loop {
+        match child.wait() {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Ok(_) | Err(_) => break,
+        }
     }
 }
 
@@ -399,6 +403,9 @@ mod watch_replay;
 #[cfg_attr(not(test), allow(dead_code))]
 #[path = "debug_node_watch_session_factory.rs"]
 mod watch_session_factory;
+
+#[path = "debug_node_watch_entry_authority.rs"]
+mod watch_entry_authority;
 
 #[path = "debug_node_watch_workspace_start.rs"]
 mod watch_workspace_start;
@@ -445,9 +452,85 @@ pub(crate) mod watch_event_gate;
 #[path = "debug_desired_policy.rs"]
 pub(crate) mod watch_desired_policy;
 
+#[cfg(test)]
+#[path = "real_node_test_admission.rs"]
+pub(crate) mod real_node_test_admission;
+
 #[cfg(all(test, unix))]
 #[path = "debug_node_watch_real_integration_tests.rs"]
 mod watch_real_integration_tests;
+
+#[cfg(all(test, unix))]
+#[path = "debug_node_stop_on_entry_real_integration_tests.rs"]
+mod stop_on_entry_real_integration_tests;
+
+#[cfg(all(test, unix))]
+#[path = "debug_node_stop_reap_real_integration_tests.rs"]
+mod stop_reap_real_integration_tests;
+
+#[cfg(all(test, unix))]
+mod startup_cleanup_tests {
+    use super::hard_kill_child_group_and_reap;
+    use std::fs;
+    use std::os::unix::process::CommandExt;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn pre_supervision_failure_kills_and_reaps_the_owned_group() {
+        let marker = temporary_marker();
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("trap '' TERM; sh -c 'trap \"\" TERM; while :; do sleep 1; done' & echo $! > \"$1\"; wait")
+            .arg("node-debug-startup-cleanup")
+            .arg(&marker)
+            .process_group(0);
+        let mut child = command.spawn().expect("spawn startup-cleanup group");
+        let root_process_id = child.id();
+        let grandchild_process_id = wait_for_process_id(&marker);
+
+        hard_kill_child_group_and_reap(&mut child);
+
+        assert!(!process_is_running(root_process_id));
+        assert!(!process_is_running(grandchild_process_id));
+        let _ = fs::remove_file(marker);
+    }
+
+    fn temporary_marker() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "codevo-node-startup-cleanup-{}-{nonce}.pid",
+            std::process::id()
+        ))
+    }
+
+    fn wait_for_process_id(path: &PathBuf) -> u32 {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(value) = fs::read_to_string(path) {
+                return value.trim().parse().expect("grandchild process id");
+            }
+            assert!(Instant::now() < deadline, "startup child marker timeout");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn process_is_running(process_id: u32) -> bool {
+        let output = Command::new("/bin/ps")
+            .args(["-o", "state=", "-p", &process_id.to_string()])
+            .output()
+            .expect("inspect startup cleanup process");
+        let state = String::from_utf8_lossy(&output.stdout);
+        let state = state.trim();
+        !state.is_empty() && !state.starts_with('Z')
+    }
+}
 
 fn discovery_error_message(error: InspectorDiscoveryError) -> String {
     match error {

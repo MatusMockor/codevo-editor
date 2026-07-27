@@ -1,9 +1,10 @@
 use super::watch_desired_policy::{DesiredDebuggerReplayPlan, DesiredDebuggerReplayStep};
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugExceptionPauseMode, DebugFunctionBreakpoint,
-    DebugJustMyCodePolicy,
+    DebugFunctionBreakpointVerification, DebugJustMyCodePolicy,
 };
 use crate::debug_cdp::transport::NodeCdpAdapter;
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use std::collections::HashSet;
 
 pub(super) trait WatchCdpProtocol {
@@ -14,6 +15,16 @@ pub(super) trait WatchCdpProtocol {
         policy: Option<DebugJustMyCodePolicy>,
     ) -> Result<(), ()>;
     fn set_exception_pause(&mut self, mode: DebugExceptionPauseMode) -> Result<(), ()>;
+    fn set_exception_pause_filter(
+        &mut self,
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: &DebugExceptionTypeFilter,
+    ) -> Result<(), ()> {
+        if !exception_type_filter.is_empty() {
+            return Err(());
+        }
+        self.set_exception_pause(mode)
+    }
     fn set_breakpoints_active(&mut self, active: bool) -> Result<(), ()>;
     fn set_breakpoints(
         &mut self,
@@ -23,6 +34,11 @@ pub(super) trait WatchCdpProtocol {
     fn set_function_breakpoints(
         &mut self,
         breakpoints: &[DebugFunctionBreakpoint],
+        generation: u64,
+        publish: &mut dyn FnMut(
+            u64,
+            Vec<DebugFunctionBreakpointVerification>,
+        ) -> Result<(), String>,
     ) -> Result<(), ()>;
 }
 
@@ -40,6 +56,15 @@ impl WatchCdpProtocol for NodeCdpAdapter {
         policy: Option<DebugJustMyCodePolicy>,
     ) -> Result<(), ()> {
         self.watch_apply_internal_step_filter(policy)
+            .map_err(|_| ())
+    }
+
+    fn set_exception_pause_filter(
+        &mut self,
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: &DebugExceptionTypeFilter,
+    ) -> Result<(), ()> {
+        DebugAdapter::set_exception_pause_filter(self, mode, exception_type_filter.as_slice())
             .map_err(|_| ())
     }
 
@@ -64,23 +89,67 @@ impl WatchCdpProtocol for NodeCdpAdapter {
     fn set_function_breakpoints(
         &mut self,
         breakpoints: &[DebugFunctionBreakpoint],
+        generation: u64,
+        publish: &mut dyn FnMut(
+            u64,
+            Vec<DebugFunctionBreakpointVerification>,
+        ) -> Result<(), String>,
     ) -> Result<(), ()> {
-        DebugAdapter::set_function_breakpoints(self, breakpoints)
-            .map(|_| ())
+        self.watch_set_function_breakpoints_with_publication(breakpoints, generation, publish)
             .map_err(|_| ())
     }
 }
 
+#[cfg(test)]
 pub(super) fn apply_replay_setup(
     adapter: &mut impl WatchCdpProtocol,
     steps: &[DesiredDebuggerReplayStep],
     is_current: impl Fn() -> bool,
 ) -> Result<(), ()> {
+    apply_replay_setup_with_function_publication(adapter, steps, is_current, &mut |_, _| Ok(()))
+}
+
+pub(super) fn apply_replay_setup_with_function_publication(
+    adapter: &mut impl WatchCdpProtocol,
+    steps: &[DesiredDebuggerReplayStep],
+    is_current: impl Fn() -> bool,
+    publish: &mut dyn FnMut(u64, Vec<DebugFunctionBreakpointVerification>) -> Result<(), String>,
+) -> Result<(), ()> {
+    apply_replay_setup_with_function_policy(
+        adapter,
+        steps,
+        is_current,
+        FunctionBreakpointReplayPolicy::Apply,
+        publish,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum FunctionBreakpointReplayPolicy {
+    Apply,
+    PreserveInstalledAuthority,
+}
+
+fn apply_replay_setup_with_function_policy(
+    adapter: &mut impl WatchCdpProtocol,
+    steps: &[DesiredDebuggerReplayStep],
+    is_current: impl Fn() -> bool,
+    function_policy: FunctionBreakpointReplayPolicy,
+    publish: &mut dyn FnMut(u64, Vec<DebugFunctionBreakpointVerification>) -> Result<(), String>,
+) -> Result<(), ()> {
     for step in steps {
         if !is_current() {
             return Err(());
         }
-        apply_replay_step(adapter, step)?;
+        if !matches!(
+            (function_policy, step),
+            (
+                FunctionBreakpointReplayPolicy::PreserveInstalledAuthority,
+                DesiredDebuggerReplayStep::SetFunctionBreakpoints { .. }
+            )
+        ) {
+            apply_replay_step(adapter, step, publish)?;
+        }
         if !is_current() {
             return Err(());
         }
@@ -91,6 +160,7 @@ pub(super) fn apply_replay_setup(
 fn apply_replay_step(
     adapter: &mut impl WatchCdpProtocol,
     step: &DesiredDebuggerReplayStep,
+    publish: &mut dyn FnMut(u64, Vec<DebugFunctionBreakpointVerification>) -> Result<(), String>,
 ) -> Result<(), ()> {
     match step {
         DesiredDebuggerReplayStep::EnableRuntime => adapter.enable_runtime(),
@@ -98,7 +168,10 @@ fn apply_replay_step(
         DesiredDebuggerReplayStep::ApplyInternalStepFilter(policy) => {
             adapter.apply_internal_step_filter(*policy)
         }
-        DesiredDebuggerReplayStep::SetExceptionPause(mode) => adapter.set_exception_pause(*mode),
+        DesiredDebuggerReplayStep::SetExceptionPause {
+            mode,
+            exception_type_filter,
+        } => adapter.set_exception_pause_filter(*mode, exception_type_filter),
         DesiredDebuggerReplayStep::SetBreakpointsActive(active) => {
             adapter.set_breakpoints_active(*active)
         }
@@ -106,9 +179,10 @@ fn apply_replay_step(
             file_path,
             breakpoints,
         } => adapter.set_breakpoints(file_path, breakpoints),
-        DesiredDebuggerReplayStep::SetFunctionBreakpoints { breakpoints } => {
-            adapter.set_function_breakpoints(breakpoints)
-        }
+        DesiredDebuggerReplayStep::SetFunctionBreakpoints {
+            breakpoints,
+            generation,
+        } => adapter.set_function_breakpoints(breakpoints, *generation, publish),
         DesiredDebuggerReplayStep::RunIfWaitingForDebugger => Err(()),
     }
 }
@@ -118,6 +192,56 @@ pub(super) fn reconcile_replay_setup(
     replayed: &DesiredDebuggerReplayPlan,
     current: &DesiredDebuggerReplayPlan,
     is_current: impl Fn() -> bool,
+) -> Result<(), ()> {
+    reconcile_replay_setup_with_function_publication(
+        adapter,
+        replayed,
+        current,
+        is_current,
+        &mut |_, _| Ok(()),
+    )
+}
+
+pub(super) fn reconcile_replay_setup_preserving_function_breakpoints(
+    adapter: &mut impl WatchCdpProtocol,
+    replayed: &DesiredDebuggerReplayPlan,
+    current: &DesiredDebuggerReplayPlan,
+    is_current: impl Fn() -> bool,
+) -> Result<(), ()> {
+    reconcile_replay_setup_with_policy(
+        adapter,
+        replayed,
+        current,
+        is_current,
+        FunctionBreakpointReplayPolicy::PreserveInstalledAuthority,
+        &mut |_, _| Ok(()),
+    )
+}
+
+pub(super) fn reconcile_replay_setup_with_function_publication(
+    adapter: &mut impl WatchCdpProtocol,
+    replayed: &DesiredDebuggerReplayPlan,
+    current: &DesiredDebuggerReplayPlan,
+    is_current: impl Fn() -> bool,
+    publish: &mut dyn FnMut(u64, Vec<DebugFunctionBreakpointVerification>) -> Result<(), String>,
+) -> Result<(), ()> {
+    reconcile_replay_setup_with_policy(
+        adapter,
+        replayed,
+        current,
+        is_current,
+        FunctionBreakpointReplayPolicy::Apply,
+        publish,
+    )
+}
+
+fn reconcile_replay_setup_with_policy(
+    adapter: &mut impl WatchCdpProtocol,
+    replayed: &DesiredDebuggerReplayPlan,
+    current: &DesiredDebuggerReplayPlan,
+    is_current: impl Fn() -> bool,
+    function_policy: FunctionBreakpointReplayPolicy,
+    publish: &mut dyn FnMut(u64, Vec<DebugFunctionBreakpointVerification>) -> Result<(), String>,
 ) -> Result<(), ()> {
     let current_files: HashSet<&str> = current
         .steps()
@@ -146,5 +270,5 @@ pub(super) fn reconcile_replay_setup(
     if !matches!(run, DesiredDebuggerReplayStep::RunIfWaitingForDebugger) {
         return Err(());
     }
-    apply_replay_setup(adapter, setup, is_current)
+    apply_replay_setup_with_function_policy(adapter, setup, is_current, function_policy, publish)
 }

@@ -26,8 +26,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other-workspace";
@@ -48,10 +47,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function runningStatus(
-  rootPath: string,
-  sessionId: number,
-): LanguageServerRuntimeStatus {
+function runningStatus(rootPath: string, sessionId: number): LanguageServerRuntimeStatus {
   return {
     kind: "running",
     rootPath,
@@ -105,8 +101,7 @@ function isRunningForWorkspace(
     return false;
   }
 
-  const rootedStatus =
-    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
+  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
 
   if (!rootedStatus || !workspaceRootKeysEqual(rootedStatus, workspaceRoot)) {
     return false;
@@ -185,9 +180,7 @@ function makePrimitives(refs: FamilyRefs) {
     const key = languageServerDocumentSyncKey(rootPath, path);
     const next = (refs.versions.current[key] || 0) + 1;
     refs.versions.current[key] = next;
-    refs.versionsByUri.current[
-      languageServerUriSyncKey(rootPath, fileUriFromPath(path))
-    ] = next;
+    refs.versionsByUri.current[languageServerUriSyncKey(rootPath, fileUriFromPath(path))] = next;
     return next;
   };
 
@@ -221,20 +214,14 @@ function makePrimitives(refs: FamilyRefs) {
 
   const sessionCurrent = (rootPath: string, sessionId: number): boolean => {
     const current =
-      cachedLanguageServerRuntimeStatusForRoot(
-        refs.statusByRootRef.current,
-        rootPath,
-      ) ??
+      cachedLanguageServerRuntimeStatusForRoot(refs.statusByRootRef.current, rootPath) ??
       (workspaceRootKeysEqual(refs.statusRootRef.current, rootPath)
         ? refs.statusRef.current
         : null);
 
     return (
-      isRunningForWorkspace(
-        current,
-        current?.rootPath ?? refs.statusRootRef.current,
-        rootPath,
-      ) && current.sessionId === sessionId
+      isRunningForWorkspace(current, current?.rootPath ?? refs.statusRootRef.current, rootPath) &&
+      current.sessionId === sessionId
     );
   };
 
@@ -355,8 +342,7 @@ function createHarness(): Harness {
     warmUpPhpLanguageServerIndex: warmUp,
 
     isLanguageServerSessionCurrentForRoot: phpPrimitives.sessionCurrent,
-    isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot:
-      jstsPrimitives.sessionCurrent,
+    isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot: jstsPrimitives.sessionCurrent,
     isRunningLanguageServerForWorkspace: isRunningForWorkspace,
     isSessionPathInWorkspace,
     isJavaScriptTypeScriptDocumentSyncableForRoot,
@@ -441,12 +427,16 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
 
     const key = languageServerDocumentSyncKey(ROOT, document.path);
     expect(harness.phpGateway.didOpen).toHaveBeenCalledTimes(1);
-    expect(harness.phpGateway.didOpen).toHaveBeenCalledWith(ROOT, {
-      languageId: "php",
-      path: document.path,
-      text: "a",
-      version: 1,
-    }, SESSION);
+    expect(harness.phpGateway.didOpen).toHaveBeenCalledWith(
+      ROOT,
+      {
+        languageId: "php",
+        path: document.path,
+        text: "a",
+        version: 1,
+      },
+      SESSION,
+    );
     expect(harness.php.syncedPaths.current.has(key)).toBe(true);
     expect(harness.warmUp).toHaveBeenCalledWith(ROOT, document.path, SESSION);
   });
@@ -457,18 +447,14 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const document = phpDocument();
 
     await rendered.api().syncOpenDocument(document);
-    expect(rendered.api().isLanguageServerDocumentSynced(document.path)).toBe(
-      true,
-    );
+    expect(rendered.api().isLanguageServerDocumentSynced(document.path)).toBe(true);
 
     rendered.rerender({
       ...harness.deps,
       currentWorkspaceRootRef: ref<string | null>(OTHER_ROOT),
     });
 
-    expect(rendered.api().isLanguageServerDocumentSynced(document.path)).toBe(
-      false,
-    );
+    expect(rendered.api().isLanguageServerDocumentSynced(document.path)).toBe(false);
   });
 
   it("assigns a new lifecycle identity when the same path closes and reopens", async () => {
@@ -477,29 +463,18 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const document = phpDocument();
 
     await api().syncOpenDocument(document);
-    const firstLifecycle = api().getLanguageServerDocumentLifecycleIdentity(
-      ROOT,
-      document.path,
-    );
+    const firstLifecycle = api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path);
 
     await api().syncClosedDocument(document);
-    expect(
-      api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path),
-    ).toBeNull();
+    expect(api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path)).toBeNull();
 
     await api().syncOpenDocument(document);
-    const secondLifecycle = api().getLanguageServerDocumentLifecycleIdentity(
-      ROOT,
-      document.path,
-    );
+    const secondLifecycle = api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path);
 
     expect(firstLifecycle).toBe(1);
     expect(secondLifecycle).toBe(2);
     expect(
-      api().getLanguageServerDocumentLifecycleIdentity(
-        `${ROOT}-neighbor`,
-        document.path,
-      ),
+      api().getLanguageServerDocumentLifecycleIdentity(`${ROOT}-neighbor`, document.path),
     ).toBeNull();
   });
 
@@ -528,9 +503,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
   it("returns a root-bound lease only after didOpen completes", async () => {
     const harness = createHarness();
     const open = deferred<void>();
-    vi.mocked(harness.phpGateway.didOpen).mockImplementation(
-      async () => open.promise,
-    );
+    vi.mocked(harness.phpGateway.didOpen).mockImplementation(async () => open.promise);
     const { api } = renderDocumentSync(harness.deps);
     const document = phpDocument();
     harness.activeDocumentRef.current = document;
@@ -551,24 +524,17 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const lease = await leasePromise;
 
     expect(lease?.lifecycleIdentity).toBe(1);
-    expect(
-      lease && api().isLanguageServerDocumentRequestLeaseCurrent(lease),
-    ).toBe(true);
+    expect(lease && api().isLanguageServerDocumentRequestLeaseCurrent(lease)).toBe(true);
   });
 
   it("does not lease a document when didOpen fails", async () => {
     const harness = createHarness();
-    vi.mocked(harness.phpGateway.didOpen).mockRejectedValue(
-      new Error("open failed"),
-    );
+    vi.mocked(harness.phpGateway.didOpen).mockRejectedValue(new Error("open failed"));
     const { api } = renderDocumentSync(harness.deps);
     const document = phpDocument();
     harness.activeDocumentRef.current = document;
 
-    const lease = await api().requestLanguageServerDocumentLease(
-      ROOT,
-      document.path,
-    );
+    const lease = await api().requestLanguageServerDocumentLease(ROOT, document.path);
 
     expect(lease).toBeNull();
     expect(api().isLanguageServerDocumentSynced(document.path)).toBe(false);
@@ -585,16 +551,10 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const document = phpDocument();
     harness.activeDocumentRef.current = document;
 
-    const firstRequest = api().requestLanguageServerDocumentLease(
-      ROOT,
-      document.path,
-    );
+    const firstRequest = api().requestLanguageServerDocumentLease(ROOT, document.path);
     await flushMicrotasks();
     const closeRequest = api().syncClosedDocument(document);
-    const secondRequest = api().requestLanguageServerDocumentLease(
-      ROOT,
-      document.path,
-    );
+    const secondRequest = api().requestLanguageServerDocumentLease(ROOT, document.path);
 
     firstOpen.resolve();
     const [firstLease, secondLease] = await Promise.all([
@@ -619,31 +579,22 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const document = phpDocument();
     harness.activeDocumentRef.current = document;
 
-    const firstLease = api().requestLanguageServerDocumentLease(
-      ROOT,
-      document.path,
-    );
+    const firstLease = api().requestLanguageServerDocumentLease(ROOT, document.path);
     await flushMicrotasks();
     const reset = api().closeSyncedLanguageServerDocumentsForRoot(ROOT);
 
     expect(harness.deps.resetLanguageServerDocuments).toHaveBeenCalledTimes(1);
-    expect(
-      api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path),
-    ).toBeNull();
+    expect(api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path)).toBeNull();
 
     firstOpen.resolve();
     await expect(firstLease).resolves.toBeNull();
     await reset;
 
-    const replacementLease = await api().requestLanguageServerDocumentLease(
-      ROOT,
-      document.path,
-    );
+    const replacementLease = await api().requestLanguageServerDocumentLease(ROOT, document.path);
 
     expect(replacementLease?.lifecycleIdentity).toBe(2);
     expect(
-      replacementLease &&
-        api().isLanguageServerDocumentRequestLeaseCurrent(replacementLease),
+      replacementLease && api().isLanguageServerDocumentRequestLeaseCurrent(replacementLease),
     ).toBe(true);
   });
 
@@ -652,46 +603,30 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const { api } = renderDocumentSync(harness.deps);
     const document = phpDocument();
     harness.activeDocumentRef.current = document;
-    const firstLease = await api().requestLanguageServerDocumentLease(
-      ROOT,
-      document.path,
-    );
+    const firstLease = await api().requestLanguageServerDocumentLease(ROOT, document.path);
 
     expect(firstLease).not.toBeNull();
     harness.currentRootRef.current = OTHER_ROOT;
-    expect(
-      firstLease &&
-        api().isLanguageServerDocumentRequestLeaseCurrent(firstLease),
-    ).toBe(false);
+    expect(firstLease && api().isLanguageServerDocumentRequestLeaseCurrent(firstLease)).toBe(false);
 
     harness.currentRootRef.current = ROOT;
     const replacementSession = runningStatus(ROOT, SESSION + 1);
     harness.php.statusRef.current = replacementSession;
     harness.php.statusByRootRef.current = { [ROOT]: replacementSession };
-    expect(
-      firstLease &&
-        api().isLanguageServerDocumentRequestLeaseCurrent(firstLease),
-    ).toBe(false);
+    expect(firstLease && api().isLanguageServerDocumentRequestLeaseCurrent(firstLease)).toBe(false);
 
     const originalSession = runningStatus(ROOT, SESSION);
     harness.php.statusRef.current = originalSession;
     harness.php.statusByRootRef.current = { [ROOT]: originalSession };
     await api().syncClosedDocument(document);
-    expect(
-      firstLease &&
-        api().isLanguageServerDocumentRequestLeaseCurrent(firstLease),
-    ).toBe(false);
+    expect(firstLease && api().isLanguageServerDocumentRequestLeaseCurrent(firstLease)).toBe(false);
 
-    const secondLease = await api().requestLanguageServerDocumentLease(
-      ROOT,
-      document.path,
-    );
+    const secondLease = await api().requestLanguageServerDocumentLease(ROOT, document.path);
 
     expect(secondLease?.lifecycleIdentity).toBe(2);
-    expect(
-      secondLease &&
-        api().isLanguageServerDocumentRequestLeaseCurrent(secondLease),
-    ).toBe(true);
+    expect(secondLease && api().isLanguageServerDocumentRequestLeaseCurrent(secondLease)).toBe(
+      true,
+    );
   });
 
   it("does not sync huge PHP documents to phpactor", async () => {
@@ -747,12 +682,16 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.phpGateway.didChange).toHaveBeenCalledTimes(1);
     // Each schedule bumps the monotonic version (v2 for "ab", v3 for "abc");
     // the coalesced didChange carries the latest content AND the latest version.
-    expect(harness.phpGateway.didChange).toHaveBeenCalledWith(ROOT, {
-      languageId: "php",
-      path,
-      text: "abc",
-      version: 3,
-    }, SESSION);
+    expect(harness.phpGateway.didChange).toHaveBeenCalledWith(
+      ROOT,
+      {
+        languageId: "php",
+        path,
+        text: "abc",
+        version: 3,
+      },
+      SESSION,
+    );
   });
 
   it("does not send huge PHP edits after a normal document was synced", async () => {
@@ -804,9 +743,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
   it("does not let a deferred debounced PHP didChange complete into a reopened lifecycle", async () => {
     const harness = createHarness();
     const change = deferred<void>();
-    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(
-      async () => change.promise,
-    );
+    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(async () => change.promise);
     const { api } = renderDocumentSync(harness.deps);
     const staleDocument = phpDocument({ content: "stale" });
     const reopenedDocument = phpDocument({ content: "reopened" });
@@ -837,9 +774,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
   it("does not let a deferred explicit PHP flush complete into a reopened lifecycle", async () => {
     const harness = createHarness();
     const change = deferred<void>();
-    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(
-      async () => change.promise,
-    );
+    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(async () => change.promise);
     const { api } = renderDocumentSync(harness.deps);
     const staleDocument = phpDocument({ content: "stale" });
     const reopenedDocument = phpDocument({ content: "reopened" });
@@ -874,21 +809,24 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const originalDocument = phpDocument({ content: "a" });
     const editedDocument = phpDocument({ content: "ab" });
     const syncKey = languageServerDocumentSyncKey(ROOT, editedDocument.path);
-    vi.mocked(harness.phpGateway.didChange).mockRejectedValueOnce(
-      new Error("didChange failed"),
-    );
+    vi.mocked(harness.phpGateway.didChange).mockRejectedValueOnce(new Error("didChange failed"));
 
     await api().syncOpenDocument(originalDocument);
     api().scheduleDocumentChange(editedDocument);
     await vi.advanceTimersByTimeAsync(150);
     await flushMicrotasks();
 
-    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(1, ROOT, {
-      languageId: "php",
-      path: editedDocument.path,
-      text: "ab",
-      version: 2,
-    }, SESSION);
+    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(
+      1,
+      ROOT,
+      {
+        languageId: "php",
+        path: editedDocument.path,
+        text: "ab",
+        version: 2,
+      },
+      SESSION,
+    );
     expect(harness.php.syncedContent.current[syncKey]).toBe("a");
     expect(harness.php.pendingChanges.current[syncKey]).toEqual(
       expect.objectContaining({ text: "ab", version: 3 }),
@@ -896,12 +834,17 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
 
     await api().syncSavedDocument(ROOT, editedDocument);
 
-    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
-      languageId: "php",
-      path: editedDocument.path,
-      text: "ab",
-      version: 3,
-    }, SESSION);
+    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      {
+        languageId: "php",
+        path: editedDocument.path,
+        text: "ab",
+        version: 3,
+      },
+      SESSION,
+    );
     expect(harness.phpGateway.didSave).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "ab", version: 3 }),
@@ -956,30 +899,20 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const editedDocument = phpDocument({ content: "echo  1;" });
     const savedDocument = phpDocument({ content: "echo 1;" });
     const events: string[] = [];
-    vi.mocked(harness.phpGateway.didChange).mockImplementation(
-      async (_root, document) => {
-        events.push(`didChange:${document.version}:${document.text}`);
-      },
-    );
-    vi.mocked(harness.phpGateway.didSave).mockImplementation(
-      async (_root, document) => {
-        events.push(`didSave:${document.version}:${document.text}`);
-      },
-    );
+    vi.mocked(harness.phpGateway.didChange).mockImplementation(async (_root, document) => {
+      events.push(`didChange:${document.version}:${document.text}`);
+    });
+    vi.mocked(harness.phpGateway.didSave).mockImplementation(async (_root, document) => {
+      events.push(`didSave:${document.version}:${document.text}`);
+    });
 
     await api().syncOpenDocument(phpDocument({ content: "a" }));
     api().scheduleDocumentChange(editedDocument);
     await api().syncSavedDocument(ROOT, savedDocument);
 
-    expect(events).toEqual([
-      "didChange:2:echo  1;",
-      "didChange:3:echo 1;",
-      "didSave:3:echo 1;",
-    ]);
+    expect(events).toEqual(["didChange:2:echo  1;", "didChange:3:echo 1;", "didSave:3:echo 1;"]);
     expect(
-      harness.php.syncedContent.current[
-        languageServerDocumentSyncKey(ROOT, savedDocument.path)
-      ],
+      harness.php.syncedContent.current[languageServerDocumentSyncKey(ROOT, savedDocument.path)],
     ).toBe("echo 1;");
   });
 
@@ -989,13 +922,8 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const originalDocument = phpDocument({ content: "unformatted" });
     const savedDocument = phpDocument({ content: "formatted" });
     const syncKey = languageServerDocumentSyncKey(ROOT, savedDocument.path);
-    const uriKey = languageServerUriSyncKey(
-      ROOT,
-      fileUriFromPath(savedDocument.path),
-    );
-    vi.mocked(harness.phpGateway.didChange).mockRejectedValueOnce(
-      new Error("didChange failed"),
-    );
+    const uriKey = languageServerUriSyncKey(ROOT, fileUriFromPath(savedDocument.path));
+    vi.mocked(harness.phpGateway.didChange).mockRejectedValueOnce(new Error("didChange failed"));
 
     await api().syncOpenDocument(originalDocument);
     await api().syncSavedDocument(ROOT, savedDocument);
@@ -1008,18 +936,28 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     await api().syncSavedDocument(ROOT, savedDocument);
 
     expect(harness.phpGateway.didChange).toHaveBeenCalledTimes(2);
-    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(1, ROOT, {
-      languageId: "php",
-      path: savedDocument.path,
-      text: "formatted",
-      version: 2,
-    }, SESSION);
-    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
-      languageId: "php",
-      path: savedDocument.path,
-      text: "formatted",
-      version: 3,
-    }, SESSION);
+    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(
+      1,
+      ROOT,
+      {
+        languageId: "php",
+        path: savedDocument.path,
+        text: "formatted",
+        version: 2,
+      },
+      SESSION,
+    );
+    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      {
+        languageId: "php",
+        path: savedDocument.path,
+        text: "formatted",
+        version: 3,
+      },
+      SESSION,
+    );
     expect(harness.phpGateway.didSave).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "formatted", version: 3 }),
@@ -1044,30 +982,22 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       .mockImplementation(async (_root, document) => {
         events.push(`didChange:${document.version}:${document.text}`);
       });
-    vi.mocked(harness.phpGateway.didSave).mockImplementation(
-      async (_root, document) => {
-        events.push(`didSave:${document.version}:${document.text}`);
-      },
-    );
+    vi.mocked(harness.phpGateway.didSave).mockImplementation(async (_root, document) => {
+      events.push(`didSave:${document.version}:${document.text}`);
+    });
 
     await api().syncOpenDocument(originalDocument);
     await api().syncSavedDocument(ROOT, convergedDocument);
     api().scheduleDocumentChange(originalDocument);
     await api().syncSavedDocument(ROOT, originalDocument);
 
-    expect(events).toEqual([
-      "didChange:2:b:rejected",
-      "didChange:4:a",
-      "didSave:4:a",
-    ]);
+    expect(events).toEqual(["didChange:2:b:rejected", "didChange:4:a", "didSave:4:a"]);
   });
 
   it("reserves a PHP convergence version before a concurrent edit", async () => {
     const harness = createHarness();
     const convergence = deferred<void>();
-    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(
-      async () => convergence.promise,
-    );
+    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(async () => convergence.promise);
     const { api } = renderDocumentSync(harness.deps);
     const originalDocument = phpDocument({ content: "unformatted" });
     const savedDocument = phpDocument({ content: "formatted" });
@@ -1084,18 +1014,28 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     await save;
     await flushMicrotasks();
 
-    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(1, ROOT, {
-      languageId: "php",
-      path: savedDocument.path,
-      text: "formatted",
-      version: 2,
-    }, SESSION);
-    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
-      languageId: "php",
-      path: newerDocument.path,
-      text: "formatted later",
-      version: 3,
-    }, SESSION);
+    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(
+      1,
+      ROOT,
+      {
+        languageId: "php",
+        path: savedDocument.path,
+        text: "formatted",
+        version: 2,
+      },
+      SESSION,
+    );
+    expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      {
+        languageId: "php",
+        path: newerDocument.path,
+        text: "formatted later",
+        version: 3,
+      },
+      SESSION,
+    );
     expect(harness.phpGateway.didSave).not.toHaveBeenCalled();
     expect(harness.php.versions.current[syncKey]).toBe(3);
     expect(harness.php.syncedContent.current[syncKey]).toBe("formatted later");
@@ -1135,17 +1075,13 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const newerDocument = phpDocument({ content: "typed later" });
     const events: string[] = [];
     let shouldEmit = true;
-    vi.mocked(harness.phpGateway.didChange).mockImplementation(
-      async (_root, document) => {
-        events.push(`didChange:${document.text}`);
-        shouldEmit = false;
-      },
-    );
-    vi.mocked(harness.phpGateway.didSave).mockImplementation(
-      async (_root, document) => {
-        events.push(`didSave:${document.text}`);
-      },
-    );
+    vi.mocked(harness.phpGateway.didChange).mockImplementation(async (_root, document) => {
+      events.push(`didChange:${document.text}`);
+      shouldEmit = false;
+    });
+    vi.mocked(harness.phpGateway.didSave).mockImplementation(async (_root, document) => {
+      events.push(`didSave:${document.text}`);
+    });
 
     await api().syncOpenDocument(savedDocument);
     api().scheduleDocumentChange(newerDocument);
@@ -1159,9 +1095,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
   it("suppresses PHP didSave when convergence is interrupted by close and reopen", async () => {
     const harness = createHarness();
     const convergence = deferred<void>();
-    vi.mocked(harness.phpGateway.didChange).mockImplementation(
-      async () => convergence.promise,
-    );
+    vi.mocked(harness.phpGateway.didChange).mockImplementation(async () => convergence.promise);
     const { api } = renderDocumentSync(harness.deps);
     const original = phpDocument({ content: "unformatted" });
     const formatted = phpDocument({ content: "formatted" });
@@ -1201,11 +1135,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     await api().syncClosedDocument(document);
     await flushMicrotasks();
 
-    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
-      ROOT,
-      document.path,
-      SESSION,
-    );
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(ROOT, document.path, SESSION);
     expect(harness.php.syncedPaths.current.has(key)).toBe(false);
     expect(harness.php.versions.current[key]).toBeUndefined();
     expect(api().isLanguageServerDocumentSynced(document.path)).toBe(false);
@@ -1214,9 +1144,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
   it("binds a queued stale close to the old session before reopening on its replacement", async () => {
     const harness = createHarness();
     const change = deferred<void>();
-    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(
-      async () => change.promise,
-    );
+    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(async () => change.promise);
     const rendered = renderDocumentSync(harness.deps);
     const { api } = rendered;
     const original = phpDocument({ content: "a" });
@@ -1239,11 +1167,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     change.resolve();
     await Promise.all([close, reopen]);
 
-    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
-      ROOT,
-      original.path,
-      SESSION,
-    );
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(ROOT, original.path, SESSION);
     expect(harness.phpGateway.didOpen).toHaveBeenLastCalledWith(
       ROOT,
       expect.objectContaining({ path: replacement.path, text: "replacement" }),
@@ -1315,6 +1239,128 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.warmUp).not.toHaveBeenCalled();
   });
 
+  it("reports a JS/TS sync version only after exact didOpen settlement and while policy-eligible", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const opened = deferred<void>();
+    vi.mocked(harness.jstsGateway.didOpen).mockImplementationOnce(async () => opened.promise);
+    const { api } = renderDocumentSync(harness.deps);
+    const document = tsDocument();
+    harness.activeDocumentRef.current = document;
+
+    const open = api().syncOpenJavaScriptTypeScriptDocument(document);
+    await flushMicrotasks();
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBeNull();
+
+    opened.resolve();
+    await open;
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBe(1);
+
+    harness.activeDocumentRef.current = {
+      ...document,
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    };
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBeNull();
+
+    harness.activeDocumentRef.current = document;
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBe(1);
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(OTHER_ROOT, document.path)).toBeNull();
+  });
+
+  it("fails a deferred JS/TS didOpen closed across an A-B-A sync generation replacement", async () => {
+    const harness = createHarness();
+    const opened = deferred<void>();
+    vi.mocked(harness.jstsGateway.didOpen).mockImplementationOnce(async () => opened.promise);
+    const { api } = renderDocumentSync(harness.deps);
+    const document = tsDocument();
+    harness.activeDocumentRef.current = document;
+
+    const staleOpen = api().syncOpenJavaScriptTypeScriptDocument(document);
+    await flushMicrotasks();
+    harness.currentRootRef.current = OTHER_ROOT;
+    harness.jsts.generation.current += 1;
+    harness.currentRootRef.current = ROOT;
+    opened.resolve();
+    await staleOpen;
+
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBeNull();
+    expect(harness.jsts.syncedPaths.current).not.toContain(
+      languageServerDocumentSyncKey(ROOT, document.path),
+    );
+
+    await api().syncOpenJavaScriptTypeScriptDocument(document);
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBe(2);
+  });
+
+  it("clears a rejected stale JS/TS didOpen before reopening after A-B-A", async () => {
+    const harness = createHarness();
+    const opened = deferred<void>();
+    vi.mocked(harness.jstsGateway.didOpen).mockImplementationOnce(async () => {
+      await opened.promise;
+      throw new Error("old session failed");
+    });
+    const { api } = renderDocumentSync(harness.deps);
+    const document = tsDocument();
+    harness.activeDocumentRef.current = document;
+
+    const staleOpen = api().syncOpenJavaScriptTypeScriptDocument(document);
+    await flushMicrotasks();
+    harness.currentRootRef.current = OTHER_ROOT;
+    harness.jsts.generation.current += 1;
+    harness.currentRootRef.current = ROOT;
+    opened.resolve();
+    await staleOpen;
+
+    const syncKey = languageServerDocumentSyncKey(ROOT, document.path);
+    expect(harness.jsts.syncedPaths.current).not.toContain(syncKey);
+    expect(harness.jsts.syncedContent.current[syncKey]).toBeUndefined();
+    expect(harness.jsts.pendingOpenAttempts.current[syncKey]).toBeUndefined();
+    expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+
+    await api().syncOpenJavaScriptTypeScriptDocument(document);
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBe(2);
+  });
+
+  it("keeps large JS/TS content out of didChange/didSave and resumes with the exact shrunken snapshot", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    const { api } = renderDocumentSync(harness.deps);
+    const original = tsDocument({ content: "const value = 1;" });
+    const large = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    const shrunken = tsDocument({ content: "const value = 2;" });
+    harness.activeDocumentRef.current = original;
+    await api().syncOpenJavaScriptTypeScriptDocument(original);
+
+    harness.activeDocumentRef.current = large;
+    api().scheduleJavaScriptTypeScriptDocumentChange(large);
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(large.path);
+    await api().syncSavedJavaScriptTypeScriptDocument(ROOT, large);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didSave).not.toHaveBeenCalled();
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, large.path)).toBeNull();
+
+    harness.activeDocumentRef.current = shrunken;
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, shrunken.path)).toBeNull();
+    api().scheduleJavaScriptTypeScriptDocumentChange(shrunken);
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(shrunken.path);
+
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledOnce();
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ text: shrunken.content, version: 2 }),
+    );
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, shrunken.path)).toBe(2);
+  });
+
   it("debounces edits and flushes / saves / closes symmetrically to PHP", async () => {
     const harness = createHarness();
     const { api } = renderDocumentSync(harness.deps);
@@ -1331,10 +1377,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
       expect.objectContaining({ text: "ab", version: 2 }),
     );
 
-    await api().syncSavedJavaScriptTypeScriptDocument(
-      ROOT,
-      tsDocument({ content: "ab" }),
-    );
+    await api().syncSavedJavaScriptTypeScriptDocument(ROOT, tsDocument({ content: "ab" }));
     await flushMicrotasks();
     expect(harness.jstsGateway.didSave).toHaveBeenCalledTimes(1);
     expect(harness.jstsGateway.didChange).toHaveBeenCalledTimes(1);
@@ -1348,18 +1391,14 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
   it("does not let a deferred debounced JavaScript/TypeScript didChange complete into a reopened lifecycle", async () => {
     const harness = createHarness();
     const change = deferred<void>();
-    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(
-      async () => change.promise,
-    );
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(async () => change.promise);
     const { api } = renderDocumentSync(harness.deps);
     const staleDocument = tsDocument({ content: "stale" });
     const reopenedDocument = tsDocument({ content: "reopened" });
     const freshDocument = tsDocument({ content: "fresh" });
     const syncKey = languageServerDocumentSyncKey(ROOT, staleDocument.path);
 
-    await api().syncOpenJavaScriptTypeScriptDocument(
-      tsDocument({ content: "original" }),
-    );
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "original" }));
     api().scheduleJavaScriptTypeScriptDocumentChange(staleDocument);
     await vi.advanceTimersByTimeAsync(150);
     expect(harness.jstsGateway.didChange).toHaveBeenCalledTimes(1);
@@ -1375,9 +1414,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
       expect.objectContaining({ text: "fresh", version: 2 }),
     );
 
-    await api().flushPendingJavaScriptTypeScriptDocumentChange(
-      freshDocument.path,
-    );
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(freshDocument.path);
     expect(harness.jsts.syncedContent.current[syncKey]).toBe("fresh");
     expect(harness.jsts.pendingChanges.current[syncKey]).toBeUndefined();
   });
@@ -1385,22 +1422,16 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
   it("does not let a deferred explicit JavaScript/TypeScript flush complete into a reopened lifecycle", async () => {
     const harness = createHarness();
     const change = deferred<void>();
-    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(
-      async () => change.promise,
-    );
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(async () => change.promise);
     const { api } = renderDocumentSync(harness.deps);
     const staleDocument = tsDocument({ content: "stale" });
     const reopenedDocument = tsDocument({ content: "reopened" });
     const freshDocument = tsDocument({ content: "fresh" });
     const syncKey = languageServerDocumentSyncKey(ROOT, staleDocument.path);
 
-    await api().syncOpenJavaScriptTypeScriptDocument(
-      tsDocument({ content: "original" }),
-    );
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "original" }));
     api().scheduleJavaScriptTypeScriptDocumentChange(staleDocument);
-    const flush = api().flushPendingJavaScriptTypeScriptDocumentChange(
-      staleDocument.path,
-    );
+    const flush = api().flushPendingJavaScriptTypeScriptDocumentChange(staleDocument.path);
     await flushMicrotasks();
     expect(harness.jstsGateway.didChange).toHaveBeenCalledTimes(1);
 
@@ -1415,9 +1446,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
       expect.objectContaining({ text: "fresh", version: 2 }),
     );
 
-    await api().flushPendingJavaScriptTypeScriptDocumentChange(
-      freshDocument.path,
-    );
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(freshDocument.path);
     expect(harness.jsts.syncedContent.current[syncKey]).toBe("fresh");
     expect(harness.jsts.pendingChanges.current[syncKey]).toBeUndefined();
   });
@@ -1428,9 +1457,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const originalDocument = tsDocument({ content: "a" });
     const editedDocument = tsDocument({ content: "ab" });
     const syncKey = languageServerDocumentSyncKey(ROOT, editedDocument.path);
-    vi.mocked(harness.jstsGateway.didChange).mockRejectedValueOnce(
-      new Error("didChange failed"),
-    );
+    vi.mocked(harness.jstsGateway.didChange).mockRejectedValueOnce(new Error("didChange failed"));
 
     await api().syncOpenJavaScriptTypeScriptDocument(originalDocument);
     api().scheduleJavaScriptTypeScriptDocumentChange(editedDocument);
@@ -1476,10 +1503,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const pendingDocument = harness.jsts.pendingChanges.current[key];
     const timer = harness.jsts.changeTimers.current[key];
 
-    await api().flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
-      OTHER_ROOT,
-      document.path,
-    );
+    await api().flushPendingJavaScriptTypeScriptDocumentChangeForRoot(OTHER_ROOT, document.path);
     await api().syncSavedJavaScriptTypeScriptDocument(OTHER_ROOT, document);
 
     expect(harness.jsts.pendingChanges.current[key]).toBe(pendingDocument);
@@ -1494,16 +1518,12 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const editedDocument = tsDocument({ content: "const x=1" });
     const savedDocument = tsDocument({ content: "const x = 1;" });
     const events: string[] = [];
-    vi.mocked(harness.jstsGateway.didChange).mockImplementation(
-      async (_root, document) => {
-        events.push(`didChange:${document.version}:${document.text}`);
-      },
-    );
-    vi.mocked(harness.jstsGateway.didSave).mockImplementation(
-      async (_root, document) => {
-        events.push(`didSave:${document.version}:${document.text}`);
-      },
-    );
+    vi.mocked(harness.jstsGateway.didChange).mockImplementation(async (_root, document) => {
+      events.push(`didChange:${document.version}:${document.text}`);
+    });
+    vi.mocked(harness.jstsGateway.didSave).mockImplementation(async (_root, document) => {
+      events.push(`didSave:${document.version}:${document.text}`);
+    });
 
     await api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "a" }));
     api().scheduleJavaScriptTypeScriptDocumentChange(editedDocument);
@@ -1515,9 +1535,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
       "didSave:3:const x = 1;",
     ]);
     expect(
-      harness.jsts.syncedContent.current[
-        languageServerDocumentSyncKey(ROOT, savedDocument.path)
-      ],
+      harness.jsts.syncedContent.current[languageServerDocumentSyncKey(ROOT, savedDocument.path)],
     ).toBe("const x = 1;");
   });
 
@@ -1527,13 +1545,8 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const originalDocument = tsDocument({ content: "unformatted" });
     const savedDocument = tsDocument({ content: "formatted" });
     const syncKey = languageServerDocumentSyncKey(ROOT, savedDocument.path);
-    const uriKey = languageServerUriSyncKey(
-      ROOT,
-      fileUriFromPath(savedDocument.path),
-    );
-    vi.mocked(harness.jstsGateway.didChange).mockRejectedValueOnce(
-      new Error("didChange failed"),
-    );
+    const uriKey = languageServerUriSyncKey(ROOT, fileUriFromPath(savedDocument.path));
+    vi.mocked(harness.jstsGateway.didChange).mockRejectedValueOnce(new Error("didChange failed"));
 
     await api().syncOpenJavaScriptTypeScriptDocument(originalDocument);
     await api().syncSavedJavaScriptTypeScriptDocument(ROOT, savedDocument);
@@ -1581,22 +1594,16 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
       .mockImplementation(async (_root, document) => {
         events.push(`didChange:${document.version}:${document.text}`);
       });
-    vi.mocked(harness.jstsGateway.didSave).mockImplementation(
-      async (_root, document) => {
-        events.push(`didSave:${document.version}:${document.text}`);
-      },
-    );
+    vi.mocked(harness.jstsGateway.didSave).mockImplementation(async (_root, document) => {
+      events.push(`didSave:${document.version}:${document.text}`);
+    });
 
     await api().syncOpenJavaScriptTypeScriptDocument(originalDocument);
     await api().syncSavedJavaScriptTypeScriptDocument(ROOT, convergedDocument);
     api().scheduleJavaScriptTypeScriptDocumentChange(originalDocument);
     await api().syncSavedJavaScriptTypeScriptDocument(ROOT, originalDocument);
 
-    expect(events).toEqual([
-      "didChange:2:b:rejected",
-      "didChange:4:a",
-      "didSave:4:a",
-    ]);
+    expect(events).toEqual(["didChange:2:b:rejected", "didChange:4:a", "didSave:4:a"]);
   });
 
   it("reserves a JavaScript/TypeScript convergence version before a concurrent edit", async () => {
@@ -1612,10 +1619,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const syncKey = languageServerDocumentSyncKey(ROOT, savedDocument.path);
 
     await api().syncOpenJavaScriptTypeScriptDocument(originalDocument);
-    const save = api().syncSavedJavaScriptTypeScriptDocument(
-      ROOT,
-      savedDocument,
-    );
+    const save = api().syncSavedJavaScriptTypeScriptDocument(ROOT, savedDocument);
     await flushMicrotasks();
 
     api().scheduleJavaScriptTypeScriptDocumentChange(newerDocument);
@@ -1671,19 +1675,12 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
   it("suppresses JavaScript/TypeScript didSave after a session restart during convergence", async () => {
     const harness = createHarness();
     const convergence = deferred<void>();
-    vi.mocked(harness.jstsGateway.didChange).mockImplementation(
-      async () => convergence.promise,
-    );
+    vi.mocked(harness.jstsGateway.didChange).mockImplementation(async () => convergence.promise);
     const { api } = renderDocumentSync(harness.deps);
     const savedDocument = tsDocument({ content: "formatted" });
 
-    await api().syncOpenJavaScriptTypeScriptDocument(
-      tsDocument({ content: "unformatted" }),
-    );
-    const save = api().syncSavedJavaScriptTypeScriptDocument(
-      ROOT,
-      savedDocument,
-    );
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "unformatted" }));
+    const save = api().syncSavedJavaScriptTypeScriptDocument(ROOT, savedDocument);
     await flushMicrotasks();
     expect(harness.jstsGateway.didChange).toHaveBeenCalledTimes(1);
 
@@ -1699,9 +1696,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
   it("suppresses JavaScript/TypeScript didSave when convergence is interrupted by close and reopen", async () => {
     const harness = createHarness();
     const convergence = deferred<void>();
-    vi.mocked(harness.jstsGateway.didChange).mockImplementation(
-      async () => convergence.promise,
-    );
+    vi.mocked(harness.jstsGateway.didChange).mockImplementation(async () => convergence.promise);
     const { api } = renderDocumentSync(harness.deps);
     const original = tsDocument({ content: "unformatted" });
     const formatted = tsDocument({ content: "formatted" });
@@ -1753,16 +1748,8 @@ describe("useDocumentSync - cross-family isolation", () => {
     await api().closeSyncedLanguageServerDocumentsForRoot(ROOT);
     await flushMicrotasks();
 
-    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
-      ROOT,
-      first.path,
-      SESSION,
-    );
-    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
-      ROOT,
-      second.path,
-      SESSION,
-    );
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(ROOT, first.path, SESSION);
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(ROOT, second.path, SESSION);
     expect(harness.php.syncedPaths.current.size).toBe(0);
   });
 

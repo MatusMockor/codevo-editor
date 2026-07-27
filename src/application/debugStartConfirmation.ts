@@ -1,6 +1,17 @@
 import type { DebugGateway } from "../domain/debug";
 import type { DebugStartDescriptor } from "./debugStartDescriptor";
 
+export async function compensateRejectedDebugStart(
+  gateway: Pick<DebugGateway, "stop">,
+  sessionId: number,
+): Promise<void> {
+  try {
+    await gateway.stop(sessionId);
+  } catch {
+    // The frontend must still drop local ownership when backend cleanup is unavailable.
+  }
+}
+
 export interface DebugStartConfirmationRequest {
   readonly descriptor: DebugStartDescriptor;
   readonly gateway: Pick<DebugGateway, "stop">;

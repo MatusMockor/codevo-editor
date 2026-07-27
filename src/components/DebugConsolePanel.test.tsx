@@ -96,6 +96,8 @@ function displayedValueSurface() {
   let candidate: DebugCopyValueCandidate | null = null;
   const copyDisplayedValue = vi.fn(async () => candidate !== null);
   const copyDisplayedValueFromMenu = vi.fn(async () => candidate !== null);
+  const copyEvaluatePath = vi.fn(async () => candidate?.adapterEvaluateName !== undefined);
+  const copyEvaluatePathFromMenu = vi.fn(async () => candidate?.adapterEvaluateName !== undefined);
   const surface: DebugCopyDisplayedValueSurface = {
     source: "console",
     workspaceOwnerKey: "workspace-owner",
@@ -110,10 +112,19 @@ function displayedValueSurface() {
       candidate = next;
     }),
     canCopyDisplayedValue: () => candidate !== null,
+    canCopyEvaluatePath: () => candidate?.adapterEvaluateName !== undefined,
     copyDisplayedValue,
     copyDisplayedValueFromMenu,
+    copyEvaluatePath,
+    copyEvaluatePathFromMenu,
   };
-  return { copyDisplayedValue, copyDisplayedValueFromMenu, read: () => candidate, surface };
+  return {
+    copyDisplayedValue,
+    copyDisplayedValueFromMenu,
+    copyEvaluatePathFromMenu,
+    read: () => candidate,
+    surface,
+  };
 }
 
 describe("DebugConsolePanel completions", () => {
@@ -260,8 +271,8 @@ describe("DebugConsolePanel completions", () => {
 
     act(() => menuItems[1]?.click());
 
-    expect(copy.copyDisplayedValueFromMenu).toHaveBeenCalledOnce();
-    expect(copy.read()?.displayedValue).toBe('root["user"]');
+    expect(copy.copyEvaluatePathFromMenu).toHaveBeenCalledOnce();
+    expect(copy.read()?.adapterEvaluateName).toBe('root["user"]');
 
     rendered.console.state = settledConsole("User").state;
     render({
@@ -426,7 +437,8 @@ describe("DebugConsolePanel completions", () => {
     );
     expect(menuItems.map((item) => item.textContent)).toEqual(["Copy Value", "Copy as Expression"]);
     act(() => menuItems[1]?.click());
-    expect(copy.read()?.displayedValue).toBe("result.named");
+    expect(copy.copyEvaluatePathFromMenu).toHaveBeenCalledOnce();
+    expect(copy.read()?.adapterEvaluateName).toBe("result.named");
 
     act(() =>
       rows[1]?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
@@ -437,6 +449,102 @@ describe("DebugConsolePanel completions", () => {
       ),
     );
     expect(menuItems.map((item) => item.textContent)).toEqual(["Copy Value"]);
+  });
+
+  it("offers exact multiline adapter expressions for nested object and property rows", () => {
+    const copy = displayedValueSurface();
+    const onLoadVariablePage = vi.fn();
+    let variablePages = createDebugVariablePagesState(INSPECTION_OWNER);
+    for (const page of [
+      {
+        reference: 41,
+        requestId: "root-page",
+        variables: [
+          {
+            name: "nested",
+            value: "Object",
+            evaluateName: "(\n  root\n).nested",
+            variablesReference: 42,
+          },
+        ],
+      },
+      {
+        reference: 42,
+        requestId: "nested-page",
+        variables: [
+          {
+            name: "b",
+            value: "1",
+            evaluateName: "(\n  root\n).nested.b",
+            variablesReference: 0,
+          },
+        ],
+      },
+    ]) {
+      variablePages = reduceDebugVariablePages(variablePages, {
+        type: "request",
+        owner: INSPECTION_OWNER,
+        variablesReference: page.reference,
+        start: 0,
+        requestId: page.requestId,
+      });
+      variablePages = reduceDebugVariablePages(variablePages, {
+        type: "resolve",
+        owner: INSPECTION_OWNER,
+        variablesReference: page.reference,
+        start: 0,
+        requestId: page.requestId,
+        result: {
+          variablesReference: page.reference,
+          start: 0,
+          variables: page.variables,
+          nextStart: null,
+        },
+      });
+    }
+    render({
+      console: settledConsole("Object", 41, "(\n  root\n)"),
+      copyDisplayedValueSurface: copy.surface,
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage,
+      variablePages,
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    const nested = host.querySelector<HTMLElement>('[data-testid="debug-console-variable"]')!;
+    act(() =>
+      nested.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    let expressionAction = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+    ).find((item) => item.textContent === "Copy as Expression");
+    expect(expressionAction).toBeDefined();
+    act(() => expressionAction?.click());
+    expect(copy.read()?.adapterEvaluateName).toBe("(\n  root\n).nested");
+
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Expand debug console variable nested"]')!
+        .click(),
+    );
+    const property = Array.from(
+      host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]'),
+    ).find((row) => row.textContent?.includes("b:"))!;
+    act(() =>
+      property.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    expressionAction = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+    ).find((item) => item.textContent === "Copy as Expression");
+    expect(expressionAction).toBeDefined();
+    act(() => expressionAction?.click());
+    expect(copy.read()?.adapterEvaluateName).toBe("(\n  root\n).nested.b");
+    expect(copy.copyEvaluatePathFromMenu).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed and clears expanded result children when the pause owner changes", () => {
@@ -648,7 +756,10 @@ describe("DebugConsolePanel completions", () => {
 
   function key(
     key: string,
-    options: Pick<KeyboardEventInit, "code" | "ctrlKey" | "isComposing" | "shiftKey"> = {},
+    options: Pick<
+      KeyboardEventInit,
+      "altKey" | "code" | "ctrlKey" | "isComposing" | "metaKey" | "shiftKey"
+    > = {},
   ): KeyboardEvent {
     const event = new KeyboardEvent("keydown", {
       bubbles: true,
@@ -757,6 +868,28 @@ describe("DebugConsolePanel completions", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toBe("Adapter has no completions");
   });
 
+  it("leaves modified completion keys to native text navigation", () => {
+    const debugConsole = consoleResult();
+    const onAccept = vi.fn(() => ({ cursor: 7, expression: "console" }));
+    render({ console: debugConsole, onAccept });
+    act(() => setInputValue(input(), "draft"));
+    key(" ", { code: "Space", ctrlKey: true });
+
+    for (const [pressedKey, modifiers] of [
+      ["ArrowUp", { shiftKey: true }],
+      ["ArrowDown", { altKey: true }],
+      ["Tab", { shiftKey: true }],
+      ["Enter", { ctrlKey: true }],
+      ["Enter", { metaKey: true }],
+    ] as const) {
+      expect(key(pressedKey, modifiers).defaultPrevented).toBe(false);
+    }
+
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(debugConsole.submit).not.toHaveBeenCalled();
+    expect(input().getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("dismisses first on Escape without clearing input, then preserves existing Escape semantics", () => {
     const onDismiss = vi.fn();
     render({ onDismiss });
@@ -801,6 +934,54 @@ describe("DebugConsolePanel completions", () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(input().value).toBe("first\n");
+    expect(debugConsole.submit).not.toHaveBeenCalled();
+  });
+
+  it.each([completion(), completion({ items: [], pending: true })])(
+    "keeps Shift+Enter multiline ahead of an open completion popup",
+    (completionModel) => {
+      const debugConsole = consoleResult();
+      const onAccept = vi.fn(() => ({ cursor: 5, expression: "count" }));
+      const onDismiss = vi.fn();
+      const onInputChanged = vi.fn();
+      render({
+        completionModel,
+        console: debugConsole,
+        onAccept,
+        onDismiss,
+        onInputChanged,
+      });
+      act(() => {
+        setInputValue(input(), "first");
+        input().setSelectionRange(5, 5);
+      });
+      key(" ", { code: "Space", ctrlKey: true });
+
+      const event = key("Enter", { shiftKey: true });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(input().value).toBe("first\n");
+      expect(input().getAttribute("aria-expanded")).toBe("false");
+      expect(onInputChanged).toHaveBeenLastCalledWith({ cursor: 6, expression: "first\n" });
+      expect(onAccept).not.toHaveBeenCalled();
+      expect(debugConsole.submit).not.toHaveBeenCalled();
+      expect(onDismiss).toHaveBeenCalled();
+    },
+  );
+
+  it("supports repeated Shift+Enter without submitting a partial expression", () => {
+    const debugConsole = consoleResult();
+    render({ console: debugConsole });
+    act(() => {
+      setInputValue(input(), "first");
+      input().setSelectionRange(5, 5);
+    });
+
+    key("Enter", { shiftKey: true });
+    act(() => input().setSelectionRange(input().value.length, input().value.length));
+    key("Enter", { shiftKey: true });
+
+    expect(input().value).toBe("first\n\n");
     expect(debugConsole.submit).not.toHaveBeenCalled();
   });
 
@@ -876,7 +1057,49 @@ describe("DebugConsolePanel completions", () => {
 
     act(() => input().setSelectionRange(input().value.length, input().value.length));
     expect(key("ArrowDown").defaultPrevented).toBe(true);
-    expect(input().value).toBe("");
+    expect(input().value).toBe("first\nmiddle\nlast");
+  });
+
+  it("restores the pre-history draft and leaves modified arrows to text editing", () => {
+    let state = createDebugConsoleState(OWNER);
+    state = reduceDebugConsoleState(state, {
+      expression: "historical",
+      owner: OWNER,
+      requestId: "request-1",
+      type: "evaluation-pending",
+    });
+    render({ console: consoleResult(state) });
+    act(() => {
+      setInputValue(input(), "draft");
+      input().setSelectionRange(0, 0);
+    });
+
+    for (const modifiers of [
+      { shiftKey: true },
+      { altKey: true },
+      { ctrlKey: true },
+      { metaKey: true },
+    ]) {
+      expect(key("ArrowUp", modifiers).defaultPrevented).toBe(false);
+      expect(input().value).toBe("draft");
+    }
+
+    expect(key("ArrowUp").defaultPrevented).toBe(true);
+    expect(input().value).toBe("historical");
+    act(() => input().setSelectionRange(input().value.length, input().value.length));
+
+    for (const modifiers of [
+      { shiftKey: true },
+      { altKey: true },
+      { ctrlKey: true },
+      { metaKey: true },
+    ]) {
+      expect(key("ArrowDown", modifiers).defaultPrevented).toBe(false);
+      expect(input().value).toBe("historical");
+    }
+
+    expect(key("ArrowDown").defaultPrevented).toBe(true);
+    expect(input().value).toBe("draft");
   });
 
   it("leaves multiline selections to normal arrow-key movement", () => {

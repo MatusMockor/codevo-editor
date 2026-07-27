@@ -72,6 +72,48 @@ describe("ServerReadyActionCoordinator", () => {
     );
   });
 
+  it("never treats truncated output as readiness evidence", () => {
+    const coordinator = new ServerReadyActionCoordinator();
+    const lease = coordinator.begin({ isOwnerCurrent: () => true, owner: OWNER, recipe: RECIPE })!;
+    expect(coordinator.adopt(lease, 13)).toBeNull();
+
+    expect(
+      coordinator.observe(output(13, 1, "Listening on port 3000!", "/workspace", "stdout", true)),
+    ).toBeNull();
+  });
+
+  it("discards partial stream state around truncation and accepts a later complete event", () => {
+    const coordinator = new ServerReadyActionCoordinator();
+    const lease = coordinator.begin({ isOwnerCurrent: () => true, owner: OWNER, recipe: RECIPE })!;
+    expect(coordinator.adopt(lease, 14)).toBeNull();
+
+    expect(coordinator.observe(output(14, 1, "Listening on port 30"))).toBeNull();
+    expect(coordinator.observe(output(14, 2, "00!", "/workspace", "stdout", true))).toBeNull();
+    expect(coordinator.observe(output(14, 3, "00!"))).toBeNull();
+    expectAuthorized(
+      coordinator,
+      coordinator.observe(output(14, 4, "Listening on port 4173!")),
+      "http://localhost:4173/health",
+    );
+  });
+
+  it("preserves owner and sequence isolation when rejecting truncated output", () => {
+    const coordinator = new ServerReadyActionCoordinator();
+    const lease = coordinator.begin({ isOwnerCurrent: () => true, owner: OWNER, recipe: RECIPE })!;
+    expect(coordinator.adopt(lease, 15)).toBeNull();
+
+    expect(coordinator.observe(output(15, 2, "Listening on port 30"))).toBeNull();
+    expect(coordinator.observe(output(15, 3, "ignored", "/other", "stdout", true))).toBeNull();
+    expect(coordinator.observe(output(15, 2, "00!"))).toBeNull();
+    expect(coordinator.observe(output(15, 3, "00!", "/workspace", "stdout", true))).toBeNull();
+    expect(coordinator.observe(output(15, 3, "Listening on port 9229!"))).toBeNull();
+    expectAuthorized(
+      coordinator,
+      coordinator.observe(output(15, 4, "Listening on port 3001!")),
+      "http://localhost:3001/health",
+    );
+  });
+
   it("fails closed on same-root early-session overflow instead of reviving an evicted match", () => {
     const coordinator = new ServerReadyActionCoordinator();
     const lease = coordinator.begin({ isOwnerCurrent: () => true, owner: OWNER, recipe: RECIPE })!;
@@ -168,9 +210,10 @@ function output(
   text: string,
   rootPath = "/workspace",
   stream: "stdout" | "stderr" = "stdout",
+  truncated = false,
 ): DebugEvent {
   return {
-    payload: { kind: "output", stream, text },
+    payload: { kind: "output", stream, text, truncated },
     rootPath,
     seq,
     sessionId,

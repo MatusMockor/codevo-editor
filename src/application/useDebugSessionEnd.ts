@@ -6,12 +6,15 @@ import type { DebugRestartAttempt, DebugRestartCoordinator } from "./debugRestar
 export interface DebugSessionOwner {
   readonly sessionId: number;
   readonly targetKind: DebugLaunchTarget["kind"];
+  readonly workspaceEpoch: number;
   readonly workspaceId: string | null;
 }
 
 export interface PendingActiveStop {
   promise: Promise<void>;
   readonly sessionId: number;
+  readonly workspaceEpoch: number;
+  readonly workspaceId: string | null;
 }
 
 export interface PendingSessionRestart {
@@ -19,6 +22,11 @@ export interface PendingSessionRestart {
   readonly coordinator: DebugRestartCoordinator;
   cancelled: boolean;
   promise: Promise<void>;
+}
+
+export interface PendingStartOwner {
+  readonly workspaceEpoch: number;
+  readonly workspaceId: string | null;
 }
 
 interface Options {
@@ -33,10 +41,17 @@ interface Options {
   pendingControlsRef: MutableRefObject<Map<string, Promise<unknown>>>;
   pendingRestartsRef: MutableRefObject<Map<string, PendingSessionRestart>>;
   pendingStartKeysRef: MutableRefObject<Set<string>>;
+  pendingStartOwnersRef: MutableRefObject<Map<string, PendingStartOwner>>;
+  pendingStartStopOwnersRef: MutableRefObject<Map<string, PendingStartOwner>>;
   pendingStopKeysRef: MutableRefObject<Set<string>>;
   restartCoordinatorsRef: MutableRefObject<Map<string, DebugRestartCoordinator>>;
   sessionOwnersRef: MutableRefObject<Map<string, DebugSessionOwner>>;
   setStopPendingByRoot: Dispatch<SetStateAction<Record<string, boolean>>>;
+  workspaceOwnerEpochRef: MutableRefObject<{
+    readonly epoch: number;
+    readonly workspaceId: string | null;
+    readonly workspaceRoot: string | null;
+  }>;
 }
 
 export function useDebugSessionEnd(options: Options) {
@@ -52,10 +67,13 @@ export function useDebugSessionEnd(options: Options) {
     pendingControlsRef,
     pendingRestartsRef,
     pendingStartKeysRef,
+    pendingStartOwnersRef,
+    pendingStartStopOwnersRef,
     pendingStopKeysRef,
     restartCoordinatorsRef,
     sessionOwnersRef,
     setStopPendingByRoot,
+    workspaceOwnerEpochRef,
   } = options;
   const endDebugSession = useCallback(
     async (
@@ -88,21 +106,44 @@ export function useDebugSessionEnd(options: Options) {
       }
       const existing = pendingActiveStopsRef.current.get(key);
       if (existing) {
-        if (expectedSessionId !== null && existing.sessionId !== expectedSessionId) return false;
+        if (
+          (expectedSessionId !== null && existing.sessionId !== expectedSessionId) ||
+          existing.workspaceEpoch !== workspaceOwnerEpochRef.current.epoch ||
+          existing.workspaceId !== requestedWorkspaceId
+        ) {
+          return false;
+        }
         await existing.promise;
         return true;
       }
       if (!isExactWorkspaceOwnerCurrent(root, requestedWorkspaceId)) return false;
       const sessionId = activeSessionId();
       if (sessionId === null) {
-        if (intent === "stop" && pendingStartKeysRef.current.has(key)) {
+        const pendingStartOwner = pendingStartOwnersRef.current.get(key);
+        if (
+          intent === "stop" &&
+          pendingStartKeysRef.current.has(key) &&
+          pendingStartOwner?.workspaceEpoch === workspaceOwnerEpochRef.current.epoch &&
+          pendingStartOwner.workspaceId === requestedWorkspaceId
+        ) {
           pendingStopKeysRef.current.add(key);
+          pendingStartStopOwnersRef.current.set(key, {
+            workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
+            workspaceId: requestedWorkspaceId,
+          });
+          if (mountedRef.current) {
+            setStopPendingByRoot((current) => ({ ...current, [key]: true }));
+          }
         }
         return false;
       }
       if (expectedSessionId !== null && sessionId !== expectedSessionId) return false;
       const owner = sessionOwnersRef.current.get(key);
-      if (owner?.sessionId !== sessionId || owner.workspaceId !== requestedWorkspaceId) {
+      if (
+        owner?.sessionId !== sessionId ||
+        owner.workspaceEpoch !== workspaceOwnerEpochRef.current.epoch ||
+        owner.workspaceId !== requestedWorkspaceId
+      ) {
         if (intent === "stop" && pendingStartKeysRef.current.has(key)) {
           pendingStopKeysRef.current.add(key);
         }
@@ -111,7 +152,12 @@ export function useDebugSessionEnd(options: Options) {
       if (intent === "disconnect" && owner.targetKind !== "node-attach") {
         return false;
       }
-      const pending: PendingActiveStop = { sessionId, promise: Promise.resolve() };
+      const pending: PendingActiveStop = {
+        sessionId,
+        promise: Promise.resolve(),
+        workspaceEpoch: workspaceOwnerEpochRef.current.epoch,
+        workspaceId: requestedWorkspaceId,
+      };
       const operation = (async () => {
         if (intent === "disconnect") {
           await gateway.disconnect({ rootPath: root, sessionId });
@@ -148,10 +194,13 @@ export function useDebugSessionEnd(options: Options) {
       pendingControlsRef,
       pendingRestartsRef,
       pendingStartKeysRef,
+      pendingStartOwnersRef,
+      pendingStartStopOwnersRef,
       pendingStopKeysRef,
       restartCoordinatorsRef,
       sessionOwnersRef,
       setStopPendingByRoot,
+      workspaceOwnerEpochRef,
     ],
   );
 

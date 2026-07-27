@@ -27,7 +27,12 @@ import {
   isBreakpointPathSupported,
   sanitizeDebugBreakpoints,
 } from "../domain/debugBreakpointPolicy";
-import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
+import {
+  DebugBreakpointMutationQueue,
+  debugBreakpointMutationQueueKey,
+  type DebugBreakpointMutationOwner,
+} from "./debugBreakpointMutationQueue";
 import { createDebugBreakpointSynchronization } from "./debugBreakpointSynchronization";
 import { useDebugInlineBreakpointMutations } from "./useDebugInlineBreakpointMutations";
 import type {
@@ -37,10 +42,17 @@ import type {
 
 const MAX_CONCURRENT_BREAKPOINT_BULK_SYNCS = 4;
 const BREAKPOINT_BULK_SYNC_ERROR = "Unable to synchronize all breakpoints.";
+const BREAKPOINT_MUTATION_STALE_ERROR =
+  "Breakpoint update was cancelled because the debug session changed.";
+const BREAKPOINT_MUTATION_SYNC_ERROR = "Unable to synchronize the breakpoint.";
 const COMPOUND_POLICY_SYNC_ERROR = "Unable to synchronize the active debug compound.";
 
 interface PendingRegistry {
   has(key: string): boolean;
+}
+
+interface WorkspaceOwnerEpoch {
+  readonly epoch: number;
 }
 
 interface UseDebugBreakpointManagementOptions {
@@ -51,6 +63,7 @@ interface UseDebugBreakpointManagementOptions {
   commitBreakpoints(key: string, list: Breakpoint[]): void;
   readonly createBreakpointId: () => string;
   readonly currentRootRef: MutableRefObject<string | null>;
+  readonly currentWorkspaceEpochRef: MutableRefObject<WorkspaceOwnerEpoch>;
   readonly currentWorkspaceIdRef: MutableRefObject<string | null>;
   readonly exactLiveCompoundSessionIds: (
     rootPath: string,
@@ -98,6 +111,7 @@ export function useDebugBreakpointManagement({
   commitBreakpoints,
   createBreakpointId,
   currentRootRef,
+  currentWorkspaceEpochRef,
   currentWorkspaceIdRef,
   exactLiveCompoundSessionIds,
   failClosedCompoundPolicy,
@@ -113,6 +127,9 @@ export function useDebugBreakpointManagement({
   setBreakpointBulkPendingByRoot,
 }: UseDebugBreakpointManagementOptions): DebugBreakpointManagement {
   const breakpointSynchronizationRef = useRef(createDebugBreakpointSynchronization());
+  const breakpointMutationQueueRef = useRef(new DebugBreakpointMutationQueue());
+  const breakpointMutationGenerationsRef = useRef(new Map<string, number>());
+  const breakpointMutationOwnersRef = useRef(new Map<string, object>());
   const breakpointCreationOwnersRef = useRef(new Map<string, object>());
   const breakpointRelocationOwnersRef = useRef(new Map<string, object>());
 
@@ -120,10 +137,12 @@ export function useDebugBreakpointManagement({
     (
       rootPath: string,
       requestedWorkspaceId: string | null,
+      requestedWorkspaceEpoch: number,
       sessionId: number,
       adapterKind: "node" | "php",
     ): boolean =>
       mountedRef.current &&
+      currentWorkspaceEpochRef.current.epoch === requestedWorkspaceEpoch &&
       isExactWorkspaceOwnerCurrent(rootPath, requestedWorkspaceId) &&
       trustedWorkspace(isWorkspaceTrusted) &&
       activeControlSessionId() === sessionId &&
@@ -131,6 +150,7 @@ export function useDebugBreakpointManagement({
     [
       activeControlSessionId,
       adapterKindForSession,
+      currentWorkspaceEpochRef,
       isExactWorkspaceOwnerCurrent,
       isWorkspaceTrusted,
       mountedRef,
@@ -167,14 +187,34 @@ export function useDebugBreakpointManagement({
   );
 
   const syncBreakpointsForFile = useCallback(
-    async (rootPath: string, key: string, filePath: string, list: readonly Breakpoint[]) => {
-      const requestedWorkspaceId = currentWorkspaceIdRef.current;
-      const sessionId = activeControlSessionId();
+    async (
+      rootPath: string,
+      key: string,
+      filePath: string,
+      list: readonly Breakpoint[],
+      expectedOwner?: DebugBreakpointMutationOwner,
+    ) => {
+      const requestedWorkspaceId = expectedOwner?.workspaceId ?? currentWorkspaceIdRef.current;
+      const requestedWorkspaceEpoch =
+        expectedOwner?.workspaceEpoch ?? currentWorkspaceEpochRef.current.epoch;
+      const sessionId = expectedOwner ? expectedOwner.sessionId : activeControlSessionId();
       if (sessionId === null) return;
-      const adapterKind = adapterKindForSession(rootPath, sessionId);
+      const adapterKind = expectedOwner
+        ? expectedOwner.adapterKind
+        : adapterKindForSession(rootPath, sessionId);
       if (!adapterKind || !isBreakpointPathSupported(rootPath, adapterKind, filePath)) return;
-      if (!isExactBreakpointSessionCurrent(rootPath, requestedWorkspaceId, sessionId, adapterKind))
+      if (
+        !isExactBreakpointSessionCurrent(
+          rootPath,
+          requestedWorkspaceId,
+          requestedWorkspaceEpoch,
+          sessionId,
+          adapterKind,
+        )
+      ) {
+        if (expectedOwner) throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
         return;
+      }
       const token = breakpointSynchronizationRef.current.begin(key, sessionId, filePath);
       const eligible = breakpointsForDebugSession(rootPath, adapterKind, list).filter(
         (breakpoint) => breakpoint.filePath === filePath,
@@ -183,16 +223,41 @@ export function useDebugBreakpointManagement({
       try {
         verified = await setBreakpointsForExactOwner(rootPath, sessionId, filePath, eligible);
       } catch (error) {
-        if (!breakpointSynchronizationRef.current.isLatest(token)) return;
-        if (
-          !isExactBreakpointSessionCurrent(rootPath, requestedWorkspaceId, sessionId, adapterKind)
-        )
+        if (!breakpointSynchronizationRef.current.isLatest(token)) {
+          if (expectedOwner) throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
           return;
+        }
+        if (
+          !isExactBreakpointSessionCurrent(
+            rootPath,
+            requestedWorkspaceId,
+            requestedWorkspaceEpoch,
+            sessionId,
+            adapterKind,
+          )
+        ) {
+          if (expectedOwner) throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
+          return;
+        }
+        if (expectedOwner) throw new Error(BREAKPOINT_MUTATION_SYNC_ERROR);
         throw error;
       }
-      if (!breakpointSynchronizationRef.current.isLatest(token)) return;
-      if (!isExactBreakpointSessionCurrent(rootPath, requestedWorkspaceId, sessionId, adapterKind))
+      if (!breakpointSynchronizationRef.current.isLatest(token)) {
+        if (expectedOwner) throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
         return;
+      }
+      if (
+        !isExactBreakpointSessionCurrent(
+          rootPath,
+          requestedWorkspaceId,
+          requestedWorkspaceEpoch,
+          sessionId,
+          adapterKind,
+        )
+      ) {
+        if (expectedOwner) throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
+        return;
+      }
       commitBreakpoints(
         key,
         applyVerification(breakpointsByRootRef.current[key] ?? [], filePath, verified),
@@ -203,99 +268,257 @@ export function useDebugBreakpointManagement({
       adapterKindForSession,
       breakpointsByRootRef,
       commitBreakpoints,
+      currentWorkspaceEpochRef,
       currentWorkspaceIdRef,
       isExactBreakpointSessionCurrent,
       setBreakpointsForExactOwner,
     ],
   );
 
-  const mutateBreakpoints = useCallback(
+  const captureBreakpointMutation = useCallback(
+    (filePath: string): DebugBreakpointMutationOwner | null => {
+      const rootPath = currentRootRef.current;
+      if (!rootPath) return null;
+      const key = normalizedWorkspaceRootKey(rootPath);
+      const workspaceId = currentWorkspaceIdRef.current;
+      const workspaceEpoch = currentWorkspaceEpochRef.current.epoch;
+      const candidateSessionId = activeSessionId();
+      const candidateAdapterKind =
+        candidateSessionId === null ? null : adapterKindForSession(rootPath, candidateSessionId);
+      const runtimeOwner =
+        candidateSessionId !== null &&
+        candidateAdapterKind !== null &&
+        isBreakpointPathSupported(rootPath, candidateAdapterKind, filePath)
+          ? { adapterKind: candidateAdapterKind, sessionId: candidateSessionId }
+          : { adapterKind: null, sessionId: null };
+      return {
+        ...runtimeOwner,
+        filePath,
+        key,
+        mutationGeneration: breakpointMutationGenerationsRef.current.get(key) ?? 0,
+        observedSessionId: candidateSessionId,
+        rootPath,
+        workspaceEpoch,
+        workspaceId,
+      };
+    },
+    [
+      activeSessionId,
+      adapterKindForSession,
+      currentRootRef,
+      currentWorkspaceEpochRef,
+      currentWorkspaceIdRef,
+    ],
+  );
+
+  const mutationCaptureIsCurrent = useCallback(
+    (capture: DebugBreakpointMutationOwner): boolean => {
+      if (
+        !mountedRef.current ||
+        currentWorkspaceEpochRef.current.epoch !== capture.workspaceEpoch ||
+        (breakpointMutationGenerationsRef.current.get(capture.key) ?? 0) !==
+          capture.mutationGeneration ||
+        !isExactWorkspaceOwnerCurrent(capture.rootPath, capture.workspaceId) ||
+        activeSessionId() !== capture.observedSessionId ||
+        pendingStartKeysRef.current.has(capture.key) ||
+        pendingRestartsRef.current.has(capture.key) ||
+        pendingActiveStopsRef.current.has(capture.key)
+      ) {
+        return false;
+      }
+      if (capture.sessionId === null || capture.adapterKind === null) return true;
+      return isExactBreakpointSessionCurrent(
+        capture.rootPath,
+        capture.workspaceId,
+        capture.workspaceEpoch,
+        capture.sessionId,
+        capture.adapterKind,
+      );
+    },
+    [
+      activeSessionId,
+      currentWorkspaceEpochRef,
+      isExactBreakpointSessionCurrent,
+      isExactWorkspaceOwnerCurrent,
+      mountedRef,
+      pendingActiveStopsRef,
+      pendingRestartsRef,
+      pendingStartKeysRef,
+    ],
+  );
+
+  const runQueuedBreakpointMutation = useCallback(
+    <T>(capture: DebugBreakpointMutationOwner, operation: () => Promise<T>): Promise<T> =>
+      breakpointMutationQueueRef.current.run(
+        debugBreakpointMutationQueueKey(
+          capture.key,
+          capture.workspaceId,
+          capture.workspaceEpoch,
+          capture.filePath,
+        ),
+        async () => {
+          if (!mutationCaptureIsCurrent(capture)) {
+            throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
+          }
+          return operation();
+        },
+      ),
+    [mutationCaptureIsCurrent],
+  );
+
+  const applyBreakpointMutation = useCallback(
     async (
-      filePathOf: (list: readonly Breakpoint[]) => string | null,
+      capture: DebugBreakpointMutationOwner,
+      id: string,
       mutate: (list: readonly Breakpoint[]) => Breakpoint[],
     ) => {
+      if (!mutationCaptureIsCurrent(capture)) {
+        throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
+      }
+      const current = breakpointsByRootRef.current[capture.key] ?? [];
+      const originalIndex = current.findIndex((entry) => entry.id === id);
+      const original = originalIndex < 0 ? null : current[originalIndex];
+      const next = mutate(current);
+      if (next === current) return;
+      const ownerKey = `${capture.key}\0${id}`;
+      const ownerToken = {};
+      breakpointMutationOwnersRef.current.set(ownerKey, ownerToken);
+      commitBreakpoints(capture.key, next);
+      try {
+        await syncBreakpointsForFile(
+          capture.rootPath,
+          capture.key,
+          capture.filePath,
+          next,
+          capture,
+        );
+        if (breakpointMutationOwnersRef.current.get(ownerKey) === ownerToken) {
+          breakpointMutationOwnersRef.current.delete(ownerKey);
+        }
+      } catch (error) {
+        if (breakpointMutationOwnersRef.current.get(ownerKey) === ownerToken) {
+          breakpointMutationOwnersRef.current.delete(ownerKey);
+          const owned = breakpointsByRootRef.current[capture.key] ?? [];
+          const existingIndex = owned.findIndex((entry) => entry.id === id);
+          let rolledBack: Breakpoint[];
+          if (original === null) {
+            rolledBack =
+              existingIndex < 0 ? owned : owned.filter((_entry, index) => index !== existingIndex);
+          } else if (existingIndex < 0) {
+            const insertionIndex = Math.min(originalIndex, owned.length);
+            rolledBack = [
+              ...owned.slice(0, insertionIndex),
+              original,
+              ...owned.slice(insertionIndex),
+            ];
+          } else {
+            rolledBack = owned.map((entry, index) => (index === existingIndex ? original : entry));
+          }
+          commitBreakpoints(capture.key, rolledBack);
+        }
+        throw error;
+      }
+    },
+    [breakpointsByRootRef, commitBreakpoints, mutationCaptureIsCurrent, syncBreakpointsForFile],
+  );
+
+  const mutateBreakpoints = useCallback(
+    async (id: string, mutate: (list: readonly Breakpoint[]) => Breakpoint[]) => {
       const root = currentRootRef.current;
       if (!root) return;
       const key = normalizedWorkspaceRootKey(root);
-      const current = breakpointsByRootRef.current[key] ?? [];
-      const filePath = filePathOf(current);
-      if (filePath === null) return;
-      const next = mutate(current);
-      commitBreakpoints(key, next);
-      await syncBreakpointsForFile(root, key, filePath, next);
+      const filePath = (breakpointsByRootRef.current[key] ?? []).find(
+        (entry) => entry.id === id,
+      )?.filePath;
+      if (!filePath) return;
+      const capture = captureBreakpointMutation(filePath);
+      if (!capture) return;
+      await runQueuedBreakpointMutation(capture, () =>
+        applyBreakpointMutation(capture, id, mutate),
+      );
     },
-    [breakpointsByRootRef, commitBreakpoints, currentRootRef, syncBreakpointsForFile],
+    [
+      applyBreakpointMutation,
+      breakpointsByRootRef,
+      captureBreakpointMutation,
+      currentRootRef,
+      runQueuedBreakpointMutation,
+    ],
   );
 
   const toggleBreakpoint = useCallback(
     async (filePath: string, lineNumber: number): Promise<BreakpointCreationOwnership | null> => {
-      const root = currentRootRef.current;
-      if (!root) return null;
-      const key = normalizedWorkspaceRootKey(root);
-      const current = breakpointsByRootRef.current[key] ?? [];
-      const existing = current.find(
-        (entry) =>
-          entry.filePath === filePath &&
-          entry.lineNumber === lineNumber &&
-          entry.columnNumber === undefined,
-      );
-      if (existing) {
-        breakpointCreationOwnersRef.current.delete(`${key}\0${existing.id}`);
-        const next = removeBreakpointFromList(current, existing.id);
-        commitBreakpoints(key, next);
-        await syncBreakpointsForFile(root, key, filePath, next);
-        return null;
-      }
-      let createdId: string | null = null;
-      const next = toggleBreakpointInList(current, filePath, lineNumber, () => {
-        let id = createBreakpointId();
-        while (current.some((entry) => entry.id === id)) id = createBreakpointId();
-        createdId = id;
-        return id;
-      });
-      if (createdId === null || next === current || next.length === current.length) return null;
-      const ownedId = createdId as string;
-      const ownerToken = {};
-      const ownerKey = `${key}\0${ownedId}`;
-      breakpointCreationOwnersRef.current.set(ownerKey, ownerToken);
-      commitBreakpoints(key, next);
-      const rollback = async () => {
-        if (breakpointCreationOwnersRef.current.get(ownerKey) !== ownerToken) return;
-        breakpointCreationOwnersRef.current.delete(ownerKey);
-        const owned = breakpointsByRootRef.current[key] ?? [];
-        if (!owned.some((entry) => entry.id === ownedId)) return;
-        const rolledBack = removeBreakpointFromList(owned, ownedId);
-        commitBreakpoints(key, rolledBack);
-        if (workspaceRootKeysEqual(root, currentRootRef.current)) {
-          await syncBreakpointsForFile(root, key, filePath, rolledBack);
+      const capture = captureBreakpointMutation(filePath);
+      if (!capture) return null;
+      return runQueuedBreakpointMutation(capture, async () => {
+        const current = breakpointsByRootRef.current[capture.key] ?? [];
+        const existing = current.find(
+          (entry) =>
+            entry.filePath === filePath &&
+            entry.lineNumber === lineNumber &&
+            entry.columnNumber === undefined,
+        );
+        if (existing) {
+          await applyBreakpointMutation(capture, existing.id, (list) =>
+            removeBreakpointFromList(list, existing.id),
+          );
+          breakpointCreationOwnersRef.current.delete(`${capture.key}\0${existing.id}`);
+          return null;
         }
-      };
-      try {
-        await syncBreakpointsForFile(root, key, filePath, next);
-      } catch (error) {
-        await rollback();
-        throw error;
-      }
-      return {
-        breakpointId: ownedId,
-        filePath,
-        lineNumber,
-        isCurrent: () =>
-          breakpointCreationOwnersRef.current.get(ownerKey) === ownerToken &&
-          (breakpointsByRootRef.current[key] ?? []).some((entry) => entry.id === ownedId),
-        rollback,
-      };
+
+        let createdId: string | null = null;
+        const next = toggleBreakpointInList(current, filePath, lineNumber, () => {
+          let id = createBreakpointId();
+          while (current.some((entry) => entry.id === id)) id = createBreakpointId();
+          createdId = id;
+          return id;
+        });
+        if (createdId === null || next === current || next.length === current.length) return null;
+        const ownedId = createdId as string;
+        const ownerToken = {};
+        const ownerKey = `${capture.key}\0${ownedId}`;
+        breakpointCreationOwnersRef.current.set(ownerKey, ownerToken);
+        try {
+          await applyBreakpointMutation(capture, ownedId, () => next);
+        } catch (error) {
+          if (breakpointCreationOwnersRef.current.get(ownerKey) === ownerToken) {
+            breakpointCreationOwnersRef.current.delete(ownerKey);
+          }
+          throw error;
+        }
+        const rollback = async () => {
+          if (breakpointCreationOwnersRef.current.get(ownerKey) !== ownerToken) return;
+          const rollbackCapture = captureBreakpointMutation(filePath);
+          if (!rollbackCapture) return;
+          await runQueuedBreakpointMutation(rollbackCapture, async () => {
+            if (breakpointCreationOwnersRef.current.get(ownerKey) !== ownerToken) return;
+            await applyBreakpointMutation(rollbackCapture, ownedId, (list) =>
+              removeBreakpointFromList(list, ownedId),
+            );
+            breakpointCreationOwnersRef.current.delete(ownerKey);
+          });
+        };
+        return {
+          breakpointId: ownedId,
+          filePath,
+          lineNumber,
+          isCurrent: () =>
+            breakpointCreationOwnersRef.current.get(ownerKey) === ownerToken &&
+            (breakpointsByRootRef.current[capture.key] ?? []).some((entry) => entry.id === ownedId),
+          rollback,
+        };
+      });
     },
     [
+      applyBreakpointMutation,
       breakpointsByRootRef,
-      commitBreakpoints,
+      captureBreakpointMutation,
       createBreakpointId,
-      currentRootRef,
-      syncBreakpointsForFile,
+      runQueuedBreakpointMutation,
     ],
   );
 
-  const { addInlineBreakpoint, relocateBreakpoint } = useDebugInlineBreakpointMutations({
+  const inlineBreakpointMutations = useDebugInlineBreakpointMutations({
     breakpointCreationOwnersRef,
     breakpointRelocationOwnersRef,
     breakpointsByRootRef,
@@ -305,14 +528,101 @@ export function useDebugBreakpointManagement({
     currentWorkspaceIdRef,
     syncBreakpointsForFile,
   });
+  const addInlineBreakpoint = useCallback(
+    async (
+      candidate: DebugInlineBreakpointCandidate,
+    ): Promise<BreakpointCreationOwnership | null> => {
+      const capture = captureBreakpointMutation(candidate.filePath);
+      if (!capture) return null;
+      return runQueuedBreakpointMutation(capture, async () => {
+        try {
+          const ownership = await inlineBreakpointMutations.addInlineBreakpoint(candidate, capture);
+          if (!ownership) return null;
+          if (!mutationCaptureIsCurrent(capture) || !safeCaptureIsCurrent(candidate.isCurrent)) {
+            await ownership.rollback();
+            throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
+          }
+          return {
+            ...ownership,
+            rollback: async () => {
+              if (!safeCaptureIsCurrent(ownership.isCurrent)) return;
+              const rollbackCapture = captureBreakpointMutation(candidate.filePath);
+              if (!rollbackCapture) return;
+              await runQueuedBreakpointMutation(rollbackCapture, async () => {
+                if (!safeCaptureIsCurrent(ownership.isCurrent)) return;
+                await applyBreakpointMutation(rollbackCapture, ownership.breakpointId, (list) =>
+                  removeBreakpointFromList(list, ownership.breakpointId),
+                );
+                await ownership.rollback();
+              });
+            },
+          };
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.message === BREAKPOINT_MUTATION_STALE_ERROR ||
+              error.message === BREAKPOINT_MUTATION_SYNC_ERROR)
+          ) {
+            throw error;
+          }
+          throw new Error(BREAKPOINT_MUTATION_SYNC_ERROR);
+        }
+      });
+    },
+    [
+      captureBreakpointMutation,
+      inlineBreakpointMutations,
+      mutationCaptureIsCurrent,
+      applyBreakpointMutation,
+      runQueuedBreakpointMutation,
+    ],
+  );
+  const relocateBreakpoint = useCallback(
+    async (candidate: DebugBreakpointRelocationCandidate): Promise<boolean> => {
+      const capture = captureBreakpointMutation(candidate.filePath);
+      if (!capture) return false;
+      return runQueuedBreakpointMutation(capture, async () => {
+        try {
+          const relocated = await inlineBreakpointMutations.relocateBreakpoint(candidate, capture);
+          if (!relocated) return false;
+          if (!mutationCaptureIsCurrent(capture) || !safeCaptureIsCurrent(candidate.isCurrent)) {
+            throw new Error(BREAKPOINT_MUTATION_STALE_ERROR);
+          }
+          return true;
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.message === BREAKPOINT_MUTATION_STALE_ERROR ||
+              error.message === BREAKPOINT_MUTATION_SYNC_ERROR)
+          ) {
+            throw error;
+          }
+          throw new Error(BREAKPOINT_MUTATION_SYNC_ERROR);
+        }
+      });
+    },
+    [
+      captureBreakpointMutation,
+      inlineBreakpointMutations,
+      mutationCaptureIsCurrent,
+      runQueuedBreakpointMutation,
+    ],
+  );
 
   const restoreBreakpoints = useCallback(
     async (list: Breakpoint[]) => {
       const root = currentRootRef.current;
       if (!root) return;
       const key = normalizedWorkspaceRootKey(root);
+      breakpointMutationGenerationsRef.current.set(
+        key,
+        (breakpointMutationGenerationsRef.current.get(key) ?? 0) + 1,
+      );
       for (const ownerKey of breakpointCreationOwnersRef.current.keys()) {
         if (ownerKey.startsWith(`${key}\0`)) breakpointCreationOwnersRef.current.delete(ownerKey);
+      }
+      for (const ownerKey of breakpointMutationOwnersRef.current.keys()) {
+        if (ownerKey.startsWith(`${key}\0`)) breakpointMutationOwnersRef.current.delete(ownerKey);
       }
       const sanitized = sanitizeDebugBreakpoints(list);
       commitBreakpoints(key, sanitized);
@@ -324,49 +634,35 @@ export function useDebugBreakpointManagement({
     [activeSessionId, commitBreakpoints, currentRootRef, syncBreakpointsForFile],
   );
 
-  const filePathOfBreakpoint = useCallback(
-    (id: string) => (list: readonly Breakpoint[]) =>
-      list.find((entry) => entry.id === id)?.filePath ?? null,
-    [],
-  );
   const setBreakpointEnabled = useCallback(
     (id: string, enabled: boolean) =>
-      mutateBreakpoints(filePathOfBreakpoint(id), (list) =>
-        setBreakpointEnabledInList(list, id, enabled),
-      ),
-    [filePathOfBreakpoint, mutateBreakpoints],
+      mutateBreakpoints(id, (list) => setBreakpointEnabledInList(list, id, enabled)),
+    [mutateBreakpoints],
   );
   const setBreakpointCondition = useCallback(
     (id: string, condition: string | null) =>
-      mutateBreakpoints(filePathOfBreakpoint(id), (list) =>
-        setBreakpointConditionInList(list, id, condition),
-      ),
-    [filePathOfBreakpoint, mutateBreakpoints],
+      mutateBreakpoints(id, (list) => setBreakpointConditionInList(list, id, condition)),
+    [mutateBreakpoints],
   );
   const setBreakpointHitCondition = useCallback(
     (id: string, hitCondition: BreakpointHitCondition | null) =>
-      mutateBreakpoints(filePathOfBreakpoint(id), (list) =>
-        setBreakpointHitConditionInList(list, id, hitCondition),
-      ),
-    [filePathOfBreakpoint, mutateBreakpoints],
+      mutateBreakpoints(id, (list) => setBreakpointHitConditionInList(list, id, hitCondition)),
+    [mutateBreakpoints],
   );
   const setBreakpointLogMessage = useCallback(
     (id: string, logMessage: string | null) =>
-      mutateBreakpoints(filePathOfBreakpoint(id), (list) =>
-        setBreakpointLogMessageInList(list, id, logMessage),
-      ),
-    [filePathOfBreakpoint, mutateBreakpoints],
+      mutateBreakpoints(id, (list) => setBreakpointLogMessageInList(list, id, logMessage)),
+    [mutateBreakpoints],
   );
   const removeBreakpoint = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const root = currentRootRef.current;
-      if (root)
-        breakpointCreationOwnersRef.current.delete(`${normalizedWorkspaceRootKey(root)}\0${id}`);
-      return mutateBreakpoints(filePathOfBreakpoint(id), (list) =>
-        removeBreakpointFromList(list, id),
-      );
+      if (!root) return;
+      const ownerKey = `${normalizedWorkspaceRootKey(root)}\0${id}`;
+      await mutateBreakpoints(id, (list) => removeBreakpointFromList(list, id));
+      breakpointCreationOwnersRef.current.delete(ownerKey);
     },
-    [currentRootRef, filePathOfBreakpoint, mutateBreakpoints],
+    [currentRootRef, mutateBreakpoints],
   );
 
   const mutateAllBreakpoints = useCallback(
@@ -387,6 +683,7 @@ export function useDebugBreakpointManagement({
       const next = mutate(current);
       if (next === current) return;
       const requestedWorkspaceId = currentWorkspaceIdRef.current;
+      const requestedWorkspaceEpoch = currentWorkspaceEpochRef.current.epoch;
       const sessionId = activeControlSessionId();
       const adapterKind = sessionId === null ? null : adapterKindForSession(root, sessionId);
       const affectedFilePaths = [
@@ -395,6 +692,13 @@ export function useDebugBreakpointManagement({
         (filePath) =>
           adapterKind !== null && isBreakpointPathSupported(root, adapterKind, filePath),
       );
+      breakpointMutationGenerationsRef.current.set(
+        key,
+        (breakpointMutationGenerationsRef.current.get(key) ?? 0) + 1,
+      );
+      for (const ownerKey of breakpointMutationOwnersRef.current.keys()) {
+        if (ownerKey.startsWith(`${key}\0`)) breakpointMutationOwnersRef.current.delete(ownerKey);
+      }
       commitBreakpoints(key, next);
       if (clearCreationOwners) {
         for (const ownerKey of breakpointCreationOwnersRef.current.keys()) {
@@ -413,7 +717,13 @@ export function useDebugBreakpointManagement({
         let nextRequest = 0;
         let failed = false;
         const operationStillCurrent = () =>
-          isExactBreakpointSessionCurrent(root, requestedWorkspaceId, sessionId, adapterKind);
+          isExactBreakpointSessionCurrent(
+            root,
+            requestedWorkspaceId,
+            requestedWorkspaceEpoch,
+            sessionId,
+            adapterKind,
+          );
         const worker = async () => {
           while (nextRequest < requests.length) {
             const request = requests[nextRequest];
@@ -471,6 +781,7 @@ export function useDebugBreakpointManagement({
       breakpointsByRootRef,
       commitBreakpoints,
       currentRootRef,
+      currentWorkspaceEpochRef,
       currentWorkspaceIdRef,
       isExactBreakpointSessionCurrent,
       mountedRef,
@@ -514,6 +825,14 @@ export function useDebugBreakpointManagement({
 }
 
 function trustedWorkspace(check: () => boolean): boolean {
+  try {
+    return check();
+  } catch {
+    return false;
+  }
+}
+
+function safeCaptureIsCurrent(check: () => boolean): boolean {
   try {
     return check();
   } catch {

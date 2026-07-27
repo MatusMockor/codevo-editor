@@ -480,6 +480,7 @@ pub enum DebugEventPayload {
     Output {
         stream: DebugOutputStream,
         text: String,
+        truncated: bool,
     },
     #[serde(rename_all = "camelCase")]
     Terminated {
@@ -492,6 +493,7 @@ pub enum DebugEventPayload {
     },
     #[serde(rename_all = "camelCase")]
     FunctionBreakpointsVerified {
+        generation: u64,
         breakpoints: Vec<DebugFunctionBreakpointVerification>,
     },
 }
@@ -530,6 +532,7 @@ pub trait DebugAdapter: Send {
     fn set_function_breakpoints(
         &mut self,
         _breakpoints: &[DebugFunctionBreakpoint],
+        _generation: u64,
     ) -> Result<Vec<DebugFunctionBreakpointVerification>, String> {
         Err("Function breakpoints are only available for Node.js debug sessions.".to_string())
     }

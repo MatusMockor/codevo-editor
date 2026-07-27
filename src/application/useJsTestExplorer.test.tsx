@@ -6,10 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { JsTestGateway, JsTestRunScope } from "../domain/jsTestRunScope";
 import type { WorkspaceTestDiscoveryGateway } from "../domain/jsTestDiscovery";
 import type { TestRunResponse } from "../domain/testResults";
-import type { JsTestTaskGateway } from "../domain/jsTestTask";
+import { MAX_JS_TEST_OUTPUT_STREAM_BYTES, type JsTestTaskGateway } from "../domain/jsTestTask";
 import type { JsTestWatchCommand, JsTestWatchGateway } from "../domain/jsTestCommand";
 import { waitForReact } from "../test/reactTestLifecycle";
 import { useJsTestExplorer, type JsTestExplorerState } from "./useJsTestExplorer";
+import type { JsTestExecutionRootResolver } from "./jsTestExecutionRootResolver";
 
 const ROOT_A = "/workspace/a";
 const ROOT_B = "/workspace/b";
@@ -25,12 +26,38 @@ describe("useJsTestExplorer", () => {
 
     expect(harness.hook().canRunScope(scope)).toBe(true);
     await act(async () => expect(await harness.hook().runScope(scope)).toBe(true));
-    expect(run).toHaveBeenCalledExactlyOnceWith(ROOT_A, scope);
+    expect(run).toHaveBeenCalledExactlyOnceWith(ROOT_A, scope, {
+      packageRootRelativePath: "",
+    });
 
     harness.set({ workspaceTrusted: false });
     expect(harness.hook().canRunScope(scope)).toBe(false);
     await act(async () => expect(await harness.hook().runScope(scope)).toBe(false));
     expect(run).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("dispatches the exact resolved nested-package authority for a selected test", async () => {
+    const run = vi.fn<JsTestGateway["run"]>().mockResolvedValue(ok([]));
+    const resolveExecutionRoot = vi.fn<JsTestExecutionRootResolver>(async () =>
+      Object.freeze({ packageRootRelativePath: "packages/web" }),
+    );
+    const harness = renderExplorer({
+      resolveExecutionRoot,
+      runGateway: { run },
+    });
+    const scope = {
+      fullName: "app works",
+      kind: "test",
+      relativeFilePath: "packages/web/src/app.test.ts",
+    } as const;
+
+    await act(async () => expect(await harness.hook().runScope(scope)).toBe(true));
+
+    expect(resolveExecutionRoot).toHaveBeenCalledExactlyOnceWith(scope);
+    expect(run).toHaveBeenCalledExactlyOnceWith(ROOT_A, scope, {
+      packageRootRelativePath: "packages/web",
+    });
     harness.unmount();
   });
 
@@ -51,6 +78,7 @@ describe("useJsTestExplorer", () => {
 
     expect(legacyRun).not.toHaveBeenCalled();
     expect(runTask).toHaveBeenCalledExactlyOnceWith({
+      packageRootRelativePath: "",
       runId: "task-1",
       scope: { kind: "all" },
       workspaceId: "workspace-a",
@@ -91,6 +119,7 @@ describe("useJsTestExplorer", () => {
     );
 
     expect(runTask).toHaveBeenCalledExactlyOnceWith({
+      packageRootRelativePath: "",
       runId: "task-1",
       scope: { kind: "all" },
       workspaceId: "workspace-a",
@@ -137,6 +166,12 @@ describe("useJsTestExplorer", () => {
   });
 
   it("uses one native watch lease and stops its exact owner", async () => {
+    let outputHandler: Parameters<JsTestWatchGateway["subscribeWatchOutput"]>[0] | null = null;
+    let statusHandler: Parameters<JsTestWatchGateway["subscribeWatchStatus"]>[0] | null = null;
+    const unsubscribeOutput = vi.fn().mockImplementationOnce(() => {
+      throw new Error("transient listener cleanup failure");
+    });
+    const unsubscribeStatus = vi.fn();
     const startWatch = vi.fn<JsTestWatchGateway["startWatch"]>(async (request) => ({
       owner: {
         epoch: request.epoch,
@@ -153,8 +188,14 @@ describe("useJsTestExplorer", () => {
       acknowledgeWatchStart,
       startWatch,
       stopWatch,
-      subscribeWatchOutput: async () => () => undefined,
-      subscribeWatchStatus: async () => () => undefined,
+      subscribeWatchOutput: async (handler) => {
+        outputHandler = handler;
+        return unsubscribeOutput;
+      },
+      subscribeWatchStatus: async (handler) => {
+        statusHandler = handler;
+        return unsubscribeStatus;
+      },
     };
     const command: JsTestWatchCommand = {
       kind: "vitest-watch",
@@ -180,12 +221,545 @@ describe("useJsTestExplorer", () => {
       watchId: "watch-1-1",
       workspaceId: "workspace-a",
     });
+    expect(outputHandler).not.toBeNull();
+    expect(statusHandler).not.toBeNull();
+    await act(async () => {
+      outputHandler?.({
+        data: "watch output",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 0,
+        stream: "stdout",
+        truncated: false,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.hook().outputSnapshot?.output.stdout).toEqual({
+      text: "watch output",
+      truncated: false,
+    });
+    await act(async () => {
+      outputHandler?.({
+        data: "duplicate",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 0,
+        stream: "stdout",
+        truncated: false,
+      });
+      outputHandler?.({
+        data: " next",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 2,
+        stream: "stdout",
+        truncated: false,
+      });
+      outputHandler?.({
+        data: "",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 3,
+        stream: "stdout",
+        truncated: true,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.hook().outputSnapshot?.output.stdout).toEqual({
+      text: "watch output next",
+      truncated: true,
+    });
     await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
     expect(stopWatch).toHaveBeenCalledExactlyOnceWith({
       epoch: 1,
       watchId: "watch-1-1",
       workspaceId: "workspace-a",
     });
+    expect(unsubscribeOutput).toHaveBeenCalledTimes(2);
+    expect(unsubscribeStatus).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("retains an exact UTF-8-safe byte tail across ring wrap and eviction boundaries", async () => {
+    let outputHandler: Parameters<JsTestWatchGateway["subscribeWatchOutput"]>[0] | null = null;
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+      stopWatch: async () => undefined,
+      subscribeWatchOutput: async (handler) => {
+        outputHandler = handler;
+        return () => undefined;
+      },
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(outputHandler).not.toBeNull());
+    await act(async () => {
+      outputHandler?.({
+        data: "x".repeat(MAX_JS_TEST_OUTPUT_STREAM_BYTES - 1),
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 0,
+        stream: "stdout",
+        truncated: false,
+      });
+      outputHandler?.({
+        data: "ž",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 1,
+        stream: "stdout",
+        truncated: false,
+      });
+      outputHandler?.({
+        data: "ž",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 2,
+        stream: "stderr",
+        truncated: false,
+      });
+      outputHandler?.({
+        data: "x".repeat(MAX_JS_TEST_OUTPUT_STREAM_BYTES - 1),
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 3,
+        stream: "stderr",
+        truncated: false,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(harness.hook().outputSnapshot?.output.stdout).toEqual({
+      text: `${"x".repeat(MAX_JS_TEST_OUTPUT_STREAM_BYTES - 2)}ž`,
+      truncated: true,
+    });
+    expect(harness.hook().outputSnapshot?.output.stderr).toEqual({
+      text: "x".repeat(MAX_JS_TEST_OUTPUT_STREAM_BYTES - 1),
+      truncated: true,
+    });
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    harness.unmount();
+  });
+
+  it("keeps native watch callbacks owned across routine discovery and result invalidation", async () => {
+    let outputHandler: Parameters<JsTestWatchGateway["subscribeWatchOutput"]>[0] | null = null;
+    let statusHandler: Parameters<JsTestWatchGateway["subscribeWatchStatus"]>[0] | null = null;
+    const unsubscribeOutput = vi.fn();
+    const unsubscribeStatus = vi.fn();
+    const stopWatch = vi.fn<JsTestWatchGateway["stopWatch"]>(async () => undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+      stopWatch,
+      subscribeWatchOutput: async (handler) => {
+        outputHandler = handler;
+        return unsubscribeOutput;
+      },
+      subscribeWatchStatus: async (handler) => {
+        statusHandler = handler;
+        return unsubscribeStatus;
+      },
+    };
+    const command: JsTestWatchCommand = {
+      kind: "vitest-watch",
+      packageRootRelativePath: "",
+      scope: { kind: "all" },
+    };
+    const harness = renderExplorer({ continuousRunWatchCommand: command, watchGateway });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(harness.hook().continuousRunPending).toBe(false));
+    harness.set({ discoveryVersion: 1, resultInvalidationVersion: 1 });
+    await act(async () => {
+      outputHandler?.({
+        data: "still owned",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 0,
+        stream: "stdout",
+        truncated: false,
+      });
+      statusHandler?.({
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        status: "running",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(harness.hook().outputSnapshot).toMatchObject({
+      generation: 2,
+      output: { stdout: { text: "still owned", truncated: false } },
+    });
+    await act(async () => {
+      statusHandler?.({
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        status: "stopped",
+      });
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(harness.hook().continuousRunEnabled).toBe(false));
+    expect(stopWatch).not.toHaveBeenCalled();
+    expect(unsubscribeOutput).toHaveBeenCalledOnce();
+    expect(unsubscribeStatus).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("encodes only incoming native-watch chunks and coalesces a large small-chunk burst", async () => {
+    let outputHandler: Parameters<JsTestWatchGateway["subscribeWatchOutput"]>[0] | null = null;
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+      stopWatch: async () => undefined,
+      subscribeWatchOutput: async (handler) => {
+        outputHandler = handler;
+        return () => undefined;
+      },
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(outputHandler).not.toBeNull());
+    const encoder = vi.spyOn(TextEncoder.prototype, "encode");
+    const callStart = encoder.mock.calls.length;
+    const renderStart = harness.renderCount();
+    const chunk = "0123456789abcdef";
+    const chunkCount = (MAX_JS_TEST_OUTPUT_STREAM_BYTES * 2) / chunk.length;
+    await act(async () => {
+      for (let sequence = 0; sequence < chunkCount; sequence += 1) {
+        outputHandler?.({
+          data: chunk,
+          owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+          sequence,
+          stream: "stdout",
+          truncated: false,
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const encodedInputs = encoder.mock.calls
+      .slice(callStart)
+      .reduce((total, [input]) => total + (input?.length ?? 0), 0);
+    encoder.mockRestore();
+    expect(encodedInputs).toBe(chunk.length * chunkCount);
+    expect(harness.renderCount() - renderStart).toBeLessThanOrEqual(1);
+    expect(harness.hook().outputSnapshot?.output.stdout).toEqual({
+      text: chunk.repeat(MAX_JS_TEST_OUTPUT_STREAM_BYTES / chunk.length),
+      truncated: true,
+    });
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    harness.unmount();
+  });
+
+  it("settles an acknowledged native watch failure and exposes its bounded backend message", async () => {
+    let outputHandler: Parameters<JsTestWatchGateway["subscribeWatchOutput"]>[0] | null = null;
+    let statusHandler: Parameters<JsTestWatchGateway["subscribeWatchStatus"]>[0] | null = null;
+    const unsubscribeOutput = vi.fn();
+    const unsubscribeStatus = vi.fn();
+    const stopWatch = vi.fn<JsTestWatchGateway["stopWatch"]>(async () => undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+      stopWatch,
+      subscribeWatchOutput: async (handler) => {
+        outputHandler = handler;
+        return unsubscribeOutput;
+      },
+      subscribeWatchStatus: async (handler) => {
+        statusHandler = handler;
+        return unsubscribeStatus;
+      },
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(harness.hook().continuousRunPending).toBe(false));
+    await act(async () => {
+      outputHandler?.({
+        data: "final output",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 0,
+        stream: "stderr",
+        truncated: false,
+      });
+      statusHandler?.({
+        message: "Watch runner failed.",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        status: "failed",
+      });
+      await Promise.resolve();
+    });
+
+    await waitForReact(() => expect(harness.hook().continuousRunEnabled).toBe(false));
+    act(() =>
+      outputHandler?.({
+        data: "late output",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 0,
+        stream: "stderr",
+        truncated: false,
+      }),
+    );
+    expect(harness.hook()).toMatchObject({
+      continuousRunRunning: false,
+      continuousRunStopping: false,
+      error: "Watch runner failed.",
+    });
+    expect(harness.hook().outputSnapshot?.output.stderr.text).toBe("final output");
+    expect(stopWatch).not.toHaveBeenCalled();
+    expect(unsubscribeOutput).toHaveBeenCalledOnce();
+    expect(unsubscribeStatus).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("does not dispatch a native watch after its workspace changes during listener admission", async () => {
+    const statusSubscription = deferred<() => void>();
+    const unsubscribeStatus = vi.fn();
+    const startWatch = vi.fn<JsTestWatchGateway["startWatch"]>();
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch,
+      stopWatch: async () => undefined,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: () => statusSubscription.promise,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(harness.hook().continuousRunRunning).toBe(true));
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    await act(async () => statusSubscription.resolve(unsubscribeStatus));
+
+    await waitForReact(() => expect(harness.hook().continuousRunStopping).toBe(false));
+    expect(startWatch).not.toHaveBeenCalled();
+    expect(unsubscribeStatus).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("does not acknowledge a native watch after its workspace changes during start", async () => {
+    const start = deferred<Awaited<ReturnType<JsTestWatchGateway["startWatch"]>>>();
+    const acknowledgeWatchStart = vi.fn<JsTestWatchGateway["acknowledgeWatchStart"]>();
+    const stopWatch = vi.fn<JsTestWatchGateway["stopWatch"]>(async () => undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart,
+      startWatch: () => start.promise,
+      stopWatch,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(harness.hook().continuousRunRunning).toBe(true));
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    await act(async () =>
+      start.resolve({
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+    );
+
+    await waitForReact(() => expect(stopWatch).toHaveBeenCalledOnce());
+    expect(acknowledgeWatchStart).not.toHaveBeenCalled();
+    expect(stopWatch).toHaveBeenCalledExactlyOnceWith({
+      epoch: 1,
+      watchId: "watch-1-1",
+      workspaceId: "workspace-a",
+    });
+    harness.unmount();
+  });
+
+  it("does not start after a terminal event arrives synchronously during subscription", async () => {
+    const unsubscribeStatus = vi.fn();
+    const subscribeWatchOutput = vi.fn<JsTestWatchGateway["subscribeWatchOutput"]>();
+    const startWatch = vi.fn<JsTestWatchGateway["startWatch"]>();
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch,
+      stopWatch: async () => undefined,
+      subscribeWatchOutput,
+      subscribeWatchStatus: async (handler) => {
+        handler({
+          message: "Watch failed before admission.",
+          owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+          status: "failed",
+        });
+        return unsubscribeStatus;
+      },
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(harness.hook().continuousRunEnabled).toBe(false));
+
+    expect(startWatch).not.toHaveBeenCalled();
+    expect(subscribeWatchOutput).not.toHaveBeenCalled();
+    expect(unsubscribeStatus).toHaveBeenCalledOnce();
+    expect(harness.hook().error).toBe("Watch failed before admission.");
+    harness.unmount();
+  });
+
+  it("clears an old native watch failure when a fresh owner is admitted", async () => {
+    const statusHandlers: Array<Parameters<JsTestWatchGateway["subscribeWatchStatus"]>[0]> = [];
+    const startWatch = vi.fn<JsTestWatchGateway["startWatch"]>(
+      async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+    );
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch,
+      stopWatch: async () => undefined,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: async (handler) => {
+        statusHandlers.push(handler);
+        return () => undefined;
+      },
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(startWatch).toHaveBeenCalledOnce());
+    await act(async () => {
+      statusHandlers[0]?.({
+        message: "first watch failed",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        status: "failed",
+      });
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(harness.hook().continuousRunEnabled).toBe(false));
+    expect(harness.hook().error).toBe("first watch failed");
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(startWatch).toHaveBeenCalledTimes(2));
+    await waitForReact(() => expect(harness.hook().continuousRunPending).toBe(false));
+    expect(harness.hook().error).toBeNull();
+    expect(startWatch.mock.calls[1]?.[0]).toMatchObject({
+      epoch: 2,
+      watchId: "watch-2-2",
+      workspaceId: "workspace-a",
+    });
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    harness.unmount();
+  });
+
+  it("drops foreign and A-B-A stale native watch output and terminal events", async () => {
+    const outputHandlers: Array<Parameters<JsTestWatchGateway["subscribeWatchOutput"]>[0]> = [];
+    const statusHandlers: Array<Parameters<JsTestWatchGateway["subscribeWatchStatus"]>[0]> = [];
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart: async () => undefined,
+      startWatch: async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+      stopWatch: async () => undefined,
+      subscribeWatchOutput: async (handler) => {
+        outputHandlers.push(handler);
+        return () => undefined;
+      },
+      subscribeWatchStatus: async (handler) => {
+        statusHandlers.push(handler);
+        return () => undefined;
+      },
+    };
+    const command: JsTestWatchCommand = {
+      kind: "vitest-watch",
+      packageRootRelativePath: "",
+      scope: { kind: "all" },
+    };
+    const harness = renderExplorer({ continuousRunWatchCommand: command, watchGateway });
+
+    act(() => expect(harness.hook().startContinuousRun()).toBe(true));
+    await waitForReact(() => expect(outputHandlers).toHaveLength(1));
+    act(() =>
+      outputHandlers[0]?.({
+        data: "foreign",
+        owner: { epoch: 1, watchId: "foreign", workspaceId: "workspace-a" },
+        sequence: 1,
+        stream: "stdout",
+        truncated: false,
+      }),
+    );
+    expect(harness.hook().outputSnapshot).toBeNull();
+
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    await waitForReact(() => expect(harness.hook().continuousRunEnabled).toBe(false));
+    harness.set({ rootPath: ROOT_A, workspaceId: "workspace-a" });
+    act(() => {
+      outputHandlers[0]?.({
+        data: "stale",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        sequence: 2,
+        stream: "stderr",
+        truncated: false,
+      });
+      statusHandlers[0]?.({
+        message: "stale failure",
+        owner: { epoch: 1, watchId: "watch-1-1", workspaceId: "workspace-a" },
+        status: "failed",
+      });
+    });
+
+    expect(harness.hook().outputSnapshot).toBeNull();
+    expect(harness.hook().error).not.toBe("stale failure");
     harness.unmount();
   });
 
@@ -249,9 +823,55 @@ describe("useJsTestExplorer", () => {
     });
 
     act(() => expect(harness.hook().startContinuousRun()).toBe(true));
-    await waitForReact(() => expect(stopWatch).toHaveBeenCalledTimes(1));
-    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    await waitForReact(() => expect(stopWatch).toHaveBeenCalledTimes(2));
+    await waitForReact(() => expect(harness.hook().continuousRunStopping).toBe(false));
+    expect(harness.hook().continuousRunEnabled).toBe(false);
+    harness.unmount();
+  });
+
+  it("keeps acknowledgement failure fail-closed until uncertain cleanup succeeds", async () => {
+    const acknowledgeWatchStart = vi.fn<JsTestWatchGateway["acknowledgeWatchStart"]>(async () => {
+      throw new Error("acknowledgement failed");
+    });
+    const stopWatch = vi
+      .fn<JsTestWatchGateway["stopWatch"]>()
+      .mockRejectedValueOnce(new Error("first cleanup failed"))
+      .mockRejectedValueOnce(new Error("automatic cleanup failed"))
+      .mockResolvedValueOnce(undefined);
+    const watchGateway: JsTestWatchGateway = {
+      acknowledgeWatchStart,
+      startWatch: async ({ epoch, watchId, workspaceId }) => ({
+        owner: { epoch, watchId, workspaceId },
+        structuredResults: "unavailable-in-watch-mode",
+      }),
+      stopWatch,
+      subscribeWatchOutput: async () => () => undefined,
+      subscribeWatchStatus: async () => () => undefined,
+    };
+    const harness = renderExplorer({
+      continuousRunWatchCommand: {
+        kind: "vitest-watch",
+        packageRootRelativePath: "",
+        scope: { kind: "all" },
+      },
+      watchGateway,
+    });
+
+    await act(async () => {
+      expect(harness.hook().startContinuousRun()).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
     expect(stopWatch).toHaveBeenCalledTimes(2);
+    expect(acknowledgeWatchStart).toHaveBeenCalledOnce();
+    expect(harness.hook()).toMatchObject({
+      continuousRunEnabled: false,
+      continuousRunStopping: true,
+    });
+    expect(harness.hook().canStartContinuousRun()).toBe(false);
+
+    await act(async () => expect(await harness.hook().stopContinuousRun()).toBe(true));
+    expect(stopWatch).toHaveBeenCalledTimes(3);
+    await waitForReact(() => expect(harness.hook().continuousRunStopping).toBe(false));
     harness.unmount();
   });
 
@@ -460,10 +1080,16 @@ describe("useJsTestExplorer", () => {
 
     await act(async () => harness.hook().run({ kind: "file", relativeFilePath: "a.test.ts" }));
 
-    expect(run).toHaveBeenCalledExactlyOnceWith(ROOT_A, {
-      kind: "file",
-      relativeFilePath: "a.test.ts",
-    });
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      ROOT_A,
+      {
+        kind: "file",
+        relativeFilePath: "a.test.ts",
+      },
+      {
+        packageRootRelativePath: "",
+      },
+    );
     expect(harness.hook().outputSnapshot).toBeNull();
     harness.unmount();
   });
@@ -614,7 +1240,9 @@ describe("useJsTestExplorer", () => {
 
     expect(harness.hook().canRerunLastRun()).toBe(true);
     await act(async () => expect(await harness.hook().rerunLastRun()).toBe(true));
-    expect(run).toHaveBeenLastCalledWith(ROOT_A, first);
+    expect(run).toHaveBeenLastCalledWith(ROOT_A, first, {
+      packageRootRelativePath: "",
+    });
     harness.unmount();
   });
 
@@ -1093,7 +1721,11 @@ test("same", () => {});`,
     await waitForReact(() => expect(harness.hook().unavailable).toBeNull());
     await act(async () => harness.hook().run({ kind: "all" }));
 
-    expect(run).toHaveBeenCalledExactlyOnceWith(ROOT_A, { kind: "all" });
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      ROOT_A,
+      { kind: "all" },
+      { packageRootRelativePath: "" },
+    );
     harness.unmount();
   });
 
@@ -1413,7 +2045,13 @@ test("same", () => {});`,
     expect(run).not.toHaveBeenCalled();
 
     harness.set({ runRequestVersion: 1 });
-    await waitForReact(() => expect(run).toHaveBeenCalledExactlyOnceWith(ROOT_A, { kind: "all" }));
+    await waitForReact(() =>
+      expect(run).toHaveBeenCalledExactlyOnceWith(
+        ROOT_A,
+        { kind: "all" },
+        { packageRootRelativePath: "" },
+      ),
+    );
     harness.set({ isOpen: false });
     harness.set({ isOpen: true });
     await act(async () => Promise.resolve());
@@ -1561,6 +2199,7 @@ interface ExplorerProps {
   isOpen: boolean;
   rootPath: string | null;
   resultInvalidationVersion: number;
+  resolveExecutionRoot?: JsTestExecutionRootResolver;
   runGateway: JsTestGateway;
   runRequestVersion: number;
   taskGateway: JsTestTaskGateway | null;
@@ -1594,7 +2233,9 @@ function renderExplorer(overrides: Partial<ExplorerProps> = {}) {
     ...overrides,
   };
   let current: JsTestExplorerState | null = null;
+  let renderCount = 0;
   function Harness() {
+    renderCount += 1;
     current = useJsTestExplorer(props);
     return null;
   }
@@ -1604,6 +2245,7 @@ function renderExplorer(overrides: Partial<ExplorerProps> = {}) {
       if (!current) throw new Error("hook not mounted");
       return current;
     },
+    renderCount: () => renderCount,
     set(next: Partial<ExplorerProps>) {
       props = { ...props, ...next };
       act(() => reactRoot.render(<Harness />));

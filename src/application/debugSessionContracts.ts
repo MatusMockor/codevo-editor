@@ -62,8 +62,9 @@ export interface DebugRestartFrameCandidate {
 }
 
 export interface DebugOutputLine {
-  stream: "stdout" | "stderr";
-  text: string;
+  readonly stream: "stdout" | "stderr";
+  readonly text: string;
+  readonly truncated: boolean;
 }
 
 export type ActiveDebugAdapterKind = "node" | "php" | null;
@@ -142,6 +143,7 @@ export interface UseDebugSessionResult {
   debugInspectionRevision: number;
   debugStopPending: boolean;
   debugSessionAttached: boolean;
+  debugStartBlockedByOtherOwner: boolean;
   debugStartPending: boolean;
   evaluationHistory: string[];
   pauseGeneration: number;

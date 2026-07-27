@@ -39,6 +39,7 @@ import {
   jsTestExplorerActiveDocumentIdentity,
   jsTestExplorerOpenedDocumentIdentitySnapshot,
 } from "./jsTestExplorerActiveDocumentOwnership";
+import { hasDebuggableNodeWorkspace } from "../application/workbenchDebugCommands";
 
 const EMPTY_JS_TEST_PROBLEM_NOTICES: readonly WorkbenchNotice[] = Object.freeze([]);
 const unavailableCopyValueBind: DebugCopyValueCommandBridge["bind"] = () => () => undefined;
@@ -190,11 +191,17 @@ export function useAppTestDebugPanels({
     jsTestProblemNoticesPublished,
     workbench.replaceJavaScriptTestProblemNotices,
   );
+  const hasJavaScriptTypeScriptDebugWorkspace = hasDebuggableNodeWorkspace({
+    activeDocument: workbench.activeDocument,
+    detectedJavaScriptTypeScript: Boolean(workbench.workspaceDescriptor?.javaScriptTypeScript),
+    openedDocuments: workbench.openDocuments,
+    workspaceRoot: workbench.workspaceRoot,
+  });
   const debugPanelProps = useDebugPanelProps({
     debugCopyStackTrace: workbench.debugCopyStackTrace,
     debugRestartFrame: workbench.debugRestartFrame,
     debugSession: workbench.debugSession,
-    hasJavaScriptTypeScriptWorkspace: !!workbench.workspaceDescriptor?.javaScriptTypeScript,
+    hasJavaScriptTypeScriptWorkspace: hasJavaScriptTypeScriptDebugWorkspace,
     nodeRunConfigurationPicker: workbench.nodeRunWithoutDebugging?.configurationLauncher,
     openNodeLaunchConfigurations: workbench.openNodeLaunchConfigurations,
     openDebugLocation: workbench.openDebugLocation,

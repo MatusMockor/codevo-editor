@@ -6,30 +6,35 @@ use super::watch_cdp_activation::{
 use super::watch_cdp_command_runtime::NodeCdpCommandRuntime;
 use super::watch_command_worker::{WatchDebugCommandWorkerPolicy, WatchDebugCommandWorkerPort};
 use super::watch_control_proxy::{
-    WatchDebugControlCommand, WatchDebugControlLease, WatchDebugControlPort,
-    WatchDebugControlProxy, WatchDebugControlResponse,
+    WatchDebugControlCommand, WatchDebugControlPort, WatchDebugControlProxy,
+    WatchDebugControlResponse,
 };
 use super::watch_controller::{
     WatchReplayOutcome, WatchTargetConnector, WatchTargetHandle, WatchTargetPublisher,
     WatchTargetReplay,
 };
-use super::watch_desired_policy::{
-    DesiredDebuggerPolicy, DesiredDebuggerReplayCommitError, DesiredDebuggerReplayPlan,
-    DesiredDebuggerReplayStep,
-};
-use super::watch_event_gate::{
-    WatchDebugEventGate, WatchEventGenerationLease, WatchLogicalFinishGate, WatchTransportEnd,
-};
-use super::watch_generation::{InspectorEndpointFingerprint, TargetGeneration};
 #[cfg(test)]
-use super::watch_replay::WatchCdpProtocol;
-use super::watch_replay::{apply_replay_setup, reconcile_replay_setup};
+use super::watch_desired_policy::DesiredDebuggerReplayPlan;
+use super::watch_desired_policy::{
+    DesiredDebuggerPolicy, DesiredDebuggerReplayCommitError, DesiredDebuggerReplayStep,
+};
+use super::watch_entry_authority::NativeNodeWatchEntryAuthority;
+#[cfg(test)]
+use super::watch_entry_authority::NativeNodeWatchEntryGeneration;
+#[cfg(test)]
+use super::watch_event_gate::WatchEventGenerationLease;
+use super::watch_event_gate::{WatchDebugEventGate, WatchLogicalFinishGate, WatchTransportEnd};
+use super::watch_generation::{InspectorEndpointFingerprint, TargetGeneration};
+use super::watch_replay::apply_replay_setup_with_function_publication;
+#[cfg(test)]
+use super::watch_replay::{apply_replay_setup, reconcile_replay_setup, WatchCdpProtocol};
 use super::watch_start_gate::NativeNodeWatchStartGate;
 use super::watch_supervisor::{WatchSupervisorCancellation, WatchTargetDisconnectPublisher};
-use crate::debug_adapter::{DebugAdapter, DebugEventEmitter};
-use crate::debug_cdp::event_sink::{
-    CdpEventDisposition, CdpEventDropReason, CdpEventEmitter, CdpEventSinkPort,
-};
+#[cfg(test)]
+use crate::debug_adapter::DebugAdapter;
+use crate::debug_adapter::DebugEventEmitter;
+#[cfg(test)]
+use crate::debug_cdp::event_sink::{CdpEventDisposition, CdpEventDropReason};
 use crate::debug_cdp::transport::{NodeCdpAdapter, PauseGenerationFloor};
 use crate::debug_source_map::SourceMapRegistry;
 use std::path::PathBuf;
@@ -38,10 +43,25 @@ use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
+#[path = "debug_node_watch_cdp_reconcile.rs"]
+mod reconcile;
+#[path = "debug_node_watch_cdp_target.rs"]
+mod target;
+use reconcile::{function_breakpoint_authority, reconcile_replayed_plan};
+#[cfg(test)]
+use target::{close_after_event_lease_ends, map_watch_event_disposition, DisconnectPublication};
+use target::{
+    prepare_entry_generation_or_end, relay_remote_disconnect,
+    terminate_startup_adapter_after_event_lease, NodeCdpWatchControlPort,
+    NodeCdpWatchTargetOwnership,
+};
+pub(crate) use target::{watch_cdp_event_emitter, NodeCdpWatchTarget};
+
 /// Internal CDP bridge for the watch controller. The supervisor process stays
 /// outside this adapter; every connected target is transport-only and external.
 pub(crate) struct NodeCdpWatchConnector {
     root: PathBuf,
+    entry_authority: Arc<NativeNodeWatchEntryAuthority>,
     request_timeout: Duration,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
     disconnects: WatchTargetDisconnectPublisher,
@@ -52,168 +72,10 @@ pub(crate) struct NodeCdpWatchConnector {
     connected_once: bool,
 }
 
-struct WatchCdpEventSink {
-    gate: Arc<WatchDebugEventGate>,
-    lease: WatchEventGenerationLease,
-    pause_epoch: Arc<AtomicU64>,
-}
-
-impl CdpEventSinkPort for WatchCdpEventSink {
-    fn emit(&self, payload: crate::debug_adapter::DebugEventPayload) -> CdpEventDisposition {
-        let epoch_update = match &payload {
-            crate::debug_adapter::DebugEventPayload::Stopped {
-                pause_generation, ..
-            } => Some(*pause_generation),
-            crate::debug_adapter::DebugEventPayload::Resumed => {
-                Some(self.pause_epoch.load(Ordering::Acquire).saturating_add(1))
-            }
-            _ => None,
-        };
-        let disposition = self.gate.emit_with_accept(&self.lease, payload, || {
-            if let Some(epoch) = epoch_update {
-                self.pause_epoch.fetch_max(epoch, Ordering::AcqRel);
-            }
-        });
-        map_watch_event_disposition(disposition)
-    }
-}
-
-fn map_watch_event_disposition(
-    disposition: super::watch_event_gate::WatchEventDisposition,
-) -> CdpEventDisposition {
-    match disposition {
-        super::watch_event_gate::WatchEventDisposition::Delivered => CdpEventDisposition::Delivered,
-        super::watch_event_gate::WatchEventDisposition::Buffered => CdpEventDisposition::Buffered,
-        super::watch_event_gate::WatchEventDisposition::DroppedOverflow => {
-            CdpEventDisposition::Dropped(CdpEventDropReason::CapacityExceeded)
-        }
-        super::watch_event_gate::WatchEventDisposition::DroppedLifecycle => {
-            CdpEventDisposition::Dropped(CdpEventDropReason::LifecycleOwnedElsewhere)
-        }
-        super::watch_event_gate::WatchEventDisposition::DroppedStale => {
-            CdpEventDisposition::Dropped(CdpEventDropReason::StaleAuthority)
-        }
-    }
-}
-
-pub(crate) fn watch_cdp_event_emitter(
-    gate: Arc<WatchDebugEventGate>,
-    lease: WatchEventGenerationLease,
-    pause_epoch: Arc<AtomicU64>,
-) -> CdpEventEmitter {
-    CdpEventEmitter::new(Arc::new(WatchCdpEventSink {
-        gate,
-        lease,
-        pause_epoch,
-    }))
-}
-
-pub(crate) struct NodeCdpWatchTarget {
-    ownership: Option<NodeCdpWatchTargetOwnership>,
-    control_proxy: WatchDebugControlProxy,
-    gate: Arc<WatchDebugEventGate>,
-    generation: TargetGeneration,
-    lease: WatchEventGenerationLease,
-    replay_plan: Option<DesiredDebuggerReplayPlan>,
-    intentional_close: Arc<AtomicBool>,
-    disconnects: WatchTargetDisconnectPublisher,
-    endpoint: InspectorEndpointFingerprint,
-    emergency_disconnect_sent: Arc<AtomicBool>,
-    pause_epoch: Arc<AtomicU64>,
-}
-
-impl NodeCdpWatchTarget {
-    fn terminate_inner(&mut self) {
-        if let Some(NodeCdpWatchTargetOwnership::Active { control_lease, .. }) =
-            self.ownership.as_ref()
-        {
-            let _ = self.control_proxy.revoke(control_lease);
-        }
-        self.intentional_close.store(true, Ordering::Release);
-        self.emergency_disconnect_sent
-            .store(true, Ordering::Release);
-
-        let mut ownership = self.ownership.take();
-        let ended = self
-            .gate
-            .end_before_transport_close(&self.lease, WatchTransportEnd::Terminated, || {
-                terminate_target_ownership(ownership.take());
-            })
-            .is_some();
-        if !ended {
-            terminate_target_ownership(ownership.take());
-        }
-    }
-}
-
-impl Drop for NodeCdpWatchTarget {
-    fn drop(&mut self) {
-        self.terminate_inner();
-    }
-}
-
-enum NodeCdpWatchTargetOwnership {
-    Startup(NodeCdpAdapter),
-    Active {
-        worker: WatchDebugCommandWorkerPort,
-        control_lease: WatchDebugControlLease,
-    },
-}
-
-struct NodeCdpWatchControlPort {
-    worker: WatchDebugCommandWorkerPort,
-    gate: Arc<WatchDebugEventGate>,
-    lease: WatchEventGenerationLease,
-    intentional_close: Arc<AtomicBool>,
-    disconnects: WatchTargetDisconnectPublisher,
-    generation: TargetGeneration,
-    endpoint: InspectorEndpointFingerprint,
-    emergency_disconnect_sent: Arc<AtomicBool>,
-}
-
-impl WatchDebugControlPort for NodeCdpWatchControlPort {
-    fn execute(
-        &self,
-        command: WatchDebugControlCommand,
-    ) -> Result<WatchDebugControlResponse, super::watch_control_proxy::WatchDebugCommandFailure>
-    {
-        self.worker.execute_bounded(command)
-    }
-
-    fn revoke(&self) {
-        self.intentional_close.store(true, Ordering::Release);
-        let worker = self.worker.clone();
-        if self
-            .gate
-            .end_before_transport_close(&self.lease, WatchTransportEnd::Terminated, || {
-                worker.revoke();
-            })
-            .is_none()
-        {
-            self.worker.revoke();
-        }
-        if self
-            .emergency_disconnect_sent
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            self.disconnects
-                .publish(self.generation, self.endpoint.clone());
-        }
-    }
-}
-
-fn terminate_target_ownership(ownership: Option<NodeCdpWatchTargetOwnership>) {
-    match ownership {
-        Some(NodeCdpWatchTargetOwnership::Startup(mut adapter)) => adapter.terminate(),
-        Some(NodeCdpWatchTargetOwnership::Active { worker, .. }) => worker.revoke(),
-        None => {}
-    }
-}
-
 pub(crate) struct NodeCdpWatchReplay {
     cancellation: WatchSupervisorCancellation,
     desired: Arc<Mutex<DesiredDebuggerPolicy>>,
+    gate: Arc<WatchDebugEventGate>,
 }
 
 pub(crate) struct NodeCdpWatchPublisher {
@@ -254,8 +116,13 @@ impl NodeCdpWatchAdapterPolicy {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "keeps the exact entry and watch lifecycle authorities explicit"
+)]
 pub(crate) fn node_cdp_watch_adapters(
     root: PathBuf,
+    entry_authority: Arc<NativeNodeWatchEntryAuthority>,
     policy: NodeCdpWatchAdapterPolicy,
     emitter: DebugEventEmitter,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -271,6 +138,7 @@ pub(crate) fn node_cdp_watch_adapters(
 ) {
     node_cdp_watch_adapters_with_start_gate(
         root,
+        entry_authority,
         policy,
         emitter,
         startup_is_current,
@@ -287,6 +155,7 @@ pub(crate) fn node_cdp_watch_adapters(
 )]
 pub(crate) fn node_cdp_watch_adapters_with_start_gate(
     root: PathBuf,
+    entry_authority: Arc<NativeNodeWatchEntryAuthority>,
     policy: NodeCdpWatchAdapterPolicy,
     emitter: DebugEventEmitter,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -319,6 +188,7 @@ pub(crate) fn node_cdp_watch_adapters_with_start_gate(
     (
         NodeCdpWatchConnector {
             root,
+            entry_authority,
             request_timeout: policy.request_timeout,
             startup_is_current,
             disconnects,
@@ -331,6 +201,7 @@ pub(crate) fn node_cdp_watch_adapters_with_start_gate(
         NodeCdpWatchReplay {
             cancellation: cancellation.clone(),
             desired: Arc::clone(&desired),
+            gate: Arc::clone(&gate),
         },
         NodeCdpWatchPublisher {
             cancellation,
@@ -362,6 +233,12 @@ impl WatchTargetConnector for NodeCdpWatchConnector {
             self.gate.prepare_initial()
         }
         .ok_or(())?;
+        let entry_generation = prepare_entry_generation_or_end(
+            self.gate.as_ref(),
+            &lease,
+            &self.entry_authority,
+            generation,
+        )?;
         let pause_epoch = Arc::new(AtomicU64::new(pause_generation_floor.epoch()));
         let emitter = watch_cdp_event_emitter(
             Arc::clone(&self.gate),
@@ -384,7 +261,7 @@ impl WatchTargetConnector for NodeCdpWatchConnector {
             }
         };
         let (disconnected_tx, disconnected_rx) = mpsc::channel();
-        let adapter = match NodeCdpAdapter::connect_watch_transport_at_pause_generation_floor(
+        let mut adapter = match NodeCdpAdapter::connect_watch_transport_at_pause_generation_floor(
             &endpoint.web_socket_url(),
             emitter,
             self.request_timeout,
@@ -403,12 +280,19 @@ impl WatchTargetConnector for NodeCdpWatchConnector {
                 return Err(());
             }
         };
+        if entry_generation.confirm().is_err() {
+            terminate_startup_adapter_after_event_lease(self.gate.as_ref(), &lease, adapter);
+            return Err(());
+        }
+        if adapter
+            .bind_exact_watch_entry_url(entry_generation.entry_url().into_string())
+            .is_err()
+        {
+            terminate_startup_adapter_after_event_lease(self.gate.as_ref(), &lease, adapter);
+            return Err(());
+        }
         if self.cancellation.is_revoked() {
-            let mut adapter = adapter;
-            adapter.terminate();
-            let _ =
-                self.gate
-                    .end_before_transport_close(&lease, WatchTransportEnd::Terminated, || ());
+            terminate_startup_adapter_after_event_lease(self.gate.as_ref(), &lease, adapter);
             return Err(());
         }
         let intentional_close = Arc::new(AtomicBool::new(false));
@@ -440,6 +324,7 @@ impl WatchTargetConnector for NodeCdpWatchConnector {
             endpoint: endpoint.clone(),
             emergency_disconnect_sent: disconnect_sent,
             pause_epoch,
+            entry_generation,
         })
     }
 }
@@ -489,7 +374,39 @@ impl WatchTargetReplay<NodeCdpWatchTarget> for NodeCdpWatchReplay {
             NodeCdpWatchTargetOwnership::Startup(adapter) => adapter,
             NodeCdpWatchTargetOwnership::Active { .. } => return Err(()),
         };
-        apply_replay_setup(adapter, setup, || !self.cancellation.is_revoked())?;
+        let target_generation = target.generation.get();
+        let desired_revision = plan.revision();
+        let (function_generation, ordered_ids) = function_breakpoint_authority(&plan).ok_or(())?;
+        let gate = Arc::clone(&self.gate);
+        let lease = target.lease.clone();
+        apply_replay_setup_with_function_publication(
+            adapter,
+            setup,
+            || !self.cancellation.is_revoked(),
+            &mut |generation, verification| {
+                if generation != function_generation {
+                    return Err(
+                        "Native watch function breakpoint generation changed during replay."
+                            .to_string(),
+                    );
+                }
+                if target_generation != 1 {
+                    return Ok(());
+                }
+                gate.retain_startup_function_breakpoint_receipt(
+                    &lease,
+                    target_generation,
+                    desired_revision,
+                    generation,
+                    &ordered_ids,
+                    verification,
+                )
+                .then_some(())
+                .ok_or_else(|| {
+                    "Native watch function breakpoint verification receipt is stale.".to_string()
+                })
+            },
+        )?;
 
         target.replay_plan = Some(plan);
         Ok(WatchReplayOutcome::Applied)
@@ -511,15 +428,19 @@ impl WatchTargetPublisher<NodeCdpWatchTarget> for NodeCdpWatchPublisher {
         let replayed_plan = target.replay_plan.take().ok_or(())?;
         let _mutation = lock_recover(&self.mutation);
         let current_plan = lock_recover(&self.desired).replay_plan();
-        if replayed_plan != current_plan {
-            let adapter = match target.ownership.as_mut().ok_or(())? {
-                NodeCdpWatchTargetOwnership::Startup(adapter) => adapter,
-                NodeCdpWatchTargetOwnership::Active { .. } => return Err(()),
-            };
-            reconcile_replay_setup(adapter, &replayed_plan, &current_plan, || {
-                !self.cancellation.is_revoked()
-            })?;
-        }
+        let adapter = match target.ownership.as_mut().ok_or(())? {
+            NodeCdpWatchTargetOwnership::Startup(adapter) => adapter,
+            NodeCdpWatchTargetOwnership::Active { .. } => return Err(()),
+        };
+        let startup_receipt_authority = reconcile_replayed_plan(
+            adapter,
+            self.gate.as_ref(),
+            &target.lease,
+            generation,
+            &replayed_plan,
+            &current_plan,
+            || !self.cancellation.is_revoked(),
+        )?;
         lock_recover(&self.desired)
             .commit_replay(current_plan)
             .map_err(|DesiredDebuggerReplayCommitError::Stale| ())?;
@@ -554,13 +475,30 @@ impl WatchTargetPublisher<NodeCdpWatchTarget> for NodeCdpWatchPublisher {
             endpoint: target.endpoint.clone(),
             emergency_disconnect_sent: Arc::clone(&target.emergency_disconnect_sent),
         });
+        let entry_generation = &target.entry_generation;
         publish_and_activate_control(
             &self.control_proxy,
             generation,
             Arc::clone(&port),
             self.gate.as_ref(),
-            &target.lease,
             &self.cancellation,
+            || {
+                if let Some((desired_revision, function_generation, ordered_ids)) =
+                    startup_receipt_authority.as_ref()
+                {
+                    self.gate
+                        .begin_publish_with_startup_function_breakpoint_receipt(
+                            &target.lease,
+                            generation.get(),
+                            *desired_revision,
+                            *function_generation,
+                            ordered_ids,
+                        )
+                } else {
+                    self.gate.begin_publish(&target.lease)
+                }
+            },
+            || entry_generation.confirm().map_err(|_| ()),
             &mut rollback,
         )?;
         let (worker, control_lease) = rollback.commit();
@@ -577,42 +515,6 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-trait DisconnectPublication {
-    fn publish_disconnect(
-        &self,
-        generation: TargetGeneration,
-        endpoint: InspectorEndpointFingerprint,
-    );
-}
-
-impl DisconnectPublication for WatchTargetDisconnectPublisher {
-    fn publish_disconnect(
-        &self,
-        generation: TargetGeneration,
-        endpoint: InspectorEndpointFingerprint,
-    ) {
-        self.publish(generation, endpoint);
-    }
-}
-
-fn relay_remote_disconnect(
-    disconnected: mpsc::Receiver<()>,
-    intentional_close: Arc<AtomicBool>,
-    disconnect_sent: Arc<AtomicBool>,
-    publisher: &impl DisconnectPublication,
-    generation: TargetGeneration,
-    endpoint: InspectorEndpointFingerprint,
-) {
-    if disconnected.recv().is_ok()
-        && !intentional_close.load(Ordering::Acquire)
-        && disconnect_sent
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-    {
-        publisher.publish_disconnect(generation, endpoint);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::watch_command_worker::WatchDebugCommandRuntime;
@@ -626,7 +528,30 @@ mod tests {
     use crate::debug_session_registry::DebugSessionRegistry;
     use std::cell::Cell;
     use std::cell::RefCell;
+    use std::fs::File;
     use std::time::Instant;
+
+    fn test_entry_authority() -> Arc<NativeNodeWatchEntryAuthority> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("canonical manifest root");
+        let entry = root.join("src/lib.rs");
+        Arc::new(
+            NativeNodeWatchEntryAuthority::from_retained(
+                &root,
+                &entry,
+                File::open(&root).expect("retained test root"),
+                File::open(&entry).expect("retained test entry"),
+            )
+            .expect("test entry authority"),
+        )
+    }
+
+    fn test_entry_generation() -> NativeNodeWatchEntryGeneration {
+        test_entry_authority()
+            .prepare_generation(TargetGeneration::from_value_for_test(1))
+            .expect("test entry generation")
+    }
 
     #[test]
     fn watch_adapter_policy_defaults_source_maps_on_and_preserves_disabled_policy() {
@@ -662,6 +587,44 @@ mod tests {
             map_watch_event_disposition(WatchEventDisposition::DroppedStale),
             CdpEventDisposition::Dropped(CdpEventDropReason::StaleAuthority)
         );
+    }
+
+    #[test]
+    fn failed_entry_generation_preparation_ends_exact_lease_before_retry() {
+        let (_registry, gate, lease, _sink) = lifecycle_gate();
+        let authority = test_entry_authority();
+        let generation = TargetGeneration::from_value_for_test(1);
+        authority
+            .prepare_generation(generation)
+            .expect("consume generation authority");
+
+        assert!(
+            prepare_entry_generation_or_end(gate.as_ref(), &lease, &authority, generation,)
+                .is_err()
+        );
+        assert!(!gate.is_current(&lease));
+        assert!(
+            gate.prepare_replacement().is_some(),
+            "failed preparation must not strand the active event generation"
+        );
+    }
+
+    #[test]
+    fn transport_close_runs_only_after_exact_event_lease_is_revoked() {
+        let (_registry, gate, lease, _sink) = lifecycle_gate();
+        let closed = Cell::new(0);
+
+        close_after_event_lease_ends(gate.as_ref(), &lease, || {
+            assert!(!gate.is_current(&lease));
+            closed.set(closed.get() + 1);
+        });
+        close_after_event_lease_ends(gate.as_ref(), &lease, || {
+            assert!(!gate.is_current(&lease));
+            closed.set(closed.get() + 1);
+        });
+
+        assert_eq!(closed.get(), 2, "fallback close must also run exactly once");
+        assert!(gate.prepare_replacement().is_some());
     }
 
     struct InertWatchCommandRuntime;
@@ -726,6 +689,8 @@ mod tests {
     #[derive(Default)]
     struct FakeProtocol {
         calls: Vec<&'static str>,
+        exception_filters: Vec<Vec<String>>,
+        function_verification: Vec<crate::debug_adapter::DebugFunctionBreakpointVerification>,
         fail_at: Option<&'static str>,
     }
 
@@ -752,6 +717,15 @@ mod tests {
         fn set_exception_pause(&mut self, _mode: DebugExceptionPauseMode) -> Result<(), ()> {
             self.call("exceptions")
         }
+        fn set_exception_pause_filter(
+            &mut self,
+            _mode: DebugExceptionPauseMode,
+            exception_type_filter: &crate::debug_exception_type_filter::DebugExceptionTypeFilter,
+        ) -> Result<(), ()> {
+            self.exception_filters
+                .push(exception_type_filter.as_slice().to_vec());
+            self.call("exceptions")
+        }
         fn set_breakpoints_active(&mut self, _active: bool) -> Result<(), ()> {
             self.call("activation")
         }
@@ -766,8 +740,14 @@ mod tests {
         fn set_function_breakpoints(
             &mut self,
             _breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+            _generation: u64,
+            publish: &mut dyn FnMut(
+                u64,
+                Vec<crate::debug_adapter::DebugFunctionBreakpointVerification>,
+            ) -> Result<(), String>,
         ) -> Result<(), ()> {
-            self.call("function-breakpoints")
+            self.call("function-breakpoints")?;
+            publish(_generation, self.function_verification.clone()).map_err(|_| ())
         }
     }
 
@@ -778,7 +758,14 @@ mod tests {
             DesiredDebuggerReplayStep::ApplyInternalStepFilter(Some(
                 DebugJustMyCodePolicy::NodeInternals,
             )),
-            DesiredDebuggerReplayStep::SetExceptionPause(DebugExceptionPauseMode::Uncaught),
+            DesiredDebuggerReplayStep::SetExceptionPause {
+                mode: DebugExceptionPauseMode::Uncaught,
+                exception_type_filter:
+                    crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(vec![
+                        "TypeError".to_string(),
+                    ])
+                    .expect("valid exception type filter"),
+            },
             DesiredDebuggerReplayStep::SetBreakpointsActive(true),
             DesiredDebuggerReplayStep::SetBreakpoints {
                 file_path: "/workspace/app.ts".into(),
@@ -786,6 +773,7 @@ mod tests {
             },
             DesiredDebuggerReplayStep::SetFunctionBreakpoints {
                 breakpoints: Vec::new(),
+                generation: 1,
             },
         ]
     }
@@ -809,6 +797,7 @@ mod tests {
                 "function-breakpoints"
             ]
         );
+        assert_eq!(protocol.exception_filters, [vec!["TypeError".to_string()]]);
     }
 
     #[test]
@@ -830,6 +819,69 @@ mod tests {
                 "exceptions",
                 "activation"
             ]
+        );
+    }
+
+    #[test]
+    fn replay_publishes_one_full_mixed_function_verification_in_exact_input_order() {
+        let mut steps = setup_steps();
+        let DesiredDebuggerReplayStep::SetFunctionBreakpoints {
+            breakpoints,
+            generation,
+        } = steps.last_mut().expect("function breakpoint step")
+        else {
+            panic!("function breakpoint step");
+        };
+        *generation = 1;
+        *breakpoints = vec![
+            crate::debug_adapter::DebugFunctionBreakpoint {
+                id: "resolved".to_string(),
+                function_name: "resolvedFunction".to_string(),
+                enabled: true,
+            },
+            crate::debug_adapter::DebugFunctionBreakpoint {
+                id: "pending".to_string(),
+                function_name: "pendingFunction".to_string(),
+                enabled: true,
+            },
+        ];
+        let mut protocol = FakeProtocol {
+            function_verification: vec![
+                crate::debug_adapter::DebugFunctionBreakpointVerification {
+                    id: "resolved".to_string(),
+                    verified: true,
+                },
+                crate::debug_adapter::DebugFunctionBreakpointVerification {
+                    id: "pending".to_string(),
+                    verified: false,
+                },
+            ],
+            ..FakeProtocol::default()
+        };
+        let published = RefCell::new(Vec::new());
+
+        assert_eq!(
+            apply_replay_setup_with_function_publication(
+                &mut protocol,
+                &steps,
+                || true,
+                &mut |generation, verification| {
+                    published.borrow_mut().push((generation, verification));
+                    Ok(())
+                },
+            ),
+            Ok(())
+        );
+        let published = published.into_inner();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].0, 1);
+        assert_eq!(
+            published[0]
+                .1
+                .iter()
+                .map(|entry| (entry.id.as_str(), entry.verified))
+                .collect::<Vec<_>>(),
+            [("resolved", true), ("pending", false)]
         );
     }
 
@@ -909,9 +961,14 @@ mod tests {
         fn set_function_breakpoints(
             &mut self,
             _breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+            _generation: u64,
+            publish: &mut dyn FnMut(
+                u64,
+                Vec<crate::debug_adapter::DebugFunctionBreakpointVerification>,
+            ) -> Result<(), String>,
         ) -> Result<(), ()> {
             self.setup_calls.push("function-breakpoints");
-            Ok(())
+            publish(_generation, Vec::new()).map_err(|_| ())
         }
     }
 
@@ -923,7 +980,11 @@ mod tests {
             DesiredDebuggerReplayStep::EnableRuntime,
             DesiredDebuggerReplayStep::EnableDebugger,
             DesiredDebuggerReplayStep::ApplyInternalStepFilter(None),
-            DesiredDebuggerReplayStep::SetExceptionPause(DebugExceptionPauseMode::None),
+            DesiredDebuggerReplayStep::SetExceptionPause {
+                mode: DebugExceptionPauseMode::None,
+                exception_type_filter:
+                    crate::debug_exception_type_filter::DebugExceptionTypeFilter::default(),
+            },
             DesiredDebuggerReplayStep::SetBreakpointsActive(true),
         ];
         steps.extend(files.into_iter().map(|(file_path, breakpoints)| {
@@ -1152,6 +1213,7 @@ mod tests {
         DebugEventPayload::Output {
             stream: DebugOutputStream::Stdout,
             text: text.to_string(),
+            truncated: false,
         }
     }
 
@@ -1254,6 +1316,7 @@ mod tests {
             endpoint: endpoint(),
             emergency_disconnect_sent: Arc::clone(&disconnect_sent),
             pause_epoch: cached_pause_epoch,
+            entry_generation: test_entry_generation(),
         };
         let request = WatchSetBreakpointsRequest::new(
             "/workspace/app.ts".into(),
@@ -1351,6 +1414,7 @@ mod tests {
             endpoint: endpoint(),
             emergency_disconnect_sent: Arc::new(AtomicBool::new(false)),
             pause_epoch: Arc::new(AtomicU64::new(0)),
+            entry_generation: test_entry_generation(),
         };
 
         target.terminate_inner();
@@ -1475,8 +1539,9 @@ mod tests {
             TargetGeneration::from_value_for_test(3),
             port,
             gate.as_ref(),
-            &event_lease,
             &WatchSupervisorCancellation::new(),
+            || gate.begin_publish(&event_lease),
+            || Ok(()),
             &mut rollback,
         )
         .expect("activate published worker");
@@ -1545,8 +1610,9 @@ mod tests {
                     TargetGeneration::from_value_for_test(4 + offset as u64),
                     port,
                     gate.as_ref(),
-                    &event_lease,
                     &WatchSupervisorCancellation::new(),
+                    || gate.begin_publish(&event_lease),
+                    || Ok(()),
                     &mut rollback,
                 ),
                 Err(())

@@ -18,11 +18,7 @@ function frame(overrides: Partial<StackFrame> = {}): StackFrame {
   };
 }
 
-function event(
-  seq: number,
-  payload: DebugEventPayload,
-  sessionId = 1,
-): DebugEvent {
+function event(seq: number, payload: DebugEventPayload, sessionId = 1): DebugEvent {
   return { rootPath: "/root", sessionId, seq, payload };
 }
 
@@ -59,13 +55,11 @@ describe("reduceDebuggerSnapshot", () => {
       { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 },
       { kind: "resumed" },
       { kind: "terminated", exitCode: 0 },
-      { kind: "output", stream: "stdout", text: "x" },
+      { kind: "output", stream: "stdout", text: "x", truncated: false },
     ];
 
     for (const [index, payload] of payloads.entries()) {
-      expect(reduceDebuggerSnapshot(snapshot, event(index + 1, payload))).toBe(
-        snapshot,
-      );
+      expect(reduceDebuggerSnapshot(snapshot, event(index + 1, payload))).toBe(snapshot);
     }
   });
 
@@ -100,10 +94,7 @@ describe("reduceDebuggerSnapshot", () => {
       snapshot,
       event(1, { kind: "stopped", reason: "entry", frames: [frame()], pauseGeneration: 1 }),
     );
-    const afterResumed = reduceDebuggerSnapshot(
-      snapshot,
-      event(1, { kind: "resumed" }),
-    );
+    const afterResumed = reduceDebuggerSnapshot(snapshot, event(1, { kind: "resumed" }));
 
     expect(afterStopped.state).toEqual({ kind: "starting", sessionId: 1 });
     expect(afterStopped.lastSeq).toBe(1);
@@ -225,13 +216,11 @@ describe("reduceDebuggerSnapshot", () => {
       { kind: "started", sessionId: 1 },
       { kind: "stopped", reason: "breakpoint", frames: [], pauseGeneration: 1 },
       { kind: "resumed" },
-      { kind: "output", stream: "stderr", text: "late" },
+      { kind: "output", stream: "stderr", text: "late", truncated: false },
     ];
 
     for (const [index, payload] of payloads.entries()) {
-      expect(reduceDebuggerSnapshot(terminated, event(index + 3, payload))).toBe(
-        terminated,
-      );
+      expect(reduceDebuggerSnapshot(terminated, event(index + 3, payload))).toBe(terminated);
     }
   });
 
@@ -270,7 +259,12 @@ describe("reduceDebuggerSnapshot", () => {
     const snapshot = runningSnapshot();
     const next = reduceDebuggerSnapshot(
       snapshot,
-      event(2, { kind: "output", stream: "stdout", text: "log line" }),
+      event(2, {
+        kind: "output",
+        stream: "stdout",
+        text: "log line",
+        truncated: false,
+      }),
     );
 
     expect(next.state).toBe(snapshot.state);
@@ -294,10 +288,7 @@ describe("reduceDebuggerSnapshot", () => {
 
   it("ignores a duplicate started event while already running", () => {
     const snapshot = runningSnapshot();
-    const next = reduceDebuggerSnapshot(
-      snapshot,
-      event(2, { kind: "started", sessionId: 1 }),
-    );
+    const next = reduceDebuggerSnapshot(snapshot, event(2, { kind: "started", sessionId: 1 }));
 
     expect(next.state).toBe(snapshot.state);
     expect(next.lastSeq).toBe(2);

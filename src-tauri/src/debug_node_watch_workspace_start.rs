@@ -1,3 +1,4 @@
+use super::watch_entry_authority::NativeNodeWatchEntryAuthority;
 use super::watch_runtime::{
     discover_native_node_watch_readiness, probe_native_node_watch_readiness,
 };
@@ -5,11 +6,12 @@ use super::watch_session_factory::{
     start_native_node_watch_session, NativeNodeWatchLaunchAuthority, NativeNodeWatchSessionStartup,
 };
 use crate::debug_adapter::{
-    DebugBreakpoint, DebugEventSink, DebugExceptionPauseMode, DebugJustMyCodePolicy,
-    DebugSessionRegistry, DebugStartResponse,
+    DebugBreakpoint, DebugEventSink, DebugExceptionPauseMode, DebugFunctionBreakpoint,
+    DebugJustMyCodePolicy, DebugSessionRegistry, DebugStartResponse,
 };
 use crate::debug_breakpoint_policy::{validate_initial_breakpoints, DebugBreakpointAdapterKind};
 use crate::debug_commands::DebugSessionFactoryStartup;
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use crate::debug_node_launch::{
     build_strict_native_node_watch_launch_plan, NativeNodeWatchLaunchPolicy,
 };
@@ -18,7 +20,6 @@ use crate::debug_session_registry::{
 };
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
-use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -27,7 +28,9 @@ pub(crate) struct NativeNodeWatchWorkspaceStartup<'a> {
     pub(crate) root_path: &'a str,
     pub(crate) policy: NativeNodeWatchLaunchPolicy,
     pub(crate) breakpoints: &'a [DebugBreakpoint],
+    pub(crate) function_breakpoints: &'a [DebugFunctionBreakpoint],
     pub(crate) exception_pause_mode: DebugExceptionPauseMode,
+    pub(crate) exception_type_filter: DebugExceptionTypeFilter,
     pub(crate) just_my_code: Option<DebugJustMyCodePolicy>,
     pub(crate) source_maps_enabled: bool,
     pub(crate) sink: Arc<dyn DebugEventSink>,
@@ -41,7 +44,9 @@ pub(crate) struct NativeNodeWatchIntentWorkspaceStartup<'a> {
     pub(crate) script_path: String,
     pub(crate) preserve_output: bool,
     pub(crate) breakpoints: &'a [DebugBreakpoint],
+    pub(crate) function_breakpoints: &'a [DebugFunctionBreakpoint],
     pub(crate) exception_pause_mode: DebugExceptionPauseMode,
+    pub(crate) exception_type_filter: DebugExceptionTypeFilter,
     pub(crate) just_my_code: Option<DebugJustMyCodePolicy>,
     pub(crate) source_maps_enabled: bool,
     pub(crate) sink: Arc<dyn DebugEventSink>,
@@ -60,7 +65,9 @@ pub(crate) fn start_native_node_watch_intent_for_retained_workspace(
             root_path: startup.root_path,
             policy,
             breakpoints: startup.breakpoints,
+            function_breakpoints: startup.function_breakpoints,
             exception_pause_mode: startup.exception_pause_mode,
+            exception_type_filter: startup.exception_type_filter,
             just_my_code: startup.just_my_code,
             source_maps_enabled: startup.source_maps_enabled,
             sink: startup.sink,
@@ -88,7 +95,9 @@ fn start_native_node_watch_with_readiness(
         root_path,
         policy,
         breakpoints,
+        function_breakpoints,
         exception_pause_mode,
+        exception_type_filter,
         just_my_code,
         source_maps_enabled,
         sink,
@@ -103,6 +112,7 @@ fn start_native_node_watch_with_readiness(
             root_path,
             policy: &validated_policy,
             breakpoints,
+            function_breakpoints,
             registry,
             workspace_registry,
             trust,
@@ -126,9 +136,12 @@ fn start_native_node_watch_with_readiness(
                 },
                 root: authorized.root,
                 workspace_directory,
+                entry_authority: authorized.entry_authority,
                 policy,
                 exception_pause_mode,
+                exception_type_filter,
                 just_my_code,
+                function_breakpoints: authorized.function_breakpoints,
                 authority: authorized
                     .authority
                     .with_verified_runtime(runtime)
@@ -142,6 +155,7 @@ struct NativeNodeWatchAuthorizationRequest<'a> {
     root_path: &'a str,
     policy: &'a NativeNodeWatchLaunchPolicy,
     breakpoints: &'a [DebugBreakpoint],
+    function_breakpoints: &'a [DebugFunctionBreakpoint],
     registry: &'a Arc<DebugSessionRegistry>,
     workspace_registry: &'a WorkspaceRegistry,
     trust: &'a Mutex<WorkspaceTrustService>,
@@ -149,11 +163,12 @@ struct NativeNodeWatchAuthorizationRequest<'a> {
 
 struct AuthorizedNativeNodeWatchStart {
     _retained_root: RetainedDebugWorkspaceRoot,
-    _retained_entry: File,
+    entry_authority: NativeNodeWatchEntryAuthority,
     root: PathBuf,
     permit: crate::debug_adapter::DebugStartupPermit,
     authority: NativeNodeWatchLaunchAuthority,
     breakpoints: Vec<DebugBreakpoint>,
+    function_breakpoints: Vec<DebugFunctionBreakpoint>,
 }
 
 fn authorize_native_node_watch_start<T>(
@@ -176,34 +191,38 @@ fn authorize_native_node_watch_start<T>(
     // session).
     let launch = build_strict_native_node_watch_launch_plan(&root, request.policy.clone())?;
     let entry_path = launch
-        .arguments
-        .last()
+        .startup_entry
+        .as_deref()
         .ok_or_else(|| "Native Node watch launch plan has no retained entrypoint.".to_string())?;
     ensure_exact_native_watch_entry(
         request.root_path,
         &root,
         request.policy.script_path(),
-        entry_path,
+        entry_path
+            .to_str()
+            .ok_or_else(|| "Native Node watch entrypoint path is not valid UTF-8.".to_string())?,
     )?;
-    let mut entry_options = OpenOptions::new();
-    entry_options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        entry_options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let retained_entry = entry_options
-        .open(entry_path)
-        .map_err(|_| "Native Node watch entrypoint identity changed during startup.".to_string())?;
-    if !retained_entry
-        .metadata()
-        .map_err(|_| "Unable to inspect native Node watch entrypoint identity.".to_string())?
-        .is_file()
-    {
-        return Err("Native Node watch entrypoint must be a regular file.".to_string());
-    }
+    let relative_entry = entry_path
+        .strip_prefix(&root)
+        .map_err(|_| "Native Node watch entrypoint escaped its workspace.".to_string())?;
+    let entry_directory = retained_root.try_clone_directory()?;
+    let retained_entry =
+        crate::workspace_registry::open_file_relative_to(&entry_directory, relative_entry)
+            .map_err(|_| {
+                "Native Node watch entrypoint identity changed during startup.".to_string()
+            })?;
+    let entry_authority = NativeNodeWatchEntryAuthority::from_retained(
+        &root,
+        entry_path,
+        entry_directory,
+        retained_entry,
+    )?;
     let breakpoints =
         validate_initial_breakpoints(&root, DebugBreakpointAdapterKind::Node, request.breakpoints)?;
+    crate::debug_cdp_function_breakpoints::validate_function_breakpoints(
+        request.function_breakpoints,
+    )?;
+    let function_breakpoints = request.function_breakpoints.to_vec();
 
     // The trust guard closes the set/revoke race through adapter publication.
     // It is dropped when `start` returns and is never captured by the watch
@@ -229,11 +248,12 @@ fn authorize_native_node_watch_start<T>(
 
     let result = start(AuthorizedNativeNodeWatchStart {
         _retained_root: retained_root,
-        _retained_entry: retained_entry,
+        entry_authority,
         root,
         permit,
         authority,
         breakpoints,
+        function_breakpoints,
     });
     drop(trust);
     result
@@ -330,6 +350,7 @@ mod tests {
                 root_path: self.root.to_str().expect("UTF-8 root"),
                 policy,
                 breakpoints: &[],
+                function_breakpoints: &[],
                 registry: &self.registry,
                 workspace_registry: &self.workspace_registry,
                 trust: &self.trust,
@@ -446,8 +467,8 @@ mod tests {
         let policy = fixture.policy();
         let authority = authorize_native_node_watch_start(fixture.request(&policy), |authorized| {
             let admitted_identity = authorized
-                ._retained_entry
-                .metadata()
+                .entry_authority
+                .retained_metadata()
                 .expect("retained entry metadata");
             fs::write(&fixture.script, "setInterval(() => {}, 20_000);\n")
                 .expect("intentional live edit");
@@ -491,6 +512,7 @@ mod tests {
             root_path: fixture.root.to_str().expect("UTF-8 root"),
             policy: &invalid,
             breakpoints: &[],
+            function_breakpoints: &[],
             registry: &fixture.registry,
             workspace_registry: &fixture.workspace_registry,
             trust: &fixture.trust,
@@ -519,7 +541,9 @@ mod tests {
             root_path: fixture.root.to_str().expect("UTF-8 root"),
             policy,
             breakpoints: &[],
+            function_breakpoints: &[],
             exception_pause_mode: DebugExceptionPauseMode::None,
+            exception_type_filter: DebugExceptionTypeFilter::default(),
             just_my_code: None,
             source_maps_enabled: true,
             sink: Arc::new(TestSink),
@@ -537,7 +561,9 @@ mod tests {
                 script_path: fixture.script.to_string_lossy().into_owned(),
                 preserve_output: false,
                 breakpoints: &[],
+                function_breakpoints: &[],
                 exception_pause_mode: DebugExceptionPauseMode::None,
+                exception_type_filter: DebugExceptionTypeFilter::default(),
                 just_my_code: None,
                 source_maps_enabled: true,
                 sink: Arc::new(TestSink),

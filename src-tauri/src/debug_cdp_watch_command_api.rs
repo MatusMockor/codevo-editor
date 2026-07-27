@@ -146,10 +146,11 @@ impl NodeCdpAdapter {
             shared.invalidate_pause();
         }
         self.client.shutdown_until(deadline);
-        if let DebuggeeOwnership::Spawned(process) = self.ownership {
+        if let DebuggeeOwnership::Spawned(process) =
+            std::mem::replace(&mut self.ownership, DebuggeeOwnership::External)
+        {
             process.terminate();
         }
-        self.ownership = DebuggeeOwnership::External;
     }
 }
 

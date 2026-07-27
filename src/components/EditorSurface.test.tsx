@@ -42,6 +42,7 @@ import {
 } from "./editorQaBridge";
 
 interface FakeModel {
+  deltaDecorations?: ReturnType<typeof vi.fn>;
   dispose?: ReturnType<typeof vi.fn>;
   getEOL?: ReturnType<typeof vi.fn>;
   getDecorationRange?: ReturnType<typeof vi.fn>;
@@ -751,7 +752,9 @@ describe("EditorSurface", () => {
       await Promise.resolve();
     });
 
-    expect(editor.onDidChangeModel).toHaveBeenCalledTimes(modelSubscriberCount);
+    // Coverage viewport ownership revalidates its model subscription when the
+    // same-path document revision changes, alongside the stable folding owner.
+    expect(editor.onDidChangeModel).toHaveBeenCalledTimes(modelSubscriberCount + 1);
     expect(getFoldingModel).toHaveBeenCalledTimes(1);
     expect(editor.setPosition).toHaveBeenCalledTimes(1);
 
@@ -4903,6 +4906,11 @@ class InvoiceServiceTest extends TestCase
     };
     const monaco = createMonaco(model);
     const editor = createEditor(model);
+    const applyEditorDecorations = editor.deltaDecorations as unknown as (
+      oldDecorations: string[],
+      decorations: unknown[],
+    ) => string[];
+    model.deltaDecorations = vi.fn(applyEditorDecorations);
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = monaco;
     const report = {
@@ -5513,6 +5521,7 @@ class InvoiceServiceTest extends TestCase
     const monaco = createMonaco(model);
     const editor = createEditor(model);
     const onToggleBreakpoint = vi.fn();
+    const onBreakpointMutationError = vi.fn();
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = monaco;
 
@@ -5520,6 +5529,7 @@ class InvoiceServiceTest extends TestCase
       root.render(
         createElement(EditorSurface, {
           ...memoGuardProps(activeDocument),
+          onBreakpointMutationError,
           onToggleBreakpoint,
         }),
       );
@@ -5542,6 +5552,46 @@ class InvoiceServiceTest extends TestCase
     });
 
     expect(onToggleBreakpoint).toHaveBeenCalledWith("/workspace/src/main.ts", 3);
+
+    onToggleBreakpoint.mockClear();
+    const toggleError = new Error("bounded toggle failure");
+    onToggleBreakpoint.mockRejectedValueOnce(toggleError);
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          position: { column: 1, lineNumber: 3 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+        },
+      });
+    });
+    await act(async () => Promise.resolve());
+    expect(onBreakpointMutationError).toHaveBeenCalledExactlyOnceWith(toggleError);
+
+    onToggleBreakpoint.mockClear();
+    onBreakpointMutationError.mockClear();
+    const synchronousToggleError = new Error("synchronous bounded toggle failure");
+    onToggleBreakpoint.mockImplementationOnce(() => {
+      throw synchronousToggleError;
+    });
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          position: { column: 1, lineNumber: 3 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+        },
+      });
+    });
+    expect(onBreakpointMutationError).toHaveBeenCalledExactlyOnceWith(synchronousToggleError);
 
     onToggleBreakpoint.mockClear();
     act(() => {

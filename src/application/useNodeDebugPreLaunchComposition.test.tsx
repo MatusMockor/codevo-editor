@@ -49,6 +49,18 @@ const PREPARED_NATIVE_WATCH: PreparedNodeDebugLaunch = {
   },
   preLaunchTask: Object.freeze({ label: "build api" }),
 };
+const PREPARED_TSX_WITH_ENV_FILE: PreparedNodeDebugLaunch = {
+  envFile: "config/dev.env",
+  launch: {
+    kind: "node-configured-script",
+    scriptPath: "/workspace/src/server.ts",
+    args: [],
+    env: {},
+    envFile: "config/dev.env",
+    runtime: "tsx",
+  },
+  preLaunchTask: Object.freeze({ label: "build api" }),
+};
 
 describe("useNodeDebugPreLaunchComposition", () => {
   it("starts a configuration without task metadata directly", async () => {
@@ -59,6 +71,97 @@ describe("useNodeDebugPreLaunchComposition", () => {
 
     expect(ui.tasks.startAndWait).not.toHaveBeenCalled();
     expect(ui.startDebug).toHaveBeenCalledExactlyOnceWith(PREPARED.launch);
+    ui.unmount();
+  });
+
+  it.each(["tsx", "ts-node"] as const)(
+    "replays the complete envFile, %s runtime, and preLaunch recipe on ordinary Restart",
+    async (runtime) => {
+      const prepared: PreparedNodeDebugLaunch = {
+        ...PREPARED_TSX_WITH_ENV_FILE,
+        launch: { ...PREPARED_TSX_WITH_ENV_FILE.launch, runtime },
+      };
+      const order: string[] = [];
+      const tasks = taskState({
+        startAndWait: vi.fn(async (label: string) => {
+          order.push(label);
+          return { status: "exited" as const, exitCode: 0 };
+        }),
+      });
+      const ui = renderComposition({ tasks });
+      ui.startDebug.mockImplementation(async (launch) => {
+        order.push("debug");
+        expect(launch).toMatchObject({
+          envFile: "config/dev.env",
+          runtime,
+        });
+        return ui.startDebug.mock.calls.length === 1 ? 4 : 9;
+      });
+      ui.stopExactDebugSession.mockImplementationOnce(async () => {
+        order.push("stop");
+        return true;
+      });
+
+      await act(async () => expect(await ui.start()(prepared)).toBe(true));
+      order.length = 0;
+      await act(async () => expect(await ui.composition().restartPostTask()).toBe(true));
+
+      expect(order).toEqual(["stop", "build api", "debug"]);
+      expect(ui.startDebug).toHaveBeenCalledTimes(2);
+      expect(ui.startDebug.mock.calls[1]?.[0]).toEqual(prepared.launch);
+      expect(ui.startDebug.mock.calls[1]?.[0]).not.toBe(prepared.launch);
+      ui.unmount();
+    },
+  );
+
+  it("fails closed after stop when the ordinary Restart preLaunchTask fails", async () => {
+    const ui = renderComposition({
+      tasks: taskState({
+        startAndWait: vi
+          .fn()
+          .mockResolvedValueOnce({ status: "exited", exitCode: 0 })
+          .mockResolvedValueOnce({ status: "exited", exitCode: 2 }),
+      }),
+    });
+    await act(async () => expect(await ui.start()(PREPARED_TSX_WITH_ENV_FILE)).toBe(true));
+
+    await act(async () => expect(await ui.composition().restartPostTask()).toBe(false));
+
+    expect(ui.stopExactDebugSession).toHaveBeenCalledExactlyOnceWith(4);
+    expect(ui.startDebug).toHaveBeenCalledOnce();
+    expect(ui.reportWarning).toHaveBeenCalledWith("Debug pre-launch task failed.");
+    ui.unmount();
+  });
+
+  it("rejects an ordinary Restart after exact workspace A-B-A generation drift", async () => {
+    const ui = renderComposition();
+    const stopped = deferred<boolean>();
+    ui.stopExactDebugSession.mockReturnValueOnce(stopped.promise);
+    await act(async () => expect(await ui.start()(PREPARED_TSX_WITH_ENV_FILE)).toBe(true));
+
+    const restarting = ui.composition().restartPostTask();
+    await act(async () => Promise.resolve());
+    act(() => ui.set({ workspaceId: "workspace-b" }));
+    act(() => ui.set({ workspaceId: "workspace-a" }));
+    stopped.resolve(true);
+    await act(async () => expect(await restarting).toBe(false));
+
+    expect(ui.stopExactDebugSession).toHaveBeenCalledExactlyOnceWith(4);
+    expect(ui.startDebug).toHaveBeenCalledOnce();
+    expect(ui.tasks.startAndWait).toHaveBeenCalledOnce();
+    ui.unmount();
+  });
+
+  it("invalidates only the exact lease-free configured recipe on natural termination", async () => {
+    const ui = renderComposition();
+    await act(async () => expect(await ui.start()(PREPARED_TSX_WITH_ENV_FILE)).toBe(true));
+
+    act(() => ui.emit(terminatedEvent(9)));
+    expect(ui.composition().hasPostTaskRestart()).toBe(true);
+    act(() => ui.emit(terminatedEvent(4)));
+
+    expect(ui.composition().hasPostTaskRestart()).toBe(false);
+    expect(ui.composition().canRestartPostTask()).toBe(false);
     ui.unmount();
   });
 
@@ -834,7 +937,7 @@ function renderComposition(
 ) {
   const root = createRoot(document.createElement("div"));
   const tasks = overrides.tasks ?? taskState();
-  const startDebug = vi.fn(async () => 4);
+  const startDebug = vi.fn(async (_launch: PreparedNodeDebugLaunch["launch"]) => 4);
   const startNativeNodeWatch = vi.fn(overrides.startNativeNodeWatch ?? (async () => 12));
   const stopExactDebugSession = vi.fn(async () => true);
   const disconnectExactDebugSession = vi.fn(async () => true);
@@ -925,7 +1028,7 @@ function outputEvent(
   rootPath = "/workspace",
 ): DebugEvent {
   return {
-    payload: { kind: "output", stream: "stdout", text },
+    payload: { kind: "output", stream: "stdout", text, truncated: false },
     rootPath,
     seq,
     sessionId,

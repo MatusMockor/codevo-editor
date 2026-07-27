@@ -13,19 +13,21 @@ import {
   type DebugCompoundSessionProjection,
 } from "./debugCompoundSessionProjection";
 import { applyCompoundChildEvent, type ActiveDebugCompound } from "./debugCompoundStart";
+import {
+  retainPendingDebugStartEvent,
+  type PendingDebugStartEvents,
+} from "./debugPendingStartEvents";
 import type { DebugFrameSelection } from "./debugFrameSelection";
 import type { DebugRestartCoordinator } from "./debugRestartCoordinator";
 import type { ActiveDebugAdapterKind, DebugOutputLine } from "./debugSessionContracts";
 import { inactiveSnapshot } from "./debugSessionDefaults";
 import { trustedWorkspace } from "./debugSessionOwnership";
+import {
+  createDebugOutputBatchCoordinator,
+  type DebugOutputOwner,
+} from "./debugOutputBatchCoordinator";
 import type { DebugSessionOwner } from "./useDebugSessionEnd";
 import type { NodeDebugCompoundSessionCoordinator } from "./nodeDebugCompoundSessionCoordinator";
-
-const OUTPUT_LINE_CAP = 5000;
-const OUTPUT_TRIM_THRESHOLD = 5500;
-const PENDING_CONFIRMED_START_EVENT_CAP = 32;
-
-export type PendingConfirmedStartEvents = Map<string, Map<number, DebugEvent[]>>;
 
 interface PendingRestartProjection {
   readonly attempt: { readonly sessionId: number };
@@ -56,7 +58,8 @@ export interface DebugSessionEventProjectionBindings {
   readonly isWorkspaceTrusted: () => boolean;
   readonly mountedRef: MutableRefObject<boolean>;
   readonly observeRestartFrameEvent: (event: DebugEvent) => void;
-  readonly pendingConfirmedStartEventsRef: MutableRefObject<PendingConfirmedStartEvents>;
+  readonly outputOwnersBySessionRef: MutableRefObject<Map<number, DebugOutputOwner>>;
+  readonly pendingConfirmedStartEventsRef: MutableRefObject<PendingDebugStartEvents>;
   readonly pendingConfirmedStartKeysRef: MutableRefObject<Set<string>>;
   readonly pendingRestartsRef: MutableRefObject<Map<string, PendingRestartProjection>>;
   readonly pendingStartKeysRef: MutableRefObject<Set<string>>;
@@ -81,6 +84,58 @@ export function useDebugSessionEventProjection(
   const gateway = bindings.gateway;
 
   useEffect(() => {
+    const isOutputOwnerCurrent = (owner: DebugOutputOwner): boolean => {
+      const bindings = bindingsRef.current;
+      const sessionOwner = bindings.sessionOwnersRef.current.get(owner.rootKey);
+      return (
+        bindings.mountedRef.current &&
+        trustedWorkspace(bindings.isWorkspaceTrusted) &&
+        bindings.isExactWorkspaceOwnerCurrent(owner.rootPath, owner.workspaceId) &&
+        owner.workspaceEpoch === bindings.workspaceOwnerEpochRef.current.epoch &&
+        owner.workspaceId === bindings.currentWorkspaceIdRef.current &&
+        sessionOwner?.sessionId === owner.sessionId &&
+        sessionOwner.workspaceEpoch === owner.workspaceEpoch &&
+        sessionOwner.workspaceId === owner.workspaceId
+      );
+    };
+    const outputCoordinator = createDebugOutputBatchCoordinator({
+      isOwnerCurrent: isOutputOwnerCurrent,
+      publish: (batches) => {
+        const bindings = bindingsRef.current;
+        const accepted = batches.filter(({ owner }) => isOutputOwnerCurrent(owner));
+        if (accepted.length === 0) return;
+        for (const { owner } of accepted) {
+          bindings.outputOwnersBySessionRef.current.set(owner.sessionId, owner);
+        }
+        // Output events advance the private sequence snapshot without publishing per event.
+        // Publish the latest snapshot once alongside the coalesced output batch.
+        bindings.setSnapshots(bindings.snapshotsRef.current);
+        bindings.setOutputBySession((current) => {
+          let next = current;
+          for (const batch of accepted) {
+            if (next === current) next = { ...current };
+            next[batch.owner.sessionId] = [...batch.lines];
+          }
+          return next;
+        });
+      },
+    });
+    const outputOwner = (
+      key: string,
+      rootPath: string,
+      sessionId: number,
+    ): DebugOutputOwner | null => {
+      const bindings = bindingsRef.current;
+      const owner = bindings.sessionOwnersRef.current.get(key);
+      if (!owner || owner.sessionId !== sessionId) return null;
+      return {
+        rootKey: key,
+        rootPath,
+        sessionId,
+        workspaceEpoch: owner.workspaceEpoch,
+        workspaceId: owner.workspaceId,
+      };
+    };
     const unsubscribe = gateway.subscribe((event) => {
       const bindings = bindingsRef.current;
       if (typeof event?.payload?.kind !== "string") {
@@ -119,12 +174,19 @@ export function useDebugSessionEventProjection(
           }
           return;
         }
-        const projectionChanged = bindings.compoundProjectionRef.current.handleEvent(event);
         const isLifecycleEvent =
           event.payload.kind === "started" ||
           event.payload.kind === "stopped" ||
           event.payload.kind === "resumed" ||
           event.payload.kind === "terminated";
+        const selectedOwnerBeforeLifecycle = isLifecycleEvent
+          ? bindings.sessionOwnersRef.current.get(key)
+          : undefined;
+        const projectionChanged = bindings.compoundProjectionRef.current.handleEvent(event);
+        if (projectionChanged && selectedOwnerBeforeLifecycle) {
+          const owner = outputOwner(key, event.rootPath, selectedOwnerBeforeLifecycle.sessionId);
+          if (owner) outputCoordinator.flushOwner(owner);
+        }
         if (event.payload.kind === "stopped" || event.payload.kind === "terminated") {
           bindings.compoundCoordinatorRef.current.handleEvent({
             kind: event.payload.kind,
@@ -198,6 +260,7 @@ export function useDebugSessionEventProjection(
           bindings.sessionOwnersRef.current.set(key, {
             sessionId: selectedSessionId,
             targetKind: "node-script",
+            workspaceEpoch: compound.owner.workspaceEpoch,
             workspaceId: compound.owner.workspaceId,
           });
           bindings.adoptBreakpointsActivation(key, selectedSessionId);
@@ -213,33 +276,33 @@ export function useDebugSessionEventProjection(
         event.payload.kind === "terminated" &&
         bindings.sessionOwnersRef.current.get(key)?.sessionId === event.sessionId
       ) {
+        const owner = outputOwner(key, event.rootPath, event.sessionId);
+        if (owner) outputCoordinator.flushOwner(owner);
         bindings.sessionOwnersRef.current.delete(key);
       }
       if (event.payload.kind === "terminated") {
         bindings.clearBreakpointsActivation(key, event.sessionId);
       }
       const existing = bindings.snapshotsRef.current[key] ?? inactiveSnapshot;
+      if (bindings.pendingStartKeysRef.current.has(key)) {
+        if (
+          event.payload.kind === "started" ||
+          event.payload.kind === "stopped" ||
+          event.payload.kind === "resumed" ||
+          event.payload.kind === "terminated" ||
+          event.payload.kind === "breakpointsVerified" ||
+          event.payload.kind === "functionBreakpointsVerified"
+        ) {
+          retainPendingDebugStartEvent(bindings.pendingConfirmedStartEventsRef.current, key, event);
+        }
+        if (event.payload.kind === "functionBreakpointsVerified") return;
+      }
       // A native-watch session is deliberately registered while Node is still
       // held at --inspect-brk. Events may arrive before the exact clean-target
       // lease has been rechecked and confirmed. Lifecycle events are retained
       // in a small bounded queue; the start owner replays only its exact
       // session after successful confirmation. User output remains hidden.
       if (bindings.pendingConfirmedStartKeysRef.current.has(key)) {
-        if (
-          event.payload.kind === "stopped" ||
-          event.payload.kind === "resumed" ||
-          event.payload.kind === "terminated" ||
-          event.payload.kind === "breakpointsVerified"
-        ) {
-          const pendingBySession =
-            bindings.pendingConfirmedStartEventsRef.current.get(key) ??
-            new Map<number, DebugEvent[]>();
-          const pending = pendingBySession.get(event.sessionId) ?? [];
-          if (pending.length >= PENDING_CONFIRMED_START_EVENT_CAP) pending.shift();
-          pending.push(event);
-          pendingBySession.set(event.sessionId, pending);
-          bindings.pendingConfirmedStartEventsRef.current.set(key, pendingBySession);
-        }
         return;
       }
       const seed =
@@ -254,7 +317,7 @@ export function useDebugSessionEventProjection(
       if (next === seed) return;
       const updated = { ...bindings.snapshotsRef.current, [key]: next };
       bindings.snapshotsRef.current = updated;
-      bindings.setSnapshots(updated);
+      if (event.payload.kind !== "output") bindings.setSnapshots(updated);
 
       const payload = event.payload;
 
@@ -281,16 +344,14 @@ export function useDebugSessionEventProjection(
       }
 
       if (payload.kind === "output") {
-        bindings.setOutputBySession((current) => {
-          const appended = [
-            ...(current[event.sessionId] ?? []),
-            { stream: payload.stream, text: payload.text },
-          ];
-          const trimmed =
-            appended.length > OUTPUT_TRIM_THRESHOLD ? appended.slice(-OUTPUT_LINE_CAP) : appended;
-
-          return { ...current, [event.sessionId]: trimmed };
-        });
+        const owner = outputOwner(key, event.rootPath, event.sessionId);
+        if (owner) {
+          outputCoordinator.enqueue(owner, {
+            stream: payload.stream,
+            text: payload.text,
+            truncated: payload.truncated,
+          });
+        }
         return;
       }
 
@@ -308,6 +369,9 @@ export function useDebugSessionEventProjection(
       }
     });
 
-    return unsubscribe;
+    return () => {
+      outputCoordinator.dispose();
+      unsubscribe();
+    };
   }, [gateway]);
 }

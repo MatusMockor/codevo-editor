@@ -21,7 +21,8 @@ describe("workspace source discovery IPC contract", () => {
       })
       .mockResolvedValueOnce({ status: "ok", content: "router.get('/a', handler);" })
       .mockResolvedValueOnce({ status: "tooLarge" })
-      .mockResolvedValueOnce({ status: "changed" });
+      .mockResolvedValueOnce({ status: "changed" })
+      .mockResolvedValueOnce({ status: "notFound" });
 
     await expect(
       invokeWorkspaceSourceEnumerationIpc(invokeCommand, {
@@ -62,6 +63,13 @@ describe("workspace source discovery IPC contract", () => {
         maxBytes: 2_097_152,
       }),
     ).resolves.toEqual({ status: "changed" });
+    await expect(
+      invokeWorkspaceSourceBoundedReadIpc(invokeCommand, {
+        workspaceId: "ws-1",
+        relativePath: "apps/api/src/missing.ts",
+        maxBytes: 2_097_152,
+      }),
+    ).resolves.toEqual({ status: "notFound" });
   });
 
   it.each([
@@ -91,7 +99,19 @@ describe("workspace source discovery IPC contract", () => {
     { status: "ok", content: 42 },
     { status: "tooLarge", content: "drift" },
     { status: "changed", content: "drift" },
+    { status: "notFound", content: "drift" },
+    { status: "not_found" },
     { status: "missing" },
+    { status: "unknown" },
+    { status: 1 },
+    {},
+    null,
+    [],
+    Object.create({ status: "notFound" }),
+    new (class {
+      readonly status = "notFound";
+    })(),
+    { status: "notFound", [Symbol("drift")]: true },
   ])("rejects malformed bounded read %#", (wire) => {
     expect(() => decodeBoundedWorkspaceSourceRead(wire)).toThrow(
       "Invalid workspace source discovery IPC value",

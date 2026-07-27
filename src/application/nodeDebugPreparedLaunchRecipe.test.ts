@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { clonePreparedNodeDebugLaunch } from "./nodeDebugPreparedLaunchRecipe";
+import {
+  clonePreparedNodeDebugLaunch,
+  createPreparedNodeDebugRestartStrategy,
+} from "./nodeDebugPreparedLaunchRecipe";
 import type { PreparedNodeDebugLaunch } from "./useNodeDebugConfigurationLauncher";
 
 describe("clonePreparedNodeDebugLaunch", () => {
@@ -76,7 +79,7 @@ describe("clonePreparedNodeDebugLaunch", () => {
     ).toBeNull();
   });
 
-  it("rejects recipes without an exact post task or with an unsupported launch", () => {
+  it("accepts an ordinary launch recipe and rejects an unsupported launch", () => {
     expect(
       clonePreparedNodeDebugLaunch({
         launch: { kind: "php-script", scriptPath: "/workspace/index.php" },
@@ -84,12 +87,15 @@ describe("clonePreparedNodeDebugLaunch", () => {
         preLaunchTask: null,
       }),
     ).toBeNull();
-    expect(
-      clonePreparedNodeDebugLaunch({
-        launch: { kind: "node-script", scriptPath: "/workspace/api.js" },
-        preLaunchTask: null,
-      }),
-    ).toBeNull();
+    const ordinary = {
+      launch: { kind: "node-script", scriptPath: "/workspace/api.js" },
+      preLaunchTask: null,
+    } as const;
+    expect(clonePreparedNodeDebugLaunch(ordinary)).toEqual(ordinary);
+    const strategy = createPreparedNodeDebugRestartStrategy(ordinary);
+    expect(strategy).toEqual({ kind: "replay-prepared", prepared: ordinary });
+    expect(Object.isFrozen(strategy)).toBe(true);
+    expect(Object.isFrozen(strategy?.prepared)).toBe(true);
   });
 
   it("rejects a structurally typed recipe that bypasses parser URL and matcher grammar", () => {

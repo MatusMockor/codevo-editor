@@ -1,7 +1,8 @@
 #![allow(dead_code)] // Protocol-agnostic registry API is incrementally wired by debugger commands.
 
 use crate::debug_adapter::{
-    DebugAdapter, DebugBreakpoint, DebugEvent, DebugEventPayload, DebugEventSink, DebugOutputStream,
+    DebugAdapter, DebugBreakpoint, DebugEvent, DebugEventPayload, DebugEventSink,
+    DebugFunctionBreakpointVerification, DebugOutputStream,
 };
 use crate::debug_breakpoint_policy::{
     commit_live_breakpoints, prepare_live_breakpoints, DebugBreakpointAdapterKind,
@@ -22,10 +23,17 @@ type BreakpointInventory = Arc<Mutex<HashMap<String, Vec<DebugBreakpoint>>>>;
 
 const MAX_BUFFERED_EVENTS: usize = 256;
 const MAX_BUFFERED_EVENT_BYTES: usize = 256 * 1024;
-const RESERVED_DELIVERY_EVENTS: usize = 3;
-const RESERVED_DELIVERY_BYTES: usize = 4 * 1024;
+const RESERVED_DELIVERY_EVENTS: usize = 4;
+const RESERVED_DELIVERY_BYTES: usize = 40 * 1024;
+const MAX_STARTUP_FUNCTION_BREAKPOINT_RECEIPT_BYTES: usize = 32 * 1024;
 const OVERFLOW_DIAGNOSTIC: &str =
     "Debugger events were truncated because the bounded delivery queue reached its limit.";
+/// Must match TypeScript `MAX_DEBUG_OUTPUT_EVENT_BYTES`.
+pub(crate) const MAX_DEBUG_OUTPUT_EVENT_BYTES: usize = 64 * 1024;
+pub(crate) const OUTPUT_TRUNCATION_SUFFIX: &str =
+    "\n[Debugger output truncated: one event exceeded 65536 UTF-8 bytes.]";
+const INVALID_OUTPUT_DIAGNOSTIC: &str =
+    "Debugger output was omitted because one event contained unsupported NUL bytes.";
 
 #[derive(Clone)]
 pub struct DebugEventEmitter {
@@ -55,15 +63,55 @@ struct DebugEventDelivery {
     draining: bool,
     overflowed: bool,
     diagnostic_queued: bool,
+    startup_function_breakpoint_receipt: Option<QueuedDebugEvent>,
     terminal: bool,
 }
 
 impl DebugEventEmitter {
+    #[cfg(test)]
+    pub(crate) fn pending_for_test(
+        root_path: &str,
+        session_id: u64,
+        sink: Arc<dyn DebugEventSink>,
+    ) -> Self {
+        Self {
+            root_path: root_path.to_string(),
+            seq: Arc::new(AtomicU64::new(0)),
+            session_id,
+            sink,
+            delivery: Arc::new(Mutex::new(DebugEventDelivery {
+                phase: DebugEventDeliveryPhase::Pending,
+                queued: VecDeque::new(),
+                queued_bytes: 0,
+                draining: false,
+                overflowed: false,
+                diagnostic_queued: false,
+                startup_function_breakpoint_receipt: None,
+                terminal: false,
+            })),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn activate_for_test(&self) {
+        let mut delivery = lock_recover(&self.delivery);
+        assert!(self.commit_activation(&mut delivery));
+        drop(delivery);
+        self.drain_committed();
+    }
+
     pub fn session_id(&self) -> u64 {
         self.session_id
     }
 
     pub fn emit(&self, payload: DebugEventPayload) {
+        {
+            let delivery = lock_recover(&self.delivery);
+            if delivery.phase == DebugEventDeliveryPhase::Discarded || delivery.terminal {
+                return;
+            }
+        }
+        let payload = bounded_debug_event_payload(payload);
         let should_drain = {
             let mut delivery = lock_recover(&self.delivery);
             if delivery.phase == DebugEventDeliveryPhase::Discarded || delivery.terminal {
@@ -90,6 +138,37 @@ impl DebugEventEmitter {
         }
     }
 
+    pub(crate) fn retain_startup_function_breakpoint_verification(
+        &self,
+        generation: u64,
+        breakpoints: Vec<DebugFunctionBreakpointVerification>,
+    ) -> Result<(), String> {
+        if generation != 1 {
+            return Err(
+                "Startup function breakpoint verification generation is invalid.".to_string(),
+            );
+        }
+        let payload = DebugEventPayload::FunctionBreakpointsVerified {
+            generation,
+            breakpoints,
+        };
+        let bytes = payload_bytes(&payload);
+        if bytes > MAX_STARTUP_FUNCTION_BREAKPOINT_RECEIPT_BYTES {
+            return Err("Startup function breakpoint verification is too large.".to_string());
+        }
+        let mut delivery = lock_recover(&self.delivery);
+        if delivery.phase != DebugEventDeliveryPhase::Pending
+            || delivery.terminal
+            || delivery.startup_function_breakpoint_receipt.is_some()
+        {
+            return Err(
+                "Startup function breakpoint verification can no longer be retained.".to_string(),
+            );
+        }
+        delivery.startup_function_breakpoint_receipt = Some(QueuedDebugEvent { bytes, payload });
+        Ok(())
+    }
+
     fn commit_activation(&self, delivery: &mut DebugEventDelivery) -> bool {
         if delivery.phase != DebugEventDeliveryPhase::Pending {
             return false;
@@ -97,12 +176,19 @@ impl DebugEventEmitter {
         if delivery.overflowed {
             delivery.push_diagnostic(true);
         }
-        delivery.push_reserved(
+        if let Some(receipt) = delivery.startup_function_breakpoint_receipt.take() {
+            if !delivery.push_reserved(receipt.payload, true) {
+                return false;
+            }
+        }
+        if !delivery.push_reserved(
             DebugEventPayload::Started {
                 session_id: self.session_id,
             },
             true,
-        );
+        ) {
+            return false;
+        }
         delivery.phase = DebugEventDeliveryPhase::Live;
         delivery.draining = true;
         true
@@ -117,6 +203,7 @@ impl DebugEventEmitter {
         delivery.phase = DebugEventDeliveryPhase::Discarded;
         delivery.queued.clear();
         delivery.queued_bytes = 0;
+        delivery.startup_function_breakpoint_receipt = None;
         delivery.draining = false;
         delivery.terminal = true;
     }
@@ -150,6 +237,60 @@ impl DebugEventEmitter {
                 return;
             }
         }
+    }
+}
+
+pub(crate) fn bounded_debug_event_payload(payload: DebugEventPayload) -> DebugEventPayload {
+    match payload {
+        DebugEventPayload::Output {
+            stream,
+            text,
+            truncated,
+        } => {
+            if text.contains('\0') {
+                return DebugEventPayload::Output {
+                    stream: DebugOutputStream::Stderr,
+                    text: INVALID_OUTPUT_DIAGNOSTIC.to_string(),
+                    truncated: true,
+                };
+            }
+            let truncated = truncated || text.len() > MAX_DEBUG_OUTPUT_EVENT_BYTES;
+            let already_marked = truncated && text.ends_with(OUTPUT_TRUNCATION_SUFFIX);
+            if (!truncated || already_marked)
+                && text.len() <= MAX_DEBUG_OUTPUT_EVENT_BYTES
+                && text.capacity() <= MAX_DEBUG_OUTPUT_EVENT_BYTES
+            {
+                return DebugEventPayload::Output {
+                    stream,
+                    text,
+                    truncated,
+                };
+            }
+            let mut bounded = String::with_capacity(MAX_DEBUG_OUTPUT_EVENT_BYTES);
+            if truncated {
+                let source = if already_marked {
+                    &text[..text.len() - OUTPUT_TRUNCATION_SUFFIX.len()]
+                } else {
+                    &text
+                };
+                let maximum_prefix =
+                    MAX_DEBUG_OUTPUT_EVENT_BYTES.saturating_sub(OUTPUT_TRUNCATION_SUFFIX.len());
+                let mut boundary = maximum_prefix.min(source.len());
+                while !source.is_char_boundary(boundary) {
+                    boundary = boundary.saturating_sub(1);
+                }
+                bounded.push_str(&source[..boundary]);
+                bounded.push_str(OUTPUT_TRUNCATION_SUFFIX);
+            } else {
+                bounded.push_str(&text);
+            }
+            DebugEventPayload::Output {
+                stream,
+                text: bounded,
+                truncated,
+            }
+        }
+        payload => payload,
     }
 }
 
@@ -198,6 +339,7 @@ impl DebugEventDelivery {
             DebugEventPayload::Output {
                 stream: DebugOutputStream::Stderr,
                 text: OVERFLOW_DIAGNOSTIC.to_string(),
+                truncated: true,
             },
             front,
         );
@@ -760,6 +902,7 @@ impl DebugSessionRegistry {
                 draining: false,
                 overflowed: false,
                 diagnostic_queued: false,
+                startup_function_breakpoint_receipt: None,
                 terminal: false,
             })),
         };

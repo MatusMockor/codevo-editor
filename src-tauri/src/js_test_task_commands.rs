@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager, State};
 pub(crate) struct RunJsTestTaskRequest {
     run_id: String,
     workspace_id: WorkspaceId,
+    package_root_relative_path: String,
     scope: JsTestRunScope,
 }
 
@@ -125,6 +126,7 @@ pub(crate) async fn run_js_test_task_json(
         let outcome = js_test_run::run_js_test_task_registered(
             root,
             app_data_base,
+            request.package_root_relative_path,
             request.scope,
             move |ownership| {
                 activation_app.state::<JsTestTaskRegistry>().activate(

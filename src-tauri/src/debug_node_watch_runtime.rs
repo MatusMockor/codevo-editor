@@ -15,6 +15,17 @@ use std::time::{Duration, Instant};
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_OUTPUT_LIMIT: usize = 512 * 1024;
 const MAX_NODE_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
+#[cfg(test)]
+const INITIAL_FINGERPRINT_SCANS: usize = 1;
+#[cfg(all(test, target_os = "linux"))]
+const DESCRIPTOR_READINESS_FULL_FINGERPRINT_SCANS: usize = INITIAL_FINGERPRINT_SCANS;
+#[cfg(all(test, not(target_os = "linux")))]
+const PATH_READINESS_FULL_FINGERPRINT_SCANS: usize = INITIAL_FINGERPRINT_SCANS + 4;
+
+#[cfg(test)]
+thread_local! {
+    static FULL_FINGERPRINT_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Debug)]
 pub(crate) struct NativeNodeWatchReadiness {
@@ -131,7 +142,6 @@ fn probe_native_node_watch_executable(
     #[cfg(not(target_os = "linux"))]
     let help = run_bounded_path_probe(&canonical_path, &fingerprint, "--help")?;
     let major = validate_probe_output(preserve_output, &version, &help)?;
-    verify_node_executable_fingerprint(&canonical_path, &fingerprint)?;
     #[cfg(target_os = "linux")]
     let program = NodeLaunchProgram::ExactNode {
         canonical_path,
@@ -179,6 +189,9 @@ pub(super) fn verify_node_executable_fingerprint(
 }
 
 fn fingerprint_retained_executable(file: &File) -> Result<NodeExecutableFingerprint, String> {
+    #[cfg(test)]
+    FULL_FINGERPRINT_SCANS.with(|scans| scans.set(scans.get() + 1));
+
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
 
@@ -391,12 +404,32 @@ fn descriptor_executable_command(executable: Arc<File>) -> Result<Command, Strin
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(not(target_os = "linux"))]
+    use std::fs::FileTimes;
+    #[cfg(not(target_os = "linux"))]
+    use std::io::Write;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
+
+    fn reset_full_fingerprint_scans() {
+        FULL_FINGERPRINT_SCANS.with(|scans| scans.set(0));
+    }
+
+    fn full_fingerprint_scans() -> usize {
+        FULL_FINGERPRINT_SCANS.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn path_probe_full_scan_budget_matches_platform_identity_strength() {
+        #[cfg(target_os = "linux")]
+        assert_eq!(DESCRIPTOR_READINESS_FULL_FINGERPRINT_SCANS, 1);
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(PATH_READINESS_FULL_FINGERPRINT_SCANS, 5);
+    }
 
     #[cfg(unix)]
     fn fake_node(version: &str, help: &str) -> PathBuf {
@@ -473,46 +506,81 @@ mod tests {
 
     #[cfg(not(target_os = "linux"))]
     #[test]
-    fn macos_readiness_probes_real_managed_node_through_trusted_live_boundary() {
-        let runtime = PathBuf::from(node_executable_path().expect("real Node runtime"));
-        let version = run_bounded_command(Command::new(&runtime), "--version").expect("version");
-        let major = parse_exact_node_major(&version).expect("real Node version");
-        let (readiness, detected_major) =
-            probe_native_node_watch_executable(&runtime, false).expect("macOS readiness");
-        assert_eq!(detected_major, major);
-        assert_eq!(readiness.major(), major);
+    fn pathname_readiness_retains_full_hashes_at_every_probe_boundary() {
+        reset_full_fingerprint_scans();
+        let runtime = fake_node("v22.1.0", "--watch run in watch mode");
+        let (readiness, major) =
+            probe_native_node_watch_executable(&runtime, false).expect("pathname readiness");
+        assert_eq!(major, 22);
         assert!(matches!(
-            readiness.program,
+            readiness.into_program(),
             NodeLaunchProgram::TrustedLiveNode { .. }
         ));
+        assert_eq!(
+            full_fingerprint_scans(),
+            PATH_READINESS_FULL_FINGERPRINT_SCANS,
+            "initial hash plus SHA-256 before and after both pathname probes"
+        );
+        let _ = fs::remove_dir_all(runtime.parent().expect("parent"));
     }
 
     #[cfg(not(target_os = "linux"))]
     #[test]
-    fn trusted_live_runtime_rejects_path_replacement_after_readiness() {
+    fn pathname_probe_rejects_restored_metadata_tamper_before_execution() {
         let runtime = fake_node("v22.1.0", "--watch run in watch mode");
-        let (readiness, _) =
-            probe_native_node_watch_executable(&runtime, false).expect("trusted live readiness");
-        let NodeLaunchProgram::TrustedLiveNode {
-            canonical_path,
-            fingerprint,
-        } = readiness.into_program()
-        else {
-            panic!("macOS readiness must use trusted live runtime");
-        };
-        let admitted = canonical_path.with_extension("admitted");
-        fs::rename(&canonical_path, admitted).expect("move admitted runtime");
-        fs::write(&canonical_path, "#!/bin/sh\nprintf 'v22.1.0\\n'\n")
-            .expect("replacement runtime");
-        let mut permissions = fs::metadata(&canonical_path)
-            .expect("replacement metadata")
-            .permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&canonical_path, permissions).expect("replacement permissions");
+        let marker = runtime.with_extension("executed");
+        let initial = fs::metadata(&runtime).expect("initial metadata");
+        let original_length = initial.len() as usize;
+        let original_times = FileTimes::new()
+            .set_accessed(initial.accessed().expect("initial access time"))
+            .set_modified(initial.modified().expect("initial modification time"));
+        let retained = OpenOptions::new()
+            .read(true)
+            .open(&runtime)
+            .expect("retained executable");
+        let fingerprint = fingerprint_retained_executable(&retained).expect("fingerprint");
+
+        let malicious_prefix = format!(
+            "#!/bin/sh\ntouch '{}'\nprintf 'v22.1.0\\n'\n",
+            marker.display()
+        );
         assert!(
-            verify_node_executable_fingerprint(&canonical_path, &fingerprint)
-                .expect_err("path replacement")
-                .contains("identity changed")
+            malicious_prefix.len() <= original_length,
+            "fixture must fit without changing executable length"
+        );
+        let mut malicious = malicious_prefix.into_bytes();
+        malicious.resize(original_length, b'#');
+        let mut writable = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&runtime)
+            .expect("writable executable");
+        writable
+            .write_all(&malicious)
+            .expect("in-place tamper content");
+        writable.sync_all().expect("persist in-place tamper");
+        writable
+            .set_times(original_times)
+            .expect("restore executable timestamps");
+        drop(writable);
+
+        let restored = fs::metadata(&runtime).expect("restored metadata");
+        assert_eq!(restored.len(), initial.len());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(restored.dev(), initial.dev());
+            assert_eq!(restored.ino(), initial.ino());
+            assert_eq!(restored.mtime(), initial.mtime());
+            assert_eq!(restored.mtime_nsec(), initial.mtime_nsec());
+        }
+
+        assert!(run_bounded_path_probe(&runtime, &fingerprint, "--version")
+            .expect_err("cryptographic pre-probe boundary must reject restored-metadata tamper")
+            .contains("identity changed"));
+        assert!(
+            !marker.exists(),
+            "tampered executable must be rejected before the capability probe"
         );
         let _ = fs::remove_dir_all(runtime.parent().expect("parent"));
     }
@@ -520,6 +588,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn readiness_binds_the_exact_canonical_executable() {
+        reset_full_fingerprint_scans();
         let runtime = fake_node(
             "v22.1.0",
             "--watch run in watch mode\\n--watch-preserve-output preserve output",
@@ -528,6 +597,11 @@ mod tests {
             probe_native_node_watch_executable(&runtime, false).expect("readiness");
         assert_eq!(readiness.major(), 22);
         assert_eq!(readiness.executable(), runtime.canonicalize().unwrap());
+        assert_eq!(
+            full_fingerprint_scans(),
+            DESCRIPTOR_READINESS_FULL_FINGERPRINT_SCANS,
+            "descriptor-retained readiness needs one full scan"
+        );
         let _ = fs::remove_dir_all(runtime.parent().expect("parent"));
     }
 

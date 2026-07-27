@@ -512,6 +512,22 @@ describe("workbench named Node debug configuration composition", () => {
     ui.unmount();
   });
 
+  it("selects generic Restart after a naturally terminated configured recipe is invalidated", async () => {
+    let configuredRecipeRetained = true;
+    mocks.nodeDebugTaskComposition.hasPostTaskRestart.mockImplementation(
+      () => configuredRecipeRetained,
+    );
+    const ui = renderOrchestration();
+    configuredRecipeRetained = false;
+    ui.rerender();
+
+    await act(async () => ui.result().debugSession.restartDebug());
+
+    expect(mocks.restartPostTask).not.toHaveBeenCalled();
+    expect(mocks.restartDebug).toHaveBeenCalledOnce();
+    ui.unmount();
+  });
+
   it.each([
     ["the exact post-task owner is stale", true, false, true],
     ["the underlying debug session is ineligible", true, true, false],

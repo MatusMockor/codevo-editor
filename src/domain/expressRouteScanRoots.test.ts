@@ -13,7 +13,7 @@ describe("expressRouteScanRoots", () => {
         ],
       }).files,
     ).toEqual([
-      { relativeFilePath: "src/root.ts", packageLabel: undefined },
+      { relativeFilePath: "src/root.ts", packageLabel: "workspace" },
       { relativeFilePath: "apps/api/src/server.ts", packageLabel: "@acme/api" },
       { relativeFilePath: "apps/web/src/server.ts", packageLabel: "@acme/web" },
     ]);
@@ -86,6 +86,28 @@ describe("expressRouteScanRoots", () => {
         packageLabel: packageName,
       })),
     );
+  });
+
+  it("uses the root package name as a fallback without overriding nearest nested packages", () => {
+    expect(
+      expressRouteScanRoots({
+        relativeFilePaths: [
+          "server.ts",
+          "src/routes.ts",
+          "packages/api/src/routes.ts",
+          "packages/api-tools/src/routes.ts",
+        ],
+        packageJsonDirs: [
+          { packageName: "workspace-api", relativeDirPath: "" },
+          { packageName: "@acme/api", relativeDirPath: "packages/api" },
+        ],
+      }).files,
+    ).toEqual([
+      { relativeFilePath: "server.ts", packageLabel: "workspace-api" },
+      { relativeFilePath: "src/routes.ts", packageLabel: "workspace-api" },
+      { relativeFilePath: "packages/api/src/routes.ts", packageLabel: "@acme/api" },
+      { relativeFilePath: "packages/api-tools/src/routes.ts", packageLabel: "workspace-api" },
+    ]);
   });
 
   it("skips malformed package names without failing file resolution", () => {

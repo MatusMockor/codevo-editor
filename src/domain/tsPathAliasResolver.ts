@@ -9,7 +9,18 @@ export type TsPathAliasResolver = (specifier: string) => readonly string[];
 
 export interface TsPathAliasResolverResult {
   readonly resolve: TsPathAliasResolver;
+  readonly resolvedBaseUrl: string | null;
   readonly truncated: boolean;
+}
+
+export interface TsPathAliasResolverOptions {
+  /**
+   * Workspace-relative directory containing the configuration. TypeScript
+   * resolves both `baseUrl` and `paths` targets from this directory.
+   */
+  readonly configDirectory?: string;
+  /** Workspace-relative baseUrl inherited through an explicit extends chain. */
+  readonly inheritedBaseUrl?: string;
 }
 
 interface AliasEntry {
@@ -30,24 +41,49 @@ interface ParsedAliasEntry {
   readonly truncated: boolean;
 }
 
-export function createTsPathAliasResolver(tsconfig: unknown): TsPathAliasResolverResult {
-  const { entries, truncated } = parseAliasEntries(tsconfig);
+export function createTsPathAliasResolver(
+  tsconfig: unknown,
+  options: TsPathAliasResolverOptions = {},
+): TsPathAliasResolverResult {
+  const configDirectory = normalizeWorkspacePath(options.configDirectory ?? "");
+  const inheritedBaseUrl =
+    options.inheritedBaseUrl === undefined
+      ? undefined
+      : normalizeWorkspacePath(options.inheritedBaseUrl);
+  const resolvedBaseUrl =
+    configDirectory === null || inheritedBaseUrl === null
+      ? null
+      : parseBaseUrl(tsconfig, configDirectory, inheritedBaseUrl);
+  const { entries, truncated } =
+    resolvedBaseUrl === null
+      ? { entries: [], truncated: false }
+      : parseAliasEntries(tsconfig, resolvedBaseUrl);
   return {
     resolve: (specifier) => resolveAliasSpecifier(specifier, entries),
+    resolvedBaseUrl,
     truncated,
   };
 }
 
-function parseAliasEntries(tsconfig: unknown): ParsedAliasEntries {
+function parseBaseUrl(
+  tsconfig: unknown,
+  configDirectory: string,
+  inheritedBaseUrl: string | undefined,
+): string | null {
+  if (!isRecord(tsconfig)) return null;
+  const compilerOptions = tsconfig.compilerOptions;
+  if (compilerOptions === undefined) return inheritedBaseUrl ?? configDirectory;
+  if (!isRecord(compilerOptions)) return null;
+  const baseUrlValue = compilerOptions.baseUrl;
+  if (baseUrlValue === undefined) return inheritedBaseUrl ?? configDirectory;
+  if (typeof baseUrlValue !== "string") return null;
+  return normalizeWorkspacePath(baseUrlValue, configDirectory);
+}
+
+function parseAliasEntries(tsconfig: unknown, baseUrl: string): ParsedAliasEntries {
   if (!isRecord(tsconfig)) return { entries: [], truncated: false };
   const compilerOptions = tsconfig.compilerOptions;
   if (!isRecord(compilerOptions)) return { entries: [], truncated: false };
-  const baseUrlValue = compilerOptions.baseUrl;
-  if (baseUrlValue !== undefined && typeof baseUrlValue !== "string") {
-    return { entries: [], truncated: false };
-  }
-  const baseUrl = normalizeWorkspacePath(typeof baseUrlValue === "string" ? baseUrlValue : ".");
-  if (baseUrl === null) return { entries: [], truncated: false };
   const paths = compilerOptions.paths;
   if (!isRecord(paths)) return { entries: [], truncated: false };
   const entries: AliasEntry[] = [];

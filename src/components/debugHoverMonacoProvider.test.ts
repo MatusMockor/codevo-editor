@@ -2,10 +2,14 @@ import type * as Monaco from "monaco-editor";
 import { describe, expect, it, vi } from "vitest";
 import type { DebugHoverEvaluationPort } from "../application/useDebugHoverEvaluation";
 import type { DebugEvaluationResult } from "../domain/debugEvaluationPolicy";
+import { MAX_DEBUG_HOVER_SOURCE_BYTES } from "../domain/debugHoverExpression";
 import type { DebugInspectionOwner } from "../domain/debugVariablePages";
 import type { EditorDocument } from "../domain/workspace";
 import {
+  DEBUG_HOVER_REQUEST_TIMEOUT_MS,
   DEBUG_HOVER_COPY_EVALUATE_PATH_COMMAND_ID,
+  MAX_DEBUG_HOVER_COPY_TOKENS,
+  MAX_DEBUG_HOVER_GLOBAL_UNSETTLED,
   MAX_DEBUG_HOVER_IN_FLIGHT,
   MAX_DEBUG_HOVER_MARKDOWN_BYTES,
   MAX_DEBUG_HOVER_RENDERED_TYPE_BYTES,
@@ -149,7 +153,7 @@ describe("debug hover Monaco provider", () => {
     await expect(disposedHover).resolves.toBeNull();
   });
 
-  it("caps physical evaluations globally at four", async () => {
+  it("caps concurrent evaluations at four per exact owner without blocking another owner", async () => {
     const pending = Array.from({ length: MAX_DEBUG_HOVER_IN_FLIGHT }, () =>
       deferred<DebugEvaluationResult | null>(),
     );
@@ -169,8 +173,139 @@ describe("debug hover Monaco provider", () => {
     ).toBe(MAX_DEBUG_HOVER_IN_FLIGHT);
     expect(fifth.port.evaluate).not.toHaveBeenCalled();
     expect(fifth.model.getValue).not.toHaveBeenCalled();
+    fifth.port.getOwner.mockReturnValue({ ...owner, sessionId: 5 });
+    fifth.state.ownerEpoch += 1;
+    await expect(
+      registeredProvider(fifth).provideHover(fifth.model, position, cancellation()),
+    ).resolves.not.toBeNull();
+    expect(fifth.port.evaluate).toHaveBeenCalledOnce();
     pending.forEach((request) => request.resolve({ status: "ok", value: "done" }));
     await Promise.all(hovers);
+  });
+
+  it("times out a hung evaluation, aborts its lease, and admits later owner work", async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = providerFixture();
+      const hung = deferred<DebugEvaluationResult | null>();
+      fixture.port.evaluate.mockReturnValueOnce(hung.promise);
+      const provider = registeredProvider(fixture);
+      const hover = provider.provideHover(fixture.model, position, cancellation());
+      const signal = fixture.port.evaluate.mock.calls[0]?.[2] as AbortSignal;
+
+      await vi.advanceTimersByTimeAsync(DEBUG_HOVER_REQUEST_TIMEOUT_MS);
+      await expect(hover).resolves.toBeNull();
+      expect(signal.aborted).toBe(true);
+
+      fixture.port.getOwner.mockReturnValue({ ...owner, sessionId: 99 });
+      fixture.state.ownerEpoch += 1;
+      fixture.port.evaluate.mockResolvedValueOnce({ status: "ok", value: "fresh" });
+      await expect(
+        provider.provideHover(fixture.model, position, cancellation()),
+      ).resolves.not.toBeNull();
+      hung.resolve({ status: "ok", value: "late" });
+      await vi.runAllTimersAsync();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds timed-out physical evaluations globally until their gateways settle", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = Array.from({ length: MAX_DEBUG_HOVER_GLOBAL_UNSETTLED }, () =>
+        deferred<DebugEvaluationResult | null>(),
+      );
+      const fixtures = pending.map((request, index) => {
+        const fixture = providerFixture();
+        fixture.port.getOwner.mockReturnValue({ ...owner, sessionId: index + 100 });
+        fixture.state.ownerEpoch = index + 2;
+        fixture.port.evaluate.mockReturnValueOnce(request.promise);
+        return fixture;
+      });
+      const hovers = fixtures.map((fixture) =>
+        registeredProvider(fixture).provideHover(fixture.model, position, cancellation()),
+      );
+      const overflow = providerFixture();
+      overflow.port.getOwner.mockReturnValue({ ...owner, sessionId: 999 });
+      overflow.state.ownerEpoch += 1;
+
+      await expect(
+        registeredProvider(overflow).provideHover(overflow.model, position, cancellation()),
+      ).resolves.toBeNull();
+      expect(overflow.port.evaluate).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(DEBUG_HOVER_REQUEST_TIMEOUT_MS);
+      await expect(Promise.all(hovers)).resolves.toEqual(
+        Array.from({ length: MAX_DEBUG_HOVER_GLOBAL_UNSETTLED }, () => null),
+      );
+      await expect(
+        registeredProvider(overflow).provideHover(overflow.model, position, cancellation()),
+      ).resolves.toBeNull();
+      expect(overflow.port.evaluate).not.toHaveBeenCalled();
+
+      pending.forEach((request) => request.resolve({ status: "ok", value: "late" }));
+      await vi.runAllTimersAsync();
+      await expect(
+        registeredProvider(overflow).provideHover(overflow.model, position, cancellation()),
+      ).resolves.not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a cancelled lease immediately and never publishes the late result", async () => {
+    const fixture = providerFixture();
+    const pending = deferred<DebugEvaluationResult | null>();
+    fixture.port.evaluate.mockReturnValueOnce(pending.promise);
+    const provider = registeredProvider(fixture);
+    const token = cancellableToken();
+    const cancelled = provider.provideHover(fixture.model, position, token);
+    token.cancel();
+    await expect(cancelled).resolves.toBeNull();
+    expect((fixture.port.evaluate.mock.calls[0]?.[2] as AbortSignal).aborted).toBe(true);
+    pending.resolve({ status: "ok", value: "late" });
+  });
+
+  it("rejects an A-B-A result even when the old model was not requested in B", async () => {
+    const fixture = providerFixture();
+    const old = deferred<DebugEvaluationResult | null>();
+    fixture.port.evaluate.mockReturnValueOnce(old.promise);
+    const provider = registeredProvider(fixture);
+    const oldHover = provider.provideHover(fixture.model, position, cancellation());
+
+    fixture.port.getOwner.mockReturnValue({ ...owner, sessionId: 5 });
+    fixture.state.ownerEpoch += 1;
+    fixture.port.getOwner.mockReturnValue(owner);
+    fixture.state.ownerEpoch += 1;
+    old.resolve({ status: "ok", value: "stale" });
+
+    await expect(oldHover).resolves.toBeNull();
+  });
+
+  it("keeps the provider copy-token registry bounded across ten thousand hovers", async () => {
+    const fixture = providerFixture();
+    let nextToken = 0;
+    fixture.port.evaluate.mockResolvedValue({
+      status: "ok",
+      value: "value",
+      evaluateName: "value",
+    });
+    fixture.port.registerCopyEvaluatePath.mockImplementation(
+      () => `${(nextToken += 1).toString(16).padStart(36, "0")}`,
+    );
+    const registration = registerDebugHoverMonacoProviders(fixture.monaco, fixture.context);
+    const provider = fixture.registrations[0]![1];
+
+    for (let index = 0; index < 10_000; index += 1) {
+      await provider.provideHover(model(`/workspace/model-${index}.ts`), position, cancellation());
+    }
+
+    expect(fixture.port.registerCopyEvaluatePath).toHaveBeenCalledTimes(10_000);
+    expect(fixture.port.revokeCopyEvaluatePath).toHaveBeenCalledTimes(
+      10_000 - MAX_DEBUG_HOVER_COPY_TOKENS,
+    );
+    registration.dispose();
+    expect(fixture.port.revokeCopyEvaluatePath).toHaveBeenCalledTimes(10_000);
   });
 
   it("renders capped values and types as untrusted non-HTML Markdown", async () => {
@@ -272,6 +407,54 @@ describe("debug hover Monaco provider", () => {
       provider.provideHover(fixture.model, position, cancellation()),
     ).resolves.toBeNull();
   });
+
+  it("settles admission after a synchronous evaluator throw", async () => {
+    const fixtures = Array.from({ length: MAX_DEBUG_HOVER_GLOBAL_UNSETTLED + 1 }, (_, index) => {
+      const fixture = providerFixture();
+      fixture.port.getOwner.mockReturnValue({ ...owner, sessionId: index + 200 });
+      fixture.state.ownerEpoch = index + 2;
+      fixture.port.evaluate.mockImplementationOnce(() => {
+        throw new Error("synchronous adapter failure");
+      });
+      return fixture;
+    });
+
+    for (const fixture of fixtures) {
+      await expect(
+        registeredProvider(fixture).provideHover(fixture.model, position, cancellation()),
+      ).resolves.toBeNull();
+      expect(fixture.port.evaluate).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("preflights oversized and changed models before building a hover index", async () => {
+    const fixture = providerFixture();
+    const provider = registeredProvider(fixture);
+    vi.mocked(fixture.model.getValueLength).mockReturnValue(MAX_DEBUG_HOVER_SOURCE_BYTES + 1);
+    await expect(
+      provider.provideHover(fixture.model, position, cancellation()),
+    ).resolves.toBeNull();
+    expect(fixture.model.getValue).not.toHaveBeenCalled();
+
+    vi.mocked(fixture.model.getValueLength).mockReturnValue("user.name".length);
+    fixture.model.version = 2;
+    vi.mocked(fixture.model.getVersionId).mockReturnValueOnce(2).mockReturnValueOnce(3);
+    await expect(
+      provider.provideHover(fixture.model, position, cancellation()),
+    ).resolves.toBeNull();
+    expect(fixture.model.getValue).toHaveBeenCalledOnce();
+  });
+
+  it("drops a result after Monaco disposes the model", async () => {
+    const fixture = providerFixture();
+    const pending = deferred<DebugEvaluationResult | null>();
+    fixture.port.evaluate.mockReturnValueOnce(pending.promise);
+    const hover = registeredProvider(fixture).provideHover(fixture.model, position, cancellation());
+    vi.mocked(fixture.model.isDisposed).mockReturnValue(true);
+    pending.resolve({ status: "ok", value: "stale" });
+
+    await expect(hover).resolves.toBeNull();
+  });
 });
 
 function providerFixture() {
@@ -294,6 +477,16 @@ function providerFixture() {
   } as unknown as typeof Monaco;
   const currentModel = model("/workspace/app.ts");
   const getOwner = vi.fn<DebugHoverEvaluationPort["getOwner"]>(() => owner);
+  const state: {
+    admittedRoot: string | null;
+    document: EditorDocument | null;
+    ownerEpoch: number;
+  } = {
+    admittedRoot: "/workspace" as string | null,
+    document: document("/workspace/app.ts") as EditorDocument | null,
+    ownerEpoch: 1,
+  };
+  const getOwnerEpoch = vi.fn<DebugHoverEvaluationPort["getOwnerEpoch"]>(() => state.ownerEpoch);
   const evaluate = vi.fn<DebugHoverEvaluationPort["evaluate"]>(async () => ({
     status: "ok",
     value: "Ada",
@@ -302,13 +495,10 @@ function providerFixture() {
     copyEvaluatePath: vi.fn(async () => true),
     evaluate,
     getOwner,
+    getOwnerEpoch,
     registerCopyEvaluatePath: vi.fn(() => "0123456789abcdef0123456789abcdef0123"),
     revokeCopyEvaluatePath: vi.fn(),
   } satisfies DebugHoverEvaluationPort;
-  const state: { admittedRoot: string | null; document: EditorDocument | null } = {
-    admittedRoot: "/workspace" as string | null,
-    document: document("/workspace/app.ts") as EditorDocument | null,
-  };
   const fixture = {
     model: currentModel,
     monaco,
@@ -344,16 +534,39 @@ function cancellation() {
   };
 }
 
+function cancellableToken() {
+  let listener: ((event: unknown) => unknown) | null = null;
+  const token = {
+    isCancellationRequested: false,
+    onCancellationRequested: vi.fn((next: (event: unknown) => unknown) => {
+      listener = next;
+      return { dispose: vi.fn() };
+    }),
+    cancel() {
+      token.isCancellationRequested = true;
+      listener?.(undefined);
+    },
+  };
+  return token as unknown as Monaco.CancellationToken & {
+    cancel(): void;
+    isCancellationRequested: boolean;
+  };
+}
+
 function document(path: string): EditorDocument {
   return { content: "user.name", language: "typescript", name: "app.ts", path, savedContent: "" };
 }
 
 function model(path: string) {
+  const source = "user.name";
   return {
-    getValue: vi.fn(() => "user.name"),
+    getLineCount: vi.fn(() => 1),
+    getValue: vi.fn(() => source),
+    getValueLength: vi.fn(() => source.length),
     getVersionId: vi.fn(function (this: { version: number }) {
       return this.version;
     }),
+    isDisposed: vi.fn(() => false),
     uri: { fsPath: path, path, scheme: "file", toString: () => `file://${path}` },
     version: 1,
   } as unknown as Monaco.editor.ITextModel & {

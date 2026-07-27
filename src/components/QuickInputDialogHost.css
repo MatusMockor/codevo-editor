@@ -1,0 +1,74 @@
+.quick-input-dialog {
+  background: var(--color-modal);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  color: var(--color-text);
+  margin: auto;
+  max-width: calc(100vw - 32px);
+  padding: 0;
+  width: 460px;
+}
+
+.quick-input-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.quick-input-dialog form {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.quick-input-dialog label {
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.quick-input-dialog input {
+  background: var(--color-panel-deep);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-strong);
+  font: inherit;
+  min-height: 32px;
+  padding: 5px 8px;
+  width: 100%;
+}
+
+.quick-input-dialog input:focus-visible,
+.quick-input-dialog button:focus-visible,
+.quick-input-dialog:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.quick-input-dialog p {
+  color: var(--color-error);
+  font-size: 12px;
+  margin: -4px 0 0;
+}
+
+.quick-input-dialog footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.quick-input-dialog button {
+  background: var(--color-control);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font: inherit;
+  min-height: 30px;
+  padding: 4px 12px;
+}
+
+.quick-input-dialog .quick-input-submit {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-active-text);
+  font-weight: 600;
+}

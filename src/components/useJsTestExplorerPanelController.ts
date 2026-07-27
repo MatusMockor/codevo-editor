@@ -3,6 +3,7 @@ import { useJsTestExplorer } from "../application/useJsTestExplorer";
 import { useJsTestCoverage } from "../application/useJsTestCoverage";
 import { useJsTestExplorerDebug } from "../application/useJsTestExplorerDebug";
 import { detectJsTestRunnerContext } from "../application/jsTestRunnerDetection";
+import { createJsTestExecutionRootResolver } from "../application/jsTestExecutionRootResolver";
 import { useJsTestExplorerScopeRunnerPort } from "../application/useJsTestExplorerScopeRunnerPort";
 import type { JsTestExplorerScopeRunnerPort } from "../application/useJsTestRunSelectionCommands";
 import type { DebugLaunchTarget } from "../domain/debug";
@@ -55,6 +56,7 @@ export type JsTestExplorerPanelController = JsTestExplorerPanelProps & {
 
 interface ContinuousRunWatchCommandState {
   readonly authority: object;
+  readonly available: boolean;
   readonly command: JsTestWatchCommand | null;
 }
 
@@ -93,7 +95,29 @@ export function useJsTestExplorerPanelController({
     continuousRunWatchCommandState?.authority === continuousRunWatchAuthority
       ? continuousRunWatchCommandState.command
       : null;
+  const continuousRunAvailable =
+    continuousRunWatchCommandState?.authority === continuousRunWatchAuthority &&
+    continuousRunWatchCommandState.available;
   const competingStartRef = useRef<"continuous" | "coverage" | "debug" | null>(null);
+  const resolveExecutionRoot = useMemo(
+    () =>
+      rootPath
+        ? createJsTestExecutionRootResolver(rootPath, (path) =>
+            readRunnerDetectionFile(discoveryGateway, rootPath, path),
+          )
+        : workspaceExecutionRoot,
+    [discoveryGateway, rootPath],
+  );
+  const coverageExecutionScope = useMemo(
+    () =>
+      activeDocumentIdentity
+        ? validatedJsTestRunScope({
+            kind: "file",
+            relativeFilePath: activeDocumentIdentity.relativeFilePath,
+          })
+        : ({ kind: "all" } as const),
+    [activeDocumentIdentity],
+  );
   useEffect(() => {
     let current = true;
     if (!rootPath || !workspaceId || !workspaceTrusted || !watchGateway) {
@@ -108,9 +132,18 @@ export function useJsTestExplorerPanelController({
       if (!current) return;
       if (context?.continuousRunStrategy !== "native-watch") {
         setContinuousRunWatchCommandState((previous) =>
-          sameContinuousRunWatchCommandState(previous, continuousRunWatchAuthority, null)
+          sameContinuousRunWatchCommandState(
+            previous,
+            continuousRunWatchAuthority,
+            context !== null && workspaceRootKeysEqual(context.rootPath, rootPath),
+            null,
+          )
             ? previous
-            : { authority: continuousRunWatchAuthority, command: null },
+            : {
+                authority: continuousRunWatchAuthority,
+                available: context !== null && workspaceRootKeysEqual(context.rootPath, rootPath),
+                command: null,
+              },
         );
         return;
       }
@@ -119,9 +152,9 @@ export function useJsTestExplorerPanelController({
         : workspaceRelativePath(rootPath, context.rootPath);
       if (packageRootRelativePath === null) {
         setContinuousRunWatchCommandState((previous) =>
-          sameContinuousRunWatchCommandState(previous, continuousRunWatchAuthority, null)
+          sameContinuousRunWatchCommandState(previous, continuousRunWatchAuthority, false, null)
             ? previous
-            : { authority: continuousRunWatchAuthority, command: null },
+            : { authority: continuousRunWatchAuthority, available: false, command: null },
         );
         return;
       }
@@ -131,9 +164,9 @@ export function useJsTestExplorerPanelController({
         scope: { kind: "all" },
       };
       setContinuousRunWatchCommandState((previous) =>
-        sameContinuousRunWatchCommandState(previous, continuousRunWatchAuthority, next)
+        sameContinuousRunWatchCommandState(previous, continuousRunWatchAuthority, true, next)
           ? previous
-          : { authority: continuousRunWatchAuthority, command: next },
+          : { authority: continuousRunWatchAuthority, available: true, command: next },
       );
     });
     return () => {
@@ -149,9 +182,11 @@ export function useJsTestExplorerPanelController({
     workspaceTrusted,
   ]);
   const coverage = useJsTestCoverage({
+    executionScope: coverageExecutionScope,
     gateway: coverageGateway,
     invalidationVersion: coverageInvalidationVersion,
     rootPath,
+    resolveExecutionRoot,
     workspaceId,
     workspaceTrusted,
   });
@@ -166,7 +201,11 @@ export function useJsTestExplorerPanelController({
     workspaceTrusted,
   });
   const explorer = useJsTestExplorer({
-    continuousRunBlocked: coverage.isRunning || selectedDebug.isDebugging || debugStartBlocked,
+    continuousRunBlocked:
+      !continuousRunAvailable ||
+      coverage.isRunning ||
+      selectedDebug.isDebugging ||
+      debugStartBlocked,
     continuousRunVersion,
     continuousRunWatchCommand: workspaceTrusted ? continuousRunWatchCommand : null,
     discoveryGateway,
@@ -175,6 +214,7 @@ export function useJsTestExplorerPanelController({
     rootPath,
     resultInvalidationVersion: coverageInvalidationVersion,
     runGateway,
+    resolveExecutionRoot,
     runRequestVersion,
     taskGateway,
     watchGateway: workspaceTrusted ? watchGateway : null,
@@ -301,6 +341,10 @@ export function useJsTestExplorerPanelController({
   };
 }
 
+async function workspaceExecutionRoot(): Promise<{ readonly packageRootRelativePath: "" }> {
+  return Object.freeze({ packageRootRelativePath: "" });
+}
+
 async function readRunnerDetectionFile(
   gateway: WorkspaceTestDiscoveryGateway,
   rootPath: string,
@@ -341,9 +385,14 @@ function sameJsTestWatchCommand(
 function sameContinuousRunWatchCommandState(
   previous: ContinuousRunWatchCommandState | null,
   authority: object,
+  available: boolean,
   command: JsTestWatchCommand | null,
 ): boolean {
-  return previous?.authority === authority && sameJsTestWatchCommand(previous.command, command);
+  return (
+    previous?.authority === authority &&
+    previous.available === available &&
+    sameJsTestWatchCommand(previous.command, command)
+  );
 }
 
 function sameJsTestRunScope(

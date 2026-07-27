@@ -293,9 +293,9 @@ export function useGitBranchPanel(dependencies: GitBranchPanelDependencies): Git
       return;
     }
 
-    const name = prompter.prompt("New branch name", "feature/");
+    const name = await prompter.prompt("New branch name", "feature/");
 
-    if (name === null) {
+    if (name === null || !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
       return;
     }
 

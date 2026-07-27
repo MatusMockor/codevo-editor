@@ -65,6 +65,7 @@ import {
   type UserSnippet,
 } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
+import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import {
   FEATURE_REQUEST_TIMED_OUT,
   HOVER_FEATURE_REQUEST_TIMEOUT_MS,
@@ -72,10 +73,7 @@ import {
   raceInteractiveFeatureRequest,
   toMonacoSemanticTokens,
 } from "./languageServerRequestCancellation";
-import {
-  canonicalWorkspaceEditDocumentVersion,
-  mergeAliasedWorkspaceEditDocumentChanges,
-} from "../domain/workspaceEditDocuments";
+import { mergeAliasedWorkspaceEditDocumentChanges } from "../domain/workspaceEditDocuments";
 import type {
   WorkspaceEditApplicationContext,
   WorkspaceEditApplicationDecision,
@@ -91,27 +89,57 @@ import {
   type LanguageServerBackedCodeAction,
   type ProviderRegistrationAuthority,
 } from "./javascriptTypescriptCodeActionAuthority";
-import { applyJavaScriptTypeScriptWorkspaceEditWithOpenModels } from "./javascriptTypescriptWorkspaceEditApplication";
+import {
+  applyJavaScriptTypeScriptWorkspaceEditWithOpenModels,
+  type AppliedJavaScriptTypeScriptWorkspaceEditCommit,
+} from "./javascriptTypescriptWorkspaceEditApplication";
+import {
+  attachStoredJavaScriptTypeScriptExecutablePayloadAuthority,
+  canContinueStoredJavaScriptTypeScriptDocumentAuthority,
+  isJavaScriptTypeScriptDocumentRequestAuthority,
+  isJavaScriptTypeScriptDocumentRequestAuthorityActive,
+  isJavaScriptTypeScriptProviderRequestAuthorityActive,
+  isLargeJavaScriptTypeScriptProviderDocument,
+  isStoredJavaScriptTypeScriptDocumentAuthorityActive,
+  refreshStoredJavaScriptTypeScriptDocumentAuthority,
+  type JavaScriptTypeScriptDocumentRequestAuthority,
+  type JavaScriptTypeScriptProviderRequestAuthority,
+  type StoredJavaScriptTypeScriptDocumentAuthority,
+} from "./javascriptTypescriptProviderDocumentAuthority";
+import {
+  createJavaScriptTypeScriptMonacoEventEmitter,
+  isJavaScriptTypeScriptMonacoLanguage,
+  registerJavaScriptTypeScriptMonacoProviderBindings,
+  type JavaScriptTypeScriptMonacoEventEmitter,
+} from "./javascriptTypescriptMonacoProviderRegistration";
+import {
+  javaScriptTypeScriptOnTypeFormattingTriggerCharacters,
+  javaScriptTypeScriptSemanticTokensLegend,
+} from "./javascriptTypescriptRuntimeCapabilityProjection";
+import {
+  consumeJavaScriptTypeScriptWorkspaceEditCommitReceipt,
+  createJavaScriptTypeScriptWorkspaceEditCommitReceipt,
+  isJavaScriptTypeScriptWorkspaceEditCommitReceiptActive,
+  type JavaScriptTypeScriptWorkspaceEditCommitReceipt,
+} from "./javascriptTypescriptWorkspaceEditContinuation";
+import {
+  javaScriptTypeScriptFileOperationIsInWorkspaceRoot as isFileOperationInWorkspaceRoot,
+  javaScriptTypeScriptPathIsInWorkspaceRoot as isPathInWorkspaceRoot,
+  javaScriptTypeScriptWorkspaceEditForRoot as workspaceEditForRoot,
+  javaScriptTypeScriptWorkspaceEditIsExactDocumentContinuation as workspaceEditIsExactDocumentContinuation,
+  javaScriptTypeScriptWorkspaceEditVersionId as workspaceEditVersionId,
+} from "./javascriptTypescriptWorkspaceEditScope";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
-type MonacoEvent<T> = (
-  listener: (event: T) => unknown,
-  thisArgs?: unknown,
-  disposables?: Disposable[],
-) => Disposable;
-type MonacoEventEmitter<T> = {
-  dispose(): void;
-  event: MonacoEvent<T>;
-  fire(event: T): void;
-};
+type MonacoEventEmitter<T> = JavaScriptTypeScriptMonacoEventEmitter<T>;
 type WorkspaceEditContext = {
   path: string | null;
   versionId: number | undefined;
 };
-type StoredLanguageServerPayloadRequest = {
+type StoredLanguageServerPayloadRequest = StoredJavaScriptTypeScriptDocumentAuthority & {
   __codeActionAuthority?: CodeActionAuthority;
   __languageServerSessionId?: number;
   __sourcePath?: string;
@@ -126,14 +154,6 @@ type MonacoWorkspaceSymbol = {
   location: Monaco.languages.Location;
   name: string;
 };
-type MonacoWorkspaceSymbolProvider = {
-  provideWorkspaceSymbols(query: string): Promise<MonacoWorkspaceSymbol[]>;
-};
-type MonacoWorkspaceSymbolRegistry = {
-  registerWorkspaceSymbolProvider?(provider: MonacoWorkspaceSymbolProvider): Disposable;
-};
-
-const JAVASCRIPT_TYPESCRIPT_ON_TYPE_FORMATTING_TRIGGER_CHARACTERS = ["}", ";", "\n"];
 
 export type JavaScriptTypeScriptWorkspaceEditApplicationContext = WorkspaceEditApplicationContext;
 
@@ -173,58 +193,19 @@ interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
 
 type ExecuteCommandPayload = ExecuteCodeActionCommandPayload;
 
-const JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS = [
-  "javascript",
-  "typescript",
-  "javascriptreact",
-  "typescriptreact",
-  // `.vue` single-file components are routed through the same tsserver, which
-  // gains `<script>` block intelligence via `@vue/typescript-plugin`. When the
-  // plugin is unavailable the server simply returns no results, so registering
-  // the providers here stays safe (highlighting-only fallback, no crash).
-  "vue",
-];
-const JAVASCRIPT_TYPESCRIPT_LANGUAGE_ID_SET = new Set<string>(JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS);
 const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.javascriptTypeScript.executeLanguageServerCommand";
-const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
-  tokenModifiers: [
-    "declaration",
-    "definition",
-    "readonly",
-    "static",
-    "deprecated",
-    "abstract",
-    "async",
-    "modification",
-    "documentation",
-    "defaultLibrary",
-  ],
-  tokenTypes: [
-    "namespace",
-    "type",
-    "class",
-    "enum",
-    "interface",
-    "struct",
-    "typeParameter",
-    "parameter",
-    "variable",
-    "property",
-    "enumMember",
-    "event",
-    "function",
-    "method",
-    "macro",
-    "keyword",
-    "modifier",
-    "comment",
-    "string",
-    "number",
-    "regexp",
-    "operator",
-  ],
-} satisfies Monaco.languages.SemanticTokensLegend;
+function attachStoredProviderPayloadAuthority<T extends object>(
+  payload: T,
+  authority:
+    JavaScriptTypeScriptDocumentRequestAuthority | StoredJavaScriptTypeScriptDocumentAuthority,
+): T {
+  return attachStoredJavaScriptTypeScriptExecutablePayloadAuthority(
+    payload,
+    authority,
+    EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
+  );
+}
 
 export interface JavaScriptTypeScriptLanguageServerProviderContext {
   applyWorkspaceEdit?: JavaScriptTypeScriptWorkspaceEditApplier;
@@ -232,8 +213,13 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   completeFunctionCalls?: boolean;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
+  getActiveJavaScriptTypeScriptOwnerEpoch(): number;
+  getActiveJavaScriptTypeScriptOwnerIdentity(): object | null;
   getActiveDocument(): EditorDocument | null;
   getActiveModel?(): MonacoModel | null;
+  getDocumentSyncVersion(rootPath: string, path: string): number | null;
+  getLargeSmartDocumentPolicy(): LargeSmartDocumentPolicy;
+  getProviderRegistrationLease?(): ProviderRegistrationAuthority;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   /**
    * Returns the GLOBAL (app-level) user-authored live templates merged with the
@@ -249,45 +235,20 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
 }
 
-function createMonacoEventEmitter<T>(): MonacoEventEmitter<T> {
-  const listeners = new Set<{
-    listener: (event: T) => unknown;
-    thisArgs?: unknown;
-  }>();
-
-  return {
-    dispose: () => {
-      listeners.clear();
-    },
-    event: (listener, thisArgs, disposables) => {
-      const entry = { listener, thisArgs };
-      listeners.add(entry);
-      const disposable = {
-        dispose: () => {
-          listeners.delete(entry);
-        },
-      };
-
-      disposables?.push(disposable);
-
-      return disposable;
-    },
-    fire: (event) => {
-      for (const entry of Array.from(listeners)) {
-        entry.listener.call(entry.thisArgs, event);
-      }
-    },
-  };
-}
-
 export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
 ): Disposable {
-  const languages = JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS;
-  const registry = monaco.languages as Partial<typeof monaco.languages>;
   const disposables: Disposable[] = [];
   const registrationAuthority: ProviderRegistrationAuthority = { active: true };
+  const registeredContext = new Proxy(context, {
+    get(target, property, receiver) {
+      if (property === "getProviderRegistrationLease") {
+        return () => registrationAuthority;
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
   const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
 
   if (identityDescriptor) {
@@ -300,9 +261,9 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   }
   const documentHighlightTracker =
     createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
-  const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
-  const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
-  const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
+  const codeLensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
+  const inlayHintRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
+  const semanticTokensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
   disposables.push({
     dispose: () => {
       codeLensRefreshEmitter.dispose();
@@ -389,9 +350,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       if (
         !rootPath ||
         sessionId == null ||
-        (authority
-          ? !isCodeActionAuthorityActive(context, authority)
-          : !isStoredLanguageServerPayloadActive(context, rootPath, sessionId))
+        !isExecutableCommandPayloadActive(context, payload, authority)
       ) {
         return;
       }
@@ -401,40 +360,79 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           return;
         }
 
-        if (authority && !isCodeActionAuthorityActive(context, authority)) {
+        if (!isExecutableCommandPayloadActive(context, payload, authority)) {
           return;
         }
 
         let commandAuthority = authority;
         if (payload.edit && context.applyWorkspaceEdit) {
+          const continuationPath = authority?.path ?? payload.path;
+          const continuationOwnerEpoch = context.getActiveJavaScriptTypeScriptOwnerEpoch();
+          const continuationOwnerIdentity = context.getActiveJavaScriptTypeScriptOwnerIdentity();
+          let commitReceipt: JavaScriptTypeScriptWorkspaceEditCommitReceipt | null = null;
+          if (
+            payload.command &&
+            (!continuationPath ||
+              !workspaceEditIsExactDocumentContinuation(payload.edit, rootPath, continuationPath))
+          ) {
+            return;
+          }
           const applied = await applyWorkspaceEditWithOpenModels(
             monaco,
             context,
             payload.edit,
             rootPath,
             () =>
-              authority
-                ? isCodeActionAuthorityActive(context, authority, false)
-                : isStoredLanguageServerPayloadActive(context, rootPath, sessionId),
+              commitReceipt
+                ? isExecutableWorkspaceEditContinuationActive(
+                    context,
+                    payload,
+                    rootPath,
+                    sessionId,
+                    authority,
+                    commitReceipt,
+                  )
+                : isExecutableCommandPayloadActive(context, payload, authority),
+            (commit) => {
+              commitReceipt = createJavaScriptTypeScriptWorkspaceEditCommitReceipt(
+                authority,
+                continuationPath,
+                continuationOwnerEpoch,
+                continuationOwnerIdentity,
+                commit,
+              );
+            },
           );
-          if (
-            !applied ||
-            (authority
-              ? !isCodeActionAuthorityActive(context, authority, false)
-              : !isStoredLanguageServerPayloadActive(context, rootPath, sessionId))
-          ) {
+          if (!applied) {
             return;
+          }
+          if (payload.command) {
+            if (!continuationPath) {
+              return;
+            }
+            await context.flushPendingDocumentChange(continuationPath);
+            if (
+              !commitReceipt ||
+              !consumeExecutableWorkspaceEditContinuation(
+                context,
+                payload,
+                rootPath,
+                sessionId,
+                authority,
+                commitReceipt,
+              ) ||
+              !refreshExecutableCommandPayloadAuthority(context, payload, rootPath, sessionId) ||
+              (authority && !isCodeActionAuthorityActive(context, authority, false))
+            ) {
+              return;
+            }
           }
           commandAuthority = authority
             ? codeActionAuthorityWithCurrentModelVersion(authority)
             : undefined;
         }
 
-        if (
-          commandAuthority
-            ? !isCodeActionAuthorityActive(context, commandAuthority)
-            : !isStoredLanguageServerPayloadActive(context, rootPath, sessionId)
-        ) {
+        if (!isExecutableCommandPayloadActive(context, payload, commandAuthority)) {
           return;
         }
 
@@ -444,19 +442,13 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
 
         const edit = await context.featuresGateway.executeCommand(rootPath, payload.command);
 
-        if (
-          commandAuthority
-            ? !isCodeActionAuthorityActive(context, commandAuthority)
-            : !isStoredLanguageServerPayloadActive(context, rootPath, sessionId)
-        ) {
+        if (!isExecutableCommandPayloadActive(context, payload, commandAuthority)) {
           return;
         }
 
         if (edit) {
           await applyWorkspaceEditWithOpenModels(monaco, context, edit, rootPath, () =>
-            commandAuthority
-              ? isCodeActionAuthorityActive(context, commandAuthority, false)
-              : isStoredLanguageServerPayloadActive(context, rootPath, sessionId),
+            isExecutableCommandPayloadActive(context, payload, commandAuthority, false),
           );
         }
       } catch (error) {
@@ -466,270 +458,152 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   });
   disposables.push(commandDisposable);
 
-  const workspaceSymbolRegistry = registry as MonacoWorkspaceSymbolRegistry;
-
-  if (workspaceSymbolRegistry.registerWorkspaceSymbolProvider) {
-    disposables.push(
-      workspaceSymbolRegistry.registerWorkspaceSymbolProvider({
-        provideWorkspaceSymbols: (query) => provideWorkspaceSymbols(monaco, context, query),
-      }),
-    );
-  }
-
-  languages.forEach((language) => {
-    if (registry.registerHoverProvider) {
-      disposables.push(
-        registry.registerHoverProvider(language, {
-          provideHover: (model, position, token) =>
-            provideHover(monaco, context, model, position, token),
-        }),
-      );
-    }
-
-    if (registry.registerCompletionItemProvider) {
-      disposables.push(
-        registry.registerCompletionItemProvider(language, {
-          triggerCharacters: [".", "'", '"', "`", "/", "@", "<", "#"],
-          provideCompletionItems: (model, position, completionContext, token) =>
-            provideCompletionItems(monaco, context, model, position, completionContext, token),
-          resolveCompletionItem: (item) => resolveCompletionItem(monaco, context, item),
-        }),
-      );
-    }
-
-    if (registry.registerSignatureHelpProvider) {
-      disposables.push(
-        registry.registerSignatureHelpProvider(language, {
-          signatureHelpRetriggerCharacters: [",", ")"],
-          signatureHelpTriggerCharacters: ["(", ",", "<"],
-          provideSignatureHelp: (model, position, token, signatureContext) =>
-            provideSignatureHelp(monaco, context, model, position, token, signatureContext),
-        }),
-      );
-    }
-
-    if (registry.registerDefinitionProvider) {
-      disposables.push(
-        registry.registerDefinitionProvider(language, {
-          provideDefinition: (model, position, token) =>
-            provideDefinition(monaco, context, model, position, token),
-        }),
-      );
-    }
-
-    if (registry.registerDeclarationProvider) {
-      disposables.push(
-        registry.registerDeclarationProvider(language, {
-          provideDeclaration: (model, position, token) =>
-            provideDeclaration(monaco, context, model, position, token),
-        }),
-      );
-    }
-
-    if (registry.registerImplementationProvider) {
-      disposables.push(
-        registry.registerImplementationProvider(language, {
-          provideImplementation: (model, position, token) =>
-            provideImplementation(monaco, context, model, position, token),
-        }),
-      );
-    }
-
-    if (registry.registerTypeDefinitionProvider) {
-      disposables.push(
-        registry.registerTypeDefinitionProvider(language, {
-          provideTypeDefinition: (model, position, token) =>
-            provideTypeDefinition(monaco, context, model, position, token),
-        }),
-      );
-    }
-
-    if (registry.registerReferenceProvider) {
-      disposables.push(
-        registry.registerReferenceProvider(language, {
-          provideReferences: (model, position, _referenceContext, token) =>
-            provideReferences(monaco, context, model, position, token),
-        }),
-      );
-    }
-
-    if (registry.registerRenameProvider) {
-      disposables.push(
-        registry.registerRenameProvider(language, {
-          resolveRenameLocation: (model, position) =>
-            resolveRenameLocation(monaco, context, model, position),
-          provideRenameEdits: (model, position, newName) =>
-            provideRenameEdits(monaco, context, model, position, newName),
-        }),
-      );
-    }
-
-    if (registry.registerCodeActionProvider) {
-      disposables.push(
-        registry.registerCodeActionProvider(
-          language,
-          {
-            provideCodeActions: (model, range, actionContext) =>
-              provideCodeActions(
-                monaco,
-                context,
-                registrationAuthority,
-                model,
-                range,
-                actionContext,
-              ),
-            resolveCodeAction: (action) => resolveCodeAction(monaco, context, action),
-          },
-          {
-            providedCodeActionKinds: [
-              "quickfix",
-              "refactor",
-              "refactor.move",
-              "source",
-              "source.fixAll",
-              "source.fixAll.ts",
-              "source.addMissingImports.ts",
-              "source.organizeImports",
-              "source.organizeImports.ts",
-              "source.removeUnused.ts",
-              "source.removeUnusedImports.ts",
-              "source.sortImports.ts",
-            ],
-          },
+  disposables.push(
+    ...registerJavaScriptTypeScriptMonacoProviderBindings(monaco, {
+      codeAction: {
+        provideCodeActions: (model, range, actionContext) =>
+          provideCodeActions(
+            monaco,
+            registeredContext,
+            registrationAuthority,
+            model,
+            range,
+            actionContext,
+          ),
+        resolveCodeAction: (action) => resolveCodeAction(monaco, registeredContext, action),
+      },
+      codeLens: {
+        onDidChange:
+          codeLensRefreshEmitter.event as unknown as Monaco.languages.CodeLensProvider["onDidChange"],
+        provideCodeLenses: (model) => provideCodeLenses(monaco, registeredContext, model),
+        resolveCodeLens: (_model, codeLens) => resolveCodeLens(monaco, registeredContext, codeLens),
+      },
+      completion: {
+        triggerCharacters: [".", "'", '"', "`", "/", "@", "<", "#"],
+        provideCompletionItems: (model, position, completionContext, token) =>
+          provideCompletionItems(
+            monaco,
+            registeredContext,
+            model,
+            position,
+            completionContext,
+            token,
+          ),
+        resolveCompletionItem: (item) => resolveCompletionItem(monaco, registeredContext, item),
+      },
+      declaration: {
+        provideDeclaration: (model, position, token) =>
+          provideDeclaration(monaco, registeredContext, model, position, token),
+      },
+      definition: {
+        provideDefinition: (model, position, token) =>
+          provideDefinition(monaco, registeredContext, model, position, token),
+      },
+      documentFormatting: {
+        provideDocumentFormattingEdits: (model, options) =>
+          provideDocumentFormattingEdits(monaco, registeredContext, model, options),
+      },
+      documentHighlight: {
+        provideDocumentHighlights: (model, position, token) =>
+          provideDocumentHighlights(
+            monaco,
+            registeredContext,
+            documentHighlightTracker,
+            model,
+            position,
+            token,
+          ),
+      },
+      documentRangeFormatting: {
+        provideDocumentRangeFormattingEdits: (model, range, options) =>
+          provideDocumentRangeFormattingEdits(monaco, registeredContext, model, range, options),
+      },
+      documentRangeSemanticTokens: {
+        getLegend: () =>
+          javaScriptTypeScriptSemanticTokensLegend(
+            registeredContext.getRuntimeStatus(),
+            registeredContext.getWorkspaceRoot?.() ?? null,
+          ),
+        provideDocumentRangeSemanticTokens: (model, range, token) =>
+          provideDocumentRangeSemanticTokens(registeredContext, model, range, token),
+      },
+      documentSemanticTokens: {
+        onDidChange: semanticTokensRefreshEmitter.event,
+        getLegend: () =>
+          javaScriptTypeScriptSemanticTokensLegend(
+            registeredContext.getRuntimeStatus(),
+            registeredContext.getWorkspaceRoot?.() ?? null,
+          ),
+        provideDocumentSemanticTokens: (model, _lastResultId, token) =>
+          provideDocumentSemanticTokens(registeredContext, model, token),
+        releaseDocumentSemanticTokens: () => undefined,
+      },
+      documentSymbol: {
+        provideDocumentSymbols: (model) => provideDocumentSymbols(monaco, registeredContext, model),
+      },
+      foldingRange: {
+        provideFoldingRanges: (model) => provideFoldingRanges(monaco, registeredContext, model),
+      },
+      hover: {
+        provideHover: (model, position, token) =>
+          provideHover(monaco, registeredContext, model, position, token),
+      },
+      implementation: {
+        provideImplementation: (model, position, token) =>
+          provideImplementation(monaco, registeredContext, model, position, token),
+      },
+      inlayHints: {
+        onDidChangeInlayHints: inlayHintRefreshEmitter.event,
+        provideInlayHints: (model, range) =>
+          provideInlayHints(monaco, registeredContext, model, range),
+        resolveInlayHint: (hint) => resolveInlayHint(monaco, registeredContext, hint),
+      },
+      linkedEditingRange: {
+        provideLinkedEditingRanges: (model, position) =>
+          provideLinkedEditingRanges(monaco, registeredContext, model, position),
+      },
+      links: {
+        provideLinks: (model) => provideDocumentLinks(monaco, registeredContext, model),
+        resolveLink: (link) => resolveDocumentLink(monaco, registeredContext, link),
+      },
+      onTypeFormatting: {
+        autoFormatTriggerCharacters: javaScriptTypeScriptOnTypeFormattingTriggerCharacters(
+          registeredContext.getRuntimeStatus(),
+          registeredContext.getWorkspaceRoot?.() ?? null,
         ),
-      );
-    }
-
-    if (registry.registerCodeLensProvider) {
-      disposables.push(
-        registry.registerCodeLensProvider(language, {
-          onDidChange:
-            codeLensRefreshEmitter.event as unknown as Monaco.languages.CodeLensProvider["onDidChange"],
-          provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
-          resolveCodeLens: (_model, codeLens) => resolveCodeLens(monaco, context, codeLens),
-        }),
-      );
-    }
-
-    if (registry.registerDocumentFormattingEditProvider) {
-      disposables.push(
-        registry.registerDocumentFormattingEditProvider(language, {
-          provideDocumentFormattingEdits: (model, options) =>
-            provideDocumentFormattingEdits(monaco, context, model, options),
-        }),
-      );
-    }
-
-    if (registry.registerDocumentRangeFormattingEditProvider) {
-      disposables.push(
-        registry.registerDocumentRangeFormattingEditProvider(language, {
-          provideDocumentRangeFormattingEdits: (model, range, options) =>
-            provideDocumentRangeFormattingEdits(monaco, context, model, range, options),
-        }),
-      );
-    }
-
-    if (registry.registerOnTypeFormattingEditProvider) {
-      disposables.push(
-        registry.registerOnTypeFormattingEditProvider(language, {
-          autoFormatTriggerCharacters: onTypeFormattingTriggerCharactersForActiveRuntime(context),
-          provideOnTypeFormattingEdits: (model, position, ch, options) =>
-            provideOnTypeFormattingEdits(monaco, context, model, position, ch, options),
-        }),
-      );
-    }
-
-    if (registry.registerInlayHintsProvider) {
-      disposables.push(
-        registry.registerInlayHintsProvider(language, {
-          onDidChangeInlayHints: inlayHintRefreshEmitter.event,
-          provideInlayHints: (model, range) => provideInlayHints(monaco, context, model, range),
-          resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
-        }),
-      );
-    }
-
-    if (registry.registerDocumentHighlightProvider) {
-      disposables.push(
-        registry.registerDocumentHighlightProvider(language, {
-          provideDocumentHighlights: (model, position, token) =>
-            provideDocumentHighlights(
-              monaco,
-              context,
-              documentHighlightTracker,
-              model,
-              position,
-              token,
-            ),
-        }),
-      );
-    }
-
-    if (registry.registerDocumentSymbolProvider) {
-      disposables.push(
-        registry.registerDocumentSymbolProvider(language, {
-          provideDocumentSymbols: (model) => provideDocumentSymbols(monaco, context, model),
-        }),
-      );
-    }
-
-    if (registry.registerLinkProvider) {
-      disposables.push(
-        registry.registerLinkProvider(language, {
-          provideLinks: (model) => provideDocumentLinks(monaco, context, model),
-          resolveLink: (link) => resolveDocumentLink(monaco, context, link),
-        }),
-      );
-    }
-
-    if (registry.registerFoldingRangeProvider) {
-      disposables.push(
-        registry.registerFoldingRangeProvider(language, {
-          provideFoldingRanges: (model) => provideFoldingRanges(monaco, context, model),
-        }),
-      );
-    }
-
-    if (registry.registerSelectionRangeProvider) {
-      disposables.push(
-        registry.registerSelectionRangeProvider(language, {
-          provideSelectionRanges: (model, positions) =>
-            provideSelectionRanges(monaco, context, model, positions),
-        }),
-      );
-    }
-
-    if (registry.registerLinkedEditingRangeProvider) {
-      disposables.push(
-        registry.registerLinkedEditingRangeProvider(language, {
-          provideLinkedEditingRanges: (model, position) =>
-            provideLinkedEditingRanges(monaco, context, model, position),
-        }),
-      );
-    }
-
-    if (registry.registerDocumentSemanticTokensProvider) {
-      disposables.push(
-        registry.registerDocumentSemanticTokensProvider(language, {
-          onDidChange: semanticTokensRefreshEmitter.event,
-          getLegend: () => semanticTokensLegendForActiveRuntime(context),
-          provideDocumentSemanticTokens: (model, _lastResultId, token) =>
-            provideDocumentSemanticTokens(context, model, token),
-          releaseDocumentSemanticTokens: () => undefined,
-        }),
-      );
-    }
-
-    if (registry.registerDocumentRangeSemanticTokensProvider) {
-      disposables.push(
-        registry.registerDocumentRangeSemanticTokensProvider(language, {
-          getLegend: () => semanticTokensLegendForActiveRuntime(context),
-          provideDocumentRangeSemanticTokens: (model, range, token) =>
-            provideDocumentRangeSemanticTokens(context, model, range, token),
-        }),
-      );
-    }
-  });
+        provideOnTypeFormattingEdits: (model, position, ch, options) =>
+          provideOnTypeFormattingEdits(monaco, registeredContext, model, position, ch, options),
+      },
+      references: {
+        provideReferences: (model, position, _referenceContext, token) =>
+          provideReferences(monaco, registeredContext, model, position, token),
+      },
+      rename: {
+        resolveRenameLocation: (model, position) =>
+          resolveRenameLocation(monaco, registeredContext, model, position),
+        provideRenameEdits: (model, position, newName) =>
+          provideRenameEdits(monaco, registeredContext, model, position, newName),
+      },
+      selectionRange: {
+        provideSelectionRanges: (model, positions) =>
+          provideSelectionRanges(monaco, registeredContext, model, positions),
+      },
+      signatureHelp: {
+        signatureHelpRetriggerCharacters: [",", ")"],
+        signatureHelpTriggerCharacters: ["(", ",", "<"],
+        provideSignatureHelp: (model, position, token, signatureContext) =>
+          provideSignatureHelp(monaco, registeredContext, model, position, token, signatureContext),
+      },
+      typeDefinition: {
+        provideTypeDefinition: (model, position, token) =>
+          provideTypeDefinition(monaco, registeredContext, model, position, token),
+      },
+      workspaceSymbols: {
+        provideWorkspaceSymbols: (query) =>
+          provideWorkspaceSymbols(monaco, registeredContext, query),
+      },
+    }),
+  );
 
   return {
     dispose: () => {
@@ -844,15 +718,18 @@ async function provideCompletionItems(
       startLineNumber: position.lineNumber,
     };
     const lspSuggestions = completion.items.map((item, index) =>
-      toMonacoCompletionItem(
-        monaco,
-        item,
-        request.rootPath,
-        request.sessionId,
-        request.path,
-        range,
-        context.completeFunctionCalls === true,
-        `0_${String(index).padStart(4, "0")}`,
+      attachStoredProviderPayloadAuthority(
+        toMonacoCompletionItem(
+          monaco,
+          item,
+          request.rootPath,
+          request.sessionId,
+          request.path,
+          range,
+          context.completeFunctionCalls === true,
+          `0_${String(index).padStart(4, "0")}`,
+        ),
+        request,
       ),
     );
     const snippetSuggestions = javaScriptTypeScriptSnippetSuggestions(
@@ -1024,29 +901,26 @@ async function resolveCompletionItem(
       backedItem.__languageServerItem,
     );
 
-    if (
-      !isStoredLanguageServerPayloadActive(
-        context,
-        backedItem.__workspaceRoot,
-        backedItem.__languageServerSessionId,
-      )
-    ) {
+    if (!isStoredDocumentPayloadActive(context, backedItem)) {
       return item;
     }
 
-    return {
-      ...item,
-      ...toMonacoCompletionItem(
-        monaco,
-        resolved,
-        backedItem.__workspaceRoot,
-        backedItem.__languageServerSessionId,
-        backedItem.__sourcePath,
-        backedItem.__completionRange ?? item.range,
-        context.completeFunctionCalls === true,
-        item.sortText,
-      ),
-    };
+    return attachStoredProviderPayloadAuthority(
+      {
+        ...item,
+        ...toMonacoCompletionItem(
+          monaco,
+          resolved,
+          backedItem.__workspaceRoot,
+          backedItem.__languageServerSessionId,
+          backedItem.__sourcePath,
+          backedItem.__completionRange ?? item.range,
+          context.completeFunctionCalls === true,
+          item.sortText,
+        ),
+      },
+      backedItem,
+    );
   } catch (error) {
     reportErrorForStoredPayload(context, backedItem, error);
     return item;
@@ -1484,7 +1358,10 @@ async function provideDocumentLinks(
     return {
       dispose: () => undefined,
       links: links.map((link) =>
-        toMonacoDocumentLink(monaco, request.rootPath, request.sessionId, request.path, link),
+        attachStoredProviderPayloadAuthority(
+          toMonacoDocumentLink(monaco, request.rootPath, request.sessionId, request.path, link),
+          request,
+        ),
       ),
     };
   } catch (error) {
@@ -1577,26 +1454,23 @@ async function resolveDocumentLink(
       backedLink.__languageServerLink,
     );
 
-    if (
-      !isStoredLanguageServerPayloadActive(
-        context,
-        backedLink.__workspaceRoot,
-        backedLink.__languageServerSessionId,
-      )
-    ) {
+    if (!isStoredDocumentPayloadActive(context, backedLink)) {
       return link;
     }
 
-    return {
-      ...link,
-      ...toMonacoDocumentLink(
-        monaco,
-        backedLink.__workspaceRoot,
-        backedLink.__languageServerSessionId,
-        backedLink.__sourcePath,
-        resolved,
-      ),
-    };
+    return attachStoredProviderPayloadAuthority(
+      {
+        ...link,
+        ...toMonacoDocumentLink(
+          monaco,
+          backedLink.__workspaceRoot,
+          backedLink.__languageServerSessionId,
+          backedLink.__sourcePath,
+          resolved,
+        ),
+      },
+      backedLink,
+    );
   } catch (error) {
     reportErrorForStoredPayload(context, backedLink, error);
     return link;
@@ -1924,7 +1798,7 @@ async function provideCodeActions(
             authority,
             action,
             actionContext,
-          ),
+          ).map((mapped) => attachStoredProviderPayloadAuthority(mapped, request)),
       ),
       dispose: () => undefined,
     };
@@ -1960,7 +1834,10 @@ async function resolveCodeAction(
       backedAction.__languageServerAction,
     );
 
-    if (!isCodeActionAuthorityActive(context, authority)) {
+    if (
+      !isCodeActionAuthorityActive(context, authority) ||
+      !isStoredDocumentPayloadActive(context, backedAction)
+    ) {
       return action;
     }
 
@@ -1982,7 +1859,9 @@ async function resolveCodeAction(
       },
     );
 
-    return mapped ? { ...action, ...mapped } : action;
+    return mapped
+      ? attachStoredProviderPayloadAuthority({ ...action, ...mapped }, backedAction)
+      : action;
   } catch (error) {
     reportErrorForStoredPayload(context, backedAction, error);
     return action;
@@ -2013,7 +1892,10 @@ async function provideCodeLenses(
 
     return {
       lenses: lenses.map((lens) =>
-        toMonacoCodeLens(monaco, request.rootPath, request.sessionId, request.path, lens),
+        attachStoredProviderPayloadAuthority(
+          toMonacoCodeLens(monaco, request.rootPath, request.sessionId, request.path, lens),
+          request,
+        ),
       ),
       dispose: () => undefined,
     };
@@ -2053,26 +1935,23 @@ async function resolveCodeLens(
       backedCodeLens.__languageServerCodeLens,
     );
 
-    if (
-      !isStoredLanguageServerPayloadActive(
-        context,
-        backedCodeLens.__workspaceRoot,
-        backedCodeLens.__languageServerSessionId,
-      )
-    ) {
+    if (!isStoredDocumentPayloadActive(context, backedCodeLens)) {
       return codeLens;
     }
 
-    return {
-      ...codeLens,
-      ...toMonacoCodeLens(
-        monaco,
-        backedCodeLens.__workspaceRoot,
-        backedCodeLens.__languageServerSessionId,
-        backedCodeLens.__sourcePath,
-        resolved,
-      ),
-    };
+    return attachStoredProviderPayloadAuthority(
+      {
+        ...codeLens,
+        ...toMonacoCodeLens(
+          monaco,
+          backedCodeLens.__workspaceRoot,
+          backedCodeLens.__languageServerSessionId,
+          backedCodeLens.__sourcePath,
+          resolved,
+        ),
+      },
+      backedCodeLens,
+    );
   } catch (error) {
     reportErrorForStoredPayload(context, backedCodeLens, error);
     return codeLens;
@@ -2219,7 +2098,10 @@ async function provideInlayHints(
 
     return {
       hints: hints.map((hint) =>
-        toMonacoInlayHint(monaco, hint, request.rootPath, request.sessionId, request.path),
+        attachStoredProviderPayloadAuthority(
+          toMonacoInlayHint(monaco, hint, request.rootPath, request.sessionId, request.path),
+          request,
+        ),
       ),
       dispose: () => undefined,
     };
@@ -2267,22 +2149,19 @@ async function resolveInlayHint(
       backedHint.__languageServerInlayHint,
     );
 
-    if (
-      !isStoredLanguageServerPayloadActive(
-        context,
-        backedHint.__workspaceRoot,
-        backedHint.__languageServerSessionId,
-      )
-    ) {
+    if (!isStoredDocumentPayloadActive(context, backedHint)) {
       return hint;
     }
 
-    return toMonacoInlayHint(
-      monaco,
-      resolvedHint,
-      backedHint.__workspaceRoot,
-      backedHint.__languageServerSessionId,
-      backedHint.__sourcePath,
+    return attachStoredProviderPayloadAuthority(
+      toMonacoInlayHint(
+        monaco,
+        resolvedHint,
+        backedHint.__workspaceRoot,
+        backedHint.__languageServerSessionId,
+        backedHint.__sourcePath,
+      ),
+      backedHint,
     );
   } catch (error) {
     reportErrorForStoredPayload(context, backedHint, error);
@@ -2309,13 +2188,28 @@ function featureRequestContext(
     | "typeDefinition",
 ) {
   const activeDocument = context.getActiveDocument();
+  const ownerEpoch = context.getActiveJavaScriptTypeScriptOwnerEpoch();
+  const registrationLease = context.getProviderRegistrationLease?.();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
   if (
     !rootPath ||
     !activeDocument ||
+    !Number.isSafeInteger(ownerEpoch) ||
+    ownerEpoch < 0 ||
+    registrationLease?.active !== true ||
     !isJavaScriptTypeScriptDocument(activeDocument) ||
     !modelMatchesWorkspacePath(model, rootPath, activeDocument.path)
+  ) {
+    return null;
+  }
+
+  if (
+    isLargeJavaScriptTypeScriptProviderDocument(
+      model,
+      activeDocument,
+      context.getLargeSmartDocumentPolicy(),
+    )
   ) {
     return null;
   }
@@ -2330,11 +2224,15 @@ function featureRequestContext(
   }
 
   return {
+    model,
+    modelVersion: model.getVersionId(),
+    ownerEpoch,
     path: activeDocument.path,
     position: toLanguageServerTextDocumentPosition(activeDocument.path, {
       column: position.column,
       lineNumber: position.lineNumber,
     }),
+    registrationLease,
     rootPath,
     sessionId,
   };
@@ -2357,13 +2255,28 @@ function documentRequestContext(
     | "semanticTokens",
 ) {
   const activeDocument = context.getActiveDocument();
+  const ownerEpoch = context.getActiveJavaScriptTypeScriptOwnerEpoch();
+  const registrationLease = context.getProviderRegistrationLease?.();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
   if (
     !rootPath ||
     !activeDocument ||
+    !Number.isSafeInteger(ownerEpoch) ||
+    ownerEpoch < 0 ||
+    registrationLease?.active !== true ||
     !isJavaScriptTypeScriptDocument(activeDocument) ||
     !modelMatchesWorkspacePath(model, rootPath, activeDocument.path)
+  ) {
+    return null;
+  }
+
+  if (
+    isLargeJavaScriptTypeScriptProviderDocument(
+      model,
+      activeDocument,
+      context.getLargeSmartDocumentPolicy(),
+    )
   ) {
     return null;
   }
@@ -2378,16 +2291,27 @@ function documentRequestContext(
   }
 
   return {
+    model,
+    modelVersion: model.getVersionId(),
+    ownerEpoch,
     path: activeDocument.path,
+    registrationLease,
     rootPath,
     sessionId,
   };
 }
 
 function workspaceSymbolRequestContext(context: JavaScriptTypeScriptLanguageServerProviderContext) {
+  const ownerEpoch = context.getActiveJavaScriptTypeScriptOwnerEpoch();
+  const registrationLease = context.getProviderRegistrationLease?.();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
-  if (!rootPath) {
+  if (
+    !rootPath ||
+    !Number.isSafeInteger(ownerEpoch) ||
+    ownerEpoch < 0 ||
+    registrationLease?.active !== true
+  ) {
     return null;
   }
 
@@ -2400,15 +2324,26 @@ function workspaceSymbolRequestContext(context: JavaScriptTypeScriptLanguageServ
     return null;
   }
 
-  return { rootPath, sessionId };
+  return { ownerEpoch, registrationLease, rootPath, sessionId };
 }
 
 async function flushPendingDocumentChangeForActiveRoot(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
-  request: { path: string; rootPath: string; sessionId?: number },
+  request: JavaScriptTypeScriptDocumentRequestAuthority,
 ): Promise<boolean> {
   await context.flushPendingDocumentChange(request.path);
 
+  if (!isFeatureRequestActive(context, request, false)) {
+    return false;
+  }
+
+  const syncVersion = context.getDocumentSyncVersion(request.rootPath, request.path);
+
+  if (syncVersion === null) {
+    return false;
+  }
+
+  request.syncVersion = syncVersion;
   return isFeatureRequestActive(context, request);
 }
 
@@ -2425,20 +2360,158 @@ async function flushPendingDocumentChangeForStoredPayload(
     return false;
   }
 
+  if (!isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId)) {
+    return false;
+  }
+
   await context.flushPendingDocumentChange(path);
 
-  return authority
-    ? isCodeActionAuthorityActive(context, authority)
-    : isStoredLanguageServerPayloadActive(context, rootPath, sessionId);
+  return (
+    (authority
+      ? isCodeActionAuthorityActive(context, authority)
+      : isStoredLanguageServerPayloadActive(context, rootPath, sessionId)) &&
+    isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId)
+  );
+}
+
+function isStoredDocumentAuthorityActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+  path: string,
+  rootPath: string,
+  sessionId: number,
+): boolean {
+  return isStoredJavaScriptTypeScriptDocumentAuthorityActive(context, payload, {
+    path,
+    rootAndSessionActive: isStoredLanguageServerPayloadActive(context, rootPath, sessionId),
+    rootPath,
+  });
+}
+
+function isStoredDocumentPayloadActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+): boolean {
+  const authority = payload.__codeActionAuthority;
+  const path = authority?.path ?? payload.path ?? payload.__sourcePath;
+  const rootPath = authority?.rootPath ?? payload.rootPath ?? payload.__workspaceRoot;
+  const sessionId = authority?.sessionId ?? payload.sessionId ?? payload.__languageServerSessionId;
+  return Boolean(
+    path &&
+    rootPath &&
+    sessionId != null &&
+    isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId),
+  );
+}
+
+function isExecutableCommandPayloadActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+  codeActionAuthority: CodeActionAuthority | undefined,
+  requireVersion = true,
+): boolean {
+  return (
+    isStoredDocumentPayloadActive(context, payload) &&
+    (!codeActionAuthority ||
+      isCodeActionAuthorityActive(context, codeActionAuthority, requireVersion))
+  );
+}
+
+function refreshExecutableCommandPayloadAuthority(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+  rootPath: string,
+  sessionId: number,
+): boolean {
+  const path = payload.__codeActionAuthority?.path ?? payload.path ?? payload.__sourcePath;
+  return Boolean(
+    path &&
+    refreshStoredJavaScriptTypeScriptDocumentAuthority(context, payload, {
+      path,
+      rootAndSessionActive: isStoredLanguageServerPayloadActive(context, rootPath, sessionId),
+      rootPath,
+    }),
+  );
+}
+
+function isExecutableWorkspaceEditContinuationActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+  rootPath: string,
+  sessionId: number,
+  codeActionAuthority: CodeActionAuthority | undefined,
+  receipt: JavaScriptTypeScriptWorkspaceEditCommitReceipt,
+): boolean {
+  return isJavaScriptTypeScriptWorkspaceEditCommitReceiptActive(
+    receipt,
+    context.getActiveJavaScriptTypeScriptOwnerEpoch(),
+    context.getActiveJavaScriptTypeScriptOwnerIdentity(),
+    () =>
+      canContinueStoredJavaScriptTypeScriptDocumentAuthority(context, payload, {
+        path: receipt.path,
+        rootAndSessionActive: isStoredLanguageServerPayloadActive(context, rootPath, sessionId),
+        rootPath,
+      }) &&
+      (!codeActionAuthority || isCodeActionAuthorityActive(context, codeActionAuthority, false)),
+  );
+}
+
+function consumeExecutableWorkspaceEditContinuation(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+  rootPath: string,
+  sessionId: number,
+  codeActionAuthority: CodeActionAuthority | undefined,
+  receipt: JavaScriptTypeScriptWorkspaceEditCommitReceipt,
+): boolean {
+  return consumeJavaScriptTypeScriptWorkspaceEditCommitReceipt(
+    receipt,
+    context.getActiveJavaScriptTypeScriptOwnerEpoch(),
+    context.getActiveJavaScriptTypeScriptOwnerIdentity(),
+    () =>
+      canContinueStoredJavaScriptTypeScriptDocumentAuthority(context, payload, {
+        path: receipt.path,
+        rootAndSessionActive: isStoredLanguageServerPayloadActive(context, rootPath, sessionId),
+        rootPath,
+      }) &&
+      (!codeActionAuthority || isCodeActionAuthorityActive(context, codeActionAuthority, false)),
+  );
 }
 
 function isFeatureRequestActive(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
-  request: { rootPath: string; sessionId?: number },
+  request:
+    | { rootPath: string; sessionId?: number }
+    | (JavaScriptTypeScriptProviderRequestAuthority & {
+        rootPath: string;
+        sessionId?: number;
+      })
+    | JavaScriptTypeScriptDocumentRequestAuthority,
+  requireSyncAuthority = true,
 ): boolean {
-  return request.sessionId == null
-    ? isStoredWorkspaceRootActive(context, request.rootPath)
-    : isStoredLanguageServerPayloadActive(context, request.rootPath, request.sessionId);
+  const rootAndSessionActive =
+    request.sessionId == null
+      ? isStoredWorkspaceRootActive(context, request.rootPath)
+      : isStoredLanguageServerPayloadActive(context, request.rootPath, request.sessionId);
+
+  if (
+    !rootAndSessionActive ||
+    ("registrationLease" in request &&
+      !isJavaScriptTypeScriptProviderRequestAuthorityActive(context, request))
+  ) {
+    return false;
+  }
+
+  if (!isJavaScriptTypeScriptDocumentRequestAuthority(request)) {
+    return rootAndSessionActive;
+  }
+
+  return isJavaScriptTypeScriptDocumentRequestAuthorityActive(
+    context,
+    request,
+    rootAndSessionActive,
+    requireSyncAuthority,
+  );
 }
 
 function canUseRuntimeFeatureForRoot(
@@ -2473,68 +2546,6 @@ function runningRuntimeStatusForRoot(
   }
 
   return status;
-}
-
-function semanticTokensLegendForActiveRuntime(
-  context: JavaScriptTypeScriptLanguageServerProviderContext,
-): Monaco.languages.SemanticTokensLegend {
-  const status = context.getRuntimeStatus();
-
-  if (status?.kind !== "running") {
-    return JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND;
-  }
-
-  const rootPath = context.getWorkspaceRoot?.() ?? null;
-
-  if (!status.rootPath || !rootPath || !workspaceRootKeysEqual(status.rootPath, rootPath)) {
-    return JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND;
-  }
-
-  if (!isUsableSemanticTokensLegend(status.capabilities.semanticTokensLegend)) {
-    return JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND;
-  }
-
-  return status.capabilities.semanticTokensLegend;
-}
-
-function onTypeFormattingTriggerCharactersForActiveRuntime(
-  context: JavaScriptTypeScriptLanguageServerProviderContext,
-): string[] {
-  const status = context.getRuntimeStatus();
-  const rootPath = context.getWorkspaceRoot?.() ?? null;
-
-  if (
-    status?.kind === "running" &&
-    status.rootPath &&
-    rootPath &&
-    workspaceRootKeysEqual(status.rootPath, rootPath) &&
-    isStringArray(status.capabilities.onTypeFormattingTriggerCharacters) &&
-    status.capabilities.onTypeFormattingTriggerCharacters.length > 0
-  ) {
-    return status.capabilities.onTypeFormattingTriggerCharacters;
-  }
-
-  return JAVASCRIPT_TYPESCRIPT_ON_TYPE_FORMATTING_TRIGGER_CHARACTERS;
-}
-
-function isUsableSemanticTokensLegend(
-  legend: unknown,
-): legend is Monaco.languages.SemanticTokensLegend {
-  if (!legend || typeof legend !== "object") {
-    return false;
-  }
-
-  const candidate = legend as Partial<Monaco.languages.SemanticTokensLegend>;
-
-  return (
-    isStringArray(candidate.tokenTypes) &&
-    candidate.tokenTypes.length > 0 &&
-    isStringArray(candidate.tokenModifiers)
-  );
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isStoredWorkspaceRootActive(
@@ -2609,14 +2620,11 @@ function reportErrorForStoredPayload(
   const rootPath = authority?.rootPath ?? payload.rootPath ?? payload.__workspaceRoot;
   const sessionId = authority?.sessionId ?? payload.sessionId ?? payload.__languageServerSessionId;
 
-  if (!rootPath || sessionId == null) {
-    return;
-  }
-
   if (
-    authority
-      ? !isCodeActionAuthorityActive(context, authority)
-      : !isStoredLanguageServerPayloadActive(context, rootPath, sessionId)
+    !rootPath ||
+    sessionId == null ||
+    !isStoredDocumentPayloadActive(context, payload) ||
+    (authority && !isCodeActionAuthorityActive(context, authority))
   ) {
     return;
   }
@@ -3429,6 +3437,7 @@ async function applyWorkspaceEditWithOpenModels(
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,
   isStillActive: () => boolean = () => true,
+  onApplied?: (commit: AppliedJavaScriptTypeScriptWorkspaceEditCommit) => void,
 ): Promise<boolean> {
   const scopedEdit = workspaceEditForRoot(edit, rootPath);
   return applyJavaScriptTypeScriptWorkspaceEditWithOpenModels(
@@ -3437,6 +3446,7 @@ async function applyWorkspaceEditWithOpenModels(
     rootPath,
     context.applyWorkspaceEdit,
     isStillActive,
+    onApplied,
   );
 }
 
@@ -3571,76 +3581,6 @@ function openModelPathsForWorkspaceEdit(
       ? [path]
       : [];
   });
-}
-
-function workspaceEditForRoot(
-  edit: LanguageServerWorkspaceEdit,
-  rootPath: string,
-): LanguageServerWorkspaceEdit {
-  const changes = Object.fromEntries(
-    Object.entries(edit.changes).filter(([uri]) => {
-      const path = pathFromLanguageServerUri(uri);
-
-      return path ? isPathInWorkspaceRoot(rootPath, path) : false;
-    }),
-  );
-  const documentVersions = Object.fromEntries(
-    Object.entries(edit.documentVersions ?? {}).filter(([uri]) => {
-      const path = pathFromLanguageServerUri(uri);
-
-      return path ? isPathInWorkspaceRoot(rootPath, path) : false;
-    }),
-  );
-  const fileOperations = (edit.fileOperations ?? []).filter((operation) =>
-    isFileOperationInWorkspaceRoot(operation, rootPath),
-  );
-
-  return mergeAliasedWorkspaceEditDocumentChanges({
-    ...(fileOperations.length > 0 ? { fileOperations } : {}),
-    ...(Object.keys(documentVersions).length > 0 ? { documentVersions } : {}),
-    changes,
-  });
-}
-
-function workspaceEditVersionId(
-  edit: LanguageServerWorkspaceEdit,
-  uri: string,
-): number | null | undefined {
-  const version = canonicalWorkspaceEditDocumentVersion(edit, uri);
-
-  return version.kind === "versioned" ? version.version : undefined;
-}
-
-function isFileOperationInWorkspaceRoot(
-  operation: LanguageServerWorkspaceFileOperation,
-  rootPath: string,
-): boolean {
-  return fileOperationUris(operation).every((uri) => {
-    const path = pathFromLanguageServerUri(uri);
-
-    return path ? isPathInWorkspaceRoot(rootPath, path) : false;
-  });
-}
-
-function fileOperationUris(operation: LanguageServerWorkspaceFileOperation): string[] {
-  if (operation.kind === "rename") {
-    return [operation.oldUri, operation.newUri];
-  }
-
-  return [operation.uri];
-}
-
-function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
-  const normalizedRootPath = normalizedWorkspacePath(rootPath);
-  const normalizedPath = normalizedWorkspacePath(path);
-
-  return (
-    normalizedPath === normalizedRootPath || normalizedPath.startsWith(`${normalizedRootPath}/`)
-  );
-}
-
-function normalizedWorkspacePath(path: string): string {
-  return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }
 
 function toMonacoCompletionItem(
@@ -3898,7 +3838,7 @@ function monacoCompletionKindFromLspKind(
 }
 
 function isJavaScriptTypeScriptDocument(document: EditorDocument): boolean {
-  return JAVASCRIPT_TYPESCRIPT_LANGUAGE_ID_SET.has(document.language);
+  return isJavaScriptTypeScriptMonacoLanguage(document.language);
 }
 
 function escapeRegExp(value: string): string {

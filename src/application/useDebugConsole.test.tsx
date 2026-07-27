@@ -53,9 +53,9 @@ describe("useDebugConsole", () => {
   });
 
   it("appends only new output across ordinary growth and source-buffer trimming", () => {
-    const one = { stream: "stdout" as const, text: "one" };
-    const two = { stream: "stderr" as const, text: "two" };
-    const three = { stream: "stdout" as const, text: "three" };
+    const one = { stream: "stdout" as const, text: "one", truncated: false };
+    const two = { stream: "stderr" as const, text: "two", truncated: false };
+    const three = { stream: "stdout" as const, text: "three", truncated: false };
     options.output = [one, two];
     render();
     expect(current.state.entries.map((entry) => entry.kind)).toEqual(["stdout", "stderr"]);
@@ -73,16 +73,39 @@ describe("useDebugConsole", () => {
     expect(current.state.entries).toHaveLength(3);
   });
 
+  it("preserves upstream truncation metadata in the chronological console model", () => {
+    options.output = [
+      {
+        stream: "stderr",
+        text: "partial\n[Debugger output truncated]",
+        truncated: true,
+      },
+    ];
+
+    render();
+
+    expect(current.state.entries[0]).toMatchObject({
+      kind: "stderr",
+      text: "partial\n[Debugger output truncated]",
+      truncated: true,
+    });
+  });
+
   it("does not duplicate retained output when a trimmed burst drops the previous cursor", () => {
     const retained = Array.from({ length: 5_000 }, (_, index) => ({
       stream: "stdout" as const,
       text: `retained-${index}`,
+      truncated: false,
     }));
     options.output = retained;
     render();
     const sequenceAfterInitialOutput = current.state.nextSequence;
 
-    const newLine = { stream: "stderr" as const, text: "new-after-trim" };
+    const newLine = {
+      stream: "stderr" as const,
+      text: "new-after-trim",
+      truncated: false,
+    };
     options = {
       ...options,
       output: [...retained.slice(0, -1), newLine],
@@ -94,6 +117,11 @@ describe("useDebugConsole", () => {
       kind: "stderr",
       text: "new-after-trim",
     });
+    expect(current.state.entries[0]).toMatchObject({
+      kind: "truncated",
+      omittedEntries: 4_002,
+    });
+    expect(current.state.entries).toHaveLength(1_000);
   });
 
   it("records pending and settled entries chronologically around process output", async () => {
@@ -111,7 +139,11 @@ describe("useDebugConsole", () => {
     });
     expect(current.state.entries.map((entry) => entry.kind)).toEqual(["pending"]);
 
-    const line = { stream: "stdout" as const, text: "during evaluation" };
+    const line = {
+      stream: "stdout" as const,
+      text: "during evaluation",
+      truncated: false,
+    };
     options = { ...options, output: [line] };
     render();
     await act(async () => {
@@ -146,7 +178,11 @@ describe("useDebugConsole", () => {
   });
 
   it("keeps session output live after Continue removes the pause owner", () => {
-    const beforeContinue = { stream: "stdout" as const, text: "before continue" };
+    const beforeContinue = {
+      stream: "stdout" as const,
+      text: "before continue",
+      truncated: false,
+    };
     options.output = [beforeContinue];
     render();
 
@@ -155,8 +191,8 @@ describe("useDebugConsole", () => {
       owner: null,
       output: [
         beforeContinue,
-        { stream: "stdout" as const, text: "server starting boot" },
-        { stream: "stderr" as const, text: "watch notice" },
+        { stream: "stdout" as const, text: "server starting boot", truncated: false },
+        { stream: "stderr" as const, text: "watch notice", truncated: false },
       ],
     };
     render();
@@ -378,7 +414,7 @@ describe("useDebugConsole", () => {
 
   it("cancels only the pending row when an upstream stale evaluation returns null", async () => {
     let resolve!: (value: DebugVariable | null) => void;
-    options.output = [{ stream: "stdout", text: "before" }];
+    options.output = [{ stream: "stdout", text: "before", truncated: false }];
     options.evaluate = () =>
       new Promise<DebugVariable | null>((settle) => {
         resolve = settle;
@@ -426,7 +462,11 @@ describe("useDebugConsole", () => {
   });
 
   it("preserves expression history and admits future process output after clear", async () => {
-    const first = { stream: "stdout" as const, text: "before clear" };
+    const first = {
+      stream: "stdout" as const,
+      text: "before clear",
+      truncated: false,
+    };
     options.output = [first];
     options.evaluate = vi.fn().mockResolvedValue({
       name: "count",
@@ -443,7 +483,7 @@ describe("useDebugConsole", () => {
 
     options = {
       ...options,
-      output: [first, { stream: "stdout", text: "after clear" }],
+      output: [first, { stream: "stdout", text: "after clear", truncated: false }],
     };
     render();
     expect(current.state.entries).toHaveLength(1);
@@ -457,7 +497,7 @@ describe("useDebugConsole", () => {
       new Promise<DebugVariable>((settle) => {
         resolve = settle;
       });
-    options.output = [{ stream: "stdout", text: "ready" }];
+    options.output = [{ stream: "stdout", text: "ready", truncated: false }];
     render();
     let submission!: Promise<void>;
     act(() => {
@@ -477,7 +517,7 @@ describe("useDebugConsole", () => {
   });
 
   it("cleans the old snapshot and consumes the full output of a replacement session", () => {
-    const oldLine = { stream: "stdout" as const, text: "old" };
+    const oldLine = { stream: "stdout" as const, text: "old", truncated: false };
     options.output = [oldLine];
     render();
 
@@ -486,8 +526,8 @@ describe("useDebugConsole", () => {
       owner: { sessionId: 8, pauseGeneration: 1 },
       sessionId: 8,
       output: [
-        { stream: "stdout", text: "new one" },
-        { stream: "stderr", text: "new two" },
+        { stream: "stdout", text: "new one", truncated: false },
+        { stream: "stderr", text: "new two", truncated: false },
       ],
     };
     render();
@@ -499,7 +539,11 @@ describe("useDebugConsole", () => {
   });
 
   it("bounds root cleanup to one snapshot and rehydrates output after returning", () => {
-    const line = { stream: "stdout" as const, text: "session output" };
+    const line = {
+      stream: "stdout" as const,
+      text: "session output",
+      truncated: false,
+    };
     options.output = [line];
     render();
     expect(current.state.entries).toHaveLength(1);

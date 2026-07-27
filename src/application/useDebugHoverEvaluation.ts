@@ -18,7 +18,10 @@ export type DebugHoverCancellation = AbortSignal | DebugHoverCancellationToken;
 
 export interface UseDebugHoverEvaluationOptions {
   readonly debugAdapterKind: ActiveDebugAdapterKind;
-  readonly evaluateWatch: (expression: string) => Promise<DebugEvaluationResult | null>;
+  readonly evaluateWatch: (
+    expression: string,
+    cancellation?: DebugHoverCancellation,
+  ) => Promise<DebugEvaluationResult | null>;
   readonly inspectionOwner: DebugInspectionOwner | null;
   readonly isWorkspaceTrusted?: () => boolean;
   readonly copyEvaluatePathOnce?: (target: DebugCopyEvaluatePathTarget) => Promise<boolean>;
@@ -26,6 +29,7 @@ export interface UseDebugHoverEvaluationOptions {
 
 export interface DebugHoverEvaluationPort {
   getOwner(): DebugInspectionOwner | null;
+  getOwnerEpoch(): number;
   evaluate(
     owner: DebugInspectionOwner,
     expression: string,
@@ -52,9 +56,13 @@ export function useDebugHoverEvaluation({
   copyEvaluatePathOnce,
 }: UseDebugHoverEvaluationOptions): DebugHoverEvaluationPort {
   const mountedRef = useRef(true);
-  const ownerEpochRef = useRef({ epoch: inspectionOwner ? 1 : 0, owner: inspectionOwner });
-  if (!debugInspectionOwnersEqual(ownerEpochRef.current.owner, inspectionOwner)) {
-    ownerEpochRef.current = { epoch: ownerEpochRef.current.epoch + 1, owner: inspectionOwner };
+  const effectiveOwner =
+    debugAdapterKind === "node" && debugHoverWorkspaceTrusted(isWorkspaceTrusted)
+      ? inspectionOwner
+      : null;
+  const ownerEpochRef = useRef({ epoch: effectiveOwner ? 1 : 0, owner: effectiveOwner });
+  if (!debugInspectionOwnersEqual(ownerEpochRef.current.owner, effectiveOwner)) {
+    ownerEpochRef.current = { epoch: ownerEpochRef.current.epoch + 1, owner: effectiveOwner };
   }
   const currentRef = useRef({
     debugAdapterKind,
@@ -103,14 +111,23 @@ export function useDebugHoverEvaluation({
       return null;
     }
   }, []);
+  const getOwnerEpoch = useCallback((): number => {
+    return mountedRef.current ? ownerEpochRef.current.epoch : -1;
+  }, []);
 
   const evaluate = useCallback<DebugHoverEvaluationPort["evaluate"]>(
     async (owner, expression, cancellation) => {
       if (!isCurrent(owner, cancellation, getOwner)) return null;
       const evaluate = currentRef.current.evaluateWatch;
+      const ownerEpoch = ownerEpochRef.current.epoch;
       try {
-        const result = await evaluate(expression);
-        if (!isCurrent(owner, cancellation, getOwner, evaluate, currentRef.current.evaluateWatch)) {
+        const result = await (cancellation
+          ? evaluate(expression, cancellation)
+          : evaluate(expression));
+        if (
+          ownerEpoch !== ownerEpochRef.current.epoch ||
+          !isCurrent(owner, cancellation, getOwner, evaluate, currentRef.current.evaluateWatch)
+        ) {
           return null;
         }
         if (result?.status === "ok" && result.evaluateName !== undefined) {
@@ -118,7 +135,10 @@ export function useDebugHoverEvaluation({
         }
         return result;
       } catch (error) {
-        if (!isCurrent(owner, cancellation, getOwner, evaluate, currentRef.current.evaluateWatch)) {
+        if (
+          ownerEpoch !== ownerEpochRef.current.epoch ||
+          !isCurrent(owner, cancellation, getOwner, evaluate, currentRef.current.evaluateWatch)
+        ) {
           return null;
         }
         throw error;
@@ -205,10 +225,18 @@ export function useDebugHoverEvaluation({
       copyEvaluatePath,
       evaluate,
       getOwner,
+      getOwnerEpoch,
       registerCopyEvaluatePath,
       revokeCopyEvaluatePath,
     }),
-    [copyEvaluatePath, evaluate, getOwner, registerCopyEvaluatePath, revokeCopyEvaluatePath],
+    [
+      copyEvaluatePath,
+      evaluate,
+      getOwner,
+      getOwnerEpoch,
+      registerCopyEvaluatePath,
+      revokeCopyEvaluatePath,
+    ],
   );
 }
 
@@ -242,4 +270,12 @@ function isCurrent(
 function isDebugHoverCancelled(cancellation?: DebugHoverCancellation): boolean {
   if (!cancellation) return false;
   return "aborted" in cancellation ? cancellation.aborted : cancellation.isCancellationRequested;
+}
+
+function debugHoverWorkspaceTrusted(isWorkspaceTrusted: () => boolean): boolean {
+  try {
+    return isWorkspaceTrusted() === true;
+  } catch {
+    return false;
+  }
 }

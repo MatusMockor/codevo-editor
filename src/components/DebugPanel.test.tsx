@@ -200,6 +200,88 @@ describe("DebugPanel", () => {
     expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Inactive");
   });
 
+  it("presents an in-flight start and exposes its existing cancellation action", () => {
+    const props = render({
+      debugStartPending: true,
+      nodeLaunchConfigurations: {
+        busy: false,
+        choices: [{ default: true, name: "Watch server", targetKind: "script" }],
+        error: null,
+        onLoad: vi.fn(),
+        onRefresh: vi.fn(),
+        onSelect: vi.fn(),
+        onStartSelected: vi.fn(),
+        selectedName: "Watch server",
+        state: "ready",
+      },
+      snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
+    });
+
+    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Starting");
+    expect(button("Stop debugging").disabled).toBe(false);
+    for (const label of [
+      "Continue",
+      "Pause",
+      "Restart debugging",
+      "Step over",
+      "Step into",
+      "Step out",
+    ]) {
+      expect(button(label).disabled).toBe(true);
+    }
+    expect(button("Start selected Node launch configuration").disabled).toBe(true);
+
+    act(() => button("Stop debugging").click());
+    expect(props.onStop).toHaveBeenCalledOnce();
+  });
+
+  it("presents a pending compound start before a representative session exists", () => {
+    render({
+      debugCompoundStartPending: true,
+      snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
+    });
+
+    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Starting");
+    expect(button("Stop debugging").disabled).toBe(false);
+  });
+
+  it("presents cancellation settlement after Stop was requested during start", () => {
+    render({
+      debugStartPending: true,
+      debugStopPending: true,
+      snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
+    });
+
+    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Stopping");
+    expect(button("Stop debugging").disabled).toBe(true);
+    expect(button("Stop debugging").getAttribute("aria-busy")).toBe("true");
+    expect(button("Stop debugging").title).toBe("Stopping debugging");
+  });
+
+  it("truthfully blocks a replacement owner without presenting the old start as its own", () => {
+    render({
+      debugStartBlockedByOtherOwner: true,
+      nodeLaunchConfigurations: {
+        busy: false,
+        choices: [{ default: true, name: "Watch server", targetKind: "script" }],
+        error: null,
+        onLoad: vi.fn(),
+        onRefresh: vi.fn(),
+        onSelect: vi.fn(),
+        onStartSelected: vi.fn(),
+        selectedName: "Watch server",
+        state: "ready",
+      },
+      snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
+    });
+
+    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe(
+      "Waiting for another debug session",
+    );
+    expect(button("Stop debugging").disabled).toBe(true);
+    expect(button("Start selected Node launch configuration").disabled).toBe(true);
+  });
+
   it("shows Copy Call Stack only from its public capability and rechecks it on click", () => {
     let accepted = true;
     const copyStackTrace = vi.fn(() => true);
@@ -951,6 +1033,23 @@ describe("DebugPanel", () => {
     expect(props.onStop).toHaveBeenCalledTimes(1);
   });
 
+  it("uses a user-facing stop-on-entry pause reason", () => {
+    render({
+      snapshot: {
+        state: {
+          kind: "stopped",
+          sessionId: 7,
+          reason: "entry",
+          frames: [FRAME_A],
+          topFrame: FRAME_A,
+        },
+        lastSeq: 1,
+      },
+    });
+
+    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe("Paused (Entry)");
+  });
+
   it("pauses a running session", () => {
     const props = render({
       snapshot: { state: { kind: "running", sessionId: 7 }, lastSeq: 1 },
@@ -1251,6 +1350,47 @@ describe("DebugPanel", () => {
     expect(variables[0]?.textContent).toContain("number");
   });
 
+  it("keeps the virtualized variable tree as the bounded scroll owner", () => {
+    render({
+      scopes: [{ name: "Local", variablesReference: 10, expensive: false }],
+      snapshot: stoppedSnapshot(),
+      variablesByReference: {
+        10: [{ name: "localLarge", value: "Array(5000)", variablesReference: 11 }],
+        11: Array.from({ length: 500 }, (_value, index) => ({
+          name: `value${index}`,
+          value: String(index),
+          variablesReference: 0,
+        })),
+      },
+    });
+
+    const variablesSection = host.querySelector<HTMLElement>('section[aria-label="Variables"]')!;
+    const tree = variablesSection.querySelector<HTMLElement>('[role="tree"]')!;
+    const scope = variablesSection.querySelector<HTMLElement>('[data-testid="debug-scope"]')!;
+
+    expect(variablesSection.style.display).toBe("flex");
+    expect(variablesSection.style.flexDirection).toBe("column");
+    expect(variablesSection.style.overflow).toBe("hidden");
+    expect(tree.style.flexGrow).toBe("1");
+    expect(tree.style.overflow).toBe("auto");
+
+    act(() => scope.click());
+    const localLarge = button("Expand localLarge");
+    act(() => localLarge.click());
+    act(() => localLarge.focus());
+    act(() =>
+      localLarge.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "ArrowDown" }),
+      ),
+    );
+
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("value0, 0");
+    expect(variablesSection.querySelectorAll('[role="treeitem"]').length).toBeLessThan(100);
+    expect(
+      variablesSection.querySelector<HTMLElement>('[role="tree"] > [role="group"]')?.style.height,
+    ).toBe("11000px");
+  });
+
   it("expands nested variables lazily", () => {
     const props = render({
       scopes: [{ name: "Local", variablesReference: 10, expensive: false }],
@@ -1339,6 +1479,78 @@ describe("DebugPanel", () => {
     expect(props.onRemoveBreakpoint).toHaveBeenCalledWith("bp-1");
   });
 
+  it("windows two thousand breakpoint rows and keeps a focused inline editor mounted", async () => {
+    const breakpoints = Array.from({ length: 2_000 }, (_value, index) => ({
+      ...BREAKPOINT,
+      id: `bp-${index}`,
+      lineNumber: index + 1,
+    }));
+    render({ breakpoints });
+
+    expect(host.querySelectorAll('[data-testid="debug-breakpoint"]').length).toBeLessThanOrEqual(
+      60,
+    );
+    expect(host.textContent).not.toContain("/workspace/src/index.ts:1000");
+
+    const condition = host.querySelector<HTMLInputElement>('input[aria-label="Condition"]')!;
+    act(() => condition.focus());
+    const list = host.querySelector<HTMLElement>('[role="list"][aria-label="Source breakpoints"]')!;
+    await act(async () => {
+      list.scrollTop = 60_000;
+      list.dispatchEvent(new Event("scroll", { bubbles: true }));
+      await nextAnimationFrame();
+    });
+
+    expect(host.contains(condition)).toBe(true);
+    expect(document.activeElement).toBe(condition);
+    expect(host.textContent).toContain("src/index.ts:1667");
+    expect(condition.closest('[role="listitem"]')?.getAttribute("aria-posinset")).toBe("1");
+    expect(condition.closest('[role="listitem"]')?.getAttribute("aria-setsize")).toBe("2000");
+    expect(host.querySelectorAll('[data-testid="debug-breakpoint"]').length).toBeLessThanOrEqual(
+      60,
+    );
+  });
+
+  it("windows a thousand call frames and scrolls the external selection into view", async () => {
+    const frames = Array.from({ length: 1_000 }, (_value, index) => ({
+      ...FRAME_A,
+      frameId: index + 1,
+      lineNumber: index + 1,
+      name: `frame-${index}`,
+    }));
+    render({
+      selectedFrameId: 1_000,
+      snapshot: {
+        lastSeq: 3,
+        state: {
+          frames,
+          kind: "stopped",
+          reason: "breakpoint",
+          sessionId: 7,
+          topFrame: frames[0]!,
+        },
+      },
+    });
+
+    const mounted = host.querySelectorAll<HTMLButtonElement>('[data-testid="debug-frame"]');
+    const list = host.querySelector<HTMLElement>('[role="list"][aria-label="Call stack frames"]')!;
+    expect(mounted.length).toBeLessThanOrEqual(60);
+    expect(host.querySelector('[aria-current="true"]')?.textContent).toContain("frame-999");
+    const selectedItem = host.querySelector('[aria-current="true"]')?.closest('[role="listitem"]');
+    expect(selectedItem?.getAttribute("aria-posinset")).toBe("1000");
+    expect(selectedItem?.getAttribute("aria-setsize")).toBe("1000");
+    expect(list.scrollTop).toBeGreaterThan(0);
+    expect([...mounted].filter((frame) => frame.tabIndex === 0)).toHaveLength(1);
+
+    const selected = host.querySelector<HTMLButtonElement>('[aria-current="true"]')!;
+    await act(async () => {
+      selected.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+      await nextAnimationFrame();
+    });
+    expect(document.activeElement?.textContent).toContain("frame-0");
+    expect(list.scrollTop).toBe(0);
+  });
+
   it("shows function breakpoints for Node workspaces and hides them for PHP", () => {
     const props = render({
       debugAdapterKind: "node",
@@ -1356,6 +1568,31 @@ describe("DebugPanel", () => {
 
     render({ debugAdapterKind: "php" });
     expect(host.querySelector('section[aria-label="Function Breakpoints"]')).toBeNull();
+  });
+
+  it("hides function-breakpoint mutation during compound start and active compounds", () => {
+    render({ debugAdapterKind: "node", debugCompoundStartPending: true });
+    expect(host.querySelector('section[aria-label="Function Breakpoints"]')).toBeNull();
+
+    render({ debugAdapterKind: "node", debugCompoundActive: true });
+    expect(host.querySelector('section[aria-label="Function Breakpoints"]')).toBeNull();
+  });
+
+  it("keeps function-breakpoint controls visible but disabled when untrusted", () => {
+    render({
+      debugAdapterKind: "node",
+      functionBreakpoints: [{ id: "fn-1", functionName: "globalThis.handler", enabled: true }],
+      workspaceTrusted: false,
+    });
+
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="Function name"]')?.disabled,
+    ).toBe(true);
+    expect(
+      host.querySelector<HTMLInputElement>(
+        'input[aria-label="Enable function breakpoint globalThis.handler"]',
+      )?.disabled,
+    ).toBe(true);
   });
 
   it("renders an inline breakpoint with its exact accessible column label", () => {
@@ -1849,4 +2086,8 @@ function setInputValue(input: HTMLInputElement | HTMLTextAreaElement | null, val
   const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }

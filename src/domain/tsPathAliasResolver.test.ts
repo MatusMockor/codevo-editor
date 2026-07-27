@@ -21,6 +21,70 @@ describe("createTsPathAliasResolver", () => {
     expect(truncated).toBe(false);
   });
 
+  it("resolves nested config aliases relative to the config directory", () => {
+    const { resolve, truncated } = createTsPathAliasResolver(
+      {
+        compilerOptions: {
+          baseUrl: ".",
+          paths: {
+            "@routes/*": ["src/routes/*"],
+          },
+        },
+      },
+      { configDirectory: "packages/api" },
+    );
+
+    expect(resolve("@routes/users")).toEqual(["packages/api/src/routes/users"]);
+    expect(truncated).toBe(false);
+  });
+
+  it("rejects malformed config-directory authority", () => {
+    const { resolve, truncated } = createTsPathAliasResolver(
+      {
+        compilerOptions: {
+          paths: {
+            "@routes": ["src/routes"],
+          },
+        },
+      },
+      { configDirectory: "../outside" },
+    );
+
+    expect(resolve("@routes")).toEqual([]);
+    expect(truncated).toBe(false);
+  });
+
+  it("keeps an explicitly inherited baseUrl at its declaring config provenance", () => {
+    const parent = createTsPathAliasResolver(
+      {
+        compilerOptions: {
+          baseUrl: ".",
+          paths: {
+            "@parent": ["src/parent"],
+          },
+        },
+      },
+      { configDirectory: "configs" },
+    );
+    const child = createTsPathAliasResolver(
+      {
+        compilerOptions: {
+          paths: {
+            "@child": ["src/child"],
+          },
+        },
+      },
+      {
+        configDirectory: "packages/api",
+        inheritedBaseUrl: parent.resolvedBaseUrl ?? undefined,
+      },
+    );
+
+    expect(parent.resolvedBaseUrl).toBe("configs");
+    expect(child.resolvedBaseUrl).toBe("configs");
+    expect(child.resolve("@child")).toEqual(["configs/src/child"]);
+  });
+
   it("substitutes single-wildcard aliases into bounded target patterns", () => {
     const { resolve } = createTsPathAliasResolver({
       compilerOptions: {

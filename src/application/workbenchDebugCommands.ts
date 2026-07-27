@@ -2,6 +2,8 @@ import type { StepKind } from "../domain/debug";
 import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import type { KeymapCommandId } from "../domain/keymap";
 import { isDebuggableNodeScriptPath, isDebuggablePhpScriptPath } from "../domain/debugScriptPath";
+import type { EditorDocument } from "../domain/workspace";
+import { workspaceRelativePath } from "../domain/workspace";
 import type { Command } from "./commandRegistry";
 import type { DebugSetVariableSafeCommands } from "./debugSetVariableCommandBridge";
 import {
@@ -9,6 +11,27 @@ import {
   type DebugAddToWatchSafeCommands,
 } from "./debugAddToWatchCommandBridge";
 export { isDebuggableNodeScriptPath, isDebuggablePhpScriptPath };
+
+export function hasDebuggableNodeWorkspace({
+  activeDocument,
+  detectedJavaScriptTypeScript,
+  openedDocuments = [],
+  workspaceRoot,
+}: {
+  readonly activeDocument: Pick<EditorDocument, "path"> | null | undefined;
+  readonly detectedJavaScriptTypeScript: boolean;
+  readonly openedDocuments?: readonly Pick<EditorDocument, "path">[];
+  readonly workspaceRoot: string | null | undefined;
+}): boolean {
+  if (!workspaceRoot) return false;
+  if (detectedJavaScriptTypeScript) return true;
+  const eligible = (document: Pick<EditorDocument, "path"> | null | undefined) =>
+    document !== null &&
+    document !== undefined &&
+    workspaceRelativePath(workspaceRoot, document.path) !== null &&
+    isDebuggableNodeScriptPath(document.path);
+  return eligible(activeDocument) || openedDocuments.some(eligible);
+}
 
 interface WorkbenchDebugCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;

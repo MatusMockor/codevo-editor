@@ -326,6 +326,27 @@ impl NodeCdpAdapter {
         )
     }
 
+    pub(super) fn connect_with_startup_function_breakpoints(
+        ws_url: &str,
+        emitter: DebugEventEmitter,
+        initial_breakpoints: &[DebugBreakpoint],
+        initial_function_breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
+        exception_type_filter: &[String],
+        options: NodeCdpConnectOptions<'_>,
+        stop_on_entry: bool,
+    ) -> Result<Self, String> {
+        Self::connect_with_source_maps_exception_filter_and_startup_function_breakpoints(
+            ws_url,
+            emitter,
+            initial_breakpoints,
+            initial_function_breakpoints,
+            exception_type_filter,
+            options,
+            PauseGenerationFloor::INITIAL,
+            stop_on_entry,
+        )
+    }
+
     pub(in crate::debug_cdp) fn connect_with_source_maps_at_pause_generation_floor(
         ws_url: &str,
         emitter: DebugEventEmitter,
@@ -349,6 +370,29 @@ impl NodeCdpAdapter {
         ws_url: &str,
         emitter: DebugEventEmitter,
         initial_breakpoints: &[DebugBreakpoint],
+        exception_type_filter: &[String],
+        options: NodeCdpConnectOptions<'_>,
+        pause_generation_floor: PauseGenerationFloor,
+        stop_on_entry: bool,
+    ) -> Result<Self, String> {
+        Self::connect_with_source_maps_exception_filter_and_startup_function_breakpoints(
+            ws_url,
+            emitter,
+            initial_breakpoints,
+            &[],
+            exception_type_filter,
+            options,
+            pause_generation_floor,
+            stop_on_entry,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn connect_with_source_maps_exception_filter_and_startup_function_breakpoints(
+        ws_url: &str,
+        emitter: DebugEventEmitter,
+        initial_breakpoints: &[DebugBreakpoint],
+        initial_function_breakpoints: &[crate::debug_adapter::DebugFunctionBreakpoint],
         exception_type_filter: &[String],
         options: NodeCdpConnectOptions<'_>,
         pause_generation_floor: PauseGenerationFloor,
@@ -390,10 +434,31 @@ impl NodeCdpAdapter {
             exception_type_filter,
             internal_step_filter,
         )?;
+        ensure_startup_current(startup_is_current.as_ref())?;
+        let startup_function_breakpoint_receipt =
+            adapter.set_function_breakpoints_with_receipt(initial_function_breakpoints, 1)?;
+        startup_function_breakpoint_receipt.publish_if_current(
+            &adapter.function_breakpoints,
+            startup_is_current.as_ref(),
+            |generation, breakpoints| {
+                emitter.retain_startup_function_breakpoint_verification(generation, breakpoints)
+            },
+        )?;
         let startup_entry = match startup {
             CdpStartupPolicy::SpawnedWaiting { startup_entry } => startup_entry,
             CdpStartupPolicy::Attached => return Ok(adapter),
         };
+        if !initial_function_breakpoints.is_empty() {
+            if let Some(entry) = startup_entry {
+                let canonical_entry = entry.canonicalize().map_err(|error| {
+                    format!("Unable to resolve the Node debug entry for function breakpoints: {error}")
+                })?;
+                ensure_startup_current(startup_is_current.as_ref())?;
+                adapter.bind_exact_startup_entry_url(file_url_from_path(
+                    &canonical_entry.to_string_lossy(),
+                ))?;
+            }
+        }
         let startup_probe: Option<StartupEntryProbe> = if let (true, Some(entry)) = (
             startup_policy::should_arm_startup_entry_probe(stop_on_entry),
             startup_entry,

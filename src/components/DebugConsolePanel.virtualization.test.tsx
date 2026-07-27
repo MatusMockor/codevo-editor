@@ -399,6 +399,7 @@ function outputEntry(index: number, text: string): DebugConsoleEntry {
     owner: OWNER,
     sequence: index + 1,
     text,
+    truncated: false,
   };
 }
 
@@ -473,8 +474,11 @@ function displayedValueSurface() {
   const copyDisplayedValue = vi.fn(async () => candidate !== null);
   const surface: DebugCopyDisplayedValueSurface = {
     canCopyDisplayedValue: () => candidate !== null,
+    canCopyEvaluatePath: () => candidate?.adapterEvaluateName !== undefined,
     copyDisplayedValue,
     copyDisplayedValueFromMenu: vi.fn(async () => candidate !== null),
+    copyEvaluatePath: vi.fn(async () => candidate?.adapterEvaluateName !== undefined),
+    copyEvaluatePathFromMenu: vi.fn(async () => candidate?.adapterEvaluateName !== undefined),
     epoch: 1,
     generation: 1,
     isOwnerCurrent: () => true,

@@ -40,7 +40,7 @@ describe("JsTestExplorerPanel", () => {
     await render({ onDebugNode, onRunScope });
 
     expect(host.querySelector('ul[aria-label="JavaScript tests"]')).not.toBeNull();
-    expect(host.querySelector('[role="tree"]')).toBeNull();
+    expect(host.querySelector('[role="tree"]')).not.toBeNull();
     expect(treeItems()).toHaveLength(9);
     expect(host.textContent).toContain("checkout");
     expect(host.textContent).toContain("charges card");

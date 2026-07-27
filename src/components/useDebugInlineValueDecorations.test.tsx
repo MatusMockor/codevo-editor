@@ -11,6 +11,10 @@ import {
   reduceDebugVariablePages,
 } from "../domain/debugVariablePages";
 import {
+  MAX_DEBUG_INLINE_SOURCE_BYTES,
+  MAX_DEBUG_INLINE_SOURCE_LINES,
+} from "../domain/debugInlineValues";
+import {
   createDebugInlineValueDecorations,
   useDebugInlineValueDecorations,
 } from "./useDebugInlineValueDecorations";
@@ -71,6 +75,8 @@ function context(overrides: Partial<DebugInlineValueContext> = {}): DebugInlineV
 function runtime(source = document().content) {
   const model = {
     getLineCount: vi.fn(() => source.split("\n").length),
+    getValueLength: vi.fn(() => source.length),
+    getVersionId: vi.fn(() => 1),
     getValue: vi.fn(() => source),
   } as unknown as Monaco.editor.ITextModel;
   class Range {
@@ -112,6 +118,51 @@ describe("createDebugInlineValueDecorations", () => {
     expect(decorations[0]?.range).toEqual(
       expect.objectContaining({ startColumn: 7, endColumn: 12, startLineNumber: 1 }),
     );
+    expect(model.getValue).toHaveBeenCalledOnce();
+  });
+
+  it("rejects oversized and over-line-limit models before copying their contents", () => {
+    const oversized = runtime();
+    vi.mocked(oversized.model.getValueLength).mockReturnValue(MAX_DEBUG_INLINE_SOURCE_BYTES + 1);
+    expect(
+      createDebugInlineValueDecorations({
+        activeDocument: document(),
+        context: context(),
+        model: oversized.model,
+        monaco: oversized.monaco,
+        workspaceRoot: "/workspace",
+      }),
+    ).toEqual([]);
+    expect(oversized.model.getValue).not.toHaveBeenCalled();
+
+    const tooManyLines = runtime();
+    vi.mocked(tooManyLines.model.getLineCount).mockReturnValue(MAX_DEBUG_INLINE_SOURCE_LINES + 1);
+    expect(
+      createDebugInlineValueDecorations({
+        activeDocument: document(),
+        context: context(),
+        model: tooManyLines.model,
+        monaco: tooManyLines.monaco,
+        workspaceRoot: "/workspace",
+      }),
+    ).toEqual([]);
+    expect(tooManyLines.model.getValue).not.toHaveBeenCalled();
+  });
+
+  it("rejects a model that changes version while its one source snapshot is copied", () => {
+    const { model, monaco } = runtime();
+    vi.mocked(model.getVersionId).mockReturnValueOnce(1).mockReturnValueOnce(2);
+
+    expect(
+      createDebugInlineValueDecorations({
+        activeDocument: document(),
+        context: context(),
+        model,
+        monaco,
+        workspaceRoot: "/workspace",
+      }),
+    ).toEqual([]);
+    expect(model.getValue).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -171,6 +222,7 @@ describe("useDebugInlineValueDecorations", () => {
 
     act(() => root.render(<Harness />));
     expect(deltaDecorations).toHaveBeenLastCalledWith([], expect.any(Array));
+    expect(model.getValue).toHaveBeenCalledOnce();
     inlineContext = null;
     act(() => root.render(<Harness />));
     expect(deltaDecorations).toHaveBeenCalledWith(["inline-0", "inline-1"], []);

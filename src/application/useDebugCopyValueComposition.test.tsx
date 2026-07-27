@@ -113,6 +113,38 @@ describe("useDebugCopyValueComposition", () => {
     ui.unmount();
   });
 
+  it("copies an exact multiline console expression and fences owner A-B-A", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const ui = renderHook({
+      clipboard: { canWriteText: () => true, writeText },
+      evaluateClipboard: vi.fn(),
+    });
+    const publish = () =>
+      act(() =>
+        ui.hook().console.onCandidateChange({
+          source: "console",
+          identity: "console-multiline",
+          ...owner,
+          generation: ui.hook().console.generation,
+          epoch: ui.hook().console.epoch,
+          adapterEvaluateName: "(\n  root\n).nested.b",
+          displayedValue: "1",
+        }),
+      );
+
+    publish();
+    await expect(ui.hook().console.copyEvaluatePathFromMenu()).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("(\n  root\n).nested.b");
+
+    publish();
+    const stale = ui.hook().console.copyEvaluatePathFromMenu();
+    ui.setOwner({ ...owner, workspaceOwnerKey: "owner-b" });
+    ui.setOwner(owner);
+    await expect(stale).resolves.toBe(false);
+    expect(writeText).toHaveBeenCalledOnce();
+    ui.unmount();
+  });
+
   it("adapts the active owner to source-scoped Variables and Watch surfaces", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const ui = renderHook({

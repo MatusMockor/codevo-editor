@@ -360,7 +360,12 @@ Known issues:
 - Imported VS Code compounds intentionally support only 2–4 task-free script or safe npm members with `stopAll: true` and at most one compound-level `preLaunchTask`. Attach members, member-level pre/post tasks, `stopAll: false`, compound Restart, Run Without Debugging and arbitrary VS Code/DAP extension configurations remain unsupported.
 - Imported `serverReadyAction` intentionally requires all three fields and supports only `openExternally`, a safe literal numeric-port capture and an explicit loopback HTTP(S) URI format. VS Code's arbitrary regex, full-URI capture, browser-debug/startDebugging actions, remote hosts and fallback defaults remain outside the interpreted subset.
 - The desktop webview already has the broader `opener:default` capability for existing features such as Markdown Preview. The server-ready application flow revalidates a branded loopback URL through its injected adapter, but this is not a Rust host-enforced boundary against a compromised renderer; replacing all external URL opens with narrow native commands remains a P2 defense-in-depth follow-up.
-- Name-based function breakpoints are consciously excluded from the VS Code JavaScript parity target: the current VS Code JavaScript debugger itself advertises `supportsFunctionBreakpoints: false`, while CDP's experimental call-breakpoint command requires a concrete runtime object ID rather than a function name. A future beyond-VS-Code action could safely target only an already materialized function-valued Variables row without evaluating arbitrary user text.
+- Codevo's beyond-VS-Code Node function breakpoints intentionally accept only bounded global
+  identifiers or dotted runtime paths. They do not claim arbitrary module-local name matching:
+  CommonJS/ES-module lexical functions must be explicitly reachable from a global path, while
+  arbitrary expressions, regex matching and anonymous functions remain unsupported. Compound
+  sessions intentionally hide and reject function-breakpoint mutation until exact transactional
+  fan-out across every child is implemented.
 - Debug DMG packaging is unsigned and not notarized. The release plan is documented, but no Developer ID certificate, Apple notarization credentials, or CI signing path is configured yet.
 - First release remains a host-runtime build: PHP, PHPactor, Intelephense, Watchman, ripgrep, and shells are not bundled sidecars.
 - First release uses manual DMG downloads; in-app auto-update is deferred until Tauri updater keys, endpoints, CI, and UI exist.

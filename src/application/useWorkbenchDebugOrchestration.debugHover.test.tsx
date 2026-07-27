@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     copyEvaluatePath: vi.fn(async () => false),
     evaluate: vi.fn(async () => null),
     getOwner: vi.fn(() => null),
+    getOwnerEpoch: vi.fn(() => 0),
     registerCopyEvaluatePath: vi.fn(() => null),
     revokeCopyEvaluatePath: vi.fn(),
   };

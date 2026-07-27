@@ -138,16 +138,11 @@ export function useDebugConsole({
     });
     if (unseenOutput.length === 0) return;
     setState((current) =>
-      unseenOutput.reduce(
-        (next, line) =>
-          reduceDebugConsoleState(next, {
-            type: "output",
-            owner: consoleOwner,
-            stream: line.stream,
-            text: line.text,
-          }),
-        current,
-      ),
+      reduceDebugConsoleState(current, {
+        type: "output-batch",
+        owner: consoleOwner,
+        lines: unseenOutput,
+      }),
     );
   }, [consoleOwner, output, sessionId]);
 

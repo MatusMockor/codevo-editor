@@ -184,6 +184,7 @@ export function createJsTestFailedRunCoordinator({
             envelope = await gateway.runTask(
               Object.freeze({
                 ...owner,
+                packageRootRelativePath: "",
                 scope: cloneFrozenScope(scope),
               }),
             );

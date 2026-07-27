@@ -33,7 +33,7 @@ export async function attachNodeDebugger({
   ) {
     return;
   }
-  const input = prompter.prompt("Node inspector port", "9229");
+  const input = await prompter.prompt("Node inspector port", "9229");
   if (input === null) return;
   const normalized = input.trim();
   const port = /^\d+$/.test(normalized) ? Number(normalized) : Number.NaN;

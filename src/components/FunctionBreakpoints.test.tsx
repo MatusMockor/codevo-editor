@@ -78,6 +78,32 @@ describe("FunctionBreakpoints", () => {
     expect(input?.value).toBe("");
   });
 
+  it("focuses the documented global-name input from its visible add action", () => {
+    act(() => {
+      root.render(
+        <FunctionBreakpoints
+          breakpoints={[]}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onSetEnabled={vi.fn()}
+        />,
+      );
+    });
+
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Function name"]');
+    expect(input?.placeholder).toBe("globalThis.handler");
+    expect(input?.getAttribute("aria-describedby")).toBe("function-breakpoint-help");
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Add function breakpoint"]')
+        ?.click(),
+    );
+    expect(document.activeElement).toBe(input);
+    expect(host.querySelector("#function-breakpoint-help")?.textContent).toContain(
+      "global function name",
+    );
+  });
+
   it("renders unresolved verification and updates to the filled verified indicator", () => {
     const render = (verified: boolean) =>
       act(() => {
@@ -107,6 +133,90 @@ describe("FunctionBreakpoints", () => {
     expect(verified?.title).toBe("Verified function breakpoint");
     expect(verified?.style.background).toBe("var(--color-error)");
     expect(verified?.style.border).toBe("");
+  });
+
+  it("renders an unknown verification state as pending instead of verified", () => {
+    act(() => {
+      root.render(
+        <FunctionBreakpoints
+          breakpoints={[{ id: "fn-1", functionName: "globalThis.handler", enabled: true }]}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onSetEnabled={vi.fn()}
+        />,
+      );
+    });
+
+    const pending = host.querySelector<HTMLElement>(
+      '[role="img"][aria-label="Pending function breakpoint globalThis.handler - verification pending"]',
+    );
+    expect(pending?.dataset.status).toBe("pending");
+    expect(pending?.title).toBe("Pending verification");
+    expect(pending?.style.background).toBe("transparent");
+    expect(pending?.style.border).toBe("1.5px dashed var(--color-text-muted)");
+    expect(host.querySelector('[aria-label^="Verified function breakpoint"]')).toBeNull();
+  });
+
+  it("labels disabled entries truthfully regardless of their last verification", () => {
+    act(() => {
+      root.render(
+        <FunctionBreakpoints
+          breakpoints={[
+            {
+              id: "fn-1",
+              functionName: "globalThis.handler",
+              enabled: false,
+              verified: false,
+            },
+          ]}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onSetEnabled={vi.fn()}
+        />,
+      );
+    });
+
+    const indicator = host.querySelector<HTMLElement>(
+      '[role="img"][aria-label="Disabled function breakpoint globalThis.handler"]',
+    );
+    expect(indicator?.dataset.status).toBe("disabled");
+    expect(indicator?.title).toBe("Disabled function breakpoint");
+    expect(
+      host.querySelector('[aria-label^="Unverified function breakpoint globalThis.handler"]'),
+    ).toBeNull();
+  });
+
+  it("disables every mutation control for an untrusted workspace", () => {
+    const onAdd = vi.fn();
+    const onRemove = vi.fn();
+    const onSetEnabled = vi.fn();
+    act(() => {
+      root.render(
+        <FunctionBreakpoints
+          breakpoints={[{ id: "fn-1", functionName: "globalThis.handler", enabled: true }]}
+          disabled
+          onAdd={onAdd}
+          onRemove={onRemove}
+          onSetEnabled={onSetEnabled}
+        />,
+      );
+    });
+
+    const controls = [
+      host.querySelector<HTMLButtonElement>('button[aria-label="Add function breakpoint"]'),
+      host.querySelector<HTMLInputElement>('input[aria-label="Function name"]'),
+      host.querySelector<HTMLInputElement>(
+        'input[aria-label="Enable function breakpoint globalThis.handler"]',
+      ),
+      host.querySelector<HTMLButtonElement>(
+        'button[aria-label="Remove function breakpoint globalThis.handler"]',
+      ),
+    ];
+    expect(controls.every((control) => control?.disabled === true)).toBe(true);
+    controls.forEach((control) => act(() => control?.click()));
+    expect(onAdd).not.toHaveBeenCalled();
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onSetEnabled).not.toHaveBeenCalled();
   });
 });
 

@@ -3,6 +3,143 @@ import { resolveExpressRouteMountsBounded } from "./expressRouteMounts";
 import { createTsPathAliasResolver } from "./tsPathAliasResolver";
 
 describe("resolveExpressRouteMountsBounded", () => {
+  it("distinguishes malformed-source uncertainty from actual capacity truncation", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "express-app.js",
+          source:
+            'const express=require("express"); const app=express(); app.get("/health", handler);',
+        },
+        {
+          relativeFilePath: "unrelated-server.js",
+          source: 'const http = require("http");\n}',
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes).toEqual([expect.objectContaining({ method: "GET", path: "/health" })]);
+    expect(result.truncated).toBe(true);
+    expect(result.capacityTruncated).toBe(false);
+  });
+
+  it("resolves a router mounted without an explicit prefix", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/server.ts",
+          source: [
+            "import express from 'express';",
+            "const app = express();",
+            "const router = express.Router();",
+            "const health = express.Router();",
+            "app.use(router);",
+            "router.use('/v1', health);",
+            "health.get('/health', handler);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        path: "/v1/health",
+        receiver: "health",
+      }),
+    );
+  });
+
+  it("resolves every provable router after prefixed middleware in declaration order", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/server.ts",
+          source: [
+            "import express from 'express';",
+            "const app = express();",
+            "const users = express.Router();",
+            "const admins = express.Router();",
+            "app.use('/api', auth, users, admins);",
+            "users.get('/users', listUsers);",
+            "admins.get('/admins', listAdmins);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes.filter(({ method }) => method === "GET").map(({ path }) => path)).toEqual([
+      "/api/users",
+      "/api/admins",
+    ]);
+  });
+
+  it("fails closed when a no-prefix mount could instead contain a dynamic path", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/server.ts",
+          source: [
+            "import express from 'express';",
+            "const app = express();",
+            "const router = express.Router();",
+            "app.use(dynamicPrefix, router);",
+            "router.get('/users', listUsers);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes.find(({ method }) => method === "GET")?.path).toBe("/users");
+  });
+
+  it("fails the entire mount closed when any prefixed handler expression is ambiguous", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/server.ts",
+          source: [
+            "import express from 'express';",
+            "const app = express();",
+            "const router = express.Router();",
+            "app.use('/api', auth(), router);",
+            "router.get('/users', listUsers);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.routes.find(({ method }) => method === "GET")?.path).toBe("/users");
+  });
+
+  it("bounds adversarial mount target lists and reports fail-closed truncation", () => {
+    const handlers = Array.from({ length: 20_001 }, (_, index) => `middleware${index}`);
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          relativeFilePath: "src/server.ts",
+          source: [
+            "import express from 'express';",
+            "const app = express();",
+            "const router = express.Router();",
+            `app.use('/api', ${handlers.join(", ")}, router);`,
+            "router.get('/users', listUsers);",
+          ].join("\n"),
+        },
+      ],
+      100,
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.capacityTruncated).toBe(true);
+    expect(result.routes.find(({ method }) => method === "GET")?.path).toBe("/users");
+  });
+
   it("resolves an aliased router import to its mount prefix", () => {
     const result = resolveExpressRouteMountsBounded(
       [
@@ -77,6 +214,126 @@ describe("resolveExpressRouteMountsBounded", () => {
         method: "GET",
         path: "/api/status",
         relativeFilePath: "src/routes/api/index.ts",
+      }),
+    );
+  });
+
+  it("passes exact importer authority to isolate identical aliases in sibling packages", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          packageLabel: "api",
+          relativeFilePath: "packages/api/src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import router from '@routes';",
+            "const app = express();",
+            "app.use('/api', router);",
+          ].join("\n"),
+        },
+        {
+          packageLabel: "api",
+          relativeFilePath: "packages/api/src/routes.ts",
+          source: [
+            "import express from 'express';",
+            "const router = express.Router();",
+            "router.get('/users', handler);",
+            "export default router;",
+          ].join("\n"),
+        },
+        {
+          packageLabel: "admin",
+          relativeFilePath: "packages/admin/src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import router from '@routes';",
+            "const app = express();",
+            "app.use('/admin', router);",
+          ].join("\n"),
+        },
+        {
+          packageLabel: "admin",
+          relativeFilePath: "packages/admin/src/routes.ts",
+          source: [
+            "import express from 'express';",
+            "const router = express.Router();",
+            "router.get('/users', handler);",
+            "export default router;",
+          ].join("\n"),
+        },
+      ],
+      100,
+      (specifier, importer) => {
+        if (specifier !== "@routes") return [];
+        if (importer.relativeFilePath.startsWith("packages/api/")) {
+          return ["packages/api/src/routes"];
+        }
+        if (importer.relativeFilePath.startsWith("packages/admin/")) {
+          return ["packages/admin/src/routes"];
+        }
+        return [];
+      },
+    );
+
+    expect(
+      result.routes
+        .filter(({ method }) => method === "GET")
+        .map(({ packageLabel, path, relativeFilePath }) => ({
+          packageLabel,
+          path,
+          relativeFilePath,
+        })),
+    ).toEqual([
+      {
+        packageLabel: "api",
+        path: "/api/users",
+        relativeFilePath: "packages/api/src/routes.ts",
+      },
+      {
+        packageLabel: "admin",
+        path: "/admin/users",
+        relativeFilePath: "packages/admin/src/routes.ts",
+      },
+    ]);
+  });
+
+  it("resolves an importer-scoped alias to a router in a sibling package", () => {
+    const result = resolveExpressRouteMountsBounded(
+      [
+        {
+          packageLabel: "api",
+          relativeFilePath: "packages/api/src/app.ts",
+          source: [
+            "import express from 'express';",
+            "import router from '@shared/router';",
+            "const app = express();",
+            "app.use('/api', router);",
+          ].join("\n"),
+        },
+        {
+          packageLabel: "shared",
+          relativeFilePath: "packages/shared/src/router.ts",
+          source: [
+            "import express from 'express';",
+            "const router = express.Router();",
+            "router.get('/shared', handler);",
+            "export default router;",
+          ].join("\n"),
+        },
+      ],
+      100,
+      (specifier, importer) =>
+        specifier === "@shared/router" && importer.packageLabel === "api"
+          ? ["packages/shared/src/router"]
+          : [],
+    );
+
+    expect(result.routes).toContainEqual(
+      expect.objectContaining({
+        method: "GET",
+        packageLabel: "shared",
+        path: "/api/shared",
+        relativeFilePath: "packages/shared/src/router.ts",
       }),
     );
   });

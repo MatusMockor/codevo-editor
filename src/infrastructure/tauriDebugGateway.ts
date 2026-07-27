@@ -7,6 +7,7 @@ import type {
   DebugEvent,
   DebugDisconnectRequest,
   DebugExceptionPauseMode,
+  DebugFunctionBreakpointInput,
   DebugGateway,
   DebugLaunchTarget,
   DebugRuntimeStatus,
@@ -99,6 +100,7 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
     breakpoints: readonly Breakpoint[],
     exceptionPauseMode: DebugExceptionPauseMode = "none",
     exceptionTypeFilter: DebugExceptionTypeFilter = [],
+    functionBreakpoints: readonly DebugFunctionBreakpointInput[] = [],
   ): Promise<DebugRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return { kind: "unavailable", message: DESKTOP_RUNTIME_REQUIRED };
@@ -108,6 +110,11 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
       rootPath,
       launch,
       breakpoints: [...breakpoints],
+      functionBreakpoints: functionBreakpoints.map(({ enabled, functionName, id }) => ({
+        enabled,
+        functionName,
+        id,
+      })),
       exceptionPauseMode,
       exceptionTypeFilter: [...exceptionTypeFilter],
     });
@@ -148,6 +155,11 @@ export class TauriDebugGateway implements DebugGateway, NativeNodeWatchDebugGate
         request: {
           ...request,
           breakpoints: [...request.breakpoints],
+          functionBreakpoints: request.functionBreakpoints.map(({ enabled, functionName, id }) => ({
+            enabled,
+            functionName,
+            id,
+          })),
           exceptionTypeFilter: [...request.exceptionTypeFilter],
         },
       },
@@ -419,18 +431,27 @@ function decodeGatewayDebugEvent(value: unknown): DebugEvent {
   }
   const payload = record.payload as Record<string, unknown>;
   if (
-    Object.keys(payload).length !== 2 ||
-    !Object.prototype.hasOwnProperty.call(payload, "breakpoints")
+    Object.keys(payload).length !== 3 ||
+    !Object.prototype.hasOwnProperty.call(payload, "breakpoints") ||
+    !Object.prototype.hasOwnProperty.call(payload, "generation")
   ) {
     throw new Error("Invalid debug function breakpoint verification event.");
   }
   const breakpoints = decodeFunctionBreakpointVerificationList(payload.breakpoints);
+  const generation = payload.generation;
   if (!breakpoints || new Set(breakpoints.map(({ id }) => id)).size !== breakpoints.length) {
+    throw new Error("Invalid debug function breakpoint verification event.");
+  }
+  if (!Number.isSafeInteger(generation) || (generation as number) <= 0) {
     throw new Error("Invalid debug function breakpoint verification event.");
   }
   const envelope = decodeDebugEvent({ ...record, payload: { kind: "resumed" } });
   return {
     ...envelope,
-    payload: { kind: "functionBreakpointsVerified", breakpoints },
+    payload: {
+      kind: "functionBreakpointsVerified",
+      generation: generation as number,
+      breakpoints,
+    },
   };
 }

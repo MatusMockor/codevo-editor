@@ -1,5 +1,6 @@
 use crate::debug_adapter::{DebugEventEmitter, DebugEventPayload, DebugOutputStream};
 use crate::debug_node_process::watch_generation::InspectorEndpointFingerprint;
+use crate::debug_session_registry::MAX_DEBUG_OUTPUT_EVENT_BYTES as MAX_OUTPUT_LINE_BYTES;
 use regex::Regex;
 use std::io::{self, BufRead, BufReader, Read};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -10,7 +11,6 @@ use std::time::{Duration, Instant};
 
 pub(crate) const INSPECTOR_AMBIGUITY_WINDOW: Duration = Duration::from_millis(200);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
-const MAX_OUTPUT_LINE_BYTES: usize = 64 * 1024;
 const MAX_DISCOVERY_OUTPUT_BYTES: u64 = 1024 * 1024;
 const ENDPOINT_FEED_CAPACITY: usize = 64;
 
@@ -205,16 +205,23 @@ fn spawn_output_pump_with<R: Read + Send + 'static>(
             else {
                 break;
             };
-            let mut text = String::from_utf8_lossy(&line).to_string();
-            if truncated {
-                text.push_str("…<truncated>");
-            }
+            let text = String::from_utf8_lossy(&line).to_string();
             if let Some((sender, observed_bytes)) = ws_url_sender.as_ref() {
-                publish_discovered_endpoint(&text, consumed_bytes, sender, observed_bytes);
+                publish_discovered_endpoint(
+                    &text,
+                    truncated,
+                    consumed_bytes,
+                    sender,
+                    observed_bytes,
+                );
             }
             let text = redact_inspector_url(&text);
             if !text.is_empty() {
-                emitter.emit(DebugEventPayload::Output { stream, text });
+                emitter.emit(DebugEventPayload::Output {
+                    stream,
+                    text,
+                    truncated,
+                });
             }
         }
     });
@@ -230,13 +237,16 @@ fn spawn_output_pump_job_with(
 
 fn publish_discovered_endpoint(
     text: &str,
+    truncated: bool,
     consumed_bytes: u64,
     sender: &InspectorEndpointPublisher,
     budget: &InspectorEndpointScanBudget,
 ) {
     if budget.startup_complete.load(Ordering::Acquire) {
-        if let Some(url) = parse_debugger_ws_url(text) {
-            sender.publish(url);
+        if !truncated {
+            if let Some(url) = parse_debugger_ws_url(text) {
+                sender.publish(url);
+            }
         }
         return;
     }
@@ -245,8 +255,10 @@ fn publish_discovered_endpoint(
         .fetch_add(consumed_bytes, Ordering::Relaxed);
     if previous.saturating_add(consumed_bytes) > MAX_DISCOVERY_OUTPUT_BYTES {
         sender.mark_overflowed();
-    } else if let Some(url) = parse_debugger_ws_url(text) {
-        sender.publish(url);
+    } else if !truncated {
+        if let Some(url) = parse_debugger_ws_url(text) {
+            sender.publish(url);
+        }
     }
 }
 
@@ -655,6 +667,7 @@ mod tests {
         let budget = InspectorEndpointScanBudget::new();
         publish_discovered_endpoint(
             &String::from_utf8_lossy(&output),
+            truncated,
             consumed_bytes,
             &sender,
             &budget,
@@ -672,16 +685,43 @@ mod tests {
         budget.complete_startup();
         publish_discovered_endpoint(
             "ordinary application output",
+            false,
             MAX_DISCOVERY_OUTPUT_BYTES + 1,
             &sender,
             &budget,
         );
         let endpoint_line = format!("Debugger listening on {}", endpoint_url(41001, UUID_A));
-        publish_discovered_endpoint(&endpoint_line, endpoint_line.len() as u64, &sender, &budget);
+        publish_discovered_endpoint(
+            &endpoint_line,
+            false,
+            endpoint_line.len() as u64,
+            &sender,
+            &budget,
+        );
         assert_eq!(
             feed.receive_fingerprint(Duration::from_millis(20)),
             InspectorEndpointFingerprint::parse_ws_url(&endpoint_url(41001, UUID_A))
                 .map_err(|_| InspectorEndpointFeedError::InvalidEndpoint)
+        );
+    }
+
+    #[test]
+    fn truncated_line_cannot_publish_an_incomplete_inspector_endpoint() {
+        let (sender, feed) = inspector_endpoint_feed();
+        let budget = InspectorEndpointScanBudget::new();
+        let endpoint_line = format!("Debugger listening on {}", endpoint_url(41001, UUID_A));
+
+        publish_discovered_endpoint(
+            &endpoint_line,
+            true,
+            MAX_OUTPUT_LINE_BYTES as u64 + 1,
+            &sender,
+            &budget,
+        );
+
+        assert_eq!(
+            feed.receive_fingerprint(Duration::from_millis(20)),
+            Err(InspectorEndpointFeedError::Timeout)
         );
     }
 }

@@ -47,6 +47,7 @@ pub(crate) async fn run_js_tests_json_with_trust(
 #[tauri::command]
 pub(crate) async fn run_js_tests_scoped_json(
     root_path: String,
+    package_root_relative_path: String,
     scope: JsTestRunScope,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
@@ -64,7 +65,13 @@ pub(crate) async fn run_js_tests_scoped_json(
         .map_err(|_| {
             "JavaScript test workspace is not open or its identity changed.".to_string()
         })?;
-    js_test_run::run_js_tests_scoped_registered(root, app_data_base, scope).await
+    js_test_run::run_js_tests_scoped_registered(
+        root,
+        app_data_base,
+        package_root_relative_path,
+        scope,
+    )
+    .await
 }
 
 fn workspace_is_trusted(

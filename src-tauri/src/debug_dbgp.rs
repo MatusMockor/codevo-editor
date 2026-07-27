@@ -2,6 +2,7 @@
 
 #[path = "debug_dbgp_evaluate_policy.rs"]
 mod evaluate_policy;
+mod output;
 #[path = "debug_dbgp_variables.rs"]
 mod variables;
 
@@ -210,10 +211,10 @@ fn create_listen_session(
         .map_err(|error| format!("Unable to resolve the Xdebug listener port: {error}"))?
         .port();
     let inner = new_adapter_inner(initial_breakpoints, emitter);
-    inner.emitter.emit(DebugEventPayload::Output {
-        stream: DebugOutputStream::Stdout,
-        text: format!("Listening for Xdebug connections on 127.0.0.1:{actual_port}..."),
-    });
+    inner.emitter.emit(output::plain(
+        DebugOutputStream::Stdout,
+        format!("Listening for Xdebug connections on 127.0.0.1:{actual_port}..."),
+    ));
     let shutdown = Arc::new(AtomicBool::new(false));
     let finish_slot: FinishSlot = Arc::new(Mutex::new(Some(finish)));
     let accept_inner = Arc::clone(&inner);
@@ -342,7 +343,7 @@ fn spawn_process_output_pump<R: Read + Send + 'static>(
             if text.is_empty() {
                 continue;
             }
-            emitter.emit(DebugEventPayload::Output { stream, text });
+            emitter.emit(output::plain(stream, text));
         }
     });
 }
@@ -596,10 +597,7 @@ fn run_reader(
             Ok(Some(packet)) => packet,
             Ok(None) => break,
             Err(error) => {
-                emitter.emit(DebugEventPayload::Output {
-                    stream: DebugOutputStream::Stderr,
-                    text: error,
-                });
+                emitter.emit(output::plain(DebugOutputStream::Stderr, error));
                 connection.close();
                 break;
             }
@@ -2413,6 +2411,7 @@ mod tests {
                         DebugEventPayload::Output {
                             stream: DebugOutputStream::Stderr,
                             text,
+                            ..
                         } => Some(text),
                         _ => None,
                     })

@@ -179,9 +179,22 @@ fn stale_startup_events_are_discarded_and_latest_events_follow_started() {
     let first_state = Arc::clone(&first_terminated);
     let first = thread::spawn(move || {
         first_registry.start_session("/workspace/one", first_sink, move |emitter| {
+            emitter
+                .retain_startup_function_breakpoint_verification(
+                    1,
+                    vec![crate::debug_adapter::DebugFunctionBreakpointVerification {
+                        id: "stale-startup".to_string(),
+                        verified: true,
+                    }],
+                )
+                .expect("retain stale startup receipt");
             emitter.emit(DebugEventPayload::Output {
                 stream: DebugOutputStream::Stdout,
-                text: "stale synchronous output".to_string(),
+                text: format!(
+                    "stale synchronous output{}",
+                    "ž".repeat(MAX_DEBUG_OUTPUT_EVENT_BYTES)
+                ),
+                truncated: false,
             });
             emitted_tx.send(()).expect("emitted signal");
             release_rx.recv().expect("release stale factory");
@@ -202,6 +215,7 @@ fn stale_startup_events_are_discarded_and_latest_events_follow_started() {
             emitter.emit(DebugEventPayload::Output {
                 stream: DebugOutputStream::Stdout,
                 text: "latest synchronous output".to_string(),
+                truncated: false,
             });
             Ok(MinimalAdapter::boxed(Arc::new(AtomicBool::new(false))))
         })
@@ -367,6 +381,7 @@ fn output(text: impl Into<String>) -> DebugEventPayload {
     DebugEventPayload::Output {
         stream: DebugOutputStream::Stdout,
         text: text.into(),
+        truncated: false,
     }
 }
 
@@ -379,6 +394,7 @@ fn diagnostic_count(events: &[DebugEvent]) -> usize {
                 DebugEventPayload::Output {
                     stream: DebugOutputStream::Stderr,
                     text,
+                    ..
                 } if text == OVERFLOW_DIAGNOSTIC
             )
         })
@@ -407,6 +423,68 @@ fn pending_count_overflow_emits_one_marker_after_started() {
 }
 
 #[test]
+fn pending_startup_function_receipt_survives_queue_saturation_after_started() {
+    const MAX_RECEIPT_BREAKPOINTS: usize = 128;
+    let registry = DebugSessionRegistry::new();
+    let sink = Arc::new(RecordingSink::default());
+    registry
+        .start_session("/workspace/function-receipt", sink.clone(), |emitter| {
+            for index in 0..(MAX_BUFFERED_EVENTS + 64) {
+                emitter.emit(output(index.to_string()));
+            }
+            assert!(emitter
+                .retain_startup_function_breakpoint_verification(2, Vec::new())
+                .is_err());
+            assert!(emitter
+                .retain_startup_function_breakpoint_verification(
+                    1,
+                    (0..(MAX_RECEIPT_BREAKPOINTS * 2))
+                        .map(|index| {
+                            crate::debug_adapter::DebugFunctionBreakpointVerification {
+                                id: format!("{index:03}{}", "x".repeat(125)),
+                                verified: true,
+                            }
+                        })
+                        .collect(),
+                )
+                .is_err());
+            emitter.retain_startup_function_breakpoint_verification(
+                1,
+                (0..MAX_RECEIPT_BREAKPOINTS)
+                    .map(
+                        |index| crate::debug_adapter::DebugFunctionBreakpointVerification {
+                            id: format!("function-{index}"),
+                            verified: index % 2 == 0,
+                        },
+                    )
+                    .collect(),
+            )?;
+            assert!(emitter
+                .retain_startup_function_breakpoint_verification(1, Vec::new())
+                .is_err());
+            Ok(MinimalAdapter::boxed(Arc::new(AtomicBool::new(false))))
+        })
+        .expect("bounded start with function receipt");
+
+    let events = lock_recover(&sink.events);
+    assert!(matches!(
+        events[0].payload,
+        DebugEventPayload::Started { .. }
+    ));
+    let DebugEventPayload::FunctionBreakpointsVerified {
+        generation,
+        breakpoints,
+    } = &events[1].payload
+    else {
+        panic!("startup receipt must immediately follow Started");
+    };
+    assert_eq!(*generation, 1);
+    assert_eq!(breakpoints.len(), MAX_RECEIPT_BREAKPOINTS);
+    assert_eq!(diagnostic_count(&events), 1);
+    assert!(events.len() <= MAX_BUFFERED_EVENTS);
+}
+
+#[test]
 fn pending_byte_overflow_is_bounded_and_marked_once() {
     let registry = DebugSessionRegistry::new();
     let sink = Arc::new(RecordingSink::default());
@@ -425,12 +503,12 @@ fn pending_byte_overflow_is_bounded_and_marked_once() {
 }
 
 #[test]
-fn oversized_pending_event_is_replaced_by_one_marker() {
+fn oversized_pending_output_is_utf8_bounded_and_truthfully_marked() {
     let registry = DebugSessionRegistry::new();
     let sink = Arc::new(RecordingSink::default());
     registry
         .start_session("/workspace/oversized", sink.clone(), |emitter| {
-            emitter.emit(output("x".repeat(MAX_BUFFERED_EVENT_BYTES)));
+            emitter.emit(output("ž".repeat(MAX_DEBUG_OUTPUT_EVENT_BYTES / 2 + 1)));
             Ok(MinimalAdapter::boxed(Arc::new(AtomicBool::new(false))))
         })
         .expect("bounded start");
@@ -440,7 +518,102 @@ fn oversized_pending_event_is_replaced_by_one_marker() {
         events[0].payload,
         DebugEventPayload::Started { .. }
     ));
-    assert_eq!(diagnostic_count(&events), 1);
+    assert_eq!(diagnostic_count(&events), 0);
+    let DebugEventPayload::Output {
+        stream,
+        text,
+        truncated,
+    } = &events[1].payload
+    else {
+        panic!("bounded output event");
+    };
+    assert_eq!(*stream, DebugOutputStream::Stdout);
+    assert!(*truncated);
+    assert!(text.len() <= MAX_DEBUG_OUTPUT_EVENT_BYTES);
+    assert!(text.capacity() <= MAX_DEBUG_OUTPUT_EVENT_BYTES);
+    assert!(text.ends_with(OUTPUT_TRUNCATION_SUFFIX));
+    assert!(text.starts_with('ž'));
+}
+
+#[test]
+fn nul_output_is_replaced_by_one_bounded_diagnostic() {
+    let registry = DebugSessionRegistry::new();
+    let sink = Arc::new(RecordingSink::default());
+    registry
+        .start_session("/workspace/nul-output", sink.clone(), |emitter| {
+            emitter.emit(output("before\0after"));
+            Ok(MinimalAdapter::boxed(Arc::new(AtomicBool::new(false))))
+        })
+        .expect("bounded start");
+    let events = lock_recover(&sink.events);
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        &events[1].payload,
+        DebugEventPayload::Output {
+            stream: DebugOutputStream::Stderr,
+            text,
+            truncated: true,
+        } if text == INVALID_OUTPUT_DIAGNOSTIC
+    ));
+}
+
+#[test]
+fn producer_truncation_and_excess_capacity_are_normalized_before_delivery() {
+    let registry = DebugSessionRegistry::new();
+    let sink = Arc::new(RecordingSink::default());
+    registry
+        .start_session("/workspace/producer-truncation", sink.clone(), |emitter| {
+            emitter.emit(DebugEventPayload::Output {
+                stream: DebugOutputStream::Stdout,
+                text: "partial output".to_string(),
+                truncated: true,
+            });
+            let mut oversized_capacity = String::with_capacity(MAX_DEBUG_OUTPUT_EVENT_BYTES * 4);
+            oversized_capacity.push_str("complete output");
+            emitter.emit(DebugEventPayload::Output {
+                stream: DebugOutputStream::Stderr,
+                text: oversized_capacity,
+                truncated: false,
+            });
+            let mut already_marked = String::with_capacity(MAX_DEBUG_OUTPUT_EVENT_BYTES * 4);
+            already_marked.push_str("partial");
+            already_marked.push_str(OUTPUT_TRUNCATION_SUFFIX);
+            emitter.emit(DebugEventPayload::Output {
+                stream: DebugOutputStream::Stdout,
+                text: already_marked,
+                truncated: true,
+            });
+            Ok(MinimalAdapter::boxed(Arc::new(AtomicBool::new(false))))
+        })
+        .expect("bounded start");
+    let events = lock_recover(&sink.events);
+    let DebugEventPayload::Output {
+        text, truncated, ..
+    } = &events[1].payload
+    else {
+        panic!("producer-truncated output");
+    };
+    assert!(*truncated);
+    assert!(text.ends_with(OUTPUT_TRUNCATION_SUFFIX));
+    let DebugEventPayload::Output {
+        text, truncated, ..
+    } = &events[2].payload
+    else {
+        panic!("complete output");
+    };
+    assert!(!truncated);
+    assert_eq!(text, "complete output");
+    assert!(text.capacity() <= MAX_DEBUG_OUTPUT_EVENT_BYTES);
+    let DebugEventPayload::Output {
+        text, truncated, ..
+    } = &events[3].payload
+    else {
+        panic!("already-marked producer-truncated output");
+    };
+    assert!(*truncated);
+    assert_eq!(text.matches(OUTPUT_TRUNCATION_SUFFIX).count(), 1);
+    assert_eq!(text, &format!("partial{OUTPUT_TRUNCATION_SUFFIX}"));
+    assert!(text.capacity() <= MAX_DEBUG_OUTPUT_EVENT_BYTES);
 }
 
 struct BlockingStartedSink {

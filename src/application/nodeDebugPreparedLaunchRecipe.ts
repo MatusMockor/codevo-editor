@@ -8,6 +8,11 @@ import { cloneNodeLaunchTarget } from "./debugRestartCoordinator";
 import type { PreparedNodeDebugLaunch } from "./useNodeDebugConfigurationLauncher";
 import { cloneNativeNodeWatchLaunchIntent } from "../domain/nativeNodeWatchLaunchIntent";
 
+export interface PreparedNodeDebugRestartStrategy {
+  readonly kind: "replay-prepared";
+  readonly prepared: PreparedNodeDebugLaunch;
+}
+
 /** Defensively clones the complete private recipe retained for a safe replay. */
 export function clonePreparedNodeDebugLaunch(
   prepared: PreparedNodeDebugLaunch,
@@ -32,7 +37,6 @@ export function clonePreparedNodeDebugLaunch(
     !launch ||
     preTask.kind === "invalid" ||
     postTask.kind === "invalid" ||
-    (postTask.kind !== "valid" && !serverReadyAction) ||
     (prepared.serverReadyAction !== undefined && !serverReadyAction) ||
     (prepared.nativeWatch !== undefined && nativeWatch?.kind !== "ok") ||
     (prepared.envFile !== undefined && !envFile) ||
@@ -59,6 +63,14 @@ export function clonePreparedNodeDebugLaunch(
     ...(postTask.kind === "valid" ? { postDebugTask: postTask.task } : {}),
     ...(serverReadyAction ? { serverReadyAction } : {}),
   });
+}
+
+/** Creates the closed immutable strategy used to replay a configured Node launch. */
+export function createPreparedNodeDebugRestartStrategy(
+  prepared: PreparedNodeDebugLaunch,
+): PreparedNodeDebugRestartStrategy | null {
+  const cloned = clonePreparedNodeDebugLaunch(prepared);
+  return cloned ? Object.freeze({ kind: "replay-prepared", prepared: cloned }) : null;
 }
 
 function cloneRuntime(value: unknown): "tsx" | "ts-node" | null {

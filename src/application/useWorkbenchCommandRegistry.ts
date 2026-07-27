@@ -30,6 +30,7 @@ import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import { CommandRegistry, type Command, type CommandContext } from "./commandRegistry";
 import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
 import {
+  hasDebuggableNodeWorkspace,
   isDebuggableNodeScriptPath,
   isDebuggablePhpScriptPath,
   workbenchDebugCommands,
@@ -82,6 +83,7 @@ type NavigationRun = () => unknown;
 
 interface UseWorkbenchCommandRegistryOptions {
   activeDocument: EditorDocument | null;
+  openDocuments?: readonly EditorDocument[];
   captureNavigationCommandScope(): EditorSurfaceCommandInvocationScope;
   activeEslintBufferClean: boolean;
   activeEslintFixes: readonly unknown[];
@@ -365,6 +367,7 @@ export function useWorkbenchCommandRegistry(
 ): CommandRegistry {
   const {
     activeDocument,
+    openDocuments = [],
     captureNavigationCommandScope,
     activeEslintBufferClean,
     activeEslintFixes,
@@ -619,6 +622,13 @@ export function useWorkbenchCommandRegistry(
       shortcut,
     }).forEach((command) => registry.register(command));
 
+    const hasJsDebugWorkspace = hasDebuggableNodeWorkspace({
+      activeDocument,
+      detectedJavaScriptTypeScript: Boolean(workspaceDescriptor?.javaScriptTypeScript),
+      openedDocuments: openDocuments,
+      workspaceRoot,
+    });
+
     workbenchDebugCommands({
       attachNodeDebug,
       breakpointBulkMutationPending: debugState.breakpointBulkMutationPending,
@@ -651,10 +661,10 @@ export function useWorkbenchCommandRegistry(
         await debugState.toggleBreakpointsActivated();
       },
       shortcut,
-      hasJsWorkspace: Boolean(workspaceDescriptor?.javaScriptTypeScript),
+      hasJsWorkspace: hasJsDebugWorkspace,
       hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
       isActiveDocumentDebuggable:
-        (Boolean(workspaceDescriptor?.javaScriptTypeScript) &&
+        (hasJsDebugWorkspace &&
           (isActiveDocumentJsTest || isDebuggableNodeScriptPath(activeDocument?.path ?? ""))) ||
         (Boolean(workspaceDescriptor?.php) &&
           isDebuggablePhpScriptPath(activeDocument?.path ?? "")),
@@ -976,6 +986,7 @@ export function useWorkbenchCommandRegistry(
     return registry;
   }, [
     activeDocument,
+    openDocuments,
     captureNavigationCommandScope,
     activeImage,
     activeMarkdownPreview,

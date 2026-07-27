@@ -1,6 +1,7 @@
 use super::watch_control_proxy::{
     WatchDebugControlCommand, WatchDebugControlFailure, WatchDebugControlProxy,
-    WatchDebugControlResponse, WatchSetBreakpointsRequest, WatchSetFunctionBreakpointsRequest,
+    WatchDebugControlResponse, WatchSetBreakpointsRequest, WatchSetExceptionPauseRequest,
+    WatchSetFunctionBreakpointsRequest,
 };
 use super::watch_desired_policy::{
     DesiredBreakpointReplacementCommitError, DesiredDebuggerPolicy, DesiredPolicyUpdateCommitError,
@@ -10,6 +11,7 @@ use crate::debug_adapter::{
     DebugFunctionBreakpointVerification,
 };
 use crate::debug_breakpoint_policy::DebugBreakpointAdapterKind;
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -93,12 +95,13 @@ impl WatchBreakpointSynchronizer {
     pub(crate) fn set_function_breakpoints(
         &self,
         breakpoints: &[DebugFunctionBreakpoint],
+        generation: u64,
     ) -> Result<Vec<DebugFunctionBreakpointVerification>, WatchBreakpointSyncFailure> {
         let _mutation = lock_recover(&self.mutation);
         let prepared = lock_recover(&self.desired)
-            .prepare_function_breakpoint_replacement(breakpoints)
+            .prepare_function_breakpoint_replacement(breakpoints, generation)
             .map_err(|_| WatchBreakpointSyncFailure::InvalidPolicy)?;
-        let request = WatchSetFunctionBreakpointsRequest::new(breakpoints.to_vec());
+        let request = WatchSetFunctionBreakpointsRequest::new(breakpoints.to_vec(), generation);
         self.control
             .execute_and_commit(
                 WatchDebugControlCommand::SetFunctionBreakpoints(request),
@@ -119,14 +122,26 @@ impl WatchBreakpointSynchronizer {
             .map_err(Into::into)
     }
 
+    pub(crate) fn set_exception_pause_filter(
+        &self,
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: DebugExceptionTypeFilter,
+    ) -> Result<(), WatchBreakpointSyncFailure> {
+        let command_filter = exception_type_filter.clone();
+        self.update_policy(
+            |desired| desired.prepare_exception_pause(mode, exception_type_filter),
+            WatchDebugControlCommand::SetExceptionPause(WatchSetExceptionPauseRequest::new(
+                mode,
+                command_filter,
+            )),
+        )
+    }
+
     pub(crate) fn set_exception_pause(
         &self,
         mode: DebugExceptionPauseMode,
     ) -> Result<(), WatchBreakpointSyncFailure> {
-        self.update_policy(
-            |desired| desired.prepare_exception_pause(mode),
-            WatchDebugControlCommand::SetExceptionPause(mode),
-        )
+        self.set_exception_pause_filter(mode, DebugExceptionTypeFilter::default())
     }
 
     fn update_policy(

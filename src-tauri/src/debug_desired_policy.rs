@@ -5,12 +5,14 @@ use crate::debug_breakpoint_policy::{
     breakpoints_by_file, commit_live_breakpoints, prepare_live_breakpoints,
     validate_initial_breakpoints, DebugBreakpointAdapterKind,
 };
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
 const INITIAL_DESIRED_POLICY_REVISION: u64 = 1;
+pub(crate) const INITIAL_FUNCTION_BREAKPOINT_GENERATION: u64 = 1;
 
 /// Complete debugger policy that must be restored before a reconnected target
 /// is allowed to run. Fields stay private so reconnect code cannot apply an
@@ -19,9 +21,11 @@ const INITIAL_DESIRED_POLICY_REVISION: u64 = 1;
 pub(crate) struct DesiredDebuggerPolicySnapshot {
     breakpoints: Vec<DebugBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
+    exception_type_filter: DebugExceptionTypeFilter,
     breakpoints_active: bool,
     internal_step_filter: Option<DebugJustMyCodePolicy>,
     function_breakpoints: Vec<DebugFunctionBreakpoint>,
+    function_breakpoint_generation: u64,
 }
 
 impl fmt::Debug for DesiredDebuggerPolicySnapshot {
@@ -30,6 +34,10 @@ impl fmt::Debug for DesiredDebuggerPolicySnapshot {
             .debug_struct("DesiredDebuggerPolicySnapshot")
             .field("breakpoint_count", &self.breakpoints.len())
             .field("exception_pause_mode", &self.exception_pause_mode)
+            .field(
+                "exception_type_filter_count",
+                &self.exception_type_filter.as_slice().len(),
+            )
             .field("breakpoints_active", &self.breakpoints_active)
             .field("internal_step_filter", &self.internal_step_filter)
             .field(
@@ -49,14 +57,50 @@ impl DesiredDebuggerPolicySnapshot {
         breakpoints_active: bool,
         internal_step_filter: Option<DebugJustMyCodePolicy>,
     ) -> Result<Self, String> {
+        Self::new_with_exception_filter(
+            root,
+            breakpoint_kind,
+            breakpoints,
+            exception_pause_mode,
+            DebugExceptionTypeFilter::default(),
+            breakpoints_active,
+            internal_step_filter,
+        )
+    }
+
+    pub(crate) fn new_with_exception_filter(
+        root: &Path,
+        breakpoint_kind: DebugBreakpointAdapterKind,
+        breakpoints: Vec<DebugBreakpoint>,
+        exception_pause_mode: DebugExceptionPauseMode,
+        exception_type_filter: DebugExceptionTypeFilter,
+        breakpoints_active: bool,
+        internal_step_filter: Option<DebugJustMyCodePolicy>,
+    ) -> Result<Self, String> {
         let breakpoints = validate_initial_breakpoints(root, breakpoint_kind, &breakpoints)?;
         Ok(Self {
             breakpoints,
             exception_pause_mode,
+            exception_type_filter: if exception_pause_mode == DebugExceptionPauseMode::None {
+                DebugExceptionTypeFilter::default()
+            } else {
+                exception_type_filter
+            },
             breakpoints_active,
             internal_step_filter,
             function_breakpoints: Vec::new(),
+            function_breakpoint_generation: INITIAL_FUNCTION_BREAKPOINT_GENERATION,
         })
+    }
+
+    pub(crate) fn with_initial_function_breakpoints(
+        mut self,
+        breakpoints: Vec<DebugFunctionBreakpoint>,
+    ) -> Result<Self, String> {
+        crate::debug_cdp_function_breakpoints::validate_function_breakpoints(&breakpoints)?;
+        self.function_breakpoints = breakpoints;
+        self.function_breakpoint_generation = INITIAL_FUNCTION_BREAKPOINT_GENERATION;
+        Ok(self)
     }
 }
 
@@ -67,7 +111,10 @@ pub(crate) enum DesiredDebuggerReplayStep {
     EnableRuntime,
     EnableDebugger,
     ApplyInternalStepFilter(Option<DebugJustMyCodePolicy>),
-    SetExceptionPause(DebugExceptionPauseMode),
+    SetExceptionPause {
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: DebugExceptionTypeFilter,
+    },
     SetBreakpointsActive(bool),
     SetBreakpoints {
         file_path: String,
@@ -75,6 +122,7 @@ pub(crate) enum DesiredDebuggerReplayStep {
     },
     SetFunctionBreakpoints {
         breakpoints: Vec<DebugFunctionBreakpoint>,
+        generation: u64,
     },
     RunIfWaitingForDebugger,
 }
@@ -88,9 +136,16 @@ impl fmt::Debug for DesiredDebuggerReplayStep {
                 .debug_tuple("ApplyInternalStepFilter")
                 .field(policy)
                 .finish(),
-            Self::SetExceptionPause(mode) => formatter
-                .debug_tuple("SetExceptionPause")
-                .field(mode)
+            Self::SetExceptionPause {
+                mode,
+                exception_type_filter,
+            } => formatter
+                .debug_struct("SetExceptionPause")
+                .field("mode", mode)
+                .field(
+                    "exception_type_filter_count",
+                    &exception_type_filter.as_slice().len(),
+                )
                 .finish(),
             Self::SetBreakpointsActive(active) => formatter
                 .debug_tuple("SetBreakpointsActive")
@@ -100,7 +155,7 @@ impl fmt::Debug for DesiredDebuggerReplayStep {
                 .debug_struct("SetBreakpoints")
                 .field("breakpoint_count", &breakpoints.len())
                 .finish(),
-            Self::SetFunctionBreakpoints { breakpoints } => formatter
+            Self::SetFunctionBreakpoints { breakpoints, .. } => formatter
                 .debug_struct("SetFunctionBreakpoints")
                 .field("breakpoint_count", &breakpoints.len())
                 .finish(),
@@ -116,6 +171,10 @@ pub(crate) struct DesiredDebuggerReplayPlan {
 }
 
 impl DesiredDebuggerReplayPlan {
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub(crate) fn steps(&self) -> &[DesiredDebuggerReplayStep] {
         &self.steps
     }
@@ -310,19 +369,30 @@ impl DesiredDebuggerPolicy {
     pub(crate) fn prepare_exception_pause(
         &self,
         mode: DebugExceptionPauseMode,
+        exception_type_filter: DebugExceptionTypeFilter,
     ) -> Result<PreparedDesiredPolicyUpdate, String> {
         let mut replacement = self.snapshot.clone();
         replacement.exception_pause_mode = mode;
+        replacement.exception_type_filter = if mode == DebugExceptionPauseMode::None {
+            DebugExceptionTypeFilter::default()
+        } else {
+            exception_type_filter
+        };
         self.prepare_policy_update(replacement)
     }
 
     pub(crate) fn prepare_function_breakpoint_replacement(
         &self,
         breakpoints: &[DebugFunctionBreakpoint],
+        generation: u64,
     ) -> Result<PreparedDesiredPolicyUpdate, String> {
+        if generation == 0 || generation > 9_007_199_254_740_991 {
+            return Err("Function breakpoint generation is invalid.".to_string());
+        }
         crate::debug_cdp_function_breakpoints::validate_function_breakpoints(breakpoints)?;
         let mut replacement = self.snapshot.clone();
         replacement.function_breakpoints = breakpoints.to_vec();
+        replacement.function_breakpoint_generation = generation;
         self.prepare_policy_update(replacement)
     }
 
@@ -378,6 +448,9 @@ impl DesiredDebuggerPolicy {
             breakpoints_active,
             internal_step_filter,
         )?;
+        if exception_pause_mode != DebugExceptionPauseMode::None {
+            replacement.exception_type_filter = self.snapshot.exception_type_filter.clone();
+        }
         replacement.function_breakpoints = self.snapshot.function_breakpoints.clone();
         if replacement == self.snapshot {
             return Ok(self.revision);
@@ -406,9 +479,10 @@ impl DesiredDebuggerPolicy {
         steps.push(DesiredDebuggerReplayStep::ApplyInternalStepFilter(
             self.snapshot.internal_step_filter,
         ));
-        steps.push(DesiredDebuggerReplayStep::SetExceptionPause(
-            self.snapshot.exception_pause_mode,
-        ));
+        steps.push(DesiredDebuggerReplayStep::SetExceptionPause {
+            mode: self.snapshot.exception_pause_mode,
+            exception_type_filter: self.snapshot.exception_type_filter.clone(),
+        });
         steps.push(DesiredDebuggerReplayStep::SetBreakpointsActive(
             self.snapshot.breakpoints_active,
         ));
@@ -420,6 +494,7 @@ impl DesiredDebuggerPolicy {
         }));
         steps.push(DesiredDebuggerReplayStep::SetFunctionBreakpoints {
             breakpoints: self.snapshot.function_breakpoints.clone(),
+            generation: self.snapshot.function_breakpoint_generation,
         });
         steps.push(DesiredDebuggerReplayStep::RunIfWaitingForDebugger);
         DesiredDebuggerReplayPlan {
@@ -528,6 +603,39 @@ mod tests {
         assert!(debug.contains("breakpoint_count: 1"));
         assert!(!debug.contains("private-id"));
         assert!(!debug.contains(&file));
+    }
+
+    #[test]
+    fn initial_function_breakpoints_replay_at_generation_one_before_target_release() {
+        let fixture = Fixture::new();
+        let function_breakpoint = DebugFunctionBreakpoint {
+            id: "initial-function".to_string(),
+            function_name: "startServer".to_string(),
+            enabled: true,
+        };
+        let snapshot = snapshot(&fixture, Vec::new())
+            .with_initial_function_breakpoints(vec![function_breakpoint.clone()])
+            .expect("valid initial function breakpoint");
+        let plan = DesiredDebuggerPolicy::new(snapshot).replay_plan();
+        let function_index = plan
+            .steps()
+            .iter()
+            .position(|step| {
+                matches!(
+                    step,
+                    DesiredDebuggerReplayStep::SetFunctionBreakpoints {
+                        breakpoints,
+                        generation: INITIAL_FUNCTION_BREAKPOINT_GENERATION,
+                    } if breakpoints == std::slice::from_ref(&function_breakpoint)
+                )
+            })
+            .expect("initial function breakpoint replay");
+        let release_index = plan
+            .steps()
+            .iter()
+            .position(|step| matches!(step, DesiredDebuggerReplayStep::RunIfWaitingForDebugger))
+            .expect("target release");
+        assert!(function_index < release_index);
     }
 
     #[test]
@@ -674,7 +782,10 @@ mod tests {
                 DesiredDebuggerReplayStep::ApplyInternalStepFilter(Some(
                     DebugJustMyCodePolicy::NodeInternalsAndDependencies
                 )),
-                DesiredDebuggerReplayStep::SetExceptionPause(DebugExceptionPauseMode::Uncaught),
+                DesiredDebuggerReplayStep::SetExceptionPause {
+                    mode: DebugExceptionPauseMode::Uncaught,
+                    exception_type_filter: _,
+                },
                 DesiredDebuggerReplayStep::SetBreakpointsActive(true),
                 DesiredDebuggerReplayStep::SetBreakpoints { .. },
                 DesiredDebuggerReplayStep::SetBreakpoints { .. },
@@ -706,6 +817,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["z", "z-two"]
         );
+    }
+
+    #[test]
+    fn exception_type_filter_is_replayed_atomically_and_none_clears_it() {
+        let fixture = Fixture::new();
+        let filter =
+            DebugExceptionTypeFilter::parse(vec!["TypeError".to_string()]).expect("valid filter");
+        let snapshot = DesiredDebuggerPolicySnapshot::new_with_exception_filter(
+            &fixture.root,
+            DebugBreakpointAdapterKind::Node,
+            Vec::new(),
+            DebugExceptionPauseMode::All,
+            filter.clone(),
+            true,
+            None,
+        )
+        .expect("filtered snapshot");
+        let mut policy = DesiredDebuggerPolicy::new(snapshot);
+        assert!(policy.replay_plan().steps().contains(
+            &DesiredDebuggerReplayStep::SetExceptionPause {
+                mode: DebugExceptionPauseMode::All,
+                exception_type_filter: filter.clone(),
+            }
+        ));
+        policy
+            .replace(
+                &fixture.root,
+                DebugBreakpointAdapterKind::Node,
+                Vec::new(),
+                DebugExceptionPauseMode::Uncaught,
+                true,
+                None,
+            )
+            .expect("replace while preserving filter");
+        assert!(policy.replay_plan().steps().contains(
+            &DesiredDebuggerReplayStep::SetExceptionPause {
+                mode: DebugExceptionPauseMode::Uncaught,
+                exception_type_filter: filter.clone(),
+            }
+        ));
+
+        let prepared = policy
+            .prepare_exception_pause(DebugExceptionPauseMode::None, filter)
+            .expect("prepare none policy");
+        policy
+            .commit_policy_update(prepared)
+            .expect("commit none policy");
+        assert!(policy.replay_plan().steps().contains(
+            &DesiredDebuggerReplayStep::SetExceptionPause {
+                mode: DebugExceptionPauseMode::None,
+                exception_type_filter: DebugExceptionTypeFilter::default(),
+            }
+        ));
     }
 
     #[test]

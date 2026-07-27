@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { parseBoundedJsonc } from "../domain/boundedJsonc";
 import type { WorkspaceSourceDiscoveryGateway } from "../domain/workspaceSourceDiscovery";
 import {
   normalizeExpressPackageLabel,
@@ -8,21 +7,22 @@ import {
   type ResolvedExpressRouteCandidate,
 } from "../domain/expressRouteMounts";
 import {
+  expressRoutePackageRoots,
   expressRouteScanRoots,
   MAX_ROOTS,
   type ExpressRoutePackageJsonDir,
 } from "../domain/expressRouteScanRoots";
-import { createTsPathAliasResolver } from "../domain/tsPathAliasResolver";
 import {
   normalizeWorkspaceExpressRouteFilePath,
   type WorkspaceExpressRoute,
   type WorkspaceExpressRouteSourceSnapshot,
 } from "../domain/workspaceExpressRoutes";
+import { readExpressRouteTsconfigAliases } from "./expressRouteTsconfigAliases";
 
 const DISCOVERY_LIMITS = { maxFiles: 2_000, maxVisited: 50_000 } as const;
 const PACKAGE_DISCOVERY_LIMITS = { maxFiles: MAX_ROOTS, maxVisited: 50_000 } as const;
 const MAX_PACKAGE_JSON_BYTES = 256 * 1024;
-const MAX_TSCONFIG_BYTES = 256 * 1024;
+const MAX_TOTAL_PACKAGE_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_SOURCE_BYTES = 32 * 1024 * 1024;
 const MAX_ROUTES = 20_000;
@@ -112,12 +112,11 @@ export function useWorkspaceExpressRoutes({
     );
 
     try {
-      const [enumeration, packageEnumeration, tsconfigRead] = await Promise.all([
+      const [enumeration, packageEnumeration] = await Promise.all([
         gateway.enumerateJavaScriptSourceFiles(rootPath, DISCOVERY_LIMITS),
         enumeratePackageJsonFiles(gateway, rootPath),
-        readTsPathAliasResolver(gateway, rootPath, isCurrent),
       ]);
-      if (!isCurrent() || tsconfigRead.status === "stale") return;
+      if (!isCurrent()) return;
       const packageJsonRead = await readPackageJsonDirs(
         gateway,
         rootPath,
@@ -126,6 +125,17 @@ export function useWorkspaceExpressRoutes({
       );
       if (!packageJsonRead || !isCurrent()) return;
       const packageJsonDirs = packageJsonRead.dirs;
+      const packageRoots = expressRoutePackageRoots(packageJsonDirs);
+      const tsconfigRead = await readExpressRouteTsconfigAliases({
+        allowUnscopedRoot:
+          !packageEnumeration.truncated && !packageJsonRead.unscopedAuthorityUncertain,
+        gateway,
+        incompleteDirectories: packageJsonRead.incompleteDirectories,
+        isCurrent,
+        packageDirectories: packageJsonRead.authorityDirectories,
+        rootPath,
+      });
+      if (!isCurrent() || tsconfigRead.status === "stale") return;
       const scanRoots = expressRouteScanRoots({
         packageJsonDirs,
         relativeFilePaths: enumeration.files,
@@ -204,9 +214,10 @@ export function useWorkspaceExpressRoutes({
             packageEnumeration.truncated ||
             packageJsonRead.truncated ||
             tsconfigRead.truncated ||
+            packageRoots.truncated ||
             scanRoots.truncated ||
             omittedSource ||
-            discovered.truncated,
+            discovered.capacityTruncated,
         }),
       );
     } catch (error) {
@@ -376,7 +387,7 @@ export function useWorkspaceExpressRoutes({
       MAX_ROUTES,
       cache.importPathResolver,
     );
-    return { routes: overlay.routes, truncated: truncated || overlay.truncated };
+    return { routes: overlay.routes, truncated: truncated || overlay.capacityTruncated };
   }, [
     cache.routes,
     cache.importPathResolver,
@@ -438,50 +449,15 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-type TsPathAliasResolverRead =
-  | {
-      readonly importPathResolver: ExpressImportPathResolver | undefined;
-      readonly status: "current";
-      readonly truncated: boolean;
-    }
-  | { readonly status: "stale" };
-
-async function readTsPathAliasResolver(
-  gateway: WorkspaceSourceDiscoveryGateway,
-  rootPath: string,
-  isCurrent: () => boolean,
-): Promise<TsPathAliasResolverRead> {
-  try {
-    let read = await gateway.readSourceTextBounded(rootPath, "tsconfig.json", MAX_TSCONFIG_BYTES);
-    if (!isCurrent()) return { status: "stale" };
-    if (read.status === "changed") {
-      read = await gateway.readSourceTextBounded(rootPath, "tsconfig.json", MAX_TSCONFIG_BYTES);
-    }
-    if (!isCurrent()) return { status: "stale" };
-    if (read.status !== "ok") {
-      return { importPathResolver: undefined, status: "current", truncated: true };
-    }
-    const parsed = parseBoundedJsonc(read.content, {
-      maxDepth: 32,
-      maxNodes: MAX_TSCONFIG_BYTES,
-    });
-    const resolver = createTsPathAliasResolver(parsed);
-    return {
-      importPathResolver: resolver.resolve,
-      status: "current",
-      truncated: resolver.truncated,
-    };
-  } catch {
-    if (!isCurrent()) return { status: "stale" };
-    return { importPathResolver: undefined, status: "current", truncated: false };
-  }
-}
-
 function workspaceExpressRoutesFromSnapshotsWithResolverBounded(
   snapshots: readonly WorkspaceExpressRouteSourceSnapshot[],
   maxRoutes: number,
   importPathResolver: ExpressImportPathResolver | undefined,
-): { readonly routes: WorkspaceExpressRoute[]; readonly truncated: boolean } {
+): {
+  readonly capacityTruncated: boolean;
+  readonly routes: WorkspaceExpressRoute[];
+  readonly truncated: boolean;
+} {
   const normalizedSnapshots = snapshots
     .map((snapshot) => {
       const relativeFilePath = normalizeWorkspaceExpressRouteFilePath(snapshot.relativeFilePath);
@@ -518,7 +494,11 @@ function workspaceExpressRoutesFromSnapshotsWithResolverBounded(
       occurrence,
     };
   });
-  return { routes: routes.sort(compareWorkspaceExpressRoutes), truncated: resolved.truncated };
+  return {
+    capacityTruncated: resolved.capacityTruncated,
+    routes: routes.sort(compareWorkspaceExpressRoutes),
+    truncated: resolved.truncated,
+  };
 }
 
 function workspaceExpressRouteId(route: ResolvedExpressRouteCandidate, occurrence: number): string {
@@ -572,50 +552,126 @@ async function readPackageJsonDirs(
   relativePaths: readonly string[],
   isCurrent: () => boolean,
 ): Promise<{
+  readonly authorityDirectories: readonly string[];
   readonly dirs: readonly ExpressRoutePackageJsonDir[];
+  readonly incompleteDirectories: readonly string[];
   readonly truncated: boolean;
+  readonly unscopedAuthorityUncertain: boolean;
 } | null> {
+  const authorityDirectories = new Set<string>();
   const dirs: ExpressRoutePackageJsonDir[] = [];
-  let truncated = false;
-  for (let start = 0; start < relativePaths.length; start += READ_CONCURRENCY) {
+  const incompleteDirectories = new Set<string>();
+  const candidates: { readonly relativeDirPath: string; readonly relativePath: string }[] = [];
+  const seenPaths = new Set<string>();
+  let truncated = relativePaths.length > MAX_ROOTS;
+  let unscopedAuthorityUncertain = relativePaths.length > MAX_ROOTS;
+  let totalBytes = 0;
+
+  for (const relativePath of relativePaths.slice(0, MAX_ROOTS)) {
+    if (seenPaths.has(relativePath)) continue;
+    seenPaths.add(relativePath);
+    const relativeDirPath = packageJsonDirPath(relativePath);
+    if (relativeDirPath === null) {
+      truncated = true;
+      unscopedAuthorityUncertain = true;
+      continue;
+    }
+    if (relativeDirPath) authorityDirectories.add(relativeDirPath);
+    candidates.push({ relativeDirPath, relativePath });
+  }
+
+  let stoppedByBudget = false;
+  let start = 0;
+  while (start < candidates.length && !stoppedByBudget) {
+    const remainingBytes = MAX_TOTAL_PACKAGE_JSON_BYTES - totalBytes;
+    const reservedReadCount = Math.min(
+      READ_CONCURRENCY,
+      Math.floor(remainingBytes / MAX_PACKAGE_JSON_BYTES),
+    );
+    if (reservedReadCount === 0) {
+      stoppedByBudget = true;
+      truncated = true;
+      break;
+    }
+    const batch = candidates.slice(start, start + reservedReadCount);
+    start += batch.length;
     const reads = await Promise.all(
-      relativePaths
-        .slice(start, start + READ_CONCURRENCY)
-        .map((relativePath) => readPackageJsonDir(gateway, rootPath, relativePath, isCurrent)),
+      batch.map(({ relativePath }) =>
+        readPackageJsonSource(gateway, rootPath, relativePath, isCurrent),
+      ),
     );
     if (!isCurrent()) return null;
-    for (const read of reads) {
-      if (read.status === "incomplete") truncated = true;
-      if (read.status === "accepted") dirs.push(read.dir);
+    for (let index = 0; index < batch.length; index += 1) {
+      const candidate = batch[index];
+      const read = reads[index];
+      if (!candidate || !read) continue;
+      if (read.status === "stale") return null;
+      if (read.status === "incomplete") {
+        truncated = true;
+        if (candidate.relativeDirPath) incompleteDirectories.add(candidate.relativeDirPath);
+      } else {
+        const sourceBytes = utf8ByteLengthBounded(read.source, MAX_PACKAGE_JSON_BYTES);
+        if (sourceBytes === null || totalBytes + sourceBytes > MAX_TOTAL_PACKAGE_JSON_BYTES) {
+          stoppedByBudget = true;
+          truncated = true;
+          if (candidate.relativeDirPath) incompleteDirectories.add(candidate.relativeDirPath);
+        } else {
+          totalBytes += sourceBytes;
+          const manifest = packageManifestFromJson(read.source);
+          if (manifest.valid) {
+            dirs.push({
+              packageName: manifest.packageName,
+              relativeDirPath: candidate.relativeDirPath,
+            });
+          } else {
+            truncated = true;
+            if (candidate.relativeDirPath) incompleteDirectories.add(candidate.relativeDirPath);
+          }
+        }
+      }
+      if (stoppedByBudget) break;
+    }
+    await yieldToMainThread();
+    if (!isCurrent()) return null;
+  }
+
+  if (stoppedByBudget) {
+    for (const { relativeDirPath } of candidates) {
+      if (!dirs.some((dir) => dir.relativeDirPath === relativeDirPath)) {
+        if (relativeDirPath) incompleteDirectories.add(relativeDirPath);
+      }
     }
   }
-  return { dirs, truncated };
+
+  return {
+    authorityDirectories: [...authorityDirectories].sort(compareText),
+    dirs,
+    incompleteDirectories: [...incompleteDirectories].sort(compareText),
+    truncated,
+    unscopedAuthorityUncertain,
+  };
 }
 
-type PackageJsonDirRead =
-  | { readonly status: "accepted"; readonly dir: ExpressRoutePackageJsonDir }
-  | { readonly status: "skipped" }
-  | { readonly status: "incomplete" };
+type PackageJsonSourceRead =
+  | { readonly source: string; readonly status: "ok" }
+  | { readonly status: "incomplete" }
+  | { readonly status: "stale" };
 
-async function readPackageJsonDir(
+async function readPackageJsonSource(
   gateway: WorkspaceSourceDiscoveryGateway,
   rootPath: string,
   relativePath: string,
   isCurrent: () => boolean,
-): Promise<PackageJsonDirRead> {
-  const relativeDirPath = packageJsonDirPath(relativePath);
-  if (relativeDirPath === null) return { status: "incomplete" };
+): Promise<PackageJsonSourceRead> {
   try {
     let read = await gateway.readSourceTextBounded(rootPath, relativePath, MAX_PACKAGE_JSON_BYTES);
-    if (!isCurrent()) return { status: "skipped" };
+    if (!isCurrent()) return { status: "stale" };
     if (read.status === "changed") {
       read = await gateway.readSourceTextBounded(rootPath, relativePath, MAX_PACKAGE_JSON_BYTES);
     }
-    if (!isCurrent()) return { status: "skipped" };
+    if (!isCurrent()) return { status: "stale" };
     if (read.status !== "ok") return { status: "incomplete" };
-    const packageName = packageNameFromJson(read.content);
-    if (packageName === undefined) return { status: "skipped" };
-    return { status: "accepted", dir: { packageName, relativeDirPath } };
+    return { source: read.content, status: "ok" };
   } catch {
     return { status: "incomplete" };
   }
@@ -623,18 +679,60 @@ async function readPackageJsonDir(
 
 function packageJsonDirPath(relativePath: string): string | null {
   if (relativePath === "package.json") return "";
-  if (!relativePath.endsWith("/package.json")) return null;
-  return relativePath.slice(0, -"/package.json".length);
+  if (
+    relativePath.length > 4_096 ||
+    relativePath.includes("\\") ||
+    !relativePath.endsWith("/package.json")
+  ) {
+    return null;
+  }
+  const relativeDirPath = relativePath.slice(0, -"/package.json".length);
+  const segments = relativeDirPath.split("/");
+  if (
+    segments.some((segment) => !segment || segment === "." || segment === "..") ||
+    segments.includes("node_modules")
+  ) {
+    return null;
+  }
+  return relativeDirPath;
 }
 
-function packageNameFromJson(source: string): unknown | undefined {
+function packageManifestFromJson(
+  source: string,
+): { readonly packageName: unknown; readonly valid: true } | { readonly valid: false } {
   try {
     const parsed: unknown = JSON.parse(source);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-    return (parsed as Record<string, unknown>).name;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { valid: false };
+    return { packageName: (parsed as Record<string, unknown>).name, valid: true };
   } catch {
-    return undefined;
+    return { valid: false };
   }
+}
+
+function utf8ByteLengthBounded(value: string, maxBytes: number): number | null {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit < 0x80) bytes += 1;
+    else if (codeUnit < 0x800) bytes += 2;
+    else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+    if (bytes > maxBytes) return null;
+  }
+  return bytes;
+}
+
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function compareText(left: string, right: string): number {

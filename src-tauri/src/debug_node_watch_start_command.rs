@@ -1,8 +1,9 @@
 use crate::debug_adapter::{
-    DebugBreakpoint, DebugExceptionPauseMode, DebugJustMyCodePolicy, DebugSessionRegistry,
-    DebugStartResponse,
+    DebugBreakpoint, DebugExceptionPauseMode, DebugFunctionBreakpoint, DebugJustMyCodePolicy,
+    DebugSessionRegistry, DebugStartResponse,
 };
 use crate::debug_commands::app_debug_event_sink;
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use crate::debug_node_process::{
     start_native_node_watch_intent_for_retained_workspace, NativeNodeWatchIntentWorkspaceStartup,
 };
@@ -21,6 +22,7 @@ pub(crate) struct NativeNodeWatchStartRequest {
     watch: bool,
     preserve_output: Option<bool>,
     breakpoints: Vec<DebugBreakpoint>,
+    function_breakpoints: Vec<DebugFunctionBreakpoint>,
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     just_my_code: Option<DebugJustMyCodePolicy>,
@@ -43,12 +45,13 @@ pub(crate) async fn debug_start_native_node_watch(
         watch,
         preserve_output,
         breakpoints,
+        function_breakpoints,
         exception_pause_mode,
         exception_type_filter,
         just_my_code,
         source_maps,
     } = request;
-    validate_native_watch_exception_filter(exception_type_filter)?;
+    let exception_type_filter = parse_native_watch_exception_filter(exception_type_filter)?;
     let preserve_output = validate_closed_intent(watch, preserve_output)?;
     let worker_app = app.clone();
     let worker_registry = Arc::clone(registry.inner());
@@ -61,7 +64,9 @@ pub(crate) async fn debug_start_native_node_watch(
                 script_path,
                 preserve_output,
                 breakpoints: &breakpoints,
+                function_breakpoints: &function_breakpoints,
                 exception_pause_mode,
+                exception_type_filter,
                 just_my_code,
                 source_maps_enabled: source_maps.unwrap_or(true),
                 sink: app_debug_event_sink(worker_app.clone()),
@@ -129,22 +134,17 @@ fn validate_closed_intent(watch: bool, preserve_output: Option<bool>) -> Result<
     }
 }
 
-fn validate_native_watch_exception_filter(
+fn parse_native_watch_exception_filter(
     exception_type_filter: Vec<String>,
-) -> Result<(), String> {
-    let filter =
-        crate::debug_exception_type_filter::DebugExceptionTypeFilter::parse(exception_type_filter)?;
-    if filter.is_empty() {
-        return Ok(());
-    }
-    Err("Exception type filters are unavailable for native Node watch generations.".to_string())
+) -> Result<DebugExceptionTypeFilter, String> {
+    DebugExceptionTypeFilter::parse(exception_type_filter)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        confirm_native_node_watch_blocking, validate_closed_intent,
-        validate_native_watch_exception_filter, NativeNodeWatchStartRequest,
+        confirm_native_node_watch_blocking, parse_native_watch_exception_filter,
+        validate_closed_intent, NativeNodeWatchStartRequest,
     };
     use crate::debug_adapter::{
         DebugAdapter, DebugEvent, DebugEventSink, DebugScopeInfo, DebugStackFrame,
@@ -168,10 +168,23 @@ mod tests {
     }
 
     #[test]
-    fn native_watch_rejects_exception_filters_until_generation_replay_supports_them() {
-        assert_eq!(validate_native_watch_exception_filter(Vec::new()), Ok(()));
-        assert!(validate_native_watch_exception_filter(vec!["DomainError".to_string()]).is_err());
-        assert!(validate_native_watch_exception_filter(vec!["invalid-name".to_string()]).is_err());
+    fn native_watch_accepts_only_bounded_closed_exception_type_filters() {
+        assert!(parse_native_watch_exception_filter(vec!["TypeError".to_string()]).is_ok());
+        assert!(parse_native_watch_exception_filter(vec![
+            "TypeError".to_string(),
+            "app.DomainError".to_string(),
+        ])
+        .is_ok());
+        assert!(parse_native_watch_exception_filter(vec!["invalid-name".to_string()]).is_err());
+        assert!(parse_native_watch_exception_filter(vec![
+            "TypeError".to_string(),
+            "TypeError".to_string(),
+        ])
+        .is_err());
+        assert!(parse_native_watch_exception_filter(
+            (0..9).map(|index| format!("Error{index}")).collect()
+        )
+        .is_err());
     }
 
     #[test]
@@ -181,6 +194,7 @@ mod tests {
             "scriptPath": "/workspace/server.js",
             "watch": true,
             "breakpoints": [],
+            "functionBreakpoints": [],
             "exceptionPauseMode": "none",
             "exceptionTypeFilter": [],
             "sourceMaps": false

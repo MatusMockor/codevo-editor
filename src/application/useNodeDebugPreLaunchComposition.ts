@@ -15,7 +15,10 @@ import {
   type PostDebugTaskLease,
   type PostDebugTaskCoordinatorSnapshot,
 } from "./postDebugTaskCoordinator";
-import { clonePreparedNodeDebugLaunch } from "./nodeDebugPreparedLaunchRecipe";
+import {
+  createPreparedNodeDebugRestartStrategy,
+  type PreparedNodeDebugRestartStrategy,
+} from "./nodeDebugPreparedLaunchRecipe";
 import {
   ServerReadyActionCoordinator,
   type ServerReadyActionLease,
@@ -39,11 +42,11 @@ interface NodeDebugPreLaunchBoundary {
   readonly workspaceTrusted: boolean;
 }
 
-interface RetainedPostDebugRestart {
+interface RetainedConfiguredRestart {
   readonly attached: boolean;
   readonly boundary: NodeDebugPreLaunchBoundary;
   readonly lease: PostDebugTaskLease | null;
-  readonly prepared: PreparedNodeDebugLaunch;
+  readonly strategy: PreparedNodeDebugRestartStrategy;
   readonly sessionId: number;
   readonly workspaceEpoch: number;
 }
@@ -135,7 +138,7 @@ export function useNodeDebugPreLaunchComposition(options: {
     readonly lease: ServerReadyActionLease;
     readonly openExternal: DebugServerReadyExternalUrlOpener["openExternal"];
   } | null>(null);
-  const retainedPostRestartRef = useRef<RetainedPostDebugRestart | null>(null);
+  const retainedPostRestartRef = useRef<RetainedConfiguredRestart | null>(null);
   const postRestartPendingRef = useRef(false);
   const [postRestartPending, setPostRestartPending] = useState(false);
   const [, setPostRestartRevision] = useState(0);
@@ -156,7 +159,7 @@ export function useNodeDebugPreLaunchComposition(options: {
     void execution.ownership?.cancel();
   }, []);
   const clearRetainedPostRestart = useCallback(
-    (expected: RetainedPostDebugRestart | null = null) => {
+    (expected: RetainedConfiguredRestart | null = null) => {
       if (expected && retainedPostRestartRef.current !== expected) return;
       if (!retainedPostRestartRef.current) return;
       retainedPostRestartRef.current = null;
@@ -243,7 +246,19 @@ export function useNodeDebugPreLaunchComposition(options: {
           retained &&
           retained.lease === null &&
           retained.sessionId === event.sessionId &&
-          workspaceRootKeysEqual(retained.boundary.rootPath, event.rootPath)
+          retained.boundary.rootPath &&
+          retained.boundary.workspaceId &&
+          workspaceRootKeysEqual(retained.boundary.rootPath, event.rootPath) &&
+          postTaskOwnerIsCurrent(
+            optionsRef.current,
+            {
+              rootPath: retained.boundary.rootPath,
+              workspaceEpoch: retained.workspaceEpoch,
+              workspaceId: retained.boundary.workspaceId,
+            },
+            retained.boundary.launchConfigurationVersion,
+            epochRef.current,
+          )
         ) {
           clearRetainedPostRestart(retained);
         }
@@ -354,19 +369,20 @@ export function useNodeDebugPreLaunchComposition(options: {
         return false;
       }
       if (outcome.status === "started" && acceptedSessionId !== null) {
+        const restartStrategy = createPreparedNodeDebugRestartStrategy(prepared);
+        if (!restartStrategy) {
+          if (serverReadyLease) serverReadyCoordinator.cancel(serverReadyLease);
+          await compensateAcceptedSession(
+            optionsRef.current.debugGateway,
+            prepared,
+            captured.rootPath,
+            acceptedSessionId,
+          );
+          safelyWarn(optionsRef.current.reportWarning, POST_DEBUG_TASK_WARNING);
+          return false;
+        }
         let postLease: PostDebugTaskLease | null = null;
         if (prepared.postDebugTask) {
-          const retainedPrepared = clonePreparedNodeDebugLaunch(prepared);
-          if (!retainedPrepared) {
-            await compensateAcceptedSession(
-              optionsRef.current.debugGateway,
-              prepared,
-              captured.rootPath,
-              acceptedSessionId,
-            );
-            safelyWarn(optionsRef.current.reportWarning, POST_DEBUG_TASK_WARNING);
-            return false;
-          }
           const armResult = postCoordinator.armAfterAcceptedSession({
             cleanup: () => undefined,
             reportError: () =>
@@ -427,32 +443,18 @@ export function useNodeDebugPreLaunchComposition(options: {
             void armResult.completion.then(refreshPostSnapshot);
           }
         }
-        if (prepared.postDebugTask || prepared.serverReadyAction) {
-          const retainedPrepared = clonePreparedNodeDebugLaunch(prepared);
-          if (!retainedPrepared) {
-            if (serverReadyLease) serverReadyCoordinator.cancel(serverReadyLease);
-            await compensateAcceptedSession(
-              optionsRef.current.debugGateway,
-              prepared,
-              captured.rootPath,
-              acceptedSessionId,
-            );
-            safelyWarn(optionsRef.current.reportWarning, POST_DEBUG_TASK_WARNING);
-            return false;
-          }
-          const retained: RetainedPostDebugRestart = Object.freeze({
-            attached: retainedPrepared.launch.kind === "node-attach",
-            boundary: Object.freeze({ ...captured }),
-            lease: postLease,
-            prepared: retainedPrepared,
-            sessionId: acceptedSessionId,
-            workspaceEpoch: capturedEpoch,
-          });
-          retainedPostRestartRef.current = retained;
-          if (mountedRef.current) setPostRestartRevision((current) => current + 1);
-          if (postLease) {
-            void postLease.completion.then(() => clearRetainedPostRestart(retained));
-          }
+        const retained: RetainedConfiguredRestart = Object.freeze({
+          attached: restartStrategy.prepared.launch.kind === "node-attach",
+          boundary: Object.freeze({ ...captured }),
+          lease: postLease,
+          strategy: restartStrategy,
+          sessionId: acceptedSessionId,
+          workspaceEpoch: capturedEpoch,
+        });
+        retainedPostRestartRef.current = retained;
+        if (mountedRef.current) setPostRestartRevision((current) => current + 1);
+        if (postLease) {
+          void postLease.completion.then(() => clearRetainedPostRestart(retained));
         }
         return true;
       }
@@ -546,7 +548,10 @@ export function useNodeDebugPreLaunchComposition(options: {
       ) {
         return false;
       }
-      return await start(retained.prepared);
+      switch (retained.strategy.kind) {
+        case "replay-prepared":
+          return await start(retained.strategy.prepared);
+      }
     } finally {
       postRestartPendingRef.current = false;
       if (mountedRef.current) setPostRestartPending(false);

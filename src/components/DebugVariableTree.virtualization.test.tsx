@@ -61,11 +61,17 @@ describe("DebugVariableTree virtualization", () => {
   it("reaches and focuses rows beyond the window with End, Home, and arrow keys", () => {
     renderTree(variables(100));
     const scope = expandRoot();
+    expect(scope.getAttribute("aria-level")).toBe("1");
+    expect(scope.getAttribute("aria-posinset")).toBe("1");
+    expect(scope.getAttribute("aria-setsize")).toBe("1");
     act(() => scope.focus());
 
     press(scope, "End");
     const last = rowByLabel("value99, 99");
     expect(document.activeElement).toBe(last);
+    expect(last.getAttribute("aria-level")).toBe("2");
+    expect(last.getAttribute("aria-posinset")).toBe("100");
+    expect(last.getAttribute("aria-setsize")).toBe("100");
     expect(tree().scrollTop).toBeGreaterThan(0);
 
     press(last, "ArrowUp");
@@ -77,6 +83,43 @@ describe("DebugVariableTree virtualization", () => {
 
     press(remountedScope, "ArrowDown");
     expect(document.activeElement).toBe(rowByLabel("value0, 0"));
+  });
+
+  it("reports positions within each logical sibling group in a nested virtualized tree", () => {
+    const parent: DebugVariable = {
+      name: "parent",
+      value: "Object",
+      variablesReference: 20,
+    };
+    renderTree([parent, ...variables(80)], {
+      variablePages: pages({
+        10: [parent, ...variables(80)],
+        20: variables(100, "child"),
+      }),
+    });
+    expandRoot();
+
+    const parentRow = rowByLabel("Expand parent");
+    expect(parentRow.getAttribute("aria-level")).toBe("2");
+    expect(parentRow.getAttribute("aria-posinset")).toBe("1");
+    expect(parentRow.getAttribute("aria-setsize")).toBe("81");
+    act(() => parentRow.click());
+
+    const firstChild = rowByLabel("child0, 0");
+    expect(firstChild.getAttribute("aria-level")).toBe("3");
+    expect(firstChild.getAttribute("aria-posinset")).toBe("1");
+    expect(firstChild.getAttribute("aria-setsize")).toBe("100");
+
+    act(() => firstChild.focus());
+    for (let index = 0; index < 99; index += 1) {
+      press(document.activeElement as HTMLElement, "ArrowDown");
+    }
+    const lastChild = rowByLabel("child99, 99");
+    expect(document.activeElement).toBe(lastChild);
+    expect(lastChild.getAttribute("aria-level")).toBe("3");
+    expect(lastChild.getAttribute("aria-posinset")).toBe("100");
+    expect(lastChild.getAttribute("aria-setsize")).toBe("100");
+    expect(treeRows().length).toBeLessThan(100);
   });
 
   it("expands a node inside the window and windows the appended children", () => {

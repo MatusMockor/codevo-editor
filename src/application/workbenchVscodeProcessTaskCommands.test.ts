@@ -21,6 +21,10 @@ describe("workbenchVscodeProcessTaskCommands", () => {
 
     expect(commands.map(({ id, title }) => ({ id, title }))).toEqual([
       {
+        id: "tasks.vscode.configure",
+        title: "Tasks: Open tasks.json",
+      },
+      {
         id: "tasks.vscode.refresh",
         title: "Tasks: Refresh Tasks",
       },
@@ -36,7 +40,7 @@ describe("workbenchVscodeProcessTaskCommands", () => {
       tasks: [task("a/b", true), task("a%2Fb", true), task("日本語 task", true)],
     });
 
-    expect(commands.slice(1).map(({ id }) => id)).toEqual([
+    expect(commands.slice(2).map(({ id }) => id)).toEqual([
       "tasks.vscode.run.a%2Fb",
       "tasks.vscode.run.a%252Fb",
       "tasks.vscode.run.%E6%97%A5%E6%9C%AC%E8%AA%9E%20task",
@@ -47,6 +51,7 @@ describe("workbenchVscodeProcessTaskCommands", () => {
   it.each([
     ["untrusted", { trusted: false }],
     ["unavailable", { available: false }],
+    ["configuring", { configuring: true }],
     ["discovering", { discovering: true }],
     ["occupied", { occupied: true }],
   ])("disables refresh and run while %s", (_name, override) => {
@@ -75,10 +80,23 @@ describe("workbenchVscodeProcessTaskCommands", () => {
     });
     const commands = createCommands({ discover, start, tasks: [task("Build", true)] });
 
-    await expect(commands[0]!.run()).rejects.toBe(refreshError);
-    await expect(commands[1]!.run()).rejects.toBe(startError);
+    await expect(commands[1]!.run()).rejects.toBe(refreshError);
+    await expect(commands[2]!.run()).rejects.toBe(startError);
     expect(discover).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledExactlyOnceWith("Build");
+  });
+
+  it("offers the exact create command and omits configuration when unavailable", async () => {
+    const configure = vi.fn(async () => true);
+    const create = createCommands({ configurationAction: "create", configure });
+
+    expect(create[0]?.title).toBe("Tasks: Create tasks.json");
+    await create[0]!.run();
+    expect(configure).toHaveBeenCalledOnce();
+
+    expect(createCommands({ configurationAction: null }).map(({ id }) => id)).not.toContain(
+      "tasks.vscode.configure",
+    );
   });
 });
 
@@ -87,6 +105,9 @@ function createCommands(
 ) {
   return workbenchVscodeProcessTaskCommands({
     available: true,
+    configurationAction: "open",
+    configure: vi.fn(async () => true),
+    configuring: false,
     discover: vi.fn(async () => true),
     discovering: false,
     occupied: false,

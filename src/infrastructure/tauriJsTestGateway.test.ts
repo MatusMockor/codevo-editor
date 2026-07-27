@@ -62,9 +62,35 @@ describe("TauriJsTestGateway", () => {
     await new TauriJsTestGateway(invoke).run("/workspace", scope);
 
     expect(invoke).toHaveBeenCalledExactlyOnceWith("run_js_tests_scoped_json", {
+      packageRootRelativePath: "",
       rootPath: "/workspace",
       scope,
     });
+  });
+
+  it("dispatches a validated nested-package authority without absolute execution paths", async () => {
+    const response = ok([]);
+    const invoke = vi.fn(async () => response);
+    const gateway = new TauriJsTestGateway(invoke);
+
+    await gateway.run(
+      "/workspace",
+      { kind: "file", relativeFilePath: "packages/web/src/app.test.ts" },
+      { packageRootRelativePath: "packages/web" },
+    );
+
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("run_js_tests_scoped_json", {
+      packageRootRelativePath: "packages/web",
+      rootPath: "/workspace",
+      scope: { kind: "file", relativeFilePath: "packages/web/src/app.test.ts" },
+    });
+    await expect(
+      gateway.run(
+        "/workspace",
+        { kind: "file", relativeFilePath: "packages/web/src/app.test.ts" },
+        { packageRootRelativePath: "/tmp/package" },
+      ),
+    ).rejects.toThrow("workspace-confined relative path");
   });
 
   it("rejects malformed wire responses instead of trusting an assertion", async () => {
@@ -222,6 +248,7 @@ describe("TauriJsTestGateway", () => {
 
     await expect(
       gateway.runTask({
+        packageRootRelativePath: "packages/web",
         runId: "run-1",
         workspaceId: "workspace-1",
         scope: { kind: "all", ignored: true } as never,
@@ -231,6 +258,7 @@ describe("TauriJsTestGateway", () => {
 
     expect(invoke).toHaveBeenCalledExactlyOnceWith("run_js_test_task_json", {
       request: {
+        packageRootRelativePath: "packages/web",
         runId: "run-1",
         workspaceId: "workspace-1",
         scope: { kind: "all" },

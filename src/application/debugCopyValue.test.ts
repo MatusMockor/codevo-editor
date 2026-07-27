@@ -139,11 +139,11 @@ describe("debug copy value contract", () => {
       { ...candidate, epoch: 0 },
       { ...candidate, evaluateName: null },
       { ...candidate, evaluateName: "   " },
-      { ...candidate, evaluateName: "bad\npath" },
+      { ...candidate, evaluateName: "bad\rpath" },
       { ...candidate, evaluateName: "x".repeat(4_097) },
       { ...candidate, adapterEvaluateName: null },
       { ...candidate, adapterEvaluateName: "   " },
-      { ...candidate, adapterEvaluateName: "bad\npath" },
+      { ...candidate, adapterEvaluateName: "bad\u000bpath" },
       { ...candidate, adapterEvaluateName: "x".repeat(4_097) },
       { ...candidate, displayedValue: "x".repeat(65_537) },
     ];
@@ -192,5 +192,14 @@ describe("debug copy value contract", () => {
           }),
       }),
     ).toBeNull();
+  });
+
+  it("captures an exact bounded multiline adapter expression without rewriting it", () => {
+    const adapterEvaluateName = "(\n  root\n).nested.b";
+    expect(
+      captureDebugCopyValueCandidate({
+        readDebugCopyValueCandidate: () => ({ ...candidate, adapterEvaluateName }),
+      })?.adapterEvaluateName,
+    ).toBe(adapterEvaluateName);
   });
 });

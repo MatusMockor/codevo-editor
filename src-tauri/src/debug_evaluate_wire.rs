@@ -28,10 +28,9 @@ impl DebugEvaluateRequest {
             false,
             "Debug workspace root",
         )?;
-        validate_evaluate_text(
+        validate_evaluate_expression_text(
             &self.expression,
             MAX_DEBUG_EVALUATE_EXPRESSION_BYTES,
-            true,
             "Debug expression",
         )?;
         for (value, label) in [
@@ -94,6 +93,37 @@ pub(super) fn validate_evaluate_text(
     Ok(())
 }
 
+fn validate_evaluate_expression_text(
+    value: &str,
+    maximum_bytes: usize,
+    label: &str,
+) -> Result<(), DebugEvaluateFailure> {
+    if value.is_empty() || value.len() > maximum_bytes {
+        return Err(DebugEvaluateFailure::unsupported(format!(
+            "{label} must contain 1 to {maximum_bytes} UTF-8 bytes."
+        )));
+    }
+    if !has_valid_evaluate_expression_characters(value) {
+        return Err(DebugEvaluateFailure::unsupported(format!(
+            "{label} contains a forbidden control character."
+        )));
+    }
+    Ok(())
+}
+
+fn has_valid_evaluate_expression_characters(value: &str) -> bool {
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '\t' | '\n' => {}
+            '\r' if characters.peek() == Some(&'\n') => {}
+            _ if character.is_control() => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 pub(super) fn bounded_value(value: DebugVariableInfo) -> DebugEvaluateResponse {
     let valid_type = value.value_type.as_ref().is_none_or(|value_type| {
         !value_type.is_empty()
@@ -101,6 +131,7 @@ pub(super) fn bounded_value(value: DebugVariableInfo) -> DebugEvaluateResponse {
             && !value_type.chars().any(char::is_control)
     });
     if value.name.len() > MAX_DEBUG_EVALUATE_EXPRESSION_BYTES
+        || !has_valid_evaluate_expression_characters(&value.name)
         || value.value.len() > MAX_DEBUG_EVALUATE_VALUE_BYTES
         || value.variables_reference > MAX_JAVASCRIPT_SAFE_INTEGER
         || !valid_type
@@ -117,7 +148,7 @@ pub(super) fn valid_optional_evaluate_name(value: Option<&str>) -> bool {
     value.is_none_or(|value| {
         !value.trim().is_empty()
             && value.len() <= MAX_DEBUG_EVALUATE_EXPRESSION_BYTES
-            && !value.chars().any(char::is_control)
+            && has_valid_evaluate_expression_characters(value)
     })
 }
 

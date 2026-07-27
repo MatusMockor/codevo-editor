@@ -19,6 +19,11 @@ interface StagedOpenModelEdit {
   versionId: number;
 }
 
+export type AppliedJavaScriptTypeScriptWorkspaceEditCommit = Extract<
+  WorkspaceEditOpenModelCommitResult,
+  { kind: "applied" }
+>;
+
 export async function applyJavaScriptTypeScriptWorkspaceEditWithOpenModels(
   monaco: typeof Monaco,
   edit: LanguageServerWorkspaceEdit,
@@ -35,6 +40,7 @@ export async function applyJavaScriptTypeScriptWorkspaceEditWithOpenModels(
         Promise<WorkspaceEditApplicationDecision | void> | WorkspaceEditApplicationDecision | void)
     | undefined,
   isStillActive: () => boolean,
+  onApplied?: (commit: AppliedJavaScriptTypeScriptWorkspaceEditCommit) => void,
 ): Promise<boolean> {
   if (!isStillActive()) return false;
   const stagedEdits = stageOpenModelEdits(monaco, edit, rootPath);
@@ -49,6 +55,9 @@ export async function applyJavaScriptTypeScriptWorkspaceEditWithOpenModels(
       } satisfies WorkspaceEditOpenModelCommitResult;
     }
     commit = applyStagedEdits(monaco, stagedEdits);
+    if (commit.kind === "applied") {
+      onApplied?.(commit);
+    }
     return commit;
   };
 

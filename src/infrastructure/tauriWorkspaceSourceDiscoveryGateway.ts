@@ -89,6 +89,7 @@ export class TauriWorkspaceSourceDiscoveryGateway
           maxBytes: request.maxBytes,
         });
         if (!this.isNpmLeaseCurrent(ownerPort, lease)) return { status: "changed" };
+        if (read.status === "notFound") return { status: "missing" };
         if (read.status !== "ok") return read;
 
         return {

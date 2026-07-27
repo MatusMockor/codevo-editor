@@ -105,6 +105,9 @@ export function useWindowedRows(input: WindowedRowsInput): WindowedRowsResult {
   }, [keyForIndex, normalizedItemCount]);
 
   const heightModel = useMemo<HeightModel>(() => {
+    // Measurements live in a ref so row callbacks can update them without cloning
+    // the full map. The epoch is the explicit snapshot revision for this memo.
+    void measurementEpoch;
     const offsets = new Array<number>(normalizedItemCount + 1);
     const measuredHeights = measuredHeightsRef.current;
     let uniformHeight: number | null = null;

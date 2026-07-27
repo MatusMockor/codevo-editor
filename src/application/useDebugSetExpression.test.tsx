@@ -60,7 +60,12 @@ function renderLifecycle() {
         current: new Map([
           [
             "/workspace/one",
-            { sessionId: 4, targetKind: "node-script" as const, workspaceId: "owner-1" },
+            {
+              sessionId: 4,
+              targetKind: "node-script" as const,
+              workspaceEpoch: 0,
+              workspaceId: "owner-1",
+            },
           ],
         ]),
       },

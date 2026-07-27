@@ -246,7 +246,7 @@ fn function_breakpoint_transaction_replays_after_lines_and_before_resume() {
         function_breakpoint("fn-two", "app.two"),
     ];
     let prepared = policy
-        .prepare_function_breakpoint_replacement(&requested)
+        .prepare_function_breakpoint_replacement(&requested, 7)
         .expect("prepare function breakpoints");
     policy
         .commit_policy_update(prepared)
@@ -273,11 +273,15 @@ fn function_breakpoint_transaction_replays_after_lines_and_before_resume() {
 
     assert!(line_index < function_index);
     assert!(function_index < resume_index);
-    let DesiredDebuggerReplayStep::SetFunctionBreakpoints { breakpoints } = &steps[function_index]
+    let DesiredDebuggerReplayStep::SetFunctionBreakpoints {
+        breakpoints,
+        generation,
+    } = &steps[function_index]
     else {
         panic!("function replay step");
     };
     assert_eq!(breakpoints, &requested);
+    assert_eq!(*generation, 7);
 }
 
 #[test]

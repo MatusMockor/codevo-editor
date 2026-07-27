@@ -49,6 +49,7 @@ import {
   type DebugConsoleCompletionQuery,
   type DebugConsoleCompletionResponse,
 } from "../domain/debugConsoleCompletions";
+import { MAX_DEBUG_CONSOLE_OUTPUT_BYTES } from "../domain/debugConsoleState";
 import { isExceptionTypeFilter } from "../domain/debugExceptionTypeFilter";
 import {
   type DebugCompoundStartResponseWire,
@@ -94,6 +95,8 @@ export const MAX_DEBUG_COMPOUND_REQUEST_BYTES = 1_048_576;
 export const MAX_DEBUG_RUN_TO_LOCATION_PATH_BYTES = 4_096;
 export const MAX_DEBUG_RUN_TO_LOCATION_LINE = 4_294_967_295;
 export const MAX_DEBUG_RUN_TO_LOCATION_COLUMN = 4_294_967_295;
+/** Must match Rust `MAX_DEBUG_OUTPUT_EVENT_BYTES` at the debugger event wire boundary. */
+export const MAX_DEBUG_OUTPUT_EVENT_BYTES = MAX_DEBUG_CONSOLE_OUTPUT_BYTES;
 
 /** Validates both directions while keeping the raw Tauri transport in one place. */
 export async function invokeDebugIpc<Command extends DebugIpcCommand>(
@@ -439,9 +442,10 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
       return;
     }
     case "debug_start": {
-      requireExactKeys(
+      requireObjectShape(
         args,
         ["rootPath", "launch", "breakpoints", "exceptionPauseMode", "exceptionTypeFilter"],
+        ["functionBreakpoints"],
         `${command} args`,
       );
       requireString(args.rootPath, `${command} args.rootPath`);
@@ -453,6 +457,22 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
         MAX_DEBUG_BREAKPOINTS_PER_SESSION,
       );
       requireBreakpointFileCaps(startupBreakpoints, `${command} args.breakpoints`);
+      if (args.functionBreakpoints !== undefined) {
+        const functionBreakpointError = validateFunctionBreakpointCommandArgs({
+          request: {
+            rootPath: args.rootPath,
+            sessionId: 1,
+            generation: 1,
+            breakpoints: args.functionBreakpoints,
+          },
+        });
+        if (functionBreakpointError) {
+          throw invalidDebugWire(
+            `${command} args.functionBreakpoints`,
+            functionBreakpointError.expected,
+          );
+        }
+      }
       requireExceptionPausePolicy(args, "exceptionPauseMode", `${command} args`);
       return;
     }
@@ -466,6 +486,7 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
           "scriptPath",
           "watch",
           "breakpoints",
+          "functionBreakpoints",
           "exceptionPauseMode",
           "exceptionTypeFilter",
         ],
@@ -499,6 +520,20 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
         MAX_DEBUG_BREAKPOINTS_PER_SESSION,
       );
       requireBreakpointFileCaps(startupBreakpoints, `${command} args.request.breakpoints`);
+      const functionBreakpointError = validateFunctionBreakpointCommandArgs({
+        request: {
+          rootPath,
+          sessionId: 1,
+          generation: 1,
+          breakpoints: request.functionBreakpoints,
+        },
+      });
+      if (functionBreakpointError) {
+        throw invalidDebugWire(
+          `${command} args.request.functionBreakpoints`,
+          functionBreakpointError.expected,
+        );
+      }
       requireExceptionPausePolicy(request, "exceptionPauseMode", `${command} args.request`);
       decodeNodeDebugJustMyCode(request.justMyCode, `${command} args.request.justMyCode`);
       decodeOptionalBoolean(request.sourceMaps, `${command} args.request.sourceMaps`);
@@ -785,7 +820,10 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
           MAX_DEBUG_EVALUATION_EXPRESSION_BYTES,
           false,
         );
-        requireNoControlCharacters(expression, `${command} args.request.expression`, true);
+        requireDebugEvaluationExpressionCharacters(
+          expression,
+          `${command} args.request.expression`,
+        );
         if (
           request.context !== "clipboard" &&
           request.context !== "repl" &&
@@ -1145,7 +1183,7 @@ function decodeVariable(value: unknown, path: string): DebugVariable {
       MAX_DEBUG_VARIABLE_EVALUATE_NAME_BYTES,
       false,
     );
-    requireNoControlCharacters(evaluateName, `${path}.evaluateName`, false);
+    requireDebugEvaluationExpressionCharacters(evaluateName, `${path}.evaluateName`);
   }
   if (record.canSetValue !== undefined && record.canSetValue !== true) {
     throw invalidDebugWire(`${path}.canSetValue`, "true or omission");
@@ -1309,7 +1347,7 @@ function decodeEvaluationResult(value: unknown, path: string): DebugEvaluationRe
             false,
           );
     if (evaluateName !== undefined) {
-      requireNoControlCharacters(evaluateName, `${path}.value.evaluateName`, false);
+      requireDebugEvaluationExpressionCharacters(evaluateName, `${path}.value.evaluateName`);
     }
     const setExpressionReference =
       nested.setExpressionReference === undefined
@@ -1318,15 +1356,17 @@ function decodeEvaluationResult(value: unknown, path: string): DebugEvaluationRe
             nested.setExpressionReference,
             `${path}.value.setExpressionReference`,
           );
+    const name = requireBoundedString(
+      nested.name,
+      `${path}.value.name`,
+      MAX_DEBUG_EVALUATION_EXPRESSION_BYTES,
+      true,
+    );
+    requireDebugEvaluationExpressionCharacters(name, `${path}.value.name`);
     return {
       status: "ok",
       value: {
-        name: requireBoundedString(
-          nested.name,
-          `${path}.value.name`,
-          MAX_DEBUG_EVALUATION_EXPRESSION_BYTES,
-          true,
-        ),
+        name,
         value: requireBoundedString(
           nested.value,
           `${path}.value.value`,
@@ -1435,14 +1475,15 @@ function decodeDebugEventPayload(value: unknown): DebugEventPayload {
       requireExactKeys(record, ["kind"], path);
       return { kind: "resumed" };
     case "output":
-      requireExactKeys(record, ["kind", "stream", "text"], path);
+      requireExactKeys(record, ["kind", "stream", "text", "truncated"], path);
       if (record.stream !== "stdout" && record.stream !== "stderr") {
         throw invalidDebugWire(`${path}.stream`, "stdout or stderr");
       }
       return {
         kind: "output",
         stream: record.stream,
-        text: requireString(record.text, `${path}.text`),
+        text: requireBoundedString(record.text, `${path}.text`, MAX_DEBUG_OUTPUT_EVENT_BYTES, true),
+        truncated: requireBoolean(record.truncated, `${path}.truncated`),
       };
     case "terminated":
       requireExactKeys(record, ["kind", "exitCode"], path);
@@ -1639,6 +1680,20 @@ function requireNoControlCharacters(value: string, path: string, allowTab: boole
       path,
       allowTab ? "no control characters other than tab" : "no control characters",
     );
+  }
+}
+
+function requireDebugEvaluationExpressionCharacters(value: string, path: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "\t" || character === "\n") continue;
+    if (character === "\r" && value[index + 1] === "\n") continue;
+    if (/\p{Cc}/u.test(character)) {
+      throw invalidDebugWire(
+        path,
+        "no control characters other than tab, LF, or CRLF line endings",
+      );
+    }
   }
 }
 

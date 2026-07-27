@@ -3,6 +3,7 @@ import type {
   DebugCompoundStartRequest,
   DebugDisconnectRequest,
   DebugExceptionPauseMode,
+  DebugFunctionBreakpointInput,
   DebugLaunchTarget,
   DebugRestartFrameRequest,
   DebugRunToLocationRequest,
@@ -121,6 +122,7 @@ interface DebugIpcContract {
       readonly rootPath: string;
       readonly launch: DebugLaunchTargetWire;
       readonly breakpoints: Breakpoint[];
+      readonly functionBreakpoints?: readonly DebugFunctionBreakpointInput[];
       readonly exceptionPauseMode: DebugExceptionPauseMode;
       readonly exceptionTypeFilter: readonly string[];
     };

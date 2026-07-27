@@ -1,18 +1,25 @@
 import type { VscodeProcessTaskDisplay } from "../domain/vscodeProcessTasks";
+import type { VscodeProcessTasksConfigurationAction } from "./configureVscodeProcessTasks";
 import type { Command, CommandContext } from "./commandRegistry";
 
 export interface WorkbenchVscodeProcessTaskCommandsOptions {
   readonly available: boolean;
+  readonly configurationAction: VscodeProcessTasksConfigurationAction | null;
+  readonly configuring: boolean;
   readonly discovering: boolean;
   readonly occupied: boolean;
   readonly tasks: readonly VscodeProcessTaskDisplay[];
   readonly trusted: boolean;
   discover(): Promise<boolean>;
+  configure(): Promise<boolean>;
   start(label: string): Promise<boolean>;
 }
 
 export function workbenchVscodeProcessTaskCommands({
   available,
+  configurationAction,
+  configure,
+  configuring,
   discover,
   discovering,
   occupied,
@@ -21,9 +28,25 @@ export function workbenchVscodeProcessTaskCommands({
   trusted,
 }: WorkbenchVscodeProcessTaskCommandsOptions): Command[] {
   const enabled = (context: CommandContext): boolean =>
-    context.hasWorkspace && trusted && available && !discovering && !occupied;
+    context.hasWorkspace && trusted && available && !configuring && !discovering && !occupied;
 
   return [
+    ...(configurationAction
+      ? [
+          {
+            id: "tasks.vscode.configure",
+            title:
+              configurationAction === "create"
+                ? "Tasks: Create tasks.json"
+                : "Tasks: Open tasks.json",
+            category: "Tasks",
+            isEnabled: enabled,
+            run: async () => {
+              await configure();
+            },
+          } satisfies Command,
+        ]
+      : []),
     {
       id: "tasks.vscode.refresh",
       title: "Tasks: Refresh Tasks",

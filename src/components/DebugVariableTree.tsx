@@ -218,6 +218,7 @@ export function DebugVariableTree({
     sample.tracker.record("debug-variables-render", sample.durationMs);
   }, [renderModel]);
   const rows = renderModel.rows;
+  const rowTreePositions = useMemo(() => buildRowTreePositions(rows), [rows]);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const previousRowsRef = useRef<readonly TreeRow[]>([]);
@@ -552,6 +553,8 @@ export function DebugVariableTree({
                 aria-expanded={row.expandable ? row.expanded : undefined}
                 aria-label={rowAriaLabel(row)}
                 aria-level={row.depth + 1}
+                aria-posinset={rowTreePositions.get(row.id)?.position}
+                aria-setsize={rowTreePositions.get(row.id)?.setSize}
                 data-testid={
                   row.testId ??
                   (row.kind === "node" && row.depth > 0 ? "debug-variable" : undefined)
@@ -754,6 +757,30 @@ export function DebugVariableTree({
       ) : null}
     </div>
   );
+}
+
+function buildRowTreePositions(
+  rows: readonly TreeRow[],
+): ReadonlyMap<string, { readonly position: number; readonly setSize: number }> {
+  const siblingCounts = new Map<string | null, number>();
+  for (const row of rows) {
+    siblingCounts.set(row.parentId, (siblingCounts.get(row.parentId) ?? 0) + 1);
+  }
+
+  const siblingPositions = new Map<string | null, number>();
+  const positions = new Map<string, { readonly position: number; readonly setSize: number }>();
+  for (const row of rows) {
+    const position = (siblingPositions.get(row.parentId) ?? 0) + 1;
+    siblingPositions.set(row.parentId, position);
+    positions.set(
+      row.id,
+      Object.freeze({
+        position,
+        setSize: siblingCounts.get(row.parentId) ?? 1,
+      }),
+    );
+  }
+  return positions;
 }
 
 function readLatencyClock(): number {

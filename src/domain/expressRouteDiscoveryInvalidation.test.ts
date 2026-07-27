@@ -64,7 +64,7 @@ describe("Express route discovery invalidation", () => {
     ).toBe(true);
   });
 
-  it("invalidates root tsconfig.json edits and renames on either side", () => {
+  it("invalidates root and nested tsconfig.json edits and renames on either side", () => {
     expect(
       workspaceFileChangeInvalidatesExpressRouteDiscovery(
         event({ kind: "modified", relativePath: "tsconfig.json" }),
@@ -88,19 +88,94 @@ describe("Express route discovery invalidation", () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({ kind: "modified", relativePath: "apps/api/tsconfig.json" }),
+      ),
+    ).toBe(true);
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({
+          kind: "renamed",
+          previousRelativePath: "apps/api/tsconfig.json",
+          relativePath: "apps/api/tsconfig.old.json",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({
+          kind: "renamed",
+          previousRelativePath: "apps/api/tsconfig.old.json",
+          relativePath: "apps/api/tsconfig.json",
+        }),
+      ),
+    ).toBe(true);
   });
 
-  it("limits tsconfig invalidation to the workspace root across separators", () => {
+  it.each([
+    "tsconfig.base.json",
+    "packages/api/tsconfig.shared.json",
+    "packages\\api\\tsconfig.shared.json",
+  ])("invalidates a workspace-local tsconfig variant change at %s", (relativePath) => {
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({ kind: "modified", relativePath }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["tsconfig.base.json", "tsconfig.base.json.disabled"],
+    ["tsconfig.base.json.disabled", "tsconfig.base.json"],
+    ["packages/api/tsconfig.shared.json", "packages/api/tsconfig.shared.json.disabled"],
+    ["packages/api/tsconfig.shared.json.disabled", "packages/api/tsconfig.shared.json"],
+  ])("invalidates a tsconfig variant rename from %s to %s", (from, to) => {
+    expect(
+      workspaceFileChangeInvalidatesExpressRouteDiscovery(
+        event({
+          kind: "renamed",
+          previousRelativePath: from,
+          relativePath: to,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts nested tsconfig separators but ignores dependency configs", () => {
     for (const relativePath of [
       "apps/api/tsconfig.json",
       "apps\\api\\tsconfig.json",
+      "apps/api/tsconfig.base.json",
+      "apps\\api\\tsconfig.shared.json",
+    ]) {
+      expect(workspaceFileChangeInvalidatesExpressRouteDiscovery(event({ relativePath }))).toBe(
+        true,
+      );
+    }
+    for (const relativePath of [
       "node_modules/dependency/tsconfig.json",
       "node_modules\\dependency\\tsconfig.json",
+      "apps/api/node_modules/dependency/tsconfig.json",
+      "node_modules/dependency/tsconfig.base.json",
+      "node_modules\\dependency\\tsconfig.shared.json",
+      "apps/api/node_modules/dependency/tsconfig.build.json",
     ]) {
       expect(workspaceFileChangeInvalidatesExpressRouteDiscovery(event({ relativePath }))).toBe(
         false,
       );
     }
+  });
+
+  it.each([
+    "mytsconfig.json",
+    "apps/api/mytsconfig.base.json",
+    "tsconfig.jsonc",
+    "apps/api/tsconfig.shared.jsonc",
+  ])("ignores a non-tsconfig JSON variant at %s", (relativePath) => {
+    expect(workspaceFileChangeInvalidatesExpressRouteDiscovery(event({ relativePath }))).toBe(
+      false,
+    );
   });
 
   it.each([

@@ -71,6 +71,130 @@ fn wait_for_method_count(server: &MockCdpServer, method: &str, count: usize) {
 }
 
 #[test]
+fn startup_function_breakpoints_install_before_spawned_runtime_resumes() {
+    let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
+        "Runtime.evaluate" => vec![result(
+            id,
+            json!({"result":{"type":"function","objectId":"function-object-1"}}),
+        )],
+        "Debugger.setBreakpointOnFunctionCall" => {
+            vec![result(id, json!({"breakpointId":"function-breakpoint-1"}))]
+        }
+        _ => vec![ok(id)],
+    }));
+    let sink = Arc::new(CollectingSink::default());
+    let registry = DebugSessionRegistry::new();
+    let url = server.url.clone();
+    let session_id = registry
+        .start_session(WORKSPACE_KEY, sink, move |emitter| {
+            NodeCdpAdapter::connect_with_startup_function_breakpoints(
+                &url,
+                emitter,
+                &[],
+                &[crate::debug_adapter::DebugFunctionBreakpoint {
+                    id: "persisted-function-1".to_string(),
+                    function_name: "globalThis.handleRequest".to_string(),
+                    enabled: true,
+                }],
+                &[],
+                NodeCdpConnectOptions {
+                    exception_pause_mode: DebugExceptionPauseMode::None,
+                    request_timeout: MOCK_REQUEST_TIMEOUT,
+                    ownership: DebuggeeOwnership::External,
+                    source_maps: None,
+                    startup: CdpStartupPolicy::SpawnedWaiting {
+                        startup_entry: None,
+                    },
+                    disconnected: None,
+                    startup_is_current: Arc::new(|| true),
+                    internal_step_filter: None,
+                },
+                false,
+            )
+            .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+        })
+        .expect("start mock session with persisted function breakpoint");
+
+    let methods = server.methods();
+    let install = methods
+        .iter()
+        .position(|method| method == "Debugger.setBreakpointOnFunctionCall")
+        .expect("function breakpoint install");
+    let resume = methods
+        .iter()
+        .position(|method| method == "Runtime.runIfWaitingForDebugger")
+        .expect("spawned runtime resume");
+    assert!(
+        install < resume,
+        "function breakpoint must install before runtime resume: {methods:?}"
+    );
+    assert!(registry.stop_by_id(session_id));
+}
+
+#[test]
+fn rejected_startup_probe_does_not_swallow_a_user_breakpoint_pause() {
+    let entry = breakpoint_fixture_file("startup-probe-user-breakpoint");
+    let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
+        "Debugger.setBreakpointByUrl" => vec![result(
+            id,
+            json!({"breakpointId": "startup-entry-probe", "locations": []}),
+        )],
+        "Runtime.runIfWaitingForDebugger" => vec![
+            ok(id),
+            event(
+                "Debugger.paused",
+                json!({
+                    "reason": "other",
+                    "hitBreakpoints": ["user-line-breakpoint"],
+                    "callFrames": []
+                }),
+            ),
+        ],
+        _ => vec![ok(id)],
+    }));
+    let sink = Arc::new(CollectingSink::default());
+    let emitter = crate::debug_session_registry::DebugEventEmitter::pending_for_test(
+        WORKSPACE_KEY,
+        1,
+        sink.clone(),
+    );
+    let retained_emitter = emitter.clone();
+
+    let result = NodeCdpAdapter::connect_with_startup_function_breakpoints(
+        &server.url,
+        emitter,
+        &[],
+        &[],
+        &[],
+        NodeCdpConnectOptions {
+            exception_pause_mode: DebugExceptionPauseMode::None,
+            request_timeout: MOCK_REQUEST_TIMEOUT,
+            ownership: DebuggeeOwnership::External,
+            source_maps: None,
+            startup: CdpStartupPolicy::SpawnedWaiting {
+                startup_entry: Some(entry.as_path()),
+            },
+            disconnected: None,
+            startup_is_current: Arc::new(|| true),
+            internal_step_filter: None,
+        },
+        false,
+    );
+    let error = match result {
+        Ok(_) => panic!("a user breakpoint cannot satisfy the exact startup probe"),
+        Err(error) => error,
+    };
+    retained_emitter.activate_for_test();
+
+    assert!(
+        error.contains("paused outside the validated wrapper workspace entry"),
+        "unexpected startup error: {error}"
+    );
+    assert_eq!(wait_for_stopped(&sink, 0).0, DebugStopReason::Breakpoint);
+    assert!(!server.methods().contains(&"Debugger.resume".to_string()));
+}
+
+#[test]
 fn stop_on_entry_surfaces_entry_without_auto_resume_and_registers_session() {
     let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
         "Runtime.runIfWaitingForDebugger" => {

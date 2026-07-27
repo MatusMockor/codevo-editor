@@ -164,7 +164,7 @@ export function validateFunctionBreakpointCommandArgs(
     return { expected: "an object", path: "request" };
   }
   const request = args.request as Record<string, unknown>;
-  if (!hasExactKeys(request, ["rootPath", "sessionId", "breakpoints"])) {
+  if (!hasExactKeys(request, ["rootPath", "sessionId", "generation", "breakpoints"])) {
     return { expected: "a closed request", path: "request" };
   }
   if (
@@ -177,6 +177,9 @@ export function validateFunctionBreakpointCommandArgs(
   }
   if (!Number.isSafeInteger(request.sessionId) || (request.sessionId as number) <= 0) {
     return { expected: "a positive safe integer", path: "request.sessionId" };
+  }
+  if (!Number.isSafeInteger(request.generation) || (request.generation as number) <= 0) {
+    return { expected: "a positive safe integer", path: "request.generation" };
   }
   if (
     !Array.isArray(request.breakpoints) ||

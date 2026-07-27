@@ -9,6 +9,7 @@ import {
   debugUtf8ByteLength,
   isDebugEvaluationOwner,
   isDebugEvaluationPolicy,
+  isBoundedDebugEvaluateName,
   validateDebugExpression,
 } from "./debugEvaluationPolicy";
 
@@ -44,6 +45,15 @@ describe("debug evaluation policy", () => {
       ok: true,
       expression: "count\t+ 1",
     });
+  });
+
+  it("accepts only bounded adapter evaluate names with exact valid line endings", () => {
+    const exact = "(\n  root\n).nested.b";
+    expect(isBoundedDebugEvaluateName(exact)).toBe(true);
+    expect(isBoundedDebugEvaluateName("root\r\n.nested")).toBe(true);
+    for (const malformed of ["", "   ", "root\r.nested", "root\u000b.nested", "x".repeat(4_097)]) {
+      expect(isBoundedDebugEvaluateName(malformed)).toBe(false);
+    }
   });
 
   it.each([

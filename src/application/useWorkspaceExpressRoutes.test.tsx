@@ -95,7 +95,7 @@ describe("useWorkspaceExpressRoutes", () => {
     expect(harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path }))).toEqual(
       [
         { packageLabel: "@acme/api", path: "/api" },
-        { packageLabel: undefined, path: "/root" },
+        { packageLabel: "workspace", path: "/root" },
       ],
     );
 
@@ -111,9 +111,51 @@ describe("useWorkspaceExpressRoutes", () => {
     expect(harness.hook().routes.map(({ packageLabel, path }) => ({ packageLabel, path }))).toEqual(
       [
         { packageLabel: "@acme/api", path: "/dirty-api" },
-        { packageLabel: undefined, path: "/root" },
+        { packageLabel: "workspace", path: "/root" },
       ],
     );
+    harness.unmount();
+  });
+
+  it("does not present malformed-source uncertainty as truncated route results", async () => {
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: ["express-app.js", "server.js"],
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["package.json"],
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path): Promise<BoundedWorkspaceSourceRead> => {
+        if (path === "package.json") {
+          return { status: "ok", content: '{"name":"watch-qa"}' };
+        }
+        if (path === "tsconfig.json") return { status: "notFound" };
+        if (path === "express-app.js") {
+          return {
+            status: "ok",
+            content:
+              'const express=require("express"); const app=express(); app.get("/health", handler);',
+          };
+        }
+        return { status: "ok", content: 'const http = require("http");\n}' };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(harness.hook().routes).toEqual([
+      expect.objectContaining({
+        packageLabel: "watch-qa",
+        path: "/health",
+        relativeFilePath: "express-app.js",
+      }),
+    ]);
+    expect(harness.hook().truncated).toBe(false);
     harness.unmount();
   });
 
@@ -488,6 +530,933 @@ describe("useWorkspaceExpressRoutes", () => {
     expect(harness.hook().routes).toEqual(
       expect.arrayContaining([expect.objectContaining({ method: "POST", path: "/api/dirty" })]),
     );
+    harness.unmount();
+  });
+
+  it("isolates identical aliases through each package tsconfig for disk and dirty routes", async () => {
+    const sources: Record<string, string> = {
+      "packages/api/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/api/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/saved', handler);",
+        "export default users;",
+      ].join("\n"),
+      "packages/admin/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/admin', users);",
+      ].join("\n"),
+      "packages/admin/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/saved', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 5,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/api/package.json", "packages/admin/package.json"],
+        truncated: false,
+        visited: 5,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "packages/api/package.json") {
+          return { status: "ok" as const, content: '{"name":"api"}' };
+        }
+        if (path === "packages/admin/package.json") {
+          return { status: "ok" as const, content: '{"name":"admin"}' };
+        }
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: '{"compilerOptions":{"paths":{"@root":["src/root"]}}}',
+          };
+        }
+        if (path.endsWith("/tsconfig.json")) {
+          return {
+            status: "ok" as const,
+            content: '{"compilerOptions":{"baseUrl":".","paths":{"@routes":["src/routes"]}}}',
+          };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() =>
+      expect(
+        harness
+          .hook()
+          .routes.filter(({ method }) => method === "GET")
+          .map(({ packageLabel, path }) => ({ packageLabel, path })),
+      ).toEqual([
+        { packageLabel: "admin", path: "/admin/saved" },
+        { packageLabel: "api", path: "/api/saved" },
+      ]),
+    );
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(
+      ROOT_A,
+      "packages/api/tsconfig.json",
+      262_144,
+    );
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(
+      ROOT_A,
+      "packages/admin/tsconfig.json",
+      262_144,
+    );
+
+    harness.set({
+      dirtySnapshots: [
+        {
+          relativeFilePath: "packages/api/src/routes.ts",
+          source: [
+            "import express from 'express';",
+            "const users = express.Router();",
+            "users.post('/dirty', handler);",
+            "export default users;",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(
+      harness
+        .hook()
+        .routes.filter(({ method }) => method === "GET" || method === "POST")
+        .map(({ packageLabel, method, path }) => ({
+          packageLabel,
+          method,
+          path,
+        })),
+    ).toEqual([
+      { packageLabel: "admin", method: "GET", path: "/admin/saved" },
+      { packageLabel: "api", method: "POST", path: "/api/dirty" },
+    ]);
+    expect(harness.hook().routes.some(({ path }) => path === "/admin/dirty")).toBe(false);
+    harness.unmount();
+  });
+
+  it("uses root aliases when a package config is confirmed missing", async () => {
+    const sources: Record<string, string> = {
+      "packages/api/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@workspace-routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/api/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/api/package.json"],
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "packages/api/package.json") {
+          return { status: "ok" as const, content: '{"name":"api"}' };
+        }
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content:
+              '{"compilerOptions":{"paths":{"@workspace-routes":["packages/api/src/routes"]}}}',
+          };
+        }
+        if (path === "packages/api/tsconfig.json") {
+          return { status: "notFound" as const };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+    ).toBe(true);
+    expect(
+      harness.hook().routes.find(({ method, path }) => method === "GET" && path === "/api/users")
+        ?.packageLabel,
+    ).toBe("api");
+    expect(harness.hook().truncated).toBe(false);
+    expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(
+      ROOT_A,
+      "packages/api/tsconfig.json",
+      256 * 1024,
+    );
+    expect(
+      gateway.readSourceTextBounded.mock.calls.filter(
+        ([, relativePath]) => relativePath === "packages/api/tsconfig.json",
+      ),
+    ).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("does not merge root aliases into an authoritative package config", async () => {
+    const sources: Record<string, string> = {
+      "packages/api/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@workspace-routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/api/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/api/package.json"],
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "packages/api/package.json") {
+          return { status: "ok" as const, content: '{"name":"api"}' };
+        }
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content:
+              '{"compilerOptions":{"paths":{"@workspace-routes":["packages/api/src/routes"]}}}',
+          };
+        }
+        if (path === "packages/api/tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: '{"compilerOptions":{"paths":{"@package-only":["src/other"]}}}',
+          };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+    ).toBe(false);
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/users"),
+    ).toBe(true);
+    harness.unmount();
+  });
+
+  it("inherits aliases only through an explicit relative extends chain with baseUrl provenance", async () => {
+    const sources: Record<string, string> = {
+      "packages/api/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/api/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/api/package.json"],
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "packages/api/package.json") {
+          return { status: "ok" as const, content: '{"name":"api"}' };
+        }
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: '{"compilerOptions":{"baseUrl":"packages/api"}}',
+          };
+        }
+        if (path === "packages/api/tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content:
+              '{"extends":"../../tsconfig.json","compilerOptions":{"paths":{"@routes":["src/routes"]}}}',
+          };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() =>
+      expect(
+        harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+      ).toBe(true),
+    );
+    expect(harness.hook().truncated).toBe(false);
+    harness.unmount();
+  });
+
+  it("fails closed for a relative extends cycle instead of falling through to root aliases", async () => {
+    const sources: Record<string, string> = {
+      "packages/a/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/a/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/a/package.json", "packages/b/package.json"],
+        truncated: false,
+        visited: 4,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path.endsWith("/package.json")) {
+          return {
+            status: "ok" as const,
+            content: JSON.stringify({ name: path.includes("/a/") ? "a" : "b" }),
+          };
+        }
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: '{"compilerOptions":{"paths":{"@routes":["packages/a/src/routes"]}}}',
+          };
+        }
+        if (path === "packages/a/tsconfig.json") {
+          return { status: "ok" as const, content: '{"extends":"../b/tsconfig.json"}' };
+        }
+        if (path === "packages/b/tsconfig.json") {
+          return { status: "ok" as const, content: '{"extends":"../a/tsconfig.json"}' };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+    ).toBe(false);
+    expect(harness.hook().truncated).toBe(true);
+    harness.unmount();
+  });
+
+  it("uses a nameless valid manifest directory as alias authority without inventing a label", async () => {
+    const sources: Record<string, string> = {
+      "packages/api/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/api/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/api/package.json"],
+        truncated: false,
+        visited: 3,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "packages/api/package.json") {
+          return { status: "ok" as const, content: '{"private":true}' };
+        }
+        if (path === "tsconfig.json") return { status: "ok" as const, content: "{}" };
+        if (path === "packages/api/tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: '{"compilerOptions":{"baseUrl":".","paths":{"@routes":["src/routes"]}}}',
+          };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() =>
+      expect(
+        harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+      ).toBe(true),
+    );
+    expect(
+      harness.hook().routes.find(({ method }) => method === "GET")?.packageLabel,
+    ).toBeUndefined();
+    harness.unmount();
+  });
+
+  it.each([
+    ["malformed", { status: "ok", content: "{ malformed" } as const],
+    ["oversized", { status: "tooLarge" } as const],
+    ["confirmed-missing", { status: "notFound" } as const],
+    ["changed-twice", { status: "changed" } as const],
+  ])(
+    "tombstones %s manifest ownership so root aliases cannot leak",
+    async (_label, manifestRead) => {
+      const sources: Record<string, string> = {
+        "packages/api/src/app.ts": [
+          "import express from 'express';",
+          "import users from '@routes';",
+          "const app = express();",
+          "app.use('/api', users);",
+        ].join("\n"),
+        "packages/api/src/routes.ts": [
+          "import express from 'express';",
+          "const users = express.Router();",
+          "users.get('/users', handler);",
+          "export default users;",
+        ].join("\n"),
+      };
+      const gateway = discovery({
+        enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+          files: Object.keys(sources),
+          truncated: false,
+          visited: 3,
+        })),
+        enumeratePackageJsonFiles: vi.fn(async () => ({
+          files: ["packages/api/package.json"],
+          truncated: false,
+          visited: 3,
+        })),
+        readSourceTextBounded: vi.fn(async (_root, path) => {
+          if (path === "packages/api/package.json") return manifestRead;
+          if (path === "tsconfig.json") {
+            return {
+              status: "ok" as const,
+              content: '{"compilerOptions":{"paths":{"@routes":["packages/api/src/routes"]}}}',
+            };
+          }
+          return { status: "ok" as const, content: sources[path] ?? "" };
+        }),
+      });
+      const harness = renderRoutes({ gateway, isOpen: true });
+
+      await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+      expect(
+        harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+      ).toBe(false);
+      expect(harness.hook().truncated).toBe(true);
+      harness.unmount();
+    },
+  );
+
+  it("tombstones package authorities omitted by the aggregate manifest byte budget", async () => {
+    const packageDirectories = Array.from({ length: 17 }, (_, index) => `packages/p${index}`);
+    const manifests = new Map(
+      packageDirectories.map((directory) => [
+        `${directory}/package.json`,
+        JSON.stringify({
+          name: directory.slice("packages/".length),
+          padding: "x".repeat(262_000),
+        }),
+      ]),
+    );
+    const sources: Record<string, string> = {
+      "packages/p16/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/p16/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: [...manifests.keys()],
+        truncated: false,
+        visited: manifests.size + 1,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        const manifest = manifests.get(path);
+        if (manifest !== undefined) return { status: "ok" as const, content: manifest };
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: '{"compilerOptions":{"paths":{"@routes":["packages/p16/src/routes"]}}}',
+          };
+        }
+        if (path.endsWith("/tsconfig.json")) return { status: "ok" as const, content: "{}" };
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+    ).toBe(false);
+    expect(harness.hook().truncated).toBe(true);
+    expect(gateway.readSourceTextBounded).not.toHaveBeenCalledWith(
+      ROOT_A,
+      "packages/p16/package.json",
+      262_144,
+    );
+    expect(gateway.readSourceTextBounded).not.toHaveBeenCalledWith(
+      ROOT_A,
+      "packages/p16/tsconfig.json",
+      262_144,
+    );
+    harness.unmount();
+  });
+
+  it.each([
+    ["invalid path", ["packages/api/../api/package.json"], 0],
+    [
+      "adapter overflow",
+      Array.from({ length: 257 }, (_, index) => `packages/other-${index}/package.json`),
+      256,
+    ],
+  ])(
+    "disables unscoped root aliases for uncertain %s enumeration",
+    async (_label, files, expectedManifestReads) => {
+      const sources: Record<string, string> = {
+        "packages/api/src/app.ts": [
+          "import express from 'express';",
+          "import users from '@routes';",
+          "const app = express();",
+          "app.use('/api', users);",
+        ].join("\n"),
+        "packages/api/src/routes.ts": [
+          "import express from 'express';",
+          "const users = express.Router();",
+          "users.get('/users', handler);",
+          "export default users;",
+        ].join("\n"),
+      };
+      const gateway = discovery({
+        enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+          files: Object.keys(sources),
+          truncated: false,
+          visited: 3,
+        })),
+        enumeratePackageJsonFiles: vi.fn(async () => ({
+          files,
+          truncated: false,
+          visited: files.length + 1,
+        })),
+        readSourceTextBounded: vi.fn(async (_root, path) => {
+          if (path.endsWith("/package.json")) {
+            return { status: "ok" as const, content: "{ malformed" };
+          }
+          if (path === "tsconfig.json") {
+            return {
+              status: "ok" as const,
+              content: '{"compilerOptions":{"paths":{"@routes":["packages/api/src/routes"]}}}',
+            };
+          }
+          if (path.endsWith("/tsconfig.json")) return { status: "ok" as const, content: "{}" };
+          return { status: "ok" as const, content: sources[path] ?? "" };
+        }),
+      });
+      const harness = renderRoutes({ gateway, isOpen: true });
+
+      await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+      expect(
+        harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+      ).toBe(false);
+      expect(harness.hook().truncated).toBe(true);
+      expect(
+        gateway.readSourceTextBounded.mock.calls.filter(
+          ([, path]) => typeof path === "string" && path.endsWith("/package.json"),
+        ),
+      ).toHaveLength(expectedManifestReads);
+      harness.unmount();
+    },
+  );
+
+  it("drops a stale manifest batch before config or source discovery can publish", async () => {
+    const pendingManifest = deferred<BoundedWorkspaceSourceRead>();
+    const packageFiles = Array.from({ length: 9 }, (_, index) => `packages/p${index}/package.json`);
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async (rootPath) => ({
+        files: [rootPath === ROOT_A ? "a.ts" : "b.ts"],
+        truncated: false,
+        visited: 2,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async (rootPath) => ({
+        files: rootPath === ROOT_A ? packageFiles : [],
+        truncated: false,
+        visited: rootPath === ROOT_A ? 10 : 1,
+      })),
+      readSourceTextBounded: vi.fn(async (rootPath, path) => {
+        if (rootPath === ROOT_A && path === "packages/p8/package.json") {
+          return pendingManifest.promise;
+        }
+        if (path.endsWith("/package.json")) {
+          return { status: "ok" as const, content: '{"name":"package"}' };
+        }
+        if (path.endsWith("tsconfig.json")) return { status: "ok" as const, content: "{}" };
+        return {
+          status: "ok" as const,
+          content: path === "b.ts" ? "app.get('/b', handler);" : "app.get('/a', handler);",
+        };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() =>
+      expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(
+        ROOT_A,
+        "packages/p8/package.json",
+        262_144,
+      ),
+    );
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    await act(async () => pendingManifest.resolve({ status: "ok", content: '{"name":"stale"}' }));
+    await waitForReact(() => expect(harness.hook().routes.map(({ path }) => path)).toEqual(["/b"]));
+
+    expect(gateway.readSourceTextBounded).not.toHaveBeenCalledWith(ROOT_A, "a.ts", 2_097_152);
+    harness.unmount();
+  });
+
+  it("disables unscoped root aliases when package enumeration is truncated", async () => {
+    const sources: Record<string, string> = {
+      "packages/omitted/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/omitted/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: [],
+        truncated: true,
+        visited: 50_000,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => ({
+        status: "ok" as const,
+        content:
+          path === "tsconfig.json"
+            ? '{"compilerOptions":{"paths":{"@routes":["packages/omitted/src/routes"]}}}'
+            : (sources[path] ?? ""),
+      })),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+    ).toBe(false);
+    expect(harness.hook().truncated).toBe(true);
+    harness.unmount();
+  });
+
+  it("fails closed for malformed and oversized package configs and reports incomplete reads", async () => {
+    const sources: Record<string, string> = {
+      "packages/api/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      "packages/api/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+      "packages/admin/src/app.ts": [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/admin', users);",
+      ].join("\n"),
+      "packages/admin/src/routes.ts": [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 5,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/api/package.json", "packages/admin/package.json"],
+        truncated: false,
+        visited: 5,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path): Promise<BoundedWorkspaceSourceRead> => {
+        if (path.endsWith("package.json")) {
+          return {
+            status: "ok",
+            content: JSON.stringify({ name: path.includes("/api/") ? "api" : "admin" }),
+          };
+        }
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok",
+            content: '{"compilerOptions":{"paths":{"@routes":["packages/api/src/routes"]}}}',
+          };
+        }
+        if (path === "packages/api/tsconfig.json") {
+          return { status: "ok", content: "{ malformed" };
+        }
+        if (path === "packages/admin/tsconfig.json") return { status: "tooLarge" };
+        return { status: "ok", content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(
+      harness
+        .hook()
+        .routes.filter(({ method }) => method === "GET")
+        .map(({ path }) => path),
+    ).toEqual(["/users", "/users"]);
+    expect(
+      harness
+        .hook()
+        .routes.some(({ method, path }) => method === "GET" && path.startsWith("/api/")),
+    ).toBe(false);
+    expect(
+      harness
+        .hook()
+        .routes.some(({ method, path }) => method === "GET" && path.startsWith("/admin/")),
+    ).toBe(false);
+    expect(harness.hook().error).toBeNull();
+    expect(harness.hook().truncated).toBe(true);
+    harness.unmount();
+  });
+
+  it("surfaces a truncated package alias configuration", async () => {
+    const paths = Object.fromEntries(
+      Array.from({ length: 257 }, (_, index) => [`@alias-${index}`, [`src/alias-${index}`]]),
+    );
+    const gateway = discovery({
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: ["packages/api/package.json"],
+        truncated: false,
+        visited: 2,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path === "packages/api/package.json") {
+          return { status: "ok" as const, content: '{"name":"api"}' };
+        }
+        if (path === "packages/api/tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: JSON.stringify({ compilerOptions: { paths } }),
+          };
+        }
+        return {
+          status: "ok" as const,
+          content: path === "tsconfig.json" ? "{}" : ROUTE_A,
+        };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(harness.hook().routes[0]?.path).toBe("/a");
+    expect(harness.hook().truncated).toBe(true);
+    harness.unmount();
+  });
+
+  it("fails closed for package scopes beyond the aggregate config budget", async () => {
+    const packageDirectories = Array.from(
+      { length: 17 },
+      (_, index) => `packages/${String(index).padStart(2, "0")}`,
+    );
+    const lastPackage = packageDirectories[packageDirectories.length - 1] ?? "";
+    const sources: Record<string, string> = {
+      [`${lastPackage}/src/app.ts`]: [
+        "import express from 'express';",
+        "import users from '@routes';",
+        "const app = express();",
+        "app.use('/api', users);",
+      ].join("\n"),
+      [`${lastPackage}/src/routes.ts`]: [
+        "import express from 'express';",
+        "const users = express.Router();",
+        "users.get('/users', handler);",
+        "export default users;",
+      ].join("\n"),
+    };
+    const largeConfig = JSON.stringify({
+      compilerOptions: {},
+      padding: "x".repeat(247_000),
+    });
+    const gateway = discovery({
+      enumerateJavaScriptSourceFiles: vi.fn(async () => ({
+        files: Object.keys(sources),
+        truncated: false,
+        visited: 3,
+      })),
+      enumeratePackageJsonFiles: vi.fn(async () => ({
+        files: packageDirectories.map((directory) => `${directory}/package.json`),
+        truncated: false,
+        visited: packageDirectories.length + 1,
+      })),
+      readSourceTextBounded: vi.fn(async (_root, path) => {
+        if (path.endsWith("/package.json")) {
+          const directory = path.slice(0, -"/package.json".length);
+          return {
+            status: "ok" as const,
+            content: JSON.stringify({ name: directory.replace("/", "-") }),
+          };
+        }
+        if (path === "tsconfig.json") {
+          return {
+            status: "ok" as const,
+            content: JSON.stringify({
+              compilerOptions: {
+                paths: { "@routes": [`${lastPackage}/src/routes`] },
+              },
+            }),
+          };
+        }
+        if (path.endsWith("/tsconfig.json")) {
+          return { status: "ok" as const, content: largeConfig };
+        }
+        return { status: "ok" as const, content: sources[path] ?? "" };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+
+    await waitForReact(() => expect(harness.hook().loading).toBe(false));
+
+    expect(harness.hook().truncated).toBe(true);
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/api/users"),
+    ).toBe(false);
+    expect(
+      harness.hook().routes.some(({ method, path }) => method === "GET" && path === "/users"),
+    ).toBe(true);
+    harness.unmount();
+  });
+
+  it("drops a stale package tsconfig read before reading stale-owner sources", async () => {
+    const pendingPackageConfig = deferred<BoundedWorkspaceSourceRead>();
+    const gateway = discovery({
+      enumeratePackageJsonFiles: vi.fn(async (rootPath) => ({
+        files: rootPath === ROOT_A ? ["packages/api/package.json"] : [],
+        truncated: false,
+        visited: 2,
+      })),
+      readSourceTextBounded: vi.fn(async (rootPath, path): Promise<BoundedWorkspaceSourceRead> => {
+        if (path === "packages/api/package.json") {
+          return { status: "ok", content: '{"name":"api"}' };
+        }
+        if (rootPath === ROOT_A && path === "packages/api/tsconfig.json") {
+          return pendingPackageConfig.promise;
+        }
+        if (path === "tsconfig.json") return { status: "ok", content: "{}" };
+        return {
+          status: "ok",
+          content: rootPath === ROOT_A ? ROUTE_A : "app.get('/b', handler);",
+        };
+      }),
+    });
+    const harness = renderRoutes({ gateway, isOpen: true });
+    await waitForReact(() =>
+      expect(gateway.readSourceTextBounded).toHaveBeenCalledWith(
+        ROOT_A,
+        "packages/api/tsconfig.json",
+        262_144,
+      ),
+    );
+
+    harness.set({ rootPath: ROOT_B, workspaceId: "workspace-b" });
+    await waitForReact(() => expect(harness.hook().routes[0]?.path).toBe("/b"));
+    await act(async () => pendingPackageConfig.resolve({ status: "changed" }));
+
+    expect(gateway.readSourceTextBounded).not.toHaveBeenCalledWith(
+      ROOT_A,
+      "src/a.ts",
+      expect.anything(),
+    );
+    expect(harness.hook().routes.map(({ path }) => path)).toEqual(["/b"]);
     harness.unmount();
   });
 

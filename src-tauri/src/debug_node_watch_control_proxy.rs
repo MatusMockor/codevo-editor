@@ -12,6 +12,7 @@ use crate::debug_adapter::{
     DebugSetVariableRequest as AdapterSetVariableRequest,
     DebugSetVariableResult as AdapterSetVariableResult, DebugVariablePageRequest, StepKind,
 };
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -45,9 +46,35 @@ pub(crate) enum WatchDebugControlCommand {
     SetVariable(WatchSetVariableRequest),
     SetExpression(WatchSetExpressionRequest),
     SetBreakpointsActive(bool),
-    SetExceptionPause(DebugExceptionPauseMode),
+    SetExceptionPause(WatchSetExceptionPauseRequest),
     SetBreakpoints(WatchSetBreakpointsRequest),
     SetFunctionBreakpoints(WatchSetFunctionBreakpointsRequest),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WatchSetExceptionPauseRequest {
+    mode: DebugExceptionPauseMode,
+    exception_type_filter: DebugExceptionTypeFilter,
+}
+
+impl WatchSetExceptionPauseRequest {
+    pub(crate) fn new(
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: DebugExceptionTypeFilter,
+    ) -> Self {
+        Self {
+            mode,
+            exception_type_filter,
+        }
+    }
+
+    pub(crate) fn mode(&self) -> DebugExceptionPauseMode {
+        self.mode
+    }
+
+    pub(crate) fn exception_type_filter(&self) -> &[String] {
+        self.exception_type_filter.as_slice()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,15 +103,23 @@ impl WatchSetBreakpointsRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WatchSetFunctionBreakpointsRequest {
     breakpoints: Vec<DebugFunctionBreakpoint>,
+    generation: u64,
 }
 
 impl WatchSetFunctionBreakpointsRequest {
-    pub(crate) fn new(breakpoints: Vec<DebugFunctionBreakpoint>) -> Self {
-        Self { breakpoints }
+    pub(crate) fn new(breakpoints: Vec<DebugFunctionBreakpoint>, generation: u64) -> Self {
+        Self {
+            breakpoints,
+            generation,
+        }
     }
 
     pub(crate) fn breakpoints(&self) -> &[DebugFunctionBreakpoint] {
         &self.breakpoints
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 }
 

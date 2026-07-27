@@ -184,6 +184,7 @@ export function DebugConsolePanel({
 }) {
   const [value, setValue] = useState("");
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [historyDraft, setHistoryDraft] = useState<string | null>(null);
   const [completionOpen, setCompletionOpen] = useState(false);
   const [activeCompletionIndex, setActiveCompletionIndex] = useState(0);
   const [expandedResultIds, setExpandedResultIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -308,7 +309,15 @@ export function DebugConsolePanel({
       item.kind === "entry" && entryIds.has(item.entryId) ? [index] : [],
     );
   }, [contextMenu, pinnedResultEntryId, renderItems]);
-  const windowed = useWindowedRows({
+  const {
+    containerRef: windowedContainerRef,
+    measureRow: measureWindowedRow,
+    onScroll: onWindowedScroll,
+    rows: windowedRows,
+    scrollToBottom: scrollWindowToBottom,
+    totalHeight: windowedTotalHeight,
+    windowOffsetTop,
+  } = useWindowedRows({
     enabled: true,
     estimateHeight,
     itemCount: renderItems.length,
@@ -319,21 +328,22 @@ export function DebugConsolePanel({
   const setBodyElement = useCallback(
     (element: HTMLDivElement | null) => {
       bodyRef.current = element;
-      windowed.containerRef(element);
+      windowedContainerRef(element);
     },
-    [windowed.containerRef],
+    [windowedContainerRef],
   );
   useEffect(() => {
     if (!stickRef.current) {
       return;
     }
 
-    windowed.scrollToBottom();
-  }, [console.state.entries, windowed.scrollToBottom, windowed.totalHeight]);
+    scrollWindowToBottom();
+  }, [console.state.entries, scrollWindowToBottom, windowedTotalHeight]);
   const sessionId = console.state.owner?.sessionId ?? null;
   useEffect(() => {
     setValue("");
     setHistoryIndex(null);
+    setHistoryDraft(null);
     setCompletionOpen(false);
     setActiveCompletionIndex(0);
   }, [sessionId]);
@@ -484,6 +494,7 @@ export function DebugConsolePanel({
     }
     setValue(replacement.expression);
     setHistoryIndex(null);
+    setHistoryDraft(null);
     setCompletionOpen(false);
     setActiveCompletionIndex(0);
     queueMicrotask(() => {
@@ -499,7 +510,20 @@ export function DebugConsolePanel({
       return;
     }
 
-    if (onRequest && event.ctrlKey && (event.code === "Space" || event.key === " ")) {
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      const start = event.currentTarget.selectionStart ?? event.currentTarget.value.length;
+      const end = event.currentTarget.selectionEnd ?? start;
+      const currentValue = event.currentTarget.value;
+      const expression = `${currentValue.slice(0, start)}\n${currentValue.slice(end)}`;
+      const cursor = start + 1;
+      dismissCompletion();
+      setValue(expression);
+      setHistoryIndex(null);
+      setHistoryDraft(null);
+      onInputChanged?.({ cursor, expression });
+      queueMicrotask(() => inputRef.current?.setSelectionRange(cursor, cursor));
+    } else if (onRequest && event.ctrlKey && (event.code === "Space" || event.key === " ")) {
       event.preventDefault();
       setCompletionOpen(true);
       setActiveCompletionIndex(0);
@@ -507,18 +531,25 @@ export function DebugConsolePanel({
         cursor: event.currentTarget.selectionStart ?? value.length,
         expression: value,
       });
-    } else if (completionVisible && event.key === "ArrowDown") {
+    } else if (completionVisible && !eventHasModifier(event) && event.key === "ArrowDown") {
       event.preventDefault();
       if (visibleCompletionItems.length)
         setActiveCompletionIndex((current) => (current + 1) % visibleCompletionItems.length);
-    } else if (completionVisible && event.key === "ArrowUp") {
+    } else if (completionVisible && !eventHasModifier(event) && event.key === "ArrowUp") {
       event.preventDefault();
       if (visibleCompletionItems.length)
         setActiveCompletionIndex(
           (current) =>
             (current - 1 + visibleCompletionItems.length) % visibleCompletionItems.length,
         );
-    } else if (completionVisible && (event.key === "Enter" || event.key === "Tab")) {
+    } else if (
+      completionVisible &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      (event.key === "Enter" || event.key === "Tab")
+    ) {
       event.preventDefault();
       if (activeCompletionItem) acceptCompletion(activeCompletionItem);
     } else if (completionVisible && event.key === "Escape") {
@@ -531,42 +562,47 @@ export function DebugConsolePanel({
       event.key === "End"
     ) {
       invalidateCompletion();
-    } else if (event.key === "Enter" && event.shiftKey) {
-      event.preventDefault();
-      const start = event.currentTarget.selectionStart ?? value.length;
-      const end = event.currentTarget.selectionEnd ?? start;
-      const expression = `${value.slice(0, start)}\n${value.slice(end)}`;
-      const cursor = start + 1;
-      setValue(expression);
-      setHistoryIndex(null);
-      onInputChanged?.({ cursor, expression });
-      queueMicrotask(() => inputRef.current?.setSelectionRange(cursor, cursor));
-    } else if (event.key === "Enter" && enabled && trimBlankLines(value).trim()) {
+    } else if (
+      event.key === "Enter" &&
+      !eventHasModifier(event) &&
+      enabled &&
+      trimBlankLines(value).trim()
+    ) {
       event.preventDefault();
       void console.submit(trimBlankLines(value));
       setValue("");
       setHistoryIndex(null);
+      setHistoryDraft(null);
     } else if (event.key === "Escape") {
       setValue("");
       setHistoryIndex(null);
+      setHistoryDraft(null);
     } else if (
       event.key === "ArrowUp" &&
+      !eventHasModifier(event) &&
       history.length &&
       caretIsOnFirstLine(event.currentTarget)
     ) {
       event.preventDefault();
       const next = Math.min(history.length - 1, (historyIndex ?? history.length) - 1);
+      if (historyIndex === null) {
+        setHistoryDraft(value);
+      }
       setHistoryIndex(next);
       setValue(history[next] ?? "");
     } else if (
       event.key === "ArrowDown" &&
+      !eventHasModifier(event) &&
       historyIndex !== null &&
       caretIsOnLastLine(event.currentTarget)
     ) {
       event.preventDefault();
       const next = historyIndex + 1;
       setHistoryIndex(next >= history.length ? null : next);
-      setValue(next >= history.length ? "" : (history[next] ?? ""));
+      setValue(next >= history.length ? (historyDraft ?? "") : (history[next] ?? ""));
+      if (next >= history.length) {
+        setHistoryDraft(null);
+      }
     }
   };
   const setResultExpanded = (
@@ -598,7 +634,7 @@ export function DebugConsolePanel({
       onLoadVariablePage?.(owner, variablesReference, 0);
     }
   };
-  const renderedSegments = segmentRenderedRows(windowed.rows, renderItems);
+  const renderedSegments = segmentRenderedRows(windowedRows, renderItems);
   const resultOwnerByEntryId = new Map(
     renderItems.flatMap((item) =>
       item.kind === "entry" && item.resultInspectionOwner
@@ -734,7 +770,7 @@ export function DebugConsolePanel({
             position: { x: bounds.left + 8, y: bounds.top + 8 },
           });
         }}
-        ref={(element) => windowed.measureRow(item.id, element)}
+        ref={(element) => measureWindowedRow(item.id, element)}
         role={copyable || item.expandable ? "group" : undefined}
         style={
           entry.kind === "stderr" || entry.kind === "error"
@@ -906,7 +942,7 @@ export function DebugConsolePanel({
         aria-label="Debug console output"
         data-testid="debug-console-body"
         onScroll={(event) => {
-          windowed.onScroll(event);
+          onWindowedScroll(event);
           const body = event.currentTarget;
           stickRef.current = body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
         }}
@@ -925,7 +961,7 @@ export function DebugConsolePanel({
         ) : (
           <div
             data-testid="debug-console-spacer"
-            style={{ height: windowed.totalHeight, position: "relative" }}
+            style={{ height: windowedTotalHeight, position: "relative" }}
           >
             <div
               style={{
@@ -933,7 +969,7 @@ export function DebugConsolePanel({
                 position: "absolute",
                 right: 0,
                 top: 0,
-                transform: `translateY(${windowed.windowOffsetTop}px)`,
+                transform: `translateY(${windowOffsetTop}px)`,
               }}
             >
               {renderedSegments.map((segment) => (
@@ -948,7 +984,7 @@ export function DebugConsolePanel({
                     position: "absolute",
                     right: 0,
                     top: 0,
-                    transform: `translateY(${segment.offsetTop - windowed.windowOffsetTop}px)`,
+                    transform: `translateY(${segment.offsetTop - windowOffsetTop}px)`,
                   }}
                 >
                   {segment.items.map((item) =>
@@ -1052,6 +1088,7 @@ export function DebugConsolePanel({
           onChange={(event) => {
             setValue(event.target.value);
             setHistoryIndex(null);
+            setHistoryDraft(null);
             dismissCompletion();
             onInputChanged?.({
               cursor: event.target.selectionStart ?? event.target.value.length,
@@ -1159,6 +1196,10 @@ function caretIsOnLastLine(input: HTMLTextAreaElement): boolean {
   return input.value.indexOf("\n", caret) === -1;
 }
 
+function eventHasModifier(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  return event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
+}
+
 function copyDisplayedValueFromMenuAndRestoreFocus(
   surface: DebugCopyDisplayedValueSurface | undefined,
   invoker: HTMLElement,
@@ -1220,11 +1261,18 @@ function copyConsoleEvaluatePathFromMenuAndRestoreFocus(
     queueMicrotask(() => invoker.focus());
     return;
   }
-  publishDebugCopyValueCandidate(surface, {
-    ...candidate,
-    displayedValue: evaluateName,
-  });
-  copyDisplayedValueFromMenuAndRestoreFocus(surface, invoker);
+  try {
+    publishDebugCopyValueCandidate(surface, candidate);
+    if (!surface?.canCopyEvaluatePath()) {
+      queueMicrotask(() => invoker.focus());
+      return;
+    }
+    void Promise.resolve(surface.copyEvaluatePathFromMenu())
+      .catch(() => false)
+      .finally(() => queueMicrotask(() => invoker.focus()));
+  } catch {
+    queueMicrotask(() => invoker.focus());
+  }
 }
 
 function consoleResultOwnersEqual(

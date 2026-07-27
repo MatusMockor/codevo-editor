@@ -1,14 +1,4 @@
-import {
-  BarChart3,
-  Bug,
-  FileText,
-  Play,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Square,
-  X,
-} from "lucide-react";
+import { BarChart3, FileText, Play, RefreshCw, RotateCcw, Search, Square, X } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -17,7 +7,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
 } from "react";
 import type { JsTestCoverageReport, JsTestFileCoverage } from "../domain/jsTestCoverage";
 import {
@@ -25,15 +14,16 @@ import {
   type JsTestExplorerCurrentFileIdentity,
   type JsTestExplorerOpenedFilesSnapshot,
 } from "../domain/jsTestExplorerFilter";
-import { jsTestRunScopeForExplorerNode, type JsTestRunScope } from "../domain/jsTestRunScope";
+import type { JsTestRunScope } from "../domain/jsTestRunScope";
 import {
   filterJsTestExplorerTree,
   type JsTestExplorerNode,
-  type JsTestExplorerStatus,
   type JsTestExplorerTestNode,
   type JsTestExplorerWorkspaceNode,
 } from "../domain/jsTestExplorerTree";
 import type { JsTestTaskOutput } from "../domain/jsTestTask";
+import { JsTestCoverageReportView } from "./JsTestCoverageReport";
+import { JsTestExplorerVirtualizedTree } from "./JsTestExplorerVirtualizedTree";
 import { JsTestOutputView } from "./JsTestOutputView";
 
 export interface JsTestExplorerPanelProps {
@@ -83,17 +73,6 @@ export interface JsTestExplorerPanelProps {
   readonly truncated: boolean;
   readonly unavailable: string | null;
   readonly workspaceId?: string | null;
-}
-
-interface TreeNodeProps {
-  readonly debugDisabled: boolean;
-  readonly disabled: boolean;
-  readonly level: number;
-  readonly node: JsTestExplorerNode;
-  readonly onOpenTest: (test: JsTestExplorerTestNode) => void;
-  readonly onDebugNode: JsTestExplorerPanelProps["onDebugNode"];
-  readonly onRunScope: (scope: JsTestRunScope) => void;
-  readonly rootPath: string;
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -486,7 +465,7 @@ export function JsTestExplorerPanel({
             </div>
           ) : null}
           {coverageReport ? (
-            <CoverageReport report={coverageReport} onOpenFile={onOpenCoverageFile} />
+            <JsTestCoverageReportView report={coverageReport} onOpenFile={onOpenCoverageFile} />
           ) : null}
           {!loading && unavailable ? (
             <div role="status" style={styles.message}>
@@ -534,18 +513,15 @@ export function JsTestExplorerPanel({
           ) : null}
 
           {showTree && filteredTree ? (
-            <ul aria-label="JavaScript tests" style={styles.tree}>
-              <TreeNode
-                debugDisabled={busy || debugStartBlocked}
-                disabled={!canRun}
-                level={1}
-                node={filteredTree}
-                onOpenTest={onOpenTest}
-                onDebugNode={onDebugNode}
-                onRunScope={runScope}
-                rootPath={tree?.rootPath ?? filteredTree.rootPath}
-              />
-            </ul>
+            <JsTestExplorerVirtualizedTree
+              debugDisabled={busy || debugStartBlocked}
+              disabled={!canRun}
+              onOpenTest={onOpenTest}
+              onDebugNode={onDebugNode}
+              onRunScope={runScope}
+              root={filteredTree}
+              rootPath={tree?.rootPath ?? filteredTree.rootPath}
+            />
           ) : null}
         </>
       )}
@@ -562,209 +538,8 @@ export function JsTestExplorerPanel({
   );
 }
 
-function CoverageReport({
-  onOpenFile,
-  report,
-}: {
-  readonly onOpenFile: (file: JsTestFileCoverage) => void;
-  readonly report: JsTestCoverageReport;
-}): ReactNode {
-  return (
-    <section aria-label="JavaScript test coverage summary" style={styles.coverage}>
-      <div style={styles.coverageSummary}>
-        <strong>Coverage</strong>
-        <span aria-label="Covered lines">
-          {report.summary.covered}/{report.summary.total} lines
-        </span>
-        <span aria-label="Line coverage percentage">
-          {coveragePercentage(report.summary.percentage)}
-        </span>
-        <span aria-label="Covered branches">
-          {report.branches.covered}/{report.branches.total} branches
-        </span>
-        <span aria-label="Branch coverage percentage">
-          {coveragePercentage(report.branches.percentage)}
-        </span>
-        <span aria-label="Covered functions">
-          {report.functions.covered}/{report.functions.total} functions
-        </span>
-        <span aria-label="Function coverage percentage">
-          {coveragePercentage(report.functions.percentage)}
-        </span>
-      </div>
-      {report.truncated ? (
-        <span aria-label="Coverage truncation status" role="status">
-          Coverage details are truncated.
-        </span>
-      ) : null}
-      {report.files.length > 0 ? (
-        <ul aria-label="JavaScript coverage files" style={styles.coverageFiles}>
-          {report.files.map((file) => (
-            <li key={file.path} style={styles.coverageFile}>
-              <button
-                aria-label={`Open first uncovered line in ${file.path}`}
-                disabled={file.firstUncoveredLine === null}
-                onClick={() => onOpenFile(file)}
-                style={{
-                  ...styles.label,
-                  cursor: file.firstUncoveredLine === null ? "default" : "pointer",
-                }}
-                type="button"
-              >
-                {file.path}
-              </button>
-              <span style={styles.muted}>
-                Lines {file.summary.covered}/{file.summary.total} ·{" "}
-                {coveragePercentage(file.summary.percentage)} · Branches {file.branches.covered}/
-                {file.branches.total} · {coveragePercentage(file.branches.percentage)} · Functions{" "}
-                {file.functions.covered}/{file.functions.total} ·{" "}
-                {coveragePercentage(file.functions.percentage)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </section>
-  );
-}
-
-function coveragePercentage(percentage: number | null): string {
-  return percentage === null ? "—" : `${percentage.toFixed(1)}%`;
-}
-
 function failedRunStatus(completed: number, total: number): string {
   return completed > 0
     ? `Rerunning failed JavaScript tests (${completed}/${total})…`
     : `Rerunning ${total} failed JavaScript tests…`;
-}
-
-function TreeNode({
-  debugDisabled,
-  disabled,
-  level,
-  node,
-  onOpenTest,
-  onDebugNode,
-  onRunScope,
-  rootPath,
-}: TreeNodeProps): ReactNode {
-  const children = node.kind === "test" ? [] : node.children;
-  const fullName = nodeFullName(node);
-  const scope =
-    node.kind === "workspace"
-      ? { kind: "all" as const }
-      : jsTestRunScopeForExplorerNode(rootPath, node);
-  const label = node.kind === "workspace" ? node.rootPath : node.label;
-
-  return (
-    <li aria-label={`${nodeKindLabel(node.kind)} ${label}`} style={styles.node}>
-      <div style={{ ...styles.row, paddingLeft: (level - 1) * 16 + 8 }}>
-        <StatusIndicator status={node.status} />
-        {node.kind === "test" ? (
-          <button
-            aria-label={`Open test ${fullName}`}
-            onClick={() => onOpenTest(node)}
-            style={{ ...styles.label, cursor: "pointer" }}
-            type="button"
-          >
-            {node.label}
-          </button>
-        ) : (
-          <span style={styles.label} title={label}>
-            {label}
-          </span>
-        )}
-        <button
-          aria-label={runButtonLabel(node, fullName, scope)}
-          disabled={disabled}
-          onClick={() => onRunScope(scope)}
-          style={{ ...styles.action, ...styles.run }}
-          type="button"
-        >
-          <Play aria-hidden="true" size={12} />
-          Run
-        </button>
-        {node.kind !== "workspace" ? (
-          <button
-            aria-label={debugButtonLabel(node, fullName, scope)}
-            disabled={debugDisabled}
-            onClick={() => void onDebugNode(node)}
-            style={styles.action}
-            type="button"
-          >
-            <Bug aria-hidden="true" size={12} />
-            Debug
-          </button>
-        ) : null}
-      </div>
-      {children.length > 0 ? (
-        <ul style={styles.children}>
-          {children.map((child) => (
-            <TreeNode
-              debugDisabled={debugDisabled}
-              disabled={disabled}
-              key={child.id}
-              level={level + 1}
-              node={child}
-              onOpenTest={onOpenTest}
-              onDebugNode={onDebugNode}
-              onRunScope={onRunScope}
-              rootPath={rootPath}
-            />
-          ))}
-        </ul>
-      ) : null}
-    </li>
-  );
-}
-
-function StatusIndicator({ status }: { readonly status: JsTestExplorerStatus }) {
-  return (
-    <span aria-label={`Status: ${status}`} role="img" style={styles.status} title={status}>
-      {statusGlyph[status]}
-    </span>
-  );
-}
-
-const statusGlyph: Readonly<Record<JsTestExplorerStatus, string>> = {
-  failed: "×",
-  idle: "○",
-  passed: "✓",
-  running: "◌",
-  skipped: "–",
-};
-
-function nodeFullName(node: JsTestExplorerNode): string {
-  if (node.kind === "suite") return node.suitePath.join(" ");
-  if (node.kind === "test") return [...node.suitePath, node.label].join(" ");
-  return "";
-}
-
-function runButtonLabel(node: JsTestExplorerNode, fullName: string, scope: JsTestRunScope): string {
-  if (node.kind === "workspace") return `Run workspace ${node.rootPath}`;
-  if (scope.kind === "file") return `Run tests in ${fileName(node.filePath)}`;
-  if (node.kind === "suite") return `Run suite ${fullName}`;
-  return `Run test ${fullName}`;
-}
-
-function debugButtonLabel(
-  node: Exclude<JsTestExplorerNode, JsTestExplorerWorkspaceNode>,
-  fullName: string,
-  scope: JsTestRunScope,
-): string {
-  if (scope.kind === "file") return `Debug tests in ${fileName(node.filePath)}`;
-  if (node.kind === "suite") return `Debug suite ${fullName}`;
-  return `Debug test ${fullName}`;
-}
-
-function nodeKindLabel(kind: JsTestExplorerNode["kind"]): string {
-  if (kind === "workspace") return "Workspace";
-  if (kind === "file") return "File";
-  if (kind === "suite") return "Suite";
-  return "Test";
-}
-
-function fileName(path: string): string {
-  const segments = path.split("\\").join("/").split("/").filter(Boolean);
-  return segments[segments.length - 1] ?? path;
 }

@@ -230,13 +230,16 @@ export function useWorkbenchFileOperations(
       return;
     }
 
-    const relativePath = prompter.prompt("New file path", "src/NewFile.php");
+    const requestedRoot = workspaceRoot;
+    const relativePath = await prompter.prompt("New file path");
 
-    if (!relativePath) {
+    if (
+      !relativePath ||
+      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+    ) {
       return;
     }
 
-    const requestedRoot = workspaceRoot;
     const path = joinWorkspacePath(requestedRoot, relativePath);
 
     try {
@@ -304,13 +307,16 @@ export function useWorkbenchFileOperations(
       return;
     }
 
-    const relativePath = prompter.prompt("New folder path", "src/Domain");
+    const requestedRoot = workspaceRoot;
+    const relativePath = await prompter.prompt("New folder path");
 
-    if (!relativePath) {
+    if (
+      !relativePath ||
+      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+    ) {
       return;
     }
 
-    const requestedRoot = workspaceRoot;
     const path = joinWorkspacePath(requestedRoot, relativePath);
 
     try {
@@ -352,9 +358,14 @@ export function useWorkbenchFileOperations(
       return;
     }
 
-    const nextName = prompter.prompt("Rename file", document.name);
+    const nextName = await prompter.prompt("Rename file", document.name);
 
-    if (!nextName || nextName === document.name) {
+    if (
+      !nextName ||
+      nextName === document.name ||
+      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
+      activeDocumentRef.current?.path !== document.path
+    ) {
       return;
     }
 
@@ -505,9 +516,13 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      const nextName = prompter.prompt("Rename folder", entry.name);
+      const nextName = await prompter.prompt("Rename folder", entry.name);
 
-      if (!nextName || nextName === entry.name) {
+      if (
+        !nextName ||
+        nextName === entry.name ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
         return;
       }
 

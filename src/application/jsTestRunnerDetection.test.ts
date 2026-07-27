@@ -31,6 +31,22 @@ describe("detectJsTestRunner", () => {
     expect(runner).toBe("vitest");
   });
 
+  it.each(["dependencies", "devDependencies"] as const)(
+    "detects vitest from package.json %s without requiring a config file",
+    async (section) => {
+      const runner = await detectJsTestRunner(
+        ROOT,
+        readerFor({
+          [`${ROOT}/package.json`]: JSON.stringify({
+            [section]: { vitest: "^3.0.0" },
+          }),
+        }),
+      );
+
+      expect(runner).toBe("vitest");
+    },
+  );
+
   it("does not detect vitest from a vite config without the vitest dependency", async () => {
     const runner = await detectJsTestRunner(
       ROOT,
@@ -104,6 +120,34 @@ describe("detectJsTestRunner", () => {
     );
 
     expect(runner).toBeNull();
+  });
+
+  it("returns null when package.json exceeds the bounded manifest size", async () => {
+    const runner = await detectJsTestRunner(
+      ROOT,
+      readerFor({
+        [`${ROOT}/package.json`]: JSON.stringify({
+          devDependencies: { vitest: "^3.0.0" },
+          padding: "x".repeat(2 * 1024 * 1024),
+        }),
+      }),
+    );
+
+    expect(runner).toBeNull();
+  });
+
+  it("does not interpret malformed dependency containers as runner declarations", async () => {
+    await expect(
+      detectJsTestRunner(
+        ROOT,
+        readerFor({
+          [`${ROOT}/package.json`]: JSON.stringify({
+            dependencies: ["vitest"],
+            devDependencies: "vitest",
+          }),
+        }),
+      ),
+    ).resolves.toBeNull();
   });
 
   it("selects the nearest configured sibling package for an active test", async () => {

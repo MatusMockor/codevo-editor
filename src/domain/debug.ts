@@ -46,6 +46,7 @@ export interface DebugFunctionBreakpointInput {
 export interface DebugSetFunctionBreakpointsRequest {
   readonly rootPath: string;
   readonly sessionId: number;
+  readonly generation: number;
   readonly breakpoints: readonly DebugFunctionBreakpointInput[];
 }
 
@@ -288,7 +289,12 @@ export type DebugEventPayload =
       pauseGeneration: number;
     }
   | { kind: "resumed" }
-  | { kind: "output"; stream: "stdout" | "stderr"; text: string }
+  | {
+      readonly kind: "output";
+      readonly stream: "stdout" | "stderr";
+      readonly text: string;
+      readonly truncated: boolean;
+    }
   | { kind: "terminated"; exitCode: number | null }
   | {
       kind: "breakpointsVerified";
@@ -297,6 +303,7 @@ export type DebugEventPayload =
     }
   | {
       kind: "functionBreakpointsVerified";
+      generation: number;
       breakpoints: readonly FunctionBreakpointVerification[];
     };
 
@@ -319,6 +326,7 @@ export interface DebugGateway {
     breakpoints: readonly Breakpoint[],
     exceptionPauseMode?: DebugExceptionPauseMode,
     exceptionTypeFilter?: DebugExceptionTypeFilter,
+    functionBreakpoints?: readonly DebugFunctionBreakpointInput[],
   ): Promise<DebugRuntimeStatus>;
   /** Private application foundation; orchestration intentionally remains opt-in. */
   startCompound?(request: DebugCompoundStartRequest): Promise<DebugCompoundRuntimeStatus>;

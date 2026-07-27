@@ -1,3 +1,5 @@
+#![cfg(all(unix, not(target_os = "solaris")))]
+
 use crate::ensure_lsp_position_in_workspace;
 use crate::lsp::{
     file_uri, InitializeRequestFactory, JsonRpcNotification, LanguageServerCommand,
@@ -11,15 +13,18 @@ use crate::lsp_session::{
 };
 use crate::managed_javascript_typescript::node_executable_path;
 use serde_json::{json, Value};
-use std::fs;
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
+use std::time::{Duration, Instant, SystemTime};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+const REAL_SERVER_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 static REAL_SERVER_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 struct StatusChannel(Mutex<Sender<LanguageServerRuntimeStatus>>);
@@ -333,11 +338,273 @@ fn real_typescript_server_keeps_parallel_workspace_sessions_isolated() {
         .all(|event| event.uri.starts_with(&file_uri(&workspace_b.0))));
 }
 
-fn lock_real_server_tests() -> MutexGuard<'static, ()> {
-    REAL_SERVER_TEST_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+// This is cooperative admission between test processes owned by the same user,
+// not a security boundary against a hostile same-UID process (which could also
+// signal or kill the tests). The private directory, no-follow opens, link checks,
+// and post-flock identity verification reject stale/preinstalled entries and
+// replacement races that overlap acquisition. They cannot prevent an authorized
+// same-UID process from replacing a path after the final identity check.
+struct RealServerTestGuard {
+    _thread_guard: MutexGuard<'static, ()>,
+    _lock_directory: File,
+    process_lock: File,
+}
+
+impl Drop for RealServerTestGuard {
+    fn drop(&mut self) {
+        let _ = self.process_lock.set_len(0);
+        // SAFETY: `process_lock` owns this live file descriptor for the full
+        // lifetime of the advisory lock. Unlocking it cannot invalidate the
+        // descriptor, and the kernel also releases the lock if this process dies.
+        let _ = unsafe { libc::flock(self.process_lock.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+fn lock_real_server_tests() -> RealServerTestGuard {
+    let deadline = Instant::now() + REAL_SERVER_LOCK_TIMEOUT;
+    let thread_lock = REAL_SERVER_TEST_LOCK.get_or_init(|| Mutex::new(()));
+    let thread_guard = loop {
+        match thread_lock.try_lock() {
+            Ok(guard) => break guard,
+            Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(TryLockError::WouldBlock) => {
+                panic!(
+                    "timed out after {}s waiting for the in-process real TypeScript test lock",
+                    REAL_SERVER_LOCK_TIMEOUT.as_secs()
+                );
+            }
+        }
+    };
+    // SAFETY: `getuid` has no preconditions and does not access memory.
+    let current_uid = unsafe { libc::getuid() };
+    let lock_directory_path =
+        std::env::temp_dir().join(format!("codevo-editor-real-test-locks-{current_uid}"));
+    let (lock_directory, mut process_lock) =
+        acquire_process_lock(&lock_directory_path, current_uid, deadline);
+
+    process_lock
+        .set_len(0)
+        .expect("truncate real TypeScript test lock metadata");
+    process_lock
+        .seek(SeekFrom::Start(0))
+        .expect("seek real TypeScript test lock metadata");
+    writeln!(
+        process_lock,
+        "pid={}, manifest={}",
+        std::process::id(),
+        env!("CARGO_MANIFEST_DIR")
+    )
+    .expect("write real TypeScript test lock metadata");
+    process_lock
+        .flush()
+        .expect("flush real TypeScript test lock metadata");
+
+    RealServerTestGuard {
+        _thread_guard: thread_guard,
+        _lock_directory: lock_directory,
+        process_lock,
+    }
+}
+
+fn acquire_process_lock(
+    lock_directory_path: &Path,
+    current_uid: u32,
+    deadline: Instant,
+) -> (File, File) {
+    loop {
+        let lock_directory = open_private_lock_directory(lock_directory_path, current_uid);
+        let lock_path = lock_directory_path.join("typescript-server.lock");
+        let mut process_lock = open_process_lock(&lock_path, current_uid);
+
+        // SAFETY: `process_lock` remains alive in the returned guard. `flock`
+        // only operates on its valid file descriptor and does not take ownership.
+        let result =
+            unsafe { libc::flock(process_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            if paths_still_name_locked_files(
+                &lock_directory,
+                lock_directory_path,
+                &process_lock,
+                &lock_path,
+                current_uid,
+            ) {
+                return (lock_directory, process_lock);
+            }
+
+            // The directory or lockfile was replaced between open and flock.
+            // Release the old inode before retrying through the authoritative paths.
+            // SAFETY: the descriptor is valid and remains owned by `process_lock`.
+            let _ = unsafe { libc::flock(process_lock.as_raw_fd(), libc::LOCK_UN) };
+        } else {
+            let error = std::io::Error::last_os_error();
+            let retryable = matches!(
+                error.kind(),
+                std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+            );
+            if !retryable {
+                panic!(
+                    "failed to acquire real TypeScript test lock {}: {error}",
+                    lock_path.display()
+                );
+            }
+            if Instant::now() >= deadline {
+                panic_lock_timeout(&mut process_lock, &lock_path);
+            }
+        }
+
+        if Instant::now() >= deadline {
+            panic!(
+                "timed out after {}s retrying replaced real TypeScript test lock {}",
+                REAL_SERVER_LOCK_TIMEOUT.as_secs(),
+                lock_path.display()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn open_private_lock_directory(path: &Path, current_uid: u32) -> File {
+    let create_result = fs::DirBuilder::new().mode(0o700).create(path);
+    if let Err(error) = create_result {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::AlreadyExists,
+            "failed to create private real TypeScript test lock directory {}: {error}",
+            path.display()
+        );
+    }
+
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to open private real TypeScript test lock directory {}: {error}",
+                path.display()
+            )
+        });
+    let metadata = directory.metadata().unwrap_or_else(|error| {
+        panic!(
+            "failed to inspect private real TypeScript test lock directory {}: {error}",
+            path.display()
+        )
+    });
+    assert!(
+        metadata.file_type().is_dir() && metadata.uid() == current_uid,
+        "real TypeScript test lock directory must be owned by uid {current_uid}: {}",
+        path.display()
+    );
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o700);
+    directory
+        .set_permissions(permissions)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to restrict real TypeScript test lock directory {}: {error}",
+                path.display()
+            )
+        });
+    directory
+}
+
+fn open_process_lock(path: &Path, current_uid: u32) -> File {
+    let process_lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to open real TypeScript test lock {}: {error}",
+                path.display()
+            )
+        });
+    let metadata = process_lock.metadata().unwrap_or_else(|error| {
+        panic!(
+            "failed to inspect real TypeScript test lock {}: {error}",
+            path.display()
+        )
+    });
+    assert!(
+        metadata.file_type().is_file()
+            && metadata.uid() == current_uid
+            && metadata.nlink() == 1,
+        "real TypeScript test lock must be a regular, singly-linked file owned by uid {current_uid}: {}",
+        path.display()
+    );
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o600);
+    process_lock
+        .set_permissions(permissions)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to restrict real TypeScript test lock {}: {error}",
+                path.display()
+            )
+        });
+    process_lock
+}
+
+fn paths_still_name_locked_files(
+    lock_directory: &File,
+    lock_directory_path: &Path,
+    process_lock: &File,
+    lock_path: &Path,
+    current_uid: u32,
+) -> bool {
+    file_matches_path(lock_directory, lock_directory_path, current_uid, false)
+        && file_matches_path(process_lock, lock_path, current_uid, true)
+}
+
+fn file_matches_path(
+    file: &File,
+    path: &Path,
+    current_uid: u32,
+    require_single_link: bool,
+) -> bool {
+    let Ok(file_metadata) = file.metadata() else {
+        return false;
+    };
+    let Ok(path_metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    let same_kind = (file_metadata.file_type().is_file() && path_metadata.file_type().is_file())
+        || (file_metadata.file_type().is_dir() && path_metadata.file_type().is_dir());
+    same_kind
+        && file_metadata.uid() == current_uid
+        && path_metadata.uid() == current_uid
+        && (!require_single_link || (file_metadata.nlink() == 1 && path_metadata.nlink() == 1))
+        && file_metadata.dev() == path_metadata.dev()
+        && file_metadata.ino() == path_metadata.ino()
+}
+
+fn panic_lock_timeout(process_lock: &mut File, lock_path: &Path) -> ! {
+    let mut owner = String::new();
+    let owner = process_lock
+        .seek(SeekFrom::Start(0))
+        .ok()
+        .and_then(|_| {
+            Read::by_ref(process_lock)
+                .take(512)
+                .read_to_string(&mut owner)
+                .ok()
+        })
+        .map(|_| owner)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "unknown owner".to_string());
+    panic!(
+        "timed out after {}s waiting for real TypeScript test lock {} ({})",
+        REAL_SERVER_LOCK_TIMEOUT.as_secs(),
+        lock_path.display(),
+        owner.trim()
+    );
 }
 
 struct TypeScriptRuntime {
@@ -583,8 +850,18 @@ fn request(
 ) -> Value {
     registry
         .send_request(root, method, params)
-        .unwrap_or_else(|error| panic!("{method} failed: {error}"))
-        .unwrap_or_else(|| panic!("{method} returned no result"))
+        .unwrap_or_else(|error| {
+            panic!(
+                "{method} failed: {error}; language-server stderr tail: {:?}",
+                registry.stderr_tail(root)
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "{method} returned no result; language-server stderr tail: {:?}",
+                registry.stderr_tail(root)
+            )
+        })
 }
 
 fn position_params(path: &Path, (line, character): (u64, u64)) -> Value {

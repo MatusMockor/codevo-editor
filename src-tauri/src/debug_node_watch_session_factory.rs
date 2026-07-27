@@ -3,6 +3,7 @@ use super::watch_cdp::{node_cdp_watch_adapters_with_start_gate, NodeCdpWatchAdap
 use super::watch_command_worker::WatchDebugCommandWorkerPolicy;
 use super::watch_controller::{WatchReconnectController, WatchReconnectPolicy};
 use super::watch_desired_policy::{DesiredDebuggerPolicy, DesiredDebuggerPolicySnapshot};
+use super::watch_entry_authority::NativeNodeWatchEntryAuthority;
 use super::watch_generation::WatchGenerationPolicy;
 use super::watch_start_gate::NativeNodeWatchStartGate;
 use super::watch_supervisor::{
@@ -19,6 +20,7 @@ use crate::debug_adapter::{
 };
 use crate::debug_breakpoint_policy::DebugBreakpointAdapterKind;
 use crate::debug_commands::start_debug_session_with_factory;
+use crate::debug_exception_type_filter::DebugExceptionTypeFilter;
 use crate::debug_node_launch::{
     build_strict_native_node_watch_launch_plan, NativeNodeWatchLaunchPolicy,
 };
@@ -105,9 +107,12 @@ pub(crate) struct NativeNodeWatchSessionStartup<'a> {
     pub(crate) factory: DebugSessionFactoryStartup<'a>,
     pub(crate) root: PathBuf,
     pub(crate) workspace_directory: File,
+    pub(crate) entry_authority: NativeNodeWatchEntryAuthority,
     pub(crate) policy: NativeNodeWatchLaunchPolicy,
     pub(crate) exception_pause_mode: DebugExceptionPauseMode,
+    pub(crate) exception_type_filter: DebugExceptionTypeFilter,
     pub(crate) just_my_code: Option<DebugJustMyCodePolicy>,
+    pub(crate) function_breakpoints: Vec<DebugFunctionBreakpoint>,
     pub(crate) authority: NativeNodeWatchLaunchAuthority,
 }
 
@@ -122,27 +127,35 @@ pub(crate) fn start_native_node_watch_session(
         factory,
         root,
         workspace_directory,
+        entry_authority,
         policy,
         exception_pause_mode,
+        exception_type_filter,
         just_my_code,
+        function_breakpoints,
         authority,
     } = startup;
     if !authority.is_current() {
         return Err("Native Node watch launch authority is stale.".to_string());
     }
     let mut launch = build_strict_native_node_watch_launch_plan(&root, policy)?;
+    if launch.startup_entry.as_deref() != Some(entry_authority.canonical_path()) {
+        return Err("Native Node watch entrypoint identity changed during startup.".to_string());
+    }
     if let Some(runtime) = authority.verified_runtime.clone() {
         launch.program = runtime;
     }
     let desired = Arc::new(Mutex::new(DesiredDebuggerPolicy::new(
-        DesiredDebuggerPolicySnapshot::new(
+        DesiredDebuggerPolicySnapshot::new_with_exception_filter(
             &root,
             DebugBreakpointAdapterKind::Node,
             factory.breakpoints.to_vec(),
             exception_pause_mode,
+            exception_type_filter,
             true,
             just_my_code,
-        )?,
+        )?
+        .with_initial_function_breakpoints(function_breakpoints)?,
     )));
     let adapter_policy = NodeCdpWatchAdapterPolicy::new(
         REQUEST_TIMEOUT,
@@ -161,6 +174,7 @@ pub(crate) fn start_native_node_watch_session(
         let adapter = create_watch_adapter(
             root,
             workspace_directory,
+            entry_authority,
             launch,
             desired,
             adapter_policy,
@@ -184,6 +198,7 @@ pub(crate) fn start_native_node_watch_session(
 fn create_watch_adapter(
     root: PathBuf,
     workspace_directory: File,
+    entry_authority: NativeNodeWatchEntryAuthority,
     launch: crate::debug_node_launch::NodeLaunchPlan,
     desired: Arc<Mutex<DesiredDebuggerPolicy>>,
     adapter_policy: NodeCdpWatchAdapterPolicy,
@@ -199,6 +214,7 @@ fn create_watch_adapter(
     }
     let start_gate =
         Arc::new(NativeNodeWatchStartGate::pending(start_confirm_timeout).map_err(str::to_string)?);
+    let entry_authority = Arc::new(entry_authority);
     let mut process = spawn_node_inspector_descriptor_bound(
         &launch,
         workspace_directory,
@@ -226,6 +242,7 @@ fn create_watch_adapter(
     let (connector, replay, publisher, control, logical_finish) =
         node_cdp_watch_adapters_with_start_gate(
             root,
+            Arc::clone(&entry_authority),
             adapter_policy,
             emitter,
             Arc::clone(&authority_is_current),
@@ -265,6 +282,7 @@ fn create_watch_adapter(
         control,
         start_gate,
         supervisor: Some(supervisor),
+        _entry_authority: entry_authority,
     }))
 }
 
@@ -290,6 +308,7 @@ struct NativeNodeWatchRegistryAdapter {
     control: WatchNodeDebugAdapter,
     start_gate: Arc<NativeNodeWatchStartGate>,
     supervisor: Option<WatchSupervisorHandle>,
+    _entry_authority: Arc<NativeNodeWatchEntryAuthority>,
 }
 
 impl NativeNodeWatchRegistryAdapter {
@@ -325,15 +344,27 @@ impl DebugAdapter for NativeNodeWatchRegistryAdapter {
     fn set_function_breakpoints(
         &mut self,
         breakpoints: &[DebugFunctionBreakpoint],
+        generation: u64,
     ) -> Result<Vec<DebugFunctionBreakpointVerification>, String> {
         self.control
-            .set_function_breakpoints(breakpoints)
+            .set_function_breakpoints(breakpoints, generation)
             .map_err(Self::failure)
     }
 
     fn set_exception_pause(&mut self, mode: DebugExceptionPauseMode) -> Result<(), String> {
         self.control
             .set_exception_pause(mode)
+            .map_err(Self::failure)
+    }
+
+    fn set_exception_pause_filter(
+        &mut self,
+        mode: DebugExceptionPauseMode,
+        exception_type_filter: &[String],
+    ) -> Result<(), String> {
+        let filter = DebugExceptionTypeFilter::parse(exception_type_filter.to_vec())?;
+        self.control
+            .set_exception_pause_filter(mode, filter)
             .map_err(Self::failure)
     }
 
@@ -469,6 +500,16 @@ mod tests {
             NativeNodeWatchLaunchPolicy::for_test(self.script.to_string_lossy().into_owned(), 22)
                 .expect("strict policy")
         }
+
+        fn entry_authority(&self) -> NativeNodeWatchEntryAuthority {
+            NativeNodeWatchEntryAuthority::from_retained(
+                &self.root,
+                &self.script,
+                fs::File::open(&self.root).expect("entry authority root"),
+                fs::File::open(&self.script).expect("retained entry"),
+            )
+            .expect("entry authority")
+        }
     }
 
     impl Drop for Fixture {
@@ -514,15 +555,55 @@ mod tests {
             factory: startup(&registry, permit, &[]),
             root: fixture.root.clone(),
             workspace_directory: fs::File::open(&fixture.root).expect("retained root"),
+            entry_authority: fixture.entry_authority(),
             policy: fixture.policy(),
             exception_pause_mode: DebugExceptionPauseMode::None,
+            exception_type_filter: DebugExceptionTypeFilter::default(),
             just_my_code: None,
+            function_breakpoints: Vec::new(),
             authority: NativeNodeWatchLaunchAuthority::new(Arc::new(|| false)),
         });
 
         assert_eq!(
             result,
             Err("Native Node watch launch authority is stale.".to_string())
+        );
+        assert_eq!(registry.session_id_for_root(&root_key), None);
+    }
+
+    #[test]
+    fn mismatched_retained_entry_authority_is_rejected_before_process_spawn() {
+        let fixture = Fixture::new();
+        let other = fixture.root.join("other.js");
+        fs::write(&other, "console.log('other');\n").expect("other entry");
+        let root_key = fixture.root.to_string_lossy().into_owned();
+        let registry = Arc::new(DebugSessionRegistry::new());
+        registry.activate_root(&root_key);
+        let permit = registry.begin_start(&root_key).expect("startup permit");
+        let entry_authority = NativeNodeWatchEntryAuthority::from_retained(
+            &fixture.root,
+            &other,
+            fs::File::open(&fixture.root).expect("entry authority root"),
+            fs::File::open(&other).expect("other retained entry"),
+        )
+        .expect("other entry authority");
+
+        let result = start_native_node_watch_session(NativeNodeWatchSessionStartup {
+            factory: startup(&registry, permit, &[]),
+            root: fixture.root.clone(),
+            workspace_directory: fs::File::open(&fixture.root).expect("retained root"),
+            entry_authority,
+            policy: fixture.policy(),
+            exception_pause_mode: DebugExceptionPauseMode::None,
+            exception_type_filter: DebugExceptionTypeFilter::default(),
+            just_my_code: None,
+            function_breakpoints: Vec::new(),
+            authority: NativeNodeWatchLaunchAuthority::new(Arc::new(|| true)),
+        });
+
+        assert_eq!(
+            result,
+            Err("Native Node watch entrypoint identity changed during startup.".to_string())
         );
         assert_eq!(registry.session_id_for_root(&root_key), None);
     }
@@ -541,9 +622,12 @@ mod tests {
             factory: startup(&registry, permit, &[]),
             root: fixture.root.clone(),
             workspace_directory: fs::File::open(&fixture.root).expect("retained root"),
+            entry_authority: fixture.entry_authority(),
             policy: fixture.policy(),
             exception_pause_mode: DebugExceptionPauseMode::None,
+            exception_type_filter: DebugExceptionTypeFilter::default(),
             just_my_code: None,
+            function_breakpoints: Vec::new(),
             authority: NativeNodeWatchLaunchAuthority::new(Arc::new(move || {
                 observed.fetch_add(1, Ordering::SeqCst) == 0
             })),
@@ -572,9 +656,12 @@ mod tests {
             factory: startup(&registry, permit, &[]),
             root: fixture.root.clone(),
             workspace_directory: fs::File::open(&fixture.root).expect("retained root"),
+            entry_authority: fixture.entry_authority(),
             policy: fixture.policy(),
             exception_pause_mode: DebugExceptionPauseMode::None,
+            exception_type_filter: DebugExceptionTypeFilter::default(),
             just_my_code: None,
+            function_breakpoints: Vec::new(),
             authority: NativeNodeWatchLaunchAuthority::new(Arc::new(|| true)),
         });
 
