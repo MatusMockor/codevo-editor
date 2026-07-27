@@ -4,6 +4,7 @@ import {
   DebugCompoundSessionProjection,
   MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS,
 } from "./debugCompoundSessionProjection";
+import { MAX_NODE_DEBUG_COMPOUND_MEMBERS } from "./nodeDebugCompoundSessionCoordinator";
 
 const event = (
   sessionId: number,
@@ -32,11 +33,16 @@ const EXACT_UTF8_ROOT = `/${"😀".repeat(1_023)}abc`;
 const OVERSIZED_UTF8_ROOT = `${EXACT_UTF8_ROOT}😀`;
 
 describe("DebugCompoundSessionProjection", () => {
-  it("projects two to four exact children and initially selects the first live child", () => {
+  it("derives pending lifecycle capacity from the compound member bound", () => {
+    expect(MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS).toBe(MAX_NODE_DEBUG_COMPOUND_MEMBERS * 4);
+  });
+
+  it("projects two to eight exact children and initially selects the first live child", () => {
     for (const sessionIds of [
       [11, 12],
       [11, 12, 13],
       [11, 12, 13, 14],
+      [11, 12, 13, 14, 15, 16, 17, 18],
     ]) {
       const projection = new DebugCompoundSessionProjection();
       const lease = projection.begin("/workspace", sessionIds);
@@ -94,11 +100,28 @@ describe("DebugCompoundSessionProjection", () => {
     expect(projection.snapshot()).toEqual({ kind: "idle" });
   });
 
+  it("fans lifecycle events across eight children and retires after the last terminal", () => {
+    const projection = new DebugCompoundSessionProjection();
+    const sessionIds = Array.from({ length: 8 }, (_, index) => index + 21);
+    const lease = projection.begin("/workspace", sessionIds)!;
+    for (const sessionId of sessionIds) {
+      expect(projection.handleEvent(event(sessionId, 1, "started"))).toBe(true);
+    }
+    expect(projection.snapshot()).toMatchObject({ kind: "active", runningCount: 8 });
+    expect(projection.handleEvent(event(sessionIds[7]!, 2, "stopped"))).toBe(true);
+    expect(projection.selectedSessionId(lease)).toBe(sessionIds[7]);
+    expect(projection.handleEvent(event(sessionIds[0]!, 2, "terminated"))).toBe(true);
+    for (const sessionId of sessionIds.slice(1)) {
+      expect(projection.handleEvent(event(sessionId, 3, "terminated"))).toBe(true);
+    }
+    expect(projection.snapshot()).toEqual({ kind: "idle" });
+  });
+
   it("rejects invalid groups, foreign leases, roots and session identities", () => {
     const projection = new DebugCompoundSessionProjection();
     expect(projection.begin("", [1, 2])).toBeNull();
     expect(projection.begin("/workspace", [1])).toBeNull();
-    expect(projection.begin("/workspace", [1, 2, 3, 4, 5])).toBeNull();
+    expect(projection.begin("/workspace", [1, 2, 3, 4, 5, 6, 7, 8, 9])).toBeNull();
     expect(projection.begin("/workspace", [1, 1])).toBeNull();
     expect(projection.begin("/workspace", [0, 2])).toBeNull();
     const lease = projection.begin("/workspace", [11, 12])!;

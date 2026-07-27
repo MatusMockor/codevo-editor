@@ -5,8 +5,10 @@ import {
   MAX_DEBUG_VARIABLE_NAME_BYTES,
   MAX_DEBUG_VARIABLE_VALUE_BYTES,
   MAX_DEBUG_COMPOUND_MEMBERS,
+  MAX_DEBUG_COMPOUND_REQUEST_BYTES,
   MAX_DEBUG_OUTPUT_EVENT_BYTES,
   MAX_DEBUG_STACK_FRAMES,
+  DebugCompoundRequestTooLargeError,
   decodeDebugEvent,
   decodeDebugIpcResult,
   decodeDebugStartResponse,
@@ -20,6 +22,69 @@ import {
 } from "./tauriDebugIpcContract";
 
 describe("debug Tauri IPC contract", () => {
+  it("accepts eight compound members and rejects nine before IPC", async () => {
+    expect(MAX_DEBUG_COMPOUND_MEMBERS).toBe(8);
+    const member = (index: number) => ({
+      launch: { kind: "node-script" as const, scriptPath: `/workspace/service-${index}.js` },
+      breakpoints: [],
+      exceptionPauseMode: "none" as const,
+      exceptionTypeFilter: [],
+    });
+    const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
+      status: "ok",
+      sessionIds: Array.from({ length: 8 }, (_, index) => index + 1),
+    });
+    const request = {
+      rootPath: "/workspace",
+      stopAll: true,
+      members: Array.from({ length: 8 }, (_, index) => member(index)),
+    } as const;
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_compound", { request }),
+    ).resolves.toMatchObject({ status: "ok", sessionIds: [1, 2, 3, 4, 5, 6, 7, 8] });
+    expect(invokeCommand).toHaveBeenCalledOnce();
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_compound", {
+        request: { ...request, members: [...request.members, member(8)] },
+      }),
+    ).rejects.toThrow("at most 8");
+    expect(invokeCommand).toHaveBeenCalledOnce();
+  });
+
+  it("distinguishes an eight-member compound request above the one MiB payload budget", async () => {
+    const breakpoints = Array.from({ length: 900 }, (_, index) => ({
+      condition: null,
+      enabled: true,
+      filePath: `/workspace/packages/service-${String(index).padStart(4, "0")}/src/handler-with-realistic-path.ts`,
+      id: `breakpoint-${index}`,
+      lineNumber: index + 1,
+    }));
+    const request = {
+      members: Array.from({ length: MAX_DEBUG_COMPOUND_MEMBERS }, (_, index) => ({
+        breakpoints,
+        exceptionPauseMode: "none" as const,
+        exceptionTypeFilter: [],
+        launch: {
+          kind: "node-script" as const,
+          scriptPath: `/workspace/service-${index}.js`,
+        },
+      })),
+      rootPath: "/workspace",
+      stopAll: true as const,
+    };
+    expect(new TextEncoder().encode(JSON.stringify(request)).byteLength).toBeGreaterThan(
+      MAX_DEBUG_COMPOUND_REQUEST_BYTES,
+    );
+    const invokeCommand = vi.fn<InvokeDebugCommand>();
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_compound", { request }),
+    ).rejects.toBeInstanceOf(DebugCompoundRequestTooLargeError);
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
   it("strictly forwards a bounded stopAll compound without attach or task metadata", async () => {
     const request: DebugCompoundStartRequest = {
       rootPath: "/workspace",
@@ -59,16 +124,12 @@ describe("debug Tauri IPC contract", () => {
       { ...request, members: request.members.slice(0, 1) },
       {
         ...request,
-        members: [
-          ...request.members,
-          ...request.members,
-          {
-            launch: { kind: "node-script", scriptPath: "/workspace/e.js" },
-            breakpoints: [],
-            exceptionPauseMode: "none",
-            exceptionTypeFilter: [],
-          },
-        ],
+        members: Array.from({ length: 9 }, (_, index) => ({
+          launch: { kind: "node-script", scriptPath: `/workspace/${index}.js` },
+          breakpoints: [],
+          exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
+        })),
       },
       {
         ...request,
@@ -100,6 +161,16 @@ describe("debug Tauri IPC contract", () => {
     expect(decodeDebugCompoundStartResponse({ status: "ok", sessionIds: [1, 2] })).toEqual({
       status: "ok",
       sessionIds: [1, 2],
+    });
+    const maximumSessionIds = Array.from(
+      { length: MAX_DEBUG_COMPOUND_MEMBERS },
+      (_, index) => index + 1,
+    );
+    expect(
+      decodeDebugCompoundStartResponse({ status: "ok", sessionIds: maximumSessionIds }),
+    ).toEqual({
+      status: "ok",
+      sessionIds: maximumSessionIds,
     });
     expect(() => decodeDebugCompoundStartResponse({ status: "ok", sessionIds: [1, 1] })).toThrow(
       "unique session ids",

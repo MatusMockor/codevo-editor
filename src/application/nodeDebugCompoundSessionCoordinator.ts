@@ -1,6 +1,6 @@
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 
-export const MAX_NODE_DEBUG_COMPOUND_MEMBERS = 4;
+export const MAX_NODE_DEBUG_COMPOUND_MEMBERS = 8;
 export const MIN_NODE_DEBUG_COMPOUND_MEMBERS = 2;
 export const MAX_PENDING_NODE_DEBUG_COMPOUND_EVENTS = 32;
 const MAX_NODE_DEBUG_COMPOUND_IDENTITY_BYTES = 4_096;

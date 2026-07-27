@@ -6,6 +6,7 @@ import {
   type NodeDebugPreLaunchTaskExecution,
 } from "./nodeDebugPreLaunchTaskCoordinator";
 import { cloneNodeDebugCompoundMembers } from "./nodeDebugCompoundRecipe";
+import type { DebugCompoundStartOutcome } from "./debugCompoundStart";
 import type { PreparedNodeDebugCompoundLaunch } from "./useNodeDebugConfigurationLauncher";
 import type { VscodeProcessTasksState } from "./useVscodeProcessTasks";
 
@@ -15,6 +16,8 @@ const COMPOUND_PRE_LAUNCH_FAILED_WARNING = "Debug compound pre-launch task faile
 const COMPOUND_STALE_WARNING =
   "Debug compound start was cancelled because the workspace or task state changed.";
 const COMPOUND_START_WARNING = "Node debug compound could not be started.";
+const COMPOUND_REQUEST_TOO_LARGE_WARNING =
+  "Node debug compound request exceeded the 1 MiB payload limit.";
 
 interface CompoundBoundary {
   readonly launchConfigurationVersion: number;
@@ -43,7 +46,9 @@ export function useNodeDebugCompoundComposition(options: {
   readonly processTasks: VscodeProcessTasksState;
   readonly reportWarning: (message: string) => void;
   readonly rootPath: string | null;
-  readonly startCompound: (members: readonly DebugCompoundLaunchTarget[]) => Promise<boolean>;
+  readonly startCompound: (
+    members: readonly DebugCompoundLaunchTarget[],
+  ) => Promise<DebugCompoundStartOutcome>;
   readonly stopAcceptedCompound: () => Promise<void>;
   readonly workspaceId: string | null;
   readonly workspaceTrusted: boolean;
@@ -124,6 +129,7 @@ export function useNodeDebugCompoundComposition(options: {
       }
       const members = Object.freeze(recipes.map(({ launch }) => launch));
       let accepted = false;
+      let requestTooLarge = false;
       const pending = coordinator.run(
         {
           task: prepared.preLaunchTask,
@@ -131,7 +137,10 @@ export function useNodeDebugCompoundComposition(options: {
           workspaceId: captured.workspaceId,
         },
         async () => {
-          accepted = await optionsRef.current.startCompound(members);
+          const result = await optionsRef.current.startCompound(members);
+          accepted = result === true;
+          requestTooLarge =
+            typeof result === "object" && result !== null && result.kind === "request-too-large";
           return accepted;
         },
       );
@@ -142,13 +151,15 @@ export function useNodeDebugCompoundComposition(options: {
       if (accepted) await safelyStopAcceptedCompound(optionsRef.current.stopAcceptedCompound);
       if (outcome.status === "cancelled") return false;
       const warning =
-        outcome.status === "task-unavailable"
-          ? COMPOUND_PRE_LAUNCH_UNAVAILABLE_WARNING
-          : outcome.status === "task-failed"
-            ? COMPOUND_PRE_LAUNCH_FAILED_WARNING
-            : outcome.status === "busy" || outcome.status === "stale"
-              ? COMPOUND_STALE_WARNING
-              : COMPOUND_START_WARNING;
+        outcome.status === "error" && requestTooLarge
+          ? COMPOUND_REQUEST_TOO_LARGE_WARNING
+          : outcome.status === "task-unavailable"
+            ? COMPOUND_PRE_LAUNCH_UNAVAILABLE_WARNING
+            : outcome.status === "task-failed"
+              ? COMPOUND_PRE_LAUNCH_FAILED_WARNING
+              : outcome.status === "busy" || outcome.status === "stale"
+                ? COMPOUND_STALE_WARNING
+                : COMPOUND_START_WARNING;
       safelyWarn(optionsRef.current.reportWarning, warning);
       return false;
     },

@@ -1,9 +1,10 @@
 import type { DebugEvent } from "../domain/debug";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
+import { MAX_NODE_DEBUG_COMPOUND_MEMBERS } from "./nodeDebugCompoundSessionCoordinator";
 
 export const MIN_DEBUG_COMPOUND_PROJECTED_SESSIONS = 2;
-export const MAX_DEBUG_COMPOUND_PROJECTED_SESSIONS = 4;
-export const MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS = 32;
+export const MAX_DEBUG_COMPOUND_PROJECTED_SESSIONS = 8;
+export const MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS = MAX_NODE_DEBUG_COMPOUND_MEMBERS * 4;
 const MAX_DEBUG_COMPOUND_PROJECTION_ROOT_BYTES = 4_096;
 const UTF8_ENCODER = new TextEncoder();
 

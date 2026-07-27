@@ -66,7 +66,11 @@ import {
   type DebugVariablePagesState,
 } from "../domain/debugVariablePages";
 import { DebugCompoundSessionProjection } from "./debugCompoundSessionProjection";
-import { NodeDebugCompoundSessionCoordinator } from "./nodeDebugCompoundSessionCoordinator";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  MIN_NODE_DEBUG_COMPOUND_MEMBERS,
+  NodeDebugCompoundSessionCoordinator,
+} from "./nodeDebugCompoundSessionCoordinator";
 import {
   COMPOUND_POLICY_SYNC_ERROR,
   startDebugCompoundAccepted as startDebugCompound,
@@ -321,7 +325,10 @@ export function useWorkbenchDebugSession({
       const live = [...compound.childSnapshots.entries()]
         .filter(([, snapshot]) => snapshot.state.kind !== "terminated")
         .map(([sessionId]) => sessionId);
-      return live.length >= 2 && live.length <= 4 ? Object.freeze(live) : emptyCompoundSessionIds;
+      return live.length >= MIN_NODE_DEBUG_COMPOUND_MEMBERS &&
+        live.length <= MAX_NODE_DEBUG_COMPOUND_MEMBERS
+        ? Object.freeze(live)
+        : emptyCompoundSessionIds;
     },
     [isExactWorkspaceOwnerCurrent, isWorkspaceTrusted],
   );
@@ -894,7 +901,7 @@ export function useWorkbenchDebugSession({
         },
         members,
       );
-      if (accepted) {
+      if (accepted === true) {
         const root = currentRootRef.current;
         if (root) {
           const state = (snapshotsRef.current[normalizedWorkspaceRootKey(root)] ?? inactiveSnapshot)

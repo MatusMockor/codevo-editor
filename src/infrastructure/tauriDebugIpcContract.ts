@@ -96,7 +96,7 @@ export const MAX_DEBUG_VARIABLES = 10_000;
 export const MAX_DEBUG_STACK_FRAMES = 256;
 const MAX_DEBUG_ROOT_PATH_BYTES = 4_096;
 export const MIN_DEBUG_COMPOUND_MEMBERS = 2;
-export const MAX_DEBUG_COMPOUND_MEMBERS = 4;
+export const MAX_DEBUG_COMPOUND_MEMBERS = 8;
 export const MAX_DEBUG_COMPOUND_MESSAGE_BYTES = 512;
 export const MAX_DEBUG_COMPOUND_REQUEST_BYTES = 1_048_576;
 export const MAX_DEBUG_RUN_TO_LOCATION_PATH_BYTES = 4_096;
@@ -104,6 +104,13 @@ export const MAX_DEBUG_RUN_TO_LOCATION_LINE = 4_294_967_295;
 export const MAX_DEBUG_RUN_TO_LOCATION_COLUMN = 4_294_967_295;
 /** Must match Rust `MAX_DEBUG_OUTPUT_EVENT_BYTES` at the debugger event wire boundary. */
 export const MAX_DEBUG_OUTPUT_EVENT_BYTES = MAX_DEBUG_CONSOLE_OUTPUT_BYTES;
+
+export class DebugCompoundRequestTooLargeError extends TypeError {
+  constructor() {
+    super(`Debug compound request exceeds ${MAX_DEBUG_COMPOUND_REQUEST_BYTES} UTF-8 bytes.`);
+    this.name = "DebugCompoundRequestTooLargeError";
+  }
+}
 
 /** Validates both directions while keeping the raw Tauri transport in one place. */
 export async function invokeDebugIpc<Command extends DebugIpcCommand>(
@@ -411,7 +418,10 @@ export function decodeDebugCompoundStartResponse(value: unknown): DebugCompoundS
       sessionIds.length < MIN_DEBUG_COMPOUND_MEMBERS ||
       new Set(sessionIds).size !== sessionIds.length
     ) {
-      throw invalidDebugWire(`${path}.sessionIds`, "2 to 4 unique session ids");
+      throw invalidDebugWire(
+        `${path}.sessionIds`,
+        `${MIN_DEBUG_COMPOUND_MEMBERS} to ${MAX_DEBUG_COMPOUND_MEMBERS} unique session ids`,
+      );
     }
     return { status: "ok", sessionIds };
   }
@@ -563,10 +573,7 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
       requireExactKeys(args, ["request"], `${command} args`);
       const request = requireRecord(args.request, `${command} args.request`);
       if (encodedJsonBytes(request, `${command} args.request`) > MAX_DEBUG_COMPOUND_REQUEST_BYTES) {
-        throw invalidDebugWire(
-          `${command} args.request`,
-          `at most ${MAX_DEBUG_COMPOUND_REQUEST_BYTES} UTF-8 bytes`,
-        );
+        throw new DebugCompoundRequestTooLargeError();
       }
       requireExactKeys(request, ["rootPath", "members", "stopAll"], `${command} args.request`);
       const rootPath = requireBoundedString(

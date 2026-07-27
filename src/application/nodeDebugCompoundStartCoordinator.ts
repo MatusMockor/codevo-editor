@@ -9,6 +9,8 @@ import {
 } from "./nodeDebugCompoundRecipe";
 import {
   NodeDebugCompoundSessionCoordinator,
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  MIN_NODE_DEBUG_COMPOUND_MEMBERS,
   type NodeDebugCompoundEvent,
   type NodeDebugCompoundLease,
   type NodeDebugCompoundOwner,
@@ -379,8 +381,8 @@ async function safelyStartMembers(
       result?.kind === "batch" &&
       Array.isArray(result.sessionIds) &&
       result.sessionIds.length === request.members.length &&
-      result.sessionIds.length >= 2 &&
-      result.sessionIds.length <= 4 &&
+      result.sessionIds.length >= MIN_NODE_DEBUG_COMPOUND_MEMBERS &&
+      result.sessionIds.length <= MAX_NODE_DEBUG_COMPOUND_MEMBERS &&
       result.sessionIds.every(validSessionId) &&
       new Set(result.sessionIds).size === result.sessionIds.length
     )

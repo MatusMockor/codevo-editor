@@ -21,7 +21,7 @@ use std::{
 use tauri::{AppHandle, State};
 
 const MIN_DEBUG_COMPOUND_MEMBERS: usize = 2;
-const MAX_DEBUG_COMPOUND_MEMBERS: usize = 4;
+const MAX_DEBUG_COMPOUND_MEMBERS: usize = 8;
 const MAX_DEBUG_COMPOUND_REQUEST_BYTES: usize = 1024 * 1024;
 const COMPOUND_START_ERROR: &str = "Compound debug configuration could not be started safely.";
 const COMPOUND_START_UNTRUSTED: &str = "Trust this workspace to run the debugger.";
@@ -243,18 +243,15 @@ pub(crate) async fn debug_start_compound(
     };
     let sink: Arc<dyn DebugEventSink> = Arc::new(AppHandleDebugEventSink { app });
     let member_count = request.members.len();
-    let mut session_ids = Vec::with_capacity(member_count);
-
-    for member in request.members {
-        let session_id = match start_member(&context, member, Arc::clone(&sink)).await {
-            Ok(session_id) => session_id,
-            Err(response) => {
-                registry.abort_start_group(&group);
-                return Ok(response);
-            }
+    let session_ids =
+        match start_compound_group_members(&registry, &group, request.members, |member| {
+            start_member(&context, member, Arc::clone(&sink))
+        })
+        .await
+        {
+            Ok(session_ids) => session_ids,
+            Err(response) => return Ok(response),
         };
-        session_ids.push(session_id);
-    }
 
     if let Err(response) = validate_compound_start_commit(
         DebugCompoundCommitContext {
@@ -271,6 +268,41 @@ pub(crate) async fn debug_start_compound(
         return Ok(response);
     }
     Ok(DebugCompoundStartResponse::Ok { session_ids })
+}
+
+async fn start_compound_members_sequentially<I, Start, Future, Session, Error>(
+    members: I,
+    mut start: Start,
+) -> Result<Vec<Session>, Error>
+where
+    I: IntoIterator,
+    Start: FnMut(I::Item) -> Future,
+    Future: std::future::Future<Output = Result<Session, Error>>,
+{
+    let members = members.into_iter();
+    let mut sessions = Vec::with_capacity(members.size_hint().0.min(MAX_DEBUG_COMPOUND_MEMBERS));
+    for member in members {
+        sessions.push(start(member).await?);
+    }
+    Ok(sessions)
+}
+
+async fn start_compound_group_members<I, Start, Future, Session, Error>(
+    registry: &DebugSessionRegistry,
+    group: &DebugStartupGroup,
+    members: I,
+    start: Start,
+) -> Result<Vec<Session>, Error>
+where
+    I: IntoIterator,
+    Start: FnMut(I::Item) -> Future,
+    Future: std::future::Future<Output = Result<Session, Error>>,
+{
+    let result = start_compound_members_sequentially(members, start).await;
+    if result.is_err() {
+        registry.abort_start_group(group);
+    }
+    result
 }
 
 fn valid_request_shape(request: &DebugCompoundStartRequest) -> bool {
@@ -519,7 +551,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[derive(Default)]
-    struct CompoundCommitTestSink;
+    pub(super) struct CompoundCommitTestSink;
 
     impl DebugEventSink for CompoundCommitTestSink {
         fn emit(&self, _event: DebugEvent) {}
@@ -567,7 +599,7 @@ mod tests {
         }
     }
 
-    fn start_compound_commit_test_member(
+    pub(super) fn start_compound_commit_test_member(
         registry: &DebugSessionRegistry,
         group: &DebugStartupGroup,
         sink: Arc<CompoundCommitTestSink>,
@@ -957,3 +989,7 @@ mod tests {
         fs::remove_dir_all(fixture).expect("remove fixture");
     }
 }
+
+#[cfg(test)]
+#[path = "debug_compound_start_large_group_tests.rs"]
+mod large_group_tests;

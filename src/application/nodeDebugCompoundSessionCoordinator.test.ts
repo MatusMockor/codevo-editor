@@ -15,29 +15,32 @@ const EXACT_UTF8_ROOT = `/${"😀".repeat(1_023)}abc`;
 const OVERSIZED_UTF8_ROOT = `${EXACT_UTF8_ROOT}😀`;
 
 describe("NodeDebugCompoundSessionCoordinator", () => {
-  it("accepts two to four exact members and exposes only generic progress", () => {
+  it("accepts eight exact members and rejects nine", () => {
     const coordinator = new NodeDebugCompoundSessionCoordinator();
-    const lease = coordinator.begin(OWNER, 2);
+    const lease = coordinator.begin(OWNER, 8);
     expect(lease).not.toBeNull();
     expect(coordinator.snapshot()).toEqual({
       acceptedCount: 0,
       kind: "starting",
-      memberCount: 2,
+      memberCount: 8,
     });
-    expect(coordinator.accept(lease!, 0, 11)).toEqual({ kind: "accepted" });
-    expect(coordinator.accept(lease!, 1, 12)).toEqual({ kind: "ready" });
+    for (let index = 0; index < 7; index += 1) {
+      expect(coordinator.accept(lease!, index, index + 11)).toEqual({ kind: "accepted" });
+    }
+    expect(coordinator.accept(lease!, 7, 18)).toEqual({ kind: "ready" });
     expect(coordinator.snapshot()).toEqual({
-      activeCount: 2,
+      activeCount: 8,
       hasSelectedSession: false,
       kind: "active",
-      memberCount: 2,
+      memberCount: 8,
     });
+    expect(new NodeDebugCompoundSessionCoordinator().begin(OWNER, 9)).toBeNull();
   });
 
   it("rejects invalid bounds, duplicate slots, duplicate sessions and foreign leases", () => {
     const coordinator = new NodeDebugCompoundSessionCoordinator();
     expect(coordinator.begin(OWNER, 1)).toBeNull();
-    expect(coordinator.begin(OWNER, 5)).toBeNull();
+    expect(coordinator.begin(OWNER, 9)).toBeNull();
     const lease = coordinator.begin(OWNER, 2)!;
     const foreign = new NodeDebugCompoundSessionCoordinator().begin(OWNER, 2)!;
     expect(coordinator.accept(foreign, 0, 1)).toEqual({ kind: "rejected" });
@@ -108,6 +111,30 @@ describe("NodeDebugCompoundSessionCoordinator", () => {
     expect(coordinator.rollback(lease)).toEqual([10, 30]);
     expect(coordinator.snapshot()).toEqual({ kind: "idle" });
     expect(coordinator.rollback(lease)).toEqual([]);
+  });
+
+  it("returns all eight live members for stopAll and retires only after every terminal event", () => {
+    const coordinator = new NodeDebugCompoundSessionCoordinator();
+    const sessionIds = Array.from({ length: 8 }, (_, index) => index + 41);
+    const lease = coordinator.begin(OWNER, sessionIds.length)!;
+    sessionIds.forEach((sessionId, index) => coordinator.accept(lease, index, sessionId));
+
+    expect(coordinator.stopAll(lease)).toEqual(sessionIds);
+    for (const sessionId of sessionIds.slice(0, -1)) {
+      expect(
+        coordinator.handleEvent({ kind: "terminated", rootPath: "/workspace", sessionId }),
+      ).toBe(true);
+      expect(coordinator.snapshot()).toMatchObject({ kind: "ending" });
+    }
+    expect(coordinator.stopAll(lease)).toEqual([sessionIds[7]]);
+    expect(
+      coordinator.handleEvent({
+        kind: "terminated",
+        rootPath: "/workspace",
+        sessionId: sessionIds[7]!,
+      }),
+    ).toBe(true);
+    expect(coordinator.snapshot()).toEqual({ kind: "idle" });
   });
 
   it("invalidates only the exact owner generation and canonical root", () => {

@@ -25,7 +25,11 @@ import type {
   NodeDebugAttachCandidateStartPort,
 } from "./debugSessionContracts";
 import { DebugCompoundSessionProjection } from "./debugCompoundSessionProjection";
-import { NodeDebugCompoundSessionCoordinator } from "./nodeDebugCompoundSessionCoordinator";
+import type { DebugCompoundStartOutcome } from "./debugCompoundStart";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  NodeDebugCompoundSessionCoordinator,
+} from "./nodeDebugCompoundSessionCoordinator";
 import { useWorkbenchDebugSession } from "./useDebugSession";
 import {
   useDebugSessionEventProjection,
@@ -47,6 +51,18 @@ const compoundMembers = [
     env: {},
   },
 ] as const;
+
+const eightCompoundSessionIds = Array.from(
+  { length: MAX_NODE_DEBUG_COMPOUND_MEMBERS },
+  (_, index) => 41 + index,
+);
+const eightCompoundMembers = Array.from(
+  { length: MAX_NODE_DEBUG_COMPOUND_MEMBERS },
+  (_, index) => ({
+    kind: "node-script" as const,
+    scriptPath: `/workspace/one/member-${index}.js`,
+  }),
+);
 
 const frame: StackFrame = {
   frameId: 11,
@@ -489,14 +505,18 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
-  it("fans live breakpoint and exception policies out to every exact compound member", async () => {
+  it("derives live fan-out admission from the exported compound member bound", async () => {
     const harness = createGateway();
+    harness.startCompound.mockResolvedValue({
+      kind: "ok",
+      sessionIds: eightCompoundSessionIds,
+    });
     harness.setBreakpoints.mockImplementation(
       async (_rootPath, _sessionId, _filePath, breakpoints) => [...breakpoints],
     );
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
     await act(async () => {
-      expect(await ui.hook().startDebugCompoundAccepted(compoundMembers)).toBe(true);
+      expect(await ui.hook().startDebugCompoundAccepted(eightCompoundMembers)).toBe(true);
     });
 
     await act(async () => {
@@ -507,26 +527,70 @@ describe("useDebugSession", () => {
     await act(async () => {
       await ui.hook().toggleBreakpoint("/workspace/one/index.js", 9);
     });
-    expect(harness.setBreakpoints.mock.calls.map((call) => call[1])).toEqual([41, 42]);
+    expect(harness.setBreakpoints.mock.calls.map((call) => call[1])).toEqual(
+      eightCompoundSessionIds,
+    );
 
     harness.setBreakpoints.mockClear();
     const breakpointId = ui.hook().breakpoints[0]!.id;
     await act(async () => {
       await ui.hook().setBreakpointEnabled(breakpointId, false);
     });
-    expect(harness.setBreakpoints.mock.calls.map((call) => call[1])).toEqual([41, 42]);
+    expect(harness.setBreakpoints.mock.calls.map((call) => call[1])).toEqual(
+      eightCompoundSessionIds,
+    );
 
     await act(async () => void (await ui.hook().toggleBreakpointsActivated()));
-    expect(harness.setBreakpointsActive.mock.calls.map(([request]) => request.sessionId)).toEqual([
-      41, 42,
-    ]);
+    expect(harness.setBreakpointsActive.mock.calls.map(([request]) => request.sessionId)).toEqual(
+      eightCompoundSessionIds,
+    );
 
     await act(async () => void (await ui.hook().setExceptionPauseMode("all")));
-    expect(harness.setExceptionPause.mock.calls).toEqual([
-      ["/workspace/one", 41, "all"],
-      ["/workspace/one", 42, "all"],
-    ]);
+    expect(harness.setExceptionPause.mock.calls).toEqual(
+      eightCompoundSessionIds.map((sessionId) => ["/workspace/one", sessionId, "all"]),
+    );
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 41 });
+    ui.unmount();
+  });
+
+  it("fails an eight-member compound closed when live breakpoint fan-out diverges", async () => {
+    const harness = createGateway();
+    const divergent = deferred<Breakpoint[]>();
+    harness.startCompound.mockResolvedValue({
+      kind: "ok",
+      sessionIds: eightCompoundSessionIds,
+    });
+    harness.setBreakpoints.mockImplementation(async (_root, sessionId, _file, breakpoints) => {
+      if (sessionId === eightCompoundSessionIds[eightCompoundSessionIds.length - 1]) {
+        return divergent.promise;
+      }
+      return [...breakpoints];
+    });
+    const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
+    await act(async () => {
+      expect(await ui.hook().startDebugCompoundAccepted(eightCompoundMembers)).toBe(true);
+    });
+
+    let mutation!: Promise<BreakpointCreationOwnership | null>;
+    act(() => {
+      mutation = ui.hook().toggleBreakpoint("/workspace/one/index.js", 9);
+    });
+    await act(async () => Promise.resolve());
+    expect(harness.setBreakpoints.mock.calls.map((call) => call[1])).toEqual(
+      eightCompoundSessionIds,
+    );
+
+    await act(async () => {
+      divergent.reject(new Error("private divergent adapter state"));
+      await expect(mutation).rejects.toThrow(
+        "Breakpoint update was cancelled because the debug session changed.",
+      );
+    });
+    expect(ui.hook().breakpoints).toEqual([]);
+    expect(JSON.stringify(harness.setBreakpoints.mock.calls)).not.toContain("private");
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(41);
+    expect(ui.hook().debugCompoundActive).toBe(false);
+    expect(ui.hook().snapshot.state.kind).toBe("terminated");
     ui.unmount();
   });
 
@@ -730,7 +794,7 @@ describe("useDebugSession", () => {
     const status = deferred<{ readonly kind: "ok"; readonly sessionIds: readonly number[] }>();
     harness.startCompound.mockReturnValueOnce(status.promise);
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
-    let starting!: Promise<boolean>;
+    let starting!: Promise<DebugCompoundStartOutcome>;
     let firstStop!: Promise<void>;
     let secondStop!: Promise<void>;
 
@@ -766,7 +830,7 @@ describe("useDebugSession", () => {
     const status = deferred<{ readonly kind: "error"; readonly message: string }>();
     harness.startCompound.mockReturnValueOnce(status.promise);
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
-    let starting!: Promise<boolean>;
+    let starting!: Promise<DebugCompoundStartOutcome>;
     let stopping!: Promise<void>;
 
     act(() => {
@@ -793,7 +857,7 @@ describe("useDebugSession", () => {
     const status = deferred<{ readonly kind: "ok"; readonly sessionIds: readonly number[] }>();
     harness.startCompound.mockReturnValueOnce(status.promise);
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
-    let starting!: Promise<boolean>;
+    let starting!: Promise<DebugCompoundStartOutcome>;
     let stopping!: Promise<void>;
 
     act(() => {
@@ -906,7 +970,7 @@ describe("useDebugSession", () => {
     const status = deferred<{ readonly kind: "ok"; readonly sessionIds: readonly number[] }>();
     harness.startCompound.mockReturnValueOnce(status.promise);
     const ui = renderHook(harness.gateway, "/workspace/one", () => true, false, "owner-1");
-    let pending!: Promise<boolean>;
+    let pending!: Promise<DebugCompoundStartOutcome>;
     await act(async () => {
       pending = ui.hook().startDebugCompoundAccepted(compoundMembers);
       await Promise.resolve();

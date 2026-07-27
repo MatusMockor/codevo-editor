@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { NodeDebugCompoundOwner } from "./nodeDebugCompoundSessionCoordinator";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  type NodeDebugCompoundOwner,
+} from "./nodeDebugCompoundSessionCoordinator";
 import {
   NODE_DEBUG_COMPOUND_PRE_LAUNCH_ERROR,
   NODE_DEBUG_COMPOUND_ROLLBACK_ERROR,
@@ -56,6 +59,30 @@ describe("NodeDebugCompoundStartCoordinator", () => {
     ]);
     expect(Object.isFrozen(ui.startMembers.mock.calls[0]?.[0].members)).toBe(true);
     expect(Object.isFrozen(ui.startMembers.mock.calls[0]?.[0].members[0]?.launch)).toBe(true);
+  });
+
+  it("starts eight members and rejects nine before reaching the start port", async () => {
+    const ui = port();
+    ui.startMembers.mockResolvedValue({
+      kind: "batch",
+      sessionIds: Array.from({ length: MAX_NODE_DEBUG_COMPOUND_MEMBERS }, (_, index) => index + 1),
+    });
+    const coordinator = new NodeDebugCompoundStartCoordinator(ui);
+
+    await expect(
+      coordinator.start({ members: compoundMembers(MAX_NODE_DEBUG_COMPOUND_MEMBERS + 1) }),
+    ).resolves.toEqual({
+      kind: "invalid",
+    });
+    expect(ui.startMembers).not.toHaveBeenCalled();
+
+    await expect(
+      coordinator.start({ members: compoundMembers(MAX_NODE_DEBUG_COMPOUND_MEMBERS) }),
+    ).resolves.toMatchObject({ kind: "started" });
+    expect(ui.startMembers).toHaveBeenCalledOnce();
+    expect(ui.startMembers.mock.calls[0]?.[0].members).toHaveLength(
+      MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+    );
   });
 
   it("bounds captured owner identities by UTF-8 bytes and rejects control characters", async () => {
@@ -390,8 +417,14 @@ function port(): {
   };
 }
 
-function compoundMembers(prefix = ""): PreparedNodeDebugLaunch[] {
-  const stem = prefix ? `${prefix}-` : "";
+function compoundMembers(prefixOrCount: string | number = ""): PreparedNodeDebugLaunch[] {
+  if (typeof prefixOrCount === "number") {
+    return Array.from({ length: prefixOrCount }, (_, index) => ({
+      launch: { kind: "node-script", scriptPath: `/workspace/service-${index}.ts` },
+      preLaunchTask: null,
+    }));
+  }
+  const stem = prefixOrCount ? `${prefixOrCount}-` : "";
   return [
     {
       launch: { kind: "node-script", scriptPath: `/workspace/${stem}api.ts` },

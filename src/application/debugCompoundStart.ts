@@ -22,10 +22,18 @@ import type {
   NodeDebugCompoundOwner,
   NodeDebugCompoundSessionCoordinator,
 } from "./nodeDebugCompoundSessionCoordinator";
+import {
+  MAX_NODE_DEBUG_COMPOUND_MEMBERS,
+  MIN_NODE_DEBUG_COMPOUND_MEMBERS,
+} from "./nodeDebugCompoundSessionCoordinator";
 import type { DebugOutputLine } from "./debugSessionContracts";
 import type { DebugSessionOwner } from "./useDebugSessionEnd";
 
 export const COMPOUND_POLICY_SYNC_ERROR = "Unable to synchronize the active debug compound.";
+export type DebugCompoundStartOutcome = boolean | { readonly kind: "request-too-large" };
+const DEBUG_COMPOUND_REQUEST_TOO_LARGE_OUTCOME = Object.freeze({
+  kind: "request-too-large" as const,
+});
 
 interface PendingRegistry {
   has(key: string): boolean;
@@ -96,11 +104,10 @@ export interface DebugCompoundStartContext {
   readonly workspaceOwnerEpochRef: MutableRefObject<WorkspaceOwnerEpoch>;
 }
 
-/** Atomically starts and adopts the exact 2–4 member Node compound. */
 export async function startDebugCompoundAccepted(
   context: DebugCompoundStartContext,
   members: readonly DebugCompoundLaunchTarget[],
-): Promise<boolean> {
+): Promise<DebugCompoundStartOutcome> {
   const requestedRoot = context.currentRootRef.current;
   const requestedWorkspaceId = context.currentWorkspaceIdRef.current;
   const startCompound = context.gateway.startCompound?.bind(context.gateway);
@@ -109,8 +116,8 @@ export async function startDebugCompoundAccepted(
     !requestedWorkspaceId ||
     !startCompound ||
     !Array.isArray(members) ||
-    members.length < 2 ||
-    members.length > 4 ||
+    members.length < MIN_NODE_DEBUG_COMPOUND_MEMBERS ||
+    members.length > MAX_NODE_DEBUG_COMPOUND_MEMBERS ||
     members.some((member) => !isNodeCompoundLaunchTarget(member)) ||
     !trustedWorkspace(context.isWorkspaceTrusted) ||
     !context.isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId)
@@ -271,8 +278,11 @@ export async function startDebugCompoundAccepted(
     });
     context.setDebugCompoundActive(true);
     return true;
-  } catch {
+  } catch (error) {
     await rollback();
+    if (isDebugCompoundRequestTooLargeError(error)) {
+      return DEBUG_COMPOUND_REQUEST_TOO_LARGE_OUTCOME;
+    }
     return false;
   } finally {
     context.pendingStartKeysRef.current.delete(key);
@@ -356,4 +366,8 @@ function isNodeCompoundLaunchTarget(value: unknown): value is DebugCompoundLaunc
 
 function validDebugSessionId(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
+}
+
+function isDebugCompoundRequestTooLargeError(value: unknown): boolean {
+  return value instanceof Error && value.name === "DebugCompoundRequestTooLargeError";
 }
