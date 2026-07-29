@@ -15,7 +15,8 @@ import type { ExecuteCodeActionCommandPayload } from "../javascriptTypescriptCod
 import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
   runBoundedJavaScriptTypeScriptProviderRequest,
-} from "../javascriptTypescriptProviderRequestBoundary";
+  type JavaScriptTypeScriptProviderRequestCancellationPort,
+} from "./requestBoundary";
 import type { JavaScriptTypeScriptProviderRequestBoundary } from "./requestBoundary";
 import { toMonacoRange, toMonacoTextEdit } from "./sharedMappings";
 
@@ -36,7 +37,7 @@ interface CompletionSnippetContext {
 }
 
 interface CompletionProviderContext extends CompletionSnippetContext {
-  cancelRequest?(rootPath: string, sessionId: number, requestId: number): Promise<void>;
+  cancelRequest?: JavaScriptTypeScriptProviderRequestCancellationPort;
   completeFunctionCalls?: boolean;
   featuresGateway: JavaScriptTypeScriptLanguageServerFeaturesGateway;
   getActiveDocument(): { language: string } | null;

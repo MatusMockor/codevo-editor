@@ -20,6 +20,7 @@ export interface JavaScriptTypeScriptRenameDependencies<Context> {
     context: Context,
     edit: LanguageServerWorkspaceEdit,
     rootPath: string,
+    isStillActive: () => boolean,
   ): Promise<boolean>;
   editIsFullyInRoot(edit: LanguageServerWorkspaceEdit, rootPath: string): boolean;
   toWorkspaceEdit(
@@ -60,6 +61,7 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
         context,
         edit,
         request.rootPath,
+        () => boundary.isActiveRequest(context, request),
       );
       return applied && boundary.isActiveRequest(context, request) ? { edits: [] } : null;
     }

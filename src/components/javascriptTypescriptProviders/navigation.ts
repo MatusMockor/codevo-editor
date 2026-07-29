@@ -11,7 +11,8 @@ import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
   prepareJavaScriptTypeScriptProviderNavigationModels,
   runBoundedJavaScriptTypeScriptProviderRequest,
-} from "../javascriptTypescriptProviderRequestBoundary";
+  type JavaScriptTypeScriptProviderRequestCancellationPort,
+} from "./requestBoundary";
 import { preparedJavaScriptTypeScriptNavigationTargetsToMonacoLocations } from "../javascriptTypescriptMonacoNavigationLocations";
 import type {
   JavaScriptTypeScriptFeatureRequest,
@@ -22,7 +23,7 @@ type NavigationFeature =
   "declaration" | "definition" | "implementation" | "references" | "typeDefinition";
 
 interface NavigationContext {
-  cancelRequest?(rootPath: string, sessionId: number, requestId: number): Promise<void>;
+  cancelRequest?: JavaScriptTypeScriptProviderRequestCancellationPort;
   featuresGateway: JavaScriptTypeScriptLanguageServerFeaturesGateway;
   prepareNavigationModels?(
     locations: readonly LanguageServerLocation[],

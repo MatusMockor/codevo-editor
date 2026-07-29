@@ -4,11 +4,12 @@ import { HOVER_FEATURE_REQUEST_TIMEOUT_MS } from "../languageServerRequestCancel
 import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
   runBoundedJavaScriptTypeScriptProviderRequest,
-} from "../javascriptTypescriptProviderRequestBoundary";
+  type JavaScriptTypeScriptProviderRequestCancellationPort,
+} from "./requestBoundary";
 import type { JavaScriptTypeScriptProviderRequestBoundary } from "./requestBoundary";
 
 interface HoverProviderContext {
-  cancelRequest?(rootPath: string, sessionId: number, requestId: number): Promise<void>;
+  cancelRequest?: JavaScriptTypeScriptProviderRequestCancellationPort;
   featuresGateway: Pick<JavaScriptTypeScriptLanguageServerFeaturesGateway, "hover">;
 }
 

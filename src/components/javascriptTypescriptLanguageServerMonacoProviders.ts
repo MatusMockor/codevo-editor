@@ -69,15 +69,11 @@ import {
   LINKED_EDITING_RANGE_REQUEST_TIMEOUT_MS,
   toMonacoSemanticTokens,
 } from "./languageServerRequestCancellation";
-import { provideJavaScriptTypeScriptDocumentHighlights } from "./javascriptTypescriptDocumentHighlightProvider";
+import { provideJavaScriptTypeScriptDocumentHighlights } from "./javascriptTypescriptProviders/documentHighlight";
 import {
   type JavaScriptTypeScriptNavigationFeature,
   type JavaScriptTypeScriptPreparedNavigationTarget,
 } from "./javascriptTypescriptMonacoProviderRegistration";
-import {
-  javaScriptTypeScriptProviderRequestDidNotComplete as featureRequestDidNotComplete,
-  runBoundedJavaScriptTypeScriptProviderRequest as runBoundedProviderRequest,
-} from "./javascriptTypescriptProviderRequestBoundary";
 import {
   toJavaScriptTypeScriptMonacoLocations as toMonacoLocations,
   toJavaScriptTypeScriptShowReferencesArguments as toShowReferencesArguments,
@@ -93,10 +89,8 @@ import type {
 } from "../application/workspaceEditApplication";
 import {
   codeActionAuthorityMatches,
-  codeActionAuthorityWithCurrentModelVersion,
   createCodeActionAuthority,
   type CodeActionAuthority,
-  type ExecuteCodeActionCommandPayload,
   type LanguageServerBackedCodeAction,
   type ProviderRegistrationAuthority,
 } from "./javascriptTypescriptCodeActionAuthority";
@@ -120,7 +114,6 @@ import {
 import {
   createJavaScriptTypeScriptMonacoEventEmitter,
   isJavaScriptTypeScriptMonacoLanguage,
-  registerJavaScriptTypeScriptMonacoProviderBindings,
   type JavaScriptTypeScriptMonacoEventEmitter,
 } from "./javascriptTypescriptMonacoProviderRegistration";
 import {
@@ -129,7 +122,6 @@ import {
 } from "./javascriptTypescriptRuntimeCapabilityProjection";
 import {
   consumeJavaScriptTypeScriptWorkspaceEditCommitReceipt,
-  createJavaScriptTypeScriptWorkspaceEditCommitReceipt,
   isJavaScriptTypeScriptWorkspaceEditCommitReceiptActive,
   type JavaScriptTypeScriptWorkspaceEditCommitReceipt,
 } from "./javascriptTypescriptWorkspaceEditContinuation";
@@ -138,7 +130,6 @@ import {
   javaScriptTypeScriptPathIsInWorkspaceRoot as isPathInWorkspaceRoot,
   javaScriptTypeScriptWorkspaceEditForRoot as workspaceEditForRoot,
   javaScriptTypeScriptWorkspaceEditIsFullyInRoot as workspaceEditIsFullyInRoot,
-  javaScriptTypeScriptWorkspaceEditIsExactDocumentContinuation as workspaceEditIsExactDocumentContinuation,
   javaScriptTypeScriptWorkspaceEditVersionId as workspaceEditVersionId,
 } from "./javascriptTypescriptWorkspaceEditScope";
 import {
@@ -152,7 +143,12 @@ import {
   toMonacoTextEdit,
 } from "./javascriptTypescriptProviders/sharedMappings";
 import { provideJavaScriptTypeScriptHover } from "./javascriptTypescriptProviders/hover";
-import type { JavaScriptTypeScriptProviderRequestBoundary } from "./javascriptTypescriptProviders/requestBoundary";
+import {
+  javaScriptTypeScriptProviderRequestDidNotComplete as featureRequestDidNotComplete,
+  runBoundedJavaScriptTypeScriptProviderRequest as runBoundedProviderRequest,
+  type JavaScriptTypeScriptProviderRequestCancellationPort,
+  type JavaScriptTypeScriptProviderRequestBoundary,
+} from "./javascriptTypescriptProviders/requestBoundary";
 import {
   provideJavaScriptTypeScriptDeclaration,
   provideJavaScriptTypeScriptDefinition,
@@ -171,6 +167,18 @@ import {
   type JavaScriptTypeScriptMonacoWorkspaceSymbol,
 } from "./javascriptTypescriptProviders/symbols";
 import { toJavaScriptTypeScriptMonacoCodeAction } from "./javascriptTypescriptProviders/actions";
+import { withJavaScriptTypeScriptAtomicWorkspaceEditAuthority } from "./javascriptTypescriptProviders/workspaceEditAtomicAuthority";
+import {
+  createJavaScriptTypeScriptExecuteCommandHandler,
+  type JavaScriptTypeScriptExecuteCommandPayload,
+} from "./javascriptTypescriptProviders/commandExecution";
+import {
+  activateJavaScriptTypeScriptProviderRegistration,
+  deactivateJavaScriptTypeScriptProviderRegistration,
+  disposeJavaScriptTypeScriptProviderDisposables,
+  registerJavaScriptTypeScriptMonacoProvidersTransactionally,
+  rollbackJavaScriptTypeScriptProviderRegistrationActivation,
+} from "./javascriptTypescriptProviders/registrationLifecycle";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -220,7 +228,7 @@ interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
   __workspaceRoot?: string;
 }
 
-type ExecuteCommandPayload = ExecuteCodeActionCommandPayload;
+type ExecuteCommandPayload = JavaScriptTypeScriptExecuteCommandPayload;
 
 const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.javascriptTypeScript.executeLanguageServerCommand";
@@ -238,7 +246,7 @@ function attachStoredProviderPayloadAuthority<T extends object>(
 
 export interface JavaScriptTypeScriptLanguageServerProviderContext {
   applyWorkspaceEdit?: JavaScriptTypeScriptWorkspaceEditApplier;
-  cancelRequest?(rootPath: string, sessionId: number, requestId: number): Promise<void>;
+  cancelRequest?: JavaScriptTypeScriptProviderRequestCancellationPort;
   completeFunctionCalls?: boolean;
   featuresGateway: JavaScriptTypeScriptLanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
@@ -284,8 +292,8 @@ const providerRequestBoundary: JavaScriptTypeScriptProviderRequestBoundary<JavaS
 
 const renameDependencies: JavaScriptTypeScriptRenameDependencies<JavaScriptTypeScriptLanguageServerProviderContext> =
   {
-    applyWorkspaceEdit: (monaco, context, edit, rootPath) =>
-      applyWorkspaceEditWithOpenModels(monaco, context, edit, rootPath),
+    applyWorkspaceEdit: (monaco, context, edit, rootPath, isStillActive) =>
+      applyWorkspaceEditWithOpenModels(monaco, context, edit, rootPath, isStillActive),
     editIsFullyInRoot: workspaceEditIsFullyInRoot,
     toWorkspaceEdit: (monaco, model, edit, rootPath) =>
       toMonacoWorkspaceEdit(monaco, workspaceEditContext(model), edit, rootPath),
@@ -297,6 +305,11 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
 ): Disposable {
   const disposables: Disposable[] = [];
   const registrationAuthority: ProviderRegistrationAuthority = { active: true };
+  let registrationDisposed = false;
+  const previousRegistrationAuthority = activateJavaScriptTypeScriptProviderRegistration(
+    monaco,
+    registrationAuthority,
+  );
   const registeredContext = new Proxy(context, {
     get(target, property, receiver) {
       if (property === "getProviderRegistrationLease") {
@@ -305,441 +318,402 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       return Reflect.get(target, property, receiver);
     },
   });
-  const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
-
-  if (identityDescriptor) {
-    disposables.push({
-      dispose: registerWorkspaceIdentityDescriptor(
-        identityDescriptor,
-        context.getWorkspaceRoot?.() ?? identityDescriptor.canonicalRoot,
-      ),
-    });
-  }
-  const documentHighlightTracker =
-    createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
-  let workspaceSymbolRequestGeneration = 0;
-  const codeLensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
-  const inlayHintRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
-  const semanticTokensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
-  disposables.push({
-    dispose: () => {
-      codeLensRefreshEmitter.dispose();
-      inlayHintRefreshEmitter.dispose();
-      semanticTokensRefreshEmitter.dispose();
-    },
-  });
-  let refreshUnsubscribe: (() => void) | null = null;
-  let refreshSubscriptionDisposed = false;
-  const refreshSubscriptionDisposable = {
-    dispose: () => {
-      refreshSubscriptionDisposed = true;
-      refreshUnsubscribe?.();
-      refreshUnsubscribe = null;
-    },
-  };
-  let workspaceEditUnsubscribe: (() => void) | null = null;
-  let workspaceEditSubscriptionDisposed = false;
-  const workspaceEditSubscriptionDisposable = {
-    dispose: () => {
-      workspaceEditSubscriptionDisposed = true;
-      workspaceEditUnsubscribe?.();
-      workspaceEditUnsubscribe = null;
-    },
-  };
-
-  if (context.refreshGateway) {
-    disposables.push(refreshSubscriptionDisposable);
-    context.refreshGateway
-      .subscribeRefreshEvents((event) => {
-        handleLanguageServerRefreshEvent(
-          context,
-          event,
-          codeLensRefreshEmitter,
-          inlayHintRefreshEmitter,
-          semanticTokensRefreshEmitter,
-        );
-      })
-      .then((unsubscribe) => {
-        if (refreshSubscriptionDisposed) {
-          unsubscribe();
-          return;
-        }
-
-        refreshUnsubscribe = unsubscribe;
-      })
-      .catch((error) => context.reportError(error));
-  }
-
-  if (context.workspaceEditGateway) {
-    disposables.push(workspaceEditSubscriptionDisposable);
-    context.workspaceEditGateway
-      .subscribeWorkspaceEdits((event) => {
-        void applyWorkspaceEditEvent(monaco, context, event).catch((error) => {
-          if (event.rootPath) {
-            reportErrorForActiveWorkspaceEditEvent(context, event, error);
-            return;
-          }
-
-          context.reportError(error);
-        });
-      })
-      .then((unsubscribe) => {
-        if (workspaceEditSubscriptionDisposed) {
-          unsubscribe();
-          return;
-        }
-
-        workspaceEditUnsubscribe = unsubscribe;
-      })
-      .catch((error) => context.reportError(error));
-  }
-
-  const commandDisposable = monaco.editor.addCommand({
-    id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
-    run: async (_accessor, payload: ExecuteCommandPayload | undefined) => {
-      if (!payload) {
-        return;
-      }
-
-      const authority = payload.__codeActionAuthority;
-      const rootPath = authority?.rootPath ?? payload.rootPath;
-      const sessionId = authority?.sessionId ?? payload.sessionId;
-      if (
-        !rootPath ||
-        sessionId == null ||
-        !isExecutableCommandPayloadActive(context, payload, authority)
-      ) {
-        return;
-      }
-
-      try {
-        if (!(await flushPendingDocumentChangeForStoredPayload(context, payload))) {
-          return;
-        }
-
-        if (!isExecutableCommandPayloadActive(context, payload, authority)) {
-          return;
-        }
-
-        let commandAuthority = authority;
-        if (payload.edit && context.applyWorkspaceEdit) {
-          const continuationPath = authority?.path ?? payload.path;
-          const continuationOwnerEpoch = context.getActiveJavaScriptTypeScriptOwnerEpoch();
-          const continuationOwnerIdentity = context.getActiveJavaScriptTypeScriptOwnerIdentity();
-          let commitReceipt: JavaScriptTypeScriptWorkspaceEditCommitReceipt | null = null;
-          if (
-            payload.command &&
-            (!continuationPath ||
-              !workspaceEditIsExactDocumentContinuation(payload.edit, rootPath, continuationPath))
-          ) {
-            return;
-          }
-          const applied = await applyWorkspaceEditWithOpenModels(
-            monaco,
-            context,
-            payload.edit,
-            rootPath,
-            () =>
-              commitReceipt
-                ? isExecutableWorkspaceEditContinuationActive(
-                    context,
-                    payload,
-                    rootPath,
-                    sessionId,
-                    authority,
-                    commitReceipt,
-                  )
-                : isExecutableCommandPayloadActive(context, payload, authority),
-            (commit) => {
-              commitReceipt = createJavaScriptTypeScriptWorkspaceEditCommitReceipt(
-                authority,
-                continuationPath,
-                continuationOwnerEpoch,
-                continuationOwnerIdentity,
-                commit,
-              );
-            },
-          );
-          if (!applied) {
-            return;
-          }
-          if (payload.command) {
-            if (!continuationPath) {
-              return;
-            }
-            await context.flushPendingDocumentChange(continuationPath);
-            if (
-              !commitReceipt ||
-              !consumeExecutableWorkspaceEditContinuation(
-                context,
-                payload,
-                rootPath,
-                sessionId,
-                authority,
-                commitReceipt,
-              ) ||
-              !refreshExecutableCommandPayloadAuthority(context, payload, rootPath, sessionId) ||
-              (authority && !isCodeActionAuthorityActive(context, authority, false))
-            ) {
-              return;
-            }
-          }
-          commandAuthority = authority
-            ? codeActionAuthorityWithCurrentModelVersion(authority)
-            : undefined;
-        }
-
-        if (!isExecutableCommandPayloadActive(context, payload, commandAuthority)) {
-          return;
-        }
-
-        if (!payload.command) {
-          return;
-        }
-
-        const edit = await context.featuresGateway.executeCommand(rootPath, payload.command);
-
-        if (!isExecutableCommandPayloadActive(context, payload, commandAuthority)) {
-          return;
-        }
-
-        if (edit) {
-          await applyWorkspaceEditWithOpenModels(monaco, context, edit, rootPath, () =>
-            isExecutableCommandPayloadActive(context, payload, commandAuthority, false),
-          );
-        }
-      } catch (error) {
-        reportErrorForStoredPayload(context, payload, error);
-      }
-    },
-  });
-  disposables.push(commandDisposable);
-
-  disposables.push(
-    ...registerJavaScriptTypeScriptMonacoProviderBindings(monaco, {
-      codeAction: {
-        provideCodeActions: (model, range, actionContext, token) =>
-          provideCodeActions(
-            monaco,
-            registeredContext,
-            registrationAuthority,
-            model,
-            range,
-            actionContext,
-            token,
-          ),
-        resolveCodeAction: (action, token) =>
-          resolveCodeAction(monaco, registeredContext, action, token),
-      },
-      codeLens: {
-        onDidChange:
-          codeLensRefreshEmitter.event as unknown as Monaco.languages.CodeLensProvider["onDidChange"],
-        provideCodeLenses: (model) => provideCodeLenses(monaco, registeredContext, model),
-        resolveCodeLens: (_model, codeLens) => resolveCodeLens(monaco, registeredContext, codeLens),
-      },
-      completion: {
-        triggerCharacters: [".", "'", '"', "`", "/", "@", "<", "#"],
-        provideCompletionItems: (model, position, completionContext, token) =>
-          provideJavaScriptTypeScriptCompletionItems(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-            completionContext,
-            token,
-          ),
-        resolveCompletionItem: (item) =>
-          resolveJavaScriptTypeScriptCompletionItem(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            item,
-          ),
-      },
-      declaration: {
-        provideDeclaration: (model, position, token) =>
-          provideJavaScriptTypeScriptDeclaration(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-            token,
-          ),
-      },
-      definition: {
-        provideDefinition: (model, position, token) =>
-          provideJavaScriptTypeScriptDefinition(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-            token,
-          ),
-      },
-      documentFormatting: {
-        provideDocumentFormattingEdits: (model, options) =>
-          provideDocumentFormattingEdits(monaco, registeredContext, model, options),
-      },
-      documentHighlight: {
-        provideDocumentHighlights: (model, position, token) =>
-          provideDocumentHighlights(
-            monaco,
-            registeredContext,
-            documentHighlightTracker,
-            model,
-            position,
-            token,
-          ),
-      },
-      documentRangeFormatting: {
-        provideDocumentRangeFormattingEdits: (model, range, options) =>
-          provideDocumentRangeFormattingEdits(monaco, registeredContext, model, range, options),
-      },
-      documentRangeSemanticTokens: {
-        getLegend: () =>
-          javaScriptTypeScriptSemanticTokensLegend(
-            registeredContext.getRuntimeStatus(),
-            registeredContext.getWorkspaceRoot?.() ?? null,
-          ),
-        provideDocumentRangeSemanticTokens: (model, range, token) =>
-          provideDocumentRangeSemanticTokens(registeredContext, model, range, token),
-      },
-      documentSemanticTokens: {
-        onDidChange: semanticTokensRefreshEmitter.event,
-        getLegend: () =>
-          javaScriptTypeScriptSemanticTokensLegend(
-            registeredContext.getRuntimeStatus(),
-            registeredContext.getWorkspaceRoot?.() ?? null,
-          ),
-        provideDocumentSemanticTokens: (model, _lastResultId, token) =>
-          provideDocumentSemanticTokens(registeredContext, model, token),
-        releaseDocumentSemanticTokens: () => undefined,
-      },
-      documentSymbol: {
-        provideDocumentSymbols: (model) => provideDocumentSymbols(monaco, registeredContext, model),
-      },
-      foldingRange: {
-        provideFoldingRanges: (model) => provideFoldingRanges(monaco, registeredContext, model),
-      },
-      hover: {
-        provideHover: (model, position, token) =>
-          provideJavaScriptTypeScriptHover(
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-            token,
-          ),
-      },
-      implementation: {
-        provideImplementation: (model, position, token) =>
-          provideJavaScriptTypeScriptImplementation(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-            token,
-          ),
-      },
-      inlayHints: {
-        onDidChangeInlayHints: inlayHintRefreshEmitter.event,
-        provideInlayHints: (model, range) =>
-          provideInlayHints(monaco, registeredContext, model, range),
-        resolveInlayHint: (hint) => resolveInlayHint(monaco, registeredContext, hint),
-      },
-      linkedEditingRange: {
-        provideLinkedEditingRanges: (model, position, token) =>
-          provideLinkedEditingRanges(monaco, registeredContext, model, position, token),
-      },
-      links: {
-        provideLinks: (model) => provideDocumentLinks(monaco, registeredContext, model),
-        resolveLink: (link) => resolveDocumentLink(monaco, registeredContext, link),
-      },
-      onTypeFormatting: {
-        autoFormatTriggerCharacters: javaScriptTypeScriptOnTypeFormattingTriggerCharacters(
-          registeredContext.getRuntimeStatus(),
-          registeredContext.getWorkspaceRoot?.() ?? null,
+  try {
+    const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
+    if (identityDescriptor) {
+      disposables.push({
+        dispose: registerWorkspaceIdentityDescriptor(
+          identityDescriptor,
+          context.getWorkspaceRoot?.() ?? identityDescriptor.canonicalRoot,
         ),
-        provideOnTypeFormattingEdits: (model, position, ch, options) =>
-          provideOnTypeFormattingEdits(monaco, registeredContext, model, position, ch, options),
+      });
+    }
+    const documentHighlightTracker =
+      createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
+    let workspaceSymbolRequestGeneration = 0;
+    const codeLensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
+    const inlayHintRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
+    const semanticTokensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
+    disposables.push({
+      dispose: () => {
+        codeLensRefreshEmitter.dispose();
+        inlayHintRefreshEmitter.dispose();
+        semanticTokensRefreshEmitter.dispose();
       },
-      references: {
-        provideReferences: (model, position, _referenceContext, token) =>
-          provideJavaScriptTypeScriptReferences(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-            token,
-          ),
+    });
+    let refreshUnsubscribe: (() => void) | null = null;
+    let refreshSubscriptionDisposed = false;
+    const refreshSubscriptionDisposable = {
+      dispose: () => {
+        refreshSubscriptionDisposed = true;
+        refreshUnsubscribe?.();
+        refreshUnsubscribe = null;
       },
-      rename: {
-        resolveRenameLocation: (model, position) =>
-          resolveJavaScriptTypeScriptRenameLocation(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-          ),
-        provideRenameEdits: (model, position, newName) =>
-          provideJavaScriptTypeScriptRenameEdits(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            renameDependencies,
-            model,
-            position,
-            newName,
-          ),
+    };
+    let workspaceEditUnsubscribe: (() => void) | null = null;
+    let workspaceEditSubscriptionDisposed = false;
+    const workspaceEditSubscriptionDisposable = {
+      dispose: () => {
+        workspaceEditSubscriptionDisposed = true;
+        workspaceEditUnsubscribe?.();
+        workspaceEditUnsubscribe = null;
       },
-      selectionRange: {
-        provideSelectionRanges: (model, positions) =>
-          provideSelectionRanges(monaco, registeredContext, model, positions),
-      },
-      signatureHelp: {
-        signatureHelpRetriggerCharacters: [",", ")"],
-        signatureHelpTriggerCharacters: ["(", ",", "<"],
-        provideSignatureHelp: (model, position, token, signatureContext) =>
-          provideSignatureHelp(monaco, registeredContext, model, position, token, signatureContext),
-      },
-      typeDefinition: {
-        provideTypeDefinition: (model, position, token) =>
-          provideJavaScriptTypeScriptTypeDefinition(
-            monaco,
-            registeredContext,
-            providerRequestBoundary,
-            model,
-            position,
-            token,
-          ),
-      },
-      workspaceSymbols: {
-        provideWorkspaceSymbols: (query, token) => {
-          const generation = ++workspaceSymbolRequestGeneration;
-          return provideWorkspaceSymbols(
-            monaco,
-            registeredContext,
-            query,
-            token,
-            () => generation === workspaceSymbolRequestGeneration,
-          );
-        },
-      },
-    }),
-  );
+    };
 
-  return {
-    dispose: () => {
-      registrationAuthority.active = false;
-      disposables.forEach((disposable) => disposable.dispose());
-    },
-  };
+    if (context.refreshGateway) {
+      disposables.push(refreshSubscriptionDisposable);
+      context.refreshGateway
+        .subscribeRefreshEvents((event) => {
+          handleLanguageServerRefreshEvent(
+            registeredContext,
+            event,
+            codeLensRefreshEmitter,
+            inlayHintRefreshEmitter,
+            semanticTokensRefreshEmitter,
+          );
+        })
+        .then((unsubscribe) => {
+          if (refreshSubscriptionDisposed) {
+            unsubscribe();
+            return;
+          }
+
+          refreshUnsubscribe = unsubscribe;
+        })
+        .catch((error) => {
+          if (registrationAuthority.active) {
+            context.reportError(error);
+          }
+        });
+    }
+
+    if (context.workspaceEditGateway) {
+      disposables.push(workspaceEditSubscriptionDisposable);
+      context.workspaceEditGateway
+        .subscribeWorkspaceEdits((event) => {
+          void applyWorkspaceEditEvent(monaco, registeredContext, event).catch((error) => {
+            if (event.rootPath) {
+              reportErrorForActiveWorkspaceEditEvent(registeredContext, event, error);
+              return;
+            }
+
+            context.reportError(error);
+          });
+        })
+        .then((unsubscribe) => {
+          if (workspaceEditSubscriptionDisposed) {
+            unsubscribe();
+            return;
+          }
+
+          workspaceEditUnsubscribe = unsubscribe;
+        })
+        .catch((error) => {
+          if (registrationAuthority.active) {
+            context.reportError(error);
+          }
+        });
+    }
+
+    const executeCommand = createJavaScriptTypeScriptExecuteCommandHandler(registeredContext, {
+      applyWorkspaceEdit: (edit, rootPath, isStillActive, onApplied) =>
+        applyWorkspaceEditWithOpenModels(
+          monaco,
+          registeredContext,
+          edit,
+          rootPath,
+          isStillActive,
+          onApplied,
+        ),
+      consumeWorkspaceEditContinuation: (payload, rootPath, sessionId, authority, receipt) =>
+        consumeExecutableWorkspaceEditContinuation(
+          registeredContext,
+          payload,
+          rootPath,
+          sessionId,
+          authority,
+          receipt,
+        ),
+      flushStoredPayload: (payload) =>
+        flushPendingDocumentChangeForStoredPayload(registeredContext, payload),
+      isCodeActionAuthorityActive: (authority, requireVersion) =>
+        isCodeActionAuthorityActive(registeredContext, authority, requireVersion),
+      isExecutableWorkspaceEditContinuationActive: (
+        payload,
+        rootPath,
+        sessionId,
+        authority,
+        receipt,
+      ) =>
+        isExecutableWorkspaceEditContinuationActive(
+          registeredContext,
+          payload,
+          rootPath,
+          sessionId,
+          authority,
+          receipt,
+        ),
+      isPayloadActive: (payload, authority, requireVersion) =>
+        isExecutableCommandPayloadActive(registeredContext, payload, authority, requireVersion),
+      refreshPayloadAuthority: (payload, rootPath, sessionId) =>
+        refreshExecutableCommandPayloadAuthority(registeredContext, payload, rootPath, sessionId),
+      reportError: (payload, error) =>
+        reportErrorForStoredPayload(registeredContext, payload, error),
+    });
+    const commandDisposable = monaco.editor.addCommand({
+      id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
+      run: async (_accessor, payload: ExecuteCommandPayload | undefined) => executeCommand(payload),
+    });
+    disposables.push(commandDisposable);
+
+    disposables.push(
+      ...registerJavaScriptTypeScriptMonacoProvidersTransactionally(monaco, {
+        codeAction: {
+          provideCodeActions: (model, range, actionContext, token) =>
+            provideCodeActions(
+              monaco,
+              registeredContext,
+              registrationAuthority,
+              model,
+              range,
+              actionContext,
+              token,
+            ),
+          resolveCodeAction: (action, token) =>
+            resolveCodeAction(monaco, registeredContext, action, token),
+        },
+        codeLens: {
+          onDidChange:
+            codeLensRefreshEmitter.event as unknown as Monaco.languages.CodeLensProvider["onDidChange"],
+          provideCodeLenses: (model) => provideCodeLenses(monaco, registeredContext, model),
+          resolveCodeLens: (_model, codeLens) =>
+            resolveCodeLens(monaco, registeredContext, codeLens),
+        },
+        completion: {
+          triggerCharacters: [".", "'", '"', "`", "/", "@", "<", "#"],
+          provideCompletionItems: (model, position, completionContext, token) =>
+            provideJavaScriptTypeScriptCompletionItems(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+              completionContext,
+              token,
+            ),
+          resolveCompletionItem: (item) =>
+            resolveJavaScriptTypeScriptCompletionItem(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              item,
+            ),
+        },
+        declaration: {
+          provideDeclaration: (model, position, token) =>
+            provideJavaScriptTypeScriptDeclaration(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+              token,
+            ),
+        },
+        definition: {
+          provideDefinition: (model, position, token) =>
+            provideJavaScriptTypeScriptDefinition(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+              token,
+            ),
+        },
+        documentFormatting: {
+          provideDocumentFormattingEdits: (model, options) =>
+            provideDocumentFormattingEdits(monaco, registeredContext, model, options),
+        },
+        documentHighlight: {
+          provideDocumentHighlights: (model, position, token) =>
+            provideDocumentHighlights(
+              monaco,
+              registeredContext,
+              documentHighlightTracker,
+              model,
+              position,
+              token,
+            ),
+        },
+        documentRangeFormatting: {
+          provideDocumentRangeFormattingEdits: (model, range, options) =>
+            provideDocumentRangeFormattingEdits(monaco, registeredContext, model, range, options),
+        },
+        documentRangeSemanticTokens: {
+          getLegend: () =>
+            javaScriptTypeScriptSemanticTokensLegend(
+              registeredContext.getRuntimeStatus(),
+              registeredContext.getWorkspaceRoot?.() ?? null,
+            ),
+          provideDocumentRangeSemanticTokens: (model, range, token) =>
+            provideDocumentRangeSemanticTokens(registeredContext, model, range, token),
+        },
+        documentSemanticTokens: {
+          onDidChange: semanticTokensRefreshEmitter.event,
+          getLegend: () =>
+            javaScriptTypeScriptSemanticTokensLegend(
+              registeredContext.getRuntimeStatus(),
+              registeredContext.getWorkspaceRoot?.() ?? null,
+            ),
+          provideDocumentSemanticTokens: (model, _lastResultId, token) =>
+            provideDocumentSemanticTokens(registeredContext, model, token),
+          releaseDocumentSemanticTokens: () => undefined,
+        },
+        documentSymbol: {
+          provideDocumentSymbols: (model) =>
+            provideDocumentSymbols(monaco, registeredContext, model),
+        },
+        foldingRange: {
+          provideFoldingRanges: (model) => provideFoldingRanges(monaco, registeredContext, model),
+        },
+        hover: {
+          provideHover: (model, position, token) =>
+            provideJavaScriptTypeScriptHover(
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+              token,
+            ),
+        },
+        implementation: {
+          provideImplementation: (model, position, token) =>
+            provideJavaScriptTypeScriptImplementation(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+              token,
+            ),
+        },
+        inlayHints: {
+          onDidChangeInlayHints: inlayHintRefreshEmitter.event,
+          provideInlayHints: (model, range) =>
+            provideInlayHints(monaco, registeredContext, model, range),
+          resolveInlayHint: (hint) => resolveInlayHint(monaco, registeredContext, hint),
+        },
+        linkedEditingRange: {
+          provideLinkedEditingRanges: (model, position, token) =>
+            provideLinkedEditingRanges(monaco, registeredContext, model, position, token),
+        },
+        links: {
+          provideLinks: (model) => provideDocumentLinks(monaco, registeredContext, model),
+          resolveLink: (link) => resolveDocumentLink(monaco, registeredContext, link),
+        },
+        onTypeFormatting: {
+          autoFormatTriggerCharacters: javaScriptTypeScriptOnTypeFormattingTriggerCharacters(
+            registeredContext.getRuntimeStatus(),
+            registeredContext.getWorkspaceRoot?.() ?? null,
+          ),
+          provideOnTypeFormattingEdits: (model, position, ch, options) =>
+            provideOnTypeFormattingEdits(monaco, registeredContext, model, position, ch, options),
+        },
+        references: {
+          provideReferences: (model, position, _referenceContext, token) =>
+            provideJavaScriptTypeScriptReferences(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+              token,
+            ),
+        },
+        rename: {
+          resolveRenameLocation: (model, position) =>
+            resolveJavaScriptTypeScriptRenameLocation(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+            ),
+          provideRenameEdits: (model, position, newName) =>
+            provideJavaScriptTypeScriptRenameEdits(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              renameDependencies,
+              model,
+              position,
+              newName,
+            ),
+        },
+        selectionRange: {
+          provideSelectionRanges: (model, positions) =>
+            provideSelectionRanges(monaco, registeredContext, model, positions),
+        },
+        signatureHelp: {
+          signatureHelpRetriggerCharacters: [",", ")"],
+          signatureHelpTriggerCharacters: ["(", ",", "<"],
+          provideSignatureHelp: (model, position, token, signatureContext) =>
+            provideSignatureHelp(
+              monaco,
+              registeredContext,
+              model,
+              position,
+              token,
+              signatureContext,
+            ),
+        },
+        typeDefinition: {
+          provideTypeDefinition: (model, position, token) =>
+            provideJavaScriptTypeScriptTypeDefinition(
+              monaco,
+              registeredContext,
+              providerRequestBoundary,
+              model,
+              position,
+              token,
+            ),
+        },
+        workspaceSymbols: {
+          provideWorkspaceSymbols: (query, token) => {
+            const generation = ++workspaceSymbolRequestGeneration;
+            return provideWorkspaceSymbols(
+              monaco,
+              registeredContext,
+              query,
+              token,
+              () => generation === workspaceSymbolRequestGeneration,
+            );
+          },
+        },
+      }),
+    );
+
+    return {
+      dispose: () => {
+        if (registrationDisposed) {
+          return;
+        }
+        registrationDisposed = true;
+        deactivateJavaScriptTypeScriptProviderRegistration(monaco, registrationAuthority);
+        disposeJavaScriptTypeScriptProviderDisposables(disposables, context.reportError);
+      },
+    };
+  } catch (error) {
+    registrationDisposed = true;
+    rollbackJavaScriptTypeScriptProviderRegistrationActivation(
+      monaco,
+      registrationAuthority,
+      previousRegistrationAuthority,
+    );
+    disposeJavaScriptTypeScriptProviderDisposables(disposables, context.reportError);
+    throw error;
+  }
 }
 
 async function provideSignatureHelp(
@@ -2572,11 +2546,15 @@ async function applyWorkspaceEditWithOpenModels(
   onApplied?: (commit: AppliedJavaScriptTypeScriptWorkspaceEditCommit) => void,
 ): Promise<boolean> {
   const scopedEdit = workspaceEditForRoot(edit, rootPath);
+  const atomicWorkspaceEditApplier = withJavaScriptTypeScriptAtomicWorkspaceEditAuthority(
+    context.applyWorkspaceEdit,
+    isStillActive,
+  );
   return applyJavaScriptTypeScriptWorkspaceEditWithOpenModels(
     monaco,
     scopedEdit,
     rootPath,
-    context.applyWorkspaceEdit,
+    atomicWorkspaceEditApplier,
     isStillActive,
     onApplied,
   );
@@ -2623,6 +2601,9 @@ function isWorkspaceEditEventActive(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   event: LanguageServerWorkspaceEditEvent,
 ): boolean {
+  if (context.getProviderRegistrationLease?.()?.active !== true) {
+    return false;
+  }
   const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
 
   if (!workspaceRoot) {
@@ -2673,6 +2654,9 @@ function isRefreshEventActive(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   event: LanguageServerRefreshEvent,
 ): boolean {
+  if (context.getProviderRegistrationLease?.()?.active !== true) {
+    return false;
+  }
   const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
 
   if (!workspaceRoot) {
