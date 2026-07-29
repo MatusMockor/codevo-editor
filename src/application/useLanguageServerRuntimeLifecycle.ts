@@ -1,15 +1,7 @@
-import {
-  useCallback,
-  useEffect,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
-import { type LanguageServerGateway, type LanguageServerPlan } from "../domain/languageServer";
+import { useCallback, useEffect } from "react";
 import {
   isLanguageServerActive,
   languageServerCrashMessage,
-  type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
   type UnsubscribeFn,
 } from "../domain/languageServerRuntime";
@@ -18,27 +10,25 @@ import {
   cacheLanguageServerRuntimeStatusForOwner,
   forgetCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
-import type { TerminalGateway } from "../domain/terminal";
-import type { WorkspaceTrustState } from "../domain/trust";
-import type {
-  ProjectRuntimeStopResult,
-  WorkspaceRuntimeLifecycleGateway,
-} from "../domain/workspaceRuntimeLifecycle";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { type WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import type { ProjectRuntimeStopResult } from "../domain/workspaceRuntimeLifecycle";
 import { shouldStartLanguageServer } from "../domain/intelligence";
-import type { AppSettings, BackgroundRuntimePolicy, WorkspaceSettings } from "../domain/settings";
-import type { IntelligenceMode, PhpToolAvailability, PhpToolGateway } from "../domain/workspace";
-import {
-  languageServerCrashNoticeGroupKey,
-  replaceWorkbenchNoticeGroup,
-  type WorkbenchNotice,
-} from "./workbenchNotice";
+import type { BackgroundRuntimePolicy, WorkspaceSettings } from "../domain/settings";
+import { languageServerCrashNoticeGroupKey, replaceWorkbenchNoticeGroup } from "./workbenchNotice";
 import { javaScriptTypeScriptLanguageServerOptions } from "./javaScriptTypeScriptLanguageServerSettings";
 import {
   useRuntimeOwnerAuthority,
   type LanguageServerRuntimeStatusFence,
 } from "./languageServerRuntimeLifecycle/runtimeOwnerAuthority";
+import {
+  cleanUpAutostartLease,
+  recordPhpAutostartAttempt,
+  shouldIgnoreAutostartSettlement,
+  useRuntimeAutostartAuthority,
+} from "./languageServerRuntimeLifecycle/runtimeAutostartAuthority";
+import { useRuntimeStatusSequenceAuthority } from "./languageServerRuntimeLifecycle/runtimeStatusSequenceAuthority";
+import { useRuntimeServiceOffLifecycle } from "./languageServerRuntimeLifecycle/runtimeServiceOffLifecycle";
 import { useRuntimePlanDiscovery } from "./languageServerRuntimeLifecycle/runtimePlanDiscovery";
 import {
   isCrashedLanguageServerForWorkspace,
@@ -48,154 +38,17 @@ import {
   runtimeStatusForRequestedRoot,
   runtimeStatusRootPath,
 } from "./languageServerRuntimeLifecycle/runtimeStatusPolicy";
+import type {
+  LanguageServerRuntimeLifecycle,
+  LanguageServerRuntimeLifecycleDependencies,
+} from "./languageServerRuntimeLifecycle/runtimeLifecycleTypes";
+
+export type {
+  LanguageServerRuntimeLifecycle,
+  LanguageServerRuntimeLifecycleDependencies,
+} from "./languageServerRuntimeLifecycle/runtimeLifecycleTypes";
 
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
-
-export interface LanguageServerRuntimeLifecycleDependencies {
-  workspaceRoot: string | null;
-  workspaceRuntimeOwner?: WorkspaceRuntimeOwner | null;
-  workspaceTrust: WorkspaceTrustState | null;
-  intelligenceMode: IntelligenceMode;
-  workspaceSettings: WorkspaceSettings;
-  shouldAutoStartJavaScriptTypeScriptLanguageServer: boolean;
-  phpLanguageServerAutostartRetryVersion: number;
-
-  languageServerPlan: LanguageServerPlan | null;
-  javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan | null;
-  languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
-  languageServerRuntimeStatusRoot: string | null;
-  javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
-  javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
-
-  appSettingsRef: MutableRefObject<AppSettings>;
-  workspaceSettingsRef: MutableRefObject<WorkspaceSettings>;
-  currentWorkspaceRootRef: MutableRefObject<string | null>;
-  autoStartedLanguageServerRootRef: MutableRefObject<string | null>;
-  phpLanguageServerAutostartAttemptsByRootRef: MutableRefObject<Record<string, number>>;
-  manuallyStoppedPhpLanguageServerRootsRef: MutableRefObject<Set<string>>;
-  autoStartedJavaScriptTypeScriptLanguageServerRootRef: MutableRefObject<string | null>;
-  lastLanguageServerCrashRef: MutableRefObject<string | null>;
-  languageServerRuntimeStatusByRootRef: MutableRefObject<
-    Record<string, LanguageServerRuntimeStatus>
-  >;
-  javaScriptTypeScriptLanguageServerRuntimeStatusRef: MutableRefObject<LanguageServerRuntimeStatus | null>;
-  javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: MutableRefObject<string | null>;
-  javaScriptTypeScriptRuntimeStatusByRootRef: MutableRefObject<
-    Record<string, LanguageServerRuntimeStatus>
-  >;
-
-  setPhpTools: Dispatch<SetStateAction<PhpToolAvailability | null>>;
-  setLanguageServerPlan: Dispatch<SetStateAction<LanguageServerPlan | null>>;
-  setJavaScriptTypeScriptLanguageServerPlan: Dispatch<SetStateAction<LanguageServerPlan | null>>;
-  setLanguageServerRuntimeStatus: Dispatch<SetStateAction<LanguageServerRuntimeStatus | null>>;
-  setLanguageServerRuntimeStatusRoot: Dispatch<SetStateAction<string | null>>;
-  setJavaScriptTypeScriptLanguageServerRuntimeStatus: Dispatch<
-    SetStateAction<LanguageServerRuntimeStatus | null>
-  >;
-  setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot: Dispatch<SetStateAction<string | null>>;
-  setMessage: Dispatch<SetStateAction<string | null>>;
-  setNotices: Dispatch<SetStateAction<WorkbenchNotice[]>>;
-  setPhpLanguageServerAutostartRetryVersion: Dispatch<SetStateAction<number>>;
-
-  phpToolGateway: PhpToolGateway;
-  languageServerGateway: LanguageServerGateway;
-  languageServerRuntimeGateway: LanguageServerRuntimeGateway;
-  javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway;
-  workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway;
-  terminalGateway: TerminalGateway;
-
-  clearLanguageServerDiagnosticsForRoot: (rootPath: string, owner?: WorkspaceRuntimeOwner) => void;
-  clearJavaScriptTypeScriptDiagnosticsForRoot: (
-    rootPath: string | null | undefined,
-    owner?: WorkspaceRuntimeOwner,
-  ) => void;
-  resetLanguageServerDiagnosticsForRoot: (
-    rootPath: string | null | undefined,
-    owner?: WorkspaceRuntimeOwner,
-  ) => void;
-  resetJavaScriptTypeScriptDiagnosticsForRoot: (
-    rootPath: string | null | undefined,
-    owner?: WorkspaceRuntimeOwner,
-  ) => void;
-  prepareLanguageServerDiagnosticsForRuntimeStart: (
-    rootPath: string | null | undefined,
-    owner?: WorkspaceRuntimeOwner,
-  ) => void;
-  prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart: (
-    rootPath: string | null | undefined,
-    owner?: WorkspaceRuntimeOwner,
-  ) => void;
-  resetLanguageServerDocuments: () => void;
-  resetJavaScriptTypeScriptLanguageServerDocuments: () => void;
-  isLanguageServerSessionCurrentForRoot: (rootPath: string, sessionId: number) => boolean;
-  reportError: (source: string, error: unknown) => void;
-  reportLanguageServerCrash: (error: unknown) => void;
-  reportLanguageServerError: (error: unknown) => void;
-  reportLanguageServerErrorForActiveWorkspaceRoot: (
-    rootPath: string | null | undefined,
-    error: unknown,
-  ) => void;
-  reportErrorForActiveWorkspaceRoot: (
-    rootPath: string | null | undefined,
-    source: string,
-    error: unknown,
-  ) => void;
-}
-
-export interface LanguageServerRuntimeLifecycle {
-  refreshLanguageServerPlan: (
-    rootPath: string,
-    owner?: WorkspaceRuntimeOwner,
-  ) => Promise<LanguageServerPlan | null>;
-  runPhpWorkspaceProbe: (rootPath: string, owner?: WorkspaceRuntimeOwner) => Promise<void>;
-  refreshJavaScriptTypeScriptLanguageServerPlan: (
-    rootPath: string,
-    typeScriptVersionPreference?: WorkspaceSettings["javaScriptTypeScriptVersion"],
-    owner?: WorkspaceRuntimeOwner,
-    requestIsValid?: () => boolean,
-  ) => Promise<LanguageServerPlan | null>;
-  clearManualPhpLanguageServerStop: (rootPath: string, owner?: WorkspaceRuntimeOwner) => void;
-  forgetLanguageServerRuntimeStatuses: (rootPath: string, owner?: WorkspaceRuntimeOwner) => void;
-  isLanguageServerSessionActiveForRoot: (rootPath: string, sessionId: number) => boolean;
-  isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot: (
-    rootPath: string,
-    sessionId: number,
-  ) => boolean;
-  isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: (
-    rootPath: string,
-    sessionId: number,
-  ) => boolean;
-  handleLanguageServerRuntimeStatus: (
-    status: LanguageServerRuntimeStatus,
-    fallbackRootPath?: string,
-    owner?: WorkspaceRuntimeOwner,
-  ) => void;
-  handleJavaScriptTypeScriptLanguageServerRuntimeStatus: (
-    status: LanguageServerRuntimeStatus,
-    fallbackRootPath?: string,
-    owner?: WorkspaceRuntimeOwner,
-  ) => void;
-  stopLanguageServerRuntime: (
-    rootPath?: string,
-    owner?: WorkspaceRuntimeOwner,
-  ) => Promise<LanguageServerRuntimeStatus | null>;
-  stopJavaScriptTypeScriptLanguageServerRuntime: (
-    rootPath?: string,
-    owner?: WorkspaceRuntimeOwner,
-  ) => Promise<LanguageServerRuntimeStatus | null>;
-  stopProjectRuntimes: (
-    rootPath?: string,
-    owner?: WorkspaceRuntimeOwner,
-  ) => Promise<ProjectRuntimeStopResult>;
-  stopBackgroundProjectRuntimes: (
-    policy: BackgroundRuntimePolicy,
-    activeRootPath: string | null,
-    previousRootPath: string | null,
-  ) => Promise<void>;
-  startLanguageServer: () => Promise<void>;
-  stopLanguageServer: () => Promise<void>;
-  restartJavaScriptTypeScriptService: () => Promise<void>;
-}
 
 export function useLanguageServerRuntimeLifecycle(
   dependencies: LanguageServerRuntimeLifecycleDependencies,
@@ -264,6 +117,7 @@ export function useLanguageServerRuntimeLifecycle(
     advanceLanguageServerRuntimeCommandSequence,
     advanceLanguageServerRuntimeStatusSequence,
     currentRuntimeOwner,
+    currentRuntimeOwnerRef,
     isAdmittedRuntimeOwnerForRoot,
     isCurrentRuntimeOwner,
     isLanguageServerRuntimeStatusFenceCurrent,
@@ -298,6 +152,44 @@ export function useLanguageServerRuntimeLifecycle(
     reportError,
     reportErrorForActiveWorkspaceRoot,
   });
+  const {
+    acquireJavaScriptTypeScriptLease,
+    acquirePhpLease,
+    javaScriptTypeScriptAuthorityVersion,
+    phpAuthorityVersion,
+    cancelJavaScriptTypeScriptLease,
+    cancelJavaScriptTypeScriptLeaseForOwner,
+    cancelPhpLease,
+    cancelPhpLeaseForOwner,
+    invalidateJavaScriptTypeScriptLeaseForOwner,
+    invalidatePhpLeaseForOwner,
+    isJavaScriptTypeScriptEligible,
+    isPhpEligible,
+    isJavaScriptTypeScriptLeaseCurrent,
+    isJavaScriptTypeScriptLeaseCancelled,
+    isPhpLeaseCurrent,
+    isPhpLeaseCancelled,
+    releaseJavaScriptTypeScriptLease,
+    releasePhpLease,
+    retainJavaScriptTypeScriptSettlement,
+    retainPhpSettlement,
+    takeJavaScriptTypeScriptSettlementForOwner,
+    takePhpSettlementForOwner,
+  } = useRuntimeAutostartAuthority(
+    currentRuntimeOwner,
+    shouldStartLanguageServer(intelligenceMode) &&
+      Boolean(workspaceTrust?.trusted) &&
+      languageServerPlan?.status === "ready",
+    workspaceSettings.javaScriptTypeScriptService === "auto" &&
+      shouldAutoStartJavaScriptTypeScriptLanguageServer &&
+      javaScriptTypeScriptLanguageServerPlan?.status === "ready",
+    autoStartedLanguageServerRootRef,
+    autoStartedJavaScriptTypeScriptLanguageServerRootRef,
+  );
+  const {
+    advanceStatusSequence: advanceJavaScriptTypeScriptStatusSequence,
+    statusSequence: javaScriptTypeScriptStatusSequence,
+  } = useRuntimeStatusSequenceAuthority();
 
   const cacheJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
     (rootPath: string, status: LanguageServerRuntimeStatus, owner?: WorkspaceRuntimeOwner) => {
@@ -578,9 +470,23 @@ export function useLanguageServerRuntimeLifecycle(
       fallbackRootPath?: string,
       owner?: WorkspaceRuntimeOwner,
       revision?: number,
+      preserveAutostartLease = false,
+      snapshotSequence?: number,
     ) => {
       if (owner && revision !== undefined && !isOwnerRevisionCurrent(owner, revision)) {
         return;
+      }
+
+      if (
+        owner &&
+        snapshotSequence !== undefined &&
+        javaScriptTypeScriptStatusSequence(owner) !== snapshotSequence
+      ) {
+        return;
+      }
+
+      if (owner && snapshotSequence === undefined) {
+        advanceJavaScriptTypeScriptStatusSequence(owner);
       }
 
       const statusRootPath = runtimeStatusRootPath(
@@ -597,6 +503,10 @@ export function useLanguageServerRuntimeLifecycle(
 
       if (!isOpenWorkspaceRuntimeRoot(statusRootPath, statusOwner)) {
         return;
+      }
+
+      if (!preserveAutostartLease) {
+        invalidateJavaScriptTypeScriptLeaseForOwner(statusOwner.ownerKey);
       }
 
       const rootedStatus = cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
@@ -631,12 +541,15 @@ export function useLanguageServerRuntimeLifecycle(
     },
     [
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      advanceJavaScriptTypeScriptStatusSequence,
       isOpenWorkspaceRuntimeRoot,
       isCurrentRuntimeOwner,
       isOwnerRevisionCurrent,
+      invalidateJavaScriptTypeScriptLeaseForOwner,
       javaScriptTypeScriptLanguageServerRuntimeStatusRef,
       javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
       latestRuntimeOwner,
+      javaScriptTypeScriptStatusSequence,
       reportError,
       resetJavaScriptTypeScriptDiagnosticsForRoot,
       runtimeOwnerForRoot,
@@ -1233,7 +1146,44 @@ export function useLanguageServerRuntimeLifecycle(
     }
 
     if (autoStartedLanguageServerRootRef.current === autostartOwnerKey) {
-      return;
+      const settlement = takePhpSettlementForOwner(requestedOwner.ownerKey);
+      if (settlement) {
+        if (
+          !isOwnerRevisionCurrent(requestedOwner, settlement.revision) ||
+          !settlement.fence ||
+          !isLanguageServerRuntimeStatusFenceCurrent(requestedOwner, settlement.fence)
+        ) {
+          invalidatePhpLeaseForOwner(requestedOwner.ownerKey);
+          return;
+        }
+        handleLanguageServerRuntimeStatus(
+          settlement.status,
+          requestedRoot,
+          requestedOwner,
+          settlement.revision,
+          settlement.fence,
+        );
+        if (
+          isRunningLanguageServerForWorkspace(
+            settlement.status,
+            settlement.status.rootPath ?? null,
+            requestedRoot,
+          )
+        ) {
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[autostartOwnerKey];
+        }
+        return;
+      }
+
+      return () => {
+        cleanUpAutostartLease(
+          requestedOwner,
+          currentRuntimeOwnerRef.current,
+          isPhpEligible(),
+          () => cancelPhpLeaseForOwner(requestedOwner.ownerKey),
+          () => invalidatePhpLeaseForOwner(requestedOwner.ownerKey),
+        );
+      };
     }
 
     const requestedRevision = ownerRevision(requestedOwner);
@@ -1242,12 +1192,34 @@ export function useLanguageServerRuntimeLifecycle(
       commandSequence: advanceLanguageServerRuntimeCommandSequence(requestedOwner),
       subscriptionSequence: languageServerRuntimeStatusSequence(requestedOwner),
     };
-    autoStartedLanguageServerRootRef.current = autostartOwnerKey;
-    phpLanguageServerAutostartAttemptsByRootRef.current[autostartOwnerKey] = autostartAttempts + 1;
+    let cancelled = false;
+    const autostartLease = acquirePhpLease(requestedOwner.ownerKey);
+    recordPhpAutostartAttempt(
+      phpLanguageServerAutostartAttemptsByRootRef.current,
+      requestedOwner.ownerKey,
+      autostartAttempts + 1,
+    );
     prepareLanguageServerDiagnosticsForRuntimeStart(requestedRoot, requestedOwner);
     languageServerRuntimeGateway
       .start(requestedRoot, phpLanguageServerOptions(workspaceSettingsRef.current))
       .then((status) => {
+        if (
+          shouldIgnoreAutostartSettlement(
+            cancelled || isPhpLeaseCancelled(autostartLease),
+            isPhpLeaseCurrent(autostartLease),
+            !isRunningLanguageServerForWorkspace(status, status.rootPath ?? null, requestedRoot),
+            () => releasePhpLease(autostartLease),
+            () =>
+              retainPhpSettlement(autostartLease, {
+                fence: requestedFence,
+                revision: requestedRevision,
+                status,
+              }),
+          )
+        ) {
+          return;
+        }
+
         if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
           return;
         }
@@ -1260,10 +1232,7 @@ export function useLanguageServerRuntimeLifecycle(
           isLanguageServerActive(status) &&
           !isLanguageServerActiveForWorkspace(status, status.rootPath ?? null, requestedRoot)
         ) {
-          if (autoStartedLanguageServerRootRef.current === autostartOwnerKey) {
-            autoStartedLanguageServerRootRef.current = null;
-          }
-
+          releasePhpLease(autostartLease);
           setPhpLanguageServerAutostartRetryVersion((current) => current + 1);
           return;
         }
@@ -1289,13 +1258,22 @@ export function useLanguageServerRuntimeLifecycle(
           return;
         }
 
-        if (autoStartedLanguageServerRootRef.current === autostartOwnerKey) {
-          autoStartedLanguageServerRootRef.current = null;
-        }
-
+        releasePhpLease(autostartLease);
         setPhpLanguageServerAutostartRetryVersion((current) => current + 1);
       })
       .catch((error) => {
+        if (
+          shouldIgnoreAutostartSettlement(
+            cancelled || isPhpLeaseCancelled(autostartLease),
+            isPhpLeaseCurrent(autostartLease),
+            true,
+            () => releasePhpLease(autostartLease),
+            () => undefined,
+          )
+        ) {
+          return;
+        }
+
         if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
           return;
         }
@@ -1304,9 +1282,7 @@ export function useLanguageServerRuntimeLifecycle(
           return;
         }
 
-        if (autoStartedLanguageServerRootRef.current === autostartOwnerKey) {
-          autoStartedLanguageServerRootRef.current = null;
-        }
+        releasePhpLease(autostartLease);
 
         if (!isCurrentRuntimeOwner(requestedOwner)) {
           return;
@@ -1315,17 +1291,41 @@ export function useLanguageServerRuntimeLifecycle(
         reportLanguageServerError(error);
         setPhpLanguageServerAutostartRetryVersion((current) => current + 1);
       });
+
+    return () => {
+      cleanUpAutostartLease(
+        requestedOwner,
+        currentRuntimeOwnerRef.current,
+        isPhpEligible(),
+        () => {
+          cancelled = true;
+          cancelPhpLease(autostartLease);
+        },
+        () => {
+          releasePhpLease(autostartLease);
+        },
+      );
+    };
   }, [
+    acquirePhpLease,
+    phpAuthorityVersion,
     autoStartedLanguageServerRootRef,
     advanceLanguageServerRuntimeCommandSequence,
     currentRuntimeOwner,
+    currentRuntimeOwnerRef,
     currentWorkspaceRootRef,
     handleLanguageServerRuntimeStatus,
     intelligenceMode,
+    isPhpEligible,
+    isPhpLeaseCancelled,
+    isPhpLeaseCurrent,
     isPhpLanguageServerManuallyStopped,
     isCurrentRuntimeOwner,
     isLanguageServerRuntimeStatusFenceCurrent,
     isOwnerRevisionCurrent,
+    cancelPhpLease,
+    cancelPhpLeaseForOwner,
+    invalidatePhpLeaseForOwner,
     languageServerPlan,
     languageServerRuntimeGateway,
     languageServerRuntimeStatusSequence,
@@ -1337,7 +1337,10 @@ export function useLanguageServerRuntimeLifecycle(
     ownerRevision,
     prepareLanguageServerDiagnosticsForRuntimeStart,
     reportLanguageServerError,
+    releasePhpLease,
+    retainPhpSettlement,
     setPhpLanguageServerAutostartRetryVersion,
+    takePhpSettlementForOwner,
     workspaceSettings.intelephensePath,
     workspaceSettings.phpBackend,
     workspaceSettings.phpactorPath,
@@ -1388,10 +1391,36 @@ export function useLanguageServerRuntimeLifecycle(
     }
 
     if (autoStartedJavaScriptTypeScriptLanguageServerRootRef.current === autostartOwnerKey) {
-      return;
+      const settlement = takeJavaScriptTypeScriptSettlementForOwner(requestedOwner.ownerKey);
+      if (settlement) {
+        if (!isOwnerRevisionCurrent(requestedOwner, settlement.revision)) {
+          invalidateJavaScriptTypeScriptLeaseForOwner(requestedOwner.ownerKey);
+          return;
+        }
+        handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
+          settlement.status,
+          requestedRoot,
+          requestedOwner,
+          settlement.revision,
+          true,
+        );
+        return;
+      }
+
+      return () => {
+        cleanUpAutostartLease(
+          requestedOwner,
+          currentRuntimeOwnerRef.current,
+          isJavaScriptTypeScriptEligible(),
+          () => cancelJavaScriptTypeScriptLeaseForOwner(requestedOwner.ownerKey),
+          () => invalidateJavaScriptTypeScriptLeaseForOwner(requestedOwner.ownerKey),
+        );
+      };
     }
 
     let cancelled = false;
+    let cancelAutostartLease: (() => void) | null = null;
+    let releaseAutostartLease: (() => void) | null = null;
 
     void (async () => {
       if (cancelled) {
@@ -1462,24 +1491,37 @@ export function useLanguageServerRuntimeLifecycle(
         return;
       }
 
-      autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = autostartOwnerKey;
+      const autostartLease = acquireJavaScriptTypeScriptLease(requestedOwner.ownerKey);
+      cancelAutostartLease = () => cancelJavaScriptTypeScriptLease(autostartLease);
+      releaseAutostartLease = () => releaseJavaScriptTypeScriptLease(autostartLease);
       prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart(requestedRoot, requestedOwner);
       javaScriptTypeScriptLanguageServerRuntimeGateway
         .start(requestedRoot, {
           ...javaScriptTypeScriptLanguageServerOptions(workspaceSettingsRef.current),
         })
         .then((status) => {
+          if (
+            shouldIgnoreAutostartSettlement(
+              cancelled || isJavaScriptTypeScriptLeaseCancelled(autostartLease),
+              isJavaScriptTypeScriptLeaseCurrent(autostartLease),
+              !isRunningLanguageServerForWorkspace(status, status.rootPath ?? null, requestedRoot),
+              () => releaseJavaScriptTypeScriptLease(autostartLease),
+              () =>
+                retainJavaScriptTypeScriptSettlement(autostartLease, {
+                  revision: requestedRevision,
+                  status,
+                }),
+            )
+          ) {
+            return;
+          }
+
           if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
             return;
           }
 
           if (!isCurrentRuntimeOwner(requestedOwner)) {
-            if (
-              autoStartedJavaScriptTypeScriptLanguageServerRootRef.current === autostartOwnerKey
-            ) {
-              autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
-            }
-
+            releaseJavaScriptTypeScriptLease(autostartLease);
             return;
           }
 
@@ -1487,17 +1529,13 @@ export function useLanguageServerRuntimeLifecycle(
             isLanguageServerActive(status) &&
             !isLanguageServerActiveForWorkspace(status, status.rootPath ?? null, requestedRoot)
           ) {
-            if (
-              autoStartedJavaScriptTypeScriptLanguageServerRootRef.current === autostartOwnerKey
-            ) {
-              autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
-            }
-
+            releaseJavaScriptTypeScriptLease(autostartLease);
             handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
               runtimeStatusForRequestedRoot(status, requestedRoot),
               requestedRoot,
               requestedOwner,
               requestedRevision,
+              true,
             );
             return;
           }
@@ -1507,9 +1545,22 @@ export function useLanguageServerRuntimeLifecycle(
             requestedRoot,
             requestedOwner,
             requestedRevision,
+            true,
           );
         })
         .catch((error) => {
+          if (
+            shouldIgnoreAutostartSettlement(
+              cancelled || isJavaScriptTypeScriptLeaseCancelled(autostartLease),
+              isJavaScriptTypeScriptLeaseCurrent(autostartLease),
+              true,
+              () => releaseJavaScriptTypeScriptLease(autostartLease),
+              () => undefined,
+            )
+          ) {
+            return;
+          }
+
           if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
             return;
           }
@@ -1518,24 +1569,41 @@ export function useLanguageServerRuntimeLifecycle(
             return;
           }
 
-          if (autoStartedJavaScriptTypeScriptLanguageServerRootRef.current === autostartOwnerKey) {
-            autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
-          }
-
+          releaseJavaScriptTypeScriptLease(autostartLease);
           reportErrorForActiveWorkspaceRoot(requestedRoot, "JavaScript/TypeScript", error);
         });
     })();
 
     return () => {
-      cancelled = true;
+      cleanUpAutostartLease(
+        requestedOwner,
+        currentRuntimeOwnerRef.current,
+        isJavaScriptTypeScriptEligible(),
+        () => {
+          cancelled = true;
+          cancelAutostartLease?.();
+        },
+        () => {
+          releaseAutostartLease?.();
+        },
+      );
     };
   }, [
+    acquireJavaScriptTypeScriptLease,
+    javaScriptTypeScriptAuthorityVersion,
     autoStartedJavaScriptTypeScriptLanguageServerRootRef,
     currentRuntimeOwner,
+    currentRuntimeOwnerRef,
     currentWorkspaceRootRef,
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     isCurrentRuntimeOwner,
+    isJavaScriptTypeScriptEligible,
+    isJavaScriptTypeScriptLeaseCancelled,
+    isJavaScriptTypeScriptLeaseCurrent,
     isOwnerRevisionCurrent,
+    cancelJavaScriptTypeScriptLease,
+    cancelJavaScriptTypeScriptLeaseForOwner,
+    invalidateJavaScriptTypeScriptLeaseForOwner,
     javaScriptTypeScriptLanguageServerPlan,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -1546,7 +1614,10 @@ export function useLanguageServerRuntimeLifecycle(
     ownerRevision,
     prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
     reportErrorForActiveWorkspaceRoot,
+    releaseJavaScriptTypeScriptLease,
+    retainJavaScriptTypeScriptSettlement,
     shouldAutoStartJavaScriptTypeScriptLanguageServer,
+    takeJavaScriptTypeScriptSettlementForOwner,
     workspaceSettings.javaScriptTypeScriptAutoImports,
     workspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition,
     workspaceSettings.javaScriptTypeScriptCodeLens,
@@ -1560,53 +1631,27 @@ export function useLanguageServerRuntimeLifecycle(
     workspaceRuntimeOwner,
   ]);
 
-  useEffect(() => {
-    if (!currentRuntimeOwner) {
-      return;
-    }
-
-    if (workspaceSettings.javaScriptTypeScriptService !== "off") {
-      return;
-    }
-
-    const targetOwner = currentRuntimeOwner;
-    const targetRootPath = targetOwner.executionRoot;
-    const cachedStatus = cachedLanguageServerRuntimeStatusForOwner(
-      javaScriptTypeScriptRuntimeStatusByRootRef.current,
-      targetOwner,
-    );
-
-    if (autoStartedJavaScriptTypeScriptLanguageServerRootRef.current === targetOwner.ownerKey) {
-      autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
-    }
-
-    if (
-      isLanguageServerActiveForWorkspace(
-        cachedStatus,
-        cachedStatus?.rootPath ?? null,
-        targetRootPath,
-      ) ||
-      isCrashedLanguageServerForWorkspace(
-        cachedStatus,
-        cachedStatus?.rootPath ?? null,
-        targetRootPath,
-      )
-    ) {
-      void stopJavaScriptTypeScriptLanguageServerRuntime(targetRootPath, targetOwner);
-      return;
-    }
-
-    clearJavaScriptTypeScriptDiagnosticsForRoot(targetRootPath, targetOwner);
-    resetJavaScriptTypeScriptLanguageServerDocuments();
-  }, [
-    autoStartedJavaScriptTypeScriptLanguageServerRootRef,
-    clearJavaScriptTypeScriptDiagnosticsForRoot,
-    currentRuntimeOwner,
-    javaScriptTypeScriptRuntimeStatusByRootRef,
-    resetJavaScriptTypeScriptLanguageServerDocuments,
-    stopJavaScriptTypeScriptLanguageServerRuntime,
-    workspaceSettings.javaScriptTypeScriptService,
-  ]);
+  useRuntimeServiceOffLifecycle({
+    acquireLease: acquireJavaScriptTypeScriptLease,
+    authorityVersion: javaScriptTypeScriptAuthorityVersion,
+    cancelLease: cancelJavaScriptTypeScriptLease,
+    clearDiagnostics: clearJavaScriptTypeScriptDiagnosticsForRoot,
+    currentOwner: currentRuntimeOwner,
+    currentOwnerRef: currentRuntimeOwnerRef,
+    gatewayGetStatus: javaScriptTypeScriptLanguageServerRuntimeGateway.getStatus,
+    handleStatus: handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
+    invalidateLease: invalidateJavaScriptTypeScriptLeaseForOwner,
+    isLeaseCurrent: isJavaScriptTypeScriptLeaseCurrent,
+    isRevisionCurrent: isOwnerRevisionCurrent,
+    leaseOwnerRef: autoStartedJavaScriptTypeScriptLanguageServerRootRef,
+    ownerRevision,
+    releaseLease: releaseJavaScriptTypeScriptLease,
+    resetDocuments: resetJavaScriptTypeScriptLanguageServerDocuments,
+    service: workspaceSettings.javaScriptTypeScriptService,
+    statusByOwnerRef: javaScriptTypeScriptRuntimeStatusByRootRef,
+    stop: stopJavaScriptTypeScriptLanguageServerRuntime,
+    takeSettlement: takeJavaScriptTypeScriptSettlementForOwner,
+  });
 
   useEffect(() => {
     let active = true;
@@ -1791,6 +1836,9 @@ export function useLanguageServerRuntimeLifecycle(
     let unsubscribe: UnsubscribeFn | null = null;
     const requestedOwner = currentRuntimeOwner;
     const requestedRevision = requestedOwner ? ownerRevision(requestedOwner) : null;
+    const requestedStatusSequence = requestedOwner
+      ? javaScriptTypeScriptStatusSequence(requestedOwner)
+      : null;
 
     if (requestedOwner) {
       const requestedRoot = requestedOwner.executionRoot;
@@ -1826,6 +1874,8 @@ export function useLanguageServerRuntimeLifecycle(
             requestedRoot,
             requestedOwner,
             requestedRevision,
+            true,
+            requestedStatusSequence ?? undefined,
           );
         })
         .catch((error) => {
@@ -1836,6 +1886,13 @@ export function useLanguageServerRuntimeLifecycle(
           if (
             requestedRevision === null ||
             !isOwnerRevisionCurrent(requestedOwner, requestedRevision)
+          ) {
+            return;
+          }
+
+          if (
+            requestedStatusSequence === null ||
+            javaScriptTypeScriptStatusSequence(requestedOwner) !== requestedStatusSequence
           ) {
             return;
           }
@@ -1938,6 +1995,7 @@ export function useLanguageServerRuntimeLifecycle(
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     isCurrentRuntimeOwner,
     isOwnerRevisionCurrent,
+    javaScriptTypeScriptStatusSequence,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptRuntimeStatusByRootRef,
     ownerRevisionVersion,

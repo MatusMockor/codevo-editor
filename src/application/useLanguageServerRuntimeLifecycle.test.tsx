@@ -3,10 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import {
-  defaultAppSettings,
-  defaultWorkspaceSettings,
-} from "../domain/settings";
+import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import type {
   LanguageServerRuntimeGateway,
   LanguageServerRuntimeStatus,
@@ -55,20 +52,14 @@ function starting(rootPath: string, sessionId = 1): LanguageServerRuntimeStatus 
 
 function running(rootPath: string, sessionId = 1): LanguageServerRuntimeStatus {
   return {
-    capabilities: {} as Extract<
-      LanguageServerRuntimeStatus,
-      { kind: "running" }
-    >["capabilities"],
+    capabilities: {} as Extract<LanguageServerRuntimeStatus, { kind: "running" }>["capabilities"],
     kind: "running",
     rootPath,
     sessionId,
   };
 }
 
-function crashed(
-  rootPath: string,
-  message: string,
-): LanguageServerRuntimeStatus {
+function crashed(rootPath: string, message: string): LanguageServerRuntimeStatus {
   return { kind: "crashed", message, rootPath };
 }
 
@@ -107,7 +98,10 @@ function latestStatusListener(gateway: LanguageServerRuntimeGateway) {
 interface Harness {
   dependencies: LanguageServerRuntimeLifecycleDependencies;
   lifecycle: () => LanguageServerRuntimeLifecycle;
-  rerender: (owner: WorkspaceRuntimeOwner, overrides?: Partial<LanguageServerRuntimeLifecycleDependencies>) => void;
+  rerender: (
+    owner: WorkspaceRuntimeOwner,
+    overrides?: Partial<LanguageServerRuntimeLifecycleDependencies>,
+  ) => void;
   unmount: () => void;
 }
 
@@ -239,10 +233,7 @@ async function flushEffects(): Promise<void> {
   });
 }
 
-function noticesAfterLastUpdate(
-  harness: Harness,
-  current: WorkbenchNotice[],
-): WorkbenchNotice[] {
+function noticesAfterLastUpdate(harness: Harness, current: WorkbenchNotice[]): WorkbenchNotice[] {
   const calls = vi.mocked(harness.dependencies.setNotices).mock.calls;
   const update = calls[calls.length - 1]?.[0];
 
@@ -268,9 +259,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(harness.dependencies.reportLanguageServerCrash).toHaveBeenCalledWith(
       "phpactor exited with code 1",
     );
-    expect(
-      harness.dependencies.reportLanguageServerError,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -310,13 +299,11 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(harness.dependencies.setNotices).not.toHaveBeenCalled();
     expect(harness.dependencies.setMessage).not.toHaveBeenCalled();
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toEqual(crashStatus);
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).toHaveBeenLastCalledWith(crashStatus);
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).toHaveBeenLastCalledWith(
+      crashStatus,
+    );
 
     act(() => listener(crashStatus));
     expect(reportedCrashes).toEqual(["newer subscribed crash"]);
@@ -332,10 +319,32 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(crashRef.current).toBeNull();
     expect(noticesAfterLastUpdate(harness, [crashNotice])).toEqual([]);
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 81 });
+    harness.unmount();
+  });
+
+  it("keeps a subscribed TS crash when an older getStatus resolves running", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    const harness = renderLifecycle(owner, {
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+    });
+    await flushEffects();
+    const crashStatus = crashed(FIRST_ROOT, "newer subscribed TS crash");
+
+    act(() => latestStatusListener(tsGateway)(crashStatus));
+    pendingStatus.resolve(running(FIRST_ROOT, 82));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toEqual(crashStatus);
+    expect(
+      harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toHaveBeenLastCalledWith(crashStatus);
     harness.unmount();
   });
 
@@ -376,13 +385,11 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(harness.dependencies.setNotices).not.toHaveBeenCalled();
     expect(harness.dependencies.setMessage).not.toHaveBeenCalled();
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toEqual(crashStatus);
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).toHaveBeenLastCalledWith(crashStatus);
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).toHaveBeenLastCalledWith(
+      crashStatus,
+    );
 
     act(() => listener(crashStatus));
     expect(reportedCrashes).toEqual(["crash after start request"]);
@@ -398,9 +405,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(crashRef.current).toBeNull();
     expect(noticesAfterLastUpdate(harness, [crashNotice])).toEqual([]);
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 91 });
     harness.unmount();
   });
@@ -424,13 +429,9 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await flushEffects();
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 100 });
-    expect(
-      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
-    ).toEqual({});
+    expect(harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current).toEqual({});
     harness.unmount();
   });
 
@@ -450,22 +451,669 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     pendingStatus.resolve(stopped(FIRST_ROOT));
     await flushEffects();
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toEqual(stopped(FIRST_ROOT));
 
     pendingStart.resolve(running(FIRST_ROOT, 103));
     await flushEffects();
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 103 });
+    expect(harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current).toEqual({});
+    harness.unmount();
+  });
+
+  it.each(["resolve", "reject"] as const)(
+    "ignores a delayed PHP autostart %s after unmount",
+    async (settlement) => {
+      const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+      const pendingStart = deferred<LanguageServerRuntimeStatus>();
+      const phpGateway = runtimeGateway();
+      vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+      const harness = renderLifecycle(owner, {
+        languageServerPlan: READY_PLAN,
+        languageServerRuntimeGateway: phpGateway,
+      });
+      await flushEffects();
+
+      expect(phpGateway.start).toHaveBeenCalledTimes(1);
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current = {};
+      vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
+      vi.mocked(harness.dependencies.reportLanguageServerError).mockClear();
+      vi.mocked(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).mockClear();
+      harness.unmount();
+      expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBeNull();
+
+      if (settlement === "resolve") {
+        pendingStart.resolve(running(FIRST_ROOT, 201));
+      } else {
+        pendingStart.reject(new Error("late PHP autostart failure"));
+      }
+      await flushEffects();
+
+      expect(
+        harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
+      ).toBeUndefined();
+      expect(harness.dependencies.setLanguageServerRuntimeStatus).not.toHaveBeenCalled();
+      expect(harness.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
+      expect(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["resolve", "reject"] as const)(
+    "ignores a delayed JavaScript/TypeScript autostart %s after unmount",
+    async (settlement) => {
+      const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+      const pendingStart = deferred<LanguageServerRuntimeStatus>();
+      const tsGateway = runtimeGateway();
+      vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+      const workspaceSettings = {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart" as const,
+        javaScriptTypeScriptService: "auto" as const,
+      };
+      const harness = renderLifecycle(owner, {
+        workspaceSettings,
+        workspaceSettingsRef: { current: workspaceSettings },
+        javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+        javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+        shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+      });
+      await flushEffects();
+
+      expect(tsGateway.start).toHaveBeenCalledTimes(1);
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
+      vi.mocked(
+        harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      ).mockClear();
+      vi.mocked(harness.dependencies.reportErrorForActiveWorkspaceRoot).mockClear();
+      harness.unmount();
+      expect(
+        harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+      ).toBeNull();
+
+      if (settlement === "resolve") {
+        pendingStart.resolve(running(FIRST_ROOT, 202));
+      } else {
+        pendingStart.reject(new Error("late JS/TS autostart failure"));
+      }
+      await flushEffects();
+
+      expect(
+        harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
+      ).toBeUndefined();
+      expect(
+        harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      ).not.toHaveBeenCalled();
+      expect(harness.dependencies.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not start JavaScript/TypeScript after its status probe effect is cleaned up", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.getStatus).mockReturnValue(pendingStatus.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+
+    harness.unmount();
+    pendingStatus.resolve(stopped(FIRST_ROOT));
+    await flushEffects();
+
+    expect(tsGateway.start).not.toHaveBeenCalled();
     expect(
-      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
-    ).toEqual({});
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
+  });
+
+  it("keeps the same autostart probe and lease across an unrelated parent rerender", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+    const statusProbeCalls = vi.mocked(tsGateway.getStatus).mock.calls.length;
+
+    harness.rerender(owner);
+    await flushEffects();
+    expect(tsGateway.getStatus).toHaveBeenCalledTimes(statusProbeCalls);
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+
+    pendingStart.resolve(running(FIRST_ROOT, 213));
+    await flushEffects();
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toMatchObject({ kind: "running", sessionId: 213 });
+    harness.unmount();
+  });
+
+  it("rejects delayed autostarts after a same-key workspace generation replacement", async () => {
+    const firstGeneration = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const replacementGeneration = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const tsGateway = runtimeGateway();
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingPhpStart.promise);
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingTypeScriptStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(firstGeneration, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      languageServerPlan: READY_PLAN,
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(replacementGeneration, {
+      languageServerPlan: null,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: false,
+    });
+    await flushEffects();
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBeNull();
+    expect(
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
+    harness.dependencies.languageServerRuntimeStatusByRootRef.current = {};
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
+
+    pendingPhpStart.resolve(running(FIRST_ROOT, 209));
+    pendingTypeScriptStart.resolve(running(FIRST_ROOT, 210));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstGeneration.ownerKey],
+    ).toBeUndefined();
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
+        firstGeneration.ownerKey
+      ],
+    ).toBeUndefined();
+    harness.unmount();
+  });
+
+  it("rejects delayed PHP and JS/TS autostarts after workspace A-B-A replacement", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", SECOND_ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const tsGateway = runtimeGateway();
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingPhpStart.promise);
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingTypeScriptStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(firstOwner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      languageServerPlan: READY_PLAN,
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+    expect(phpGateway.start).toHaveBeenCalledTimes(1);
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+
+    harness.rerender(secondOwner, {
+      languageServerPlan: null,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: false,
+    });
+    harness.rerender(replacementOwner, {
+      languageServerPlan: null,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: false,
+    });
+    await flushEffects();
+    harness.dependencies.languageServerRuntimeStatusByRootRef.current = {};
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
+    vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
+    vi.mocked(harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus).mockClear();
+
+    pendingPhpStart.resolve(running(FIRST_ROOT, 203));
+    pendingTypeScriptStart.resolve(running(FIRST_ROOT, 204));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toBeUndefined();
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toBeUndefined();
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBeNull();
+    expect(
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
+    harness.unmount();
+  });
+
+  it("does not publish delayed autostarts after same-owner effect cleanup", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const tsGateway = runtimeGateway();
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingPhpStart.promise);
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingTypeScriptStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      languageServerPlan: READY_PLAN,
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(owner, {
+      languageServerPlan: null,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: false,
+    });
+    await flushEffects();
+    harness.dependencies.languageServerRuntimeStatusByRootRef.current = {};
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
+    vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
+    vi.mocked(harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus).mockClear();
+
+    pendingPhpStart.resolve(running(FIRST_ROOT, 207));
+    pendingTypeScriptStart.resolve(running(FIRST_ROOT, 208));
+    await flushEffects();
+
+    expect(phpGateway.start).toHaveBeenCalledTimes(1);
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toBeUndefined();
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toBeUndefined();
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).not.toHaveBeenCalled();
+
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBe(owner.ownerKey);
+    expect(harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current).toBe(
+      owner.ownerKey,
+    );
+    harness.rerender(owner, {
+      languageServerPlan: READY_PLAN,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+    expect(phpGateway.start).toHaveBeenCalledTimes(1);
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toMatchObject({ kind: "running", sessionId: 207 });
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toMatchObject({ kind: "running", sessionId: 208 });
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).toHaveBeenCalled();
+    expect(
+      harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("releases cancelled failed autostarts so the same owner can retry", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const tsGateway = runtimeGateway();
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingPhpStart.promise);
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingTypeScriptStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      languageServerPlan: READY_PLAN,
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(owner, {
+      languageServerPlan: null,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: false,
+    });
+    pendingPhpStart.reject(new Error("cancelled PHP start"));
+    pendingTypeScriptStart.reject(new Error("cancelled TS start"));
+    await flushEffects();
+
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBeNull();
+    expect(
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
+    expect(harness.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
+    expect(harness.dependencies.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+
+    harness.rerender(owner, {
+      languageServerPlan: READY_PLAN,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+    expect(phpGateway.start).toHaveBeenCalledTimes(2);
+    expect(tsGateway.start).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("stops a retained TS start that settles while the service is off before re-enabling", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingStop = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    vi.mocked(tsGateway.stop).mockReturnValueOnce(pendingStop.promise);
+    const autoSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const offSettings = {
+      ...autoSettings,
+      javaScriptTypeScriptService: "off" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(owner, {
+      workspaceSettings: offSettings,
+      workspaceSettingsRef: { current: offSettings },
+    });
+    pendingStart.resolve(running(FIRST_ROOT, 215));
+    await flushEffects();
+
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+    expect(tsGateway.stop).toHaveBeenCalledTimes(1);
+    expect(harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current).toBe(
+      owner.ownerKey,
+    );
+
+    harness.rerender(owner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+    });
+    await flushEffects();
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+
+    pendingStop.resolve(stopped(FIRST_ROOT));
+    await flushEffects();
+    expect(tsGateway.start).toHaveBeenCalledTimes(2);
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toMatchObject({ kind: "running" });
+    expect(vi.mocked(tsGateway.stop).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(tsGateway.start).mock.invocationCallOrder[1],
+    );
+    harness.unmount();
+  });
+
+  it("reconciles and retries a failed retained TS stop before re-enabling", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    vi.mocked(tsGateway.stop)
+      .mockRejectedValueOnce(new Error("transient stop failure"))
+      .mockResolvedValueOnce(stopped(FIRST_ROOT));
+    const autoSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const offSettings = {
+      ...autoSettings,
+      javaScriptTypeScriptService: "off" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(owner, {
+      workspaceSettings: offSettings,
+      workspaceSettingsRef: { current: offSettings },
+    });
+    vi.mocked(tsGateway.getStatus).mockResolvedValue(running(FIRST_ROOT, 216));
+    pendingStart.resolve(running(FIRST_ROOT, 215));
+    await flushEffects();
+    await flushEffects();
+
+    expect(tsGateway.stop).toHaveBeenCalledTimes(2);
+    expect(
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
+
+    harness.rerender(owner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+    });
+    await flushEffects();
+    expect(tsGateway.start).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("releases a retained TS stop barrier after reconciliation observes stopped", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    vi.mocked(tsGateway.stop).mockResolvedValueOnce(running(FIRST_ROOT, 217));
+    const autoSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const offSettings = {
+      ...autoSettings,
+      javaScriptTypeScriptService: "off" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(owner, {
+      workspaceSettings: offSettings,
+      workspaceSettingsRef: { current: offSettings },
+    });
+    vi.mocked(tsGateway.getStatus).mockResolvedValue(stopped(FIRST_ROOT));
+    pendingStart.resolve(running(FIRST_ROOT, 215));
+    await flushEffects();
+    await flushEffects();
+
+    expect(tsGateway.stop).toHaveBeenCalledTimes(1);
+    expect(
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
+
+    harness.rerender(owner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+    });
+    await flushEffects();
+    expect(tsGateway.start).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("does not retry an old TS stop after an A-B-A owner replacement", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", SECOND_ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingReconciliation = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    vi.mocked(tsGateway.stop).mockResolvedValueOnce(running(FIRST_ROOT, 218));
+    const autoSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const offSettings = {
+      ...autoSettings,
+      javaScriptTypeScriptService: "off" as const,
+    };
+    const harness = renderLifecycle(firstOwner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(firstOwner, {
+      workspaceSettings: offSettings,
+      workspaceSettingsRef: { current: offSettings },
+    });
+    vi.mocked(tsGateway.getStatus).mockReturnValue(pendingReconciliation.promise);
+    pendingStart.resolve(running(FIRST_ROOT, 217));
+    await flushEffects();
+
+    harness.rerender(secondOwner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+    });
+    delete harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
+      firstOwner.ownerKey
+    ];
+    harness.rerender(replacementOwner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+    });
+    await flushEffects();
+    expect(tsGateway.start).toHaveBeenCalledTimes(2);
+
+    pendingReconciliation.resolve(running(FIRST_ROOT, 219));
+    await flushEffects();
+    expect(tsGateway.stop).toHaveBeenCalledTimes(1);
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
+        replacementOwner.ownerKey
+      ],
+    ).toMatchObject({ kind: "running" });
+    harness.unmount();
+  });
+
+  it("continues a retained TS stop reconciliation across an alias transfer", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingReconciliation = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    vi.mocked(tsGateway.stop)
+      .mockResolvedValueOnce(running(FIRST_ROOT, 221))
+      .mockResolvedValueOnce(stopped(SECOND_ROOT));
+    const autoSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const offSettings = {
+      ...autoSettings,
+      javaScriptTypeScriptService: "off" as const,
+    };
+    const harness = renderLifecycle(firstOwner, {
+      workspaceSettings: autoSettings,
+      workspaceSettingsRef: { current: autoSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(firstOwner, {
+      workspaceSettings: offSettings,
+      workspaceSettingsRef: { current: offSettings },
+    });
+    vi.mocked(tsGateway.getStatus).mockReturnValue(pendingReconciliation.promise);
+    pendingStart.resolve(running(FIRST_ROOT, 220));
+    await flushEffects();
+
+    harness.rerender(transferredOwner, {
+      workspaceSettings: offSettings,
+      workspaceSettingsRef: { current: offSettings },
+    });
+    await flushEffects();
+    pendingReconciliation.resolve(running(SECOND_ROOT, 222));
+    await flushEffects();
+    await flushEffects();
+
+    expect(tsGateway.stop).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(tsGateway.stop).mock.calls[1]?.[0]).toBe(SECOND_ROOT);
+    expect(
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
     harness.unmount();
   });
 
@@ -482,9 +1130,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     });
     await flushEffects();
     vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
-    vi.mocked(
-      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
-    ).mockClear();
+    vi.mocked(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).mockClear();
 
     pendingStart.resolve({
       ...running(FIRST_ROOT, 108),
@@ -493,22 +1139,14 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await flushEffects();
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toBeUndefined();
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.autoStartedLanguageServerRootRef.current,
-    ).toBeNull();
-    expect(
-      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
-    ).toHaveBeenCalledTimes(1);
-    expect(
-      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
-    ).toEqual({ [owner.ownerKey]: 1 });
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).not.toHaveBeenCalled();
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBeNull();
+    expect(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).toHaveBeenCalledTimes(1);
+    expect(harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current).toEqual({
+      [owner.ownerKey]: 1,
+    });
     harness.unmount();
   });
 
@@ -542,9 +1180,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       }
 
       expect(
-        harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-          owner.ownerKey
-        ],
+        harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
       ).toMatchObject({ kind: "running", sessionId: 104 });
       harness.unmount();
     },
@@ -573,13 +1209,9 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       let stopPromise: Promise<LanguageServerRuntimeStatus | null>;
       if (invocationOrder === "start-stop") {
         startPromise = harness.lifecycle().startLanguageServer();
-        stopPromise = harness
-          .lifecycle()
-          .stopLanguageServerRuntime(FIRST_ROOT, owner);
+        stopPromise = harness.lifecycle().stopLanguageServerRuntime(FIRST_ROOT, owner);
       } else {
-        stopPromise = harness
-          .lifecycle()
-          .stopLanguageServerRuntime(FIRST_ROOT, owner);
+        stopPromise = harness.lifecycle().stopLanguageServerRuntime(FIRST_ROOT, owner);
         startPromise = harness.lifecycle().startLanguageServer();
       }
 
@@ -596,9 +1228,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       await act(async () => Promise.all([startPromise, stopPromise]));
 
       expect(
-        harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-          owner.ownerKey
-        ],
+        harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
       ).toMatchObject({ kind: expectedKind });
       harness.unmount();
     },
@@ -615,9 +1245,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       languageServerRuntimeGateway: phpGateway,
     });
     await flushEffects();
-    const stopPromise = harness
-      .lifecycle()
-      .stopLanguageServerRuntime(FIRST_ROOT, owner);
+    const stopPromise = harness.lifecycle().stopLanguageServerRuntime(FIRST_ROOT, owner);
 
     pendingStop.resolve(stopped(FIRST_ROOT));
     await act(async () => stopPromise);
@@ -625,9 +1253,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await flushEffects();
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toEqual(stopped(FIRST_ROOT));
     harness.unmount();
   });
@@ -641,22 +1267,16 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       languageServerRuntimeGateway: phpGateway,
     });
     await flushEffects();
-    const stopPromise = harness
-      .lifecycle()
-      .stopLanguageServerRuntime(FIRST_ROOT, owner);
+    const stopPromise = harness.lifecycle().stopLanguageServerRuntime(FIRST_ROOT, owner);
 
     act(() => latestStatusListener(phpGateway)(running(FIRST_ROOT, 107)));
     vi.mocked(harness.dependencies.reportLanguageServerError).mockClear();
     pendingStop.reject(new Error("stale stop failure"));
     await act(async () => stopPromise);
 
+    expect(harness.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
     expect(
-      harness.dependencies.reportLanguageServerError,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 107 });
     harness.unmount();
   });
@@ -676,26 +1296,51 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     const crashStatus = crashed(FIRST_ROOT, "newer autostart crash");
 
     act(() => latestStatusListener(phpGateway)(crashStatus));
-    vi.mocked(
-      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
-    ).mockClear();
+    vi.mocked(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).mockClear();
     pendingStart.resolve(running(FIRST_ROOT, 101));
     await flushEffects();
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toEqual(crashStatus);
+    expect(harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current).toEqual({
+      [owner.ownerKey]: 1,
+    });
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBe(owner.ownerKey);
+    expect(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps a newer subscribed TS crash over a delayed autostart running status", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(owner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+    const newerCrash = crashed(FIRST_ROOT, "newer TS crash");
+
+    act(() => latestStatusListener(tsGateway)(newerCrash));
+    pendingStart.resolve(running(FIRST_ROOT, 214));
+    await flushEffects();
+
     expect(
-      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
-    ).toEqual({ [owner.ownerKey]: 1 });
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
+    ).toEqual(newerCrash);
     expect(
-      harness.dependencies.autoStartedLanguageServerRootRef.current,
-    ).toBe(owner.ownerKey);
-    expect(
-      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
-    ).not.toHaveBeenCalled();
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+    ).toBeNull();
     harness.unmount();
   });
 
@@ -711,16 +1356,12 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
     act(() => latestStatusListener(phpGateway)(running(FIRST_ROOT, 102)));
     vi.mocked(harness.dependencies.reportError).mockClear();
-    vi.mocked(
-      harness.dependencies.setLanguageServerRuntimeStatusRoot,
-    ).mockClear();
+    vi.mocked(harness.dependencies.setLanguageServerRuntimeStatusRoot).mockClear();
     pendingStatus.reject(new Error("stale getStatus failure"));
     await flushEffects();
 
     expect(harness.dependencies.reportError).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatusRoot,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.setLanguageServerRuntimeStatusRoot).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -735,18 +1376,12 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await flushEffects();
     const startPromise = harness.lifecycle().startLanguageServer();
 
-    act(() =>
-      latestStatusListener(phpGateway)(
-        crashed(FIRST_ROOT, "newer explicit-start crash"),
-      ),
-    );
+    act(() => latestStatusListener(phpGateway)(crashed(FIRST_ROOT, "newer explicit-start crash")));
     vi.mocked(harness.dependencies.reportLanguageServerError).mockClear();
     pendingStart.reject(new Error("stale explicit start failure"));
     await act(async () => startPromise);
 
-    expect(
-      harness.dependencies.reportLanguageServerError,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -764,29 +1399,19 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await flushEffects();
 
     act(() =>
-      latestStatusListener(phpGateway)(
-        crashed(FIRST_ROOT, "newer autostart rejection crash"),
-      ),
+      latestStatusListener(phpGateway)(crashed(FIRST_ROOT, "newer autostart rejection crash")),
     );
     vi.mocked(harness.dependencies.reportLanguageServerError).mockClear();
-    vi.mocked(
-      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
-    ).mockClear();
+    vi.mocked(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).mockClear();
     pendingStart.reject(new Error("stale autostart failure"));
     await flushEffects();
 
-    expect(
-      harness.dependencies.reportLanguageServerError,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
-    ).toEqual({ [owner.ownerKey]: 1 });
-    expect(
-      harness.dependencies.autoStartedLanguageServerRootRef.current,
-    ).toBe(owner.ownerKey);
+    expect(harness.dependencies.reportLanguageServerError).not.toHaveBeenCalled();
+    expect(harness.dependencies.setPhpLanguageServerAutostartRetryVersion).not.toHaveBeenCalled();
+    expect(harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current).toEqual({
+      [owner.ownerKey]: 1,
+    });
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBe(owner.ownerKey);
     harness.unmount();
   });
 
@@ -804,11 +1429,9 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     );
 
     act(() => {
-      harness.lifecycle().handleLanguageServerRuntimeStatus(
-        running(FIRST_ROOT, 60),
-        FIRST_ROOT,
-        owner,
-      );
+      harness
+        .lifecycle()
+        .handleLanguageServerRuntimeStatus(running(FIRST_ROOT, 60), FIRST_ROOT, owner);
     });
 
     expect(harness.dependencies.lastLanguageServerCrashRef.current).toBeNull();
@@ -842,20 +1465,15 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     );
 
     act(() => {
-      harness.lifecycle().handleLanguageServerRuntimeStatus(
-        running(FIRST_ROOT, 61),
-        FIRST_ROOT,
-        owner,
-      );
+      harness
+        .lifecycle()
+        .handleLanguageServerRuntimeStatus(running(FIRST_ROOT, 61), FIRST_ROOT, owner);
     });
 
-    expect(
-      noticesAfterLastUpdate(harness, [
-        crashNotice,
-        requestError,
-        unrelatedNotice,
-      ]),
-    ).toEqual([requestError, unrelatedNotice]);
+    expect(noticesAfterLastUpdate(harness, [crashNotice, requestError, unrelatedNotice])).toEqual([
+      requestError,
+      unrelatedNotice,
+    ]);
     harness.unmount();
   });
 
@@ -879,36 +1497,27 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     );
 
     act(() => {
-      harness.lifecycle().handleLanguageServerRuntimeStatus(
-        running(FIRST_ROOT, 62),
-        FIRST_ROOT,
-        owner,
-      );
+      harness
+        .lifecycle()
+        .handleLanguageServerRuntimeStatus(running(FIRST_ROOT, 62), FIRST_ROOT, owner);
     });
 
-    expect(noticesAfterLastUpdate(harness, [currentCrash, otherCrash])).toEqual([
-      otherCrash,
-    ]);
+    expect(noticesAfterLastUpdate(harness, [currentCrash, otherCrash])).toEqual([otherCrash]);
     harness.unmount();
   });
 
   it("ignores PHP crash recovery from a background owner", async () => {
     const currentOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const backgroundOwner = createWorkspaceRuntimeOwner(
-      "workspace-b",
-      SECOND_ROOT,
-    );
+    const backgroundOwner = createWorkspaceRuntimeOwner("workspace-b", SECOND_ROOT);
     const harness = renderLifecycle(currentOwner);
     harness.dependencies.appSettingsRef.current.workspaceTabs = [SECOND_ROOT];
     await flushEffects();
     vi.mocked(harness.dependencies.setNotices).mockClear();
 
     act(() => {
-      harness.lifecycle().handleLanguageServerRuntimeStatus(
-        running(SECOND_ROOT, 63),
-        SECOND_ROOT,
-        backgroundOwner,
-      );
+      harness
+        .lifecycle()
+        .handleLanguageServerRuntimeStatus(running(SECOND_ROOT, 63), SECOND_ROOT, backgroundOwner);
     });
 
     expect(harness.dependencies.setNotices).not.toHaveBeenCalled();
@@ -919,18 +1528,10 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
     const harness = renderLifecycle(owner);
     await flushEffects();
-    vi.mocked(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.resetLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
+    vi.mocked(harness.dependencies.clearLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.resetLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
 
     act(() => {
       latestStatusListener(harness.dependencies.languageServerRuntimeGateway)(
@@ -939,35 +1540,29 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       latestStatusListener(harness.dependencies.languageServerRuntimeGateway)(
         running(FIRST_ROOT, 61),
       );
-      latestStatusListener(
-        harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
-      )(starting(FIRST_ROOT, 62));
-      latestStatusListener(
-        harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
-      )(running(FIRST_ROOT, 62));
+      latestStatusListener(harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway)(
+        starting(FIRST_ROOT, 62),
+      );
+      latestStatusListener(harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway)(
+        running(FIRST_ROOT, 62),
+      );
     });
 
+    expect(harness.dependencies.resetLanguageServerDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      owner,
+    );
+    expect(harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      owner,
+    );
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).not.toHaveBeenCalled();
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).not.toHaveBeenCalled();
     expect(
-      harness.dependencies.resetLanguageServerDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, owner);
-    expect(
-      harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, owner);
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 61 });
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 62 });
     harness.unmount();
   });
@@ -979,54 +1574,44 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     harness.dependencies.appSettingsRef.current.workspaceTabs = [SECOND_ROOT];
     await flushEffects();
     vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
-    vi.mocked(
-      harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
+    vi.mocked(harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus).mockClear();
+    vi.mocked(harness.dependencies.clearLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
 
     act(() => {
-      harness.lifecycle().handleLanguageServerRuntimeStatus(
-        starting(SECOND_ROOT, 71),
-        SECOND_ROOT,
-        secondOwner,
-      );
-      harness.lifecycle().handleLanguageServerRuntimeStatus(
-        running(SECOND_ROOT, 71),
-        SECOND_ROOT,
-        secondOwner,
-      );
-      harness.lifecycle().handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
-        starting(SECOND_ROOT, 72),
-        SECOND_ROOT,
-        secondOwner,
-      );
-      harness.lifecycle().handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
-        running(SECOND_ROOT, 72),
-        SECOND_ROOT,
-        secondOwner,
-      );
+      harness
+        .lifecycle()
+        .handleLanguageServerRuntimeStatus(starting(SECOND_ROOT, 71), SECOND_ROOT, secondOwner);
+      harness
+        .lifecycle()
+        .handleLanguageServerRuntimeStatus(running(SECOND_ROOT, 71), SECOND_ROOT, secondOwner);
+      harness
+        .lifecycle()
+        .handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
+          starting(SECOND_ROOT, 72),
+          SECOND_ROOT,
+          secondOwner,
+        );
+      harness
+        .lifecycle()
+        .handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
+          running(SECOND_ROOT, 72),
+          SECOND_ROOT,
+          secondOwner,
+        );
     });
 
-    expect(
-      harness.dependencies.resetLanguageServerDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(SECOND_ROOT, secondOwner);
-    expect(
-      harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(SECOND_ROOT, secondOwner);
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.resetLanguageServerDiagnosticsForRoot).toHaveBeenCalledWith(
+      SECOND_ROOT,
+      secondOwner,
+    );
+    expect(harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      SECOND_ROOT,
+      secondOwner,
+    );
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).not.toHaveBeenCalled();
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).not.toHaveBeenCalled();
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).not.toHaveBeenCalled();
     expect(
       harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
     ).not.toHaveBeenCalled();
@@ -1041,18 +1626,13 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await act(async () => {
       await harness.lifecycle().stopLanguageServerRuntime(FIRST_ROOT, owner);
     });
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, owner);
-    vi.mocked(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.resetLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.prepareLanguageServerDiagnosticsForRuntimeStart,
-    ).mockClear();
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      owner,
+    );
+    vi.mocked(harness.dependencies.clearLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.resetLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.prepareLanguageServerDiagnosticsForRuntimeStart).mockClear();
 
     await act(async () => {
       await harness.lifecycle().startLanguageServer();
@@ -1061,16 +1641,10 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(
       harness.dependencies.prepareLanguageServerDiagnosticsForRuntimeStart,
     ).toHaveBeenCalledWith(FIRST_ROOT, owner);
+    expect(harness.dependencies.resetLanguageServerDiagnosticsForRoot).not.toHaveBeenCalled();
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).not.toHaveBeenCalled();
     expect(
-      harness.dependencies.resetLanguageServerDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running" });
     harness.unmount();
   });
@@ -1093,42 +1667,32 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await flushEffects();
 
     await act(async () => {
-      await harness
-        .lifecycle()
-        .stopJavaScriptTypeScriptLanguageServerRuntime(FIRST_ROOT, owner);
+      await harness.lifecycle().stopJavaScriptTypeScriptLanguageServerRuntime(FIRST_ROOT, owner);
     });
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, owner);
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      owner,
+    );
+    vi.mocked(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
     vi.mocked(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies
-        .prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
+      harness.dependencies.prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
     ).mockClear();
 
     await act(async () => {
       await harness.lifecycle().restartJavaScriptTypeScriptService();
     });
 
+    expect(harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      owner,
+    );
     expect(
-      harness.dependencies.resetJavaScriptTypeScriptDiagnosticsForRoot,
+      harness.dependencies.prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
     ).toHaveBeenCalledWith(FIRST_ROOT, owner);
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).not.toHaveBeenCalled();
     expect(
-      harness.dependencies
-        .prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
-    ).toHaveBeenCalledWith(FIRST_ROOT, owner);
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running" });
     harness.unmount();
   });
@@ -1139,39 +1703,30 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     const harness = renderLifecycle(foregroundOwner, {
       workspaceRuntimeOwner: null,
     });
-    harness.dependencies.appSettingsRef.current.workspaceTabs = [
-      FIRST_ROOT,
-      SECOND_ROOT,
-    ];
+    harness.dependencies.appSettingsRef.current.workspaceTabs = [FIRST_ROOT, SECOND_ROOT];
     await flushEffects();
 
     vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
-    vi.mocked(
-      harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
-    ).mockClear();
+    vi.mocked(harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus).mockClear();
 
     act(() => {
       latestStatusListener(harness.dependencies.languageServerRuntimeGateway)(
         running(SECOND_ROOT, 21),
       );
-      latestStatusListener(
-        harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
-      )(running(SECOND_ROOT, 22));
+      latestStatusListener(harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway)(
+        running(SECOND_ROOT, 22),
+      );
     });
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        backgroundOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[backgroundOwner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 21 });
     expect(
       harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
         backgroundOwner.ownerKey
       ],
     ).toMatchObject({ kind: "running", sessionId: 22 });
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).not.toHaveBeenCalled();
     expect(
       harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
     ).not.toHaveBeenCalled();
@@ -1203,13 +1758,10 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(
       harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledTimes(1);
-    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBe(
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBe(firstOwner.ownerKey);
+    expect(harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current).toBe(
       firstOwner.ownerKey,
     );
-    expect(
-      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef
-        .current,
-    ).toBe(firstOwner.ownerKey);
 
     harness.rerender(secondOwner);
     await flushEffects();
@@ -1218,6 +1770,160 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(
       harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("keeps pending PHP and TS autostart leases across an exact-owner alias transfer", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const tsGateway = runtimeGateway();
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingPhpStart.promise);
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingTypeScriptStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(firstOwner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      languageServerPlan: READY_PLAN,
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(transferredOwner);
+    await flushEffects();
+    expect(phpGateway.start).toHaveBeenCalledTimes(1);
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+
+    pendingPhpStart.resolve(running(FIRST_ROOT, 205));
+    pendingTypeScriptStart.resolve(running(FIRST_ROOT, 206));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toMatchObject({
+      kind: "running",
+      rootPath: SECOND_ROOT,
+      sessionId: 205,
+    });
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toMatchObject({
+      kind: "running",
+      rootPath: SECOND_ROOT,
+      sessionId: 206,
+    });
+    harness.unmount();
+  });
+
+  it("keeps an alias-transferred TS start over an older transferred snapshot", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingTransferredSnapshot = deferred<LanguageServerRuntimeStatus>();
+    const tsGateway = runtimeGateway();
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(firstOwner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    vi.mocked(tsGateway.getStatus).mockReturnValueOnce(pendingTransferredSnapshot.promise);
+    harness.rerender(transferredOwner);
+    await flushEffects();
+    pendingStart.resolve(running(FIRST_ROOT, 220));
+    await flushEffects();
+    pendingTransferredSnapshot.resolve(stopped(SECOND_ROOT));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toMatchObject({
+      kind: "running",
+      rootPath: SECOND_ROOT,
+      sessionId: 220,
+    });
+    harness.unmount();
+  });
+
+  it("cancels retained alias autostarts when the transferred owner disables prerequisites", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const pendingPhpStart = deferred<LanguageServerRuntimeStatus>();
+    const pendingTypeScriptStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const tsGateway = runtimeGateway();
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingPhpStart.promise);
+    vi.mocked(tsGateway.start).mockReturnValueOnce(pendingTypeScriptStart.promise);
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "fullSmart" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const harness = renderLifecycle(firstOwner, {
+      workspaceSettings,
+      workspaceSettingsRef: { current: workspaceSettings },
+      languageServerPlan: READY_PLAN,
+      javaScriptTypeScriptLanguageServerPlan: TS_READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: tsGateway,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+
+    harness.rerender(transferredOwner, {
+      languageServerPlan: null,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: false,
+    });
+    await flushEffects();
+    harness.dependencies.languageServerRuntimeStatusByRootRef.current = {};
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
+
+    pendingPhpStart.resolve(running(FIRST_ROOT, 211));
+    pendingTypeScriptStart.resolve(running(FIRST_ROOT, 212));
+    await flushEffects();
+
+    expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBe(firstOwner.ownerKey);
+    expect(harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current).toBe(
+      firstOwner.ownerKey,
+    );
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toBeUndefined();
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toBeUndefined();
+
+    harness.rerender(transferredOwner, {
+      languageServerPlan: READY_PLAN,
+      shouldAutoStartJavaScriptTypeScriptLanguageServer: true,
+    });
+    await flushEffects();
+    expect(phpGateway.start).toHaveBeenCalledTimes(1);
+    expect(tsGateway.start).toHaveBeenCalledTimes(1);
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toMatchObject({ kind: "running", rootPath: SECOND_ROOT, sessionId: 211 });
+    expect(
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
+    ).toMatchObject({ kind: "running", rootPath: SECOND_ROOT, sessionId: 212 });
     harness.unmount();
   });
 
@@ -1250,34 +1956,28 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     harness.dependencies.appSettingsRef.current.workspaceTabs = [SECOND_ROOT];
 
     act(() => {
-      harness.lifecycle().handleLanguageServerRuntimeStatus(
-        running(FIRST_ROOT),
-        FIRST_ROOT,
-        firstOwner,
-      );
-      harness.lifecycle().handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
-        running(SECOND_ROOT, 2),
-        SECOND_ROOT,
-        secondOwner,
-      );
+      harness
+        .lifecycle()
+        .handleLanguageServerRuntimeStatus(running(FIRST_ROOT), FIRST_ROOT, firstOwner);
+      harness
+        .lifecycle()
+        .handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
+          running(SECOND_ROOT, 2),
+          SECOND_ROOT,
+          secondOwner,
+        );
     });
-    harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current[
-      firstOwner.ownerKey
-    ] = 2;
-    harness.dependencies.autoStartedLanguageServerRootRef.current =
-      firstOwner.ownerKey;
+    harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current[firstOwner.ownerKey] =
+      2;
+    harness.dependencies.autoStartedLanguageServerRootRef.current = firstOwner.ownerKey;
     harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current =
       firstOwner.ownerKey;
 
     await act(async () => {
-      await harness.lifecycle().stopLanguageServerRuntime(
-        SECOND_ROOT,
-        transferredOwner,
-      );
-      await harness.lifecycle().stopJavaScriptTypeScriptLanguageServerRuntime(
-        SECOND_ROOT,
-        transferredOwner,
-      );
+      await harness.lifecycle().stopLanguageServerRuntime(SECOND_ROOT, transferredOwner);
+      await harness
+        .lifecycle()
+        .stopJavaScriptTypeScriptLanguageServerRuntime(SECOND_ROOT, transferredOwner);
     });
 
     expect(harness.dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
@@ -1286,33 +1986,25 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(
       harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
     ).toHaveBeenCalledWith(SECOND_ROOT);
+    expect(Object.keys(harness.dependencies.languageServerRuntimeStatusByRootRef.current)).toEqual([
+      firstOwner.ownerKey,
+    ]);
     expect(
-      Object.keys(harness.dependencies.languageServerRuntimeStatusByRootRef.current),
-    ).toEqual([firstOwner.ownerKey]);
-    expect(
-      Object.keys(
-        harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current,
-      ),
+      Object.keys(harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current),
     ).toEqual(expect.arrayContaining([firstOwner.ownerKey, secondOwner.ownerKey]));
 
     act(() => {
-      harness.lifecycle().forgetLanguageServerRuntimeStatuses(
-        SECOND_ROOT,
-        transferredOwner,
-      );
+      harness.lifecycle().forgetLanguageServerRuntimeStatuses(SECOND_ROOT, transferredOwner);
     });
 
     expect(harness.dependencies.languageServerRuntimeStatusByRootRef.current).toEqual({});
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        secondOwner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[secondOwner.ownerKey],
     ).toBeDefined();
     expect(harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current).toEqual({});
     expect(harness.dependencies.autoStartedLanguageServerRootRef.current).toBeNull();
     expect(
-      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef
-        .current,
+      harness.dependencies.autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
     ).toBeNull();
     harness.unmount();
   });
@@ -1324,20 +2016,23 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     harness.dependencies.appSettingsRef.current.workspaceTabs = [SECOND_ROOT];
 
     await flushEffects();
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, firstOwner);
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      firstOwner,
+    );
 
     await act(async () => {
       await harness.lifecycle().stopProjectRuntimes(SECOND_ROOT, secondOwner);
     });
 
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(SECOND_ROOT, secondOwner);
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(SECOND_ROOT, secondOwner);
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).toHaveBeenCalledWith(
+      SECOND_ROOT,
+      secondOwner,
+    );
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      SECOND_ROOT,
+      secondOwner,
+    );
     expect(
       harness.dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
     ).toHaveBeenCalledWith(SECOND_ROOT);
@@ -1346,14 +2041,8 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
 
   it("stops an inactive admitted owner without creating a legacy duplicate", async () => {
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
-    const transferredOwner = transferWorkspaceRuntimeOwner(
-      firstOwner,
-      SECOND_ROOT,
-    );
-    const secondOwner = createWorkspaceRuntimeOwner(
-      "workspace-b",
-      "/workspace-b",
-    );
+    const transferredOwner = transferWorkspaceRuntimeOwner(firstOwner, SECOND_ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", "/workspace-b");
     const harness = renderLifecycle(firstOwner);
     harness.dependencies.appSettingsRef.current.workspaceTabs = [
       FIRST_ROOT,
@@ -1365,46 +2054,36 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     harness.rerender(secondOwner);
     await flushEffects();
 
-    harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ] = running(SECOND_ROOT, 31);
-    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ] = running(SECOND_ROOT, 32);
-    vi.mocked(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
+    harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey] =
+      running(SECOND_ROOT, 31);
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey] =
+      running(SECOND_ROOT, 32);
+    vi.mocked(harness.dependencies.clearLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
 
     await act(async () => {
-      await harness.lifecycle().stopBackgroundProjectRuntimes(
-        "singleActive",
-        secondOwner.executionRoot,
-        FIRST_ROOT,
-      );
+      await harness
+        .lifecycle()
+        .stopBackgroundProjectRuntimes("singleActive", secondOwner.executionRoot, FIRST_ROOT);
     });
 
     expect(
       harness.dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
     ).toHaveBeenCalledWith(SECOND_ROOT);
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toEqual({ kind: "stopped", rootPath: SECOND_ROOT });
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toEqual({ kind: "stopped", rootPath: SECOND_ROOT });
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(SECOND_ROOT, transferredOwner);
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(SECOND_ROOT, transferredOwner);
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).toHaveBeenCalledWith(
+      SECOND_ROOT,
+      transferredOwner,
+    );
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      SECOND_ROOT,
+      transferredOwner,
+    );
     expect(
       harness.dependencies.languageServerRuntimeStatusByRootRef.current[
         createLegacyWorkspaceRuntimeOwner(FIRST_ROOT).ownerKey
@@ -1450,15 +2129,10 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     vi.mocked(phpGateway.stop).mockClear();
     vi.mocked(tsGateway.stop).mockClear();
 
-    const disposal = harness.lifecycle().stopProjectRuntimes(
-      FIRST_ROOT,
-      firstOwner,
-    );
+    const disposal = harness.lifecycle().stopProjectRuntimes(FIRST_ROOT, firstOwner);
     harness.rerender(secondOwner);
     await flushEffects();
-    delete harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ];
+    delete harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey];
     delete harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
       firstOwner.ownerKey
     ];
@@ -1473,18 +2147,12 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(tsGateway.stop).not.toHaveBeenCalled();
     expect(stopTerminalRoot).not.toHaveBeenCalled();
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toBeUndefined();
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toBeUndefined();
-    expect(
-      harness.dependencies.reportErrorForActiveWorkspaceRoot,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -1507,24 +2175,16 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     await flushEffects();
     harness.rerender(secondOwner);
     await flushEffects();
-    harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ] = running(FIRST_ROOT, 41);
-    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ] = running(FIRST_ROOT, 42);
-    vi.mocked(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
+    harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey] =
+      running(FIRST_ROOT, 41);
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey] =
+      running(FIRST_ROOT, 42);
+    vi.mocked(harness.dependencies.clearLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
 
     let result: "stopped" | "incomplete" | "stale" | undefined;
     await act(async () => {
-      result = await harness
-        .lifecycle()
-        .stopProjectRuntimes(FIRST_ROOT, firstOwner);
+      result = await harness.lifecycle().stopProjectRuntimes(FIRST_ROOT, firstOwner);
     });
 
     expect(result).toBe("stopped");
@@ -1532,24 +2192,20 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(tsGateway.stop).toHaveBeenCalledWith(FIRST_ROOT);
     expect(stopTerminalRoot).toHaveBeenCalledWith(FIRST_ROOT);
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toEqual(stopped(FIRST_ROOT));
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toEqual(stopped(FIRST_ROOT));
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, firstOwner);
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, firstOwner);
-    expect(
-      harness.dependencies.reportErrorForActiveWorkspaceRoot,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      firstOwner,
+    );
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      firstOwner,
+    );
+    expect(harness.dependencies.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -1576,47 +2232,32 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     harness.rerender(secondOwner);
     await flushEffects();
     const phpRunning = running(FIRST_ROOT, 51);
-    harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ] = phpRunning;
-    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ] = running(FIRST_ROOT, 52);
-    vi.mocked(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).mockClear();
-    vi.mocked(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).mockClear();
+    harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey] =
+      phpRunning;
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey] =
+      running(FIRST_ROOT, 52);
+    vi.mocked(harness.dependencies.clearLanguageServerDiagnosticsForRoot).mockClear();
+    vi.mocked(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).mockClear();
 
     let result: "stopped" | "incomplete" | "stale" | undefined;
     await act(async () => {
-      result = await harness
-        .lifecycle()
-        .stopProjectRuntimes(FIRST_ROOT, firstOwner);
+      result = await harness.lifecycle().stopProjectRuntimes(FIRST_ROOT, firstOwner);
     });
 
     expect(result).toBe("incomplete");
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toBe(phpRunning);
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toEqual(stopped(FIRST_ROOT));
-    expect(
-      harness.dependencies.clearLanguageServerDiagnosticsForRoot,
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
-    ).toHaveBeenCalledWith(FIRST_ROOT, firstOwner);
+    expect(harness.dependencies.clearLanguageServerDiagnosticsForRoot).not.toHaveBeenCalled();
+    expect(harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot).toHaveBeenCalledWith(
+      FIRST_ROOT,
+      firstOwner,
+    );
     expect(stopTerminalRoot).toHaveBeenCalledWith(FIRST_ROOT);
-    expect(
-      harness.dependencies.reportErrorForActiveWorkspaceRoot,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -1655,23 +2296,20 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       transferredTsListener(stopped(FIRST_ROOT));
     });
 
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).toHaveBeenCalledWith(
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "running",
         rootPath: SECOND_ROOT,
         sessionId: 3,
       }),
     );
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).toHaveBeenCalledWith(
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "crashed", rootPath: SECOND_ROOT }),
     );
-    expect(
-      harness.dependencies.setLanguageServerRuntimeStatus,
-    ).toHaveBeenCalledWith({ kind: "stopped", rootPath: SECOND_ROOT });
+    expect(harness.dependencies.setLanguageServerRuntimeStatus).toHaveBeenCalledWith({
+      kind: "stopped",
+      rootPath: SECOND_ROOT,
+    });
     expect(
       harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
     ).toHaveBeenCalledWith(
@@ -1683,9 +2321,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     );
     expect(
       harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "crashed", rootPath: SECOND_ROOT }),
-    );
+    ).toHaveBeenCalledWith(expect.objectContaining({ kind: "crashed", rootPath: SECOND_ROOT }));
     expect(
       harness.dependencies.setJavaScriptTypeScriptLanguageServerRuntimeStatus,
     ).toHaveBeenCalledWith({ kind: "stopped", rootPath: SECOND_ROOT });
@@ -1706,24 +2342,16 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     });
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toEqual({ kind: "stopped", rootPath: SECOND_ROOT });
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        secondOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[secondOwner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 7 });
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toEqual({ kind: "stopped", rootPath: SECOND_ROOT });
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        secondOwner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[secondOwner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 8 });
     harness.unmount();
   });
@@ -1743,15 +2371,9 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     const forgottenListener = latestStatusListener(phpGateway);
 
     const startPromise = harness.lifecycle().startLanguageServer();
-    const stopPromise = harness.lifecycle().stopLanguageServerRuntime(
-      SECOND_ROOT,
-      firstOwner,
-    );
+    const stopPromise = harness.lifecycle().stopLanguageServerRuntime(SECOND_ROOT, firstOwner);
     act(() => {
-      harness.lifecycle().forgetLanguageServerRuntimeStatuses(
-        SECOND_ROOT,
-        firstOwner,
-      );
+      harness.lifecycle().forgetLanguageServerRuntimeStatuses(SECOND_ROOT, firstOwner);
       forgottenListener(running(SECOND_ROOT, 7));
     });
     harness.rerender(secondOwner);
@@ -1763,14 +2385,10 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     });
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        firstOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[firstOwner.ownerKey],
     ).toBeUndefined();
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        secondOwner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[secondOwner.ownerKey],
     ).toEqual(stopped(SECOND_ROOT));
     harness.unmount();
   });
@@ -1790,21 +2408,14 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     );
 
     act(() => {
-      harness.lifecycle().forgetLanguageServerRuntimeStatuses(
-        SECOND_ROOT,
-        transferredOwner,
-      );
+      harness.lifecycle().forgetLanguageServerRuntimeStatuses(SECOND_ROOT, transferredOwner);
     });
     await flushEffects();
 
     const phpStatusBeforeStaleAlias =
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ];
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey];
     const tsStatusBeforeStaleAlias =
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ];
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey];
 
     act(() => {
       stalePhpListener(running(SECOND_ROOT, 10));
@@ -1812,40 +2423,32 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       latestStatusListener(harness.dependencies.languageServerRuntimeGateway)(
         running(FIRST_ROOT, 12),
       );
-      latestStatusListener(
-        harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
-      )(running(FIRST_ROOT, 13));
+      latestStatusListener(harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway)(
+        running(FIRST_ROOT, 13),
+      );
     });
 
+    expect(harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey]).toBe(
+      phpStatusBeforeStaleAlias,
+    );
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
-    ).toBe(phpStatusBeforeStaleAlias);
-    expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toBe(tsStatusBeforeStaleAlias);
 
     act(() => {
       latestStatusListener(harness.dependencies.languageServerRuntimeGateway)(
         running(SECOND_ROOT, 14),
       );
-      latestStatusListener(
-        harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
-      )(running(SECOND_ROOT, 15));
+      latestStatusListener(harness.dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway)(
+        running(SECOND_ROOT, 15),
+      );
     });
 
     expect(
-      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 14 });
     expect(
-      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-        owner.ownerKey
-      ],
+      harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[owner.ownerKey],
     ).toMatchObject({ kind: "running", sessionId: 15 });
     harness.unmount();
   });
@@ -1857,7 +2460,12 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     const phpSubscribe = deferred<() => void>();
     const phpStart = deferred<LanguageServerRuntimeStatus>();
     const phpStop = deferred<LanguageServerRuntimeStatus>();
-    const phpProbe = deferred<Awaited<ReturnType<LanguageServerRuntimeLifecycleDependencies["phpToolGateway"]["detectPhpTools"]>>>();
+    const phpProbe =
+      deferred<
+        Awaited<
+          ReturnType<LanguageServerRuntimeLifecycleDependencies["phpToolGateway"]["detectPhpTools"]>
+        >
+      >();
     const tsGetStatus = deferred<LanguageServerRuntimeStatus>();
     const tsSubscribe = deferred<() => void>();
     const tsStart = deferred<LanguageServerRuntimeStatus>();
@@ -1905,20 +2513,13 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     });
 
     const phpStartPromise = harness.lifecycle().startLanguageServer();
-    const phpStopPromise = harness.lifecycle().stopLanguageServerRuntime(
-      SECOND_ROOT,
-      firstOwner,
-    );
-    const phpProbePromise = harness.lifecycle().runPhpWorkspaceProbe(
-      SECOND_ROOT,
-      firstOwner,
-    );
+    const phpStopPromise = harness.lifecycle().stopLanguageServerRuntime(SECOND_ROOT, firstOwner);
+    const phpProbePromise = harness.lifecycle().runPhpWorkspaceProbe(SECOND_ROOT, firstOwner);
     const tsStartPromise = harness.lifecycle().restartJavaScriptTypeScriptService();
     await flushEffects();
-    const tsStopPromise = harness.lifecycle().stopJavaScriptTypeScriptLanguageServerRuntime(
-      SECOND_ROOT,
-      firstOwner,
-    );
+    const tsStopPromise = harness
+      .lifecycle()
+      .stopJavaScriptTypeScriptLanguageServerRuntime(SECOND_ROOT, firstOwner);
     harness.rerender(secondOwner);
 
     const staleError = new Error("stale owner failure");
@@ -1946,9 +2547,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(
       harness.dependencies.reportLanguageServerErrorForActiveWorkspaceRoot,
     ).not.toHaveBeenCalled();
-    expect(
-      harness.dependencies.reportErrorForActiveWorkspaceRoot,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -1964,34 +2563,26 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       javaScriptTypeScriptLanguageServerRuntimeStatus: globalStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot: FIRST_ROOT,
       javaScriptTypeScriptLanguageServerRuntimeStatusRef: globalStatusRef,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef:
-        globalStatusRootRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: globalStatusRootRef,
     });
 
-    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
-      firstOwner.ownerKey
-    ] = globalStatus;
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[firstOwner.ownerKey] =
+      globalStatus;
     harness.rerender(secondOwner, {
       javaScriptTypeScriptLanguageServerRuntimeStatus: globalStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot: FIRST_ROOT,
       javaScriptTypeScriptLanguageServerRuntimeStatusRef: globalStatusRef,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef:
-        globalStatusRootRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: globalStatusRootRef,
     });
-    delete harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef
-      .current[secondOwner.ownerKey];
+    delete harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
+      secondOwner.ownerKey
+    ];
 
     expect(
-      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
-        FIRST_ROOT,
-        73,
-      ),
+      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(FIRST_ROOT, 73),
     ).toBe(false);
     expect(
-      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-        FIRST_ROOT,
-        73,
-      ),
+      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(FIRST_ROOT, 73),
     ).toBe(false);
     harness.unmount();
   });
@@ -2012,10 +2603,7 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     });
 
     expect(
-      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
-        FIRST_ROOT,
-        74,
-      ),
+      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(FIRST_ROOT, 74),
     ).toBe(true);
     harness.unmount();
   });
