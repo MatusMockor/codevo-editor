@@ -8,6 +8,7 @@ import {
   emptyLanguageServerCapabilities,
   type LanguageServerRuntimeStatus,
 } from "../../domain/languageServerRuntime";
+import { defaultAppSettings } from "../../domain/settings";
 import {
   type FileEntry,
   type ManagedPhpactorInstallCompletionEvent,
@@ -23,6 +24,85 @@ import {
   type WorkbenchWorkspaceGateways,
 } from "../useWorkbenchController";
 
+// Shared test-only dependency surface for split controller suites.
+export { callHierarchyRows } from "../../domain/callHierarchy";
+export type { DebugGateway } from "../../domain/debug";
+export { debugBreakpointStorageKey } from "../../domain/debugBreakpointPersistence";
+export { deserializeBreakpoints, serializeBreakpoints } from "../../domain/debugBreakpoints";
+export { createInitialEditorGroupsState } from "../../domain/editorGroups";
+export { emptyGitStatus, gitChangeKey } from "../../domain/git";
+export type { GitChangedFile, GitGateway } from "../../domain/git";
+export type { IndexProgressGateway, MetadataScanCompletionEvent } from "../../domain/indexProgress";
+export type { SmartModeGateway } from "../../domain/intelligence";
+export { defaultKeymapSettings } from "../../domain/keymap";
+export type {
+  LanguageServerGateway,
+  LanguageServerPlan,
+  PhpLanguageServerPlanOptions,
+} from "../../domain/languageServer";
+export type {
+  LanguageServerDiagnosticEvent,
+  LanguageServerDiagnosticsGateway,
+} from "../../domain/languageServerDiagnostics";
+export { fileUriFromPath } from "../../domain/languageServerDocumentSync";
+export type {
+  LanguageServerCodeAction,
+  LanguageServerFeaturesGateway,
+  LanguageServerTextEdit,
+  LanguageServerWorkspaceEdit,
+} from "../../domain/languageServerFeatures";
+export { emptyLanguageServerCapabilities } from "../../domain/languageServerRuntime";
+export type {
+  LanguageServerRuntimeGateway,
+  LanguageServerRuntimeStatus,
+} from "../../domain/languageServerRuntime";
+export { emptyPhpFileOutline } from "../../domain/phpFileOutline";
+export type { PhpFileOutlineGateway } from "../../domain/phpFileOutline";
+export type { PhpTreeGateway } from "../../domain/phpTree";
+export type {
+  ProjectSymbolSearchGateway,
+  ProjectSymbolSearchResult,
+} from "../../domain/projectSymbols";
+export { referenceRows } from "../../domain/referencesView";
+export {
+  defaultAppSettings,
+  defaultWorkspaceSettings,
+  normalizeWorkspaceSession,
+} from "../../domain/settings";
+export type { SettingsGateway } from "../../domain/settings";
+export type { WorkspaceTrustGateway, WorkspaceTrustState } from "../../domain/trust";
+export { typeHierarchyRows } from "../../domain/typeHierarchy";
+export { defaultTextSearchOptions } from "../../domain/workspace";
+export type {
+  FileEntry,
+  FileSearchResult,
+  TextSearchResult,
+  WorkspaceDescriptor,
+} from "../../domain/workspace";
+export type { WorkspaceFileChangeEvent } from "../../domain/workspaceFileChange";
+export { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
+export type { WorkspaceRuntimeLifecycleGateway } from "../../domain/workspaceRuntimeLifecycle";
+export {
+  flushTextSearchDebounce,
+  resolveInReactAct,
+  waitForReact,
+} from "../../test/reactTestLifecycle";
+export {
+  featuresGateway,
+  flushAsyncTurns,
+  javaScriptTypeScriptWorkspaceDescriptor,
+  setupWorkbenchControllerTestHarness,
+} from "../../test/workbenchControllerTestHarness";
+export type { WorkbenchController } from "../../test/workbenchControllerTestHarness";
+export { EditorActiveLiveDocumentSaveCoordinator } from "../editorActiveLiveDocumentSaveCoordinator";
+export {
+  adoptLegacyCachedWorkspaceState,
+  withWorkspaceIdentityLease,
+} from "../useWorkbenchController";
+export type { WorkbenchWorkspaceGateways } from "../useWorkbenchController";
+export { act } from "react";
+export { describe, expect, it, vi } from "vitest";
+
 export interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -31,6 +111,13 @@ export interface Deferred<T> {
 
 export function completion(fields: Record<string, unknown>) {
   return expect.objectContaining(fields);
+}
+
+export function workspaceAppSettings() {
+  return {
+    ...defaultAppSettings(),
+    recentWorkspacePath: "/workspace",
+  };
 }
 
 export function readyJavaScriptTypeScriptPlan(rootPath: string): LanguageServerPlan {
@@ -94,32 +181,18 @@ export function createDeferred<T>(): Deferred<T> {
   };
 }
 
-export async function flushWorkspaceDirectoryRefresh(): Promise<void> {
+async function flushAfter(delay: number): Promise<void> {
   await act(async () => {
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 150);
+      setTimeout(resolve, delay);
     });
   });
   await flushAsyncTurns();
 }
 
-export async function flushSearchEverywhereDebounce(): Promise<void> {
-  await act(async () => {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 150);
-    });
-  });
-  await flushAsyncTurns();
-}
-
-export async function flushFilePrefetch(): Promise<void> {
-  await act(async () => {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 150);
-    });
-  });
-  await flushAsyncTurns();
-}
+export const flushWorkspaceDirectoryRefresh = () => flushAfter(150);
+export const flushSearchEverywhereDebounce = () => flushAfter(150);
+export const flushFilePrefetch = () => flushAfter(150);
 
 export interface ManagedPhpactorInstallHarness {
   phpTools: WorkbenchWorkspaceGateways["phpTools"];
@@ -199,38 +272,34 @@ export function netteWorkspaceDescriptor(): WorkspaceDescriptor {
   return phpWorkspaceDescriptor({
     packageName: "nette/application",
     packages: [
-      {
-        classmapRoots: [],
-        dev: false,
-        installPath: "../nette/application",
-        name: "nette/application",
-        packageType: "library",
-        psr4Roots: [
-          {
-            dev: false,
-            namespace: "Nette\\Application\\",
-            paths: ["src/"],
-          },
-        ],
-        version: "3.2.0",
-      },
-      {
-        classmapRoots: [],
-        dev: false,
-        installPath: "../latte/latte",
-        name: "latte/latte",
-        packageType: "library",
-        psr4Roots: [
-          {
-            dev: false,
-            namespace: "Latte\\",
-            paths: ["src/"],
-          },
-        ],
-        version: "3.0.0",
-      },
+      phpPackage(
+        "nette/application",
+        "../nette/application",
+        "Nette\\Application\\",
+        "src/",
+        "3.2.0",
+      ),
+      phpPackage("latte/latte", "../latte/latte", "Latte\\", "src/", "3.0.0"),
     ],
   });
+}
+
+function phpPackage(
+  name: string,
+  installPath: string,
+  namespace: string,
+  path: string,
+  version: string,
+) {
+  return {
+    classmapRoots: [],
+    dev: false,
+    installPath,
+    name,
+    packageType: "library" as const,
+    psr4Roots: [{ dev: false, namespace, paths: [path] }],
+    version,
+  };
 }
 
 export function phpProjectDescriptor(
@@ -241,36 +310,20 @@ export function phpProjectDescriptor(
     hasComposer: true,
     packageName: "laravel/laravel",
     packages: [
-      {
-        classmapRoots: [],
-        dev: false,
-        installPath: "../laravel/framework",
-        name: "laravel/framework",
-        packageType: "library",
-        psr4Roots: [
-          {
-            dev: false,
-            namespace: "Illuminate\\",
-            paths: ["src/Illuminate/"],
-          },
-        ],
-        version: "13.0.0",
-      },
-      {
-        classmapRoots: [],
-        dev: false,
-        installPath: "../symfony/http-foundation",
-        name: "symfony/http-foundation",
-        packageType: "library",
-        psr4Roots: [
-          {
-            dev: false,
-            namespace: "Symfony\\Component\\HttpFoundation\\",
-            paths: [""],
-          },
-        ],
-        version: "8.0.0",
-      },
+      phpPackage(
+        "laravel/framework",
+        "../laravel/framework",
+        "Illuminate\\",
+        "src/Illuminate/",
+        "13.0.0",
+      ),
+      phpPackage(
+        "symfony/http-foundation",
+        "../symfony/http-foundation",
+        "Symfony\\Component\\HttpFoundation\\",
+        "",
+        "8.0.0",
+      ),
     ],
     phpPlatformVersion: null,
     phpVersionConstraint: "^8.3",
@@ -386,9 +439,36 @@ export function gitChangedFile(relativePath: string, isStaged: boolean) {
 }
 
 export function fileHistoryGitGateway(overrides: Partial<GitGateway>): GitGateway {
+  const statusMethods = Object.fromEntries(
+    [
+      "commit",
+      "push",
+      "getStatus",
+      "revertFiles",
+      "stageFiles",
+      "stageHunk",
+      "unstageFiles",
+      "unstageHunk",
+    ].map((name) => [name, vi.fn(async (rootPath: string) => emptyGitStatus(rootPath))]),
+  );
+  const arrayMethods = Object.fromEntries(
+    ["blame", "getFileHunks", "stashList", "branchList"].map((name) => [
+      name,
+      vi.fn(async () => []),
+    ]),
+  );
+  const voidMethods = Object.fromEntries(
+    ["stashSave", "stashApply", "stashPop", "stashDrop", "createBranch", "switchBranch"].map(
+      (name) => [name, vi.fn(async () => undefined)],
+    ),
+  );
+
   return {
-    blame: vi.fn(async () => []),
+    ...arrayMethods,
+    ...statusMethods,
+    ...voidMethods,
     fileHistory: overrides.fileHistory ?? vi.fn(async () => []),
+    commit: overrides.commit ?? statusMethods.commit,
     fileCommitDiff:
       overrides.fileCommitDiff ??
       vi.fn(async (_rootPath, relativePath) => ({
@@ -405,32 +485,16 @@ export function fileHistoryGitGateway(overrides: Partial<GitGateway>): GitGatewa
         modifiedContent: "",
         originalContent: "",
       })),
-    commit: overrides.commit ?? vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-    push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     getDiff: vi.fn(async (_rootPath, requestedChange) => ({
       change: requestedChange,
       language: "plaintext",
       modifiedContent: "",
       originalContent: "",
     })),
-    getStatus: overrides.getStatus ?? vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-    getFileHunks: vi.fn(async () => []),
-    revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-    stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-    stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-    unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-    unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-    stashSave: vi.fn(async () => undefined),
-    stashList: vi.fn(async () => []),
-    stashApply: vi.fn(async () => undefined),
-    stashPop: vi.fn(async () => undefined),
+    getStatus: overrides.getStatus ?? statusMethods.getStatus,
     stashShow: vi.fn(async () => ""),
-    stashDrop: vi.fn(async () => undefined),
-    branchList: vi.fn(async () => []),
     currentBranch: vi.fn(async () => null),
-    createBranch: vi.fn(async () => undefined),
-    switchBranch: vi.fn(async () => undefined),
-  };
+  } as unknown as GitGateway;
 }
 
 export function range(

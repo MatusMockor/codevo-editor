@@ -9,6 +9,27 @@ const activeChildren = new Set();
 const defaultProjectQaCdpUrl = "http://127.0.0.1:9222";
 const defaultProjectQaTargetUrl = "localhost:1420";
 
+export const workbenchControllerPreviewSuites = [
+  "src/application/useWorkbenchController.preview.test.tsx",
+  "src/application/useWorkbenchController.preview/editing-file-events-settings-and-outline.test.tsx",
+  "src/application/useWorkbenchController.preview/editing-trust-runtime-and-renames.test.tsx",
+  "src/application/useWorkbenchController.preview/laravel-latte-blade-and-navigation.test.tsx",
+  "src/application/useWorkbenchController.preview/laravel-routes-config-translations-and-definitions.test.tsx",
+  "src/application/useWorkbenchController.preview/navigation-php-hierarchies-and-definitions.test.tsx",
+  "src/application/useWorkbenchController.preview/navigation-search-and-symbols.test.tsx",
+  "src/application/useWorkbenchController.preview/php-diagnostics-relations-and-definitions.test.tsx",
+  "src/application/useWorkbenchController.preview/php-refactors-and-quickfixes.test.tsx",
+  "src/application/useWorkbenchController.preview/php-resolution-generics-and-inference.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-lifecycle-identity-and-commands.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-save-runtime-switch-and-cleanup.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-session-git-and-editor.test.tsx",
+];
+
+const laravelWorkbenchControllerPreviewSuites = [
+  "src/application/useWorkbenchController.preview/laravel-latte-blade-and-navigation.test.tsx",
+  "src/application/useWorkbenchController.preview/laravel-routes-config-translations-and-definitions.test.tsx",
+];
+
 export const qaSmokeProfiles = {
   vitestFast: {
     description:
@@ -62,7 +83,7 @@ export const qaSmokeProfiles = {
       "src/domain/phpLaravelViewData.test.ts",
       "src/domain/bladeNavigation.test.ts",
       "src/components/languageServerMonacoProviders.test.ts",
-      "src/application/useWorkbenchController.preview.test.tsx",
+      ...laravelWorkbenchControllerPreviewSuites,
       "-t",
       "phpLaravelViews|phpLaravelViewDataBindings|detectBladeReferenceAt|bladeViewCandidateRelativePaths|bladeComponentCandidateRelativePaths|bladeComponentClassCandidatePaths|registerLanguageServerMonacoProviders blade providers|Laravel Blade view|View::make|Route::view|basic Blade document|Blade Cmd\\+Click definition and completion|variables passed from a controller|built-in Blade variables|Laravel helpers in Blade",
     ],
@@ -71,7 +92,7 @@ export const qaSmokeProfiles = {
       "src/domain/phpLaravelViewData.test.ts",
       "src/domain/bladeNavigation.test.ts",
       "src/components/languageServerMonacoProviders.test.ts",
-      "src/application/useWorkbenchController.preview.test.tsx",
+      ...laravelWorkbenchControllerPreviewSuites,
     ],
   },
   vitestNette: {
@@ -114,12 +135,12 @@ export const qaSmokeProfiles = {
       "--",
       "src/components/RuntimeObservabilityPanel.test.tsx",
       "src/components/EditorSurface.test.tsx",
-      "src/application/useWorkbenchController.preview.test.tsx",
+      ...workbenchControllerPreviewSuites,
     ],
     files: [
       "src/components/RuntimeObservabilityPanel.test.tsx",
       "src/components/EditorSurface.test.tsx",
-      "src/application/useWorkbenchController.preview.test.tsx",
+      ...workbenchControllerPreviewSuites,
     ],
   },
   vitestFull: {
@@ -206,22 +227,12 @@ const modeSteps = {
     }),
   ],
   projects: [
-    commandStep(
-      "Real project scenario preflight",
-      "node",
-      projectQaPreflightArgs(),
-      {
-        timeoutMs: minutes(2),
-      },
-    ),
-    commandStep(
-      "Real project provider smoke",
-      "node",
-      projectQaScenarioArgs(),
-      {
-        timeoutMs: minutes(10),
-      },
-    ),
+    commandStep("Real project scenario preflight", "node", projectQaPreflightArgs(), {
+      timeoutMs: minutes(2),
+    }),
+    commandStep("Real project provider smoke", "node", projectQaScenarioArgs(), {
+      timeoutMs: minutes(10),
+    }),
   ],
 };
 
@@ -245,7 +256,9 @@ async function main() {
 
   const steps = modeSteps[options.mode];
   if (!steps) {
-    throw new Error(`Unknown smoke mode "${options.mode}". Expected one of: ${modeNames.join(", ")}.`);
+    throw new Error(
+      `Unknown smoke mode "${options.mode}". Expected one of: ${modeNames.join(", ")}.`,
+    );
   }
 
   registerSignalHandlers();
@@ -256,7 +269,9 @@ async function main() {
     await runStep(step, index + 1, steps.length);
   }
 
-  console.log(`\nqa-smoke: ${options.mode} smoke passed in ${formatDuration(Date.now() - startedAt)}`);
+  console.log(
+    `\nqa-smoke: ${options.mode} smoke passed in ${formatDuration(Date.now() - startedAt)}`,
+  );
 }
 
 function parseArgs(args) {

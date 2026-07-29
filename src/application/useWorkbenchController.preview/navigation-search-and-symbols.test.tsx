@@ -1,37 +1,43 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import { describe, expect, it, vi } from "vitest";
-import type {
-  LanguageServerDiagnosticEvent,
-  LanguageServerDiagnosticsGateway,
-} from "../../domain/languageServerDiagnostics";
-import { fileUriFromPath } from "../../domain/languageServerDocumentSync";
 import {
-  emptyLanguageServerCapabilities,
-  type LanguageServerRuntimeStatus,
-} from "../../domain/languageServerRuntime";
-import { defaultAppSettings, defaultWorkspaceSettings } from "../../domain/settings";
-import { defaultTextSearchOptions, type TextSearchResult } from "../../domain/workspace";
-import type { WorkspaceFileChangeEvent } from "../../domain/workspaceFileChange";
-import { flushTextSearchDebounce, waitForReact } from "../../test/reactTestLifecycle";
-import {
-  featuresGateway,
-  flushAsyncTurns,
-  javaScriptTypeScriptWorkspaceDescriptor,
-  setupWorkbenchControllerTestHarness,
-} from "../../test/workbenchControllerTestHarness";
-import { type WorkbenchWorkspaceGateways } from "../useWorkbenchController";
-import {
+  workspaceAppSettings,
+  act,
   createDeferred,
+  defaultAppSettings,
+  defaultTextSearchOptions,
+  defaultWorkspaceSettings,
+  describe,
   directoryEntry,
+  emptyLanguageServerCapabilities,
+  expect,
+  featuresGateway,
   fileEntry,
+  fileUriFromPath,
+  flushAsyncTurns,
+  flushTextSearchDebounce,
   flushWorkspaceDirectoryRefresh,
+  it,
+  javaScriptTypeScriptWorkspaceDescriptor,
+  type LanguageServerDiagnosticEvent,
+  type LanguageServerDiagnosticsGateway,
+  type LanguageServerFeaturesGateway,
+  type LanguageServerRuntimeGateway,
+  type LanguageServerRuntimeStatus,
   lineNumberOf,
   phpWorkspaceDescriptor,
   positionAfter,
+  type ProjectSymbolSearchGateway,
+  type ProjectSymbolSearchResult,
   range,
   runCommand,
+  setupWorkbenchControllerTestHarness,
+  type TextSearchResult,
+  vi,
+  waitForClassSearch,
+  waitForReact,
+  type WorkbenchWorkspaceGateways,
+  type WorkspaceFileChangeEvent,
 } from "./testSupport";
 
 describe("useWorkbenchController file events, tests, search, and recent navigation", () => {
@@ -69,10 +75,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       return `// ${path}\n`;
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readDirectory,
       readTextFile,
     });
@@ -178,10 +181,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readDirectory,
       workspaceFileChangeGateway,
     });
@@ -238,10 +238,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       sessionId: 71,
     };
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       languageServerDiagnosticsGateway,
       readDirectory,
       runtimeStatus: runningStatus,
@@ -424,10 +421,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       sessionId: 91,
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       languageServerDiagnosticsGateway,
       readDirectory,
       runtimeStatus: runningStatus,
@@ -500,10 +494,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
   it("clears local PHP diagnostics when a PHP tab is closed", async () => {
     const filePath = "/workspace/src/TransientSyntax.php";
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile: vi.fn(async () => "<?php\nfinal class TransientSyntax {\n"),
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -562,10 +553,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readDirectory,
       workspaceFileChangeGateway,
     });
@@ -655,10 +643,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceFileChangeGateway,
     });
@@ -714,10 +699,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceFileChangeGateway,
     });
@@ -762,10 +744,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       }),
     };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readDirectory,
       workspaceFileChangeGateway,
     });
@@ -825,10 +804,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       files.set(path, content);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceFiles: { writeTextFile },
       workspaceDescriptor: phpWorkspaceDescriptor({
@@ -888,10 +864,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -929,10 +902,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       "",
     ].join("\n");
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile: vi.fn(async () => sourceContent),
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
@@ -1040,10 +1010,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1095,10 +1062,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       throw new Error(`missing: ${path}`);
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1151,10 +1115,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       throw new Error(`missing: ${path}`);
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1198,10 +1159,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1309,10 +1267,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readDirectory: vi.fn(async () => [
         fileEntry("/workspace/composer.json", "composer.json"),
         fileEntry("/workspace/package.json", "package.json"),
@@ -1361,10 +1316,7 @@ describe("useWorkbenchController file events, tests, search, and recent navigati
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readDirectory: vi.fn(async () => [
         fileEntry("/workspace/package.json", "package.json"),
         fileEntry("/workspace/pnpm-lock.yaml", "pnpm-lock.yaml"),
@@ -1503,10 +1455,7 @@ class InvoiceServiceTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1562,10 +1511,7 @@ class SampleTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1618,10 +1564,7 @@ class SampleTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
@@ -1668,10 +1611,7 @@ class SampleTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
@@ -1699,10 +1639,7 @@ class SampleTest extends TestCase
   });
   it("opens the shared test results panel and bumps only the JS run request version", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
@@ -1721,10 +1658,7 @@ class SampleTest extends TestCase
   });
   it("does not flag a JS-test path carrying a non-JS language id as a JS test", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
@@ -1757,10 +1691,7 @@ class SampleTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1797,10 +1728,7 @@ it('adds two numbers', function () {
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -1838,10 +1766,7 @@ it('adds two numbers', function () {
   it("safely quotes a malicious Pest description without injecting shell input", async () => {
     const testPath = "/workspace/tests/Feature/EvilTest.php";
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile: vi.fn(async (path: string) => {
         if (path === "/workspace/artisan") {
           return "#!/usr/bin/env php\n";
@@ -1880,10 +1805,7 @@ it('adds two numbers', function () {
   it("never writes a command for a Pest description with a line break", async () => {
     const testPath = "/workspace/tests/Feature/NewlineTest.php";
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile: vi.fn(async () => "<?php\n"),
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -1913,10 +1835,7 @@ it('adds two numbers', function () {
   it("never writes a command for a maliciously named filter", async () => {
     const testPath = "/workspace/tests/Unit/SampleTest.php";
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile: vi.fn(async () => "<?php\n"),
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -1970,10 +1889,7 @@ class SampleTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -2048,10 +1964,7 @@ class InvoiceServiceTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -2103,10 +2016,7 @@ it('subtracts two numbers', function () {
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -2147,10 +2057,7 @@ it('subtracts two numbers', function () {
       throw new Error(`missing: ${path}`);
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -2204,10 +2111,7 @@ class SampleTest extends TestCase
       throw new Error(`missing: ${path}`);
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor({
         psr4Roots: [
@@ -2305,10 +2209,7 @@ class User
       subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       phpToolGateway,
       readTextFile,
       searchFiles,
@@ -2447,10 +2348,7 @@ class User
       throw new Error("light PHP navigation must not use text search");
     });
     const { dependencies, getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       languageServerFeaturesGateway,
       readTextFile,
       runtimeStatus: runningStatus,
@@ -2574,10 +2472,7 @@ class PostRepository
       return "";
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor(),
       workspaceSettings: {
@@ -2665,10 +2560,7 @@ class PostRepository
       return "";
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
       workspaceDescriptor: phpWorkspaceDescriptor(),
       workspaceSettings: {
@@ -2707,10 +2599,7 @@ class PostRepository
   });
   it("records opened files in the recent files buffer, newest first", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
     });
     await flushAsyncTurns();
 
@@ -2728,10 +2617,7 @@ class PostRepository
   });
   it("moves a re-opened file to the head of the recent files buffer", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
     });
     await flushAsyncTurns();
 
@@ -2753,10 +2639,7 @@ class PostRepository
   });
   it("drops the active file from the switcher entries so the previous file leads", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
     });
     await flushAsyncTurns();
 
@@ -2774,10 +2657,7 @@ class PostRepository
   });
   it("opens the recent files switcher and opens the chosen file, closing the switcher", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
     });
     await flushAsyncTurns();
 
@@ -2812,10 +2692,7 @@ class PostRepository
       return "";
     });
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
       readTextFile,
     });
     await flushAsyncTurns();
@@ -2846,10 +2723,7 @@ class PostRepository
   });
   it("closes the recent files switcher when another overlay opens", async () => {
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
+      appSettings: workspaceAppSettings(),
     });
     await flushAsyncTurns();
 
@@ -2920,10 +2794,7 @@ class PostRepository
   describe("recent locations", () => {
     it("records the position the user navigated away from, newest first", async () => {
       const { getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-        },
+        appSettings: workspaceAppSettings(),
         readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\nclass Demo {}\n`),
       });
       await flushAsyncTurns();
@@ -2955,10 +2826,7 @@ class PostRepository
 
     it("opens the recent locations panel and jumps to the chosen position, closing the panel", async () => {
       const { getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-        },
+        appSettings: workspaceAppSettings(),
       });
       await flushAsyncTurns();
 
@@ -3372,10 +3240,7 @@ class PostRepository
         },
       );
       const { getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-        },
+        appSettings: workspaceAppSettings(),
         readTextFile,
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
@@ -3404,10 +3269,7 @@ class PostRepository
         {},
       );
       const { getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-        },
+        appSettings: workspaceAppSettings(),
         readTextFile,
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
@@ -3438,10 +3300,7 @@ class PostRepository
         },
       );
       const { dependencies, getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-        },
+        appSettings: workspaceAppSettings(),
         readTextFile,
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
@@ -3474,10 +3333,7 @@ class PostRepository
         { "/workspace": ["root = true", "[*]", "end_of_line = crlf"].join("\n") },
       );
       const { dependencies, getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-        },
+        appSettings: workspaceAppSettings(),
         readTextFile,
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
@@ -3512,10 +3368,7 @@ class PostRepository
         {},
       );
       const { dependencies, getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-        },
+        appSettings: workspaceAppSettings(),
         readTextFile,
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
@@ -3738,6 +3591,2690 @@ class PostRepository
 
       expect(opened).toBe(false);
       expect(getWorkbench().activePath).toBe("/workspace/src/Other.php");
+    });
+  });
+});
+
+describe("useWorkbenchController navigation, references, hierarchies, and symbols", () => {
+  const { renderController } = setupWorkbenchControllerTestHarness();
+  it("keeps PHP declaration commands enabled when capability gating fails", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const source = `<?php
+
+$repository->findUser();
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => source),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          typeDefinition: true,
+        },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 703,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDeclaration")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(true);
+  });
+  it("keeps PHP type definition commands enabled when root gating fails", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const source = `<?php
+
+$repository->findUser();
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => source),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          typeDefinition: true,
+        },
+        kind: "running",
+        rootPath: "/workspace-b",
+        sessionId: 704,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToTypeDefinition")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(true);
+  });
+  it("drops stale PHP declaration results after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/app/Services/UserService.php";
+    const targetPath = "/workspace-a/app/Contracts/UserRepository.php";
+    const source = `<?php
+
+$repository->findUser();
+`;
+    const cursorPosition = positionAfter(source, "findUs");
+    const declarationResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["declaration"]>>>();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 705,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.declaration).mockImplementationOnce(
+      async () => declarationResult.promise,
+    );
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "<?php\ninterface UserRepository {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(languageServerFeaturesGateway.declaration).toHaveBeenCalledWith("/workspace-a", {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    declarationResult.resolve([
+      {
+        range: range(1, 10, 1, 24),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened declaration UserRepository.php:2:11");
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+  it("drops stale PHP type definition results after same-root session restart", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const targetPath = "/workspace/app/Models/User.php";
+    const source = `<?php
+
+$user = $repository->findUser();
+$user->name;
+`;
+    const cursorPosition = positionAfter(source, "$user->na");
+    const typeDefinitionResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["typeDefinition"]>>>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(706)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(706)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.typeDefinition).mockImplementationOnce(
+      async () => typeDefinitionResult.promise,
+    );
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "<?php\nfinal class User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      readTextFile,
+      runtimeStatus: runningStatus(706),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToTypeDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(languageServerFeaturesGateway.typeDefinition).toHaveBeenCalledWith("/workspace", {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      });
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(707));
+    });
+    await flushAsyncTurns();
+
+    typeDefinitionResult.resolve([
+      {
+        range: range(1, 12, 1, 16),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().activePath).toBe(sourcePath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened type definition User.php:2:13");
+  });
+  it("opens JavaScript and TypeScript source definitions through workbench commands", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/packages/user/src/user.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const target = "export class User {\n  name = '';\n}\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        sourceDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 32,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition).mockResolvedValue(
+      [
+        {
+          range: range(0, 13, 0, 17),
+          uri: fileUriFromPath(targetPath),
+        },
+      ],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSourceDefinition")
+        ?.run();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      },
+    );
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 14,
+        lineNumber: 1,
+      },
+    });
+  });
+  it("drops stale JavaScript and TypeScript source definition results after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/src/main.ts";
+    const targetPath = "/workspace-a/packages/user/src/user.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const sourceDefinitionResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["sourceDefinition"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        sourceDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 37,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition,
+    ).mockImplementationOnce(async () => sourceDefinitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "export class User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToSourceDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition,
+      ).toHaveBeenCalledWith("/workspace-a", {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    sourceDefinitionResult.resolve([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened source definition user.ts:1:14");
+  });
+  it("drops stale JavaScript and TypeScript source definition results after same-root session restart", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/packages/user/src/user.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const sourceDefinitionResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["sourceDefinition"]>>>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        sourceDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(44)),
+      openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+      start: vi.fn(async () => runningStatus(44)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition,
+    ).mockImplementationOnce(async () => sourceDefinitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "export class User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(44),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(44),
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToSourceDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition,
+      ).toHaveBeenCalledWith("/workspace", {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      });
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(45));
+    });
+    await flushAsyncTurns();
+
+    sourceDefinitionResult.resolve([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().activePath).toBe(sourcePath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened source definition user.ts:1:14");
+  });
+  it("opens JavaScript and TypeScript declarations through workbench commands", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/types/user.d.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const target = "export declare class User {\n  name: string;\n}\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 38,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.declaration).mockResolvedValue([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+
+    expect(
+      command?.isEnabled({
+        activeDocumentDirty: false,
+        hasActiveDocument: true,
+        hasWorkspace: true,
+      }),
+    ).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.declaration).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      },
+    );
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 14,
+        lineNumber: 1,
+      },
+    });
+  });
+  it("drops stale JavaScript and TypeScript declaration results after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/src/main.ts";
+    const targetPath = "/workspace-a/types/user.d.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const declarationResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["declaration"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 39,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.declaration).mockImplementationOnce(
+      async () => declarationResult.promise,
+    );
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "export declare class User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(javaScriptTypeScriptLanguageServerFeaturesGateway.declaration).toHaveBeenCalledWith(
+        "/workspace-a",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    declarationResult.resolve([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened declaration user.d.ts:1:14");
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+  it("drops stale JavaScript and TypeScript invalid declaration targets after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/src/main.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const declarationResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["declaration"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 41,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.declaration).mockImplementationOnce(
+      async () => declarationResult.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => source),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(javaScriptTypeScriptLanguageServerFeaturesGateway.declaration).toHaveBeenCalledWith(
+        "/workspace-a",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    declarationResult.resolve([
+      {
+        range: range(0, 13, 0, 17),
+        uri: "untitled:stale-declaration",
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Could not open declaration target.");
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+  it("opens JavaScript and TypeScript type definitions through workbench commands", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/src/user.ts";
+    const source = "const user: User = makeUser();\nuser.name;\n";
+    const target = "export interface User {\n  name: string;\n}\n";
+    const cursorPosition = positionAfter(source, "Us");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 40,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition).mockResolvedValue([
+      {
+        range: range(0, 17, 0, 21),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToTypeDefinition",
+    );
+
+    expect(
+      command?.isEnabled({
+        activeDocumentDirty: false,
+        hasActiveDocument: true,
+        hasWorkspace: true,
+      }),
+    ).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      },
+    );
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 18,
+        lineNumber: 1,
+      },
+    });
+  });
+  it("drops stale JavaScript and TypeScript type definition results after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/src/main.ts";
+    const targetPath = "/workspace-a/src/user.ts";
+    const source = "const user: User = makeUser();\nuser.name;\n";
+    const cursorPosition = positionAfter(source, "Us");
+    const typeDefinitionResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["typeDefinition"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 43,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition,
+    ).mockImplementationOnce(async () => typeDefinitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "export interface User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToTypeDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition).toHaveBeenCalledWith(
+        "/workspace-a",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    typeDefinitionResult.resolve([
+      {
+        range: range(0, 17, 0, 21),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened type definition user.ts:1:18");
+  });
+  it("drops stale JavaScript and TypeScript type definition results after same-root session restart", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/src/user.ts";
+    const source = "const user: User = makeUser();\nuser.name;\n";
+    const cursorPosition = positionAfter(source, "Us");
+    const typeDefinitionResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["typeDefinition"]>>>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(46)),
+      openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+      start: vi.fn(async () => runningStatus(46)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition,
+    ).mockImplementationOnce(async () => typeDefinitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "export interface User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(46),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(46),
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToTypeDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition).toHaveBeenCalledWith(
+        "/workspace",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(47));
+    });
+    await flushAsyncTurns();
+
+    typeDefinitionResult.resolve([
+      {
+        range: range(0, 17, 0, 21),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().activePath).toBe(sourcePath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened type definition user.ts:1:18");
+  });
+  it("shows a JavaScript and TypeScript implementation chooser through workbench commands", async () => {
+    const interfacePath = "/workspace/src/PlatformAdapter.ts";
+    const baseAdapterPath = "/workspace/src/BaseAdapter.ts";
+    const facebookAdapterPath = "/workspace/src/FacebookAdapterService.ts";
+    const interfaceSource = `export interface PlatformAdapter {
+  getPlatform(): string;
+}
+`;
+    const baseAdapterSource = `import type { PlatformAdapter } from './PlatformAdapter';
+
+export abstract class BaseAdapter implements PlatformAdapter {
+  getPlatform(): string {
+    return 'base';
+  }
+}
+`;
+    const facebookAdapterSource = `import { BaseAdapter } from './BaseAdapter';
+
+export class FacebookAdapterService extends BaseAdapter {
+  getPlatform(): string {
+    return 'facebook';
+  }
+}
+`;
+    const cursorPosition = positionAfter(interfaceSource, "getPlatform");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        implementation: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 32,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.implementation).mockResolvedValue([
+      {
+        range: range(3, 2, 5, 3),
+        uri: fileUriFromPath(baseAdapterPath),
+      },
+      {
+        range: range(3, 2, 5, 3),
+        uri: fileUriFromPath(facebookAdapterPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === interfacePath) {
+          return interfaceSource;
+        }
+
+        if (requestedPath === baseAdapterPath) {
+          return baseAdapterSource;
+        }
+
+        if (requestedPath === facebookAdapterPath) {
+          return facebookAdapterSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(interfacePath, "PlatformAdapter.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToImplementation",
+    );
+
+    expect(
+      command?.isEnabled({
+        activeDocumentDirty: false,
+        hasActiveDocument: true,
+        hasWorkspace: true,
+      }),
+    ).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.implementation).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: interfacePath,
+      },
+    );
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().implementationChooser?.title).toBe(
+      "Choose implementation of getPlatform",
+    );
+    expect(
+      getWorkbench().implementationChooser?.targets.map((target) => ({
+        detail: target.detail,
+        label: target.label,
+        path: target.path,
+      })),
+    ).toEqual([
+      {
+        detail: "BaseAdapter.ts",
+        label: "BaseAdapter",
+        path: baseAdapterPath,
+      },
+      {
+        detail: "FacebookAdapterService.ts",
+        label: "FacebookAdapterService",
+        path: facebookAdapterPath,
+      },
+    ]);
+  });
+  it("drops stale JavaScript and TypeScript implementation results after switching project tabs", async () => {
+    const interfacePath = "/workspace-a/src/PlatformAdapter.ts";
+    const implementationPath = "/workspace-a/src/FacebookAdapterService.ts";
+    const interfaceSource = `export interface PlatformAdapter {
+  getPlatform(): string;
+}
+`;
+    const cursorPosition = positionAfter(interfaceSource, "getPlatform");
+    const implementationResult =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["implementation"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        implementation: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 36,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.implementation,
+    ).mockImplementationOnce(async () => implementationResult.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === interfacePath) {
+          return interfaceSource;
+        }
+
+        if (requestedPath === implementationPath) {
+          return "export class FacebookAdapterService {}\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(interfacePath, "PlatformAdapter.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToImplementation",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(javaScriptTypeScriptLanguageServerFeaturesGateway.implementation).toHaveBeenCalledWith(
+        "/workspace-a",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: interfacePath,
+        },
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    implementationResult.resolve([
+      {
+        range: range(3, 2, 5, 3),
+        uri: fileUriFromPath(implementationPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(implementationPath);
+    expect(getWorkbench().implementationChooser).toBeNull();
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+  it("stops reading stale JavaScript and TypeScript implementation chooser targets after switching project tabs", async () => {
+    const interfacePath = "/workspace-a/src/PlatformAdapter.ts";
+    const baseAdapterPath = "/workspace-a/src/BaseAdapter.ts";
+    const facebookAdapterPath = "/workspace-a/src/FacebookAdapterService.ts";
+    const interfaceSource = `export interface PlatformAdapter {
+  getPlatform(): string;
+}
+`;
+    const baseAdapterSource = `import type { PlatformAdapter } from './PlatformAdapter';
+
+export abstract class BaseAdapter implements PlatformAdapter {
+  getPlatform(): string {
+    return 'base';
+  }
+}
+`;
+    const cursorPosition = positionAfter(interfaceSource, "getPlatform");
+    const baseAdapterRead = createDeferred<string>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        implementation: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 38,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.implementation).mockResolvedValue([
+      {
+        range: range(3, 2, 5, 3),
+        uri: fileUriFromPath(baseAdapterPath),
+      },
+      {
+        range: range(3, 2, 5, 3),
+        uri: fileUriFromPath(facebookAdapterPath),
+      },
+    ]);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === interfacePath) {
+        return interfaceSource;
+      }
+
+      if (requestedPath === baseAdapterPath) {
+        return baseAdapterRead.promise;
+      }
+
+      if (requestedPath === facebookAdapterPath) {
+        return "export class FacebookAdapterService {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(interfacePath, "PlatformAdapter.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToImplementation",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(readTextFile).toHaveBeenCalledWith(baseAdapterPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    baseAdapterRead.resolve(baseAdapterSource);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(readTextFile).not.toHaveBeenCalledWith(facebookAdapterPath);
+    expect(getWorkbench().implementationChooser).toBeNull();
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+  it("shows interfaces in Cmd+O class search results", async () => {
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Contracts\\CommentRepository",
+        kind: "interface",
+        lineNumber: 3,
+        name: "CommentRepository",
+        path: "/workspace/app/Contracts/CommentRepository.php",
+        relativePath: "app/Contracts/CommentRepository.php",
+      },
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Services\\CommentService",
+        kind: "class",
+        lineNumber: 5,
+        name: "CommentService",
+        path: "/workspace/app/Services/CommentService.php",
+        relativePath: "app/Services/CommentService.php",
+      },
+      {
+        column: 21,
+        containerName: "App\\Services\\CommentService",
+        fullyQualifiedName: "App\\Services\\CommentService::store",
+        kind: "method",
+        lineNumber: 12,
+        name: "store",
+        path: "/workspace/app/Services/CommentService.php",
+        relativePath: "app/Services/CommentService.php",
+      },
+    ];
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      projectSymbols,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "lightSmart",
+      },
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find((candidate) => candidate.id === "class.quickOpen");
+
+    act(() => {
+      command?.run();
+      getWorkbench().setClassOpenQuery("Comment");
+    });
+    await waitForClassSearch();
+
+    expect(dependencies.workspaceGateways.projectSymbols.searchProjectSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "Comment",
+      120,
+    );
+    expect(getWorkbench().classOpenResults.map((result) => result.kind)).toEqual([
+      "interface",
+      "class",
+    ]);
+  });
+  it("uses JavaScript and TypeScript workspace symbols for Cmd+O in Basic mode", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 12,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).mockResolvedValue(
+      [
+        {
+          containerName: "src/userService",
+          kind: 5,
+          location: {
+            range: range(4, 13, 8, 1),
+            uri: fileUriFromPath("/workspace/src/userService.ts"),
+          },
+          name: "UserService",
+        },
+        {
+          containerName: null,
+          kind: 11,
+          location: {
+            range: range(1, 17, 3, 1),
+            uri: fileUriFromPath("/workspace/src/UserRepository.ts"),
+          },
+          name: "UserRepository",
+        },
+        {
+          containerName: "UserService",
+          kind: 6,
+          location: {
+            range: range(5, 2, 7, 3),
+            uri: fileUriFromPath("/workspace/src/userService.ts"),
+          },
+          name: "loadUser",
+        },
+      ],
+    );
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+    expect(getWorkbench().classOpenResults.map((result) => result.name)).toEqual([
+      "UserService",
+      "UserRepository",
+    ]);
+    expect(getWorkbench().classOpenResults[0]).toMatchObject({
+      kind: "class",
+      lineNumber: 5,
+      relativePath: "src/userService.ts",
+    });
+  });
+  it("uses PHP workspace symbols for Cmd+O in Basic mode", async () => {
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 22,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.workspaceSymbols).mockResolvedValue([
+      {
+        containerName: "App\\Services",
+        kind: 5,
+        location: {
+          range: range(4, 13, 8, 1),
+          uri: fileUriFromPath("/workspace/app/Services/UserService.php"),
+        },
+        name: "UserService",
+      },
+      {
+        containerName: "App\\Contracts",
+        kind: 11,
+        location: {
+          range: range(1, 17, 3, 1),
+          uri: fileUriFromPath("/workspace/app/Contracts/UserRepository.php"),
+        },
+        name: "UserRepository",
+      },
+      {
+        containerName: "App\\Services\\UserService",
+        kind: 6,
+        location: {
+          range: range(5, 2, 7, 3),
+          uri: fileUriFromPath("/workspace/app/Services/UserService.php"),
+        },
+        name: "loadUser",
+      },
+    ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      languageServerFeaturesGateway,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+    expect(getWorkbench().classOpenResults.map((result) => result.name)).toEqual([
+      "UserService",
+      "UserRepository",
+    ]);
+    expect(getWorkbench().classOpenResults[0]).toMatchObject({
+      kind: "class",
+      lineNumber: 5,
+      relativePath: "app/Services/UserService.php",
+    });
+  });
+  it("drops stale PHP workspace symbol errors after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 127,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.workspaceSymbols).mockImplementationOnce(
+      async () => workspaceSymbols.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace-a",
+      "User",
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.reject(new Error("stale PHP workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale PHP workspace symbols");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "PHP Workspace Symbols" &&
+          notice.message.includes("stale PHP workspace symbols"),
+      ),
+    ).toBe(false);
+  });
+  it("drops stale PHP workspace symbol results after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 128,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.workspaceSymbols).mockImplementationOnce(
+      async () => workspaceSymbols.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace-a",
+      "User",
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.resolve([
+      {
+        containerName: "App\\Services",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace-a/app/Services/StaleUser.php"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().classOpenResults.some((result) => result.name === "StaleUser")).toBe(
+      false,
+    );
+  });
+  it("drops stale PHP workspace symbol errors after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(511)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(511)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.workspaceSymbols).mockImplementationOnce(
+      async () => workspaceSymbols.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      runtimeStatus: runningStatus(511),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+
+    act(() => {
+      publishStatus?.(runningStatus(512));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.reject(new Error("stale PHP workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().message).not.toBe("Error: stale PHP workspace symbols");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "PHP Workspace Symbols" &&
+          notice.message.includes("stale PHP workspace symbols"),
+      ),
+    ).toBe(false);
+  });
+  it("drops stale PHP workspace symbol results after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(521)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(521)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.workspaceSymbols).mockImplementationOnce(
+      async () => workspaceSymbols.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      runtimeStatus: runningStatus(521),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+
+    act(() => {
+      publishStatus?.(runningStatus(522));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.resolve([
+      {
+        containerName: "App\\Services",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace/app/Services/StaleUser.php"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().classOpenResults.some((result) => result.name === "StaleUser")).toBe(
+      false,
+    );
+  });
+  it("drops stale JavaScript and TypeScript workspace symbol errors after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 27,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace-a",
+      "User",
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.reject(new Error("stale workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale workspace symbols");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript Workspace Symbols" &&
+          notice.message.includes("stale workspace symbols"),
+      ),
+    ).toBe(false);
+  });
+  it("drops stale JavaScript and TypeScript workspace symbol results after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 28,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace-a",
+      "User",
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/staleUser",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace-a/src/staleUser.ts"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().classOpenResults.some((result) => result.name === "StaleUser")).toBe(
+      false,
+    );
+  });
+  it("drops stale JavaScript and TypeScript workspace symbol errors after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(411)),
+      openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+      start: vi.fn(async () => runningStatus(411)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(411),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(411),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+
+    act(() => {
+      publishStatus?.(runningStatus(412));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.reject(new Error("stale workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().message).not.toBe("Error: stale workspace symbols");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript Workspace Symbols" &&
+          notice.message.includes("stale workspace symbols"),
+      ),
+    ).toBe(false);
+  });
+  it("drops stale JavaScript and TypeScript workspace symbol results after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(421)),
+      openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+      start: vi.fn(async () => runningStatus(421)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(421),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(421),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+
+    act(() => {
+      publishStatus?.(runningStatus(422));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/staleUser",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace/src/staleUser.ts"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().classOpenResults.some((result) => result.name === "StaleUser")).toBe(
+      false,
+    );
+  });
+  it("opens the workspace symbols modal and closes other modals for Cmd+T", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 41,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: featuresGateway(),
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().setClassOpenOpen(true);
+      getWorkbench().setQuickOpenOpen(true);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToSymbol",
+    );
+
+    expect(command).toBeDefined();
+    expect(command?.category).toBe("Editor");
+    expect(command?.title).toBe("Go to Symbol in Workspace");
+
+    act(() => {
+      command?.run();
+    });
+
+    expect(getWorkbench().workspaceSymbolsOpen).toBe(true);
+    expect(getWorkbench().classOpenOpen).toBe(false);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+  });
+  it("returns every JavaScript and TypeScript workspace symbol kind for Cmd+T", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 42,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).mockResolvedValue(
+      [
+        {
+          containerName: "src/userService",
+          kind: 5,
+          location: {
+            range: range(4, 13, 8, 1),
+            uri: fileUriFromPath("/workspace/src/userService.ts"),
+          },
+          name: "UserService",
+        },
+        {
+          containerName: "UserService",
+          kind: 6,
+          location: {
+            range: range(5, 2, 7, 3),
+            uri: fileUriFromPath("/workspace/src/userService.ts"),
+          },
+          name: "loadUser",
+        },
+        {
+          containerName: null,
+          kind: 12,
+          location: {
+            range: range(9, 0, 11, 1),
+            uri: fileUriFromPath("/workspace/src/createUser.ts"),
+          },
+          name: "createUser",
+        },
+      ],
+    );
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+    expect(getWorkbench().workspaceSymbolsResults.map((result) => result.kind)).toEqual([
+      "class",
+      "method",
+      "function",
+    ]);
+    expect(getWorkbench().workspaceSymbolsResults.map((result) => result.name)).toEqual([
+      "UserService",
+      "loadUser",
+      "createUser",
+    ]);
+  });
+  it("opens the selected workspace symbol at its position and closes the modal", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 43,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).mockResolvedValue(
+      [
+        {
+          containerName: "UserService",
+          kind: 6,
+          location: {
+            range: range(5, 2, 7, 3),
+            uri: fileUriFromPath("/workspace/src/userService.ts"),
+          },
+          name: "loadUser",
+        },
+      ],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => "export class UserService {\n  loadUser() {}\n}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("loadUser");
+    });
+    await waitForClassSearch();
+
+    const result = getWorkbench().workspaceSymbolsResults[0];
+
+    expect(result).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceSymbolResult(result);
+    });
+
+    expect(getWorkbench().workspaceSymbolsOpen).toBe(false);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: "/workspace/src/userService.ts",
+      position: {
+        column: 3,
+        lineNumber: 6,
+      },
+    });
+  });
+  it("does not expose Cmd+T workspace symbol search without workspace symbol capability", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 44,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().workspaceSymbolsResults).toEqual([]);
+  });
+  it("drops stale Cmd+T workspace symbol results after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 45,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace-a",
+      "User",
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/staleUser",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace-a/src/staleUser.ts"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().workspaceSymbolsResults.some((result) => result.name === "StaleUser"),
+    ).toBe(false);
+  });
+  it("uses the project index for go to definition when the language server is unavailable", async () => {
+    const controllerPath = "/workspace/src/CommentController.php";
+    const agentPath = "/workspace/src/CommentsAgent.php";
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 13,
+        containerName: null,
+        fullyQualifiedName: "App\\CommentsAgent",
+        kind: "class",
+        lineNumber: 4,
+        name: "CommentsAgent",
+        path: agentPath,
+        relativePath: "src/CommentsAgent.php",
+      },
+    ];
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return "<?php\n$agent = new CommentsAgent();\n";
+        }
+
+        return "<?php\nfinal class CommentsAgent {}\n";
+      }),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(dependencies.workspaceGateways.projectSymbols.searchProjectSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "CommentsAgent",
+      25,
+    );
+    expect(getWorkbench().activePath).toBe(agentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: agentPath,
+      position: {
+        column: 13,
+        lineNumber: 4,
+      },
+    });
+  });
+  it("drops stale contextual PHP class targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/src/CommentController.php";
+    const targetPath = "/external/shared/CommentsAgent.php";
+    const controllerSource = "<?php\n$agent = new CommentsAgent();\n";
+    const symbolSearch =
+      createDeferred<Awaited<ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>>>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === targetPath) {
+        return "<?php\nfinal class CommentsAgent {}\n";
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => symbolSearch.promise);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await waitForReact(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "CommentsAgent", 25);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    symbolSearch.resolve([
+      {
+        column: 13,
+        containerName: null,
+        fullyQualifiedName: "App\\CommentsAgent",
+        kind: "class",
+        lineNumber: 4,
+        name: "CommentsAgent",
+        path: targetPath,
+        relativePath: "../shared/CommentsAgent.php",
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+  it("navigates a class type-hint to its definition without Smart Index", async () => {
+    const servicePath = "/workspace/app/Services/PageService.php";
+    const repositoryPath = "/workspace/app/Repositories/PageRepository.php";
+    const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Repositories\\PageRepository;
+
+class PageService
+{
+    public function __construct(private PageRepository $pageRepository)
+    {
+    }
+}
+`;
+    const repositorySource = `<?php
+
+namespace App\\Repositories;
+
+class PageRepository
+{
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === servicePath) {
+        return serviceSource;
+      }
+
+      if (path === repositoryPath) {
+        return repositorySource;
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(serviceSource, "private PageReposit"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(repositoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: repositoryPath,
+      position: {
+        column: 7,
+        lineNumber: lineNumberOf(repositorySource, "class PageRepository"),
+      },
     });
   });
 });
