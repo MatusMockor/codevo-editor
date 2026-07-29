@@ -391,6 +391,7 @@ async function runSmoke() {
       tauri.kill("SIGTERM");
     }
     await cleanupAndVerifySmoke(smokeBaselinePids);
+    reportTargetClean(cleanTargetIfOversized({ forced: cleanForced, repoRoot }));
   }
 
   console.log("Debug app boot smoke passed: no matching dev/runtime processes remain.");
@@ -432,6 +433,7 @@ function runDebug() {
 
   tauri.on("exit", (code, signal) => {
     cleanupDevAppProcesses();
+    reportTargetClean(cleanTargetIfOversized({ forced: cleanForced, repoRoot }));
     if (signal) {
       process.kill(process.pid, signal);
       return;
