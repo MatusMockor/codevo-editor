@@ -1,9 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
-  useRef,
-  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -28,20 +25,29 @@ import type {
   WorkspaceRuntimeLifecycleGateway,
 } from "../domain/workspaceRuntimeLifecycle";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  createLegacyWorkspaceRuntimeOwner,
-  type WorkspaceRuntimeOwner,
-} from "../domain/workspaceRuntimeOwner";
+import { type WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { shouldStartLanguageServer } from "../domain/intelligence";
 import type { AppSettings, BackgroundRuntimePolicy, WorkspaceSettings } from "../domain/settings";
 import type { IntelligenceMode, PhpToolAvailability, PhpToolGateway } from "../domain/workspace";
 import {
-  createWorkbenchNotice,
   languageServerCrashNoticeGroupKey,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
 import { javaScriptTypeScriptLanguageServerOptions } from "./javaScriptTypeScriptLanguageServerSettings";
+import {
+  useRuntimeOwnerAuthority,
+  type LanguageServerRuntimeStatusFence,
+} from "./languageServerRuntimeLifecycle/runtimeOwnerAuthority";
+import { useRuntimePlanDiscovery } from "./languageServerRuntimeLifecycle/runtimePlanDiscovery";
+import {
+  isCrashedLanguageServerForWorkspace,
+  isLanguageServerActiveForWorkspace,
+  isRunningLanguageServerForWorkspace,
+  isRunningLanguageServerSessionForWorkspace,
+  runtimeStatusForRequestedRoot,
+  runtimeStatusRootPath,
+} from "./languageServerRuntimeLifecycle/runtimeStatusPolicy";
 
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
 
@@ -191,12 +197,6 @@ export interface LanguageServerRuntimeLifecycle {
   restartJavaScriptTypeScriptService: () => Promise<void>;
 }
 
-interface LanguageServerRuntimeStatusFence {
-  authority: "command" | "snapshot";
-  commandSequence: number;
-  subscriptionSequence: number;
-}
-
 export function useLanguageServerRuntimeLifecycle(
   dependencies: LanguageServerRuntimeLifecycleDependencies,
 ): LanguageServerRuntimeLifecycle {
@@ -258,440 +258,46 @@ export function useLanguageServerRuntimeLifecycle(
     reportErrorForActiveWorkspaceRoot,
   } = dependencies;
 
-  const currentRuntimeOwner = useMemo(() => {
-    if (workspaceRuntimeOwner) {
-      return workspaceRuntimeOwner;
-    }
-
-    if (!workspaceRoot) {
-      return null;
-    }
-
-    return createLegacyWorkspaceRuntimeOwner(workspaceRoot);
-  }, [workspaceRoot, workspaceRuntimeOwner]);
-  const currentRuntimeOwnerRef = useRef(currentRuntimeOwner);
-  currentRuntimeOwnerRef.current = currentRuntimeOwner;
-  const ownerRevisionByKeyRef = useRef<Record<string, number>>({});
-  const languageServerRuntimeStatusSequenceByOwnerRef = useRef<Record<string, number>>({});
-  const languageServerRuntimeCommandSequenceByOwnerRef = useRef<Record<string, number>>({});
-  const previousRuntimeOwnerRef = useRef(currentRuntimeOwner);
-  const retainedRuntimeAliasesByOwnerRef = useRef<
-    Record<string, { revision: number; rootPaths: string[] }>
-  >({});
-  const admittedRuntimeOwnersByRootRef = useRef<
-    Array<{
-      owner: WorkspaceRuntimeOwner;
-      revision: number;
-      rootPath: string;
-    }>
-  >([]);
-  const [ownerRevisionVersion, setOwnerRevisionVersion] = useState(0);
-
-  useEffect(() => {
-    const previousOwner = previousRuntimeOwnerRef.current;
-    previousRuntimeOwnerRef.current = currentRuntimeOwner;
-
-    if (!workspaceRuntimeOwner || !currentRuntimeOwner) {
-      return;
-    }
-
-    const currentOwnerRevision = ownerRevisionByKeyRef.current[currentRuntimeOwner.ownerKey] ?? 0;
-
-    for (const admittedOwner of admittedRuntimeOwnersByRootRef.current) {
-      if (admittedOwner.owner.ownerKey !== currentRuntimeOwner.ownerKey) {
-        continue;
-      }
-
-      admittedOwner.owner = currentRuntimeOwner;
-      admittedOwner.revision = currentOwnerRevision;
-    }
-
-    const admittedExecutionRoot = admittedRuntimeOwnersByRootRef.current.find(({ rootPath }) =>
-      workspaceRootKeysEqual(rootPath, currentRuntimeOwner.executionRoot),
-    );
-
-    if (admittedExecutionRoot) {
-      admittedExecutionRoot.owner = currentRuntimeOwner;
-      admittedExecutionRoot.revision = currentOwnerRevision;
-    }
-
-    if (!admittedExecutionRoot) {
-      admittedRuntimeOwnersByRootRef.current.push({
-        owner: currentRuntimeOwner,
-        revision: currentOwnerRevision,
-        rootPath: currentRuntimeOwner.executionRoot,
-      });
-    }
-
-    if (!previousOwner) {
-      return;
-    }
-
-    if (previousOwner.ownerKey !== currentRuntimeOwner.ownerKey) {
-      return;
-    }
-
-    if (workspaceRootKeysEqual(previousOwner.executionRoot, currentRuntimeOwner.executionRoot)) {
-      return;
-    }
-
-    const revision = ownerRevisionByKeyRef.current[currentRuntimeOwner.ownerKey] ?? 0;
-    const retainedAliases = retainedRuntimeAliasesByOwnerRef.current[currentRuntimeOwner.ownerKey];
-    const rootPaths = retainedAliases?.revision === revision ? retainedAliases.rootPaths : [];
-
-    if (
-      rootPaths.some((rootPath) => workspaceRootKeysEqual(rootPath, previousOwner.executionRoot))
-    ) {
-      return;
-    }
-
-    retainedRuntimeAliasesByOwnerRef.current[currentRuntimeOwner.ownerKey] = {
-      revision,
-      rootPaths: [...rootPaths, previousOwner.executionRoot],
-    };
-  }, [currentRuntimeOwner, ownerRevisionVersion, workspaceRuntimeOwner]);
-
-  const admittedRuntimeOwnerForRoot = useCallback(
-    (rootPath: string): WorkspaceRuntimeOwner | undefined => {
-      if (!workspaceRuntimeOwner) {
-        return undefined;
-      }
-
-      return admittedRuntimeOwnersByRootRef.current.find((admittedOwner) =>
-        workspaceRootKeysEqual(admittedOwner.rootPath, rootPath),
-      )?.owner;
-    },
-    [workspaceRuntimeOwner],
-  );
-
-  const runtimeOwnerForRoot = useCallback(
-    (rootPath: string, owner?: WorkspaceRuntimeOwner) => {
-      if (owner) {
-        return owner;
-      }
-
-      if (
-        currentRuntimeOwnerRef.current &&
-        workspaceRootKeysEqual(currentRuntimeOwnerRef.current.executionRoot, rootPath)
-      ) {
-        return currentRuntimeOwnerRef.current;
-      }
-
-      return createLegacyWorkspaceRuntimeOwner(rootPath);
-    },
-    [currentRuntimeOwnerRef],
-  );
-
-  const isCurrentRuntimeOwner = useCallback(
-    (owner: WorkspaceRuntimeOwner) => currentRuntimeOwnerRef.current?.ownerKey === owner.ownerKey,
-    [currentRuntimeOwnerRef],
-  );
-
-  const latestRuntimeOwner = useCallback(
-    (owner: WorkspaceRuntimeOwner) => {
-      if (currentRuntimeOwnerRef.current?.ownerKey === owner.ownerKey) {
-        return currentRuntimeOwnerRef.current;
-      }
-
-      return owner;
-    },
-    [currentRuntimeOwnerRef],
-  );
-
-  const ownerRevision = useCallback(
-    (owner: WorkspaceRuntimeOwner) => ownerRevisionByKeyRef.current[owner.ownerKey] ?? 0,
-    [ownerRevisionByKeyRef],
-  );
-
-  const isOwnerRevisionCurrent = useCallback(
-    (owner: WorkspaceRuntimeOwner, revision: number) => ownerRevision(owner) === revision,
-    [ownerRevision],
-  );
-
-  const languageServerRuntimeStatusSequence = useCallback(
-    (owner: WorkspaceRuntimeOwner) =>
-      languageServerRuntimeStatusSequenceByOwnerRef.current[owner.ownerKey] ?? 0,
-    [languageServerRuntimeStatusSequenceByOwnerRef],
-  );
-
-  const advanceLanguageServerRuntimeStatusSequence = useCallback(
-    (owner: WorkspaceRuntimeOwner) => {
-      languageServerRuntimeStatusSequenceByOwnerRef.current[owner.ownerKey] =
-        languageServerRuntimeStatusSequence(owner) + 1;
-    },
-    [languageServerRuntimeStatusSequence, languageServerRuntimeStatusSequenceByOwnerRef],
-  );
-
-  const languageServerRuntimeCommandSequence = useCallback(
-    (owner: WorkspaceRuntimeOwner) =>
-      languageServerRuntimeCommandSequenceByOwnerRef.current[owner.ownerKey] ?? 0,
-    [languageServerRuntimeCommandSequenceByOwnerRef],
-  );
-
-  const advanceLanguageServerRuntimeCommandSequence = useCallback(
-    (owner: WorkspaceRuntimeOwner) => {
-      const sequence = languageServerRuntimeCommandSequence(owner) + 1;
-      languageServerRuntimeCommandSequenceByOwnerRef.current[owner.ownerKey] = sequence;
-      return sequence;
-    },
-    [languageServerRuntimeCommandSequence, languageServerRuntimeCommandSequenceByOwnerRef],
-  );
-
-  const isLanguageServerRuntimeStatusSequenceCurrent = useCallback(
-    (owner: WorkspaceRuntimeOwner, sequence: number) =>
-      languageServerRuntimeStatusSequence(owner) === sequence,
-    [languageServerRuntimeStatusSequence],
-  );
-
-  const isLanguageServerRuntimeStatusFenceCurrent = useCallback(
-    (owner: WorkspaceRuntimeOwner, fence: LanguageServerRuntimeStatusFence) =>
-      isLanguageServerRuntimeStatusSequenceCurrent(owner, fence.subscriptionSequence) &&
-      languageServerRuntimeCommandSequence(owner) === fence.commandSequence,
-    [isLanguageServerRuntimeStatusSequenceCurrent, languageServerRuntimeCommandSequence],
-  );
-
-  const acceptLanguageServerRuntimeCommandFence = useCallback(
-    (owner: WorkspaceRuntimeOwner, fence: LanguageServerRuntimeStatusFence) => {
-      if (!isLanguageServerRuntimeStatusFenceCurrent(owner, fence)) {
-        return false;
-      }
-
-      advanceLanguageServerRuntimeCommandSequence(owner);
-      return true;
-    },
-    [advanceLanguageServerRuntimeCommandSequence, isLanguageServerRuntimeStatusFenceCurrent],
-  );
-
-  const isAdmittedRuntimeOwnerForRoot = useCallback(
-    (rootPath: string, owner: WorkspaceRuntimeOwner, revision: number): boolean => {
-      const currentOwner = currentRuntimeOwnerRef.current;
-
-      if (
-        currentOwner &&
-        workspaceRootKeysEqual(currentOwner.executionRoot, rootPath) &&
-        currentOwner.ownerKey !== owner.ownerKey
-      ) {
-        return false;
-      }
-
-      const admittedOwner = admittedRuntimeOwnersByRootRef.current.find((candidate) =>
-        workspaceRootKeysEqual(candidate.rootPath, rootPath),
-      );
-
-      if (!admittedOwner) {
-        return false;
-      }
-
-      return (
-        admittedOwner.owner.ownerKey === owner.ownerKey &&
-        admittedOwner.revision === revision &&
-        isOwnerRevisionCurrent(owner, revision)
-      );
-    },
-    [isOwnerRevisionCurrent],
-  );
-
-  const retainedRuntimeStatusForOwner = useCallback(
-    (
-      status: LanguageServerRuntimeStatus,
-      owner: WorkspaceRuntimeOwner,
-      revision: number,
-    ): LanguageServerRuntimeStatus | null => {
-      if (!isOwnerRevisionCurrent(owner, revision)) {
-        return null;
-      }
-
-      const currentOwner = currentRuntimeOwnerRef.current;
-
-      if (!currentOwner || currentOwner.ownerKey !== owner.ownerKey) {
-        return null;
-      }
-
-      const statusRootPath = runtimeStatusRootPath(status, owner.executionRoot);
-
-      if (!statusRootPath) {
-        return null;
-      }
-
-      const isExecutionRoot = workspaceRootKeysEqual(statusRootPath, owner.executionRoot);
-      const retainedAliases = retainedRuntimeAliasesByOwnerRef.current[owner.ownerKey];
-      const isRetainedAlias =
-        retainedAliases?.revision === revision &&
-        retainedAliases.rootPaths.some((rootPath) =>
-          workspaceRootKeysEqual(rootPath, statusRootPath),
-        );
-
-      if (!isExecutionRoot && !isRetainedAlias) {
-        return null;
-      }
-
-      return {
-        ...status,
-        rootPath: currentOwner.executionRoot,
-      };
-    },
-    [isOwnerRevisionCurrent],
-  );
-
-  const refreshLanguageServerPlan = useCallback(
-    async (rootPath: string, owner?: WorkspaceRuntimeOwner) => {
-      const requestedOwner = runtimeOwnerForRoot(rootPath, owner);
-      const requestedRevision = ownerRevision(requestedOwner);
-
-      try {
-        const plan = await languageServerGateway.planPhpLanguageServer(
-          rootPath,
-          phpLanguageServerOptions(workspaceSettingsRef.current),
-        );
-
-        if (
-          isOwnerRevisionCurrent(requestedOwner, requestedRevision) &&
-          isCurrentRuntimeOwner(requestedOwner)
-        ) {
-          setLanguageServerPlan(plan);
-        }
-        return plan;
-      } catch (error) {
-        if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
-          return null;
-        }
-
-        if (!isCurrentRuntimeOwner(requestedOwner)) {
-          return null;
-        }
-
-        setLanguageServerPlan(null);
-        reportError("Language Server", error);
-        return null;
-      }
-    },
-    [
-      isCurrentRuntimeOwner,
-      isOwnerRevisionCurrent,
-      languageServerGateway,
-      ownerRevision,
-      reportError,
-      runtimeOwnerForRoot,
-      setLanguageServerPlan,
-      workspaceSettingsRef,
-    ],
-  );
-
-  const runPhpWorkspaceProbe = useCallback(
-    async (rootPath: string, owner?: WorkspaceRuntimeOwner) => {
-      const requestedOwner = runtimeOwnerForRoot(rootPath, owner);
-      const requestedRevision = ownerRevision(requestedOwner);
-
-      try {
-        const tools = await phpToolGateway.detectPhpTools(rootPath);
-        const phpSetupNoticeGroup = `phpactor-setup:${rootPath}`;
-
-        if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
-          return;
-        }
-
-        if (!isCurrentRuntimeOwner(requestedOwner)) {
-          return;
-        }
-
-        setPhpTools(tools);
-
-        if (tools.phpactor) {
-          setNotices((current) => replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, []));
-          await refreshLanguageServerPlan(rootPath, requestedOwner);
-          return;
-        }
-
-        setNotices((current) =>
-          replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, [
-            createWorkbenchNotice(
-              "warning",
-              "PHP IDE Engine",
-              "Install the managed PHP IDE engine (one-click user profile bootstrap) to enable hover, completion, definition, and implementation support.",
-              phpSetupNoticeGroup,
-            ),
-          ]),
-        );
-        await refreshLanguageServerPlan(rootPath, requestedOwner);
-      } catch (error) {
-        if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
-          return;
-        }
-
-        if (!isCurrentRuntimeOwner(requestedOwner)) {
-          return;
-        }
-
-        reportErrorForActiveWorkspaceRoot(rootPath, "PHP Tools", error);
-      }
-    },
-    [
-      isCurrentRuntimeOwner,
-      isOwnerRevisionCurrent,
-      ownerRevision,
-      phpToolGateway,
-      refreshLanguageServerPlan,
-      reportErrorForActiveWorkspaceRoot,
-      runtimeOwnerForRoot,
-      setNotices,
-      setPhpTools,
-    ],
-  );
-
-  const refreshJavaScriptTypeScriptLanguageServerPlan = useCallback(
-    async (
-      rootPath: string,
-      typeScriptVersionPreference = workspaceSettingsRef.current.javaScriptTypeScriptVersion,
-      owner?: WorkspaceRuntimeOwner,
-      requestIsValid: () => boolean = () => true,
-    ) => {
-      const requestedOwner = runtimeOwnerForRoot(rootPath, owner);
-      const requestedRevision = ownerRevision(requestedOwner);
-
-      try {
-        const plan = await languageServerGateway.planJavaScriptTypeScriptLanguageServer(rootPath, {
-          ...javaScriptTypeScriptLanguageServerOptions(workspaceSettingsRef.current),
-          typeScriptVersionPreference,
-        });
-
-        if (
-          requestIsValid() &&
-          isOwnerRevisionCurrent(requestedOwner, requestedRevision) &&
-          isCurrentRuntimeOwner(requestedOwner)
-        ) {
-          setJavaScriptTypeScriptLanguageServerPlan(plan);
-        }
-
-        return plan;
-      } catch (error) {
-        if (!requestIsValid()) {
-          return null;
-        }
-
-        if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
-          return null;
-        }
-
-        if (!isCurrentRuntimeOwner(requestedOwner)) {
-          return null;
-        }
-
-        setJavaScriptTypeScriptLanguageServerPlan(null);
-        reportErrorForActiveWorkspaceRoot(rootPath, "JavaScript/TypeScript", error);
-        return null;
-      }
-    },
-    [
-      isCurrentRuntimeOwner,
-      isOwnerRevisionCurrent,
-      languageServerGateway,
-      ownerRevision,
-      reportErrorForActiveWorkspaceRoot,
-      runtimeOwnerForRoot,
-      setJavaScriptTypeScriptLanguageServerPlan,
-      workspaceSettingsRef,
-    ],
-  );
+  const {
+    acceptLanguageServerRuntimeCommandFence,
+    admittedRuntimeOwnerForRoot,
+    advanceLanguageServerRuntimeCommandSequence,
+    advanceLanguageServerRuntimeStatusSequence,
+    currentRuntimeOwner,
+    isAdmittedRuntimeOwnerForRoot,
+    isCurrentRuntimeOwner,
+    isLanguageServerRuntimeStatusFenceCurrent,
+    isOwnerRevisionCurrent,
+    languageServerRuntimeCommandSequence,
+    languageServerRuntimeStatusSequence,
+    latestRuntimeOwner,
+    ownerRevision,
+    ownerRevisionByKeyRef,
+    ownerRevisionVersion,
+    retainedRuntimeStatusForOwner,
+    runtimeOwnerForRoot,
+    setOwnerRevisionVersion,
+  } = useRuntimeOwnerAuthority(workspaceRoot, workspaceRuntimeOwner);
+
+  const {
+    refreshJavaScriptTypeScriptLanguageServerPlan,
+    refreshLanguageServerPlan,
+    runPhpWorkspaceProbe,
+  } = useRuntimePlanDiscovery({
+    workspaceSettingsRef,
+    languageServerGateway,
+    phpToolGateway,
+    runtimeOwnerForRoot,
+    ownerRevision,
+    isOwnerRevisionCurrent,
+    isCurrentRuntimeOwner,
+    setPhpTools,
+    setLanguageServerPlan,
+    setJavaScriptTypeScriptLanguageServerPlan,
+    setNotices,
+    reportError,
+    reportErrorForActiveWorkspaceRoot,
+  });
 
   const cacheJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
     (rootPath: string, status: LanguageServerRuntimeStatus, owner?: WorkspaceRuntimeOwner) => {
@@ -2370,86 +1976,4 @@ function phpLanguageServerOptions(settings: WorkspaceSettings) {
     phpBackend: settings.phpBackend,
     phpactorPath: settings.phpactorPath,
   };
-}
-
-function isRunningLanguageServerForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): status is Extract<LanguageServerRuntimeStatus, { kind: "running" }> {
-  if (!isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot)) {
-    return false;
-  }
-
-  return status.kind === "running";
-}
-
-function isRunningLanguageServerSessionForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-  sessionId: number,
-): status is Extract<LanguageServerRuntimeStatus, { kind: "running" }> {
-  return (
-    isRunningLanguageServerForWorkspace(status, statusRoot, workspaceRoot) &&
-    status.sessionId === sessionId
-  );
-}
-
-function isLanguageServerActiveForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): boolean {
-  return (
-    isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
-    isLanguageServerActive(status)
-  );
-}
-
-function isCrashedLanguageServerForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): boolean {
-  return (
-    isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
-    status.kind === "crashed"
-  );
-}
-
-function runtimeStatusRootPath(
-  status: LanguageServerRuntimeStatus,
-  fallbackRootPath?: string,
-): string | null {
-  if (status.rootPath) {
-    return status.rootPath;
-  }
-
-  return status.kind === "stopped" ? (fallbackRootPath ?? null) : null;
-}
-
-function runtimeStatusForRequestedRoot(
-  status: LanguageServerRuntimeStatus,
-  rootPath: string,
-): LanguageServerRuntimeStatus {
-  if (status.rootPath && workspaceRootKeysEqual(status.rootPath, rootPath)) {
-    return status;
-  }
-
-  return { kind: "stopped", rootPath };
-}
-
-function isLanguageServerStatusForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): status is LanguageServerRuntimeStatus {
-  if (!workspaceRoot || !status) {
-    return false;
-  }
-
-  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
-
-  return Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }
