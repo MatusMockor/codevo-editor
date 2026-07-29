@@ -9,6 +9,53 @@ export type {
   WorkbenchControllerOptions,
   WorkbenchWorkspaceGateways,
 } from "./workbenchControllerContracts";
+import { ownerDocumentSavePipelineContextFor } from "./workbenchController/documentSaveOwnerContext";
+export { ownerDocumentSavePipelineContextFor } from "./workbenchController/documentSaveOwnerContext";
+import {
+  admittedWorkspaceIdentityForRoot,
+  adoptLegacyCachedWorkspaceState,
+  removeWorkspaceIdentityMappings,
+  resolveAdmittedDocumentSaveOwnership,
+  withWorkspaceIdentityLease,
+  workspaceSettingsIdentity,
+} from "./workbenchController/workspaceIdentityPolicy";
+export {
+  adoptLegacyCachedWorkspaceState,
+  resolveAdmittedDocumentSaveOwnership,
+  withWorkspaceIdentityLease,
+} from "./workbenchController/workspaceIdentityPolicy";
+import {
+  backgroundRuntimeOwnersForPolicy,
+  workspaceRuntimeOwnerFor,
+} from "./workbenchController/workspaceRuntimePolicy";
+import {
+  isLanguageServerActiveForWorkspace,
+  isLanguageServerSessionActiveForOwner,
+  isLanguageServerSessionCurrentForOwnerOrLegacy,
+  isRunningLanguageServerForWorkspace,
+} from "./workbenchController/languageServerStatusPolicy";
+export {
+  isLanguageServerSessionActiveForOwner,
+  isLanguageServerSessionCurrentForOwnerOrLegacy,
+} from "./workbenchController/languageServerStatusPolicy";
+import {
+  isBlockedByManuallyCollapsedDirectory,
+  isJavaScriptTypeScriptDocumentSyncableForRoot,
+  isPhpPath,
+  parentDirectoriesInWorkspace,
+  relativeWorkspacePath,
+  shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
+  workspacePathBelongsToRoot,
+} from "./workbenchController/workspacePathPolicy";
+import {
+  mergeDiagnosticsByPath,
+  mergePhpFileOutlines,
+} from "./workbenchController/diagnosticProjection";
+import { useWorkbenchSettingsPersistence } from "./workbenchController/useWorkbenchSettingsPersistence";
+import {
+  useWorkbenchLatencyReporting,
+  useWorkbenchLatencyTrackerForRoot,
+} from "./workbenchController/useWorkbenchLatencyTracking";
 import { useEditorSessionState } from "./useEditorSessionState";
 import {
   DocumentSessionAuthorityLifecycleCoordinator,
@@ -108,15 +155,11 @@ import {
 } from "./documentSaveParticipants";
 import { createPrettierSaveParticipant } from "./prettierSaveParticipant";
 import { type ResolveDocumentSaveOwnership } from "./documentSaveIdentity";
-import { admittedDocumentSaveOwnership } from "./admittedDocumentSaveOwnership";
 import { DocumentSelfWriteCoordinator } from "./documentSelfWriteCoordinator";
 import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroupCloseLifecycle";
 import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveService";
 import { WorkbenchOwnerDocumentSaveAdapters } from "./workbenchOwnerDocumentSaveAdapters";
-import {
-  useDocumentSavePipeline,
-  type DocumentSavePipelineOwnerContext,
-} from "./useDocumentSavePipeline";
+import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
 import {
   isSessionPathInWorkspace,
   restoreWorkspaceSession as restorePersistedWorkspaceSession,
@@ -223,12 +266,7 @@ import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import { synthesizePhpTypedReceiverSource } from "./phpTypedReceiverSource";
 import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfaceCommand";
-import type {
-  WorkspaceIdentityDescriptor,
-  WorkspaceIdentityDescriptorResolver,
-  WorkspaceIdentityGateway,
-} from "../infrastructure/tauriWorkspaceIdentityGateway";
-import { workspaceRelativePathForDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
+import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
 import { navigateToArtisanController } from "./artisanRouteNavigation";
@@ -332,20 +370,11 @@ import {
 import { summarizeDiagnosticsByPath } from "../domain/diagnosticsSummary";
 import { applyEditorChangeRevert, type EditorChangeHunk } from "../domain/editorChangeMarkers";
 import {
-  isLanguageServerActive,
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
-import {
-  cachedLanguageServerRuntimeStatusForOwner,
-  cachedLanguageServerRuntimeStatusForRoot,
-  type LanguageServerRuntimeStatusByOwner,
-} from "../domain/languageServerRuntimeStatusCache";
-import {
-  createLegacyWorkspaceRuntimeOwner,
-  createWorkspaceRuntimeOwner,
-  type WorkspaceRuntimeOwner,
-} from "../domain/workspaceRuntimeOwner";
+import { cachedLanguageServerRuntimeStatusForOwner } from "../domain/languageServerRuntimeStatusCache";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   createEditorSessionOwnerKey,
   createLegacyEditorSessionOwnerKey,
@@ -375,19 +404,15 @@ import { pushGitCommitMessageHistory } from "../domain/gitCommitMessageHistory";
 import { clearRecentlyClosedTabs, emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import {
   defaultAppSettings,
-  defaultEditorFontSize,
   defaultWorkspaceSettings,
-  normalizeEditorFontSize,
   pushRecentWorkspacePath,
   type AppSettings,
-  type BackgroundRuntimePolicy,
   type SettingsGateway,
   type SettingsSection,
   type StatusBarItemVisibility,
   type WorkspaceSessionState,
   type WorkspaceSessionViewState,
   type WorkspaceSettings,
-  type WorkspaceSettingsIdentity,
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import { parseComposerScripts, type PackageScript } from "../domain/packageScripts";
@@ -406,12 +431,7 @@ import {
   type EditorSplitDirection,
 } from "../domain/editorGroups";
 import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
-import {
-  createLatencyTracker,
-  measureLatency,
-  type LatencySnapshotEntry,
-  type LatencyTracker,
-} from "../domain/latencyTracker";
+import { measureLatency, type LatencyTracker } from "../domain/latencyTracker";
 import {
   createWorkspaceTextFileWithContent,
   detectLanguage,
@@ -477,32 +497,6 @@ function restoreRuntimeStatusCacheEntry(
 }
 
 export type SidebarView = "files" | "git" | "php" | "scripts";
-
-export function ownerDocumentSavePipelineContextFor(
-  owner: WorkspaceRuntimeOwner,
-  settings: WorkspaceSettings,
-  hasPhpWorkspaceByOwner: Readonly<Record<string, boolean>>,
-  phpRuntimeStatusByOwner: LanguageServerRuntimeStatusByOwner,
-  javaScriptTypeScriptRuntimeStatusByOwner: LanguageServerRuntimeStatusByOwner,
-  synchronizedOwner: WorkspaceRuntimeOwner | null = null,
-): DocumentSavePipelineOwnerContext {
-  const phpRuntimeStatus = phpRuntimeStatusByOwner[owner.ownerKey] ?? null;
-  const javaScriptTypeScriptRuntimeStatus =
-    javaScriptTypeScriptRuntimeStatusByOwner[owner.ownerKey] ?? null;
-  return {
-    canUseLanguageServerDocument:
-      synchronizedOwner?.ownerKey === owner.ownerKey &&
-      workspaceRootKeysEqual(synchronizedOwner.executionRoot, owner.executionRoot),
-    hasPhpWorkspace: hasPhpWorkspaceByOwner[owner.ownerKey] === true,
-    javaScriptTypeScriptRuntimeStatus,
-    javaScriptTypeScriptRuntimeStatusRoot:
-      javaScriptTypeScriptRuntimeStatus?.rootPath ?? owner.executionRoot,
-    owner,
-    phpRuntimeStatus,
-    phpRuntimeStatusRoot: phpRuntimeStatus?.rootPath ?? owner.executionRoot,
-    settings,
-  };
-}
 
 const createDiagnosticsCoalescer = (
   sink: DiagnosticsBatchSink,
@@ -1615,20 +1609,10 @@ export function useWorkbenchController(
     [reportError],
   );
 
-  // Records a PHP completion round-trip latency reported by the Monaco
-  // completion provider (wired through EditorSurface). Stable identity so the
-  // provider registration never re-runs because of it.
-  const latencyTrackerForRoot = useCallback((rootPath: string) => {
-    const rootKey = normalizedWorkspaceRootKey(rootPath);
-    let tracker = latencyTrackersByRootRef.current[rootKey];
-
-    if (!tracker) {
-      tracker = createLatencyTracker();
-      latencyTrackersByRootRef.current[rootKey] = tracker;
-    }
-
-    return tracker;
-  }, []);
+  const latencyTrackerForRoot = useWorkbenchLatencyTrackerForRoot({
+    currentWorkspaceRootRef,
+    latencyTrackersByRootRef,
+  });
   const quickOpenPrefixDispatch = useQuickOpenPrefixDispatch();
   const {
     quickOpenOpen,
@@ -1723,159 +1707,34 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const forgetLatencyTrackerForRoot = useCallback((rootPath: string | null | undefined) => {
-    const rootKey = normalizedWorkspaceRootKey(rootPath);
+  const { forgetLatencyTrackerForRoot, getLatencySnapshot, recordCompletionLatency } =
+    useWorkbenchLatencyReporting({
+      currentWorkspaceRootRef,
+      latencyTrackersByRootRef,
+      latencyTrackerForRoot,
+    });
 
-    if (rootKey) {
-      delete latencyTrackersByRootRef.current[rootKey];
-    }
-  }, []);
-
-  const recordCompletionLatency = useCallback(
-    (
-      durationMs: number,
-      rootPath?: string,
-      feature: "completion" | "definition" = "completion",
-    ) => {
-      const requestedRoot = rootPath ?? currentWorkspaceRootRef.current;
-
-      if (!requestedRoot) {
-        return;
-      }
-
-      latencyTrackerForRoot(requestedRoot).record(feature, durationMs);
-    },
-    [latencyTrackerForRoot],
-  );
-
-  // Pull a fresh snapshot of all recorded operation latencies. The runtime
-  // latency panel polls this on an interval (the tracker is mutated imperatively
-  // on the hot path, so there is no React state to subscribe to).
-  const getLatencySnapshot = useCallback((): LatencySnapshotEntry[] => {
-    const requestedRoot = currentWorkspaceRootRef.current;
-
-    if (!requestedRoot) {
-      return [];
-    }
-
-    const rootKey = normalizedWorkspaceRootKey(requestedRoot);
-    return latencyTrackersByRootRef.current[rootKey]?.snapshot() ?? [];
-  }, []);
-
-  const applyAppSettings = useCallback((settings: AppSettings) => {
-    appSettingsRef.current = settings;
-    setAppSettings(settings);
-  }, []);
-
-  const applyWorkspaceSettings = useCallback((settings: WorkspaceSettings) => {
-    workspaceSettingsRef.current = settings;
-    setWorkspaceSettings(settings);
-  }, []);
-
-  const persistAppSettings = useCallback(
-    async (nextSettings: AppSettings) => {
-      const previousSettings = appSettingsRef.current;
-      applyAppSettings(nextSettings);
-
-      try {
-        await settingsGateway.saveAppSettings(nextSettings);
-      } catch (error) {
-        applyAppSettings(previousSettings);
-        throw error;
-      }
-    },
-    [applyAppSettings, settingsGateway],
-  );
-
-  const setEditorFontSize = useCallback(
-    (nextFontSize: number) => {
-      const currentSettings = appSettingsRef.current;
-      const editorFontSize = normalizeEditorFontSize(nextFontSize);
-
-      if (editorFontSize === currentSettings.editorFontSize) {
-        return;
-      }
-
-      void persistAppSettings({
-        ...currentSettings,
-        editorFontSize,
-      }).catch((error) => reportError("Settings", error));
-    },
-    [persistAppSettings, reportError],
-  );
-
-  const zoomEditorFontIn = useCallback(() => {
-    setEditorFontSize(appSettingsRef.current.editorFontSize + 1);
-  }, [setEditorFontSize]);
-
-  const zoomEditorFontOut = useCallback(() => {
-    setEditorFontSize(appSettingsRef.current.editorFontSize - 1);
-  }, [setEditorFontSize]);
-
-  const resetEditorFontSize = useCallback(() => {
-    setEditorFontSize(defaultEditorFontSize);
-  }, [setEditorFontSize]);
-
-  const toggleEditorFontLigatures = useCallback(() => {
-    const currentSettings = appSettingsRef.current;
-
-    void persistAppSettings({
-      ...currentSettings,
-      editorFontLigatures: !currentSettings.editorFontLigatures,
-    }).catch((error) => reportError("Settings", error));
-  }, [persistAppSettings, reportError]);
-
-  const persistWorkspaceSettings = useCallback(
-    async (rootPath: string, nextSettings: WorkspaceSettings) => {
-      const identityDescriptor = workspaceIdentityByRootRef.current[rootPath];
-      const canonicalKey = identityDescriptor?.canonicalRoot ?? rootPath;
-      const settingsIdentity = identityDescriptor
-        ? workspaceSettingsIdentity(canonicalKey, identityDescriptor.selectedPath)
-        : rootPath;
-      const isRootActive = () => workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath);
-      const previousSettings =
-        workspaceSettingsByRoot.resolve(canonicalKey) ??
-        (isRootActive() ? workspaceSettingsRef.current : null);
-
-      const saveRevision = workspaceSettingsByRoot.capture(canonicalKey, nextSettings);
-
-      if (isRootActive()) {
-        applyWorkspaceSettings(nextSettings);
-      }
-
-      try {
-        await workspaceSettingsSaveCoordinator.save(
-          canonicalKey,
-          previousSettings,
-          nextSettings,
-          () => settingsGateway.saveWorkspaceSettings(settingsIdentity, nextSettings),
-        );
-      } catch (error) {
-        if (workspaceSettingsByRoot.revision(canonicalKey) !== saveRevision) {
-          throw error;
-        }
-
-        const committedSettings = workspaceSettingsSaveCoordinator.committed(canonicalKey);
-        if (committedSettings) {
-          workspaceSettingsByRoot.capture(canonicalKey, committedSettings);
-        }
-        if (!committedSettings) {
-          workspaceSettingsByRoot.forget(canonicalKey);
-        }
-        if (isRootActive() && committedSettings) {
-          applyWorkspaceSettings(committedSettings);
-        }
-
-        throw error;
-      }
-    },
-    [
-      applyWorkspaceSettings,
-      settingsGateway,
-      workspaceSettingsByRoot,
-      workspaceSettingsSaveCoordinator,
-    ],
-  );
+  const {
+    applyAppSettings,
+    applyWorkspaceSettings,
+    persistAppSettings,
+    persistWorkspaceSettings,
+    resetEditorFontSize,
+    toggleEditorFontLigatures,
+    zoomEditorFontIn,
+    zoomEditorFontOut,
+  } = useWorkbenchSettingsPersistence({
+    appSettingsRef,
+    currentWorkspaceRootRef,
+    reportError,
+    setAppSettings,
+    setWorkspaceSettings,
+    settingsGateway,
+    workspaceIdentityByRootRef,
+    workspaceSettingsByRoot,
+    workspaceSettingsRef,
+    workspaceSettingsSaveCoordinator,
+  });
 
   const {
     workspaceStateCacheRef,
@@ -9671,370 +9530,4 @@ export function useWorkbenchController(
     workspaceSettings,
     workspaceTrust,
   };
-}
-
-function mergeDiagnosticsByPath(
-  ...maps: Array<Record<string, LanguageServerDiagnostic[]>>
-): Record<string, LanguageServerDiagnostic[]> {
-  const merged: Record<string, LanguageServerDiagnostic[]> = {};
-
-  maps.forEach((map) => {
-    Object.entries(map).forEach(([path, diagnostics]) => {
-      merged[path] = [...(merged[path] ?? []), ...diagnostics];
-    });
-  });
-
-  return merged;
-}
-
-function relativeWorkspacePath(workspaceRoot: string, path: string): string {
-  const normalizedRoot = workspaceRoot.replace(/\/+$/, "");
-  const normalizedPath = path.split("\\").join("/");
-
-  if (normalizedPath === normalizedRoot) {
-    return getFileName(path);
-  }
-
-  if (normalizedPath.startsWith(`${normalizedRoot}/`)) {
-    return normalizedPath.slice(normalizedRoot.length + 1);
-  }
-
-  return path;
-}
-
-function workspacePathBelongsToRoot(
-  path: string,
-  workspaceRoot: string | null | undefined,
-): boolean {
-  const normalizedRoot = normalizedWorkspaceRootKey(workspaceRoot);
-  const normalizedPath = normalizedWorkspaceRootKey(path);
-
-  if (!normalizedRoot) return false;
-
-  return (
-    normalizedPath === normalizedRoot ||
-    normalizedPath.startsWith(`${normalizedRoot}/`) ||
-    normalizedPath.startsWith(`${normalizedRoot}\\`)
-  );
-}
-
-function mergePhpFileOutlines(
-  currentOutline: PhpFileOutline | null,
-  inheritedOutline: PhpFileOutline | null,
-): PhpFileOutline | null {
-  if (!currentOutline && !inheritedOutline) return null;
-
-  return {
-    nodes: [...(currentOutline?.nodes ?? []), ...(inheritedOutline?.nodes ?? [])],
-  };
-}
-
-function isPhpPath(path: string): boolean {
-  return path.toLowerCase().endsWith(".php");
-}
-
-function parentDirectoriesInWorkspace(rootPath: string, path: string): string[] {
-  if (!isSessionPathInWorkspace(rootPath, path)) {
-    return [];
-  }
-
-  const root = normalizedSessionPath(rootPath);
-  const directories: string[] = [];
-  let current = normalizedSessionPath(getParentPath(path));
-
-  while (isSessionPathInWorkspace(root, current)) {
-    directories.unshift(current);
-
-    if (current === root) {
-      break;
-    }
-
-    const parent = normalizedSessionPath(getParentPath(current));
-
-    if (parent === current) {
-      break;
-    }
-
-    current = parent;
-  }
-
-  return directories;
-}
-
-function isBlockedByManuallyCollapsedDirectory(
-  directory: string,
-  manuallyCollapsedDirectories: Set<string>,
-): boolean {
-  const normalizedDirectory = normalizedSessionPath(directory);
-
-  for (const collapsedDirectory of manuallyCollapsedDirectories) {
-    const normalizedCollapsedDirectory = normalizedSessionPath(collapsedDirectory);
-
-    if (
-      normalizedDirectory === normalizedCollapsedDirectory ||
-      normalizedDirectory.startsWith(`${normalizedCollapsedDirectory}/`)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function isJavaScriptTypeScriptDocumentSyncableForRoot(
-  rootPath: string,
-  document: EditorDocument,
-): boolean {
-  return (
-    document.readOnly !== true &&
-    isJavaScriptTypeScriptLanguageServerDocument(document) &&
-    isSessionPathInWorkspace(rootPath, document.path)
-  );
-}
-
-function shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-  rootPath: string,
-  path: string,
-): boolean {
-  return isJavaScriptTypeScriptNavigationPath(path) && !isSessionPathInWorkspace(rootPath, path);
-}
-
-function isJavaScriptTypeScriptNavigationPath(path: string): boolean {
-  const language = detectLanguage(path);
-
-  return (
-    language === "javascript" ||
-    language === "javascriptreact" ||
-    language === "typescript" ||
-    language === "typescriptreact"
-  );
-}
-
-function normalizedSessionPath(path: string): string {
-  return path.trim().split("\\").join("/").replace(/\/+$/, "");
-}
-
-function admittedWorkspaceIdentityForRoot(
-  identities: Record<string, WorkspaceIdentityDescriptor>,
-  identityGateway: WorkspaceIdentityGateway,
-  rootPath: string,
-): WorkspaceIdentityDescriptor | null {
-  const admitted = Object.values(identities);
-  const identityResolver = identityGateway as WorkspaceIdentityGateway &
-    Partial<WorkspaceIdentityDescriptorResolver>;
-  const gatewayMatch = identityResolver.matchForPath?.(rootPath);
-  const gatewayAdmittedDescriptor = gatewayMatch
-    ? admitted.find((descriptor) => descriptor.workspaceId === gatewayMatch.descriptor.workspaceId)
-    : null;
-  if (gatewayAdmittedDescriptor) {
-    return gatewayAdmittedDescriptor;
-  }
-
-  const mapped = identities[rootPath];
-  if (mapped) {
-    return mapped;
-  }
-
-  return (
-    admitted.find(
-      (descriptor) => workspaceRelativePathForDescriptor(descriptor, rootPath) === "",
-    ) ?? null
-  );
-}
-
-export function resolveAdmittedDocumentSaveOwnership(
-  identities: Record<string, WorkspaceIdentityDescriptor>,
-  identityGateway: WorkspaceIdentityGateway,
-  rootPath: string,
-  path: string,
-): ReturnType<ResolveDocumentSaveOwnership> {
-  const descriptor = admittedWorkspaceIdentityForRoot(identities, identityGateway, rootPath);
-  return admittedDocumentSaveOwnership(descriptor, identityGateway, rootPath, path);
-}
-
-function workspaceSettingsIdentity(
-  canonicalKey: string,
-  selectedRoot: string,
-): WorkspaceSettingsIdentity {
-  return {
-    canonicalKey,
-    legacyRawKeys: [...new Set([canonicalKey, selectedRoot])],
-  };
-}
-
-function backgroundRuntimeOwnersForPolicy(
-  policy: BackgroundRuntimePolicy,
-  activeRootPath: string | null,
-  previousRootPath: string | null,
-  workspaceTabs: readonly string[],
-  runtimeOwnersByTab: Record<string, WorkspaceRuntimeOwner>,
-): WorkspaceRuntimeOwner[] {
-  if (policy === "keepAlive") {
-    return [];
-  }
-
-  const rootPaths =
-    policy === "singleActive" || previousRootPath === null
-      ? workspaceTabs.filter((rootPath) => !workspaceRootKeysEqual(rootPath, activeRootPath))
-      : previousRootPath && !workspaceRootKeysEqual(previousRootPath, activeRootPath)
-        ? [previousRootPath]
-        : [];
-  const owners = rootPaths.flatMap((rootPath) => {
-    const owner = runtimeOwnersByTab[rootPath];
-    return owner ? [owner] : [];
-  });
-
-  return owners.filter(
-    (owner, index) =>
-      owners.findIndex((candidate) => candidate.ownerKey === owner.ownerKey) === index,
-  );
-}
-
-function workspaceRuntimeOwnerFor(
-  executionRoot: string,
-  descriptor: WorkspaceIdentityDescriptor | null,
-): WorkspaceRuntimeOwner {
-  if (descriptor) {
-    return createWorkspaceRuntimeOwner(descriptor.workspaceId, executionRoot);
-  }
-
-  return createLegacyWorkspaceRuntimeOwner(executionRoot);
-}
-
-function removeWorkspaceIdentityMappings(
-  identities: Record<string, WorkspaceIdentityDescriptor>,
-  descriptor: WorkspaceIdentityDescriptor,
-): void {
-  for (const [root, registered] of Object.entries(identities)) {
-    if (registered.workspaceId !== descriptor.workspaceId) {
-      continue;
-    }
-    delete identities[root];
-  }
-}
-
-export async function withWorkspaceIdentityLease(
-  descriptor: WorkspaceIdentityDescriptor,
-  unregister: (workspaceId: string) => Promise<void>,
-  useLease: (adopt: () => void) => Promise<void>,
-): Promise<void> {
-  let adopted = false;
-  try {
-    await useLease(() => {
-      adopted = true;
-    });
-  } finally {
-    if (!adopted) {
-      await unregister(descriptor.workspaceId);
-    }
-  }
-}
-
-export function adoptLegacyCachedWorkspaceState<
-  T extends {
-    workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
-  },
->(identityDescriptor: WorkspaceIdentityDescriptor, candidates: ReadonlyArray<T | null>): T | null {
-  for (const candidate of candidates) {
-    if (!candidate) {
-      continue;
-    }
-
-    const cachedWorkspaceId = candidate.workspaceIdentityDescriptor?.workspaceId;
-    if (cachedWorkspaceId && cachedWorkspaceId !== identityDescriptor.workspaceId) {
-      continue;
-    }
-
-    candidate.workspaceIdentityDescriptor = identityDescriptor;
-    return candidate;
-  }
-
-  return null;
-}
-
-function isRunningLanguageServerForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): status is Extract<LanguageServerRuntimeStatus, { kind: "running" }> {
-  return (
-    isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
-    status.kind === "running"
-  );
-}
-
-function isRunningLanguageServerSessionForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-  sessionId: number,
-): status is Extract<LanguageServerRuntimeStatus, { kind: "running" }> {
-  return (
-    isRunningLanguageServerForWorkspace(status, statusRoot, workspaceRoot) &&
-    status.sessionId === sessionId
-  );
-}
-
-export function isLanguageServerSessionActiveForOwner(
-  runtimeStatuses: LanguageServerRuntimeStatusByOwner,
-  owner: WorkspaceRuntimeOwner,
-  rootPath: string,
-  sessionId: number,
-): boolean {
-  return isRunningLanguageServerSessionForWorkspace(
-    cachedLanguageServerRuntimeStatusForOwner(runtimeStatuses, owner),
-    owner.executionRoot,
-    rootPath,
-    sessionId,
-  );
-}
-
-export function isLanguageServerSessionCurrentForOwnerOrLegacy(
-  runtimeStatuses: LanguageServerRuntimeStatusByOwner,
-  owner: WorkspaceRuntimeOwner | undefined,
-  legacyStatus: LanguageServerRuntimeStatus | null,
-  legacyStatusRoot: string | null,
-  rootPath: string,
-  sessionId: number,
-): boolean {
-  if (owner) {
-    return isLanguageServerSessionActiveForOwner(runtimeStatuses, owner, rootPath, sessionId);
-  }
-
-  const cachedRuntimeStatus = cachedLanguageServerRuntimeStatusForRoot(runtimeStatuses, rootPath);
-  const currentLegacyStatus =
-    cachedRuntimeStatus ??
-    (workspaceRootKeysEqual(legacyStatusRoot, rootPath) ? legacyStatus : null);
-
-  return isRunningLanguageServerSessionForWorkspace(
-    currentLegacyStatus,
-    currentLegacyStatus?.rootPath ?? legacyStatusRoot,
-    rootPath,
-    sessionId,
-  );
-}
-
-function isLanguageServerActiveForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): boolean {
-  return (
-    isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
-    isLanguageServerActive(status)
-  );
-}
-
-function isLanguageServerStatusForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): status is LanguageServerRuntimeStatus {
-  if (!workspaceRoot || !status) {
-    return false;
-  }
-
-  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
-
-  return !!rootedStatus && workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }
