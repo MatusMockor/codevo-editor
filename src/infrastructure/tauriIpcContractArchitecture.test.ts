@@ -9,33 +9,37 @@ import {
 
 const PROJECT_ROOT = process.cwd();
 const FRONTEND_ROOT = join(PROJECT_ROOT, "src");
-const RUST_ENTRYPOINT = join(PROJECT_ROOT, "src-tauri", "src", "lib.rs");
+const RUST_HANDLER_REGISTRY = join(
+  PROJECT_ROOT,
+  "src-tauri",
+  "src",
+  "lib_composition",
+  "runtime.rs",
+);
 
 describe("Tauri IPC contract architecture (static command literals and named maps only)", () => {
-  it(
-    "keeps statically declared frontend commands registered in generate_handler",
-    () => {
-      const registered = new Set(
-        parseRegisteredTauriCommands(readFileSync(RUST_ENTRYPOINT, "utf8")),
-      );
-      const references = sourceFiles(FRONTEND_ROOT).flatMap((fileName) =>
-        parseFrontendTauriCommandReferences(
-          readFileSync(fileName, "utf8"),
-          relative(PROJECT_ROOT, fileName),
-        ).map((reference) => ({ fileName, reference })),
-      );
-      const missing = references
-        .filter(({ reference }) => !registered.has(reference.command))
-        .map(formatMissingReference)
-        .sort();
+  it("keeps statically declared frontend commands registered in generate_handler", () => {
+    const registered = new Set(
+      parseRegisteredTauriCommands(readFileSync(RUST_HANDLER_REGISTRY, "utf8")),
+    );
+    const references = sourceFiles(FRONTEND_ROOT).flatMap((fileName) =>
+      parseFrontendTauriCommandReferences(
+        readFileSync(fileName, "utf8"),
+        relative(PROJECT_ROOT, fileName),
+      ).map((reference) => ({ fileName, reference })),
+    );
+    const missing = references
+      .filter(({ reference }) => !registered.has(reference.command))
+      .map(formatMissingReference)
+      .sort();
 
-      expect(missing).toEqual([]);
-    },
-    15_000,
-  );
+    expect(missing).toEqual([]);
+  }, 15_000);
 
   it("exposes package-script execution only through the typed task registry", () => {
-    const registered = new Set(parseRegisteredTauriCommands(readFileSync(RUST_ENTRYPOINT, "utf8")));
+    const registered = new Set(
+      parseRegisteredTauriCommands(readFileSync(RUST_HANDLER_REGISTRY, "utf8")),
+    );
 
     expect(registered).toContain("workspace_start_node_package_task");
     expect(registered).toContain("workspace_stop_node_package_task");

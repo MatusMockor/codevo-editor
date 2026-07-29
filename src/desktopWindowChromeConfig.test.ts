@@ -25,7 +25,10 @@ describe("desktop window chrome config", () => {
   });
 
   it("exposes editor typography commands through the native macOS View menu", () => {
-    const runtimeSource = readText("src-tauri/src/lib.rs");
+    const runtimeSource = [
+      readText("src-tauri/src/lib_composition/workspace_facade.rs"),
+      readText("src-tauri/src/lib_composition/runtime.rs"),
+    ].join("\n");
     const menuSource = readText("src-tauri/src/application_menu.rs");
 
     expect(runtimeSource).toContain("const FONT_ZOOM_IN_MENU_ID");
