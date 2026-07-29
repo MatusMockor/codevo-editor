@@ -4,22 +4,13 @@ import {
   createLanguageServerTextDocument,
   isLanguageServerDocument,
   languageServerDocumentSyncKey,
-  languageServerPathFromDocumentSyncKey,
 } from "../domain/languageServerDocumentSync";
 import {
   defaultLargeSmartDocumentPolicy,
   isLargeSmartDocument,
 } from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type {
-  DocumentSync,
-  DocumentSyncDependencies,
-  LanguageServerDocumentRequestLease,
-} from "./documentSyncContracts";
-import {
-  closeJavaScriptTypeScriptDocumentsForRoot,
-  closePhpDocumentsForRoot,
-} from "./documentSyncCloseLifecycle";
+import type { DocumentSync, DocumentSyncDependencies } from "./documentSyncContracts";
 import { clearDocumentSyncVersionState } from "./documentSyncVersionBookkeeping";
 import {
   DocumentSyncLargePolicyMemo,
@@ -33,6 +24,8 @@ import { useJavaScriptTypeScriptLegacyHandoff } from "./useJavaScriptTypeScriptL
 import { useJavaScriptTypeScriptDocumentCloseSync } from "./useJavaScriptTypeScriptDocumentCloseSync";
 import { useJavaScriptTypeScriptDocumentVersionIssuer } from "./useJavaScriptTypeScriptDocumentVersionIssuer";
 import { useLanguageServerDocumentLifecycleIdentity } from "./useLanguageServerDocumentLifecycleIdentity";
+import { useDocumentSyncRootCleanup } from "./documentSync/useDocumentSyncRootCleanup";
+import { usePhpDocumentRequestLeases } from "./documentSync/usePhpDocumentRequestLeases";
 
 export type {
   DocumentSync,
@@ -1007,128 +1000,23 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
     [currentWorkspaceRootRef, flushPendingDocumentChangeForRoot],
   );
 
-  const isLanguageServerDocumentRequestLeaseCurrent = useCallback(
-    (lease: LanguageServerDocumentRequestLease): boolean => {
-      const syncKey = languageServerDocumentSyncKey(lease.rootPath, lease.path);
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, lease.rootPath)) {
-        return false;
-      }
-
-      if (documentSyncGenerationRef.current !== lease.syncGeneration) {
-        return false;
-      }
-
-      if (!isLanguageServerSessionCurrentForRoot(lease.rootPath, lease.sessionId)) {
-        return false;
-      }
-
-      if (!syncedDocumentPathsRef.current.has(syncKey)) {
-        return false;
-      }
-
-      if (pendingDocumentOpenSyncAttemptsRef.current[syncKey] !== undefined) {
-        return false;
-      }
-
-      return documentLifecycleIdentitiesRef.current[syncKey] === lease.lifecycleIdentity;
-    },
-    [
-      currentWorkspaceRootRef,
-      documentLifecycleIdentitiesRef,
-      documentSyncGenerationRef,
-      isLanguageServerSessionCurrentForRoot,
-      pendingDocumentOpenSyncAttemptsRef,
-      syncedDocumentPathsRef,
-    ],
-  );
-
-  const requestLanguageServerDocumentLease = useCallback(
-    async (rootPath: string, path: string): Promise<LanguageServerDocumentRequestLease | null> => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        return null;
-      }
-
-      if (
-        !isRunningLanguageServerForWorkspace(
-          languageServerRuntimeStatus,
-          languageServerRuntimeStatusRoot,
-          rootPath,
-        )
-      ) {
-        return null;
-      }
-
-      const syncKey = languageServerDocumentSyncKey(rootPath, path);
-      const requestedSessionId = languageServerRuntimeStatus.sessionId;
-      const requestedSyncGeneration = documentSyncGenerationRef.current;
-      const flushPromise = flushPendingDocumentChangeForRoot(rootPath, path);
-      const requestedLifecycleIdentity =
-        documentLifecycleIdentitiesRef.current[syncKey] ??
-        pendingDocumentLifecycleIdentitiesRef.current[syncKey];
-
-      if (requestedLifecycleIdentity === undefined) {
-        await flushPromise;
-        return null;
-      }
-
-      await flushPromise;
-
-      const lease: LanguageServerDocumentRequestLease = {
-        lifecycleIdentity: requestedLifecycleIdentity,
-        path,
-        rootPath,
-        sessionId: requestedSessionId,
-        syncGeneration: requestedSyncGeneration,
-      };
-
-      if (!isLanguageServerDocumentRequestLeaseCurrent(lease)) {
-        return null;
-      }
-
-      return lease;
-    },
-    [
-      currentWorkspaceRootRef,
-      documentLifecycleIdentitiesRef,
-      documentSyncGenerationRef,
-      flushPendingDocumentChangeForRoot,
-      isLanguageServerDocumentRequestLeaseCurrent,
-      isRunningLanguageServerForWorkspace,
-      languageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot,
-      pendingDocumentLifecycleIdentitiesRef,
-    ],
-  );
-
-  // BUG 2 gate: reports whether a PHP document has already been opened
-  // (`didOpen` sent) on the active workspace's language server. Outline /
-  // breadcrumb DocumentSymbol fetches consult this so they never race ahead of
-  // the document sync and trigger an UnknownDocument error. Isolated per
-  // workspace via the active-root sync key.
-  const isLanguageServerDocumentSynced = useCallback(
-    (path: string): boolean => {
-      const rootPath = currentWorkspaceRootRef.current;
-
-      if (!rootPath) {
-        return false;
-      }
-
-      const syncKey = languageServerDocumentSyncKey(rootPath, path);
-
-      return (
-        syncedDocumentPathsRef.current.has(syncKey) &&
-        pendingDocumentOpenSyncAttemptsRef.current[syncKey] === undefined &&
-        documentLifecycleIdentitiesRef.current[syncKey] !== undefined
-      );
-    },
-    [
-      currentWorkspaceRootRef,
-      documentLifecycleIdentitiesRef,
-      pendingDocumentOpenSyncAttemptsRef,
-      syncedDocumentPathsRef,
-    ],
-  );
+  const {
+    isDocumentSynced: isLanguageServerDocumentSynced,
+    isRequestLeaseCurrent: isLanguageServerDocumentRequestLeaseCurrent,
+    requestLease: requestLanguageServerDocumentLease,
+  } = usePhpDocumentRequestLeases({
+    currentWorkspaceRootRef,
+    documentLifecycleIdentitiesRef,
+    documentSyncGenerationRef,
+    flushPendingDocumentChangeForRoot,
+    isLanguageServerSessionCurrentForRoot,
+    isRunningLanguageServerForWorkspace,
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
+    pendingDocumentLifecycleIdentitiesRef,
+    pendingDocumentOpenSyncAttemptsRef,
+    syncedDocumentPathsRef,
+  });
 
   const flushPendingJavaScriptTypeScriptDocumentChangeForRoot = useCallback(
     async (requestedRoot: string, path: string) => {
@@ -1704,125 +1592,52 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
     syncedPathsRef: javaScriptTypeScriptSyncedDocumentPathsRef,
   });
 
-  const closeSyncedLanguageServerDocumentsForRoot = useCallback(
-    (rootPath: string) =>
-      closePhpDocumentsForRoot({
-        rootPath,
-        syncGenerationRef: documentSyncGenerationRef,
-        state: {
-          syncedPathsRef: syncedDocumentPathsRef,
-          syncedContentRef: syncedDocumentContentRef,
-          pendingChangesRef: pendingDocumentChangesRef,
-          pendingOpenAttemptsRef: pendingDocumentOpenSyncAttemptsRef,
-          lifecycleIdentitiesRef: documentLifecycleIdentitiesRef,
-          pendingLifecycleIdentitiesRef: pendingDocumentLifecycleIdentitiesRef,
-          versionState: {
-            diagnosticVersionsByUriRef: lastAppliedDiagnosticVersionByUriRef,
-            documentVersionsByUriRef,
-            documentVersionsRef,
-          },
-        },
-        runtimeAuthority: {
-          statusRef: languageServerRuntimeStatusRef,
-          statusRootRef: languageServerRuntimeStatusRootRef,
-          statusByRootRef: languageServerRuntimeStatusByRootRef,
-          isRunningForWorkspace: isRunningLanguageServerForWorkspace,
-        },
-        clearChangeTimer: clearDocumentChangeTimer,
-        enqueueSync: enqueueDocumentSync,
-        gateway: languageServerDocumentSyncGateway,
-        isSessionCurrent: isLanguageServerSessionCurrentForRoot,
-        reportError: reportLanguageServerErrorForActiveWorkspaceRoot,
-        resetDocuments: resetLanguageServerDocuments,
-      }),
-    [
-      clearDocumentChangeTimer,
-      documentLifecycleIdentitiesRef,
-      documentSyncGenerationRef,
-      documentVersionsByUriRef,
-      documentVersionsRef,
-      enqueueDocumentSync,
-      isLanguageServerSessionCurrentForRoot,
-      isRunningLanguageServerForWorkspace,
-      languageServerDocumentSyncGateway,
-      languageServerRuntimeStatusByRootRef,
-      languageServerRuntimeStatusRef,
-      languageServerRuntimeStatusRootRef,
-      lastAppliedDiagnosticVersionByUriRef,
-      pendingDocumentChangesRef,
-      pendingDocumentLifecycleIdentitiesRef,
-      pendingDocumentOpenSyncAttemptsRef,
-      reportLanguageServerErrorForActiveWorkspaceRoot,
-      resetLanguageServerDocuments,
-      syncedDocumentContentRef,
-      syncedDocumentPathsRef,
-    ],
-  );
-
-  const closeSyncedJavaScriptTypeScriptDocumentsForRoot = useCallback(
-    async (rootPath: string) => {
-      const incrementalSync = javaScriptTypeScriptIncrementalSyncRef?.current ?? null;
-      if (incrementalSync) await incrementalSync.closeRoot(rootPath);
-      for (const syncKey of javaScriptTypeScriptSyncedDocumentPathsRef.current) {
-        if (languageServerPathFromDocumentSyncKey(rootPath, syncKey) !== null) {
-          javaScriptTypeScriptDocumentChangeMailbox.drop(syncKey);
-        }
-      }
-
-      return closeJavaScriptTypeScriptDocumentsForRoot({
-        rootPath,
-        syncGenerationRef: javaScriptTypeScriptDocumentSyncGenerationRef,
-        state: {
-          syncedPathsRef: javaScriptTypeScriptSyncedDocumentPathsRef,
-          syncedContentRef: javaScriptTypeScriptSyncedDocumentContentRef,
-          pendingChangesRef: javaScriptTypeScriptPendingDocumentChangesRef,
-          pendingOpenAttemptsRef: javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
-          lifecycleIdentitiesRef: javaScriptTypeScriptDocumentLifecycleIdentitiesRef,
-          authorityVersionsRef: javaScriptTypeScriptDocumentAuthorityVersionsRef,
-          versionState: {
-            diagnosticVersionsByUriRef: javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
-            documentVersionsByUriRef: javaScriptTypeScriptDocumentVersionsByUriRef,
-            documentVersionsRef: javaScriptTypeScriptDocumentVersionsRef,
-          },
-        },
-        runtimeAuthority: {
-          statusRef: javaScriptTypeScriptLanguageServerRuntimeStatusRef,
-          statusRootRef: javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-          statusByRootRef: javaScriptTypeScriptRuntimeStatusByRootRef,
-          isRunningForWorkspace: isRunningLanguageServerForWorkspace,
-        },
-        isPathInWorkspace: isSessionPathInWorkspace,
-        clearChangeTimer: clearJavaScriptTypeScriptDocumentChangeTimer,
-        enqueueSync: enqueueJavaScriptTypeScriptDocumentSync,
-        gateway: javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-        isSessionCurrent: isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-        reportError: (requestedRoot, error) =>
-          reportErrorForActiveWorkspaceRoot(requestedRoot, "JavaScript/TypeScript", error),
-      });
-    },
-    [
-      clearJavaScriptTypeScriptDocumentChangeTimer,
-      enqueueJavaScriptTypeScriptDocumentSync,
-      isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-      isRunningLanguageServerForWorkspace,
-      isSessionPathInWorkspace,
-      javaScriptTypeScriptDocumentSyncGenerationRef,
-      javaScriptTypeScriptIncrementalSyncRef,
-      javaScriptTypeScriptDocumentChangeMailbox,
-      javaScriptTypeScriptDocumentVersionsByUriRef,
-      javaScriptTypeScriptDocumentVersionsRef,
-      javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRef,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-      javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
-      javaScriptTypeScriptPendingDocumentChangesRef,
-      javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
-      javaScriptTypeScriptRuntimeStatusByRootRef,
-      javaScriptTypeScriptSyncedDocumentContentRef,
-      javaScriptTypeScriptSyncedDocumentPathsRef,
-      reportErrorForActiveWorkspaceRoot,
-    ],
-  );
+  const {
+    closePhpDocumentsForRoot: closeSyncedLanguageServerDocumentsForRoot,
+    closeJavaScriptTypeScriptDocumentsForRoot: closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+  } = useDocumentSyncRootCleanup({
+    clearDocumentChangeTimer,
+    clearJavaScriptTypeScriptDocumentChangeTimer,
+    documentLifecycleIdentitiesRef,
+    documentSyncGenerationRef,
+    documentVersionsByUriRef,
+    documentVersionsRef,
+    enqueueDocumentSync,
+    enqueueJavaScriptTypeScriptDocumentSync,
+    isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
+    isLanguageServerSessionCurrentForRoot,
+    isRunningLanguageServerForWorkspace,
+    isSessionPathInWorkspace,
+    javaScriptTypeScriptDocumentAuthorityVersionsRef,
+    javaScriptTypeScriptDocumentChangeMailbox,
+    javaScriptTypeScriptDocumentLifecycleIdentitiesRef,
+    javaScriptTypeScriptDocumentSyncGenerationRef,
+    javaScriptTypeScriptDocumentVersionsByUriRef,
+    javaScriptTypeScriptDocumentVersionsRef,
+    javaScriptTypeScriptIncrementalSyncRef,
+    javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+    javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
+    javaScriptTypeScriptPendingDocumentChangesRef,
+    javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
+    javaScriptTypeScriptRuntimeStatusByRootRef,
+    javaScriptTypeScriptSyncedDocumentContentRef,
+    javaScriptTypeScriptSyncedDocumentPathsRef,
+    languageServerDocumentSyncGateway,
+    languageServerRuntimeStatusByRootRef,
+    languageServerRuntimeStatusRef,
+    languageServerRuntimeStatusRootRef,
+    lastAppliedDiagnosticVersionByUriRef,
+    pendingDocumentChangesRef,
+    pendingDocumentLifecycleIdentitiesRef,
+    pendingDocumentOpenSyncAttemptsRef,
+    reportErrorForActiveWorkspaceRoot,
+    reportLanguageServerErrorForActiveWorkspaceRoot,
+    resetLanguageServerDocuments,
+    syncedDocumentContentRef,
+    syncedDocumentPathsRef,
+  });
 
   return {
     isJavaScriptTypeScriptLegacyHandoffSafe,
