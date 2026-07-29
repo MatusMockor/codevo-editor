@@ -24,7 +24,6 @@ import { useNpmRunSelectedScriptMonacoAction } from "./npmRunSelectedScriptMonac
 import type { NavigationRequest } from "../application/navigationRequest";
 import type { PhpCodeActionWorkspaceEditApplier } from "../application/phpCodeActionTypes";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
-import { editorActionForMenuCommand } from "./editorMenuCommandAction";
 import type {
   EditorSurfaceCommandInvocationScope,
   EditorSurfaceCommandRunner,
@@ -37,7 +36,6 @@ import {
   resolveCompleteWorkspaceIdentityDescriptor,
 } from "./editorSurfaceModelIdentity";
 import {
-  activeDocumentModelForReveal,
   currentEditorModelForPath,
   editorSurfaceControlledValue,
   editorSurfaceModelPath,
@@ -49,7 +47,6 @@ import type { DebugWatchAtCursorCaptureReader } from "../domain/debugWatchAtCurs
 import type { DebugBreakpointNavigationCaptureReader } from "../domain/debugBreakpointNavigationCapture";
 import type { DebugInlineBreakpointCaptureReader } from "../domain/debugInlineBreakpointCapture";
 import type { DebugEvaluateInConsoleCaptureReader } from "../domain/debugEvaluateInConsoleCapture";
-import { applicableEslintFixes, type EslintFix } from "../domain/eslintDiagnostics";
 import type {
   EditorSurfaceBufferFixRunner,
   EditorSurfacePhpstanIgnoreRunner,
@@ -104,8 +101,6 @@ import type { HippieSession } from "../domain/hippieCompletion";
 import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { gitBlameShaAtLine, type GitBlameLine } from "../domain/git";
-import { jsGutterTargetsCoordinator } from "../domain/jsGutterTargetsCoordinator";
-import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
@@ -177,9 +172,7 @@ import {
   findChangeHunkAtLine,
   glyphMarginLaneFromMouseEvent,
   navigateChangeHunkFromPopover,
-  toBookmarkDecoration,
   toEditorChangeDecoration,
-  toGitBlameDecoration,
 } from "./editorChangeMonacoMappings";
 import { shouldTriggerLatteMemberSuggest } from "./editorLatteMemberSuggestTrigger";
 import type { EditorSurfaceCoverageProps } from "./useEditorSurfaceCoverageDecorations";
@@ -209,17 +202,11 @@ import {
   type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
 import { editorSurfaceBreadcrumbFeaturesGateway } from "./editorSurfaceBreadcrumbGateway";
-import { dismissTransientEditorWidgets } from "./editorTransientWidgetDismissal";
-import { createDebugWatchAtCursorCaptureReader } from "./debugWatchAtCursorMonacoReader";
-import { createDebugBreakpointNavigationCaptureReader } from "./debugBreakpointNavigationMonacoReader";
-import { createDebugInlineBreakpointCaptureReader } from "./debugInlineBreakpointMonacoReader";
-import { createDebugEvaluateInConsoleCaptureReader } from "./debugEvaluateInConsoleMonacoReader";
 import {
   applyCompleteStatement,
   applyCyclicExpandWord,
   applyMoveStatement,
   applySurroundWith,
-  createEditorSurfaceCommandRunner,
   expandEditorSelection,
   surroundWithRequestFromEditor,
   triggerEditorAction,
@@ -244,6 +231,12 @@ import { useSynchronizedRef } from "./editorSurfaceCore/useSynchronizedRef";
 import { useEditorPresentationBindings } from "./editorSurfaceCore/useEditorPresentationBindings";
 import { useBackgroundTokenizationLifecycle } from "./editorSurfaceCore/useBackgroundTokenizationLifecycle";
 import { useEditorModelViewStateLifecycle } from "./editorSurfaceCore/useEditorModelViewStateLifecycle";
+import { useEditorSurfaceCommandPublications } from "./editorSurfaceCore/useEditorSurfaceCommandPublications";
+import { useEditorDebugCaptureReaders } from "./editorSurfaceCore/useEditorDebugCaptureReaders";
+import { useEditorDiagnosticFixRunners } from "./editorSurfaceCore/useEditorDiagnosticFixRunners";
+import { useEditorSourceControlDecorations } from "./editorSurfaceCore/useEditorSourceControlDecorations";
+import { useEditorGutterDecorations } from "./editorSurfaceCore/useEditorGutterDecorations";
+import { useEditorNavigationLifecycle } from "./editorSurfaceCore/useEditorNavigationLifecycle";
 
 interface ChangePreviewState {
   anchorLineNumber: number;
@@ -1087,333 +1080,41 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
-  useEffect(() => {
-    if (!onEditorMenuCommandRunnerChange) {
-      return;
-    }
-
-    if (!editorApi || !activeDocumentPath) {
-      onEditorMenuCommandRunnerChange(null);
-      return;
-    }
-
-    const targetPath = activeDocumentPath;
-    const runner: EditorMenuCommandRunner = (command) => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
-        return;
-      }
-
-      editorApi.focus();
-      editorApi.trigger("mockor.windowChrome", editorActionForMenuCommand(command), null);
-    };
-
-    onEditorMenuCommandRunnerChange(runner);
-
-    return () => {
-      onEditorMenuCommandRunnerChange(null);
-    };
-  }, [activeDocumentPath, editorApi, onEditorMenuCommandRunnerChange, workspaceRoot]);
-
-  useEffect(() => {
-    if (!onEditorSurfaceCommandRunnerChange) {
-      return;
-    }
-
-    if (!editorApi || !activeDocumentPath) {
-      onEditorSurfaceCommandRunnerChange(null);
-      return;
-    }
-
-    const publishRunner = () => {
-      onEditorSurfaceCommandRunnerChange(
-        createEditorSurfaceCommandRunner({
-          captureScope: captureEditorSurfaceScope,
-          changeHunksRef,
-          editor: editorApi,
-          isImportActionEnabled: isEditorSurfaceImportActionEnabled,
-          runImportAction: runEditorSurfaceImportAction,
-        }),
-      );
-    };
-
-    publishRunner();
-    const modelChangeDisposable = editorApi.onDidChangeModel(() => {
-      invalidateEditorSurfaceImportActionAuthority();
-      publishRunner();
-    });
-
-    return () => {
-      modelChangeDisposable.dispose();
-      onEditorSurfaceCommandRunnerChange(null);
-    };
-  }, [
+  useEditorSurfaceCommandPublications({
     activeDocumentPath,
     captureEditorSurfaceScope,
-    editorApi,
-    invalidateEditorSurfaceImportActionAuthority,
-    isEditorSurfaceImportActionEnabled,
+    changeHunksRef,
+    editor: editorApi,
+    invalidateImportActionAuthority: invalidateEditorSurfaceImportActionAuthority,
+    isImportActionEnabled: isEditorSurfaceImportActionEnabled,
+    onEditorMenuCommandRunnerChange,
     onEditorSurfaceCommandRunnerChange,
-    runEditorSurfaceImportAction,
-  ]);
-
-  useEffect(() => {
-    if (!onDebugWatchAtCursorCaptureReaderChange) return;
-    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
-      onDebugWatchAtCursorCaptureReaderChange(null);
-      return;
-    }
-
-    const reader = createDebugWatchAtCursorCaptureReader({
-      activeDocumentRef,
-      editor: editorApi,
-      workspaceOwnerKey: editorSessionOwnerKey,
-      workspaceRootRef,
-    });
-    onDebugWatchAtCursorCaptureReaderChange(reader);
-    return () => onDebugWatchAtCursorCaptureReaderChange(null);
-  }, [
-    activeDocumentPath,
-    editorApi,
-    editorSessionOwnerKey,
-    onDebugWatchAtCursorCaptureReaderChange,
+    runImportAction: runEditorSurfaceImportAction,
     workspaceRoot,
-  ]);
+  });
 
-  useEffect(() => {
-    if (!onDebugEvaluateInConsoleCaptureReaderChange) return;
-    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
-      onDebugEvaluateInConsoleCaptureReaderChange(null);
-      return;
-    }
-
-    const reader = createDebugEvaluateInConsoleCaptureReader({
-      activeDocumentRef,
-      editor: editorApi,
-      workspaceOwnerKey: editorSessionOwnerKey,
-      workspaceRootRef,
-    });
-    onDebugEvaluateInConsoleCaptureReaderChange(reader);
-    return () => onDebugEvaluateInConsoleCaptureReaderChange(null);
-  }, [
+  useEditorDebugCaptureReaders({
     activeDocumentPath,
-    editorApi,
-    editorSessionOwnerKey,
-    onDebugEvaluateInConsoleCaptureReaderChange,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!onDebugBreakpointNavigationCaptureReaderChange) return;
-    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
-      onDebugBreakpointNavigationCaptureReaderChange(null);
-      return;
-    }
-
-    const reader = createDebugBreakpointNavigationCaptureReader({
-      activeDocumentRef,
-      editor: editorApi,
-      workspaceOwnerKey: editorSessionOwnerKey,
-      workspaceRootRef,
-    });
-    onDebugBreakpointNavigationCaptureReaderChange(reader);
-    return () => onDebugBreakpointNavigationCaptureReaderChange(null);
-  }, [
-    activeDocumentPath,
-    editorApi,
+    activeDocumentRef,
+    editor: editorApi,
     editorSessionOwnerKey,
     onDebugBreakpointNavigationCaptureReaderChange,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!onDebugInlineBreakpointCaptureReaderChange) return;
-    if (!editorApi || !activeDocumentPath || !workspaceRoot || !editorSessionOwnerKey) {
-      onDebugInlineBreakpointCaptureReaderChange(null);
-      return;
-    }
-
-    const reader = createDebugInlineBreakpointCaptureReader({
-      activeDocumentRef,
-      editor: editorApi,
-      workspaceOwnerKey: editorSessionOwnerKey,
-      workspaceRootRef,
-    });
-    onDebugInlineBreakpointCaptureReaderChange(reader);
-    return () => onDebugInlineBreakpointCaptureReaderChange(null);
-  }, [
-    activeDocumentPath,
-    editorApi,
-    editorSessionOwnerKey,
+    onDebugEvaluateInConsoleCaptureReaderChange,
     onDebugInlineBreakpointCaptureReaderChange,
+    onDebugWatchAtCursorCaptureReaderChange,
     workspaceRoot,
-  ]);
+    workspaceRootRef,
+  });
 
-  useEffect(() => {
-    if (!onEditorSurfaceBufferFixRunnerChange) {
-      return;
-    }
-
-    if (!editorApi || !monacoApi || !activeDocumentPath) {
-      onEditorSurfaceBufferFixRunnerChange(null);
-      return;
-    }
-
-    const targetPath = activeDocumentPath;
-    const runner: EditorSurfaceBufferFixRunner = (expectedContent, fixes) => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
-        return null;
-      }
-
-      if (model.getValue() !== expectedContent) {
-        return null;
-      }
-
-      const applicable = applicableEslintFixes(expectedContent, fixes);
-
-      if (applicable.length === 0) {
-        return 0;
-      }
-
-      const edits = applicable.map((fix: EslintFix) => {
-        const start = model.getPositionAt(fix.range[0]);
-        const end = model.getPositionAt(fix.range[1]);
-
-        return {
-          forceMoveMarkers: true,
-          range: new monacoApi.Range(start.lineNumber, start.column, end.lineNumber, end.column),
-          text: fix.text,
-        };
-      });
-
-      if (!editorApi.executeEdits("eslint.fixAllInActiveFile", edits)) {
-        return null;
-      }
-
-      return applicable.length;
-    };
-
-    onEditorSurfaceBufferFixRunnerChange(runner);
-
-    return () => {
-      onEditorSurfaceBufferFixRunnerChange(null);
-    };
-  }, [
+  useEditorDiagnosticFixRunners({
     activeDocumentPath,
-    editorApi,
-    monacoApi,
+    editor: editorApi,
+    monaco: monacoApi,
     onEditorSurfaceBufferFixRunnerChange,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!onEditorSurfaceEslintDisableRunnerChange) {
-      return;
-    }
-
-    if (!editorApi || !monacoApi || !activeDocumentPath) {
-      onEditorSurfaceEslintDisableRunnerChange(null);
-      return;
-    }
-
-    const targetPath = activeDocumentPath;
-    const runner: EditorSurfaceEslintDisableRunner = (expectedContent, lineNumber, identifiers) => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
-        return null;
-      }
-
-      if (model.getValue() !== expectedContent) {
-        return null;
-      }
-
-      if (identifiers.length === 0 || lineNumber < 1 || lineNumber > model.getLineCount()) {
-        return 0;
-      }
-
-      const indentation = /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
-      const edit = {
-        forceMoveMarkers: true,
-        range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
-        text: `${indentation}// eslint-disable-next-line ${identifiers.join(", ")}\n`,
-      };
-
-      if (!editorApi.executeEdits("eslint.disableRuleAtCursor", [edit])) {
-        return null;
-      }
-
-      return identifiers.length;
-    };
-
-    onEditorSurfaceEslintDisableRunnerChange(runner);
-
-    return () => {
-      onEditorSurfaceEslintDisableRunnerChange(null);
-    };
-  }, [
-    activeDocumentPath,
-    editorApi,
-    monacoApi,
     onEditorSurfaceEslintDisableRunnerChange,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!onEditorSurfacePhpstanIgnoreRunnerChange) {
-      return;
-    }
-
-    if (!editorApi || !monacoApi || !activeDocumentPath) {
-      onEditorSurfacePhpstanIgnoreRunnerChange(null);
-      return;
-    }
-
-    const targetPath = activeDocumentPath;
-    const runner: EditorSurfacePhpstanIgnoreRunner = (expectedContent, lineNumber, identifiers) => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
-        return null;
-      }
-
-      if (model.getValue() !== expectedContent) {
-        return null;
-      }
-
-      if (identifiers.length === 0 || lineNumber < 1 || lineNumber > model.getLineCount()) {
-        return 0;
-      }
-
-      const indentation = /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
-      const edit = {
-        forceMoveMarkers: true,
-        range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
-        text: `${indentation}// @phpstan-ignore ${identifiers.join(", ")}\n`,
-      };
-
-      if (!editorApi.executeEdits("phpstan.ignoreIssueAtCursor", [edit])) {
-        return null;
-      }
-
-      return identifiers.length;
-    };
-
-    onEditorSurfacePhpstanIgnoreRunnerChange(runner);
-
-    return () => {
-      onEditorSurfacePhpstanIgnoreRunnerChange(null);
-    };
-  }, [
-    activeDocumentPath,
-    editorApi,
-    monacoApi,
     onEditorSurfacePhpstanIgnoreRunnerChange,
     workspaceRoot,
-  ]);
+  });
 
   const recoverVisibleLocalPhpDiagnostics = useCallback(
     (uris: readonly Monaco.Uri[] = []) => {
@@ -2694,118 +2395,20 @@ function EditorSurfaceComponent({
     // bookmark / diagnostic-overview / gutter path-gated effects.
   }, [activeDocumentPath, changeHunks, editorApi, monacoApi, workspaceRoot]);
 
-  // Renders a bookmark marker in the lines-decorations margin plus an overview
-  // ruler tick for each bookmarked line of the active document. The stale-guard
-  // (model path must equal the active document path) keeps the per-tab isolation
-  // invariant intact: a switch repaints from the new tab's bookmarked lines and
-  // the previous tab's markers are dropped via deltaDecorations.
-  useEffect(() => {
-    if (!activeDocumentPath || !editorApi || !monacoApi) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-      return;
-    }
-
-    bookmarkDecorationIdsRef.current = editorApi.deltaDecorations(
-      bookmarkDecorationIdsRef.current,
-      bookmarkedLineNumbers.map((lineNumber) => toBookmarkDecoration(monacoApi, lineNumber)),
-    );
-
-    return () => {
-      bookmarkDecorationIdsRef.current = editorApi.deltaDecorations(
-        bookmarkDecorationIdsRef.current,
-        [],
-      );
-    };
-    // Depend on the active document path (not its full identity) so typing does
-    // not re-run this effect every keystroke. The body reads only the path (for
-    // the per-tab stale guard) plus bookmarkedLineNumbers, so the path covers
-    // file switches and bookmarkedLineNumbers covers bookmark toggles.
-  }, [activeDocumentPath, bookmarkedLineNumbers, editorApi, monacoApi, workspaceRoot]);
-
-  // Git blame annotations (PhpStorm "Annotate with Git Blame"). When enabled for
-  // the active document, fetch per-line blame off the parent gateway and render
-  // an inline author + relative-date annotation at the start of each line. The
-  // request captures the requested path up front and re-checks the active /
-  // model path AFTER the await before mutating decorations, so a tab switch in
-  // flight drops the stale result (per-tab + per-document isolation). Disabling
-  // (or switching away) clears the annotations synchronously.
-  useEffect(() => {
-    if (!activeDocumentPath || !editorApi || !monacoApi) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-      return;
-    }
-
-    const clearAnnotations = () => {
-      gitBlameLinesRef.current = [];
-      gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
-        gitBlameDecorationIdsRef.current,
-        [],
-      );
-      gitBlameDecoratedPathRef.current = null;
-    };
-
-    const provider = provideGitBlameRef.current;
-
-    if (!gitBlameEnabled || !provider) {
-      clearAnnotations();
-      return;
-    }
-
-    // Capture the requested path BEFORE the await so a switch can be detected.
-    const requestedPath = activeDocumentPath;
-    let cancelled = false;
-
-    void provider(requestedPath)
-      .then((blameLines) => {
-        // Re-check AFTER the await: drop stale results from a switched-away tab,
-        // an effect cleanup (cancelled), a disposed model, or a document whose
-        // path no longer matches the request.
-        if (cancelled || model.isDisposed?.()) {
-          return;
-        }
-
-        const currentModel = editorApi.getModel();
-
-        if (
-          !currentModel ||
-          !modelMatchesProject(currentModel, workspaceRoot, requestedPath) ||
-          activeDocumentRef.current?.path !== requestedPath
-        ) {
-          return;
-        }
-
-        const now = Date.now();
-        gitBlameLinesRef.current = blameLines;
-        gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
-          gitBlameDecorationIdsRef.current,
-          blameLines.map((line) => toGitBlameDecoration(monacoApi, line, now)),
-        );
-        gitBlameDecoratedPathRef.current = requestedPath;
-      })
-      .catch(() => {
-        // Blame is best-effort decoration; a gateway failure leaves the editor
-        // untouched rather than surfacing an error.
-      });
-
-    return () => {
-      cancelled = true;
-      clearAnnotations();
-    };
-    // Keyed on the active path + the enabled flag (not the document identity), so
-    // typing does not refetch blame every keystroke; a file switch or a toggle
-    // re-runs it. Blame is anchored to committed lines and need not track live
-    // edits between toggles.
-  }, [activeDocumentPath, editorApi, gitBlameEnabled, monacoApi, workspaceRoot]);
+  useEditorSourceControlDecorations({
+    activeDocumentPath,
+    activeDocumentRef,
+    bookmarkedLineNumbers,
+    bookmarkDecorationIdsRef,
+    editor: editorApi,
+    gitBlameDecoratedPathRef,
+    gitBlameDecorationIdsRef,
+    gitBlameEnabled,
+    gitBlameLinesRef,
+    monaco: monacoApi,
+    provideGitBlameRef,
+    workspaceRoot,
+  });
 
   useEffect(() => {
     if (!changePreview) {
@@ -2958,293 +2561,38 @@ function EditorSurfaceComponent({
     ],
   );
 
-  useEffect(() => {
-    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi || !monacoApi) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-      return;
-    }
-
-    // Synchronously drop the previous file's glyphs on a path switch (or when the
-    // document is no longer PHP) so a switch never leaves stale glyphs while the
-    // debounced recompute is pending. A same-path keystroke does not clear, so
-    // the existing glyphs stay put (and track edits via stickiness) until the
-    // shared debounce tick flushes - no flicker.
-    const decoratedPath = implementationGutterDecoratedPathRef.current;
-    const isPathSwitch = decoratedPath !== null && decoratedPath !== activeDocumentPath;
-
-    if (activeDocumentLanguage !== "php" || isPathSwitch) {
-      implementationGutterTargetsRef.current = new Map();
-      implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-        implementationGutterDecorationIdsRef.current,
-        [],
-      );
-      implementationGutterDecoratedPathRef.current = null;
-    }
-  }, [activeDocumentLanguage, activeDocumentPath, editorApi, monacoApi, workspaceRoot]);
-
-  // The debounced full-file parse + decoration replace. Driven by the shared
-  // `phpEditTick` (one 160ms timer per edit for all PHP gutter/diagnostics
-  // consumers) instead of arming its own timer per keystroke. The glyphs do not
-  // need to track typing in real time - their stickiness keeps existing glyphs
-  // anchored to the right lines while typing, and the recompute catches up once
-  // the user pauses. The live-model path guard re-checks isolation AFTER the
-  // debounce so a stale tab's snapshot can never decorate the active model.
-  useEffect(() => {
-    if (!phpEditTick || !editorApi || !monacoApi) {
-      return;
-    }
-
-    const liveModel = editorApi.getModel();
-
-    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)) {
-      return;
-    }
-
-    const targets = phpGutterTargetsCoordinator.resolveImplementation(
-      workspaceRoot,
-      phpEditTick.path,
-      phpEditTick.content,
-    );
-    implementationGutterTargetsRef.current = new Map(
-      targets.map((target) => [target.position.lineNumber, target.position]),
-    );
-    implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-      implementationGutterDecorationIdsRef.current,
-      targets.map((target) => ({
-        options: {
-          glyphMargin: {
-            position: monacoApi.editor.GlyphMarginLane.Center,
-          },
-          glyphMarginClassName: "implementation-gutter-glyph",
-          glyphMarginHoverMessage: {
-            value: "Go to implementation",
-          },
-          isWholeLine: false,
-          stickiness: monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-          zIndex: 20,
-        },
-        range: new monacoApi.Range(target.position.lineNumber, 1, target.position.lineNumber, 1),
-      })),
-    );
-    implementationGutterDecoratedPathRef.current = phpEditTick.path;
-  }, [editorApi, monacoApi, phpEditTick, workspaceRoot]);
-
-  // Renders the green "run test" play glyph on the Right glyph-margin lane for
-  // each parsed test target in the active PHP test file. Gated to PHP test
-  // documents (via the controller-supplied boolean) so the glyph never appears
-  // on production code or non-PHP files. The stale-guard (model path must equal
-  // the active document path) plus the absolute-path-keyed cache keep the
-  // per-tab isolation invariant intact.
-  useEffect(() => {
-    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi || !monacoApi) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-      return;
-    }
-
-    // Synchronously drop the previous file's glyphs on a path switch (or when the
-    // document stops being a PHP test) so a switch never leaves stale glyphs while
-    // the shared debounce tick is pending. Mirrors the implementation-gutter
-    // effect; see its comment for the no-flicker rationale.
-    const decoratedPath = testGutterDecoratedPathRef.current;
-    const isPathSwitch = decoratedPath !== null && decoratedPath !== activeDocumentPath;
-    const isApplicable =
-      (activeDocumentLanguage === "php" && isActiveDocumentPhpTest) || isActiveDocumentJsTest;
-
-    if (!isApplicable || isPathSwitch) {
-      testGutterTargetsRef.current = new Map();
-      testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-        testGutterDecorationIdsRef.current,
-        [],
-      );
-      testGutterDecoratedPathRef.current = null;
-    }
-  }, [
+  useEditorGutterDecorations({
     activeDocumentLanguage,
     activeDocumentPath,
-    editorApi,
+    editor: editorApi,
+    implementationDecoratedPathRef: implementationGutterDecoratedPathRef,
+    implementationDecorationIdsRef: implementationGutterDecorationIdsRef,
+    implementationTargetsRef: implementationGutterTargetsRef,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
-    monacoApi,
-    workspaceRoot,
-  ]);
-
-  // The debounced test-gutter parse + decoration replace, driven by the shared
-  // `phpEditTick`. Re-applies the `isActiveDocumentPhpTest` gate (the tick only
-  // knows the document is PHP) and re-checks the live model path AFTER the
-  // debounce so a stale tab's snapshot can never decorate the active model.
-  useEffect(() => {
-    if (
-      !testEditTick ||
-      !editorApi ||
-      !monacoApi ||
-      (!isActiveDocumentPhpTest && !isActiveDocumentJsTest)
-    ) {
-      return;
-    }
-
-    const liveModel = editorApi.getModel();
-
-    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, testEditTick.path)) {
-      return;
-    }
-
-    const targets = isActiveDocumentJsTest
-      ? jsGutterTargetsCoordinator.resolveTest(
-          workspaceRoot,
-          testEditTick.path,
-          testEditTick.content,
-        )
-      : phpGutterTargetsCoordinator.resolveTest(
-          workspaceRoot,
-          testEditTick.path,
-          testEditTick.content,
-        );
-    testGutterTargetsRef.current = new Map(
-      targets.map((target) => [target.position.lineNumber, target]),
-    );
-    testGutterDecorationIdsRef.current = editorApi.deltaDecorations(
-      testGutterDecorationIdsRef.current,
-      targets.map((target) => ({
-        options: {
-          glyphMargin: {
-            position: monacoApi.editor.GlyphMarginLane.Right,
-          },
-          glyphMarginClassName: "test-run-gutter-glyph",
-          glyphMarginHoverMessage: {
-            value: target.label,
-          },
-          isWholeLine: false,
-          stickiness: monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-          zIndex: 20,
-        },
-        range: new monacoApi.Range(target.position.lineNumber, 1, target.position.lineNumber, 1),
-      })),
-    );
-    testGutterDecoratedPathRef.current = testEditTick.path;
-  }, [
-    editorApi,
-    isActiveDocumentJsTest,
-    isActiveDocumentPhpTest,
-    monacoApi,
+    monaco: monacoApi,
+    phpEditTick,
+    testDecoratedPathRef: testGutterDecoratedPathRef,
+    testDecorationIdsRef: testGutterDecorationIdsRef,
     testEditTick,
+    testTargetsRef: testGutterTargetsRef,
     workspaceRoot,
-  ]);
+  });
 
-  useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    const currentPath = activeDocument?.path ?? null;
-    const previousPath = previousActiveDocumentPathRef.current;
-    previousActiveDocumentPathRef.current = currentPath;
-
-    if (previousPath === currentPath) {
-      return;
-    }
-
-    dismissTransientEditorWidgets(editorApi, "document-switch");
-  }, [activeDocument?.path, editorApi]);
-
-  useEffect(() => {
-    if (!editorApi || transientWidgetDismissKey === undefined) {
-      return;
-    }
-
-    if (previousTransientWidgetDismissKeyRef.current === transientWidgetDismissKey) {
-      return;
-    }
-
-    previousTransientWidgetDismissKeyRef.current = transientWidgetDismissKey;
-    dismissTransientEditorWidgets(editorApi, "floating-surface");
-  }, [editorApi, transientWidgetDismissKey]);
-
-  useEffect(() => {
-    if (!editorRevealTarget) {
-      return;
-    }
-
-    if (!activeDocument) {
-      onRevealTargetHandled(editorRevealTarget);
-      return;
-    }
-
-    if (editorRevealTarget.path !== activeDocument.path) {
-      onRevealTargetHandled(editorRevealTarget);
-      return;
-    }
-
-    if (!editorApi) {
-      return;
-    }
-
-    if (!activeDocumentContentReady || isOpeningFile) {
-      return;
-    }
-
-    const reveal = (): boolean => {
-      const model = activeDocumentModelForReveal(
-        runtime,
-        groupId,
-        editorApi,
-        workspaceRoot,
-        activeDocument,
-      );
-
-      if (!model) {
-        return false;
-      }
-
-      // A reveal is a programmatic jump (Back/Forward, go-to-definition,
-      // breadcrumb, etc). Clear transient widgets before moving the caret so
-      // an in-flight hover cannot remain pinned to the previous location.
-      dismissTransientEditorWidgets(editorApi, "navigation");
-      editorApi.setPosition(editorRevealTarget.position);
-      editorApi.revealPositionInCenter(editorRevealTarget.position);
-      editorApi.focus();
-      onRevealTargetHandled(editorRevealTarget);
-      return true;
-    };
-
-    if (reveal()) {
-      return;
-    }
-
-    // @monaco-editor/react swaps models in its own post-render lifecycle. Back
-    // can therefore publish a reveal while the editor still exposes the model
-    // being replaced. Keep the target pending and retry only when Monaco reports
-    // the replacement instead of asking a stale/disposed model to validate the
-    // position.
-    const disposable = editorApi.onDidChangeModel(() => {
-      if (!reveal()) {
-        return;
-      }
-
-      disposable.dispose();
-    });
-
-    return () => disposable.dispose();
-  }, [
+  useEditorNavigationLifecycle({
     activeDocument,
     activeDocumentContentReady,
-    editorApi,
+    editor: editorApi,
     editorRevealTarget,
+    groupId,
     isOpeningFile,
     onRevealTargetHandled,
-    groupId,
+    previousActiveDocumentPathRef,
+    previousTransientWidgetDismissKeyRef,
     runtime,
+    transientWidgetDismissKey,
     workspaceRoot,
-  ]);
+  });
 
   const reconcileActiveModelContentRef = useRef(() => undefined);
   const applyActiveModelConfigRef = useRef(() => undefined);
