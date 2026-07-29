@@ -3,21 +3,21 @@ use crate::file_fuzzy_matcher::compare_ranked_paths;
 use crate::local_history::LocalHistoryStore;
 use crate::workspace_registry::{validate_relative_path, WorkspaceId, WorkspaceRegistry};
 use crate::{search::TextSearchOptions, workspace::FileEntryKind};
-use ignore::{gitignore::GitignoreBuilder, overrides::OverrideBuilder, Match};
-use regex::{NoExpand, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, CString},
     fs::File,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom},
     os::fd::{AsRawFd, FromRawFd, RawFd},
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::Path,
 };
 
 mod atomic_create;
+mod atomic_save;
 mod descriptor_admission;
 mod directory_stream;
+mod mutation_settlement;
+mod search_policy;
 mod workspace_file_search;
 #[cfg(test)]
 #[path = "workspace_file_commands/workspace_search_tests.rs"]
@@ -25,6 +25,7 @@ mod workspace_search_tests;
 
 use descriptor_admission::*;
 use directory_stream::{DirectoryEntry, DirectoryStream, DirectoryStreamEntry};
+use search_policy::{collect_files, entry_rank, file_mask, replace_text, text_matcher};
 #[cfg(test)]
 use workspace_file_search::{
     collect_ranked_files, collect_ranked_files_with_truncation, file_score,
@@ -38,7 +39,6 @@ const RENAME_EXCL: libc::c_uint = 0x0000_0004;
 #[cfg(target_os = "macos")]
 const RENAME_SWAP: libc::c_uint = 0x0000_0002;
 const WORKSPACE_FILE_SEARCH_VISITED_LIMIT: usize = 200_000;
-const WORKSPACE_GITIGNORE_BYTE_LIMIT: u64 = 1024 * 1024;
 const WORKSPACE_TEXT_SEARCH_FILE_SIZE_LIMIT: u64 = 4 * 1024 * 1024;
 const WORKSPACE_TEXT_SEARCH_READ_CHUNK_BYTES: usize = 64 * 1024;
 const WORKSPACE_TEXT_SEARCH_PREVIEW_BYTE_LIMIT: usize = 4 * 1024;
@@ -70,274 +70,6 @@ fn directory_entries(directory: &File) -> io::Result<Vec<DirectoryEntry>> {
         }
     }
     Ok(entries)
-}
-
-fn collect_files(
-    root: &File,
-    scope: &Path,
-    scan_limit: usize,
-    display_root: &Path,
-) -> io::Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    let start = open_directory_path(root.as_raw_fd(), scope)?;
-    let mut stack = vec![(
-        scope.to_path_buf(),
-        start,
-        Vec::<Arc<ignore::gitignore::Gitignore>>::new(),
-    )];
-    let mut materialized = 0usize;
-    while let Some((relative, directory, inherited_ignores)) = stack.pop() {
-        let mut ignores = inherited_ignores;
-        if let Some(local) = load_directory_gitignore(&directory, &display_root.join(&relative))? {
-            ignores.push(Arc::new(local));
-        }
-        for entry in directory_entries(&directory)? {
-            let path = relative.join(&entry.name);
-            if crate::ignore_matcher::is_default_ignored_name(&entry.name)
-                || gitignore_stack_ignores(&ignores, &display_root.join(&path), entry.is_directory)
-            {
-                continue;
-            }
-            materialized += 1;
-            if materialized > 100_000 {
-                return Err(io::Error::other(
-                    "workspace search exceeded the 100000-entry safety limit",
-                ));
-            }
-            if entry.is_directory {
-                let name = CString::new(entry.name).unwrap();
-                let child = open_directory_at(directory.as_raw_fd(), &name)?;
-                stack.push((path, child, ignores.clone()));
-            } else {
-                files.push(path);
-                if files.len() >= scan_limit {
-                    return Ok(files);
-                }
-            }
-        }
-    }
-    Ok(files)
-}
-
-fn load_directory_gitignore(
-    directory: &File,
-    display_directory: &Path,
-) -> io::Result<Option<ignore::gitignore::Gitignore>> {
-    let file = match open_regular_at(directory.as_raw_fd(), c".gitignore", libc::O_RDONLY) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let mut bytes = Vec::new();
-    file.take(WORKSPACE_GITIGNORE_BYTE_LIMIT + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > WORKSPACE_GITIGNORE_BYTE_LIMIT {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            ".gitignore exceeds the 1 MiB workspace-search limit",
-        ));
-    }
-    let content = String::from_utf8(bytes)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let mut builder = GitignoreBuilder::new(display_directory);
-    for line in content.lines() {
-        builder.add_line(None, line).map_err(io::Error::other)?;
-    }
-    builder.build().map(Some).map_err(io::Error::other)
-}
-
-fn gitignore_stack_ignores(
-    scopes: &[Arc<ignore::gitignore::Gitignore>],
-    absolute: &Path,
-    is_directory: bool,
-) -> bool {
-    let mut ignored = false;
-    for scope in scopes {
-        match scope.matched_path_or_any_parents(absolute, is_directory) {
-            Match::Ignore(_) => ignored = true,
-            Match::Whitelist(_) => ignored = false,
-            Match::None => {}
-        }
-    }
-    ignored
-}
-
-fn entry_rank(kind: &FileEntryKind) -> u8 {
-    if matches!(kind, FileEntryKind::Directory) {
-        0
-    } else {
-        1
-    }
-}
-fn text_matcher(query: &str, options: &TextSearchOptions) -> io::Result<Regex> {
-    let pattern = if options.is_regex {
-        query.to_string()
-    } else {
-        regex::escape(query)
-    };
-    let pattern = if options.whole_word {
-        format!(r"\b(?:{pattern})\b")
-    } else {
-        pattern
-    };
-    RegexBuilder::new(&pattern)
-        .case_insensitive(!options.case_sensitive)
-        .build()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
-}
-
-fn replace_text(
-    matcher: &Regex,
-    content: &str,
-    replacement: &str,
-    options: &TextSearchOptions,
-) -> String {
-    if !options.preserve_case {
-        return replace_text_without_case_preservation(matcher, content, replacement, options);
-    }
-
-    if options.is_regex {
-        return matcher
-            .replace_all(content, |captures: &regex::Captures<'_>| {
-                let mut expanded = String::new();
-                captures.expand(replacement, &mut expanded);
-                adapt_replacement_case(captures.get(0).unwrap().as_str(), &expanded)
-            })
-            .into_owned();
-    }
-
-    matcher
-        .replace_all(content, |captures: &regex::Captures<'_>| {
-            adapt_replacement_case(captures.get(0).unwrap().as_str(), replacement)
-        })
-        .into_owned()
-}
-
-fn replace_text_without_case_preservation(
-    matcher: &Regex,
-    content: &str,
-    replacement: &str,
-    options: &TextSearchOptions,
-) -> String {
-    if options.is_regex {
-        return matcher.replace_all(content, replacement).into_owned();
-    }
-
-    matcher
-        .replace_all(content, NoExpand(replacement))
-        .into_owned()
-}
-
-fn adapt_replacement_case(matched: &str, replacement: &str) -> String {
-    if is_all_upper(matched) {
-        return replacement.to_uppercase();
-    }
-
-    if is_title_case(matched) {
-        return capitalize_first_letter(replacement);
-    }
-
-    replacement.to_string()
-}
-
-fn is_all_upper(value: &str) -> bool {
-    let letters: Vec<char> = value.chars().filter(|value| is_cased(*value)).collect();
-
-    !letters.is_empty() && letters.iter().all(|value| value.is_uppercase())
-}
-
-fn is_title_case(value: &str) -> bool {
-    let letters: Vec<char> = value.chars().filter(|value| is_cased(*value)).collect();
-    if letters.is_empty() {
-        return false;
-    }
-
-    letters[0].is_uppercase() && letters[1..].iter().all(|value| value.is_lowercase())
-}
-
-fn is_cased(value: char) -> bool {
-    value.is_lowercase() || value.is_uppercase()
-}
-
-fn capitalize_first_letter(value: &str) -> String {
-    let mut result = String::new();
-    let mut capitalized = false;
-
-    for character in value.chars() {
-        if !capitalized && is_cased(character) {
-            result.extend(character.to_uppercase());
-            capitalized = true;
-            continue;
-        }
-
-        result.push(character);
-    }
-
-    result
-}
-struct FileMask {
-    matcher: ignore::overrides::Override,
-    has_positive: bool,
-}
-fn file_mask(mask: &str, root: &Path) -> io::Result<Option<FileMask>> {
-    let mut builder = OverrideBuilder::new(root);
-    let mut any = false;
-    let mut has_positive = false;
-    for owned in split_file_masks(mask) {
-        let item = owned.trim();
-        any = true;
-        has_positive |= !item.starts_with('!');
-        builder.add(item).map_err(io::Error::other)?;
-    }
-    if any {
-        builder
-            .build()
-            .map(|matcher| {
-                Some(FileMask {
-                    matcher,
-                    has_positive,
-                })
-            })
-            .map_err(io::Error::other)
-    } else {
-        Ok(None)
-    }
-}
-
-fn split_file_masks(mask: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut brace_depth = 0usize;
-    let mut escaped = false;
-    for character in mask.chars() {
-        if escaped {
-            current.push(character);
-            escaped = false;
-            continue;
-        }
-        if character == '\\' {
-            current.push(character);
-            escaped = true;
-            continue;
-        }
-        if character == '{' {
-            brace_depth += 1;
-        }
-        if character == '}' {
-            brace_depth = brace_depth.saturating_sub(1);
-        }
-        if (character == ',' && brace_depth == 0) || character == '\n' {
-            if !current.trim().is_empty() {
-                parts.push(std::mem::take(&mut current));
-            }
-            continue;
-        }
-        current.push(character);
-    }
-    if !current.trim().is_empty() {
-        parts.push(current);
-    }
-    parts
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -952,231 +684,7 @@ impl<'a> WorkspaceFileRepository<'a> {
         content: &str,
         expected: &FileRevision,
     ) -> Result<FileRevision, CommandFailure> {
-        let _operation = self.registry.lock_operations()?;
-        let root = self.registry.clone_root(id)?;
-        let (parent_path, name) = split_path(path)?;
-        let parent = open_parent(root.as_raw_fd(), parent_path)?;
-        let target = open_regular_at(parent.as_raw_fd(), &name, libc::O_RDONLY)?;
-        let original = regular_unlinked_stat(target.as_raw_fd())?;
-        let original_bytes = read_all(&mut &target)?;
-        if revision(&original, &original_bytes) != *expected {
-            return Err(CommandFailure::Conflict(
-                "file changed since it was read".into(),
-            ));
-        }
-        drop(original_bytes);
-
-        let (mut staged, staged_name) =
-            create_unique_file(parent.as_raw_fd(), &name, original.st_mode as libc::mode_t)?;
-        let staged_identity = regular_unlinked_stat(staged.as_raw_fd())?;
-        let mut cleanup = TempCleanup {
-            parent: parent.as_raw_fd(),
-            name: staged_name.clone(),
-            expected: staged_identity,
-            armed: true,
-        };
-        run_test_hook(
-            "save-after-temp-create",
-            parent.as_raw_fd(),
-            &name,
-            &staged_name,
-        );
-        let preparation = (|| -> Result<(), CommandFailure> {
-            staged.write_all(content.as_bytes())?;
-            copy_metadata(target.as_raw_fd(), staged.as_raw_fd())?;
-            staged.sync_all()?;
-            let current = stat_at(parent.as_raw_fd(), &name)?;
-            if !same_identity(&original, &current) {
-                return Err(CommandFailure::Conflict(
-                    "file changed while it was being saved".into(),
-                ));
-            }
-            let staged_name_stat = stat_at(parent.as_raw_fd(), &staged_name)?;
-            if !same_identity(&staged_identity, &staged_name_stat) {
-                return Err(CommandFailure::Conflict(
-                    "temporary save file changed before the atomic swap".into(),
-                ));
-            }
-            Ok(())
-        })();
-        if let Err(failure) = preparation {
-            if let Err(message) = cleanup.finish_before_return() {
-                return Err(CommandFailure::Partial(message, None));
-            }
-            return Err(failure);
-        }
-        if let Err(error) = rename_swap(parent.as_raw_fd(), &staged_name, &name) {
-            if let Err(message) = cleanup.finish_before_return() {
-                return Err(CommandFailure::Partial(message, None));
-            }
-            return Err(error.into());
-        }
-        let saved = regular_unlinked_stat(staged.as_raw_fd()).map_err(|error| {
-            cleanup.armed = false;
-            CommandFailure::Partial(
-                format!(
-                    "file was swapped, but the staged capability could not be validated: {error}"
-                ),
-                None,
-            )
-        })?;
-        let saved_revision = revision(&saved, content.as_bytes());
-        run_test_hook("save-after-swap", parent.as_raw_fd(), &name, &staged_name);
-        let displaced = stat_at(parent.as_raw_fd(), &staged_name).map_err(|error| {
-            cleanup.armed = false;
-            CommandFailure::Partial(
-                format!(
-                    "file was swapped, but the displaced version could not be inspected: {error}"
-                ),
-                Some(saved_revision.clone()),
-            )
-        })?;
-        let displaced_file = open_regular_at(parent.as_raw_fd(), &staged_name, libc::O_RDONLY)
-            .map_err(|error| {
-                cleanup.armed = false;
-                CommandFailure::Partial(
-                    format!(
-                        "file was swapped, but the displaced version could not be opened: {error}"
-                    ),
-                    Some(saved_revision.clone()),
-                )
-            })?;
-        let displaced_bytes = read_all(&mut &displaced_file).map_err(|error| {
-            cleanup.armed = false;
-            CommandFailure::Partial(
-                format!("file was swapped, but the displaced version could not be read: {error}"),
-                Some(saved_revision.clone()),
-            )
-        })?;
-        if !same_identity(&original, &displaced)
-            || revision(&displaced, &displaced_bytes) != *expected
-        {
-            let current_target = stat_at(parent.as_raw_fd(), &name);
-            let current_displaced = stat_at(parent.as_raw_fd(), &staged_name);
-            let target_revision_matches =
-                open_regular_at(parent.as_raw_fd(), &name, libc::O_RDONLY)
-                    .and_then(|file| {
-                        let stat = regular_unlinked_stat(file.as_raw_fd())?;
-                        let bytes = read_all(&mut &file)?;
-                        Ok(revision(&stat, &bytes) == saved_revision)
-                    })
-                    .unwrap_or(false);
-            let displaced_revision_matches =
-                open_regular_at(parent.as_raw_fd(), &staged_name, libc::O_RDONLY)
-                    .and_then(|file| {
-                        let stat = regular_unlinked_stat(file.as_raw_fd())?;
-                        let bytes = read_all(&mut &file)?;
-                        Ok(revision(&stat, &bytes) == *expected)
-                    })
-                    .unwrap_or(false);
-            let safe_to_rollback = current_target
-                .as_ref()
-                .is_ok_and(|current| same_identity(&saved, current))
-                && current_displaced
-                    .as_ref()
-                    .is_ok_and(|current| same_identity(&original, current))
-                && target_revision_matches
-                && displaced_revision_matches;
-            if !safe_to_rollback {
-                cleanup.armed = false;
-                return Err(CommandFailure::Partial(
-                    "save race was detected and rollback was unsafe; all reachable versions were retained".into(),
-                    None,
-                ));
-            }
-            if let Err(error) = rename_swap(parent.as_raw_fd(), &staged_name, &name) {
-                cleanup.armed = false;
-                return Err(CommandFailure::Partial(
-                    format!("save race was detected but rollback failed; both versions were retained: {error}"),
-                    None,
-                ));
-            }
-            let restored = stat_at(parent.as_raw_fd(), &name).map_err(|error| {
-                cleanup.armed = false;
-                CommandFailure::Partial(
-                    format!("save rollback completed, but the restored target could not be validated: {error}"),
-                    None,
-                )
-            })?;
-            let replacement = stat_at(parent.as_raw_fd(), &staged_name).map_err(|error| {
-                cleanup.armed = false;
-                CommandFailure::Partial(
-                    format!("save rollback completed, but the replacement could not be validated: {error}"),
-                    None,
-                )
-            })?;
-            if !same_identity(&original, &restored) || !same_identity(&saved, &replacement) {
-                cleanup.armed = false;
-                return Err(CommandFailure::Partial(
-                    "save rollback completed with unexpected identities; versions were retained"
-                        .into(),
-                    None,
-                ));
-            }
-            cleanup_owned_entry(
-                parent.as_raw_fd(),
-                &staged_name,
-                &saved,
-                0,
-                "save-rollback-before-cleanup-isolation",
-            )
-            .map_err(|message| {
-                cleanup.armed = false;
-                CommandFailure::Partial(message, None)
-            })?;
-            cleanup.armed = false;
-            if let Err(error) = sync_dir(&parent) {
-                return Err(CommandFailure::Partial(
-                    format!("save was rolled back and cleaned up, but its directory could not be synced: {error}"),
-                    None,
-                ));
-            }
-            return Err(CommandFailure::Conflict(
-                "file changed during the atomic save; replacement was rolled back".into(),
-            ));
-        }
-        drop(displaced_bytes);
-        drop(displaced_file);
-        run_test_hook(
-            "save-before-target-revalidation",
-            parent.as_raw_fd(),
-            &name,
-            &staged_name,
-        );
-        let live_target = stat_at(parent.as_raw_fd(), &name).map_err(|error| {
-            cleanup.armed = false;
-            CommandFailure::Partial(
-                format!("file was replaced, but its live target could not be revalidated: {error}"),
-                Some(saved_revision.clone()),
-            )
-        })?;
-        if !same_entry_snapshot(&saved, &live_target) {
-            cleanup.armed = false;
-            return Err(CommandFailure::Partial(
-                "save target changed after the atomic swap; reachable versions were retained"
-                    .into(),
-                Some(saved_revision.clone()),
-            ));
-        }
-        cleanup_owned_entry(
-            parent.as_raw_fd(),
-            &staged_name,
-            &original,
-            0,
-            "save-before-cleanup-isolation",
-        )
-        .map_err(|message| {
-            cleanup.armed = false;
-            CommandFailure::Partial(message, Some(saved_revision.clone()))
-        })?;
-        cleanup.armed = false;
-        if unsafe { libc::fsync(parent.as_raw_fd()) } != 0 {
-            return Err(CommandFailure::Partial(
-                "file was replaced but its directory could not be synced".into(),
-                Some(saved_revision.clone()),
-            ));
-        }
-        Ok(saved_revision)
+        atomic_save::save_text(self.registry, id, path, content, expected)
     }
 
     pub fn create_directory(&self, id: &WorkspaceId, path: &Path) -> MutationResult {
@@ -1184,41 +692,7 @@ impl<'a> WorkspaceFileRepository<'a> {
     }
 
     fn create_directory_inner(&self, id: &WorkspaceId, path: &Path) -> Result<(), MutationFailure> {
-        let _operation = self.registry.lock_operations()?;
-        let root = self.registry.clone_root(id)?;
-        validate_relative_path(path)?;
-        let mut parent = root;
-        let mut committed = false;
-        for component in path.components() {
-            let name = cstring(component.as_os_str())?;
-            match open_directory_at(parent.as_raw_fd(), &name) {
-                Ok(next) => parent = next,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o777) } != 0 {
-                        return Err(io::Error::last_os_error().into());
-                    }
-                    committed = true;
-                    run_test_hook(
-                        "create-directory-after-mkdir",
-                        parent.as_raw_fd(),
-                        &name,
-                        &name,
-                    );
-                    sync_after_commit(&parent, "directory was created")?;
-                    parent = open_directory_at(parent.as_raw_fd(), &name).map_err(|error| {
-                        MutationFailure::Partial(format!(
-                            "directory was partially created before opening the new component failed: {error}"
-                        ))
-                    })?;
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
-        if committed {
-            Ok(())
-        } else {
-            Err(io::Error::new(io::ErrorKind::AlreadyExists, "directory already exists").into())
-        }
+        mutation_settlement::create_directory(self.registry, id, path)
     }
 
     pub fn delete(&self, id: &WorkspaceId, path: &Path) -> MutationResult {
@@ -1226,13 +700,7 @@ impl<'a> WorkspaceFileRepository<'a> {
     }
 
     fn delete_inner(&self, id: &WorkspaceId, path: &Path) -> Result<(), MutationFailure> {
-        let _operation = self.registry.lock_operations()?;
-        let root = self.registry.clone_root(id)?;
-        let (parent_path, name) = split_path(path)?;
-        let parent = open_parent(root.as_raw_fd(), parent_path)?;
-        let expected = stat_at(parent.as_raw_fd(), &name)?;
-        delete_entry(parent.as_raw_fd(), &name, &expected)?;
-        sync_after_commit(&parent, "path was deleted")
+        mutation_settlement::delete(self.registry, id, path)
     }
 
     pub fn rename(
@@ -1252,56 +720,7 @@ impl<'a> WorkspaceFileRepository<'a> {
         to: &Path,
         overwrite: bool,
     ) -> Result<(), MutationFailure> {
-        let _operation = self.registry.lock_operations()?;
-        let root = self.registry.clone_root(id)?;
-        let (from_parent_path, from_name) = split_path(from)?;
-        let (to_parent_path, to_name) = split_path(to)?;
-        let from_parent = open_parent(root.as_raw_fd(), from_parent_path)?;
-        let to_parent = open_parent(root.as_raw_fd(), to_parent_path)?;
-        let source = stat_at(from_parent.as_raw_fd(), &from_name)?;
-        ensure_supported_entry(&source)?;
-        let destination = if overwrite {
-            match stat_at(to_parent.as_raw_fd(), &to_name) {
-                Ok(stat) => {
-                    ensure_supported_entry(&stat)?;
-                    Some(stat)
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            }
-        } else {
-            None
-        };
-        let revalidated = stat_at(from_parent.as_raw_fd(), &from_name)?;
-        if !same_entry_snapshot(&source, &revalidated) {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "rename source changed before commit",
-            )
-            .into());
-        }
-        if let Some(destination) = destination {
-            return rename_overwrite(
-                &from_parent,
-                &from_name,
-                &source,
-                &to_parent,
-                &to_name,
-                &destination,
-            );
-        }
-        rename_at(
-            from_parent.as_raw_fd(),
-            &from_name,
-            to_parent.as_raw_fd(),
-            &to_name,
-            !overwrite,
-        )?;
-        sync_after_commit(&from_parent, "path was renamed")?;
-        if from_parent.as_raw_fd() != to_parent.as_raw_fd() {
-            sync_after_commit(&to_parent, "path was renamed")?;
-        }
-        Ok(())
+        mutation_settlement::rename(self.registry, id, from, to, overwrite)
     }
 }
 
@@ -2017,6 +1436,7 @@ mod tests {
     use crate::local_history::LocalHistoryStore;
     use std::{
         fs,
+        io::Write,
         os::unix::fs::symlink,
         path::PathBuf,
         sync::{Arc, Barrier},

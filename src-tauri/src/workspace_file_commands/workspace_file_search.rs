@@ -1,10 +1,10 @@
+use super::search_policy::{load_directory_gitignore, FileMask};
 use super::{
-    is_skippable_text_search_candidate_error, load_directory_gitignore, open_directory_path,
-    open_regular, DescriptorFileSearchResult, DescriptorTextSearchResponse,
-    DescriptorTextSearchResult, DirectoryStream, DirectoryStreamEntry, FileMask,
-    WORKSPACE_FILE_SEARCH_VISITED_LIMIT, WORKSPACE_TEXT_SEARCH_FILE_SIZE_LIMIT,
-    WORKSPACE_TEXT_SEARCH_PREVIEW_BYTE_LIMIT, WORKSPACE_TEXT_SEARCH_READ_CHUNK_BYTES,
-    WORKSPACE_TEXT_SEARCH_RESPONSE_BYTE_LIMIT,
+    is_skippable_text_search_candidate_error, open_directory_path, open_regular,
+    DescriptorFileSearchResult, DescriptorTextSearchResponse, DescriptorTextSearchResult,
+    DirectoryStream, DirectoryStreamEntry, WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
+    WORKSPACE_TEXT_SEARCH_FILE_SIZE_LIMIT, WORKSPACE_TEXT_SEARCH_PREVIEW_BYTE_LIMIT,
+    WORKSPACE_TEXT_SEARCH_READ_CHUNK_BYTES, WORKSPACE_TEXT_SEARCH_RESPONSE_BYTE_LIMIT,
 };
 use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatchRank};
 use crate::workspace_registry::ManagedWorkspaceDescriptor;
