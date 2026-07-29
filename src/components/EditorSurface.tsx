@@ -1,6 +1,4 @@
-import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
-import { ChevronDown, ChevronUp, RotateCcw, X } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -12,12 +10,6 @@ import {
   useId,
 } from "react";
 import type * as Monaco from "monaco-editor";
-import {
-  isSmartBlankLineIndentDocument,
-  leadingWhitespace,
-  smartBlankLineIndent,
-  smartBlankLineIndentTargetLineNumber,
-} from "./editorSmartIndent";
 import type { EditorChangeHunk } from "../domain/editorChangeMarkers";
 import type { CommandContext, CommandExecutionRunner } from "../application/commandRegistry";
 import { useNpmRunSelectedScriptMonacoAction } from "./npmRunSelectedScriptMonacoAction";
@@ -35,12 +27,7 @@ import {
   modelMatchesProject,
   resolveCompleteWorkspaceIdentityDescriptor,
 } from "./editorSurfaceModelIdentity";
-import {
-  currentEditorModelForPath,
-  editorSurfaceControlledValue,
-  editorSurfaceModelPath,
-  reconcileActiveDocumentModelContent,
-} from "./editorSurfaceLiveModelContentAuthority";
+import { currentEditorModelForPath } from "./editorSurfaceLiveModelContentAuthority";
 import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { EditorCursorStorePort } from "../application/editorCursorStore";
 import type { DebugWatchAtCursorCaptureReader } from "../domain/debugWatchAtCursorCapture";
@@ -65,12 +52,7 @@ import type {
   LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
-import { breadcrumbPathFromCursorAndSymbols } from "../domain/breadcrumbs";
-import {
-  BackgroundTokenizer,
-  idleCallbackScheduler,
-  type BackgroundTokenizableModel,
-} from "../domain/backgroundTokenizer";
+import { BackgroundTokenizer, idleCallbackScheduler } from "../domain/backgroundTokenizer";
 import {
   defaultShortcutForCommand,
   detectKeymapPlatform,
@@ -86,21 +68,16 @@ import {
   runRegisteredCommand,
 } from "../application/commandChain";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
-import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import {
   defaultLargeSmartDocumentPolicy,
-  isLargeSmartDocument,
   isLargeSmartDocumentContent,
   type LargeSmartDocumentPolicy,
 } from "../domain/largeDocumentPolicy";
-import { Breadcrumbs } from "./Breadcrumbs";
-import { CursorAwareBreadcrumbs } from "./CursorAwareBreadcrumbs";
 import { useEditorCursorPublication } from "./useEditorCursorPublication";
-import { SurroundWithPicker } from "./SurroundWithPicker";
 import type { HippieSession } from "../domain/hippieCompletion";
 import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import { gitBlameShaAtLine, type GitBlameLine } from "../domain/git";
+import type { GitBlameLine } from "../domain/git";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
@@ -121,11 +98,7 @@ import {
   phpStaticAccessCompletionContextAt,
 } from "../domain/phpMethodCompletions";
 import { isDirty, type EditorDocument } from "../domain/workspace";
-import {
-  editorConfigEol,
-  editorConfigFormattingOptions,
-  type ResolvedEditorConfig,
-} from "../domain/editorConfig";
+import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import type { UserSnippet } from "../domain/snippets";
 import {
   defaultEditorFontFamily,
@@ -154,7 +127,6 @@ import { useConflictMarkerEditorDecorations } from "./useConflictMarkerEditorDec
 import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./useEditorSurfaceLanguageProviderRegistration";
 import { EditorRuntimeHost, type EditorRuntimeSurfaceRegistration } from "./EditorRuntimeHost";
 import { useEditorRuntimeContext } from "./editorRuntimeContext";
-import { EditorBreakpointGutterMenu } from "./EditorBreakpointGutterMenu";
 import {
   toBoundedDiagnosticOverviewDecorations,
   toMonacoDiagnosticMarker,
@@ -164,17 +136,7 @@ import {
   localPhpDiagnosticsFromVisibleMarkers,
 } from "./editorLocalPhpValidation";
 
-import {
-  changePreviewText,
-  clampNumber,
-  editorChangeKindLabel,
-  editorChangePopoverStyle,
-  findChangeHunkAtLine,
-  glyphMarginLaneFromMouseEvent,
-  navigateChangeHunkFromPopover,
-  toEditorChangeDecoration,
-} from "./editorChangeMonacoMappings";
-import { shouldTriggerLatteMemberSuggest } from "./editorLatteMemberSuggestTrigger";
+import { clampNumber } from "./editorChangeMonacoMappings";
 import type { EditorSurfaceCoverageProps } from "./useEditorSurfaceCoverageDecorations";
 import { useEditorBreakpointDecorations } from "./useEditorBreakpointDecorations";
 import { useEditorRuntimeDecorations } from "./useEditorRuntimeDecorations";
@@ -194,19 +156,15 @@ import {
   installEditorQaBridge,
 } from "./editorQaBridge";
 import { loadJsonSchemaForDocument } from "../infrastructure/jsonSchemaLoader";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { getTabId, getTabPanelId } from "./tabIds";
 import {
   modelMatchesWorkspacePath,
   modelPath,
   type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
-import { editorSurfaceBreadcrumbFeaturesGateway } from "./editorSurfaceBreadcrumbGateway";
 import {
   applyCompleteStatement,
   applyCyclicExpandWord,
   applyMoveStatement,
-  applySurroundWith,
   expandEditorSelection,
   surroundWithRequestFromEditor,
   triggerEditorAction,
@@ -215,17 +173,12 @@ import {
 } from "./editorSurfaceCore/editorCommands";
 import { pruneClosedPaths } from "./editorSurfaceCore/modelViewState";
 import {
-  beforeMonacoMount,
-  EDITOR_LOADING_PLACEHOLDER,
   EMPTY_BOOKMARK_LINES,
-  EMPTY_BREADCRUMB_PATH,
   EMPTY_BREADCRUMB_SYMBOLS,
   EMPTY_BREAKPOINTS,
   EMPTY_PATHS,
   EMPTY_USER_SNIPPETS,
   noopLocalPhpDiagnosticsChange,
-  PLACEHOLDER_LANGUAGE,
-  PLACEHOLDER_PATH,
 } from "./editorSurfaceCore/presentation";
 import { useSynchronizedRef } from "./editorSurfaceCore/useSynchronizedRef";
 import { useEditorPresentationBindings } from "./editorSurfaceCore/useEditorPresentationBindings";
@@ -237,11 +190,18 @@ import { useEditorDiagnosticFixRunners } from "./editorSurfaceCore/useEditorDiag
 import { useEditorSourceControlDecorations } from "./editorSurfaceCore/useEditorSourceControlDecorations";
 import { useEditorGutterDecorations } from "./editorSurfaceCore/useEditorGutterDecorations";
 import { useEditorNavigationLifecycle } from "./editorSurfaceCore/useEditorNavigationLifecycle";
-
-interface ChangePreviewState {
-  anchorLineNumber: number;
-  hunk: EditorChangeHunk;
-}
+import { useEditorBreadcrumbLifecycle } from "./editorSurfaceCore/useEditorBreadcrumbLifecycle";
+import { useEditorInputLifecycle } from "./editorSurfaceCore/useEditorInputLifecycle";
+import { useEditorActiveModelLifecycle } from "./editorSurfaceCore/useEditorActiveModelLifecycle";
+import {
+  type EditorChangePreviewState,
+  useEditorMouseInteractions,
+} from "./editorSurfaceCore/useEditorMouseInteractions";
+import { useEditorSurfacePresentation } from "./editorSurfaceCore/useEditorSurfacePresentation";
+import {
+  useChangePreviewEscapeLifecycle,
+  useEditorChangeDecorations,
+} from "./editorSurfaceCore/useEditorChangePresentationLifecycle";
 
 export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   activeDocument: EditorDocument | null;
@@ -889,7 +849,7 @@ function EditorSurfaceComponent({
   const [phpInspectionDiagnosticCountsByPath, setPhpInspectionDiagnosticCountsByPath] = useState<
     Record<string, number>
   >({});
-  const [changePreview, setChangePreview] = useState<ChangePreviewState | null>(null);
+  const [changePreview, setChangePreview] = useState<EditorChangePreviewState | null>(null);
   const [cursorPosition, setCursorPosition] = useState<EditorPosition | null>(null);
   const [breadcrumbSymbolsByPath, setBreadcrumbSymbolsByPath] = useState<
     Record<string, LanguageServerDocumentSymbol[]>
@@ -1416,274 +1376,30 @@ function EditorSurfaceComponent({
     workspaceRoot,
   });
 
-  useEffect(() => {
-    if (!activeDocument || !workspaceRoot) {
-      return;
-    }
-
-    if (activeDocumentIsLargeSmart) {
-      setBreadcrumbSymbolsByPath((current) => {
-        if (!current[activeDocument.path]) {
-          return current;
-        }
-
-        const next = { ...current };
-        delete next[activeDocument.path];
-        return next;
-      });
-      return;
-    }
-
-    const breadcrumbGateway = editorSurfaceBreadcrumbFeaturesGateway(activeDocument, {
-      javaScriptTypeScript: javaScriptTypeScriptLanguageServerFeaturesGateway,
-      php: languageServerFeaturesGateway,
-    });
-
-    if (!breadcrumbGateway) {
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const requestedPath = activeDocument.path;
-    // The synced gate only applies to PHP documents: phpactor answers a
-    // DocumentSymbol request that races ahead of the document's `didOpen` with
-    // UnknownDocument, and `isLanguageServerDocumentSynced` tracks exactly the
-    // PHP synced set. JS/TS breadcrumbs keep their prior on-demand behaviour.
-    const requiresSync = isLanguageServerDocument(activeDocument);
-    const requestDocumentLease = requestLanguageServerDocumentLeaseRef.current;
-    const isDocumentLeaseCurrent = isLanguageServerDocumentRequestLeaseCurrentRef.current;
-    const canUseDocumentLease = Boolean(
-      requiresSync && requestDocumentLease && isDocumentLeaseCurrent,
-    );
-    let active = true;
-    let timeout: number | null = null;
-
-    const fetchBreadcrumbSymbols = async () => {
-      let documentLease: LanguageServerMonacoDocumentRequestLease | null = null;
-
-      try {
-        documentLease = canUseDocumentLease
-          ? ((await requestDocumentLease?.(requestedRoot, requestedPath)) ?? null)
-          : null;
-
-        if (!active) {
-          return;
-        }
-
-        if (canUseDocumentLease && (!documentLease || !isDocumentLeaseCurrent?.(documentLease))) {
-          return;
-        }
-
-        let load = () => breadcrumbGateway.documentSymbols(requestedRoot, requestedPath);
-        if (requiresSync) {
-          if (!canUseDocumentLease) {
-            await flushPendingLanguageServerDocument(requestedPath);
-            if (!active) {
-              return;
-            }
-          }
-
-          const document = activeDocumentRef.current;
-          const status = runtimeStatusRef.current;
-          if (!document || document.path !== requestedPath) {
-            return;
-          }
-
-          if (
-            documentLease &&
-            (status?.kind !== "running" || status.sessionId !== documentLease.sessionId)
-          ) {
-            return;
-          }
-
-          if (
-            documentLease &&
-            status?.kind === "running" &&
-            status.rootPath &&
-            workspaceRootKeysEqual(status.rootPath, requestedRoot)
-          ) {
-            const directLoad = load;
-            const coordinatedLease = documentLease;
-            load = () =>
-              runtime?.coordinatePhpDocumentSymbols(
-                {
-                  content: document.content,
-                  lifecycleIdentity: coordinatedLease.lifecycleIdentity,
-                  path: requestedPath,
-                  rootPath: requestedRoot,
-                  runtimeIdentity: languageServerFeaturesGateway,
-                  sessionId: coordinatedLease.sessionId,
-                },
-                directLoad,
-              ) ?? directLoad();
-          }
-        }
-
-        const symbols = await load();
-        if (!active) {
-          return;
-        }
-
-        if (documentLease && !isDocumentLeaseCurrent?.(documentLease)) {
-          return;
-        }
-
-        setBreadcrumbSymbolsByPath((current) => ({
-          ...current,
-          [requestedPath]: symbols,
-        }));
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-
-        if (documentLease && !isDocumentLeaseCurrent?.(documentLease)) {
-          return;
-        }
-
-        errorReporterRef.current(error);
-      }
-    };
-
-    const loadBreadcrumbSymbols = () => {
-      if (!active) {
-        return;
-      }
-
-      // Skip until the document's `didOpen` has been sent; otherwise the
-      // outline / breadcrumb fetch races ahead of the document sync and
-      // phpactor answers with UnknownDocument. Re-arm so the breadcrumbs are
-      // populated as soon as the document is synced (the sync state lives in a
-      // ref, so polling is the re-trigger that survives the await-less sync).
-      if (
-        requiresSync &&
-        !canUseDocumentLease &&
-        !isLanguageServerDocumentSyncedRef.current?.(requestedPath)
-      ) {
-        timeout = window.setTimeout(loadBreadcrumbSymbols, 160);
-        return;
-      }
-
-      fetchBreadcrumbSymbols();
-    };
-
-    timeout = window.setTimeout(loadBreadcrumbSymbols, 160);
-
-    return () => {
-      active = false;
-
-      if (timeout !== null) {
-        window.clearTimeout(timeout);
-      }
-    };
-    // `isLanguageServerDocumentSynced` is read through a ref inside the poll, so
-    // it is intentionally omitted here: the re-arming timeout re-reads the fresh
-    // synced state each tick (the re-trigger) without restarting the effect.
-  }, [
+  useEditorBreadcrumbLifecycle({
     activeDocument,
     activeDocumentIsLargeSmart,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    languageServerFeaturesGateway,
+    activeDocumentRef,
+    errorReporterRef,
     flushPendingLanguageServerDocument,
+    isLanguageServerDocumentRequestLeaseCurrentRef,
+    isLanguageServerDocumentSyncedRef,
+    javaScriptTypeScriptFeaturesGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
+    languageServerFeaturesGateway,
+    requestLanguageServerDocumentLeaseRef,
     runtime,
+    runtimeStatusRef,
+    setBreadcrumbSymbolsByPath,
     workspaceRoot,
-  ]);
+  });
 
-  useEffect(() => {
-    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi) {
-      return;
-    }
-
-    if (activeDocumentLanguage !== "latte") {
-      return;
-    }
-
-    const disposable = editorApi.onDidChangeModelContent((event) => {
-      const model = editorApi.getModel();
-      const position = editorApi.getPosition();
-
-      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-        return;
-      }
-
-      if (
-        !shouldTriggerLatteMemberSuggest(activeDocumentLanguage, model, position, event.changes)
-      ) {
-        return;
-      }
-
-      editorApi.trigger("mockor.latteMemberCompletion", "editor.action.triggerSuggest", {});
-    });
-
-    return () => disposable.dispose();
-  }, [activeDocumentLanguage, activeDocumentPath, editorApi, workspaceRoot]);
-
-  useEffect(() => {
-    if (!activeDocumentPath || !activeDocumentLanguage || !editorApi || !monacoApi) {
-      return;
-    }
-
-    if (!isSmartBlankLineIndentDocument({ language: activeDocumentLanguage })) {
-      return;
-    }
-
-    const disposable = editorApi.onDidChangeModelContent((event) => {
-      const insertedNewLine = event.changes.some((change) => change.text.includes("\n"));
-      const insertedBlankLineWhitespace = event.changes.some((change) =>
-        /^[\t ]+$/.test(change.text),
-      );
-
-      if (!insertedNewLine && !insertedBlankLineWhitespace) {
-        return;
-      }
-
-      const model = editorApi.getModel();
-      const position = editorApi.getPosition();
-
-      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-        return;
-      }
-
-      const targetLineNumber = insertedNewLine
-        ? smartBlankLineIndentTargetLineNumber(event.changes, position.lineNumber)
-        : position.lineNumber;
-      const indent = smartBlankLineIndent(model, targetLineNumber);
-
-      if (indent === null) {
-        return;
-      }
-
-      const line = model.getLineContent(targetLineNumber);
-      const currentIndent = leadingWhitespace(line);
-
-      if (currentIndent === indent) {
-        return;
-      }
-
-      if (!insertedNewLine && currentIndent.length >= indent.length) {
-        return;
-      }
-
-      editorApi.executeEdits("mockor.smartBlankLineIndent", [
-        {
-          forceMoveMarkers: true,
-          range: new monacoApi.Range(
-            targetLineNumber,
-            1,
-            targetLineNumber,
-            currentIndent.length + 1,
-          ),
-          text: indent,
-        },
-      ]);
-      editorApi.setPosition({
-        column: indent.length + 1,
-        lineNumber: targetLineNumber,
-      });
-    });
-
-    return () => disposable.dispose();
-  }, [activeDocumentLanguage, activeDocumentPath, editorApi, monacoApi, workspaceRoot]);
+  useEditorInputLifecycle({
+    activeDocumentLanguage,
+    activeDocumentPath,
+    editor: editorApi,
+    monaco: monacoApi,
+    workspaceRoot,
+  });
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {
@@ -2185,176 +1901,25 @@ function EditorSurfaceComponent({
     return () => disposable.dispose();
   }, [editorApi, monacoApi, onCloseFloatingSurface]);
 
-  useEffect(() => {
-    if (!editorApi || !monacoApi) {
-      return;
-    }
-
-    const mouseDownPlatform = detectKeymapPlatform();
-
-    const disposable = editorApi.onMouseDown((event) => {
-      activateEditorGroupFromInteraction();
-      const targetType = event.target.type;
-
-      if (
-        targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT &&
-        event.event.leftButton === true &&
-        event.target.element?.closest(".git-blame-annotation")
-      ) {
-        const lineNumber = event.target.position?.lineNumber;
-        const sha = lineNumber ? gitBlameShaAtLine(gitBlameLinesRef.current, lineNumber) : null;
-        const path = activeDocumentRef.current?.path;
-
-        if (!sha || !path) {
-          return;
-        }
-
-        event.event.preventDefault();
-        event.event.stopPropagation();
-
-        if (onRevealGitBlameCommit) {
-          onRevealGitBlameCommit(path, sha);
-          return;
-        }
-
-        window.dispatchEvent(
-          new CustomEvent("mockor-reveal-git-blame-commit", {
-            detail: { path, sha },
-          }),
-        );
-        return;
-      }
-
-      // Cmd+click (macOS) / Ctrl+click (Windows/Linux) and middle-click on code
-      // text mirror the Cmd+B go-to-definition command instead of Monaco's
-      // built-in gesture, which has no cross-file opener wired and skips the
-      // Laravel/PHP contextual definition cascade. We set the caret first
-      // (onMouseDown fires before the selection settles, and the controller
-      // reads the active editor position), then run the same callback as the
-      // keyboard shortcut and suppress the native gesture so navigation does not
-      // fire twice.
-      //
-      // The modifier gesture must be a primary (left) click only. On macOS
-      // Ctrl+click is the OS secondary/context click, so we navigate solely on
-      // Cmd (metaKey) and explicitly bail when Ctrl is held - otherwise a Mac
-      // user opening the context menu would be yanked to the definition instead.
-      const isContentText = targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT;
-      const isLeftClick = event.event.leftButton === true;
-      const isMiddleClick = event.event.middleButton === true;
-      const definitionModifierPressed =
-        mouseDownPlatform === "mac"
-          ? event.event.metaKey === true && event.event.ctrlKey !== true
-          : event.event.ctrlKey === true;
-      const shouldNavigateToDefinition =
-        (isLeftClick && definitionModifierPressed) || isMiddleClick;
-      const contentPosition = event.target.position;
-
-      if (isContentText && shouldNavigateToDefinition && contentPosition) {
-        event.event.preventDefault();
-        event.event.stopPropagation();
-        editorApi.setPosition(contentPosition);
-        runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", onGoToDefinition);
-        return;
-      }
-
-      if (targetType === monacoApi.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
-        const lineNumber = event.target.position?.lineNumber;
-        const path = activeDocumentRef.current?.path;
-        const isPlainLeftClick =
-          event.event.leftButton === true &&
-          event.event.ctrlKey !== true &&
-          event.event.metaKey !== true &&
-          event.event.shiftKey !== true &&
-          event.event.altKey !== true;
-        if (!toggleBreakpointAction || !isPlainLeftClick || !lineNumber || !path) {
-          return;
-        }
-
-        try {
-          void Promise.resolve(toggleBreakpointAction(path, lineNumber)).catch(
-            reportBreakpointMutationError,
-          );
-        } catch (error) {
-          reportBreakpointMutationError(error);
-        }
-        return;
-      }
-
-      if (event.event.rightButton) return;
-
-      const isGlyphMargin = targetType === monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN;
-      const isLineDecorations =
-        targetType === monacoApi.editor.MouseTargetType.GUTTER_LINE_DECORATIONS;
-
-      if (!isGlyphMargin && !isLineDecorations) {
-        return;
-      }
-
-      const lineNumber = event.target.position?.lineNumber;
-
-      if (!lineNumber) {
-        return;
-      }
-
-      // A click in the lines-decorations margin toggles a bookmark on that line.
-      // This margin is independent of the three glyph-margin lanes, so it never
-      // contends with the git/impl/test glyph clicks above.
-      if (isLineDecorations) {
-        if (!onToggleBookmarkAtLine) {
-          return;
-        }
-
-        event.event.preventDefault();
-        event.event.stopPropagation();
-        onToggleBookmarkAtLine(lineNumber);
-        return;
-      }
-
-      const lane = glyphMarginLaneFromMouseEvent(event);
-      const changeHunk = findChangeHunkAtLine(changeHunksRef.current, lineNumber);
-      const testTarget = testGutterTargetsRef.current.get(lineNumber);
-
-      if (testTarget && onRunTestAt && lane === monacoApi.editor.GlyphMarginLane.Right) {
-        event.event.preventDefault();
-        event.event.stopPropagation();
-        onRunTestAt(testTarget);
-        return;
-      }
-
-      const target = implementationGutterTargetsRef.current.get(lineNumber);
-
-      if (target && lane !== monacoApi.editor.GlyphMarginLane.Left) {
-        event.event.preventDefault();
-        event.event.stopPropagation();
-        editorApi.setPosition(target);
-        runRegisteredCommand(commandExecutionRunnerRef, "editor.goToImplementation", () =>
-          editorActionCommandPortRef.current.goToImplementationAt(target),
-        );
-        return;
-      }
-
-      if (changeHunk) {
-        event.event.preventDefault();
-        event.event.stopPropagation();
-        setChangePreview({
-          anchorLineNumber: lineNumber,
-          hunk: changeHunk,
-        });
-      }
-    });
-
-    return () => disposable.dispose();
-  }, [
+  useEditorMouseInteractions({
     activateEditorGroupFromInteraction,
-    editorApi,
-    monacoApi,
-    onGoToDefinition,
+    activeDocumentRef,
+    changeHunksRef,
+    commandExecutionRunnerRef,
+    editor: editorApi,
+    editorActionCommandPortRef,
+    gitBlameLinesRef,
+    goToDefinition: onGoToDefinition,
+    implementationGutterTargetsRef,
+    monaco: monacoApi,
     onRevealGitBlameCommit,
     onRunTestAt,
     onToggleBookmarkAtLine,
     reportBreakpointMutationError,
+    setChangePreview,
+    testGutterTargetsRef,
     toggleBreakpointAction,
-  ]);
+  });
 
   useEffect(() => {
     const gesture = javaScriptTypeScriptDefinitionGesture(editorApi);
@@ -2366,34 +1931,14 @@ function EditorSurfaceComponent({
     disableJavaScriptTypeScriptDefinitionGesture(gesture);
   }, [editorApi]);
 
-  useEffect(() => {
-    if (!activeDocumentPath || !editorApi || !monacoApi) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-      return;
-    }
-
-    changeDecorationIdsRef.current = editorApi.deltaDecorations(
-      changeDecorationIdsRef.current,
-      changeHunks.map((hunk) => toEditorChangeDecoration(monacoApi, hunk)),
-    );
-
-    return () => {
-      changeDecorationIdsRef.current = editorApi.deltaDecorations(
-        changeDecorationIdsRef.current,
-        [],
-      );
-    };
-    // Depend on the active document path (not its full identity) so typing does
-    // not re-run this effect every keystroke. The body reads only the path (for
-    // the per-tab stale guard) plus changeHunks, so the path covers file
-    // switches and changeHunks covers actual hunk changes. Mirrors the
-    // bookmark / diagnostic-overview / gutter path-gated effects.
-  }, [activeDocumentPath, changeHunks, editorApi, monacoApi, workspaceRoot]);
+  useEditorChangeDecorations({
+    activeDocumentPath,
+    changeDecorationIdsRef,
+    changeHunks,
+    editor: editorApi,
+    monaco: monacoApi,
+    workspaceRoot,
+  });
 
   useEditorSourceControlDecorations({
     activeDocumentPath,
@@ -2410,22 +1955,7 @@ function EditorSurfaceComponent({
     workspaceRoot,
   });
 
-  useEffect(() => {
-    if (!changePreview) {
-      return;
-    }
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-
-      setChangePreview(null);
-    };
-
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [changePreview]);
+  useChangePreviewEscapeLifecycle(changePreview, setChangePreview);
 
   // ONE debounced snapshot of the active PHP file's content, shared by the
   // implementation gutter, the test gutter and the syntax diagnostics. Each of
@@ -2594,132 +2124,24 @@ function EditorSurfaceComponent({
     workspaceRoot,
   });
 
-  const reconcileActiveModelContentRef = useRef(() => undefined);
-  const applyActiveModelConfigRef = useRef(() => undefined);
-  const startActiveModelTokenizerRef = useRef(() => undefined);
-
-  reconcileActiveModelContentRef.current = () => {
-    const document = activeDocumentRef.current;
-
-    if (!editorApi || !document || !activeDocumentContentReady || isOpeningFile) {
-      return;
-    }
-
-    reconcileActiveDocumentModelContent(
-      runtime,
-      groupId,
-      editorApi,
-      workspaceRootRef.current,
-      document,
-    );
-  };
-  applyActiveModelConfigRef.current = () => {
-    const document = activeDocumentRef.current;
-
-    if (!editorApi || !monacoApi || !document) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRootRef.current, document.path)) {
-      return;
-    }
-
-    const resolved: ResolvedEditorConfig = editorConfig ?? {};
-    const formattingOptions = editorConfigFormattingOptions(resolved);
-
-    if (formattingOptions) {
-      model.updateOptions({
-        insertSpaces: formattingOptions.insertSpaces,
-        tabSize: formattingOptions.tabSize,
-      });
-    }
-
-    const eol = editorConfigEol(resolved);
-
-    if (!eol) {
-      return;
-    }
-
-    model.setEOL(
-      eol === "\r\n"
-        ? monacoApi.editor.EndOfLineSequence.CRLF
-        : monacoApi.editor.EndOfLineSequence.LF,
-    );
-  };
-  startActiveModelTokenizerRef.current = () => {
-    const document = activeDocumentRef.current;
-    const tokenizer = backgroundTokenizerRef.current;
-
-    if (!editorApi || !document || !tokenizer) {
-      return;
-    }
-
-    if (isLargeSmartDocument(document, largeSmartDocumentPolicyRef.current)) {
-      tokenizer.stop();
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRootRef.current, document.path)) {
-      return;
-    }
-
-    tokenizer.start(model as unknown as BackgroundTokenizableModel);
-  };
-
-  // Deterministic content sync: guarantee the live model buffer matches the
-  // active document's content after every open / content change.
-  //
-  // @monaco-editor/react applies the `value` prop in an effect keyed on the
-  // value identity, and swaps the model in a separate effect keyed on the `path`
-  // identity. When a file's model already exists (we keep models alive for
-  // Back/Forward navigation) and the path swaps to it without the value effect
-  // re-running for this commit, Monaco shows that model's stale/empty buffer and
-  // the freshly read content is never applied - the editor renders blank until an
-  // unrelated edit nudges the value effect (the Quick Open "empty tab" race the
-  // user hit). Reconcile here so content is shown the moment a file opens, with
-  // no dependency on @monaco-editor/react's effect ordering.
-  //
-  // Isolation: only the model that currently belongs to the active document is
-  // touched (path match), so a stale async commit can never write one file's
-  // content into another's buffer. Idempotent: typing keeps content equal to the
-  // model value, so this never re-applies during editing or fights live input.
-  useEffect(() => {
-    if (!editorApi || !activeDocumentPath || !activeDocumentContentReady || isOpeningFile) {
-      return;
-    }
-
-    reconcileActiveModelContentRef.current();
-  }, [
+  useEditorActiveModelLifecycle({
     activeDocumentContent,
-    activeDocumentPath,
     activeDocumentContentReady,
-    editorApi,
+    activeDocumentPath,
+    activeDocumentRef,
+    backgroundTokenizerRef,
+    editor: editorApi,
+    editorConfig,
+    generatedSurfaceId,
+    groupId,
     isOpeningFile,
+    largeSmartDocumentPolicyRef,
+    monaco: monacoApi,
+    runtime,
+    runtimeRegistrationRef,
     workspaceRoot,
-  ]);
-
-  // Model replacement is independent from document content updates. Keep one
-  // listener for the editor instance and route it through latest-value refs so
-  // same-path typing never replaces the subscription. A replacement model still
-  // receives the current buffer, EditorConfig settings and token warming.
-  useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    const disposable = editorApi.onDidChangeModel(() => {
-      reconcileActiveModelContentRef.current();
-      applyActiveModelConfigRef.current();
-      startActiveModelTokenizerRef.current();
-      runtime?.updateSurface(generatedSurfaceId, runtimeRegistrationRef.current);
-    });
-
-    return () => disposable.dispose();
-  }, [editorApi, generatedSurfaceId, runtime]);
+    workspaceRootRef,
+  });
 
   useEditorModelViewStateLifecycle({
     activeDocumentPath,
@@ -3026,338 +2448,44 @@ function EditorSurfaceComponent({
     : EMPTY_BREADCRUMB_SYMBOLS;
   const cursorLineNumber = cursorPosition?.lineNumber;
   const cursorColumn = cursorPosition?.column;
-  // Recomputed only when the cursor actually moves (line OR column) or the
-  // symbols change, so a re-render that leaves all three stable hands the same
-  // path array to the memo'd Breadcrumbs and skips its render. Keyed on the raw
-  // line/column rather than the cursorPosition object so the gate above does not
-  // need to share identity for the memo to hold.
-  const breadcrumbPath = useMemo(
-    () =>
-      activeDocumentPath && cursorLineNumber !== undefined && cursorColumn !== undefined
-        ? breadcrumbPathFromCursorAndSymbols(
-            { column: cursorColumn, lineNumber: cursorLineNumber },
-            breadcrumbSymbols,
-          )
-        : EMPTY_BREADCRUMB_PATH,
-    [activeDocumentPath, breadcrumbSymbols, cursorColumn, cursorLineNumber],
-  );
-
-  const navigateToBreadcrumbSymbol = useCallback(
-    (symbol: LanguageServerDocumentSymbol) => {
-      if (!editorApi) {
-        return;
-      }
-
-      const position: EditorPosition = {
-        lineNumber: symbol.selectionRange.start.line + 1,
-        column: symbol.selectionRange.start.character + 1,
-      };
-
-      editorApi.setPosition(position);
-      editorApi.revealPositionInCenter(position);
-      editorApi.focus();
-    },
-    [editorApi],
-  );
-
-  const changePreviewStyle =
-    activeDocument && changePreview && editorApi
-      ? editorChangePopoverStyle(editorApi, changePreview.hunk, changePreview.anchorLineNumber)
-      : undefined;
-
-  // The gutter rollback popover mirrors JetBrains' change marker menu: Revert,
-  // Show diff (the inline previous/current content already shown), and
-  // Next/Previous change. Navigation is anchored on the hunk the popover is
-  // currently showing (not the caret), then BOTH the editor caret and the
-  // popover move to the target hunk so the popover follows the change instead of
-  // being left stale on the originally-clicked hunk. The popover stays open so
-  // repeated presses walk every change.
-  const onPopoverGoToChange = useCallback(
-    (direction: "next" | "previous") => {
-      if (!editorApi) {
-        return;
-      }
-
-      // Anchor on the hunk the popover is showing (read via the functional
-      // updater so there is no stale-closure dependency on changePreview), find
-      // the target, then move BOTH the editor and the popover onto it.
-      setChangePreview((current) => {
-        if (!current) {
-          return current;
-        }
-
-        const target = navigateChangeHunkFromPopover(
-          editorApi,
-          changeHunksRef.current,
-          current.hunk.startLineNumber,
-          direction,
-        );
-
-        if (!target) {
-          return current;
-        }
-
-        return {
-          anchorLineNumber: target.startLineNumber,
-          hunk: target,
-        };
-      });
-    },
-    [editorApi],
-  );
-
-  // The Monaco editor stays mounted at all times so switching files only swaps
-  // the model (path/value) instead of unmounting/remounting Monaco — which would
-  // re-run its initialization and flash a blank surface (VS Code never does
-  // this). When no document is open we feed Monaco a stable placeholder model
-  // and cover it with an overlay, instead of replacing the editor with a plain
-  // div.
-  const isReadOnly = activeDocument?.readOnly === true;
-
-  // beforeMount only depends on the theme, so a cursor move keeps the same
-  // reference and never re-runs Monaco's first-frame theme/feature setup.
-  const handleBeforeMount = useCallback(
-    (monaco: typeof Monaco) => beforeMonacoMount(monaco, monacoTheme),
-    [monacoTheme],
-  );
-
-  // The Editor options object is rebuilt ONLY when a value Monaco actually reads
-  // changes (read-only/format-on-paste flags and the three font settings). Every
-  // other option is a static literal. Holding the identity stable across cursor
-  // moves keeps @monaco-editor/react's memo intact, so it stops calling
-  // editor.updateOptions (deep clone + ~170 comparisons) on each cursor event,
-  // while a genuine settings/font change still recomputes and is applied.
-  const editorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(
-    () => ({
-      autoIndent: "full",
-      automaticLayout: true,
-      bracketPairColorization: { enabled: true },
-      detectIndentation: true,
-      domReadOnly: isReadOnly,
-      formatOnPaste,
-      fontFamily: editorFontFamily,
-      fontLigatures: monacoFontLigatures,
-      fontSize: editorFontSize,
-      glyphMargin: true,
-      insertSpaces: true,
-      // Skip memory- and CPU-intensive features (including per-line
-      // tokenization) on extreme lines. Monaco's default, kept explicit so the
-      // scroll-performance guards live together.
-      largeFileOptimizations: true,
-      // Let Monaco derive line height from the configured font size so restored
-      // large font settings cannot render into a fixed 20px row.
-      lineHeight: 0,
-      // Lines longer than this are not tokenized. Monaco tokenizes the visible
-      // viewport synchronously while scrolling, so a viewport full of very long
-      // lines blows the frame budget and makes fast scrolling lag. Mirrors the
-      // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
-      maxTokenizationLineLength: 2000,
-      minimap: { enabled: minimapEnabled },
-      wordWrap: wordWrapEnabled ? "on" : "off",
-      // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so Cmd/Ctrl+Click
-      // stays bound to go-to-definition (same as Cmd+B). Add a cursor with Alt+Click;
-      // toggle persistent column/box selection with the `editor.toggleColumnSelection`
-      // action below.
-      multiCursorModifier: "alt",
-      padding: { top: 14, bottom: 14 },
-      parameterHints: { enabled: true, cycle: true },
-      quickSuggestions: { other: true, comments: false, strings: true },
-      quickSuggestionsDelay: 10,
-      readOnly: isReadOnly,
-      scrollBeyondLastLine: false,
-      "semanticHighlighting.enabled": true,
-      // Smooth scrolling animates every fling into many onDidScrollChange
-      // events, each driving a synchronous viewport tokenization pass. Disabling
-      // it keeps fast scrolling of large files responsive (trade-off: the scroll
-      // animation is gone, but the lag is too).
-      smoothScrolling: false,
-      stickyScroll: { enabled: true },
-      // Stop rendering a line after this many characters. Monaco's default, kept
-      // explicit alongside the other large-file scroll guards.
-      stopRenderingLineAfter: 10000,
-      suggestOnTriggerCharacters: true,
-      tabSize: 2,
-    }),
-    [
-      editorFontFamily,
-      editorFontSize,
-      formatOnPaste,
-      isReadOnly,
-      minimapEnabled,
-      monacoFontLigatures,
-      wordWrapEnabled,
-    ],
-  );
-
-  const overlay = activeDocument ? null : isOpeningFile ? (
-    <div className="editor-empty-overlay" data-testid="editor-opening">
-      <p>Opening file…</p>
-    </div>
-  ) : (
-    <div className="editor-empty-overlay" data-testid="editor-empty">
-      <p>Open a file to start editing.</p>
-    </div>
-  );
-
-  return (
-    <div
-      aria-labelledby={
-        !embeddedInGroupPanel && activeDocument ? getTabId(activeDocument.path, groupId) : undefined
-      }
-      className="editor-panel"
-      id={
-        !embeddedInGroupPanel && activeDocument
-          ? getTabPanelId(activeDocument.path, groupId)
-          : undefined
-      }
-      onFocusCapture={() => {
-        activateEditorGroupFromInteraction();
-      }}
-      onMouseDown={() => {
-        activateEditorGroupFromInteraction();
-      }}
-      role={embeddedInGroupPanel ? undefined : "tabpanel"}
-    >
-      {activeDocument ? (
-        cursorStore && editorSessionOwnerKey && runtimeMembership ? (
-          <CursorAwareBreadcrumbs
-            documentPath={activeDocument.path}
-            fileName={activeDocument.name}
-            groupId={runtimeMembership.groupId}
-            onNavigate={navigateToBreadcrumbSymbol}
-            ownerKey={editorSessionOwnerKey}
-            store={cursorStore}
-            symbols={breadcrumbSymbols}
-            trackingActive={cursorTrackingActive}
-          />
-        ) : (
-          <Breadcrumbs
-            fileName={activeDocument.name}
-            onNavigate={navigateToBreadcrumbSymbol}
-            path={cursorStore === undefined ? breadcrumbPath : EMPTY_BREADCRUMB_PATH}
-            symbols={breadcrumbSymbols}
-          />
-        )
-      ) : null}
-      <Editor
-        beforeMount={handleBeforeMount}
-        height="100%"
-        keepCurrentModel
-        language={activeDocument?.language ?? PLACEHOLDER_LANGUAGE}
-        loading={EDITOR_LOADING_PLACEHOLDER}
-        onMount={handleMount}
-        options={editorOptions}
-        path={editorSurfaceModelPath(workspaceRoot, activeDocument, PLACEHOLDER_PATH)}
-        theme={monacoTheme}
-        value={editorSurfaceControlledValue(
-          runtime,
-          groupId,
-          editorApi,
-          activeDocument,
-          activeDocumentContentReady,
-          isOpeningFile,
-        )}
-      />
-      {overlay}
-      <EditorBreakpointGutterMenu
-        actions={breakpointActions}
-        activeDocumentPath={activeDocumentPath}
-        breakpoints={breakpoints}
-        editor={editorApi}
-        modelIdentity={currentBreakpointModel}
-        monaco={monacoApi}
-        onMutationError={reportBreakpointMutationError}
-        toggleBreakpointFallback={onToggleBreakpoint}
-        workspaceRoot={workspaceRoot}
-      />
-      {activeDocument && changePreview ? (
-        <div
-          aria-label="Local change preview"
-          className={`editor-change-popover editor-change-popover-${changePreview.hunk.kind}`}
-          role="dialog"
-          style={changePreviewStyle}
-        >
-          <div className="editor-change-popover-header">
-            <span className={`editor-change-popover-kind ${changePreview.hunk.kind}`}>
-              {editorChangeKindLabel(changePreview.hunk.kind)}
-            </span>
-            <div aria-label="Change navigation" className="editor-change-popover-nav">
-              <button
-                aria-label="Go to previous change"
-                className="editor-change-popover-icon-button editor-change-popover-action-previous"
-                onClick={() => onPopoverGoToChange("previous")}
-                title="Previous change"
-                type="button"
-              >
-                <ChevronUp aria-hidden="true" size={14} />
-              </button>
-              <button
-                aria-label="Go to next change"
-                className="editor-change-popover-icon-button editor-change-popover-action-next"
-                onClick={() => onPopoverGoToChange("next")}
-                title="Next change"
-                type="button"
-              >
-                <ChevronDown aria-hidden="true" size={14} />
-              </button>
-              <button
-                aria-label="Close local change preview"
-                className="editor-change-popover-icon-button"
-                onClick={() => setChangePreview(null)}
-                title="Close"
-                type="button"
-              >
-                <X aria-hidden="true" size={14} />
-              </button>
-            </div>
-          </div>
-          {changePreview.hunk.originalLines.length > 0 ? (
-            <>
-              <div className="editor-change-popover-section-label">Previous content</div>
-              <pre className="editor-change-popover-code editor-change-popover-code-removed">
-                {changePreviewText(changePreview.hunk)}
-              </pre>
-            </>
-          ) : null}
-          {changePreview.hunk.currentLines.length > 0 ? (
-            <>
-              <div className="editor-change-popover-section-label">Current content</div>
-              <pre className="editor-change-popover-code editor-change-popover-code-added">
-                {changePreview.hunk.currentLines.join("\n")}
-              </pre>
-            </>
-          ) : null}
-          <div className="editor-change-popover-actions">
-            <button
-              className="editor-change-popover-action editor-change-popover-action-revert"
-              onClick={() => {
-                onRevertChangeHunk(changePreview.hunk);
-                setChangePreview(null);
-              }}
-              type="button"
-            >
-              <RotateCcw aria-hidden="true" size={13} />
-              Revert change
-            </button>
-          </div>
-        </div>
-      ) : null}
-      <SurroundWithPicker
-        isOpen={surroundWithRequest !== null}
-        onClose={() => {
-          setSurroundWithRequest(null);
-          editorApi?.focus();
-        }}
-        onSelect={(templateId) => {
-          if (surroundWithRequest && editorApi && monacoApi) {
-            applySurroundWith(monacoApi, editorApi, surroundWithRequest, templateId);
-          }
-
-          setSurroundWithRequest(null);
-        }}
-      />
-    </div>
-  );
+  return useEditorSurfacePresentation({
+    activateEditorGroupFromInteraction,
+    activeDocument,
+    activeDocumentContentReady,
+    beforeMountTheme: monacoTheme,
+    breakpointActions,
+    breakpoints,
+    breadcrumbSymbols,
+    changeHunksRef,
+    changePreview,
+    cursorColumn,
+    cursorLineNumber,
+    cursorStore,
+    cursorTrackingActive,
+    editor: editorApi,
+    editorFontFamily,
+    editorFontSize,
+    editorSessionOwnerKey,
+    embeddedInGroupPanel,
+    formatOnPaste,
+    groupId,
+    handleMount,
+    isOpeningFile,
+    minimapEnabled,
+    modelIdentity: currentBreakpointModel,
+    monaco: monacoApi,
+    monacoFontLigatures,
+    onMutationError: reportBreakpointMutationError,
+    onRevertChangeHunk,
+    runtime,
+    runtimeMembershipGroupId: runtimeMembership?.groupId,
+    setChangePreview,
+    setSurroundWithRequest,
+    surroundWithRequest,
+    toggleBreakpointFallback: onToggleBreakpoint,
+    wordWrapEnabled,
+    workspaceRoot,
+  });
 }
 
 // IDE events (index progress, runtime status, …) re-render App without touching
