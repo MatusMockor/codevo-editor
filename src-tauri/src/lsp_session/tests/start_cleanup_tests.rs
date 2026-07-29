@@ -180,7 +180,7 @@ fn cleanup_snapshot_excludes_concurrent_spawn_until_reserved_start_spawns() {
 
 #[test]
 fn javascript_typescript_command_reserves_before_cleanup_and_starts_after_cleanup() {
-    let source = include_str!("../../lib.rs");
+    let source = include_str!("../../lib_composition/language_runtime_facade.rs");
     let command_start = source
         .find("async fn start_javascript_typescript_language_server")
         .expect("JavaScript TypeScript start command");
