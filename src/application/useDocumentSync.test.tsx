@@ -447,6 +447,23 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.warmUp).toHaveBeenCalledWith(ROOT, document.path, SESSION);
   });
 
+  it("accounts only scalarized live text when dirty opens have distinct restored content", async () => {
+    const harness = createHarness();
+    const phpEnqueue = vi.fn(harness.deps.enqueueDocumentSync);
+    const jsEnqueue = vi.fn(harness.deps.enqueueJavaScriptTypeScriptDocumentSync);
+    harness.deps.enqueueDocumentSync = phpEnqueue;
+    harness.deps.enqueueJavaScriptTypeScriptDocumentSync = jsEnqueue;
+    const { api } = renderDocumentSync(harness.deps);
+    const php = phpDocument({ content: "php live", savedContent: "php restored" });
+    const js = tsDocument({ content: "js live", savedContent: "js restored" });
+
+    await api().syncOpenDocument(php);
+    await api().syncOpenJavaScriptTypeScriptDocument(js);
+
+    expect(phpEnqueue.mock.calls[0]?.[2]).toEqual(["php live"]);
+    expect(jsEnqueue.mock.calls[0]?.[2]).toEqual(["js live"]);
+  });
+
   it("opens PHP documents independently when the JavaScript/TypeScript runtime is stopped", async () => {
     const harness = createHarness();
     const stoppedJavaScriptTypeScriptStatus: LanguageServerRuntimeStatus = {
@@ -908,6 +925,20 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.phpGateway.didChange).not.toHaveBeenCalled();
   });
 
+  it("declares the exact PHP save content retained by its queued closure", async () => {
+    const harness = createHarness();
+    const enqueue = vi.fn(harness.deps.enqueueDocumentSync);
+    harness.deps.enqueueDocumentSync = enqueue;
+    const { api } = renderDocumentSync(harness.deps);
+    await api().syncOpenDocument(phpDocument({ content: "old" }));
+    enqueue.mockClear();
+
+    const saved = phpDocument({ content: "new retained payload" });
+    await api().syncSavedDocument(ROOT, saved);
+
+    expect(enqueue.mock.calls.some((call) => call[2]?.[0] === saved.content)).toBe(true);
+  });
+
   it("does not mutate pending state or save for a mismatched explicit root", async () => {
     const harness = createHarness();
     const { api } = renderDocumentSync(harness.deps);
@@ -1174,6 +1205,65 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.php.syncedPaths.current.has(key)).toBe(false);
     expect(harness.php.versions.current[key]).toBeUndefined();
     expect(api().isLanguageServerDocumentSynced(document.path)).toBe(false);
+  });
+
+  it("closes a large PHP document without retaining its text in the queue", async () => {
+    const harness = createHarness();
+    const enqueue = vi.fn(harness.deps.enqueueDocumentSync);
+    harness.deps.enqueueDocumentSync = enqueue;
+    const { api } = renderDocumentSync(harness.deps);
+    const opened = phpDocument({ content: "a" });
+    await api().syncOpenDocument(opened);
+    enqueue.mockClear();
+
+    await api().syncClosedDocument(phpDocument({ content: "x".repeat(2 * 1024 * 1024) }));
+
+    expect(enqueue).toHaveBeenCalledWith(
+      languageServerDocumentSyncKey(ROOT, opened.path),
+      expect.any(Function),
+      [],
+    );
+  });
+
+  it("reports an initial JS change mailbox payload-admission failure", async () => {
+    const harness = createHarness();
+    let reservationAttempts = 0;
+    harness.deps.enqueueJavaScriptTypeScriptDocumentSync = Object.assign(
+      harness.deps.enqueueJavaScriptTypeScriptDocumentSync,
+      {
+        reservePayload: () => {
+          reservationAttempts += 1;
+          return reservationAttempts === 1
+            ? null
+            : { release: () => undefined, replace: () => true };
+        },
+      },
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    const document = tsDocument({ content: "a" });
+    await api().syncOpenJavaScriptTypeScriptDocument(document);
+
+    api().scheduleJavaScriptTypeScriptDocumentChange(tsDocument({ content: "changed" }));
+    await vi.advanceTimersByTimeAsync(150);
+    await flushMicrotasks();
+
+    expect(harness.reportErrorForActiveWorkspaceRoot).toHaveBeenCalledWith(
+      ROOT,
+      "JavaScript/TypeScript",
+      expect.objectContaining({ message: expect.stringContaining("capacity") }),
+    );
+    expect(
+      harness.jsts.pendingChanges.current[languageServerDocumentSyncKey(ROOT, document.path)]?.text,
+    ).toBe("changed");
+
+    api().scheduleJavaScriptTypeScriptDocumentChange(tsDocument({ content: "retry" }));
+    await vi.advanceTimersByTimeAsync(150);
+    await flushMicrotasks();
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ text: "retry" }),
+      SESSION,
+    );
   });
 
   it("binds a queued stale close to the old session before reopening on its replacement", async () => {

@@ -10,6 +10,23 @@ import type { EditorDocument } from "../domain/workspace";
 import type { LatestValueDrainMailbox } from "./latestValueDrainMailbox";
 import type { JavaScriptTypeScriptIncrementalSyncDocumentLifecyclePort } from "./javaScriptTypeScriptIncrementalSyncProduction";
 
+export interface DocumentSyncPayloadReservation {
+  release(): void;
+  replace(retainedPayloads: readonly string[]): boolean;
+}
+
+export interface DocumentSyncEnqueue {
+  (
+    key: string,
+    operation: () => Promise<void>,
+    retainedPayloads?: readonly string[],
+  ): Promise<void>;
+  reservePayload?(
+    key: string,
+    retainedPayloads: readonly string[],
+  ): DocumentSyncPayloadReservation | null;
+}
+
 /** Shell-owned collaborators and mutable state required by document sync. */
 export interface DocumentSyncDependencies {
   largeSmartDocumentPolicy?: LargeSmartDocumentPolicy;
@@ -73,11 +90,8 @@ export interface DocumentSyncDependencies {
   nextJavaScriptTypeScriptDocumentVersion: (rootPath: string, path: string) => number;
   clearDocumentChangeTimer: (key: string) => void;
   clearJavaScriptTypeScriptDocumentChangeTimer: (key: string) => void;
-  enqueueDocumentSync: (path: string, operation: () => Promise<void>) => Promise<void>;
-  enqueueJavaScriptTypeScriptDocumentSync: (
-    key: string,
-    operation: () => Promise<void>,
-  ) => Promise<void>;
+  enqueueDocumentSync: DocumentSyncEnqueue;
+  enqueueJavaScriptTypeScriptDocumentSync: DocumentSyncEnqueue;
   resetLanguageServerDocuments: () => void;
   warmUpPhpLanguageServerIndex: (
     rootPath: string,

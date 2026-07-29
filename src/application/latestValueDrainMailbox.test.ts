@@ -44,6 +44,80 @@ describe("LatestValueDrainMailbox", () => {
     expect(drained).toEqual([1, 1_000]);
   });
 
+  it("reserves replacement payload bytes while an earlier value is in flight", async () => {
+    const mailbox = new LatestValueDrainMailbox<string>();
+    const first = deferred();
+    const payloads: string[][] = [];
+    const enqueue = Object.assign((_key: string, operation: () => Promise<void>) => operation(), {
+      reservePayload: (_key: string, retainedPayloads: readonly string[]) => {
+        payloads.push([...retainedPayloads]);
+        return {
+          release: () => undefined,
+          replace: (replacement: readonly string[]) => {
+            payloads.push([...replacement]);
+            return true;
+          },
+        };
+      },
+    });
+    const running = mailbox.offer(
+      "owner",
+      "small",
+      enqueue,
+      async (value) => {
+        if (value === "small") await first.promise;
+      },
+      ["small"],
+    );
+    mailbox.offer("owner", "much larger", enqueue, async () => undefined, ["much larger"]);
+
+    expect(payloads).toEqual([["small"], ["much larger"]]);
+    first.resolve();
+    await running.settlement;
+  });
+
+  it("releases ownership when initial or replacement payload admission fails", async () => {
+    const mailbox = new LatestValueDrainMailbox<number>();
+    const capacity = new Error("capacity");
+    const rejectedQueue = () => Promise.reject(capacity);
+    await expect(
+      mailbox.offer("owner", 1, rejectedQueue, async () => undefined).settlement,
+    ).rejects.toBe(capacity);
+
+    const first = deferred();
+    let reservationCalls = 0;
+    const replacementRejectingQueue = Object.assign(
+      (_key: string, operation: () => Promise<void>) => operation(),
+      {
+        reservePayload: () => {
+          reservationCalls += 1;
+          return reservationCalls === 1
+            ? {
+                release: () => undefined,
+                replace: () => true,
+              }
+            : null;
+        },
+      },
+    );
+    const running = mailbox.offer(
+      "owner",
+      2,
+      replacementRejectingQueue,
+      async () => {
+        await first.promise;
+      },
+      ["two"],
+    );
+    mailbox.offer("owner", 3, replacementRejectingQueue, async () => undefined, ["three"]);
+    first.resolve();
+    await expect(running.settlement).rejects.toThrow("capacity");
+
+    const freshDrain = vi.fn(async () => undefined);
+    await mailbox.offer("owner", 4, directQueue, freshDrain).settlement;
+    expect(freshDrain).toHaveBeenCalledOnce();
+  });
+
   it("keeps owners independent", async () => {
     const mailbox = new LatestValueDrainMailbox<string>();
     const first = deferred();
