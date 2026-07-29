@@ -5,7 +5,9 @@ import {
   evaluateHotspotSizes,
   formatHotspotBaseline,
   isProductionSource,
+  matchesGlob,
   reducedBaselineUpdate,
+  trackedGroupSize,
 } from "./check-hotspot-size-budget.mjs";
 
 describe("hotspot size ratchet", () => {
@@ -91,6 +93,99 @@ describe("hotspot size ratchet", () => {
     expect(isProductionSource("src-tauri/src/lib.rs")).toBe(true);
   });
 
+  it("matches aggregate group globs across direct and nested files", () => {
+    expect(matchesGlob("src/preview/a.test.tsx", "src/preview/**/*.tsx")).toBe(true);
+    expect(matchesGlob("src/preview/nested/a.test.tsx", "src/preview/**/*.tsx")).toBe(true);
+    expect(matchesGlob("src/preview/a.test.ts", "src/preview/**/*.tsx")).toBe(false);
+  });
+
+  it("aggregates raw lines and structural tokens for every matching member", () => {
+    expect(
+      trackedGroupSize(
+        { patterns: ["src/preview.test.tsx", "src/preview/**/*.ts*"] },
+        {
+          "src/preview.test.tsx": { rawLines: 10, structuralTokens: 20 },
+          "src/preview/a.test.tsx": { rawLines: 30, structuralTokens: 40 },
+          "src/unrelated.test.tsx": { rawLines: 100, structuralTokens: 200 },
+        },
+      ),
+    ).toEqual({
+      members: ["src/preview.test.tsx", "src/preview/a.test.tsx"],
+      rawLines: 40,
+      structuralTokens: 60,
+    });
+  });
+
+  it("ratchets aggregate raw lines and structural tokens independently", () => {
+    const baseline = {
+      files: {},
+      groups: {
+        preview: {
+          patterns: ["src/preview/**/*.tsx"],
+          members: ["src/preview/a.test.tsx", "src/preview/b.test.tsx"],
+          rawLines: 30,
+          structuralTokens: 40,
+        },
+      },
+      productionLineLimit: 20,
+      productionStructuralTokenLimit: 100,
+    };
+    const currentFiles = {
+      "src/preview/a.test.tsx": { rawLines: 10, structuralTokens: 21 },
+      "src/preview/b.test.tsx": { rawLines: 21, structuralTokens: 19 },
+    };
+
+    const result = evaluateHotspotSizes(baseline, currentFiles, new Set());
+
+    expect(result.groupGrowth).toEqual([
+      {
+        actual: { rawLines: 31, structuralTokens: 40 },
+        expected: { rawLines: 30, structuralTokens: 40 },
+        path: "preview",
+      },
+    ]);
+    expect(result.groupMembershipChanges).toEqual([]);
+    expect(result.groupReductions).toEqual([]);
+  });
+
+  it.each([
+    {
+      label: "addition",
+      files: {
+        "src/preview/a.test.tsx": { rawLines: 10, structuralTokens: 10 },
+        "src/preview/b.test.tsx": { rawLines: 10, structuralTokens: 10 },
+      },
+    },
+    { label: "removal", files: {} },
+    {
+      label: "rename",
+      files: { "src/preview/renamed.test.tsx": { rawLines: 10, structuralTokens: 10 } },
+    },
+  ])(
+    "rejects aggregate membership $label instead of allowing a split-suite escape",
+    ({ files }) => {
+      const result = evaluateHotspotSizes(
+        {
+          files: {},
+          groups: {
+            preview: {
+              patterns: ["src/preview/**/*.tsx"],
+              members: ["src/preview/a.test.tsx"],
+              rawLines: 10,
+              structuralTokens: 10,
+            },
+          },
+          productionLineLimit: 20,
+          productionStructuralTokenLimit: 100,
+        },
+        files,
+        new Set(),
+      );
+
+      expect(result.groupMembershipChanges).toHaveLength(1);
+    },
+  );
+
   it("rejects tracked growth and requires reductions to be recorded", () => {
     const result = evaluateHotspotSizes(
       {
@@ -143,7 +238,6 @@ describe("hotspot size ratchet", () => {
         },
         productionLineLimit: 20,
         productionStructuralTokenLimit: 100,
-        trackedTests: [],
       },
       { "src/reduced.ts": { rawLines: 9, structuralTokens: 9 } },
       new Set(["src/reduced.ts"]),
@@ -160,16 +254,21 @@ describe("hotspot size ratchet", () => {
       files: {
         "src/reduced.ts": { rawLines: 9, structuralTokens: 9 },
       },
+      groups: {
+        preview: {
+          patterns: ["src/preview/**/*.tsx"],
+          members: ["src/preview/a.test.tsx"],
+          rawLines: 10,
+          structuralTokens: 20,
+        },
+      },
       productionLineLimit: 20,
       productionStructuralTokenLimit: 100,
-      trackedTests: ["src/application/useWorkbenchController.preview.test.tsx"],
     };
 
     const serialized = await formatHotspotBaseline(baseline);
 
-    expect(serialized).toContain(
-      '"trackedTests": ["src/application/useWorkbenchController.preview.test.tsx"]',
-    );
+    expect(serialized).toContain('"patterns": ["src/preview/**/*.tsx"]');
     expect(serialized.endsWith("\n")).toBe(true);
   });
 
@@ -179,7 +278,6 @@ describe("hotspot size ratchet", () => {
         files: { "src/wrapped.ts": { rawLines: 10, structuralTokens: 10 } },
         productionLineLimit: 20,
         productionStructuralTokenLimit: 100,
-        trackedTests: [],
       },
       { "src/wrapped.ts": { rawLines: 20, structuralTokens: 10 } },
       new Set(["src/wrapped.ts"]),
@@ -198,7 +296,6 @@ describe("hotspot size ratchet", () => {
         files: { "src/grown.ts": { rawLines: 10, structuralTokens: 10 } },
         productionLineLimit: 20,
         productionStructuralTokenLimit: 100,
-        trackedTests: [],
       },
       {
         "src/grown.ts": { rawLines: 11, structuralTokens: 11 },
@@ -211,5 +308,87 @@ describe("hotspot size ratchet", () => {
       "growth",
       "oversized-untracked",
     ]);
+  });
+
+  it("refuses aggregate membership changes and aggregate growth during update", () => {
+    const result = reducedBaselineUpdate(
+      {
+        files: {},
+        groups: {
+          preview: {
+            patterns: ["src/preview/**/*.tsx"],
+            members: ["src/preview/a.test.tsx"],
+            rawLines: 10,
+            structuralTokens: 10,
+          },
+        },
+        productionLineLimit: 20,
+        productionStructuralTokenLimit: 100,
+      },
+      {
+        "src/preview/a.test.tsx": { rawLines: 10, structuralTokens: 10 },
+        "src/preview/b.test.tsx": { rawLines: 1, structuralTokens: 1 },
+      },
+      new Set(),
+    );
+
+    expect(result.violations.map((violation) => violation.kind)).toEqual([
+      "group-growth",
+      "group-membership-change",
+    ]);
+    expect(result.baseline.groups.preview.members).toEqual(["src/preview/a.test.tsx"]);
+    expect(result.baseline.groups.preview.rawLines).toBe(10);
+    expect(result.baseline.groups.preview.structuralTokens).toBe(10);
+  });
+
+  it("does not accept aggregate structural growth when raw lines decreased", () => {
+    const result = reducedBaselineUpdate(
+      {
+        files: {},
+        groups: {
+          preview: {
+            patterns: ["src/preview/**/*.tsx"],
+            members: ["src/preview/a.test.tsx"],
+            rawLines: 10,
+            structuralTokens: 10,
+          },
+        },
+        productionLineLimit: 20,
+        productionStructuralTokenLimit: 100,
+      },
+      { "src/preview/a.test.tsx": { rawLines: 9, structuralTokens: 11 } },
+      new Set(),
+    );
+
+    expect(result.violations.map((violation) => violation.kind)).toEqual(["group-growth"]);
+    expect(result.baseline.groups.preview.structuralTokens).toBe(10);
+  });
+
+  it("only lowers aggregate raw and structural limits when membership is unchanged", () => {
+    const result = reducedBaselineUpdate(
+      {
+        files: {},
+        groups: {
+          preview: {
+            patterns: ["src/preview/**/*.tsx"],
+            members: ["src/preview/a.test.tsx"],
+            rawLines: 20,
+            structuralTokens: 30,
+          },
+        },
+        productionLineLimit: 20,
+        productionStructuralTokenLimit: 100,
+      },
+      { "src/preview/a.test.tsx": { rawLines: 15, structuralTokens: 25 } },
+      new Set(),
+    );
+
+    expect(result.violations).toEqual([]);
+    expect(result.baseline.groups.preview).toEqual({
+      patterns: ["src/preview/**/*.tsx"],
+      members: ["src/preview/a.test.tsx"],
+      rawLines: 15,
+      structuralTokens: 25,
+    });
   });
 });

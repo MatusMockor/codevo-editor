@@ -96,6 +96,9 @@ export function evaluateHotspotSizes(baseline, currentFiles, productionFiles) {
   const growth = [];
   const reductions = [];
   const oversizedUntracked = [];
+  const groupGrowth = [];
+  const groupReductions = [];
+  const groupMembershipChanges = [];
 
   for (const [filePath, expected] of Object.entries(baseline.files)) {
     const actual = currentFiles[filePath]?.structuralTokens ?? 0;
@@ -125,13 +128,69 @@ export function evaluateHotspotSizes(baseline, currentFiles, productionFiles) {
     }
   }
 
-  return { growth, oversizedUntracked, reductions };
+  for (const [groupName, expected] of Object.entries(baseline.groups ?? {})) {
+    const actual = trackedGroupSize(expected, currentFiles);
+    if (!samePaths(actual.members, expected.members)) {
+      groupMembershipChanges.push({
+        actual: actual.members,
+        expected: expected.members,
+        path: groupName,
+      });
+    }
+    if (
+      actual.rawLines > expected.rawLines ||
+      actual.structuralTokens > expected.structuralTokens
+    ) {
+      groupGrowth.push({
+        actual: {
+          rawLines: actual.rawLines,
+          structuralTokens: actual.structuralTokens,
+        },
+        expected: {
+          rawLines: expected.rawLines,
+          structuralTokens: expected.structuralTokens,
+        },
+        path: groupName,
+      });
+    }
+    if (
+      actual.rawLines <= expected.rawLines &&
+      actual.structuralTokens <= expected.structuralTokens &&
+      (actual.rawLines < expected.rawLines || actual.structuralTokens < expected.structuralTokens)
+    ) {
+      groupReductions.push({
+        actual: {
+          rawLines: actual.rawLines,
+          structuralTokens: actual.structuralTokens,
+        },
+        expected: {
+          rawLines: expected.rawLines,
+          structuralTokens: expected.structuralTokens,
+        },
+        path: groupName,
+      });
+    }
+  }
+
+  return {
+    growth,
+    groupGrowth,
+    groupMembershipChanges,
+    groupReductions,
+    oversizedUntracked,
+    reductions,
+  };
 }
 
 export function reducedBaselineUpdate(baseline, currentFiles, productionFiles) {
   const evaluation = evaluateHotspotSizes(baseline, currentFiles, productionFiles);
   const violations = [
     ...evaluation.growth.map((entry) => ({ ...entry, kind: "growth" })),
+    ...evaluation.groupGrowth.map((entry) => ({ ...entry, kind: "group-growth" })),
+    ...evaluation.groupMembershipChanges.map((entry) => ({
+      ...entry,
+      kind: "group-membership-change",
+    })),
     ...evaluation.oversizedUntracked.map((entry) => ({
       ...entry,
       kind: "oversized-untracked",
@@ -148,7 +207,17 @@ export function reducedBaselineUpdate(baseline, currentFiles, productionFiles) {
     };
   }
 
-  return { baseline: { ...baseline, files }, violations };
+  const groups = {};
+  for (const [groupName, expected] of Object.entries(baseline.groups ?? {})) {
+    const actual = trackedGroupSize(expected, currentFiles);
+    groups[groupName] = {
+      ...expected,
+      rawLines: Math.min(expected.rawLines, actual.rawLines),
+      structuralTokens: Math.min(expected.structuralTokens, actual.structuralTokens),
+    };
+  }
+
+  return { baseline: { ...baseline, files, groups }, violations };
 }
 
 export async function formatHotspotBaseline(baseline) {
@@ -179,6 +248,52 @@ async function collectSourceFiles(projectRoot) {
     };
   }
   return currentFiles;
+}
+
+export function trackedGroupSize(group, currentFiles) {
+  const patterns = group.patterns ?? [];
+  const members = Object.keys(currentFiles)
+    .filter((filePath) => patterns.some((pattern) => matchesGlob(filePath, pattern)))
+    .sort();
+  let rawLines = 0;
+  let structuralTokens = 0;
+  for (const member of members) {
+    rawLines += currentFiles[member]?.rawLines ?? 0;
+    structuralTokens += currentFiles[member]?.structuralTokens ?? 0;
+  }
+  return { members, rawLines, structuralTokens };
+}
+
+export function matchesGlob(filePath, pattern) {
+  let expression = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index] ?? "";
+    if (character === "*") {
+      if (pattern[index + 1] === "*") {
+        index += 1;
+        if (pattern[index + 1] === "/") {
+          index += 1;
+          expression += "(?:.*/)?";
+        } else {
+          expression += ".*";
+        }
+      } else {
+        expression += "[^/]*";
+      }
+    } else if (character === "?") {
+      expression += "[^/]";
+    } else {
+      expression += character.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
+    }
+  }
+  return new RegExp(`${expression}$`, "u").test(filePath);
+}
+
+function samePaths(actual, expected) {
+  return (
+    actual.length === expected.length &&
+    actual.every((filePath, index) => filePath === expected[index])
+  );
 }
 
 async function walk(directory, projectRoot) {
@@ -216,7 +331,8 @@ async function main() {
     }
     await writeFile(baselinePath, await formatHotspotBaseline(update.baseline));
     console.log(
-      `Lowered hotspot baseline for ${Object.keys(update.baseline.files).length} file(s).`,
+      `Lowered hotspot baseline for ${Object.keys(update.baseline.files).length} file(s) and ` +
+        `${Object.keys(update.baseline.groups ?? {}).length} aggregate group(s).`,
     );
     return;
   }
@@ -224,12 +340,16 @@ async function main() {
   const result = evaluateHotspotSizes(baseline, currentFiles, productionFiles);
   console.log(
     `Hotspot baseline: ${Object.keys(baseline.files).length} tracked file(s), ` +
+      `${Object.keys(baseline.groups ?? {}).length} aggregate group(s), ` +
       `${baseline.productionLineLimit} raw lines / ` +
       `${baseline.productionStructuralTokenLimit} structural tokens for new production files`,
   );
   reportResult(result);
   if (
     result.growth.length > 0 ||
+    result.groupGrowth.length > 0 ||
+    result.groupMembershipChanges.length > 0 ||
+    result.groupReductions.length > 0 ||
     result.oversizedUntracked.length > 0 ||
     result.reductions.length > 0
   ) {
@@ -253,11 +373,36 @@ function reportResult(result) {
       );
     }
   }
-  if (result.reductions.length > 0) {
-    console.error("Structural size decreased; lock it in with:");
+  if (result.groupMembershipChanges.length > 0) {
+    console.error("Tracked hotspot aggregate membership changed:");
+    for (const entry of result.groupMembershipChanges) {
+      const added = entry.actual.filter((member) => !entry.expected.includes(member));
+      const removed = entry.expected.filter((member) => !entry.actual.includes(member));
+      console.error(`  ${entry.path}:`);
+      if (added.length > 0) console.error(`    added: ${added.join(", ")}`);
+      if (removed.length > 0) console.error(`    removed: ${removed.join(", ")}`);
+    }
+  }
+  if (result.groupGrowth.length > 0) {
+    console.error("Tracked hotspot aggregate size increased:");
+    for (const entry of result.groupGrowth) {
+      console.error(
+        `  ${entry.path}: ${entry.actual.rawLines}/${entry.expected.rawLines} raw lines, ` +
+          `${entry.actual.structuralTokens}/${entry.expected.structuralTokens} structural tokens`,
+      );
+    }
+  }
+  if (result.reductions.length > 0 || result.groupReductions.length > 0) {
+    console.error("Tracked hotspot size decreased; lock it in with:");
     console.error("  npm run size:hotspots:update");
     for (const entry of result.reductions) {
       console.error(`  ${entry.path}: ${entry.expected} -> ${entry.actual}`);
+    }
+    for (const entry of result.groupReductions) {
+      console.error(
+        `  ${entry.path}: ${entry.expected.rawLines} -> ${entry.actual.rawLines} raw lines, ` +
+          `${entry.expected.structuralTokens} -> ${entry.actual.structuralTokens} structural tokens`,
+      );
     }
   }
 }

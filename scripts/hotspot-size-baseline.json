@@ -1,7 +1,33 @@
 {
   "productionLineLimit": 2000,
   "productionStructuralTokenLimit": 10000,
-  "trackedTests": ["src/application/useWorkbenchController.preview.test.tsx"],
+  "groups": {
+    "workbench-controller-preview-tests": {
+      "patterns": [
+        "src/application/useWorkbenchController.preview.test.tsx",
+        "src/application/useWorkbenchController.preview/**/*.ts",
+        "src/application/useWorkbenchController.preview/**/*.tsx"
+      ],
+      "members": [
+        "src/application/useWorkbenchController.preview.test.tsx",
+        "src/application/useWorkbenchController.preview/editing-file-events-settings-and-outline.test.tsx",
+        "src/application/useWorkbenchController.preview/editing-trust-runtime-and-renames.test.tsx",
+        "src/application/useWorkbenchController.preview/laravel-latte-blade-and-navigation.test.tsx",
+        "src/application/useWorkbenchController.preview/laravel-routes-config-translations-and-definitions.test.tsx",
+        "src/application/useWorkbenchController.preview/navigation-php-hierarchies-and-definitions.test.tsx",
+        "src/application/useWorkbenchController.preview/navigation-search-and-symbols.test.tsx",
+        "src/application/useWorkbenchController.preview/php-diagnostics-relations-and-definitions.test.tsx",
+        "src/application/useWorkbenchController.preview/php-refactors-and-quickfixes.test.tsx",
+        "src/application/useWorkbenchController.preview/php-resolution-generics-and-inference.test.tsx",
+        "src/application/useWorkbenchController.preview/testSupport.ts",
+        "src/application/useWorkbenchController.preview/workspace-lifecycle-identity-and-commands.test.tsx",
+        "src/application/useWorkbenchController.preview/workspace-save-runtime-switch-and-cleanup.test.tsx",
+        "src/application/useWorkbenchController.preview/workspace-session-git-and-editor.test.tsx"
+      ],
+      "rawLines": 71702,
+      "structuralTokens": 336382
+    }
+  },
   "files": {
     "src-tauri/src/debug_cdp.rs": {
       "rawLines": 1458,
@@ -19,13 +45,13 @@
       "structuralTokens": 7703
     },
     "src-tauri/src/lsp_session.rs": {
-      "rawLines": 7681,
-      "structuralTokens": 39334
+      "rawLines": 6514,
+      "structuralTokens": 33085
     },
     "src-tauri/src/lsp.rs": { "rawLines": 2364, "structuralTokens": 10802 },
     "src-tauri/src/workspace_file_commands.rs": {
-      "rawLines": 3706,
-      "structuralTokens": 23648
+      "rawLines": 3126,
+      "structuralTokens": 19903
     },
     "src/App.tsx": { "rawLines": 1654, "structuralTokens": 8363 },
     "src/application/useDocumentSync.ts": {
@@ -36,25 +62,21 @@
       "rawLines": 1979,
       "structuralTokens": 6737
     },
-    "src/application/useWorkbenchController.preview.test.tsx": {
-      "rawLines": 2512,
-      "structuralTokens": 15774
-    },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 9533,
-      "structuralTokens": 35469
+      "rawLines": 8579,
+      "structuralTokens": 31427
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 4032,
-      "structuralTokens": 16672
+      "rawLines": 3380,
+      "structuralTokens": 14087
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
       "rawLines": 2720,
       "structuralTokens": 11417
     },
     "src/components/languageServerMonacoProviders.ts": {
-      "rawLines": 4857,
-      "structuralTokens": 10841
+      "rawLines": 4080,
+      "structuralTokens": 10496
     },
     "src/components/SettingsDialog.tsx": {
       "rawLines": 1762,
