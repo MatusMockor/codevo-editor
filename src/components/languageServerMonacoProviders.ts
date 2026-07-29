@@ -1,7 +1,6 @@
 import type * as Monaco from "monaco-editor";
 import type { EditorDocument } from "../domain/workspace";
 import {
-  canUseLanguageServerFeature,
   pathFromLanguageServerUri,
   toLanguageServerTextDocumentPosition,
   type LanguageServerCodeAction,
@@ -9,7 +8,6 @@ import {
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionList,
   type LanguageServerCodeLens,
-  type LanguageServerDocumentLink,
   type LanguageServerFeaturesGateway,
   type LanguageServerInlayHint,
   type LanguageServerLocation,
@@ -23,19 +21,13 @@ import {
   type LanguageServerWorkspaceEdit,
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
-  type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
   createDocumentHighlightRequestTracker,
   type DocumentHighlightRequestTracker,
 } from "../domain/documentHighlightRequestTracker";
-import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
-import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import {
-  isLargeSmartDocument,
-  type LargeSmartDocumentPolicy,
-} from "../domain/largeDocumentPolicy";
+import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import {
   phpPostfixCompletionContextAt,
   phpPostfixCompletionItems,
@@ -86,21 +78,17 @@ import {
 } from "./phpFrameworkMonacoProviders";
 import {
   activePhpDocumentContext,
-  isLargeActivePhpDocument,
   isPhpDocumentContextActive,
-  isStoredLanguageServerPayloadActive,
   modelMatchesWorkspacePath,
   modelPath,
   modelSource,
   offsetAtMonacoPosition,
   registerWorkspaceIdentityDescriptor,
-  runningRuntimeSessionIdForRoot,
   toWorkspaceMonacoUri,
   type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
 import {
   flattenSelectionRange,
-  monacoSymbolKind,
   toLanguageServerFormattingOptions,
   toLanguageServerRange,
   toMonacoDocumentHighlight,
@@ -111,6 +99,42 @@ import {
   toMonacoSemanticTokens,
   toMonacoTextEdit,
 } from "./languageServerMonacoMappings";
+import { registerDocumentLanguageServerProviders } from "./languageServerProviders/documentProviderRegistration";
+import { registerInteractiveLanguageServerProviders } from "./languageServerProviders/interactiveProviderRegistration";
+import { registerNavigationLanguageServerProviders } from "./languageServerProviders/navigationProviderRegistration";
+import {
+  FEATURE_REQUEST_TIMED_OUT,
+  HOVER_FEATURE_REQUEST_TIMEOUT_MS,
+  featureDocumentRequestContext,
+  featureRequestContext,
+  flushPendingDocumentChangeForActiveRequest,
+  isDocumentLifecyclePayloadActive,
+  isExecuteCommandPayloadActive,
+  isFeatureRequestActive,
+  isLargePhpDocumentContext,
+  isPathInWorkspaceRoot,
+  isWorkspaceEditEventActive,
+  raceInteractiveFeatureRequest,
+  reportErrorForActiveRequest,
+  reportErrorForActiveWorkspaceEditEvent,
+  runningRuntimeStatusForRoot,
+  shouldSkipLargePhpSmartProviders,
+  workspaceSymbolRequestContext,
+  type LanguageServerMonacoDocumentRequestLease,
+} from "./languageServerProviders/providerRequestLifecycle";
+import {
+  toMonacoDocumentLink,
+  toMonacoLocation,
+  toMonacoWorkspaceEdit,
+  toMonacoWorkspaceSymbol,
+  workspaceEditContext,
+  type LanguageServerBackedLink,
+  type WorkspaceEditContext,
+} from "./languageServerProviders/providerProjections";
+import {
+  createMonacoEventEmitter,
+  type MonacoEventEmitter,
+} from "./languageServerProviders/providerRegistrationTypes";
 
 export type {
   BladeCompletion,
@@ -130,45 +154,15 @@ type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
-type MonacoEventEmitter<T> = {
-  dispose(): void;
-  event: Monaco.IEvent<T>;
-  fire(event: T): void;
-};
-type WorkspaceEditContext = {
-  path: string | null;
-  versionId: number | undefined;
-};
-type MonacoWorkspaceSymbol = {
-  containerName?: string;
-  kind: Monaco.languages.SymbolKind;
-  location: Monaco.languages.Location;
-  name: string;
-};
-type MonacoWorkspaceSymbolProvider = {
-  provideWorkspaceSymbols(query: string): Promise<MonacoWorkspaceSymbol[]>;
-};
-type MonacoWorkspaceSymbolRegistry = {
-  registerWorkspaceSymbolProvider?(
-    provider: MonacoWorkspaceSymbolProvider,
-  ): Disposable;
-};
-export interface LanguageServerMonacoDocumentRequestLease {
-  readonly lifecycleIdentity: number;
-  readonly path: string;
-  readonly rootPath: string;
-  readonly sessionId: number;
-  readonly syncGeneration: number;
-}
+type MonacoWorkspaceSymbol =
+  import("./languageServerProviders/providerRegistrationTypes").MonacoWorkspaceSymbol;
+export type { LanguageServerMonacoDocumentRequestLease } from "./languageServerProviders/providerRequestLifecycle";
 export type PhpWorkspaceEditApplicationContext = WorkspaceEditApplicationContext;
 
 export type PhpWorkspaceEditApplier = (
   edit: LanguageServerWorkspaceEdit,
   context: PhpWorkspaceEditApplicationContext,
-) =>
-  | Promise<WorkspaceEditApplicationDecision | void>
-  | WorkspaceEditApplicationDecision
-  | void;
+) => Promise<WorkspaceEditApplicationDecision | void> | WorkspaceEditApplicationDecision | void;
 
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __documentLifecycleIdentity?: number;
@@ -176,14 +170,6 @@ interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerSessionId?: number;
   __sourcePath?: string;
   __workspaceEditContext?: WorkspaceEditContext;
-  __workspaceRoot?: string;
-}
-
-interface LanguageServerBackedLink extends Monaco.languages.ILink {
-  __documentLifecycleIdentity?: number;
-  __languageServerLink?: LanguageServerDocumentLink;
-  __languageServerSessionId?: number;
-  __sourcePath?: string;
   __workspaceRoot?: string;
 }
 
@@ -233,24 +219,18 @@ interface ApplyPhpCodeActionWorkspaceEditPayload {
   rootPath: string;
 }
 
-type OpenPhpChangeSignaturePayload = NonNullable<
-  PhpCodeActionDescriptor["interaction"]
->;
+type OpenPhpChangeSignaturePayload = NonNullable<PhpCodeActionDescriptor["interaction"]>;
 
-const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
-  "mockor.php.executeLanguageServerCommand";
-const RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID =
-  "mockor.php.resolveAndApplyCodeAction";
+const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID = "mockor.php.executeLanguageServerCommand";
+const RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID = "mockor.php.resolveAndApplyCodeAction";
 /**
  * Monaco command fired by a synthesized PHP code action that creates a new file
  * (currently "Extract interface"). The command persists the new interface file
  * first and then applies the paired in-document edit, so a failed file creation
  * cannot leave a partial `implements` clause behind.
  */
-const APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID =
-  "mockor.php.applyCodeActionNewFile";
-const APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID =
-  "mockor.php.applyCodeActionWorkspaceEdit";
+const APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID = "mockor.php.applyCodeActionNewFile";
+const APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID = "mockor.php.applyCodeActionWorkspaceEdit";
 const OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID = "codevo.php.openChangeSignature";
 /**
  * Upper bound (ms) for an interactive hover / navigation request before the
@@ -260,7 +240,6 @@ const OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID = "codevo.php.openChangeSignature";
  * answers in well under this budget, so the timeout only trips on genuinely
  * stuck cold requests and never cancels a legitimate (slower-but-valid) result.
  */
-const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
 /**
  * Shorter upper bound (ms) for a hover request. Hover is passive information,
  * so the worse outcome is leaving the Monaco "Loading…" placeholder on screen
@@ -270,12 +249,8 @@ const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
  * its "Loading…" widget in ~700ms (PhpStorm-like) instead of 2.5s. Actionable
  * navigation/references/completion requests keep the longer budget.
  */
-const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
 const PHP_SIGNATURE_MERGE_WINDOW_MS = 20;
-const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
-const PHP_SIGNATURE_MERGE_WINDOW_EXPIRED = Symbol(
-  "phpSignatureMergeWindowExpired",
-);
+const PHP_SIGNATURE_MERGE_WINDOW_EXPIRED = Symbol("phpSignatureMergeWindowExpired");
 const PHP_SEMANTIC_TOKENS_LEGEND = {
   tokenModifiers: [
     "declaration",
@@ -316,8 +291,7 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
 } satisfies Monaco.languages.SemanticTokensLegend;
 
 export interface LanguageServerMonacoProviderContext
-  extends TemplateLanguageMonacoProviderContext,
-    PhpFrameworkMonacoProviderContext {
+  extends TemplateLanguageMonacoProviderContext, PhpFrameworkMonacoProviderContext {
   getDocumentForModel?(model: MonacoModel): EditorDocument | null;
   getWorkspaceIdentityDescriptor?(): WorkspaceIdentityDescriptor | null;
   /**
@@ -357,13 +331,8 @@ export interface LanguageServerMonacoProviderContext
     rootPath: string,
     path: string,
   ): Promise<LanguageServerMonacoDocumentRequestLease | null>;
-  isDocumentLeaseCurrent?(
-    lease: LanguageServerMonacoDocumentRequestLease,
-  ): boolean;
-  getDocumentLifecycleIdentity?(
-    rootPath: string,
-    path: string,
-  ): number | null;
+  isDocumentLeaseCurrent?(lease: LanguageServerMonacoDocumentRequestLease): boolean;
+  getDocumentLifecycleIdentity?(rootPath: string, path: string): number | null;
   /**
    * Reports whether `path` has already been opened on the language server (its
    * `didOpen` was sent) for `rootPath`. Used to gate the `documentSymbol`
@@ -419,46 +388,10 @@ export interface LanguageServerMonacoProviderContext
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
 }
 
-function createMonacoEventEmitter<T>(): MonacoEventEmitter<T> {
-  const listeners = new Set<{
-    listener: (event: T) => unknown;
-    thisArgs?: unknown;
-  }>();
-
-  return {
-    dispose: () => {
-      listeners.clear();
-    },
-    event: (
-      listener: (event: T) => unknown,
-      thisArgs?: unknown,
-      disposables?: Disposable[],
-    ) => {
-      const entry = { listener, thisArgs };
-      listeners.add(entry);
-      const disposable = {
-        dispose: () => {
-          listeners.delete(entry);
-        },
-      };
-
-      disposables?.push(disposable);
-
-      return disposable;
-    },
-    fire: (event) => {
-      for (const entry of Array.from(listeners)) {
-        entry.listener.call(entry.thisArgs, event);
-      }
-    },
-  };
-}
-
 export function registerLanguageServerMonacoProviders(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
 ): Disposable {
-  const registry = monaco.languages as Partial<typeof monaco.languages>;
   const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
   const unregisterWorkspaceIdentity = identityDescriptor
     ? registerWorkspaceIdentityDescriptor(
@@ -537,10 +470,7 @@ export function registerLanguageServerMonacoProviders(
         return;
       }
 
-      if (
-        payload.sessionId == null ||
-        !isExecuteCommandPayloadActive(context, payload)
-      ) {
+      if (payload.sessionId == null || !isExecuteCommandPayloadActive(context, payload)) {
         return;
       }
 
@@ -548,9 +478,7 @@ export function registerLanguageServerMonacoProviders(
         if (payload.path) {
           await context.flushPendingDocumentChange(payload.path);
 
-          if (
-            !isExecuteCommandPayloadActive(context, payload)
-          ) {
+          if (!isExecuteCommandPayloadActive(context, payload)) {
             return;
           }
         }
@@ -560,24 +488,15 @@ export function registerLanguageServerMonacoProviders(
           payload.command,
         );
 
-        if (
-          !isExecuteCommandPayloadActive(context, payload)
-        ) {
+        if (!isExecuteCommandPayloadActive(context, payload)) {
           return;
         }
 
         if (edit) {
-          await applyWorkspaceEditWithOpenModels(
-            monaco,
-            context,
-            edit,
-            payload.rootPath,
-          );
+          await applyWorkspaceEditWithOpenModels(monaco, context, edit, payload.rootPath);
         }
       } catch (error) {
-        if (
-          isExecuteCommandPayloadActive(context, payload)
-        ) {
+        if (isExecuteCommandPayloadActive(context, payload)) {
           context.reportError(error);
         }
       }
@@ -585,10 +504,7 @@ export function registerLanguageServerMonacoProviders(
   });
   const resolveAndApplyCodeActionCommand = monaco.editor.addCommand({
     id: RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID,
-    run: async (
-      _accessor,
-      payload: ResolveAndApplyCodeActionPayload | undefined,
-    ) => {
+    run: async (_accessor, payload: ResolveAndApplyCodeActionPayload | undefined) => {
       if (
         !payload ||
         payload.sessionId == null ||
@@ -622,10 +538,7 @@ export function registerLanguageServerMonacoProviders(
 
         const resolved = isLanguageServerActionAlreadyResolved(payload.action)
           ? payload.action
-          : await context.featuresGateway.resolveCodeAction(
-              payload.rootPath,
-              payload.action,
-            );
+          : await context.featuresGateway.resolveCodeAction(payload.rootPath, payload.action);
 
         if (
           !isDocumentLifecyclePayloadActive(
@@ -640,12 +553,7 @@ export function registerLanguageServerMonacoProviders(
         }
 
         if (resolved.edit) {
-          await applyWorkspaceEditWithOpenModels(
-            monaco,
-            context,
-            resolved.edit,
-            payload.rootPath,
-          );
+          await applyWorkspaceEditWithOpenModels(monaco, context, resolved.edit, payload.rootPath);
         }
 
         if (resolved.command) {
@@ -664,12 +572,7 @@ export function registerLanguageServerMonacoProviders(
               payload.lifecycleIdentity,
             )
           ) {
-            await applyWorkspaceEditWithOpenModels(
-              monaco,
-              context,
-              edit,
-              payload.rootPath,
-            );
+            await applyWorkspaceEditWithOpenModels(monaco, context, edit, payload.rootPath);
           }
         }
       } catch (error) {
@@ -690,10 +593,7 @@ export function registerLanguageServerMonacoProviders(
   });
   const applyNewFileCommand = monaco.editor.addCommand({
     id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
-    run: async (
-      _accessor,
-      payload: ApplyPhpCodeActionNewFilePayload | undefined,
-    ) => {
+    run: async (_accessor, payload: ApplyPhpCodeActionNewFilePayload | undefined) => {
       if (!payload?.newFile || !context.applyPhpCodeActionNewFile) {
         return;
       }
@@ -710,9 +610,7 @@ export function registerLanguageServerMonacoProviders(
         // freshly written; we apply the paired in-document edits only then, so a
         // pre-existing target or a failed creation cannot leave a partial class
         // edit behind.
-        const interfaceFileWritten = await context.applyPhpCodeActionNewFile(
-          payload.newFile,
-        );
+        const interfaceFileWritten = await context.applyPhpCodeActionNewFile(payload.newFile);
 
         if (interfaceFileWritten) {
           if (payload.sourcePath) {
@@ -728,21 +626,13 @@ export function registerLanguageServerMonacoProviders(
   });
   const applyCodeActionWorkspaceEditCommand = monaco.editor.addCommand({
     id: APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID,
-    run: async (
-      _accessor,
-      payload: ApplyPhpCodeActionWorkspaceEditPayload | undefined,
-    ) => {
+    run: async (_accessor, payload: ApplyPhpCodeActionWorkspaceEditPayload | undefined) => {
       if (!payload?.edit || !payload.rootPath) {
         return;
       }
 
       try {
-        await applyWorkspaceEditWithOpenModels(
-          monaco,
-          context,
-          payload.edit,
-          payload.rootPath,
-        );
+        await applyWorkspaceEditWithOpenModels(monaco, context, payload.edit, payload.rootPath);
       } catch (error) {
         context.reportError(error);
       }
@@ -752,225 +642,74 @@ export function registerLanguageServerMonacoProviders(
     id: OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID,
     run: (_accessor, payload: OpenPhpChangeSignaturePayload | undefined) => {
       if (!payload || payload.kind !== "change-signature") return;
-      if (
-        !workspaceRootKeysEqual(
-          context.getWorkspaceRoot?.() ?? null,
-          payload.rootPath,
-        )
-      )
-        return;
+      if (!workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? null, payload.rootPath)) return;
       context.openPhpChangeSignature?.(
         payload,
         createOpenModelWorkspaceEditApplier(monaco, context),
       );
     },
   });
-  const hover = monaco.languages.registerHoverProvider("php", {
-    provideHover: (model, position, token) =>
-      provideHover(monaco, context, model, position, token),
-  });
-  const completion = monaco.languages.registerCompletionItemProvider("php", {
-    triggerCharacters: ["$", ">", ":", "'", "\"", "."],
+  const interactiveProviders = registerInteractiveLanguageServerProviders(monaco, {
+    provideCodeActions: (model, range, actionContext) =>
+      provideCodeActions(monaco, context, model, range, actionContext),
     provideCompletionItems: (model, position, completionContext, token) =>
-      provideCompletionItems(
-        monaco,
-        context,
-        model,
-        position,
-        completionContext,
-        token,
-      ),
-  });
-  const signature = monaco.languages.registerSignatureHelpProvider("php", {
-    signatureHelpRetriggerCharacters: [","],
-    signatureHelpTriggerCharacters: ["(", ","],
-    provideSignatureHelp: (model, position, token, signatureContext) =>
-      provideSignatureHelp(
-        monaco,
-        context,
-        model,
-        position,
-        token,
-        signatureContext,
-      ),
-  });
-  const codeActions = monaco.languages.registerCodeActionProvider(
-    "php",
-    {
-      provideCodeActions: (model, range, actionContext) =>
-        provideCodeActions(monaco, context, model, range, actionContext),
-      resolveCodeAction: (action) =>
-        resolveCodeAction(monaco, context, action),
-    },
-    {
-      providedCodeActionKinds: [
-        "quickfix",
-        "refactor",
-        "source",
-        "source.fixAll",
-        "source.organizeImports",
-      ],
-    },
-  );
-  const selectionRange = monaco.languages.registerSelectionRangeProvider("php", {
+      provideCompletionItems(monaco, context, model, position, completionContext, token),
+    provideHover: (model, position, token) => provideHover(monaco, context, model, position, token),
     provideSelectionRanges: (model, positions) =>
       provideSelectionRanges(monaco, context, model, positions),
+    provideSignatureHelp: (model, position, token, signatureContext) =>
+      provideSignatureHelp(monaco, context, model, position, token, signatureContext),
+    resolveCodeAction: (action) => resolveCodeAction(monaco, context, action),
   });
-  const rename = monaco.languages.registerRenameProvider
-    ? monaco.languages.registerRenameProvider("php", {
-        provideRenameEdits: (model, position, newName) =>
-          provideRenameEdits(monaco, context, model, position, newName),
-        resolveRenameLocation: (model, position) =>
-          prepareRename(monaco, context, model, position),
-      })
-    : { dispose: () => undefined };
-  const references = monaco.languages.registerReferenceProvider
-    ? monaco.languages.registerReferenceProvider("php", {
-        provideReferences: (model, position, _referenceContext, token) =>
-          provideReferences(monaco, context, model, position, token),
-      })
-    : { dispose: () => undefined };
-  const definition = monaco.languages.registerDefinitionProvider
-    ? monaco.languages.registerDefinitionProvider("php", {
-        provideDefinition: (model, position, token) =>
-          provideDefinition(monaco, context, model, position, token),
-      })
-    : { dispose: () => undefined };
-  const declaration = monaco.languages.registerDeclarationProvider
-    ? monaco.languages.registerDeclarationProvider("php", {
-        provideDeclaration: (model, position, token) =>
-          provideDeclaration(monaco, context, model, position, token),
-      })
-    : { dispose: () => undefined };
-  const implementation = monaco.languages.registerImplementationProvider
-    ? monaco.languages.registerImplementationProvider("php", {
-        provideImplementation: (model, position, token) =>
-          provideImplementation(monaco, context, model, position, token),
-      })
-    : { dispose: () => undefined };
-  const typeDefinition = monaco.languages.registerTypeDefinitionProvider
-    ? monaco.languages.registerTypeDefinitionProvider("php", {
-        provideTypeDefinition: (model, position, token) =>
-          provideTypeDefinition(monaco, context, model, position, token),
-      })
-    : { dispose: () => undefined };
-  const documentHighlight = monaco.languages.registerDocumentHighlightProvider
-    ? monaco.languages.registerDocumentHighlightProvider("php", {
-        provideDocumentHighlights: (model, position, token) =>
-          provideDocumentHighlights(
-            monaco,
-            context,
-            documentHighlightTracker,
-            model,
-            position,
-            token,
-          ),
-      })
-    : { dispose: () => undefined };
-  const documentSymbol = monaco.languages.registerDocumentSymbolProvider
-    ? monaco.languages.registerDocumentSymbolProvider("php", {
-        provideDocumentSymbols: (model) =>
-          provideDocumentSymbols(monaco, context, model),
-      })
-    : { dispose: () => undefined };
-  const workspaceSymbolRegistry = registry as MonacoWorkspaceSymbolRegistry;
-  const workspaceSymbol = workspaceSymbolRegistry.registerWorkspaceSymbolProvider
-    ? workspaceSymbolRegistry.registerWorkspaceSymbolProvider({
-        provideWorkspaceSymbols: (query) =>
-          provideWorkspaceSymbols(monaco, context, query),
-      })
-    : { dispose: () => undefined };
-  const documentLink = monaco.languages.registerLinkProvider
-    ? monaco.languages.registerLinkProvider("php", {
-        provideLinks: (model) => provideDocumentLinks(monaco, context, model),
-        resolveLink: (link) => resolveDocumentLink(monaco, context, link),
-      })
-    : { dispose: () => undefined };
-  const codeLens = monaco.languages.registerCodeLensProvider
-    ? monaco.languages.registerCodeLensProvider("php", {
-        onDidChange:
-          codeLensRefreshEmitter.event as unknown as Monaco.languages.CodeLensProvider["onDidChange"],
-        provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
-        resolveCodeLens: (model, lens) =>
-          resolveCodeLens(monaco, context, model, lens),
-      })
-    : { dispose: () => undefined };
-  const inlayHints = monaco.languages.registerInlayHintsProvider
-    ? monaco.languages.registerInlayHintsProvider("php", {
-        onDidChangeInlayHints: inlayHintRefreshEmitter.event,
-        provideInlayHints: (model, range) =>
-          provideInlayHints(monaco, context, model, range),
-        resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
-      })
-    : { dispose: () => undefined };
-  const foldingRange = monaco.languages.registerFoldingRangeProvider
-    ? monaco.languages.registerFoldingRangeProvider("php", {
-        provideFoldingRanges: (model) =>
-          provideFoldingRanges(monaco, context, model),
-      })
-    : { dispose: () => undefined };
-  const documentFormatting = monaco.languages.registerDocumentFormattingEditProvider
-    ? monaco.languages.registerDocumentFormattingEditProvider("php", {
-        provideDocumentFormattingEdits: (model, options) =>
-          provideDocumentFormattingEdits(monaco, context, model, options),
-      })
-    : { dispose: () => undefined };
-  const rangeFormatting = monaco.languages.registerDocumentRangeFormattingEditProvider
-    ? monaco.languages.registerDocumentRangeFormattingEditProvider("php", {
-        provideDocumentRangeFormattingEdits: (model, range, options) =>
-          provideDocumentRangeFormattingEdits(
-            monaco,
-            context,
-            model,
-            range,
-            options,
-          ),
-      })
-    : { dispose: () => undefined };
-  const onTypeFormatting = monaco.languages.registerOnTypeFormattingEditProvider
-    ? monaco.languages.registerOnTypeFormattingEditProvider("php", {
-        autoFormatTriggerCharacters:
-          onTypeFormattingTriggerCharacters(context),
-        provideOnTypeFormattingEdits: (model, position, ch, options) =>
-          provideOnTypeFormattingEdits(
-            monaco,
-            context,
-            model,
-            position,
-            ch,
-            options,
-          ),
-      })
-    : { dispose: () => undefined };
-  const linkedEditingRange = monaco.languages.registerLinkedEditingRangeProvider
-    ? monaco.languages.registerLinkedEditingRangeProvider("php", {
-        provideLinkedEditingRanges: (model, position) =>
-          provideLinkedEditingRanges(monaco, context, model, position),
-      })
-    : { dispose: () => undefined };
-  const semanticTokens = registry.registerDocumentSemanticTokensProvider
-    ? registry.registerDocumentSemanticTokensProvider("php", {
-        onDidChange: semanticTokensRefreshEmitter.event,
-        getLegend: () => semanticTokensLegendForActiveRuntime(context),
-        provideDocumentSemanticTokens: (model) =>
-          provideDocumentSemanticTokens(context, model),
-        releaseDocumentSemanticTokens: () => undefined,
-      })
-    : { dispose: () => undefined };
-  const rangeSemanticTokens = registry.registerDocumentRangeSemanticTokensProvider
-    ? registry.registerDocumentRangeSemanticTokensProvider("php", {
-        getLegend: () => semanticTokensLegendForActiveRuntime(context),
-        provideDocumentRangeSemanticTokens: (model, range) =>
-          provideDocumentRangeSemanticTokens(context, model, range),
-      })
-    : { dispose: () => undefined };
-  const templateLanguageProviders = registerTemplateLanguageMonacoProviders(
-    monaco,
-    context,
-    {
-      toCodeAction: toPhpCodeAction,
-    },
-  );
+  const navigationProviders = registerNavigationLanguageServerProviders(monaco, {
+    provideDeclaration: (model, position, token) =>
+      provideDeclaration(monaco, context, model, position, token),
+    provideDefinition: (model, position, token) =>
+      provideDefinition(monaco, context, model, position, token),
+    provideDocumentHighlights: (model, position, token) =>
+      provideDocumentHighlights(monaco, context, documentHighlightTracker, model, position, token),
+    provideDocumentSymbols: (model) => provideDocumentSymbols(monaco, context, model),
+    provideImplementation: (model, position, token) =>
+      provideImplementation(monaco, context, model, position, token),
+    provideReferences: (model, position, _referenceContext, token) =>
+      provideReferences(monaco, context, model, position, token),
+    provideRenameEdits: (model, position, newName) =>
+      provideRenameEdits(monaco, context, model, position, newName),
+    provideTypeDefinition: (model, position, token) =>
+      provideTypeDefinition(monaco, context, model, position, token),
+    provideWorkspaceSymbols: (query) => provideWorkspaceSymbols(monaco, context, query),
+    resolveRenameLocation: (model, position) => prepareRename(monaco, context, model, position),
+  });
+  const documentProviders = registerDocumentLanguageServerProviders(monaco, {
+    getSemanticTokensLegend: () => semanticTokensLegendForActiveRuntime(context),
+    onDidChangeCodeLens: codeLensRefreshEmitter.event as unknown as NonNullable<
+      Monaco.languages.CodeLensProvider["onDidChange"]
+    >,
+    onDidChangeInlayHints: inlayHintRefreshEmitter.event,
+    onDidChangeSemanticTokens: semanticTokensRefreshEmitter.event,
+    onTypeFormattingTriggerCharacters: onTypeFormattingTriggerCharacters(context),
+    provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
+    provideDocumentFormattingEdits: (model, options) =>
+      provideDocumentFormattingEdits(monaco, context, model, options),
+    provideDocumentLinks: (model) => provideDocumentLinks(monaco, context, model),
+    provideDocumentRangeFormattingEdits: (model, range, options) =>
+      provideDocumentRangeFormattingEdits(monaco, context, model, range, options),
+    provideDocumentRangeSemanticTokens: (model, range) =>
+      provideDocumentRangeSemanticTokens(context, model, range),
+    provideDocumentSemanticTokens: (model) => provideDocumentSemanticTokens(context, model),
+    provideFoldingRanges: (model) => provideFoldingRanges(monaco, context, model),
+    provideInlayHints: (model, range) => provideInlayHints(monaco, context, model, range),
+    provideLinkedEditingRanges: (model, position) =>
+      provideLinkedEditingRanges(monaco, context, model, position),
+    provideOnTypeFormattingEdits: (model, position, ch, options) =>
+      provideOnTypeFormattingEdits(monaco, context, model, position, ch, options),
+    resolveCodeLens: (model, lens) => resolveCodeLens(monaco, context, model, lens),
+    resolveDocumentLink: (link) => resolveDocumentLink(monaco, context, link),
+    resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
+  });
+  const templateLanguageProviders = registerTemplateLanguageMonacoProviders(monaco, context, {
+    toCodeAction: toPhpCodeAction,
+  });
 
   return {
     dispose: () => {
@@ -984,30 +723,9 @@ export function registerLanguageServerMonacoProviders(
       applyNewFileCommand.dispose();
       applyCodeActionWorkspaceEditCommand.dispose();
       openPhpChangeSignatureCommand.dispose();
-      hover.dispose();
-      completion.dispose();
-      signature.dispose();
-      codeActions.dispose();
-      selectionRange.dispose();
-      rename.dispose();
-      references.dispose();
-      definition.dispose();
-      declaration.dispose();
-      implementation.dispose();
-      typeDefinition.dispose();
-      documentHighlight.dispose();
-      documentSymbol.dispose();
-      workspaceSymbol.dispose();
-      documentLink.dispose();
-      codeLens.dispose();
-      inlayHints.dispose();
-      foldingRange.dispose();
-      documentFormatting.dispose();
-      rangeFormatting.dispose();
-      onTypeFormatting.dispose();
-      linkedEditingRange.dispose();
-      semanticTokens.dispose();
-      rangeSemanticTokens.dispose();
+      interactiveProviders.dispose();
+      navigationProviders.dispose();
+      documentProviders.dispose();
       templateLanguageProviders.dispose();
       unregisterWorkspaceIdentity();
     },
@@ -1074,11 +792,7 @@ async function provideRenameEdits(
       return null;
     }
 
-    const edit = await context.featuresGateway.rename(
-      request.rootPath,
-      request.position,
-      newName,
-    );
+    const edit = await context.featuresGateway.rename(request.rootPath, request.position, newName);
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1089,12 +803,7 @@ async function provideRenameEdits(
     }
 
     if (context.applyWorkspaceEdit) {
-      await applyWorkspaceEditWithOpenModels(
-        monaco,
-        context,
-        edit,
-        request.rootPath,
-      );
+      await applyWorkspaceEditWithOpenModels(monaco, context, edit, request.rootPath);
 
       if (!isFeatureRequestActive(context, request)) {
         return null;
@@ -1103,12 +812,7 @@ async function provideRenameEdits(
       return { edits: [] };
     }
 
-    return toMonacoWorkspaceEdit(
-      monaco,
-      workspaceEditContext(model),
-      edit,
-      request.rootPath,
-    );
+    return toMonacoWorkspaceEdit(monaco, workspaceEditContext(model), edit, request.rootPath);
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -1128,8 +832,7 @@ async function provideReferences(
     model,
     position,
     "references",
-    (rootPath, requestPosition) =>
-      context.featuresGateway.references(rootPath, requestPosition),
+    (rootPath, requestPosition) => context.featuresGateway.references(rootPath, requestPosition),
     token,
   );
 }
@@ -1147,8 +850,7 @@ async function provideDeclaration(
     model,
     position,
     "declaration",
-    (rootPath, requestPosition) =>
-      context.featuresGateway.declaration(rootPath, requestPosition),
+    (rootPath, requestPosition) => context.featuresGateway.declaration(rootPath, requestPosition),
     token,
   );
 }
@@ -1174,8 +876,7 @@ async function provideDefinition(
     model,
     position,
     "definition",
-    (rootPath, requestPosition) =>
-      context.featuresGateway.definition(rootPath, requestPosition),
+    (rootPath, requestPosition) => context.featuresGateway.definition(rootPath, requestPosition),
     token,
   );
 }
@@ -1226,12 +927,7 @@ async function provideDocumentHighlights(
   position: MonacoPosition,
   token: Monaco.CancellationToken,
 ): Promise<Monaco.languages.DocumentHighlight[] | null> {
-  const request = featureRequestContext(
-    context,
-    model,
-    position,
-    "documentHighlight",
-  );
+  const request = featureRequestContext(context, model, position, "documentHighlight");
 
   if (!request) {
     return null;
@@ -1266,9 +962,7 @@ async function provideDocumentHighlights(
       return null;
     }
 
-    const mapped = highlights.map((highlight) =>
-      toMonacoDocumentHighlight(monaco, highlight),
-    );
+    const mapped = highlights.map((highlight) => toMonacoDocumentHighlight(monaco, highlight));
 
     if (word !== null) {
       tracker.remember(request.path, word, version, mapped);
@@ -1297,10 +991,7 @@ async function provideFoldingRanges(
       return null;
     }
 
-    const ranges = await context.featuresGateway.foldingRanges(
-      request.rootPath,
-      request.path,
-    );
+    const ranges = await context.featuresGateway.foldingRanges(request.rootPath, request.path);
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1391,11 +1082,7 @@ async function provideOnTypeFormattingEdits(
   ch: string,
   options: Monaco.languages.FormattingOptions,
 ): Promise<Monaco.languages.TextEdit[]> {
-  const request = featureDocumentRequestContext(
-    context,
-    model,
-    "onTypeFormatting",
-  );
+  const request = featureDocumentRequestContext(context, model, "onTypeFormatting");
 
   if (!request) {
     return [];
@@ -1452,13 +1139,10 @@ async function provideDocumentSymbols(
       return null;
     }
 
-    const load = () => context.featuresGateway.documentSymbols(
-      request.rootPath,
-      request.path,
-    );
+    const load = () => context.featuresGateway.documentSymbols(request.rootPath, request.path);
     const symbols = await (request.lifecycleIdentity == null
       ? load()
-      : context.coordinatePhpDocumentSymbols?.(
+      : (context.coordinatePhpDocumentSymbols?.(
           {
             ...request,
             content: model.getValue(),
@@ -1466,7 +1150,7 @@ async function provideDocumentSymbols(
             runtimeIdentity: context.featuresGateway,
           },
           load,
-        ) ?? load());
+        ) ?? load()));
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1491,18 +1175,13 @@ async function provideWorkspaceSymbols(
   }
 
   try {
-    const symbols = await context.featuresGateway.workspaceSymbols(
-      request.rootPath,
-      query,
-    );
+    const symbols = await context.featuresGateway.workspaceSymbols(request.rootPath, query);
 
     if (!isFeatureRequestActive(context, request)) {
       return [];
     }
 
-    return symbols.flatMap((symbol) =>
-      toMonacoWorkspaceSymbol(monaco, request.rootPath, symbol),
-    );
+    return symbols.flatMap((symbol) => toMonacoWorkspaceSymbol(monaco, request.rootPath, symbol));
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return [];
@@ -1515,12 +1194,7 @@ async function provideLinkedEditingRanges(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.LinkedEditingRanges | null> {
-  const request = featureRequestContext(
-    context,
-    model,
-    position,
-    "linkedEditingRange",
-  );
+  const request = featureRequestContext(context, model, position, "linkedEditingRange");
 
   if (!request) {
     return null;
@@ -1563,10 +1237,7 @@ async function provideDocumentLinks(
       return documentLinkList();
     }
 
-    const links = await context.featuresGateway.documentLinks(
-      request.rootPath,
-      request.path,
-    );
+    const links = await context.featuresGateway.documentLinks(request.rootPath, request.path);
 
     if (!isFeatureRequestActive(context, request)) {
       return documentLinkList();
@@ -1689,10 +1360,7 @@ async function provideCodeLenses(
       return codeLensList();
     }
 
-    const lenses = await context.featuresGateway.codeLenses(
-      request.rootPath,
-      request.path,
-    );
+    const lenses = await context.featuresGateway.codeLenses(request.rootPath, request.path);
 
     if (!isFeatureRequestActive(context, request)) {
       return codeLensList();
@@ -1844,16 +1512,9 @@ async function provideInlayHints(
         hint,
       ),
     );
-    const parameterHints = await providePhpParameterNameInlayHints(
-      context,
-      request,
-      model,
-      range,
-    );
+    const parameterHints = await providePhpParameterNameInlayHints(context, request, model, range);
 
-    return inlayHintList(
-      mergePhpInlayHints(parameterHints, monacoHints),
-    );
+    return inlayHintList(mergePhpInlayHints(parameterHints, monacoHints));
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return inlayHintList();
@@ -1937,13 +1598,10 @@ function mergePhpInlayHints(
   phpactorHints: LanguageServerBackedInlayHint[],
 ): LanguageServerBackedInlayHint[] {
   const occupied = new Set(
-    phpactorHints.map(
-      (hint) => `${hint.position.lineNumber}:${hint.position.column}`,
-    ),
+    phpactorHints.map((hint) => `${hint.position.lineNumber}:${hint.position.column}`),
   );
   const fallback = parameterHints.filter(
-    (hint) =>
-      !occupied.has(`${hint.position.lineNumber}:${hint.position.column}`),
+    (hint) => !occupied.has(`${hint.position.lineNumber}:${hint.position.column}`),
   );
 
   return [...phpactorHints, ...fallback];
@@ -1972,10 +1630,7 @@ async function resolveInlayHint(
     return hint;
   }
 
-  const runtimeStatus = runningRuntimeStatusForRoot(
-    context,
-    backedHint.__workspaceRoot,
-  );
+  const runtimeStatus = runningRuntimeStatusForRoot(context, backedHint.__workspaceRoot);
   if (
     runtimeStatus?.sessionId !== backedHint.__languageServerSessionId ||
     runtimeStatus.capabilities.inlayHintResolve !== true
@@ -2045,12 +1700,7 @@ async function provideNavigationLocations(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
-  feature:
-    | "declaration"
-    | "definition"
-    | "implementation"
-    | "references"
-    | "typeDefinition",
+  feature: "declaration" | "definition" | "implementation" | "references" | "typeDefinition",
   requestLocations: (
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -2128,12 +1778,7 @@ async function provideCodeActions(
   range: Monaco.Range,
   actionContext: Monaco.languages.CodeActionContext,
 ): Promise<Monaco.languages.CodeActionList> {
-  const localActions = provideLocalCodeActions(
-    monaco,
-    model,
-    range,
-    actionContext,
-  );
+  const localActions = provideLocalCodeActions(monaco, model, range, actionContext);
   const request = featureDocumentRequestContext(context, model, "codeAction");
   const phpDocumentContext = activePhpDocumentContext(context, model);
   const phpActions = context.providePhpCodeActions
@@ -2150,9 +1795,7 @@ async function provideCodeActions(
   // request; re-validate their document context at EVERY return so a workspace
   // switch during any later await drops them (per-project isolation).
   const activePhpActions = () =>
-    phpDocumentContext && isPhpDocumentContextActive(context, phpDocumentContext)
-      ? phpActions
-      : [];
+    phpDocumentContext && isPhpDocumentContextActive(context, phpDocumentContext) ? phpActions : [];
 
   if (!request) {
     return codeActionList([...activePhpActions(), ...localActions]);
@@ -2292,10 +1935,7 @@ function phpOrganizeImportsKindRequested(only: string): boolean {
  * the 0-based character offset span the controller's position-aware actions
  * consume. An empty selection collapses to `start === end` (the bare cursor).
  */
-function phpCodeActionOffsetRange(
-  source: string,
-  range: Monaco.Range,
-): PhpCodeActionRange {
+function phpCodeActionOffsetRange(source: string, range: Monaco.Range): PhpCodeActionRange {
   const start = offsetAtMonacoPosition(source, {
     column: range.startColumn,
     lineNumber: range.startLineNumber,
@@ -2318,7 +1958,7 @@ function canApplyPhpWorkspaceEditDescriptor(
 
   return Boolean(
     context.applyWorkspaceEdit &&
-      (descriptor.workspaceRoot ?? context.getWorkspaceRoot?.() ?? null),
+    (descriptor.workspaceRoot ?? context.getWorkspaceRoot?.() ?? null),
   );
 }
 
@@ -2346,10 +1986,7 @@ function toPhpCodeAction(
 
     if (rootPath) {
       return {
-        command: applyPhpCodeActionWorkspaceEditCommand(
-          descriptor.workspaceEdit,
-          rootPath,
-        ),
+        command: applyPhpCodeActionWorkspaceEditCommand(descriptor.workspaceEdit, rootPath),
         edit: { edits: [] },
         isPreferred: descriptor.isPreferred,
         kind: descriptor.kind ?? "quickfix",
@@ -2373,11 +2010,7 @@ function toPhpCodeAction(
   // bulk edit.
   if (descriptor.newFile && context.applyPhpCodeActionNewFile) {
     return {
-      command: applyPhpCodeActionNewFileCommand(
-        descriptor.newFile,
-        descriptor.edits,
-        model,
-      ),
+      command: applyPhpCodeActionNewFileCommand(descriptor.newFile, descriptor.edits, model),
       edit: { edits: [] },
       isPreferred: descriptor.isPreferred,
       kind: descriptor.kind ?? "quickfix",
@@ -2388,11 +2021,7 @@ function toPhpCodeAction(
   return {
     edit: {
       edits: [
-        ...newFileEdits(
-          monaco,
-          context.getWorkspaceRoot?.() ?? null,
-          descriptor.newFile,
-        ),
+        ...newFileEdits(monaco, context.getWorkspaceRoot?.() ?? null, descriptor.newFile),
         ...documentEdits,
       ],
     },
@@ -2427,9 +2056,7 @@ function phpCodeActionDocumentEdit(
         ),
         text: edit.text,
       },
-      versionId: phpCodeActionEditTargetsModel(edit, model)
-        ? modelVersionId
-        : undefined,
+      versionId: phpCodeActionEditTargetsModel(edit, model) ? modelVersionId : undefined,
     },
   ];
 }
@@ -2470,10 +2097,7 @@ function applyPhpCodeActionNewFileCommand(
         newFile,
         sourcePath: modelPath(model),
         sourceModelUri: model.uri.toString(),
-        versionId:
-          typeof model.getVersionId === "function"
-            ? model.getVersionId()
-            : undefined,
+        versionId: typeof model.getVersionId === "function" ? model.getVersionId() : undefined,
       } satisfies ApplyPhpCodeActionNewFilePayload,
     ],
     id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
@@ -2486,18 +2110,13 @@ function applyPhpCodeActionWorkspaceEditCommand(
   rootPath: string,
 ): Monaco.languages.Command {
   return {
-    arguments: [
-      { edit, rootPath } satisfies ApplyPhpCodeActionWorkspaceEditPayload,
-    ],
+    arguments: [{ edit, rootPath } satisfies ApplyPhpCodeActionWorkspaceEditPayload],
     id: APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID,
     title: "Apply workspace edit",
   };
 }
 
-function phpCodeActionEditTargetsModel(
-  edit: PhpCodeActionTextEdit,
-  model: MonacoModel,
-): boolean {
+function phpCodeActionEditTargetsModel(edit: PhpCodeActionTextEdit, model: MonacoModel): boolean {
   if (!edit.path) {
     return true;
   }
@@ -2551,9 +2170,7 @@ function newFileEdits(
   monaco: MonacoApi,
   rootPath: string | null,
   newFile: PhpCodeActionNewFile | undefined,
-): Array<
-  Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
-> {
+): Array<Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit> {
   if (!newFile || !rootPath) {
     return [];
   }
@@ -2674,9 +2291,7 @@ async function resolveCodeAction(
  * server that does not support `codeAction/resolve` to fill in what is already
  * present.
  */
-function isLanguageServerActionAlreadyResolved(
-  action: LanguageServerCodeAction,
-): boolean {
+function isLanguageServerActionAlreadyResolved(action: LanguageServerCodeAction): boolean {
   return Boolean(action.edit) || Boolean(action.command);
 }
 
@@ -2690,12 +2305,9 @@ function isLanguageServerActionAlreadyResolved(
  * simply cannot be resolved.
  */
 function isUnsupportedCodeActionResolveError(error: unknown): boolean {
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
 
-  return /codeAction\/resolve.*not found|not found.*codeAction\/resolve/i.test(
-    message,
-  );
+  return /codeAction\/resolve.*not found|not found.*codeAction\/resolve/i.test(message);
 }
 
 function provideLocalCodeActions(
@@ -2736,9 +2348,7 @@ function provideLocalCodeActions(
     }));
 }
 
-function codeActionList(
-  actions: Monaco.languages.CodeAction[],
-): Monaco.languages.CodeActionList {
+function codeActionList(actions: Monaco.languages.CodeAction[]): Monaco.languages.CodeActionList {
   return {
     actions,
     dispose: () => undefined,
@@ -2767,65 +2377,48 @@ function orderCodeActions({
     }),
   );
   const seenLanguageServerActions = new Set<string>();
-  const filteredLanguageServerActions = languageServerActions.filter(
-    (action) => {
-      const phpactorCreateTypeName = phpactorCreateTypeVariantName(action);
-      if (
-        phpactorCreateTypeName &&
-        safeCreateTypeNames.has(phpactorCreateTypeName)
-      ) {
-        return false;
-      }
+  const filteredLanguageServerActions = languageServerActions.filter((action) => {
+    const phpactorCreateTypeName = phpactorCreateTypeVariantName(action);
+    if (phpactorCreateTypeName && safeCreateTypeNames.has(phpactorCreateTypeName)) {
+      return false;
+    }
 
-      const phpactorCreateMemberKey = phpactorCreateMemberVariantKey(action);
-      if (
-        phpactorCreateMemberKey &&
-        safeCreateMemberKeys.has(phpactorCreateMemberKey)
-      ) {
-        return false;
-      }
+    const phpactorCreateMemberKey = phpactorCreateMemberVariantKey(action);
+    if (phpactorCreateMemberKey && safeCreateMemberKeys.has(phpactorCreateMemberKey)) {
+      return false;
+    }
 
-      const key = codeActionDedupeKey(action);
+    const key = codeActionDedupeKey(action);
 
-      if (seenLanguageServerActions.has(key)) {
-        return false;
-      }
+    if (seenLanguageServerActions.has(key)) {
+      return false;
+    }
 
-      seenLanguageServerActions.add(key);
-      return true;
-    },
-  );
+    seenLanguageServerActions.add(key);
+    return true;
+  });
 
   return [...phpActions, ...filteredLanguageServerActions, ...localActions];
 }
 
 function phpCreateTypeActionName(title: string): string | null {
-  const match = /^Create (?:class|interface|trait|enum) ([A-Za-z_\\][A-Za-z0-9_\\]*)$/.exec(
-    title,
-  );
+  const match = /^Create (?:class|interface|trait|enum) ([A-Za-z_\\][A-Za-z0-9_\\]*)$/.exec(title);
 
   return match ? phpTypeShortName(match[1] ?? "") : null;
 }
 
-function phpactorCreateTypeVariantName(
-  action: Monaco.languages.CodeAction,
-): string | null {
+function phpactorCreateTypeVariantName(action: Monaco.languages.CodeAction): string | null {
   const backedAction = action as LanguageServerBackedCodeAction;
 
   if (!backedAction.__languageServerAction) {
     return null;
   }
 
-  return (
-    phpactorCreateFileActionName(action.title) ??
-    phpCreateTypeActionName(action.title)
-  );
+  return phpactorCreateFileActionName(action.title) ?? phpCreateTypeActionName(action.title);
 }
 
 function phpCreateMemberActionKey(title: string): string | null {
-  const match = /^Create (method|property|constant) '([^']+)'(?: in '[^']+')?$/i.exec(
-    title,
-  );
+  const match = /^Create (method|property|constant) '([^']+)'(?: in '[^']+')?$/i.exec(title);
 
   if (!match?.[1] || !match[2]) {
     return null;
@@ -2834,9 +2427,7 @@ function phpCreateMemberActionKey(title: string): string | null {
   return phpCreateMemberKey(match[1], match[2]);
 }
 
-function phpactorCreateMemberVariantKey(
-  action: Monaco.languages.CodeAction,
-): string | null {
+function phpactorCreateMemberVariantKey(action: Monaco.languages.CodeAction): string | null {
   const backedAction = action as LanguageServerBackedCodeAction;
 
   if (!backedAction.__languageServerAction) {
@@ -2876,16 +2467,11 @@ function phpMemberShortName(name: string): string {
 
   const namespaceParts = normalized.split("\\").filter(Boolean);
 
-  return (namespaceParts[namespaceParts.length - 1] ?? normalized).replace(
-    /^\$+/,
-    "",
-  );
+  return (namespaceParts[namespaceParts.length - 1] ?? normalized).replace(/^\$+/, "");
 }
 
 function phpactorCreateFileActionName(title: string): string | null {
-  const quoted = /^Create (?:default|class|interface|trait|enum) file for "([^"]+)"$/i.exec(
-    title,
-  );
+  const quoted = /^Create (?:default|class|interface|trait|enum) file for "([^"]+)"$/i.exec(title);
 
   if (quoted) {
     return phpTypeShortName(quoted[1] ?? "");
@@ -2906,53 +2492,42 @@ function phpTypeShortName(name: string): string {
   const normalized = name.replace(/^\\+/, "").trim();
   const segments = normalized.split("\\").filter(Boolean);
 
-  return segments.length > 0 ? segments[segments.length - 1] ?? normalized : normalized;
+  return segments.length > 0 ? (segments[segments.length - 1] ?? normalized) : normalized;
 }
 
 function codeActionDedupeKey(action: Monaco.languages.CodeAction): string {
   return [action.kind ?? "", action.title].join("\0");
 }
 
-function documentLinkList(
-  links: Monaco.languages.ILink[] = [],
-): Monaco.languages.ILinksList {
+function documentLinkList(links: Monaco.languages.ILink[] = []): Monaco.languages.ILinksList {
   return {
     dispose: () => undefined,
     links,
   };
 }
 
-function codeLensList(
-  lenses: Monaco.languages.CodeLens[] = [],
-): Monaco.languages.CodeLensList {
+function codeLensList(lenses: Monaco.languages.CodeLens[] = []): Monaco.languages.CodeLensList {
   return {
     dispose: () => undefined,
     lenses,
   };
 }
 
-function inlayHintList(
-  hints: Monaco.languages.InlayHint[] = [],
-): Monaco.languages.InlayHintList {
+function inlayHintList(hints: Monaco.languages.InlayHint[] = []): Monaco.languages.InlayHintList {
   return {
     dispose: () => undefined,
     hints,
   };
 }
 
-function isUnexpectedBareIdentifierMarker(
-  marker: Monaco.editor.IMarkerData,
-): boolean {
+function isUnexpectedBareIdentifierMarker(marker: Monaco.editor.IMarkerData): boolean {
   return (
     marker.source === "PHP Syntax" &&
     /^Unexpected bare PHP identifier "[^"]+"\.$/.test(marker.message)
   );
 }
 
-function markerTouchesRange(
-  marker: Monaco.editor.IMarkerData,
-  range: Monaco.Range,
-): boolean {
+function markerTouchesRange(marker: Monaco.editor.IMarkerData, range: Monaco.Range): boolean {
   if (marker.endLineNumber < range.startLineNumber) {
     return false;
   }
@@ -2961,17 +2536,11 @@ function markerTouchesRange(
     return false;
   }
 
-  if (
-    marker.startLineNumber === range.endLineNumber &&
-    marker.startColumn > range.endColumn
-  ) {
+  if (marker.startLineNumber === range.endLineNumber && marker.startColumn > range.endColumn) {
     return false;
   }
 
-  if (
-    marker.endLineNumber === range.startLineNumber &&
-    marker.endColumn < range.startColumn
-  ) {
+  if (marker.endLineNumber === range.startLineNumber && marker.endColumn < range.startColumn) {
     return false;
   }
 
@@ -3005,9 +2574,7 @@ function toLanguageServerCodeActionContext(
   };
 }
 
-function onTypeFormattingTriggerCharacters(
-  context: LanguageServerMonacoProviderContext,
-): string[] {
+function onTypeFormattingTriggerCharacters(context: LanguageServerMonacoProviderContext): string[] {
   const status = context.getRuntimeStatus();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
   const triggers =
@@ -3095,10 +2662,7 @@ function codeActionTriggerKind(
   return null;
 }
 
-function lspDiagnosticSeverity(
-  monaco: MonacoApi,
-  severity: Monaco.MarkerSeverity,
-): number | null {
+function lspDiagnosticSeverity(monaco: MonacoApi, severity: Monaco.MarkerSeverity): number | null {
   if (severity === monaco.MarkerSeverity.Error) {
     return 1;
   }
@@ -3134,9 +2698,7 @@ function toMonacoCodeAction(
   }
 
   const codeAction: LanguageServerBackedCodeAction = {
-    ...(lifecycleIdentity == null
-      ? {}
-      : { __documentLifecycleIdentity: lifecycleIdentity }),
+    ...(lifecycleIdentity == null ? {} : { __documentLifecycleIdentity: lifecycleIdentity }),
     __languageServerAction: action,
     __languageServerSessionId: sessionId,
     ...(sourcePath ? { __sourcePath: sourcePath } : {}),
@@ -3191,12 +2753,7 @@ function toMonacoCodeAction(
           : {}),
     ...(action.edit && !appliesEditThroughWorkspaceApplier
       ? {
-          edit: toMonacoWorkspaceEdit(
-            monaco,
-            editContext,
-            action.edit,
-            rootPath,
-          ),
+          edit: toMonacoWorkspaceEdit(monaco, editContext, action.edit, rootPath),
         }
       : {}),
     ...(action.disabled
@@ -3244,9 +2801,7 @@ function toMonacoCodeLens(
   lens: LanguageServerCodeLens,
 ): LanguageServerBackedCodeLens {
   return {
-    ...(lifecycleIdentity == null
-      ? {}
-      : { __documentLifecycleIdentity: lifecycleIdentity }),
+    ...(lifecycleIdentity == null ? {} : { __documentLifecycleIdentity: lifecycleIdentity }),
     __languageServerLens: lens,
     __languageServerSessionId: sessionId,
     __sourcePath: sourcePath,
@@ -3294,9 +2849,7 @@ function toMonacoInlayHint(
     ...(kind != null ? { kind } : {}),
     ...(hint.textEdits?.length
       ? {
-          textEdits: hint.textEdits.map((edit) =>
-            toMonacoTextEdit(monaco, edit),
-          ),
+          textEdits: hint.textEdits.map((edit) => toMonacoTextEdit(monaco, edit)),
         }
       : {}),
     tooltip: hint.tooltip ?? undefined,
@@ -3340,9 +2893,7 @@ function toMonacoInlayHintLabel(
   }
 
   return label.map((part) => {
-    const [location] = part.location
-      ? toMonacoLocation(monaco, rootPath, part.location)
-      : [];
+    const [location] = part.location ? toMonacoLocation(monaco, rootPath, part.location) : [];
 
     return {
       ...(part.command
@@ -3445,9 +2996,7 @@ function toMonacoFileUri(
   return toWorkspaceMonacoUri(monaco, rootPath, path);
 }
 
-function toMonacoCommandPosition(
-  value: unknown,
-): Monaco.IPosition | null {
+function toMonacoCommandPosition(value: unknown): Monaco.IPosition | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -3462,127 +3011,6 @@ function toMonacoCommandPosition(
   return {
     column: Math.max(1, character + 1),
     lineNumber: Math.max(1, line + 1),
-  };
-}
-
-function toMonacoWorkspaceEdit(
-  monaco: MonacoApi,
-  context: WorkspaceEditContext,
-  edit: LanguageServerWorkspaceEdit,
-  rootPath: string,
-): Monaco.languages.WorkspaceEdit {
-  const canonicalEdit = mergeAliasedWorkspaceEditDocumentChanges(edit);
-
-  return {
-    edits: Object.entries(canonicalEdit.changes).flatMap(([uri, edits]) => {
-      const path = pathFromLanguageServerUri(uri);
-
-      if (!path) {
-        return [];
-      }
-
-      if (!isPathInWorkspaceRoot(rootPath, path)) {
-        return [];
-      }
-
-      const resource = toWorkspaceMonacoUri(monaco, rootPath, path);
-
-      if (!resource) {
-        return [];
-      }
-      const versionId = context.path === path ? context.versionId : undefined;
-
-      return edits.map((textEdit) => ({
-        resource,
-        textEdit: toMonacoTextEdit(monaco, textEdit),
-        versionId,
-      }));
-    }),
-  };
-}
-
-function toMonacoLocation(
-  monaco: MonacoApi,
-  rootPath: string,
-  location: LanguageServerLocation,
-  limitToOpenModels = false,
-): Monaco.languages.Location[] {
-  const path = pathFromLanguageServerUri(location.uri);
-
-  if (!path || !isPathInWorkspaceRoot(rootPath, path)) {
-    return [];
-  }
-
-  const uri = toWorkspaceMonacoUri(monaco, rootPath, path);
-
-  if (!uri) {
-    return [];
-  }
-
-  if (limitToOpenModels && !monaco.editor.getModel(uri)) {
-    return [];
-  }
-
-  return [
-    {
-      range: toMonacoRange(monaco, location.range),
-      uri,
-    },
-  ];
-}
-
-function toMonacoWorkspaceSymbol(
-  monaco: MonacoApi,
-  rootPath: string,
-  symbol: LanguageServerWorkspaceSymbol,
-): MonacoWorkspaceSymbol[] {
-  if (!symbol.location) {
-    return [];
-  }
-
-  const [location] = toMonacoLocation(monaco, rootPath, symbol.location);
-
-  if (!location) {
-    return [];
-  }
-
-  return [
-    {
-      ...(symbol.containerName ? { containerName: symbol.containerName } : {}),
-      kind: monacoSymbolKind(monaco, symbol.kind),
-      location,
-      name: symbol.name,
-    },
-  ];
-}
-
-function toMonacoDocumentLink(
-  monaco: MonacoApi,
-  rootPath: string,
-  sourcePath: string,
-  sessionId: number,
-  lifecycleIdentity: number | null | undefined,
-  link: LanguageServerDocumentLink,
-): LanguageServerBackedLink {
-  return {
-    ...(lifecycleIdentity == null
-      ? {}
-      : { __documentLifecycleIdentity: lifecycleIdentity }),
-    __languageServerLink: link,
-    __languageServerSessionId: sessionId,
-    __sourcePath: sourcePath,
-    __workspaceRoot: rootPath,
-    range: toMonacoRange(monaco, link.range),
-    tooltip: link.tooltip ?? undefined,
-    url: link.target ?? undefined,
-  };
-}
-
-function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
-  return {
-    path: modelPath(model),
-    versionId:
-      typeof model.getVersionId === "function" ? model.getVersionId() : undefined,
   };
 }
 
@@ -3619,13 +3047,15 @@ function stageWorkspaceEditForOpenModels(
       return [];
     }
 
-    return [{
-      content: model.getValue(),
-      edits,
-      model,
-      path,
-      versionId: model.getVersionId(),
-    }];
+    return [
+      {
+        content: model.getValue(),
+        edits,
+        model,
+        path,
+        versionId: model.getVersionId(),
+      },
+    ];
   });
 }
 
@@ -3758,12 +3188,7 @@ async function applyWorkspaceEditEvent(
     return;
   }
 
-  await applyWorkspaceEditWithOpenModels(
-    monaco,
-    context,
-    event.edit,
-    event.rootPath,
-  );
+  await applyWorkspaceEditWithOpenModels(monaco, context, event.edit, event.rootPath);
 }
 
 function workspaceEditForRoot(
@@ -3786,9 +3211,7 @@ function workspaceEditForRoot(
   );
   const fileOperations = (edit.fileOperations ?? []).filter((operation) => {
     const uris =
-      operation.kind === "rename"
-        ? [operation.oldUri, operation.newUri]
-        : [operation.uri];
+      operation.kind === "rename" ? [operation.oldUri, operation.newUri] : [operation.uri];
 
     return uris.every((uri) => {
       const path = pathFromLanguageServerUri(uri);
@@ -3799,9 +3222,7 @@ function workspaceEditForRoot(
 
   return mergeAliasedWorkspaceEditDocumentChanges({
     ...(fileOperations.length > 0 ? { fileOperations } : {}),
-    ...(Object.keys(documentVersions).length > 0
-      ? { documentVersions }
-      : {}),
+    ...(Object.keys(documentVersions).length > 0 ? { documentVersions } : {}),
     changes,
   });
 }
@@ -3875,12 +3296,7 @@ async function provideCompletionItems(
   const word = model.getWordUntilPosition(position);
   const range = completionRange(model, position, word);
   const source = modelSource(model, documentContext.activeDocument.content);
-  const postfixSuggestions = phpPostfixCompletionSuggestions(
-    monaco,
-    model,
-    source,
-    position,
-  );
+  const postfixSuggestions = phpPostfixCompletionSuggestions(monaco, model, source, position);
 
   if (postfixSuggestions) {
     return { suggestions: postfixSuggestions };
@@ -3900,14 +3316,8 @@ async function provideCompletionItems(
     return { suggestions: frameworkSuggestions };
   }
 
-  const memberAccessCompletionContext = phpMemberAccessCompletionContextAt(
-    source,
-    position,
-  );
-  const staticAccessCompletionContext = phpStaticAccessCompletionContextAt(
-    source,
-    position,
-  );
+  const memberAccessCompletionContext = phpMemberAccessCompletionContextAt(source, position);
+  const staticAccessCompletionContext = phpStaticAccessCompletionContextAt(source, position);
   const isMemberOrStaticAccessCompletion = Boolean(
     memberAccessCompletionContext || staticAccessCompletionContext,
   );
@@ -3948,10 +3358,7 @@ async function provideCompletionItems(
   const variableSuggestions: Monaco.languages.CompletionItem[] =
     methodSuggestions.length > 0 || isScopedCompletion
       ? []
-      : phpVariableCompletionsAt(
-          source,
-          position,
-        ).map((item, index) => ({
+      : phpVariableCompletionsAt(source, position).map((item, index) => ({
           detail: item.detail,
           insertText: item.name,
           kind: monaco.languages.CompletionItemKind.Variable,
@@ -4029,11 +3436,13 @@ async function provideCompletionItems(
       return [];
     }
 
-    if (!phpLspCompletionVisibleForReceiver(
-      item,
-      memberAccessCompletionContext?.receiverExpression ?? null,
-      staticAccessCompletionContext?.className ?? null,
-    )) {
+    if (
+      !phpLspCompletionVisibleForReceiver(
+        item,
+        memberAccessCompletionContext?.receiverExpression ?? null,
+        staticAccessCompletionContext?.className ?? null,
+      )
+    ) {
       return [];
     }
 
@@ -4043,43 +3452,41 @@ async function provideCompletionItems(
         ? item.additionalTextEdits.map((edit) => toMonacoTextEdit(monaco, edit))
         : undefined;
 
-    return [{
-      ...(additionalTextEdits ? { additionalTextEdits } : {}),
-      ...(item.commitCharacters && item.commitCharacters.length > 0
-        ? { commitCharacters: item.commitCharacters }
-        : {}),
-      detail: item.detail || undefined,
-      documentation: phpLspCompletionDocumentation(item),
-      filterText: item.filterText || undefined,
-      insertText: insert.insertText,
-      ...(item.command
-        ? {
-            command: toMonacoLanguageServerCommand(
-              resolution.rootPath,
-              resolution.sessionId,
-              item.command,
-              item.label,
-              resolution.sourcePath,
-              resolution.lifecycleIdentity,
-            ),
-          }
-        : insert.command
-          ? { command: insert.command }
+    return [
+      {
+        ...(additionalTextEdits ? { additionalTextEdits } : {}),
+        ...(item.commitCharacters && item.commitCharacters.length > 0
+          ? { commitCharacters: item.commitCharacters }
           : {}),
-      ...(insert.insertTextRules
-        ? { insertTextRules: insert.insertTextRules }
-        : {}),
-      kind,
-      label: phpLspCompletionLabel(item),
-      ...(item.preselect ? { preselect: true } : {}),
-      range,
-      sortText: item.sortText
-        ? `1_${item.sortText}`
-        : `1_${String(index).padStart(4, "0")}`,
-      ...(phpLspCompletionIsDeprecated(item)
-        ? { tags: [monaco.languages.CompletionItemTag.Deprecated] }
-        : {}),
-    }];
+        detail: item.detail || undefined,
+        documentation: phpLspCompletionDocumentation(item),
+        filterText: item.filterText || undefined,
+        insertText: insert.insertText,
+        ...(item.command
+          ? {
+              command: toMonacoLanguageServerCommand(
+                resolution.rootPath,
+                resolution.sessionId,
+                item.command,
+                item.label,
+                resolution.sourcePath,
+                resolution.lifecycleIdentity,
+              ),
+            }
+          : insert.command
+            ? { command: insert.command }
+            : {}),
+        ...(insert.insertTextRules ? { insertTextRules: insert.insertTextRules } : {}),
+        kind,
+        label: phpLspCompletionLabel(item),
+        ...(item.preselect ? { preselect: true } : {}),
+        range,
+        sortText: item.sortText ? `1_${item.sortText}` : `1_${String(index).padStart(4, "0")}`,
+        ...(phpLspCompletionIsDeprecated(item)
+          ? { tags: [monaco.languages.CompletionItemTag.Deprecated] }
+          : {}),
+      },
+    ];
   });
 
   // Ordering for dedupe: locally-computed method/variable suggestions first,
@@ -4116,9 +3523,11 @@ function phpLspCompletionVisibleForReceiver(
 
   const normalizedStaticReceiver = staticReceiver?.trim().toLowerCase();
 
-  return normalizedStaticReceiver === "self" ||
+  return (
+    normalizedStaticReceiver === "self" ||
     normalizedStaticReceiver === "static" ||
-    normalizedStaticReceiver === "parent";
+    normalizedStaticReceiver === "parent"
+  );
 }
 
 function phpLspCompletionLabel(
@@ -4131,7 +3540,11 @@ function phpLspCompletionLabel(
     return item.label;
   }
 
-  return { ...(description ? { description } : {}), ...(detail ? { detail } : {}), label: item.label };
+  return {
+    ...(description ? { description } : {}),
+    ...(detail ? { detail } : {}),
+    label: item.label,
+  };
 }
 
 function phpLspCompletionDocumentation(
@@ -4141,9 +3554,7 @@ function phpLspCompletionDocumentation(
     return undefined;
   }
 
-  return item.documentationKind === "markdown"
-    ? { value: item.documentation }
-    : item.documentation;
+  return item.documentationKind === "markdown" ? { value: item.documentation } : item.documentation;
 }
 
 function phpLspCompletionIsDeprecated(
@@ -4212,10 +3623,7 @@ async function requestPhpLanguageServerCompletion(
     // callback, the `performance.now()` read above was skipped entirely (zero
     // hot-path cost).
     if (recordCompletionLatency) {
-      recordCompletionLatency(
-        performance.now() - completionStart,
-        request.rootPath,
-      );
+      recordCompletionLatency(performance.now() - completionStart, request.rootPath);
     }
 
     if (!isFeatureRequestActive(context, request)) {
@@ -4266,19 +3674,17 @@ function phpPostfixCompletionSuggestions(
     startLineNumber: start.lineNumber,
   };
 
-  return phpPostfixCompletionItems(
-    postfixContext.receiverExpression,
-    postfixContext.keyword,
-  ).map((item, index) => ({
-    detail: item.detail,
-    insertText: item.insertText,
-    insertTextRules:
-      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-    kind: monaco.languages.CompletionItemKind.Snippet,
-    label: item.label,
-    range,
-    sortText: `0_${String(index).padStart(4, "0")}`,
-  }));
+  return phpPostfixCompletionItems(postfixContext.receiverExpression, postfixContext.keyword).map(
+    (item, index) => ({
+      detail: item.detail,
+      insertText: item.insertText,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      label: item.label,
+      range,
+      sortText: `0_${String(index).padStart(4, "0")}`,
+    }),
+  );
 }
 
 /**
@@ -4314,9 +3720,7 @@ function phpSnippetSuggestions(
  * or malformed in-session snippet (empty body, untrimmed prefix, no language)
  * never reaches completion, matching the persisted/reload path.
  */
-function contextUserSnippets(
-  context: LanguageServerMonacoProviderContext,
-): readonly UserSnippet[] {
+function contextUserSnippets(context: LanguageServerMonacoProviderContext): readonly UserSnippet[] {
   return normalizeUserSnippets(context.getUserSnippets?.() ?? []);
 }
 
@@ -4349,8 +3753,8 @@ async function phpMethodSuggestions(
         ? {
             id: "editor.action.triggerParameterHints",
             title: "Trigger parameter hints",
-            }
-          : undefined,
+          }
+        : undefined,
       detail: phpMethodDetail(item),
       documentation: phpMethodDocumentation(item),
       insertText: phpMethodInsertText(item),
@@ -4381,12 +3785,7 @@ function phpMethodCompletionRange(
   const start = model.getPositionAt(item.replaceStart);
   const end = model.getPositionAt(item.replaceEnd);
 
-  return new monaco.Range(
-    start.lineNumber,
-    start.column,
-    end.lineNumber,
-    end.column,
-  );
+  return new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
 }
 
 const invalidPhpMemberCompletionNames = new Set([
@@ -4479,9 +3878,7 @@ async function provideSignatureHelp(
   );
 
   if (localSignature) {
-    const lspResolution = await resolvePhpSignatureWithinMergeWindow(
-      lspSignaturePromise,
-    );
+    const lspResolution = await resolvePhpSignatureWithinMergeWindow(lspSignaturePromise);
 
     if (token?.isCancellationRequested) {
       return null;
@@ -4495,11 +3892,7 @@ async function provideSignatureHelp(
       return toMonacoPhpSignatureHelp(localSignature);
     }
 
-    return phpSignatureHelpFromResolution(
-      context,
-      lspResolution,
-      localSignature,
-    );
+    return phpSignatureHelpFromResolution(context, lspResolution, localSignature);
   }
 
   const lspResolution = await lspSignaturePromise;
@@ -4517,15 +3910,11 @@ async function provideSignatureHelp(
 
 async function resolvePhpSignatureWithinMergeWindow(
   lspSignaturePromise: Promise<PhpLanguageServerSignatureResolution>,
-): Promise<
-  | PhpLanguageServerSignatureResolution
-  | typeof PHP_SIGNATURE_MERGE_WINDOW_EXPIRED
-> {
+): Promise<PhpLanguageServerSignatureResolution | typeof PHP_SIGNATURE_MERGE_WINDOW_EXPIRED> {
   return Promise.race([
     lspSignaturePromise,
     new Promise<typeof PHP_SIGNATURE_MERGE_WINDOW_EXPIRED>((resolve) => {
-      setTimeout(() => resolve(PHP_SIGNATURE_MERGE_WINDOW_EXPIRED),
-        PHP_SIGNATURE_MERGE_WINDOW_MS);
+      setTimeout(() => resolve(PHP_SIGNATURE_MERGE_WINDOW_EXPIRED), PHP_SIGNATURE_MERGE_WINDOW_MS);
     }),
   ]);
 }
@@ -4543,9 +3932,7 @@ function phpSignatureHelpFromResolution(
     context.reportError(resolution.error);
   }
 
-  const lspSignature = resolution.kind === "signature"
-    ? resolution.signatureHelp
-    : null;
+  const lspSignature = resolution.kind === "signature" ? resolution.signatureHelp : null;
   const merged = mergePhpSignatureHelp(lspSignature, localSignature);
 
   return merged ? toMonacoPhpSignatureHelp(merged) : null;
@@ -4581,14 +3968,16 @@ async function requestLocalPhpSignatureHelp(
         Math.max(0, signature.parameters.length - 1),
       ),
       activeSignature: 0,
-      signatures: [{
-        documentation: signature.method.declaringClassName,
-        label: phpMethodSignatureLabel(signature.method),
-        parameters: signature.parameters.map((parameter) => ({
-          documentation: null,
-          label: phpParameterLabel(parameter),
-        })),
-      }],
+      signatures: [
+        {
+          documentation: signature.method.declaringClassName,
+          label: phpMethodSignatureLabel(signature.method),
+          parameters: signature.parameters.map((parameter) => ({
+            documentation: null,
+            label: phpParameterLabel(parameter),
+          })),
+        },
+      ],
     };
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
@@ -4626,15 +4015,8 @@ async function requestPhpLanguageServerSignatureHelp(
     const lspContext = toPhpLanguageServerSignatureHelpContext(signatureContext);
     const signatureHelp = await raceInteractiveFeatureRequest(
       lspContext
-        ? context.featuresGateway.signatureHelp(
-            request.rootPath,
-            request.position,
-            lspContext,
-          )
-        : context.featuresGateway.signatureHelp(
-            request.rootPath,
-            request.position,
-          ),
+        ? context.featuresGateway.signatureHelp(request.rootPath, request.position, lspContext)
+        : context.featuresGateway.signatureHelp(request.rootPath, request.position),
     );
 
     if (signatureHelp === FEATURE_REQUEST_TIMED_OUT) {
@@ -4666,18 +4048,13 @@ function toPhpLanguageServerSignatureHelpContext(
           activeSignatureHelp: {
             activeParameter: context.activeSignatureHelp.activeParameter,
             activeSignature: context.activeSignatureHelp.activeSignature,
-            signatures: context.activeSignatureHelp.signatures.map(
-              toPhpLanguageServerSignature,
-            ),
+            signatures: context.activeSignatureHelp.signatures.map(toPhpLanguageServerSignature),
           },
         }
       : {}),
     isRetrigger: context.isRetrigger,
-    ...(context.triggerCharacter
-      ? { triggerCharacter: context.triggerCharacter }
-      : {}),
-    triggerKind:
-      context.triggerKind as LanguageServerSignatureHelpContext["triggerKind"],
+    ...(context.triggerCharacter ? { triggerCharacter: context.triggerCharacter } : {}),
+    triggerKind: context.triggerKind as LanguageServerSignatureHelpContext["triggerKind"],
   };
 }
 
@@ -4697,18 +4074,14 @@ function toPhpLanguageServerSignature(
 function monacoDocumentationText(
   documentation: string | Monaco.IMarkdownString | undefined,
 ): string | null {
-  return typeof documentation === "string"
-    ? documentation
-    : documentation?.value ?? null;
+  return typeof documentation === "string" ? documentation : (documentation?.value ?? null);
 }
 
 function monacoSignatureParameterLabel(
   signatureLabel: string,
   label: string | [number, number],
 ): string {
-  return typeof label === "string"
-    ? label
-    : signatureLabel.slice(label[0], label[1]);
+  return typeof label === "string" ? label : signatureLabel.slice(label[0], label[1]);
 }
 
 function mergePhpSignatureHelp(
@@ -4737,10 +4110,7 @@ function mergePhpSignatureHelp(
 
   return {
     activeParameter: lsp.activeParameter,
-    activeSignature: Math.min(
-      lsp.activeSignature,
-      Math.max(0, signatures.length - 1),
-    ),
+    activeSignature: Math.min(lsp.activeSignature, Math.max(0, signatures.length - 1)),
     signatures,
   };
 }
@@ -4795,9 +4165,7 @@ async function provideSelectionRanges(
       return null;
     }
 
-    return selectionRanges.map((selectionRange) =>
-      flattenSelectionRange(monaco, selectionRange),
-    );
+    return selectionRanges.map((selectionRange) => flattenSelectionRange(monaco, selectionRange));
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -4819,10 +4187,7 @@ async function provideDocumentSemanticTokens(
       return null;
     }
 
-    const tokens = await context.featuresGateway.semanticTokens(
-      request.rootPath,
-      request.path,
-    );
+    const tokens = await context.featuresGateway.semanticTokens(request.rootPath, request.path);
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -5022,9 +4387,7 @@ function phpMethodDocumentation(item: PhpMethodCompletion): string {
   ].join("\n");
 }
 
-function phpMethodCompletionLabel(
-  item: PhpMethodCompletion,
-): Monaco.languages.CompletionItemLabel {
+function phpMethodCompletionLabel(item: PhpMethodCompletion): Monaco.languages.CompletionItemLabel {
   return {
     description: phpMethodCompletionLabelDescription(item),
     detail: phpMethodCompletionLabelDetail(item),
@@ -5109,9 +4472,7 @@ function phpMethodSignatureLabel(item: PhpMethodCompletion): string {
   return `${item.name}${parameters}${returnType}`;
 }
 
-function phpMethodCompletionShouldTriggerParameterHints(
-  item: PhpMethodCompletion,
-): boolean {
+function phpMethodCompletionShouldTriggerParameterHints(item: PhpMethodCompletion): boolean {
   if (item.completionBehavior?.triggerParameterHints != null) {
     return item.completionBehavior.triggerParameterHints;
   }
@@ -5179,8 +4540,7 @@ function phpMethodSnippet(item: PhpMethodCompletion): string {
   }
 
   const placeholders = requiredParameters.map(
-    (parameter, index) =>
-      `\${${index + 1}:${snippetPlaceholderText(parameter.name)}}`,
+    (parameter, index) => `\${${index + 1}:${snippetPlaceholderText(parameter.name)}}`,
   );
 
   return `${item.name}(${placeholders.join(", ")})$0`;
@@ -5188,8 +4548,7 @@ function phpMethodSnippet(item: PhpMethodCompletion): string {
 
 function phpParameterLabel(parameter: PhpMethodParameter): string {
   const type = parameter.type ? `${parameter.type} ` : "";
-  const defaultValue =
-    parameter.defaultValue !== null ? ` = ${parameter.defaultValue}` : "";
+  const defaultValue = parameter.defaultValue !== null ? ` = ${parameter.defaultValue}` : "";
 
   return `${type}${parameter.name}${defaultValue}`;
 }
@@ -5219,14 +4578,13 @@ function lspCompletionInsert(
   if (containsSnippetPlaceholder(insertText)) {
     return {
       insertText,
-      insertTextRules:
-        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     };
   }
 
   if (!isCallableCompletionKind(monaco, kind)) {
-    const textCallableName = phpCallableCompletionName(item.label) ??
-      phpCallableCompletionName(insertText);
+    const textCallableName =
+      phpCallableCompletionName(item.label) ?? phpCallableCompletionName(insertText);
 
     if (
       !textCallableName ||
@@ -5245,16 +4603,12 @@ function lspCompletionInsert(
             title: "Trigger parameter hints",
           }
         : undefined,
-      insertText: hasParameters
-        ? `${textCallableName}($0)`
-        : `${textCallableName}()$0`,
-      insertTextRules:
-        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      insertText: hasParameters ? `${textCallableName}($0)` : `${textCallableName}()$0`,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     };
   }
 
-  const name =
-    phpCallableCompletionName(item.label) ?? phpCallableCompletionName(insertText);
+  const name = phpCallableCompletionName(item.label) ?? phpCallableCompletionName(insertText);
 
   if (!name) {
     return { insertText };
@@ -5271,8 +4625,7 @@ function lspCompletionInsert(
         }
       : undefined,
     insertText: hasParameters ? `${name}($0)` : `${name}()$0`,
-    insertTextRules:
-      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
   };
 }
 
@@ -5290,8 +4643,7 @@ function completionItemValuesLookLikeSignature(
   insertText: string | null | undefined,
   name: string,
 ): boolean {
-  const documentation =
-    typeof item.documentation === "string" ? item.documentation : null;
+  const documentation = typeof item.documentation === "string" ? item.documentation : null;
 
   return [
     completionItemLabelText(item.label),
@@ -5345,10 +4697,7 @@ function lspCompletionParameterState(
   return "unknown";
 }
 
-function callableParameterState(
-  value: string,
-  name: string,
-): "hasParameters" | "none" | "unknown" {
+function callableParameterState(value: string, name: string): "hasParameters" | "none" | "unknown" {
   const match = new RegExp(`${escapeRegExp(name)}\\s*\\(([^)]*)\\)`).exec(value);
 
   if (!match) {
@@ -5370,9 +4719,7 @@ function completionRange(
   const line = model.getLineContent?.(position.lineNumber) ?? "";
   const characterBeforeWord = line[word.startColumn - 2] || "";
   const startColumn =
-    characterBeforeWord === "$"
-      ? Math.max(1, word.startColumn - 1)
-      : word.startColumn;
+    characterBeforeWord === "$" ? Math.max(1, word.startColumn - 1) : word.startColumn;
 
   return {
     endColumn: word.endColumn,
@@ -5394,10 +4741,7 @@ function dedupeCompletionItems(
     const existingIndex = indexByKey.get(key);
 
     if (existingIndex != null) {
-      unique[existingIndex] = mergePhpCompletionItemMetadata(
-        unique[existingIndex],
-        item,
-      );
+      unique[existingIndex] = mergePhpCompletionItemMetadata(unique[existingIndex], item);
       continue;
     }
 
@@ -5412,33 +4756,24 @@ function mergePhpCompletionItemMetadata(
   primary: Monaco.languages.CompletionItem,
   metadata: Monaco.languages.CompletionItem,
 ): Monaco.languages.CompletionItem {
-  const tags = Array.from(
-    new Set([...(primary.tags ?? []), ...(metadata.tags ?? [])]),
-  );
+  const tags = Array.from(new Set([...(primary.tags ?? []), ...(metadata.tags ?? [])]));
 
   return {
     ...metadata,
     ...primary,
-    ...(metadata.commitCharacters
-      ? { commitCharacters: metadata.commitCharacters }
-      : {}),
+    ...(metadata.commitCharacters ? { commitCharacters: metadata.commitCharacters } : {}),
     ...(metadata.detail && !primary.detail ? { detail: metadata.detail } : {}),
     ...(metadata.documentation && !primary.documentation
       ? { documentation: metadata.documentation }
       : {}),
     ...(metadata.filterText ? { filterText: metadata.filterText } : {}),
     ...(metadata.preselect ? { preselect: true } : {}),
-    ...(metadata.sortText && !primary.sortText
-      ? { sortText: metadata.sortText }
-      : {}),
+    ...(metadata.sortText && !primary.sortText ? { sortText: metadata.sortText } : {}),
     ...(tags.length > 0 ? { tags } : {}),
   };
 }
 
-function completionItemDedupeKey(
-  monaco: MonacoApi,
-  item: Monaco.languages.CompletionItem,
-): string {
+function completionItemDedupeKey(monaco: MonacoApi, item: Monaco.languages.CompletionItem): string {
   const callableName = completionItemCallableDedupeName(monaco, item);
 
   if (callableName) {
@@ -5479,10 +4814,7 @@ function completionItemCallableDedupeName(
   if (
     typeof item.label !== "string" &&
     item.label.detail &&
-    completionLabelLooksLikeSignature(
-      `${item.label.label}${item.label.detail}`,
-      callableName,
-    )
+    completionLabelLooksLikeSignature(`${item.label.label}${item.label.detail}`, callableName)
   ) {
     return callableName;
   }
@@ -5494,9 +4826,7 @@ function completionLabelLooksLikeSignature(value: string, name: string): boolean
   return new RegExp(`(?:^|::|\\b)${escapeRegExp(name)}\\s*\\(`).test(value);
 }
 
-function completionItemLabelText(
-  label: Monaco.languages.CompletionItem["label"],
-): string {
+function completionItemLabelText(label: Monaco.languages.CompletionItem["label"]): string {
   return typeof label === "string" ? label : label.label;
 }
 
@@ -5524,384 +4854,4 @@ function monacoCompletionKindFromLspKind(
     default:
       return monaco.languages.CompletionItemKind.Text;
   }
-}
-
-function featureRequestContext(
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-  position: MonacoPosition,
-  feature:
-    | "completion"
-    | "declaration"
-    | "definition"
-    | "documentHighlight"
-    | "hover"
-    | "implementation"
-    | "linkedEditingRange"
-    | "prepareRename"
-    | "references"
-    | "rename"
-    | "signatureHelp"
-    | "typeDefinition",
-) {
-  const request = featureDocumentRequestContext(context, model, feature);
-
-  if (!request) {
-    return null;
-  }
-
-  return {
-    ...request,
-    position: toLanguageServerTextDocumentPosition(request.path, position),
-  };
-}
-
-function featureDocumentRequestContext(
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-  feature:
-    | "codeAction"
-    | "codeLens"
-    | "completion"
-    | "declaration"
-    | "definition"
-    | "documentHighlight"
-    | "documentSymbol"
-    | "documentLink"
-    | "foldingRange"
-    | "formatting"
-    | "hover"
-    | "implementation"
-    | "inlayHint"
-    | "linkedEditingRange"
-    | "onTypeFormatting"
-    | "prepareRename"
-    | "rangeFormatting"
-    | "references"
-    | "rename"
-    | "selectionRange"
-    | "semanticTokens"
-    | "signatureHelp"
-    | "typeDefinition",
-) {
-  const activeDocument = context.getActiveDocument();
-  const rootPath = context.getWorkspaceRoot?.() ?? null;
-
-  if (!activeDocument || !rootPath) {
-    return null;
-  }
-
-  if (!isLanguageServerDocument(activeDocument)) {
-    return null;
-  }
-
-  const path = modelPath(model);
-
-  if (!path || path !== activeDocument.path) {
-    return null;
-  }
-
-  if (
-    largePhpSmartProviderGuardedFeature(feature) &&
-    shouldSkipLargePhpSmartProviders(context, model)
-  ) {
-    return null;
-  }
-
-  const status = runningRuntimeStatusForRoot(context, rootPath);
-
-  if (!status || !canUseLanguageServerFeature(status.capabilities, feature)) {
-    return null;
-  }
-
-  return {
-    lifecycleIdentity: null as number | null,
-    path,
-    rootPath,
-    sessionId: status.sessionId,
-  };
-}
-
-function shouldSkipLargePhpSmartProviders(
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-): boolean {
-  return isLargeActivePhpDocument(
-    context,
-    model,
-    context.getLargeSmartDocumentPolicy?.(),
-  );
-}
-
-function isLargePhpDocumentContext(
-  context: LanguageServerMonacoProviderContext,
-  documentContext: NonNullable<ReturnType<typeof activePhpDocumentContext>>,
-): boolean {
-  return isLargeSmartDocument(
-    documentContext.activeDocument,
-    context.getLargeSmartDocumentPolicy?.(),
-  );
-}
-
-function largePhpSmartProviderGuardedFeature(feature: string): boolean {
-  switch (feature) {
-    case "codeLens":
-    case "completion":
-    case "declaration":
-    case "definition":
-    case "documentLink":
-    case "foldingRange":
-    case "hover":
-    case "implementation":
-    case "inlayHint":
-    case "references":
-    case "semanticTokens":
-    case "typeDefinition":
-      return true;
-    default:
-      return false;
-  }
-}
-
-function workspaceSymbolRequestContext(
-  context: LanguageServerMonacoProviderContext,
-) {
-  const rootPath = context.getWorkspaceRoot?.() ?? null;
-
-  if (!rootPath) {
-    return null;
-  }
-
-  const status = runningRuntimeStatusForRoot(context, rootPath);
-
-  if (
-    !status ||
-    !canUseLanguageServerFeature(status.capabilities, "workspaceSymbol")
-  ) {
-    return null;
-  }
-
-  return { rootPath, sessionId: status.sessionId };
-}
-
-async function flushPendingDocumentChangeForActiveRequest(
-  context: LanguageServerMonacoProviderContext,
-  request: {
-    documentLease?: LanguageServerMonacoDocumentRequestLease | null;
-    lifecycleIdentity: number | null;
-    path: string;
-    rootPath: string;
-    sessionId: number;
-  },
-): Promise<boolean> {
-  if (context.requestDocumentLease) {
-    const lease = await context.requestDocumentLease(
-      request.rootPath,
-      request.path,
-    );
-
-    if (!lease) {
-      return false;
-    }
-
-    if (request.sessionId !== lease.sessionId) {
-      return false;
-    }
-
-    request.documentLease = lease;
-    request.lifecycleIdentity = lease.lifecycleIdentity;
-
-    return isFeatureRequestActive(context, request);
-  }
-
-  if (context.getDocumentLifecycleIdentity) {
-    request.lifecycleIdentity = context.getDocumentLifecycleIdentity(
-      request.rootPath,
-      request.path,
-    );
-
-    if (request.lifecycleIdentity === null) {
-      return false;
-    }
-  }
-
-  await context.flushPendingDocumentChange(request.path);
-
-  return isFeatureRequestActive(context, request);
-}
-
-function runningRuntimeStatusForRoot(
-  context: LanguageServerMonacoProviderContext,
-  rootPath: string,
-): Extract<LanguageServerRuntimeStatus, { kind: "running" }> | null {
-  const status = context.getRuntimeStatus();
-
-  if (
-    status?.kind === "running" &&
-    Boolean(status.rootPath) &&
-    workspaceRootKeysEqual(status.rootPath, rootPath)
-  ) {
-    return status;
-  }
-
-  return null;
-}
-
-/**
- * Races `request` against a timeout (defaulting to
- * {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS}). Resolves to
- * {@link FEATURE_REQUEST_TIMED_OUT} when the timeout wins, letting the caller
- * tear down the Monaco "Loading…" widget (returning a "no result") instead of
- * waiting on a cold language server forever. Hover passes the shorter
- * {@link HOVER_FEATURE_REQUEST_TIMEOUT_MS} budget. The timer is always cleared
- * so a settled request never leaks a pending timeout.
- */
-function raceInteractiveFeatureRequest<T>(
-  request: Promise<T>,
-  timeoutMs: number = INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
-): Promise<T | typeof FEATURE_REQUEST_TIMED_OUT> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
-    timeoutHandle = setTimeout(
-      () => resolve(FEATURE_REQUEST_TIMED_OUT),
-      timeoutMs,
-    );
-  });
-
-  return Promise.race([request, timeout]).finally(() => {
-    clearTimeout(timeoutHandle);
-  });
-}
-
-function isFeatureRequestActive(
-  context: LanguageServerMonacoProviderContext,
-  request: {
-    documentLease?: LanguageServerMonacoDocumentRequestLease | null;
-    lifecycleIdentity?: number | null;
-    path?: string;
-    rootPath: string;
-    sessionId: number;
-  },
-): boolean {
-  if (request.documentLease && context.isDocumentLeaseCurrent) {
-    return context.isDocumentLeaseCurrent(request.documentLease);
-  }
-
-  if (
-    !isStoredLanguageServerPayloadActive(
-      context,
-      request.rootPath,
-      request.sessionId,
-    )
-  ) {
-    return false;
-  }
-
-  if (request.lifecycleIdentity == null || !request.path) {
-    return true;
-  }
-
-  return (
-    context.getDocumentLifecycleIdentity?.(request.rootPath, request.path) ===
-    request.lifecycleIdentity
-  );
-}
-
-function isDocumentLifecyclePayloadActive(
-  context: LanguageServerMonacoProviderContext,
-  rootPath: string,
-  sessionId: number,
-  path: string | undefined,
-  lifecycleIdentity: number | undefined,
-): boolean {
-  if (!context.getDocumentLifecycleIdentity) {
-    return isStoredLanguageServerPayloadActive(context, rootPath, sessionId);
-  }
-
-  if (!path || lifecycleIdentity == null) {
-    return false;
-  }
-
-  return isFeatureRequestActive(context, {
-    lifecycleIdentity,
-    path,
-    rootPath,
-    sessionId,
-  });
-}
-
-function isExecuteCommandPayloadActive(
-  context: LanguageServerMonacoProviderContext,
-  payload: ExecuteCommandPayload,
-): boolean {
-  if (payload.lifecycleIdentity == null || !payload.path) {
-    return isStoredLanguageServerPayloadActive(
-      context,
-      payload.rootPath,
-      payload.sessionId,
-    );
-  }
-
-  return isDocumentLifecyclePayloadActive(
-    context,
-    payload.rootPath,
-    payload.sessionId,
-    payload.path,
-    payload.lifecycleIdentity,
-  );
-}
-
-function reportErrorForActiveRequest(
-  context: LanguageServerMonacoProviderContext,
-  request: { rootPath: string; sessionId: number },
-  error: unknown,
-): void {
-  if (!isFeatureRequestActive(context, request)) {
-    return;
-  }
-
-  context.reportError(error);
-}
-
-function reportErrorForActiveWorkspaceEditEvent(
-  context: LanguageServerMonacoProviderContext,
-  event: LanguageServerWorkspaceEditEvent,
-  error: unknown,
-): void {
-  if (!isWorkspaceEditEventActive(context, event)) {
-    return;
-  }
-
-  context.reportError(error);
-}
-
-function isWorkspaceEditEventActive(
-  context: LanguageServerMonacoProviderContext,
-  event: LanguageServerWorkspaceEditEvent,
-): boolean {
-  const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
-
-  if (!workspaceRoot) {
-    return false;
-  }
-
-  if (!event.rootPath || !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
-    return false;
-  }
-
-  return runningRuntimeSessionIdForRoot(context, event.rootPath) === event.sessionId;
-}
-
-function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
-  const normalizedRootPath = normalizedWorkspacePath(rootPath);
-  const normalizedPath = normalizedWorkspacePath(path);
-
-  return (
-    normalizedPath === normalizedRootPath ||
-    normalizedPath.startsWith(`${normalizedRootPath}/`)
-  );
-}
-
-function normalizedWorkspacePath(path: string): string {
-  return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }
