@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn composition_root_registers_batch_state_commands_and_shutdown() {
-        let composition = include_str!("lib.rs");
+        let composition = include_str!("lib_composition/runtime.rs");
         let lifecycle = include_str!("runtime_task_lifecycle.rs");
         let trust = include_str!("workspace_trust_commands.rs");
         assert!(
