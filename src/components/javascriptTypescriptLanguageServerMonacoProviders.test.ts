@@ -42,6 +42,10 @@ import {
   LINKED_EDITING_RANGE_REQUEST_TIMEOUT_MS,
 } from "./languageServerRequestCancellation";
 import { workspaceModelUri } from "./phpMonacoDocumentContext";
+import { provideJavaScriptTypeScriptDocumentHighlights as legacyDocumentHighlights } from "./javascriptTypescriptDocumentHighlightProvider";
+import { runBoundedJavaScriptTypeScriptProviderRequest as legacyBoundedProviderRequest } from "./javascriptTypescriptProviderRequestBoundary";
+import { provideJavaScriptTypeScriptDocumentHighlights as productionDocumentHighlights } from "./javascriptTypescriptProviders/documentHighlight";
+import { runBoundedJavaScriptTypeScriptProviderRequest as productionBoundedProviderRequest } from "./javascriptTypescriptProviders/requestBoundary";
 
 const JAVASCRIPT_TYPESCRIPT_PROVIDER_LANGUAGES = [
   "javascript",
@@ -53,6 +57,11 @@ const JAVASCRIPT_TYPESCRIPT_PROVIDER_LANGUAGES = [
 const DEFAULT_OWNER_IDENTITY = Object.freeze({});
 
 describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
+  it("keeps legacy direct-import provider entry points aligned with production", () => {
+    expect(legacyDocumentHighlights).toBe(productionDocumentHighlights);
+    expect(legacyBoundedProviderRequest).toBe(productionBoundedProviderRequest);
+  });
+
   it("registers VS Code-like navigation, actions, rename and formatting providers", () => {
     const monaco = createMonaco();
     const disposable = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
