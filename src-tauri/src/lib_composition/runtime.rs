@@ -1,4 +1,8 @@
 use super::*;
+// This Tauri composition root intentionally wires the complete command surface.
+// Capability modules below use explicit imports; the runtime remains the one
+// broad crate boundary until command registration is generated from typed groups.
+use crate::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

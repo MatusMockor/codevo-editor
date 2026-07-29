@@ -134,157 +134,60 @@ pub(crate) use crate::blocking_command::run_blocking_command;
 use crate::debug_commands::*;
 use crate::debug_node_attach_list_command::debug_list_node_attach_candidates;
 use crate::debug_node_attach_start_command::debug_start_node_attach_candidate;
-use crate::runtime_task_lifecycle::{shutdown_runtime_processes, RuntimeTaskLifecycleExt as _};
+use crate::runtime_task_lifecycle::shutdown_runtime_processes;
 use crate::settings_fonts::cached_monospace_font_families;
 
-#[cfg(test)]
-use crate::application_commands::enumerate_monospace_font_families;
 use crate::application_commands::{
     confirm_native_shutdown, list_monospace_font_families, quit_application,
     set_native_close_listener_ready, NativeCloseListenerState,
 };
 
 use crate::debug_adapter::DebugSessionRegistry;
-use crate::file_uri_path::path_from_file_uri;
-use crate::git::{
-    safe_stash_index, CommandGitRepositoryGateway, GitBranch, GitChangedFile, GitCommit,
-    GitDiffHunk, GitFileDiff, GitRepositoryGateway, GitStashEntry, GitStatus,
-};
 use crate::git_commands::{
     cherry_pick_git_commit, detect_git_repositories, get_git_blame, get_git_branches,
     get_git_commit_details, get_git_commit_diff, get_git_commit_files, get_git_commit_graph_page,
     get_git_commit_log, get_git_diff, get_git_file_history, get_git_repo_status, get_git_status,
     revert_git_commit,
 };
-use crate::index::{
-    workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
-    WorkspaceIndexMaintenanceStore, WorkspaceIndexStore, WorkspaceIndexSummary,
-    WorkspacePhpFileOutlineStore, WorkspacePhpTreeStore, WorkspaceSymbolSearchStore,
-};
-use crate::index_reindex::{
-    LocalWorkspaceReindexStarter, WorkspaceReindexRequest, WorkspaceReindexStarter,
-};
-use crate::index_scan::{
-    IndexProgressEvent, InitialMetadataScanStart, MetadataScanCompletionEvent,
-    MetadataScanEventSink, WorkspaceReindexMode, INDEX_PROGRESS_EVENT,
-    METADATA_SCAN_COMPLETED_EVENT,
-};
 use crate::job_scheduler::WorkspaceIndexLifecycle;
 use crate::js_test_run::batch::JsTestBatchRegistry;
 use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
-use crate::local_history::{LocalHistoryStore, LocalHistoryVersion};
-use crate::lsp::{
-    JsonRpcNotification, JsonRpcRequest, LanguageServerCommand, LanguageServerPlan,
-    LanguageServerPlanStatus, LanguageServerPlanner, PhpLanguageServerSettings,
-    PhpactorLanguageServerPlanner,
-};
-use crate::lsp_capability_support::{
-    supports_code_action_resolve as lsp_status_supports_code_action_resolve,
-    supports_inlay_hint_resolve as lsp_status_supports_inlay_hint_resolve,
-};
-use crate::lsp_document::{
-    LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
-    TextDocumentSyncNotificationFactory,
-};
+use crate::lsp_capability_support::supports_code_action_resolve as lsp_status_supports_code_action_resolve;
 use crate::lsp_features::{
-    parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_item_result,
-    parse_completion_result, parse_definition_result, parse_document_highlights_result,
-    parse_document_links_result, parse_document_symbols_result, parse_folding_ranges_result,
-    parse_formatting_result, parse_hover_result, parse_incoming_calls_result,
-    parse_inlay_hint_result, parse_inlay_hints_result, parse_linked_editing_ranges_result,
-    parse_optional_workspace_edit_result, parse_outgoing_calls_result, parse_prepare_rename_result,
-    parse_resolved_code_action_result, parse_selection_ranges_result, parse_semantic_tokens_result,
-    parse_signature_help_result, parse_type_hierarchy_items_result, parse_workspace_edit_result,
-    parse_workspace_symbols_result, validate_code_action_context,
+    parse_code_action_result, parse_definition_result, parse_document_highlights_result,
+    parse_linked_editing_ranges_result, parse_resolved_code_action_result,
+    parse_semantic_tokens_result, parse_workspace_symbols_result, validate_code_action_context,
     validate_code_action_request_range, validate_code_action_resolve_request,
-    LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-    LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionContext,
-    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
-    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFoldingRange,
-    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerIncomingCall,
-    LanguageServerInlayHint, LanguageServerInlayHintLabel, LanguageServerLinkedEditingRanges,
-    LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPosition,
-    LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
-    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerSignatureHelpContext,
-    LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
-    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
-    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-    TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
-    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
-    TextDocumentSignatureHelp, WorkspaceFileChange, WorkspaceFileCreate, WorkspaceFileDelete,
-    WorkspaceFileRename,
+    LanguageServerCodeAction, LanguageServerCodeActionContext, LanguageServerDocumentHighlight,
+    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerRange,
+    LanguageServerSemanticTokens, LanguageServerWorkspaceSymbol,
+    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory, TextDocumentPosition,
+    TextDocumentRange,
 };
 use crate::lsp_incremental_document::{
-    canonical_document_identity as canonical_lsp_document_identity,
     javascript_typescript_document_did_change_bounded,
     javascript_typescript_document_did_close_bounded,
     javascript_typescript_document_did_open_bounded, DocumentChangeAdmissionRegistry,
 };
 use crate::lsp_session::{
-    language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
     JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRequestError,
-    LanguageServerRuntimeStatus, PhpLanguageServerRegistry, RefreshSink, RestartController,
-    StatusSink, WorkspaceEditSink,
+    PhpLanguageServerRegistry,
 };
-use crate::lsp_workspace_edit_guard::{
-    ensure_lsp_workspace_edit_paths_in_workspace, workspace_file_operation_uris,
-};
-use crate::php_file_outline::{
-    build_php_file_outline, php_symbol_outline_record, PhpFileOutline, PhpFileOutlineSymbolRecord,
-};
-use crate::php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
-use crate::php_symbols::{PhpSymbolExtractor, TreeSitterPhpSymbolExtractor};
-use crate::php_tree::PhpTree;
-use crate::project::{ComposerWorkspaceDetector, WorkspaceDetector};
-use crate::search::{RipgrepTextSearcher, TextSearchOptions, TextSearchResult, TextSearcher};
-use crate::smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
+use crate::smart_mode::SmartModeService;
 use crate::terminal_session::TerminalSupervisor;
-use crate::tools::{LocalPhpToolDetector, PhpToolDetector};
 use crate::trust::WorkspaceTrustService;
-use crate::workspace::{
-    FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
-};
-#[cfg(test)]
-use crate::workspace_edit_commands::{
-    abort_transaction_current_path, apply_descriptor_workspace_edit,
-    apply_transactional_descriptor_workspace_edit,
-    apply_trusted_transactional_descriptor_workspace_edit,
-    apply_trusted_transactional_descriptor_workspace_edit_with_hooks, descriptor_file_identity,
-    descriptor_transaction_file_snapshot, guarded_descriptor_cleanup,
-    guarded_descriptor_cleanup_with_terminal_hook,
-    with_test_parent_transaction_recovery_byte_limit, with_test_parent_transaction_recovery_limit,
-    workspace_text_edits_from_language_server, CommittedTransactionPath, DescriptorTransactionPath,
-    StagedTransactionFile, TransactionalWorkspaceEditRequest, MAX_TRANSACTION_AFFECTED_PATHS,
-    MAX_TRANSACTION_FILE_OPERATIONS,
-};
 use crate::workspace_edit_commands::{
     apply_workspace_edit, workspace_apply_workspace_edit,
     workspace_apply_workspace_edit_transaction,
 };
 use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
-use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
-use crate::workspace_runtime::{
-    dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
-};
-#[cfg(test)]
-use crate::workspace_typescript::build_javascript_typescript_language_server_plan;
-use crate::workspace_typescript::{
-    build_javascript_typescript_language_server_plan_with_trust,
-    capture_javascript_typescript_workspace_trust,
-    revalidate_javascript_typescript_workspace_trust,
-};
-use serde::Serialize;
-use serde_json::{json, Value};
+use crate::workspace_registry::WorkspaceRegistry;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    io,
-    path::{Component, Path, PathBuf},
+    collections::BTreeSet,
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
 };
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
-use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_opener::OpenerExt;
 mod lib_composition;
 
 pub use lib_composition::run;

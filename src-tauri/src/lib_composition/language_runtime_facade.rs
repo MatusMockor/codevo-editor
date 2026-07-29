@@ -1,4 +1,66 @@
-use super::*;
+use super::workspace_facade::{
+    canonicalize_workspace_root, ensure_lsp_call_hierarchy_item_in_workspace,
+    ensure_lsp_code_action_context_payloads_in_workspace,
+    ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
+    ensure_lsp_completion_item_payload_in_workspace, ensure_lsp_path_in_workspace,
+    ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
+    ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
+    filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_code_action_to_workspace,
+    filter_lsp_code_actions_to_workspace, filter_lsp_code_lens_to_workspace,
+    filter_lsp_code_lenses_to_workspace, filter_lsp_completion_item_to_workspace,
+    filter_lsp_completion_list_to_workspace, filter_lsp_incoming_calls_to_workspace,
+    filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
+    filter_lsp_type_hierarchy_items_to_workspace, filter_optional_lsp_workspace_edit_to_workspace,
+    reveal_path_in_workspace, workspace_root_for_disposal,
+};
+use super::workspace_services::{
+    build_php_language_server_plan, JavaScriptTypeScriptLanguageServerRequest,
+};
+use crate::blocking_command::run_blocking_command;
+use crate::job_scheduler::WorkspaceIndexLifecycle;
+use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
+use crate::lsp::{JsonRpcRequest, LanguageServerCommand, LanguageServerPlanStatus};
+use crate::lsp_capability_support::supports_code_action_resolve as lsp_status_supports_code_action_resolve;
+use crate::lsp_document::{
+    LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
+    TextDocumentSyncNotificationFactory,
+};
+use crate::lsp_features::{
+    parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_item_result,
+    parse_completion_result, parse_definition_result, parse_hover_result,
+    parse_incoming_calls_result, parse_outgoing_calls_result, parse_prepare_rename_result,
+    parse_type_hierarchy_items_result, parse_workspace_edit_result,
+    LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionContext,
+    LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
+    LanguageServerCompletionList, LanguageServerHover, LanguageServerIncomingCall,
+    LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPrepareRenameResult,
+    LanguageServerRange, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+    LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
+    TextDocumentFeatureRequestFactory, TextDocumentPosition, TextDocumentRange, TextDocumentRename,
+};
+use crate::lsp_incremental_document::DocumentChangeAdmissionRegistry;
+use crate::lsp_session::{
+    language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
+    JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRequestError,
+    LanguageServerRuntimeStatus, PhpLanguageServerRegistry, RefreshSink, RestartController,
+    StatusSink, WorkspaceEditSink,
+};
+use crate::managed_javascript_typescript;
+use crate::managed_phpactor;
+use crate::runtime_observability;
+use crate::smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
+use crate::trust::WorkspaceTrustService;
+use crate::workspace_registry::WorkspaceRegistry;
+use crate::workspace_typescript::{
+    build_javascript_typescript_language_server_plan_with_trust,
+    capture_javascript_typescript_workspace_trust,
+    revalidate_javascript_typescript_workspace_trust,
+};
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 pub(crate) fn set_smart_mode(

@@ -1,4 +1,39 @@
-use super::*;
+use super::workspace_facade::{
+    canonicalize_workspace_root, local_history_store, open_workspace_index, resolve_workspace_path,
+    LegacyLocalHistoryWorkspaceAuthorizer,
+};
+use crate::blocking_command::run_blocking_command;
+use crate::git::{
+    safe_stash_index, CommandGitRepositoryGateway, GitBranch, GitChangedFile, GitCommit,
+    GitDiffHunk, GitFileDiff, GitRepositoryGateway, GitStashEntry, GitStatus,
+};
+use crate::index::{
+    ProjectSymbolSearchResult, WorkspacePhpFileOutlineStore, WorkspacePhpTreeStore,
+    WorkspaceSymbolSearchStore,
+};
+use crate::local_history::LocalHistoryVersion;
+use crate::lsp::{
+    LanguageServerPlan, LanguageServerPlanner, PhpLanguageServerSettings,
+    PhpactorLanguageServerPlanner,
+};
+use crate::php_file_outline::PhpFileOutline;
+use crate::php_tree::PhpTree;
+use crate::project::{ComposerWorkspaceDetector, WorkspaceDetector};
+use crate::search::{RipgrepTextSearcher, TextSearchOptions, TextSearchResult, TextSearcher};
+use crate::tools::{LocalPhpToolDetector, PhpToolDetector};
+use crate::trust::WorkspaceTrustService;
+use crate::workspace::{
+    FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
+};
+use crate::workspace_registry::WorkspaceRegistry;
+use crate::workspace_typescript::{
+    build_javascript_typescript_language_server_plan_with_trust,
+    capture_javascript_typescript_workspace_trust,
+    revalidate_javascript_typescript_workspace_trust,
+};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager, State};
 
 pub(crate) fn build_php_language_server_plan(
     root_path: &str,

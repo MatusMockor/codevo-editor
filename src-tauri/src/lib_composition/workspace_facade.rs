@@ -1,4 +1,63 @@
-use super::*;
+use super::language_runtime_facade::registered_runtime_root;
+use crate::blocking_command::run_blocking_command;
+use crate::debug_adapter::DebugSessionRegistry;
+use crate::debug_cdp;
+use crate::eslint;
+use crate::file_uri_path::path_from_file_uri;
+use crate::index::{
+    workspace_index_path, SqliteWorkspaceIndex, WorkspaceFileRecord,
+    WorkspaceIndexMaintenanceStore, WorkspaceIndexStore, WorkspaceIndexSummary,
+};
+use crate::index_reindex::{
+    LocalWorkspaceReindexStarter, WorkspaceReindexRequest, WorkspaceReindexStarter,
+};
+use crate::index_scan::{
+    IndexProgressEvent, InitialMetadataScanStart, MetadataScanCompletionEvent,
+    MetadataScanEventSink, WorkspaceReindexMode, INDEX_PROGRESS_EVENT,
+    METADATA_SCAN_COMPLETED_EVENT,
+};
+use crate::job_scheduler::WorkspaceIndexLifecycle;
+use crate::js_test_run::batch::JsTestBatchRegistry;
+use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
+use crate::local_history::LocalHistoryStore;
+use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
+use crate::lsp_features::{
+    parse_definition_result, LanguageServerCallHierarchyItem, LanguageServerCodeAction,
+    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCodeLens,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentLink,
+    LanguageServerIncomingCall, LanguageServerInlayHint, LanguageServerInlayHintLabel,
+    LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerTypeHierarchyItem,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol, TextDocumentPosition,
+};
+use crate::lsp_incremental_document::{
+    canonical_document_identity as canonical_lsp_document_identity, DocumentChangeAdmissionRegistry,
+};
+use crate::lsp_session::{JavaScriptTypeScriptLanguageServerRegistry, PhpLanguageServerRegistry};
+use crate::lsp_workspace_edit_guard::{
+    ensure_lsp_workspace_edit_paths_in_workspace, workspace_file_operation_uris,
+};
+use crate::php_file_outline::{
+    build_php_file_outline, php_symbol_outline_record, PhpFileOutline, PhpFileOutlineSymbolRecord,
+};
+use crate::php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
+use crate::php_symbols::{PhpSymbolExtractor, TreeSitterPhpSymbolExtractor};
+use crate::runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
+use crate::smart_mode::SmartModeService;
+use crate::terminal_session::TerminalSupervisor;
+use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
+use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
+use crate::workspace_runtime::{
+    dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
+};
+use crate::{workspace_commands, workspace_file_watcher};
+use serde::Serialize;
+use serde_json::Value;
+use std::collections::{BTreeMap, HashMap};
+use std::io;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 #[cfg(target_os = "macos")]
 pub(crate) const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
