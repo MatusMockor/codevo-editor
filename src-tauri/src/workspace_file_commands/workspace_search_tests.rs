@@ -1,4 +1,5 @@
 use super::*;
+use crate::{search::TextSearchOptions, workspace_registry::WorkspaceId};
 use std::{
     fs,
     path::{Path, PathBuf},

@@ -1,6 +1,5 @@
-use super::{
-    directory_entries, open_directory_at, open_directory_path, open_regular_at, TextSearchOptions,
-};
+use super::{directory_entries, open_directory_at, open_directory_path, open_regular_at};
+use crate::search::TextSearchOptions;
 use crate::workspace::FileEntryKind;
 use ignore::{gitignore::GitignoreBuilder, overrides::OverrideBuilder, Match};
 use regex::{NoExpand, Regex, RegexBuilder};
