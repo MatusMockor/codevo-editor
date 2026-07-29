@@ -6,8 +6,18 @@ import {
   type LanguageServerTextDocument,
 } from "../domain/languageServerDocumentSync";
 import { LatestValueDrainMailbox } from "./latestValueDrainMailbox";
+import {
+  BoundedDocumentSyncQueue,
+  type BoundedDocumentSyncQueueLimits,
+} from "./boundedDocumentSyncQueue";
 
-export function useLanguageServerDocumentSyncState() {
+export interface LanguageServerDocumentSyncStateOptions {
+  readonly queueLimits?: Partial<BoundedDocumentSyncQueueLimits>;
+}
+
+export function useLanguageServerDocumentSyncState(
+  options: LanguageServerDocumentSyncStateOptions = {},
+) {
   const documentVersionsRef = useRef<Record<string, number>>({});
   const documentVersionsByUriRef = useRef<Record<string, number>>({});
   // Tracks the analysis version of the LAST diagnostic we actually APPLIED, per
@@ -25,6 +35,11 @@ export function useLanguageServerDocumentSyncState() {
   const documentOpenSyncAttemptIdRef = useRef(0);
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const documentSyncQueueRef = useRef<BoundedDocumentSyncQueue | null>(null);
+  documentSyncQueueRef.current ??= new BoundedDocumentSyncQueue(
+    documentSyncQueuesRef,
+    options.queueLimits,
+  );
   const documentSyncGenerationRef = useRef(0);
   const documentSyncRuntimeSignatureRef = useRef<string | null>(null);
   const nextDocumentLifecycleIdentityRef = useRef(0);
@@ -52,6 +67,11 @@ export function useLanguageServerDocumentSyncState() {
   const javaScriptTypeScriptDocumentOpenSyncAttemptIdRef = useRef(0);
   const javaScriptTypeScriptDocumentChangeTimersRef = useRef<Record<string, number>>({});
   const javaScriptTypeScriptDocumentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const javaScriptTypeScriptDocumentSyncQueueRef = useRef<BoundedDocumentSyncQueue | null>(null);
+  javaScriptTypeScriptDocumentSyncQueueRef.current ??= new BoundedDocumentSyncQueue(
+    javaScriptTypeScriptDocumentSyncQueuesRef,
+    options.queueLimits,
+  );
   const javaScriptTypeScriptDocumentChangeMailboxRef = useRef(
     new LatestValueDrainMailbox<LanguageServerTextDocument>(),
   );
@@ -61,6 +81,8 @@ export function useLanguageServerDocumentSyncState() {
   useEffect(
     () => () => {
       javaScriptTypeScriptDocumentChangeMailboxRef.current.clear();
+      documentSyncQueueRef.current?.clear();
+      javaScriptTypeScriptDocumentSyncQueueRef.current?.clear();
     },
     [],
   );
@@ -109,41 +131,39 @@ export function useLanguageServerDocumentSyncState() {
     delete javaScriptTypeScriptDocumentChangeTimersRef.current[key];
   }, []);
 
-  const enqueueDocumentSync = useCallback((path: string, operation: () => Promise<void>) => {
-    const previous = documentSyncQueuesRef.current[path] || Promise.resolve();
-    const next = previous.then(operation, operation);
-    const queued = next.catch(() => undefined);
-    documentSyncQueuesRef.current[path] = queued;
-
-    queued.finally(() => {
-      if (documentSyncQueuesRef.current[path] !== queued) {
-        return;
-      }
-
-      delete documentSyncQueuesRef.current[path];
-    });
-
-    return next;
-  }, []);
-
-  const enqueueJavaScriptTypeScriptDocumentSync = useCallback(
-    (key: string, operation: () => Promise<void>) => {
-      const previous = javaScriptTypeScriptDocumentSyncQueuesRef.current[key] || Promise.resolve();
-      const next = previous.then(operation, operation);
-      const queued = next.catch(() => undefined);
-      javaScriptTypeScriptDocumentSyncQueuesRef.current[key] = queued;
-
-      queued.finally(() => {
-        if (javaScriptTypeScriptDocumentSyncQueuesRef.current[key] !== queued) {
-          return;
-        }
-
-        delete javaScriptTypeScriptDocumentSyncQueuesRef.current[key];
-      });
-
-      return next;
+  const enqueueDocumentSyncOperation = useCallback(
+    (path: string, operation: () => Promise<void>, retainedPayloads: readonly string[] = []) => {
+      return documentSyncQueueRef.current!.enqueue(path, operation, retainedPayloads);
     },
     [],
+  );
+  const reserveDocumentSyncPayload = useCallback(
+    (key: string, retainedPayloads: readonly string[]) =>
+      documentSyncQueueRef.current!.reservePayload(key, retainedPayloads),
+    [],
+  );
+  const enqueueDocumentSync = Object.assign(enqueueDocumentSyncOperation, {
+    reservePayload: reserveDocumentSyncPayload,
+  });
+
+  const enqueueJavaScriptTypeScriptDocumentSyncOperation = useCallback(
+    (key: string, operation: () => Promise<void>, retainedPayloads: readonly string[] = []) => {
+      return javaScriptTypeScriptDocumentSyncQueueRef.current!.enqueue(
+        key,
+        operation,
+        retainedPayloads,
+      );
+    },
+    [],
+  );
+  const reserveJavaScriptTypeScriptDocumentSyncPayload = useCallback(
+    (key: string, retainedPayloads: readonly string[]) =>
+      javaScriptTypeScriptDocumentSyncQueueRef.current!.reservePayload(key, retainedPayloads),
+    [],
+  );
+  const enqueueJavaScriptTypeScriptDocumentSync = Object.assign(
+    enqueueJavaScriptTypeScriptDocumentSyncOperation,
+    { reservePayload: reserveJavaScriptTypeScriptDocumentSyncPayload },
   );
 
   const resetLanguageServerDocuments = useCallback(() => {
@@ -157,7 +177,7 @@ export function useLanguageServerDocumentSyncState() {
     documentVersionsRef.current = {};
     documentVersionsByUriRef.current = {};
     lastAppliedDiagnosticVersionByUriRef.current = {};
-    documentSyncQueuesRef.current = {};
+    documentSyncQueueRef.current!.clear();
     documentLifecycleIdentitiesRef.current = {};
     pendingDocumentLifecycleIdentitiesRef.current = {};
     // A document-sync reset means the phpactor session/generation changed, so
@@ -180,7 +200,7 @@ export function useLanguageServerDocumentSyncState() {
     javaScriptTypeScriptDocumentVersionsRef.current = {};
     javaScriptTypeScriptDocumentVersionsByUriRef.current = {};
     javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current = {};
-    javaScriptTypeScriptDocumentSyncQueuesRef.current = {};
+    javaScriptTypeScriptDocumentSyncQueueRef.current!.clear();
   }, [clearJavaScriptTypeScriptDocumentChangeTimer]);
 
   const getPhpDocumentSyncVersion = useCallback(

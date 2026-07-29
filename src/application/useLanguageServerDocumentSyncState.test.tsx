@@ -7,6 +7,7 @@ import {
   fileUriFromPath,
   languageServerDocumentSyncKey,
   languageServerUriSyncKey,
+  type LanguageServerTextDocument,
 } from "../domain/languageServerDocumentSync";
 import { useLanguageServerDocumentSyncState } from "./useLanguageServerDocumentSyncState";
 
@@ -17,11 +18,11 @@ type DocumentSyncState = ReturnType<typeof useLanguageServerDocumentSyncState>;
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
-function renderHook() {
+function renderHook(options?: Parameters<typeof useLanguageServerDocumentSyncState>[0]) {
   let current: DocumentSyncState | null = null;
 
   function Harness() {
-    current = useLanguageServerDocumentSyncState();
+    current = useLanguageServerDocumentSyncState(options);
     return null;
   }
 
@@ -267,5 +268,238 @@ describe("useLanguageServerDocumentSyncState", () => {
     await Promise.resolve();
     expect(jsCalls).toEqual(["js:first", "js:second"]);
     expect(state.javaScriptTypeScriptDocumentSyncQueuesRef.current).toEqual({});
+  });
+
+  it("times out a never-settled owner without overlapping its successor", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = renderHook();
+      const state = harness.current;
+      let resolveLate!: () => void;
+      const late = new Promise<void>((resolve) => {
+        resolveLate = resolve;
+      });
+      const first = state.enqueueDocumentSync("file.php", () => late);
+      const successor = vi.fn(async () => undefined);
+      const second = state.enqueueDocumentSync("file.php", successor);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(first).rejects.toThrow("deadline");
+      expect(successor).not.toHaveBeenCalled();
+      expect(state.documentSyncQueuesRef.current["file.php"]).toBeDefined();
+
+      resolveLate();
+      await expect(second).resolves.toBeUndefined();
+      expect(successor).toHaveBeenCalledOnce();
+      expect(state.documentSyncQueuesRef.current).toEqual({});
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed when per-key queue count or UTF-8 key budgets are exhausted", async () => {
+    const harness = renderHook({
+      queueLimits: {
+        maxKeyUtf8Bytes: 8,
+        maxKeys: 1,
+        maxQueuedPerKey: 2,
+        maxTotalKeyUtf8Bytes: 8,
+        operationTimeoutMs: 5_000,
+      },
+    });
+    const state = harness.current;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = state.enqueueDocumentSync("12345678", () => blocked);
+    const second = state.enqueueDocumentSync("12345678", async () => undefined);
+
+    await expect(state.enqueueDocumentSync("12345678", async () => undefined)).rejects.toThrow(
+      "capacity",
+    );
+    await expect(state.enqueueDocumentSync("ééééé", async () => undefined)).rejects.toThrow(
+      "capacity",
+    );
+    void state.enqueueDocumentSync("12345678", async () => undefined);
+    await Promise.resolve();
+
+    release();
+    await Promise.all([first, second]);
+  });
+
+  it("retains timed-out payload bytes until the underlying owner settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = renderHook({
+        queueLimits: {
+          maxPayloadUtf8BytesPerKey: 4,
+          maxPayloadUtf8BytesPerOperation: 4,
+          maxPayloadUtf8BytesTotal: 4,
+          operationTimeoutMs: 5_000,
+        },
+      });
+      const state = harness.current;
+      state.pendingDocumentChangesRef.current["file.php"] = {
+        languageId: "php",
+        path: "file.php",
+        text: "éé",
+        version: 1,
+      };
+      let release!: () => void;
+      const first = state.enqueueDocumentSync(
+        "file.php",
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+        ["éé"],
+      );
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(first).rejects.toThrow("deadline");
+      await expect(
+        state.enqueueDocumentSync("file.php", async () => undefined, ["éé"]),
+      ).rejects.toThrow("capacity");
+      await expect(
+        state.enqueueDocumentSync("oversize.php", async () => undefined, ["ééé"]),
+      ).rejects.toThrow("capacity");
+      await expect(
+        state.enqueueDocumentSync("other.php", async () => undefined, ["x"]),
+      ).rejects.toThrow("capacity");
+
+      release();
+      await Promise.resolve();
+      await expect(
+        state.enqueueDocumentSync("file.php", async () => undefined, ["éé"]),
+      ).resolves.toBe(undefined);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("atomically replaces one mailbox payload reservation without accumulating history", async () => {
+    const harness = renderHook({
+      queueLimits: {
+        maxPayloadUtf8BytesPerKey: 4,
+        maxPayloadUtf8BytesPerOperation: 4,
+        maxPayloadUtf8BytesTotal: 4,
+      },
+    });
+    const state = harness.current;
+    let release!: () => void;
+    const drained: string[] = [];
+    const drain = async (document: LanguageServerTextDocument) => {
+      drained.push(document.text);
+      if (document.text === "a") {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+    };
+    const first = state.javaScriptTypeScriptDocumentChangeMailbox.offer(
+      "file.ts",
+      { languageId: "typescript", path: "file.ts", text: "a", version: 1 },
+      state.enqueueJavaScriptTypeScriptDocumentSync,
+      drain,
+      ["a"],
+    );
+    for (let version = 2; version <= 1_000; version += 1) {
+      state.javaScriptTypeScriptDocumentChangeMailbox.offer(
+        "file.ts",
+        { languageId: "typescript", path: "file.ts", text: "é", version },
+        state.enqueueJavaScriptTypeScriptDocumentSync,
+        drain,
+        ["é"],
+      );
+    }
+
+    release();
+    await expect(first.settlement).resolves.toBeUndefined();
+    expect(drained).toEqual(["a", "é"]);
+  });
+
+  it("does not publish a mailbox replacement whose payload reservation is rejected", async () => {
+    const harness = renderHook({
+      queueLimits: {
+        maxPayloadUtf8BytesPerKey: 4,
+        maxPayloadUtf8BytesPerOperation: 4,
+        maxPayloadUtf8BytesTotal: 4,
+      },
+    });
+    const state = harness.current;
+    let release!: () => void;
+    const drained: string[] = [];
+    const first = state.javaScriptTypeScriptDocumentChangeMailbox.offer(
+      "file.ts",
+      { languageId: "typescript", path: "file.ts", text: "a", version: 1 },
+      state.enqueueJavaScriptTypeScriptDocumentSync,
+      async (document) => {
+        drained.push(document.text);
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+      ["a"],
+    );
+    state.javaScriptTypeScriptDocumentChangeMailbox.offer(
+      "file.ts",
+      { languageId: "typescript", path: "file.ts", text: "ééé", version: 2 },
+      state.enqueueJavaScriptTypeScriptDocumentSync,
+      async (document) => {
+        drained.push(document.text);
+      },
+      ["ééé"],
+    );
+
+    release();
+    await expect(first.settlement).rejects.toThrow("capacity");
+    expect(drained).toEqual(["a"]);
+  });
+
+  it("serializes new-A behind a retired old-A owner and ignores its late response", async () => {
+    const harness = renderHook();
+    const state = harness.current;
+    let releaseOldA!: () => void;
+    const oldA = state.enqueueJavaScriptTypeScriptDocumentSync(
+      "A\0file.ts",
+      () =>
+        new Promise<void>((resolve) => {
+          releaseOldA = resolve;
+        }),
+    );
+    const oldASettlement = expect(oldA).resolves.toBeUndefined();
+    await Promise.resolve();
+
+    state.resetJavaScriptTypeScriptLanguageServerDocuments();
+    const newAOperation = vi.fn(async () => undefined);
+    const newA = state.enqueueJavaScriptTypeScriptDocumentSync("A\0file.ts", newAOperation);
+    expect(newAOperation).not.toHaveBeenCalled();
+    expect(state.javaScriptTypeScriptDocumentSyncQueuesRef.current["A\0file.ts"]).toBeDefined();
+
+    releaseOldA();
+    await oldASettlement;
+    await expect(newA).resolves.toBeUndefined();
+    expect(newAOperation).toHaveBeenCalledOnce();
+    expect(state.javaScriptTypeScriptDocumentSyncQueuesRef.current).toEqual({});
+  });
+
+  it("internally handles a fire-and-forget owner retirement during reset", async () => {
+    const harness = renderHook();
+    const state = harness.current;
+    let release!: () => void;
+    void state.enqueueDocumentSync(
+      "file.php",
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      ["content"],
+    );
+    await Promise.resolve();
+
+    state.resetLanguageServerDocuments();
+    release();
+    await Promise.resolve();
   });
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { DocumentSelfWriteCoordinator } from "./documentSelfWriteCoordinator";
+import {
+  DOCUMENT_SELF_WRITE_SETTLEMENT_TIMEOUT_MS,
+  DocumentSelfWriteCoordinator,
+} from "./documentSelfWriteCoordinator";
 import { createRegisteredDocumentSaveIdentity } from "./documentSaveIdentity";
 
 const ownership = createRegisteredDocumentSaveIdentity("workspace-a", "/workspace", "new.php")!;
@@ -131,6 +134,104 @@ describe("DocumentSelfWriteCoordinator", () => {
       });
       controller.abort();
       await expect(cancelledWait).resolves.toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects new writes when exact-key count or UTF-8 budgets are exhausted", async () => {
+    const coordinator = new DocumentSelfWriteCoordinator({
+      maxPendingBytesPerKey: 5,
+      maxPendingBytesTotal: 10,
+      maxPendingKeys: 2,
+      maxPendingWritesPerKey: 2,
+      settlementTimeoutMs: 5_000,
+    });
+
+    const first = coordinator.begin(ownership, "é");
+    const second = coordinator.begin(ownership, "abc");
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(coordinator.begin(ownership, "x")).toBeNull();
+
+    first?.abort();
+    expect(coordinator.begin(ownership, "é")).not.toBeNull();
+  });
+
+  it("bounds UTF-8 ownership identities per key and in total", () => {
+    const coordinator = new DocumentSelfWriteCoordinator({
+      maxIdentityBytesPerKey: 6,
+      maxIdentityBytesTotal: 6,
+    });
+    const firstOwnership = {
+      canonicalRoot: "/r",
+      workspaceId: "a",
+      workspaceRelativePath: "p",
+    };
+    const secondOwnership = {
+      canonicalRoot: "/s",
+      workspaceId: "b",
+      workspaceRelativePath: "q",
+    };
+
+    const first = coordinator.begin(firstOwnership, "x");
+    expect(first).not.toBeNull();
+    expect(coordinator.begin(secondOwnership, "x")).toBeNull();
+    expect(
+      coordinator.begin(
+        {
+          canonicalRoot: "/r",
+          workspaceId: "éé",
+          workspaceRelativePath: "p",
+        },
+        "x",
+      ),
+    ).toBeNull();
+
+    first?.abort();
+    expect(coordinator.begin(secondOwnership, "x")).not.toBeNull();
+  });
+
+  it("expires never-settled writes after five seconds and ignores late completion", async () => {
+    vi.useFakeTimers();
+    try {
+      const coordinator = new DocumentSelfWriteCoordinator();
+      const lease = coordinator.begin(ownership, "saved content");
+      const pending = coordinator.waitForExpectations(ownership, {
+        timeoutMs: DOCUMENT_SELF_WRITE_SETTLEMENT_TIMEOUT_MS + 1_000,
+      });
+
+      await vi.advanceTimersByTimeAsync(DOCUMENT_SELF_WRITE_SETTLEMENT_TIMEOUT_MS);
+      await expect(pending).resolves.toEqual([]);
+
+      lease?.complete(revision(9));
+      expect(await coordinator.waitForExpectations(ownership, { timeoutMs: 0 })).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts watcher retention when a slow write completes", async () => {
+    vi.useFakeTimers();
+    try {
+      const coordinator = new DocumentSelfWriteCoordinator();
+      const lease = coordinator.begin(ownership, "saved content");
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      lease?.complete(revision(10));
+      await expect(
+        coordinator.waitForExpectations(ownership, { timeoutMs: 0 }),
+      ).resolves.toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(DOCUMENT_SELF_WRITE_SETTLEMENT_TIMEOUT_MS - 1);
+      await expect(
+        coordinator.waitForExpectations(ownership, { timeoutMs: 0 }),
+      ).resolves.toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(coordinator.waitForExpectations(ownership, { timeoutMs: 0 })).resolves.toEqual(
+        [],
+      );
     } finally {
       vi.useRealTimers();
     }

@@ -63,6 +63,72 @@ describe("JavaScriptTypeScriptIncrementalSyncProductionCoordinator", () => {
     expect(fixture.source.captureCurrentContent).toHaveBeenCalledOnce();
   });
 
+  it("blocks a never-settled legacy handoff after five seconds and ignores its late response", async () => {
+    vi.useFakeTimers();
+    try {
+      const close = deferred<void>();
+      const fixture = productionFixture({
+        closeLegacy: () => close.promise,
+        productionOperationTimeoutMs: 5_000,
+      });
+      const attachment = fixture.production.attach(
+        fixture.authority,
+        fixture.source,
+        () => fixture.current,
+      );
+      fixture.production.observe(attachment!, insertion(2, 10, "x"));
+      const claim = fixture.production.claimLegacyChange(PATH);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(claim?.suppressLegacy()).resolves.toBe(true);
+      expect(fixture.production.ownsLifecycle(PATH)).toBe(true);
+      expect(fixture.gateway.openRequests).toHaveLength(0);
+      expect(fixture.legacyOpen).not.toHaveBeenCalled();
+
+      close.resolve();
+      await Promise.resolve();
+      expect(fixture.gateway.openRequests).toHaveLength(0);
+      expect(fixture.legacyOpen).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retires deterministically when an opening owner exceeds count or UTF-8 budgets", async () => {
+    const close = deferred<void>();
+    const fixture = productionFixture({
+      closeLegacy: () => close.promise,
+      productionLimits: {
+        maxPendingClaimUtf8BytesPerPath: 3,
+        maxPendingClaimUtf8BytesTotal: 3,
+        maxPendingClaimsPerPath: 2,
+        maxPendingClaimsTotal: 2,
+        maxPendingOpeningEvents: 2,
+        maxPendingOpeningUtf8Bytes: 3,
+        operationTimeoutMs: 5_000,
+      },
+    });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    expect(fixture.production.observe(attachment!, insertion(2, 10, "x"))).toEqual({
+      status: "legacy-required",
+    });
+    expect(fixture.production.observe(attachment!, insertion(3, 11, "é"))).toEqual({
+      status: "legacy-required",
+    });
+    const overflow = fixture.production.observe(attachment!, insertion(4, 12, "z"));
+    expect(overflow).toEqual({ status: "legacy-required" });
+    expect(fixture.production.claimLegacyChange(PATH)?.revision).toBe(4);
+
+    close.resolve();
+    await settle();
+    expect(fixture.gateway.openRequests).toHaveLength(0);
+    expect(fixture.legacyOpen).toHaveBeenCalledOnce();
+  });
+
   it.each([1, 2, 4])(
     "joins %i exact panes and restores legacy only after the admitted final close",
     async (paneCount) => {
@@ -716,6 +782,40 @@ describe("JavaScriptTypeScriptIncrementalSyncProductionCoordinator", () => {
     expect(fixture.legacyOpen).not.toHaveBeenCalled();
   });
 
+  it("bounds an owner close that never settles and ignores its late admission", async () => {
+    const close = deferred<BoundedLanguageServerDocumentSyncReceipt>();
+    const gateway = new FakeIncrementalGateway();
+    gateway.close = () => close.promise;
+    const fixture = productionFixture({
+      gateway,
+      gatewayTimeoutMs: 30_000,
+      productionLimits: {
+        maxPendingClaimsPerPath: 1,
+        maxPendingClaimsTotal: 1,
+        operationTimeoutMs: 5_000,
+      },
+    });
+    const attachment = fixture.production.attach(fixture.authority, fixture.source, () => true);
+    await settle();
+
+    vi.useFakeTimers();
+    try {
+      fixture.production.observe(attachment!, insertion(2, 10, "x"));
+      fixture.production.observe(attachment!, insertion(3, 11, "y"));
+      const claim = fixture.production.claimLegacyChange(PATH);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(claim?.suppressLegacy()).resolves.toBe(true);
+      expect(fixture.legacyOpen).not.toHaveBeenCalled();
+
+      close.resolve({ kind: "admitted" });
+      await Promise.resolve();
+      expect(fixture.legacyOpen).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("blocks the overflow revision while the legacy handoff close is still opening", async () => {
     const close = deferred<void>();
     const fixture = productionFixture({ closeLegacy: () => close.promise });
@@ -795,6 +895,10 @@ function productionFixture(
     gatewayTimeoutMs?: number;
     initialText?: string;
     publishLegacyFallback?: (content: string) => boolean;
+    productionLimits?: ConstructorParameters<
+      typeof JavaScriptTypeScriptIncrementalSyncProductionCoordinator
+    >[3];
+    productionOperationTimeoutMs?: number;
   } = {},
 ) {
   const authority = groupAuthority();
@@ -855,6 +959,10 @@ function productionFixture(
       close: legacyClose,
       open: legacyOpen,
     },
+    options.productionLimits ??
+      (options.productionOperationTimeoutMs === undefined
+        ? undefined
+        : { operationTimeoutMs: options.productionOperationTimeoutMs }),
   );
   return {
     authority,

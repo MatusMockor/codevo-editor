@@ -15,7 +15,10 @@ import type {
   IncrementalDocumentContentEvent,
   NegotiatedDocumentSyncCapability,
 } from "../domain/incrementalDocumentSync";
-import { DEFAULT_INCREMENTAL_DOCUMENT_SYNC_LIMITS } from "../domain/incrementalDocumentSync";
+import {
+  DEFAULT_INCREMENTAL_DOCUMENT_SYNC_LIMITS,
+  boundedUtf8Length,
+} from "../domain/incrementalDocumentSync";
 import {
   AUTHORITATIVE_EDITOR_LIVE_EDIT,
   LEGACY_REQUIRED_EDITOR_LIVE_EDIT,
@@ -119,6 +122,7 @@ interface AttachmentCapabilities {
   fallbackPublicationInProgress: boolean;
   readonly isCurrent: () => boolean;
   readonly pendingEvents: PendingOpeningEvent[];
+  pendingEventUtf8Bytes: number;
   released: boolean;
   readonly runtimeAuthority: JavaScriptTypeScriptIncrementalRuntimeAuthority;
   readonly source: EditorJavaScriptTypeScriptIncrementalSyncSource;
@@ -144,6 +148,7 @@ interface PendingClaim {
   consumed: boolean;
   readonly decision: Promise<JavaScriptTypeScriptIncrementalSyncArbitration>;
   readonly revision: number;
+  readonly utf8Bytes: number;
 }
 
 interface PendingOpeningEvent {
@@ -174,8 +179,34 @@ interface SavePermitCapabilities {
 const MAX_PENDING_CLAIMS_PER_PATH = 256;
 const MAX_PENDING_CLAIMS_TOTAL = 8_192;
 const MAX_PRODUCTION_CHANNELS = 32;
+export const JAVASCRIPT_TYPESCRIPT_INCREMENTAL_PRODUCTION_OPERATION_TIMEOUT_MS = 5_000;
+export const MAX_PENDING_CLAIM_UTF8_BYTES_PER_PATH = 512 * 1024;
+export const MAX_PENDING_CLAIM_UTF8_BYTES_TOTAL = 8 * 1024 * 1024;
+export const MAX_PENDING_OPENING_EVENTS = 256;
+export const MAX_PENDING_OPENING_UTF8_BYTES = 512 * 1024;
 export const MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS =
   DEFAULT_INCREMENTAL_DOCUMENT_SYNC_LIMITS.maxFullSnapshotUtf16Units;
+
+export interface JavaScriptTypeScriptIncrementalSyncProductionLimits {
+  readonly maxPendingClaimUtf8BytesPerPath: number;
+  readonly maxPendingClaimUtf8BytesTotal: number;
+  readonly maxPendingClaimsPerPath: number;
+  readonly maxPendingClaimsTotal: number;
+  readonly maxPendingOpeningEvents: number;
+  readonly maxPendingOpeningUtf8Bytes: number;
+  readonly operationTimeoutMs: number;
+}
+
+const DEFAULT_PRODUCTION_LIMITS: JavaScriptTypeScriptIncrementalSyncProductionLimits =
+  Object.freeze({
+    maxPendingClaimUtf8BytesPerPath: MAX_PENDING_CLAIM_UTF8_BYTES_PER_PATH,
+    maxPendingClaimUtf8BytesTotal: MAX_PENDING_CLAIM_UTF8_BYTES_TOTAL,
+    maxPendingClaimsPerPath: MAX_PENDING_CLAIMS_PER_PATH,
+    maxPendingClaimsTotal: MAX_PENDING_CLAIMS_TOTAL,
+    maxPendingOpeningEvents: MAX_PENDING_OPENING_EVENTS,
+    maxPendingOpeningUtf8Bytes: MAX_PENDING_OPENING_UTF8_BYTES,
+    operationTimeoutMs: JAVASCRIPT_TYPESCRIPT_INCREMENTAL_PRODUCTION_OPERATION_TIMEOUT_MS,
+  });
 
 /**
  * Exact application arbitration between the legacy full-text writer and the
@@ -199,6 +230,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   >();
   private readonly pendingClaims = new Map<string, PendingClaim[]>();
   private pendingClaimCount = 0;
+  private pendingClaimUtf8Bytes = 0;
   private reconciliationAuthority: JavaScriptTypeScriptIncrementalRuntimeAuthority | null = null;
   private reconciliationRevisionIdentity: object | null = null;
   private readonly savePermitCapabilities = new WeakMap<
@@ -210,7 +242,12 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     private readonly service: JavaScriptTypeScriptIncrementalSyncService,
     private readonly runtime: JavaScriptTypeScriptIncrementalRuntimePort,
     private readonly legacy: JavaScriptTypeScriptIncrementalLegacyPort,
-  ) {}
+    limits: Partial<JavaScriptTypeScriptIncrementalSyncProductionLimits> = DEFAULT_PRODUCTION_LIMITS,
+  ) {
+    this.limits = normalizeProductionLimits(limits);
+  }
+
+  private readonly limits: JavaScriptTypeScriptIncrementalSyncProductionLimits;
 
   reconciliationIdentity(): object | null {
     const authority = this.runtime.current();
@@ -285,6 +322,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       fallbackPublicationInProgress: false,
       isCurrent,
       pendingEvents: [],
+      pendingEventUtf8Bytes: 0,
       released: false,
       runtimeAuthority,
       source,
@@ -334,13 +372,41 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     }
     const ownsFallback = typeof capabilities.source.publishLegacyFallback === "function";
     const claims = this.pendingClaims.get(capabilities.channel.path) ?? [];
+    const eventUtf8Bytes = incrementalEventUtf8Bytes(
+      event,
+      Math.min(this.limits.maxPendingClaimUtf8BytesPerPath, this.limits.maxPendingOpeningUtf8Bytes),
+    );
+    const claimUtf8Bytes = claims.reduce((total, claim) => total + claim.utf8Bytes, 0);
     if (
       !ownsFallback &&
-      (claims.length >= MAX_PENDING_CLAIMS_PER_PATH ||
-        this.pendingClaimCount >= MAX_PENDING_CLAIMS_TOTAL)
+      (eventUtf8Bytes === null ||
+        claims.length >= this.limits.maxPendingClaimsPerPath ||
+        this.pendingClaimCount >= this.limits.maxPendingClaimsTotal ||
+        claimUtf8Bytes + eventUtf8Bytes > this.limits.maxPendingClaimUtf8BytesPerPath ||
+        this.pendingClaimUtf8Bytes + eventUtf8Bytes > this.limits.maxPendingClaimUtf8BytesTotal)
     ) {
       this.blockOverflowRevision(capabilities, event.versionId);
       return LEGACY_REQUIRED_EDITOR_LIVE_EDIT;
+    }
+    if (
+      capabilities.state !== "open" &&
+      (eventUtf8Bytes === null ||
+        capabilities.pendingEvents.length >= this.limits.maxPendingOpeningEvents ||
+        capabilities.pendingEventUtf8Bytes + eventUtf8Bytes >
+          this.limits.maxPendingOpeningUtf8Bytes)
+    ) {
+      if (!ownsFallback) {
+        this.blockOverflowRevision(capabilities, event.versionId);
+        return LEGACY_REQUIRED_EDITOR_LIVE_EDIT;
+      }
+      const deferred = deferredArbitration();
+      void this.retireOverflowChannel(capabilities, event.versionId).then(deferred.resolve, () =>
+        deferred.resolve(blockedArbitrationForRevision(event.versionId)),
+      );
+      void deferred.promise.then((settlement) =>
+        this.settleArbitrationOwnership(capabilities, settlement),
+      );
+      return AUTHORITATIVE_EDITOR_LIVE_EDIT;
     }
 
     let decision: Promise<JavaScriptTypeScriptIncrementalSyncArbitration>;
@@ -350,6 +416,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       } else {
         const deferred = deferredArbitration();
         capabilities.pendingEvents.push({ event, resolve: deferred.resolve });
+        capabilities.pendingEventUtf8Bytes += eventUtf8Bytes ?? 0;
         decision = deferred.promise;
       }
     } catch {
@@ -372,9 +439,11 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       consumed: false,
       decision,
       revision: event.versionId,
+      utf8Bytes: eventUtf8Bytes ?? 0,
     };
     claims.push(claim);
     this.pendingClaimCount += 1;
+    this.pendingClaimUtf8Bytes += claim.utf8Bytes;
     this.pendingClaims.set(capabilities.channel.path, claims);
     void decision.then((settlement) => this.settleArbitrationOwnership(capabilities, settlement));
     void decision.finally(() => this.removeSettledClaim(capabilities.channel.path, claim));
@@ -384,7 +453,12 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   claimLegacyChange(path: string): JavaScriptTypeScriptIncrementalLegacyClaim | null {
     const claims = this.pendingClaims.get(path) ?? [];
     const currentClaims = claims.filter((candidate) => this.isClaimCurrent(candidate));
-    this.pendingClaimCount -= claims.length - currentClaims.length;
+    const removedClaims = claims.filter((candidate) => !currentClaims.includes(candidate));
+    this.pendingClaimCount -= removedClaims.length;
+    this.pendingClaimUtf8Bytes -= removedClaims.reduce(
+      (total, claim) => total + claim.utf8Bytes,
+      0,
+    );
     if (currentClaims.length > 0) this.pendingClaims.set(path, currentClaims);
     else this.pendingClaims.delete(path);
     const claim = [...currentClaims].reverse().find((candidate) => !candidate.consumed);
@@ -575,7 +649,10 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   ): Promise<void> {
     const { channel, runtimeAuthority } = capabilities;
     try {
-      await this.ensureLegacyHandoff(channel, runtimeAuthority);
+      await withDeadline(
+        this.ensureLegacyHandoff(channel, runtimeAuthority),
+        this.limits.operationTimeoutMs,
+      );
     } catch {
       this.endHandoff(channel.path);
       capabilities.state = "blocked";
@@ -683,6 +760,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   private drainOpeningEvents(capabilities: AttachmentCapabilities): void {
     const binding = capabilities.binding;
     if (!binding) return;
+    capabilities.pendingEventUtf8Bytes = 0;
     for (const pending of capabilities.pendingEvents.splice(0)) {
       void this.service.acceptChange(binding, pending.event).then(pending.resolve);
     }
@@ -694,6 +772,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     reason: "close-uncertain" | JavaScriptTypeScriptIncrementalSyncFallbackReason,
   ): void {
     capabilities.state = status === "blocked" ? "blocked" : "closed";
+    capabilities.pendingEventUtf8Bytes = 0;
     for (const pending of capabilities.pendingEvents.splice(0)) {
       if (status === "blocked") {
         pending.resolve({
@@ -798,7 +877,13 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   }
 
   private blockOverflowRevision(capabilities: AttachmentCapabilities, revision: number): void {
-    this.removeClaimsForChannel(capabilities.channel);
+    const displaced = this.pendingClaims.get(capabilities.channel.path) ?? [];
+    this.pendingClaimCount -= displaced.length;
+    this.pendingClaimUtf8Bytes -= displaced.reduce(
+      (total, pending) => total + pending.utf8Bytes,
+      0,
+    );
+    this.pendingClaims.delete(capabilities.channel.path);
     const deferred = deferredArbitration();
     const claim: PendingClaim = {
       authority: capabilities.runtimeAuthority,
@@ -807,6 +892,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       consumed: false,
       decision: deferred.promise,
       revision,
+      utf8Bytes: 0,
     };
     this.pendingClaims.set(capabilities.channel.path, [claim]);
     this.pendingClaimCount += 1;
@@ -814,7 +900,9 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       capabilities.channel.lastObservedRevision,
       revision,
     );
-    void this.retireOverflowChannel(capabilities, revision).then(deferred.resolve);
+    void this.retireOverflowChannel(capabilities, revision).then(deferred.resolve, () =>
+      deferred.resolve(blockedArbitrationForRevision(revision)),
+    );
     void deferred.promise.finally(() => this.removeSettledClaim(capabilities.channel.path, claim));
   }
 
@@ -826,7 +914,9 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     channel.retired = true;
     if (!capabilities.binding) {
       try {
-        await channel.legacyHandoff;
+        if (channel.legacyHandoff) {
+          await withDeadline(channel.legacyHandoff, this.limits.operationTimeoutMs);
+        }
       } catch {
         this.endHandoff(channel.path);
         this.blockedPaths.set(channel.path, { authority: runtimeAuthority });
@@ -842,7 +932,18 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
         ? legacyArbitrationForRevision(revision)
         : blockedArbitrationForRevision(revision);
     }
-    const result = await this.service.closeDocument(capabilities.binding);
+    let result: JavaScriptTypeScriptIncrementalSyncReleaseResult;
+    try {
+      result = await withDeadline(
+        this.service.closeDocument(capabilities.binding),
+        this.limits.operationTimeoutMs,
+      );
+    } catch {
+      channel.allowLegacyRestore = false;
+      this.blockedPaths.set(channel.path, { authority: runtimeAuthority });
+      this.closeLocalChannel(channel, true);
+      return blockedArbitrationForRevision(revision);
+    }
     const exact = this.runtime.isCurrent(runtimeAuthority);
     if (!exact || !closeResultAdmitsLegacy(result)) {
       this.settleCloseResult(channel, runtimeAuthority, result, false);
@@ -1020,9 +1121,16 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     if (channel.legacyRestore) return channel.legacyRestore;
     channel.legacyRestore = (async () => {
       try {
-        await this.legacy.open(this.legacyRequest(channel, authority, "open"));
+        await withDeadline(
+          this.legacy.open(this.legacyRequest(channel, authority, "open")),
+          this.limits.operationTimeoutMs,
+        );
         return true;
       } catch {
+        // A timed-out open may still settle later at the adapter boundary.
+        // Revoke its exact request guard so that late work cannot resurrect
+        // legacy ownership after this bounded attempt failed closed.
+        channel.allowLegacyRestore = false;
         // Existing legacy orchestration owns user-facing error reporting.
         return false;
       }
@@ -1050,6 +1158,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       isCurrent: () =>
         this.runtime.isCurrent(authority) &&
         channel.rootPath === authority.rootPath &&
+        (operation !== "open" || channel.allowLegacyRestore) &&
         (this.currentCapabilitiesForPath(channel.path) === null ||
           this.currentCapabilitiesForPath(channel.path)?.channel === channel),
       operation,
@@ -1075,6 +1184,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     if (index >= 0) {
       claims.splice(index, 1);
       this.pendingClaimCount -= 1;
+      this.pendingClaimUtf8Bytes -= claim.utf8Bytes;
     }
     if (claims.length === 0) this.pendingClaims.delete(path);
   }
@@ -1083,7 +1193,9 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     const claims = this.pendingClaims.get(channel.path);
     if (!claims) return;
     const remaining = claims.filter((claim) => claim.channel !== channel);
-    this.pendingClaimCount -= claims.length - remaining.length;
+    const removed = claims.filter((claim) => claim.channel === channel);
+    this.pendingClaimCount -= removed.length;
+    this.pendingClaimUtf8Bytes -= removed.reduce((total, claim) => total + claim.utf8Bytes, 0);
     if (remaining.length > 0) this.pendingClaims.set(channel.path, remaining);
     else this.pendingClaims.delete(channel.path);
   }
@@ -1245,4 +1357,82 @@ function safeCurrent(isCurrent: () => boolean): boolean {
 
 function isObject(value: unknown): value is object {
   return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+function normalizeProductionLimits(
+  limits: Partial<JavaScriptTypeScriptIncrementalSyncProductionLimits>,
+): JavaScriptTypeScriptIncrementalSyncProductionLimits {
+  return Object.freeze({
+    maxPendingClaimUtf8BytesPerPath: positiveLimit(
+      limits.maxPendingClaimUtf8BytesPerPath,
+      DEFAULT_PRODUCTION_LIMITS.maxPendingClaimUtf8BytesPerPath,
+    ),
+    maxPendingClaimUtf8BytesTotal: positiveLimit(
+      limits.maxPendingClaimUtf8BytesTotal,
+      DEFAULT_PRODUCTION_LIMITS.maxPendingClaimUtf8BytesTotal,
+    ),
+    maxPendingClaimsPerPath: positiveLimit(
+      limits.maxPendingClaimsPerPath,
+      DEFAULT_PRODUCTION_LIMITS.maxPendingClaimsPerPath,
+    ),
+    maxPendingClaimsTotal: positiveLimit(
+      limits.maxPendingClaimsTotal,
+      DEFAULT_PRODUCTION_LIMITS.maxPendingClaimsTotal,
+    ),
+    maxPendingOpeningEvents: positiveLimit(
+      limits.maxPendingOpeningEvents,
+      DEFAULT_PRODUCTION_LIMITS.maxPendingOpeningEvents,
+    ),
+    maxPendingOpeningUtf8Bytes: positiveLimit(
+      limits.maxPendingOpeningUtf8Bytes,
+      DEFAULT_PRODUCTION_LIMITS.maxPendingOpeningUtf8Bytes,
+    ),
+    operationTimeoutMs: positiveLimit(
+      limits.operationTimeoutMs,
+      DEFAULT_PRODUCTION_LIMITS.operationTimeoutMs,
+    ),
+  });
+}
+
+function positiveLimit(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && value !== undefined && value > 0 ? value : fallback;
+}
+
+/** Counts retained inserted text; fixed event overhead is bounded by the count budgets. */
+function incrementalEventUtf8Bytes(
+  event: IncrementalDocumentContentEvent,
+  limit: number,
+): number | null {
+  if (!Array.isArray(event?.changes)) {
+    return null;
+  }
+  let total = 0;
+  for (const change of event.changes) {
+    if (typeof change?.text !== "string") {
+      return null;
+    }
+    const receipt = boundedUtf8Length(change.text, limit - total);
+    if (receipt.status !== "within-limit") {
+      return null;
+    }
+    total += receipt.bytes;
+  }
+  return total;
+}
+
+async function withDeadline<T>(settlement: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("Incremental sync production operation exceeded its deadline.")),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([settlement, timeout]);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
 }

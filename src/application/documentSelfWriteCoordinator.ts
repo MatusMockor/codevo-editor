@@ -1,4 +1,5 @@
 import type { WorkspaceFileRevision, WorkspaceTextFileSnapshot } from "../domain/workspace";
+import { boundedUtf8Length } from "../domain/incrementalDocumentSync";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { DocumentSaveOwnership } from "./documentSaveIdentity";
 import { documentSaveOwnershipKey } from "./documentSaveIdentity";
@@ -20,12 +21,13 @@ export interface DocumentSelfWriteWaitOptions {
 }
 
 interface PendingSelfWrite {
+  readonly contentUtf8Bytes: number;
   readonly content: string;
-  readonly generation: number;
   readonly owner: PendingSelfWriteOwner;
   readonly settled: Promise<DocumentSelfWriteExpectation | null>;
   readonly settle: (expectation: DocumentSelfWriteExpectation | null) => void;
   readonly token: object;
+  expiryTimer: ReturnType<typeof setTimeout> | null;
   completed: boolean;
 }
 
@@ -40,30 +42,107 @@ type PendingSelfWriteOwner =
       readonly workspaceId: string;
     };
 
-const DEFAULT_SETTLEMENT_TIMEOUT_MS = 2_000;
+export const DOCUMENT_SELF_WRITE_SETTLEMENT_TIMEOUT_MS = 5_000;
+export const DOCUMENT_SELF_WRITE_MAX_PENDING_KEYS = 256;
+export const DOCUMENT_SELF_WRITE_MAX_PENDING_WRITES_PER_KEY = 32;
+export const DOCUMENT_SELF_WRITE_MAX_PENDING_UTF8_BYTES_PER_KEY = 32 * 1024 * 1024;
+export const DOCUMENT_SELF_WRITE_MAX_PENDING_UTF8_BYTES_TOTAL = 128 * 1024 * 1024;
+export const DOCUMENT_SELF_WRITE_MAX_IDENTITY_UTF8_BYTES_PER_KEY = 4 * 1024;
+export const DOCUMENT_SELF_WRITE_MAX_IDENTITY_UTF8_BYTES_TOTAL = 1024 * 1024;
+
+export interface DocumentSelfWriteCoordinatorOptions {
+  readonly maxIdentityBytesPerKey?: number;
+  readonly maxIdentityBytesTotal?: number;
+  readonly maxPendingBytesPerKey?: number;
+  readonly maxPendingBytesTotal?: number;
+  readonly maxPendingKeys?: number;
+  readonly maxPendingWritesPerKey?: number;
+  readonly settlementTimeoutMs?: number;
+}
 
 /**
  * Coordinates filesystem watcher events with writes issued by the editor.
  * Entries are owner-scoped, generation-fenced, and consumed in issue order.
  */
 export class DocumentSelfWriteCoordinator {
-  private readonly generations = new Map<string, number>();
   private readonly writes = new Map<string, PendingSelfWrite[]>();
+  private readonly identityUtf8BytesByKey = new Map<string, number>();
+  private readonly limits: Required<DocumentSelfWriteCoordinatorOptions>;
+  private pendingIdentityUtf8Bytes = 0;
+  private pendingUtf8Bytes = 0;
+
+  constructor(options: DocumentSelfWriteCoordinatorOptions = {}) {
+    this.limits = {
+      maxIdentityBytesPerKey: positiveLimit(
+        options.maxIdentityBytesPerKey,
+        DOCUMENT_SELF_WRITE_MAX_IDENTITY_UTF8_BYTES_PER_KEY,
+      ),
+      maxIdentityBytesTotal: positiveLimit(
+        options.maxIdentityBytesTotal,
+        DOCUMENT_SELF_WRITE_MAX_IDENTITY_UTF8_BYTES_TOTAL,
+      ),
+      maxPendingBytesPerKey: positiveLimit(
+        options.maxPendingBytesPerKey,
+        DOCUMENT_SELF_WRITE_MAX_PENDING_UTF8_BYTES_PER_KEY,
+      ),
+      maxPendingBytesTotal: positiveLimit(
+        options.maxPendingBytesTotal,
+        DOCUMENT_SELF_WRITE_MAX_PENDING_UTF8_BYTES_TOTAL,
+      ),
+      maxPendingKeys: positiveLimit(options.maxPendingKeys, DOCUMENT_SELF_WRITE_MAX_PENDING_KEYS),
+      maxPendingWritesPerKey: positiveLimit(
+        options.maxPendingWritesPerKey,
+        DOCUMENT_SELF_WRITE_MAX_PENDING_WRITES_PER_KEY,
+      ),
+      settlementTimeoutMs: positiveLimit(
+        options.settlementTimeoutMs,
+        DOCUMENT_SELF_WRITE_SETTLEMENT_TIMEOUT_MS,
+      ),
+    };
+  }
 
   begin(ownership: DocumentSaveOwnership, content: string): DocumentSelfWriteLease | null {
+    if (ownershipIdentityUtf8Bytes(ownership, this.limits.maxIdentityBytesPerKey) === null) {
+      return null;
+    }
     const key = documentSaveOwnershipKey(ownership);
     if (!key) {
       return null;
     }
+    const identityReceipt = boundedUtf8Length(key, this.limits.maxIdentityBytesPerKey);
+    if (
+      identityReceipt.status !== "within-limit" ||
+      (!this.writes.has(key) &&
+        this.pendingIdentityUtf8Bytes + identityReceipt.bytes > this.limits.maxIdentityBytesTotal)
+    ) {
+      return null;
+    }
 
     const owner = pendingSelfWriteOwner(ownership, key);
-    const generation = this.generationForRoot(owner.canonicalRoot);
+    const queue = this.writes.get(key) ?? [];
+    if (
+      queue.length >= this.limits.maxPendingWritesPerKey ||
+      (!this.writes.has(key) && this.writes.size >= this.limits.maxPendingKeys)
+    ) {
+      return null;
+    }
+    const keyBytes = queue.reduce((total, write) => total + write.contentUtf8Bytes, 0);
+    const availableBytes = Math.min(
+      this.limits.maxPendingBytesPerKey - keyBytes,
+      this.limits.maxPendingBytesTotal - this.pendingUtf8Bytes,
+    );
+    const receipt = boundedUtf8Length(content, Math.max(0, availableBytes));
+    if (receipt.status !== "within-limit") {
+      return null;
+    }
+
     let settle!: (expectation: DocumentSelfWriteExpectation | null) => void;
     const token = {};
     const write: PendingSelfWrite = {
       content,
+      contentUtf8Bytes: receipt.bytes,
       completed: false,
-      generation,
+      expiryTimer: null,
       owner,
       settled: new Promise((resolve) => {
         settle = resolve;
@@ -71,9 +150,17 @@ export class DocumentSelfWriteCoordinator {
       settle: (expectation) => settle(expectation),
       token,
     };
-    const queue = this.writes.get(key) ?? [];
     queue.push(write);
     this.writes.set(key, queue);
+    if (!this.identityUtf8BytesByKey.has(key)) {
+      this.identityUtf8BytesByKey.set(key, identityReceipt.bytes);
+      this.pendingIdentityUtf8Bytes += identityReceipt.bytes;
+    }
+    this.pendingUtf8Bytes += receipt.bytes;
+    write.expiryTimer = setTimeout(
+      () => this.expireWrite(key, write),
+      this.limits.settlementTimeoutMs,
+    );
 
     return {
       abort: () => this.abortWrite(key, write),
@@ -90,10 +177,7 @@ export class DocumentSelfWriteCoordinator {
       return null;
     }
 
-    const generation = this.generationForRoot(pendingSelfWriteOwner(ownership, key).canonicalRoot);
-    const candidates = (this.writes.get(key) ?? []).filter(
-      (write) => write.generation === generation,
-    );
+    const candidates = this.writes.get(key) ?? [];
     if (candidates.length === 0) {
       return null;
     }
@@ -137,9 +221,6 @@ export class DocumentSelfWriteCoordinator {
       return false;
     }
     const write = queue[index];
-    if (write.generation !== this.generationForRoot(write.owner.canonicalRoot)) {
-      return false;
-    }
     if (snapshot.content !== expectation.content) {
       return false;
     }
@@ -148,9 +229,12 @@ export class DocumentSelfWriteCoordinator {
     }
 
     const consumed = queue.splice(0, index + 1);
+    for (const consumedWrite of consumed) {
+      this.releaseWriteResources(consumedWrite);
+    }
     this.settleAbandonedWrites(consumed, write);
     if (queue.length === 0) {
-      this.writes.delete(key);
+      this.deleteQueue(key);
     }
     return true;
   }
@@ -165,26 +249,13 @@ export class DocumentSelfWriteCoordinator {
   }
 
   clearRoot(rootPath: string): void {
-    const matchingRoots = new Set<string>();
     for (const [key, queue] of this.writes) {
       const matchingWrite = queue.find((write) =>
         workspaceRootKeysEqual(write.owner.canonicalRoot, rootPath),
       );
       if (matchingWrite) {
-        matchingRoots.add(matchingWrite.owner.canonicalRoot);
         this.cancelQueue(key);
       }
-    }
-    for (const root of this.generations.keys()) {
-      if (workspaceRootKeysEqual(root, rootPath)) {
-        matchingRoots.add(root);
-      }
-    }
-    if (matchingRoots.size === 0) {
-      matchingRoots.add(rootPath);
-    }
-    for (const root of matchingRoots) {
-      this.generations.set(root, this.generationForRoot(root) + 1);
     }
   }
 
@@ -192,7 +263,9 @@ export class DocumentSelfWriteCoordinator {
     for (const key of [...this.writes.keys()]) {
       this.cancelQueue(key);
     }
-    this.generations.clear();
+    this.pendingUtf8Bytes = 0;
+    this.pendingIdentityUtf8Bytes = 0;
+    this.identityUtf8BytesByKey.clear();
   }
 
   private abortWrite(key: string, write: PendingSelfWrite): void {
@@ -221,13 +294,9 @@ export class DocumentSelfWriteCoordinator {
     if (!queue || !queue.includes(write)) {
       return;
     }
-    if (write.generation !== this.generationForRoot(write.owner.canonicalRoot)) {
-      this.abortWrite(key, write);
-      return;
-    }
-
     write.completed = true;
     write.settle({ content: write.content, revision, token: write.token });
+    this.restartExpiryTimer(key, write);
   }
 
   private cancelQueue(key: string): void {
@@ -236,8 +305,9 @@ export class DocumentSelfWriteCoordinator {
       return;
     }
 
-    this.writes.delete(key);
+    this.deleteQueue(key);
     for (const write of queue) {
+      this.releaseWriteResources(write);
       if (write.completed) {
         continue;
       }
@@ -246,18 +316,56 @@ export class DocumentSelfWriteCoordinator {
     }
   }
 
-  private generationForRoot(root: string): number {
-    return this.generations.get(root) ?? 0;
-  }
-
   private removeWrite(key: string, queue: PendingSelfWrite[], write: PendingSelfWrite): void {
     const index = queue.indexOf(write);
     if (index >= 0) {
       queue.splice(index, 1);
+      this.releaseWriteResources(write);
     }
     if (queue.length === 0) {
-      this.writes.delete(key);
+      this.deleteQueue(key);
     }
+  }
+
+  private expireWrite(key: string, write: PendingSelfWrite): void {
+    const queue = this.writes.get(key);
+    if (!queue || !queue.includes(write)) {
+      return;
+    }
+    if (!write.completed) {
+      write.completed = true;
+      write.settle(null);
+    }
+    this.removeWrite(key, queue, write);
+  }
+
+  private releaseWriteResources(write: PendingSelfWrite): void {
+    if (write.expiryTimer === null) {
+      return;
+    }
+    clearTimeout(write.expiryTimer);
+    write.expiryTimer = null;
+    this.pendingUtf8Bytes = Math.max(0, this.pendingUtf8Bytes - write.contentUtf8Bytes);
+  }
+
+  private restartExpiryTimer(key: string, write: PendingSelfWrite): void {
+    if (write.expiryTimer !== null) {
+      clearTimeout(write.expiryTimer);
+    }
+    write.expiryTimer = setTimeout(
+      () => this.expireWrite(key, write),
+      this.limits.settlementTimeoutMs,
+    );
+  }
+
+  private deleteQueue(key: string): void {
+    this.writes.delete(key);
+    const identityBytes = this.identityUtf8BytesByKey.get(key);
+    if (identityBytes === undefined) {
+      return;
+    }
+    this.identityUtf8BytesByKey.delete(key);
+    this.pendingIdentityUtf8Bytes = Math.max(0, this.pendingIdentityUtf8Bytes - identityBytes);
   }
 
   private settleAbandonedWrites(
@@ -276,9 +384,32 @@ export class DocumentSelfWriteCoordinator {
 
 function normalizeTimeout(timeoutMs: number | undefined): number {
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs)) {
-    return DEFAULT_SETTLEMENT_TIMEOUT_MS;
+    return DOCUMENT_SELF_WRITE_SETTLEMENT_TIMEOUT_MS;
   }
   return Math.max(0, timeoutMs);
+}
+
+function positiveLimit(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && value !== undefined && value > 0 ? value : fallback;
+}
+
+function ownershipIdentityUtf8Bytes(
+  ownership: DocumentSaveOwnership,
+  limit: number,
+): number | null {
+  const components =
+    "canonicalRoot" in ownership
+      ? [ownership.workspaceId, ownership.canonicalRoot, ownership.workspaceRelativePath]
+      : [ownership.rootPath, ownership.path];
+  let bytes = Math.max(0, components.length - 1);
+  for (const component of components) {
+    const receipt = boundedUtf8Length(component, limit - bytes);
+    if (receipt.status !== "within-limit") {
+      return null;
+    }
+    bytes += receipt.bytes;
+  }
+  return bytes;
 }
 
 async function waitForSettlements(
