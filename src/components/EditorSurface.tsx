@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
   useId,
-  type MutableRefObject,
 } from "react";
 import type * as Monaco from "monaco-editor";
 import {
@@ -24,18 +23,12 @@ import type { CommandContext, CommandExecutionRunner } from "../application/comm
 import { useNpmRunSelectedScriptMonacoAction } from "./npmRunSelectedScriptMonacoAction";
 import type { NavigationRequest } from "../application/navigationRequest";
 import type { PhpCodeActionWorkspaceEditApplier } from "../application/phpCodeActionTypes";
-import {
-  nextEditorSelectionExpansionRange,
-  type EditorSelectionTextRange,
-} from "../domain/editorSelectionRanges";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import { editorActionForMenuCommand } from "./editorMenuCommandAction";
 import type {
-  EditorSurfaceCommandId,
   EditorSurfaceCommandInvocationScope,
   EditorSurfaceCommandRunner,
 } from "../domain/editorSurfaceCommand";
-import { editorSurfaceCommandInvocationScopesEqual } from "../domain/editorSurfaceCommand";
 import { useEditorSurfaceImportActions } from "./useEditorSurfaceImportActions";
 import {
   type IncompleteWorkspaceIdentityDescriptor,
@@ -107,14 +100,7 @@ import { Breadcrumbs } from "./Breadcrumbs";
 import { CursorAwareBreadcrumbs } from "./CursorAwareBreadcrumbs";
 import { useEditorCursorPublication } from "./useEditorCursorPublication";
 import { SurroundWithPicker } from "./SurroundWithPicker";
-import { surroundWithSnippet, type SurroundWithTemplateId } from "../domain/surroundWith";
-import { completePhpStatement } from "../domain/phpCompleteStatement";
-import {
-  advanceHippieSession,
-  startHippieSession,
-  type HippieSession,
-} from "../domain/hippieCompletion";
-import { phpMoveStatement, type MoveStatementDirection } from "../domain/phpMoveStatement";
+import type { HippieSession } from "../domain/hippieCompletion";
 import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { gitBlameShaAtLine, type GitBlameLine } from "../domain/git";
@@ -173,7 +159,6 @@ import { useConflictMarkerEditorDecorations } from "./useConflictMarkerEditorDec
 import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./useEditorSurfaceLanguageProviderRegistration";
 import { EditorRuntimeHost, type EditorRuntimeSurfaceRegistration } from "./EditorRuntimeHost";
 import { useEditorRuntimeContext } from "./editorRuntimeContext";
-import { editorActionForSurfaceCommand } from "./editorSurfaceCommandAction";
 import { EditorBreakpointGutterMenu } from "./EditorBreakpointGutterMenu";
 import {
   toBoundedDiagnosticOverviewDecorations,
@@ -191,7 +176,6 @@ import {
   editorChangePopoverStyle,
   findChangeHunkAtLine,
   glyphMarginLaneFromMouseEvent,
-  jumpToChangeHunk,
   navigateChangeHunkFromPopover,
   toBookmarkDecoration,
   toEditorChangeDecoration,
@@ -216,12 +200,6 @@ import {
   editorQaBridgeEnabled,
   installEditorQaBridge,
 } from "./editorQaBridge";
-import {
-  applyImmediateFallbackTheme,
-  configureShikiLanguageFeatures,
-  setupShikiTokenization,
-} from "../infrastructure/shikiHighlighter";
-import { setupEmmet } from "../infrastructure/emmetSetup";
 import { loadJsonSchemaForDocument } from "../infrastructure/jsonSchemaLoader";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
@@ -236,6 +214,36 @@ import { createDebugWatchAtCursorCaptureReader } from "./debugWatchAtCursorMonac
 import { createDebugBreakpointNavigationCaptureReader } from "./debugBreakpointNavigationMonacoReader";
 import { createDebugInlineBreakpointCaptureReader } from "./debugInlineBreakpointMonacoReader";
 import { createDebugEvaluateInConsoleCaptureReader } from "./debugEvaluateInConsoleMonacoReader";
+import {
+  applyCompleteStatement,
+  applyCyclicExpandWord,
+  applyMoveStatement,
+  applySurroundWith,
+  createEditorSurfaceCommandRunner,
+  expandEditorSelection,
+  surroundWithRequestFromEditor,
+  triggerEditorAction,
+  triggerEditorSurfaceCommand,
+  type SurroundWithRequest,
+} from "./editorSurfaceCore/editorCommands";
+import { pruneClosedPaths } from "./editorSurfaceCore/modelViewState";
+import {
+  beforeMonacoMount,
+  EDITOR_LOADING_PLACEHOLDER,
+  EMPTY_BOOKMARK_LINES,
+  EMPTY_BREADCRUMB_PATH,
+  EMPTY_BREADCRUMB_SYMBOLS,
+  EMPTY_BREAKPOINTS,
+  EMPTY_PATHS,
+  EMPTY_USER_SNIPPETS,
+  noopLocalPhpDiagnosticsChange,
+  PLACEHOLDER_LANGUAGE,
+  PLACEHOLDER_PATH,
+} from "./editorSurfaceCore/presentation";
+import { useSynchronizedRef } from "./editorSurfaceCore/useSynchronizedRef";
+import { useEditorPresentationBindings } from "./editorSurfaceCore/useEditorPresentationBindings";
+import { useBackgroundTokenizationLifecycle } from "./editorSurfaceCore/useBackgroundTokenizationLifecycle";
+import { useEditorModelViewStateLifecycle } from "./editorSurfaceCore/useEditorModelViewStateLifecycle";
 
 interface ChangePreviewState {
   anchorLineNumber: number;
@@ -423,27 +431,6 @@ interface EditorActionCommandPort {
   openFile(): void;
   openFileStructure(): void;
   toggleGitBlame?(): void;
-}
-
-interface FoldingRegionViewState {
-  isCollapsed: boolean;
-  regionIndex: number;
-  startLineNumber: number;
-}
-
-interface FoldingModelViewState {
-  onDidChange(listener: () => void): Monaco.IDisposable;
-  regions: {
-    getStartLineNumber(index: number): number;
-    isCollapsed(index: number): boolean;
-    length: number;
-    toRegion(index: number): FoldingRegionViewState;
-  };
-  toggleCollapseState(regions: FoldingRegionViewState[]): void;
-}
-
-interface FoldingControllerViewState {
-  getFoldingModel(): Promise<FoldingModelViewState | null> | null;
 }
 
 type GuardedQaDefinitionProvider = (
@@ -962,17 +949,12 @@ function EditorSurfaceComponent({
     });
   }, [changeHunks]);
 
-  useEffect(() => {
-    runtimeStatusRef.current = languageServerRuntimeStatus;
-  }, [languageServerRuntimeStatus]);
-
-  useEffect(() => {
-    largeSmartDocumentPolicyRef.current = largeSmartDocumentPolicy;
-  }, [largeSmartDocumentPolicy]);
-
-  useEffect(() => {
-    javaScriptTypeScriptRuntimeStatusRef.current = javaScriptTypeScriptLanguageServerRuntimeStatus;
-  }, [javaScriptTypeScriptLanguageServerRuntimeStatus]);
+  useSynchronizedRef(runtimeStatusRef, languageServerRuntimeStatus);
+  useSynchronizedRef(largeSmartDocumentPolicyRef, largeSmartDocumentPolicy);
+  useSynchronizedRef(
+    javaScriptTypeScriptRuntimeStatusRef,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+  );
 
   // Registers the local JSON Schema declared by the active document's `$schema`
   // (e.g. `.phpactor.json`) with Monaco so it validates inline. Without this,
@@ -1009,110 +991,54 @@ function EditorSurfaceComponent({
     });
   }, [activeDocument, monacoApi, readWorkspaceFile]);
 
-  useEffect(() => {
-    flushPendingRef.current = flushPendingLanguageServerDocument;
-  }, [flushPendingLanguageServerDocument]);
-  useEffect(() => {
-    getLanguageServerDocumentLifecycleIdentityRef.current =
-      getLanguageServerDocumentLifecycleIdentity;
-  }, [getLanguageServerDocumentLifecycleIdentity]);
-  useEffect(() => {
-    getJavaScriptTypeScriptDocumentSyncVersionRef.current =
-      getJavaScriptTypeScriptDocumentSyncVersion;
-  }, [getJavaScriptTypeScriptDocumentSyncVersion]);
-  useEffect(() => {
-    requestLanguageServerDocumentLeaseRef.current = requestLanguageServerDocumentLease;
-  }, [requestLanguageServerDocumentLease]);
-  useEffect(() => {
-    isLanguageServerDocumentRequestLeaseCurrentRef.current =
-      isLanguageServerDocumentRequestLeaseCurrent;
-  }, [isLanguageServerDocumentRequestLeaseCurrent]);
-
-  useEffect(() => {
-    flushPendingJavaScriptTypeScriptRef.current =
-      flushPendingJavaScriptTypeScriptLanguageServerDocument;
-  }, [flushPendingJavaScriptTypeScriptLanguageServerDocument]);
-
-  useEffect(() => {
-    applyJavaScriptTypeScriptWorkspaceEditRef.current =
-      applyJavaScriptTypeScriptLanguageServerWorkspaceEdit;
-  }, [applyJavaScriptTypeScriptLanguageServerWorkspaceEdit]);
-
-  useEffect(() => {
-    applyPhpWorkspaceEditRef.current = applyPhpLanguageServerWorkspaceEdit;
-  }, [applyPhpLanguageServerWorkspaceEdit]);
-
-  useEffect(() => {
-    errorReporterRef.current = onLanguageServerError;
-  }, [onLanguageServerError]);
-
-  useEffect(() => {
-    recordCompletionLatencyRef.current = onRecordCompletionLatency;
-  }, [onRecordCompletionLatency]);
-
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
-
-  useEffect(() => {
-    openWorkspaceFileRef.current = onOpenWorkspaceFile;
-  }, [onOpenWorkspaceFile]);
-
-  useEffect(() => {
-    openWorkspaceRootRef.current = onOpenWorkspaceRoot;
-  }, [onOpenWorkspaceRoot]);
-
-  useEffect(() => {
-    isLanguageServerDocumentSyncedRef.current = isLanguageServerDocumentSynced;
-  }, [isLanguageServerDocumentSynced]);
-
-  useEffect(() => {
-    languageServerDiagnosticsByPathRef.current = languageServerDiagnosticsByPath;
-  }, [languageServerDiagnosticsByPath]);
-
-  useEffect(() => {
-    phpCodeActionsRef.current = providePhpCodeActions;
-  }, [providePhpCodeActions]);
-
-  useEffect(() => {
-    openPhpChangeSignatureRef.current = onOpenPhpChangeSignature;
-  }, [onOpenPhpChangeSignature]);
-
-  useEffect(() => {
-    applyPhpCodeActionNewFileRef.current = applyPhpCodeActionNewFile;
-  }, [applyPhpCodeActionNewFile]);
-
-  useEffect(() => {
-    clearLanguageServerDiagnosticsForPathRef.current = clearLanguageServerDiagnosticsForPath;
-  }, [clearLanguageServerDiagnosticsForPath]);
+  useSynchronizedRef(flushPendingRef, flushPendingLanguageServerDocument);
+  useSynchronizedRef(
+    getLanguageServerDocumentLifecycleIdentityRef,
+    getLanguageServerDocumentLifecycleIdentity,
+  );
+  useSynchronizedRef(
+    getJavaScriptTypeScriptDocumentSyncVersionRef,
+    getJavaScriptTypeScriptDocumentSyncVersion,
+  );
+  useSynchronizedRef(requestLanguageServerDocumentLeaseRef, requestLanguageServerDocumentLease);
+  useSynchronizedRef(
+    isLanguageServerDocumentRequestLeaseCurrentRef,
+    isLanguageServerDocumentRequestLeaseCurrent,
+  );
+  useSynchronizedRef(
+    flushPendingJavaScriptTypeScriptRef,
+    flushPendingJavaScriptTypeScriptLanguageServerDocument,
+  );
+  useSynchronizedRef(
+    applyJavaScriptTypeScriptWorkspaceEditRef,
+    applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
+  );
+  useSynchronizedRef(applyPhpWorkspaceEditRef, applyPhpLanguageServerWorkspaceEdit);
+  useSynchronizedRef(errorReporterRef, onLanguageServerError);
+  useSynchronizedRef(recordCompletionLatencyRef, onRecordCompletionLatency);
+  useSynchronizedRef(onChangeRef, onChange);
+  useSynchronizedRef(openWorkspaceFileRef, onOpenWorkspaceFile);
+  useSynchronizedRef(openWorkspaceRootRef, onOpenWorkspaceRoot);
+  useSynchronizedRef(isLanguageServerDocumentSyncedRef, isLanguageServerDocumentSynced);
+  useSynchronizedRef(languageServerDiagnosticsByPathRef, languageServerDiagnosticsByPath);
+  useSynchronizedRef(phpCodeActionsRef, providePhpCodeActions);
+  useSynchronizedRef(openPhpChangeSignatureRef, onOpenPhpChangeSignature);
+  useSynchronizedRef(applyPhpCodeActionNewFileRef, applyPhpCodeActionNewFile);
+  useSynchronizedRef(
+    clearLanguageServerDiagnosticsForPathRef,
+    clearLanguageServerDiagnosticsForPath,
+  );
 
   useEffect(() => {
     pendingLocalPhpValidationRef.current = null;
   }, [activeDocument?.path]);
 
-  useEffect(() => {
-    phpMethodCompletionsRef.current = providePhpMethodCompletions;
-  }, [providePhpMethodCompletions]);
-
-  useEffect(() => {
-    phpMethodSignatureRef.current = providePhpMethodSignature;
-  }, [providePhpMethodSignature]);
-
-  useEffect(() => {
-    phpParameterInlayHintsRef.current = providePhpParameterInlayHints;
-  }, [providePhpParameterInlayHints]);
-
-  useEffect(() => {
-    phpInlayHintsEnabledRef.current = phpInlayHintsEnabled;
-  }, [phpInlayHintsEnabled]);
-
-  useEffect(() => {
-    userSnippetsRef.current = userSnippets;
-  }, [userSnippets]);
-
-  useEffect(() => {
-    provideGitBlameRef.current = provideGitBlame;
-  }, [provideGitBlame]);
+  useSynchronizedRef(phpMethodCompletionsRef, providePhpMethodCompletions);
+  useSynchronizedRef(phpMethodSignatureRef, providePhpMethodSignature);
+  useSynchronizedRef(phpParameterInlayHintsRef, providePhpParameterInlayHints);
+  useSynchronizedRef(phpInlayHintsEnabledRef, phpInlayHintsEnabled);
+  useSynchronizedRef(userSnippetsRef, userSnippets);
+  useSynchronizedRef(provideGitBlameRef, provideGitBlame);
 
   useEffect(() => {
     if (!activeDocumentPath || activeDocumentLanguage !== "php") {
@@ -1753,88 +1679,22 @@ function EditorSurfaceComponent({
     });
   }, [groupId, runtime]);
 
-  useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    const disposable = editorApi.onDidFocusEditorWidget(activateEditorGroupFromInteraction);
-    return () => disposable.dispose();
-  }, [activateEditorGroupFromInteraction, editorApi]);
-
-  useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    editorApi.updateOptions({
-      fontFamily: editorFontFamily,
-      fontLigatures: monacoFontLigatures,
-      fontSize: editorFontSize,
-      minimap: { enabled: minimapEnabled },
-      wordWrap: wordWrapEnabled ? "on" : "off",
-    });
-  }, [
-    editorApi,
-    editorFontFamily,
-    monacoFontLigatures,
-    editorFontSize,
-    minimapEnabled,
-    wordWrapEnabled,
-  ]);
-
-  // Apply resolved `.editorconfig` indent + EOL to the ACTIVE model only, so a
-  // file with a matching `.editorconfig` mirrors VS Code / PhpStorm. Guarded by
-  // `modelPath === activeDocument.path` (per-tab isolation): during a switch the
-  // editor may still hold the previous model for a frame, and applying then
-  // would mutate the wrong file. When EditorConfig sets no indent / EOL we leave
-  // Monaco's own detection (`detectIndentation`) and the file's existing EOL
-  // untouched, preserving the no-`.editorconfig` default behaviour.
-  useEffect(() => {
-    if (!editorApi || !monacoApi || !activeDocumentPath) {
-      return;
-    }
-
-    const model = editorApi.getModel();
-
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-      return;
-    }
-
-    const resolved: ResolvedEditorConfig = {
-      endOfLine: editorConfigEndOfLine,
-      indentSize: editorConfigIndentSize,
-      indentStyle: editorConfigIndentStyle,
-      tabWidth: editorConfigTabWidth,
-    };
-    const formattingOptions = editorConfigFormattingOptions(resolved);
-
-    if (formattingOptions) {
-      model.updateOptions({
-        insertSpaces: formattingOptions.insertSpaces,
-        tabSize: formattingOptions.tabSize,
-      });
-    }
-
-    const eol = editorConfigEol(resolved);
-
-    if (eol) {
-      model.setEOL(
-        eol === "\r\n"
-          ? monacoApi.editor.EndOfLineSequence.CRLF
-          : monacoApi.editor.EndOfLineSequence.LF,
-      );
-    }
-  }, [
+  useEditorPresentationBindings({
     activeDocumentPath,
-    editorApi,
+    activateFromInteraction: activateEditorGroupFromInteraction,
+    editor: editorApi,
     editorConfigEndOfLine,
     editorConfigIndentSize,
     editorConfigIndentStyle,
     editorConfigTabWidth,
-    monacoApi,
+    fontFamily: editorFontFamily,
+    fontLigatures: monacoFontLigatures,
+    fontSize: editorFontSize,
+    minimapEnabled,
+    monaco: monacoApi,
+    wordWrapEnabled,
     workspaceRoot,
-  ]);
+  });
 
   useEditorCursorPublication({
     activeDocumentPath: activeDocumentPath ?? null,
@@ -1847,44 +1707,13 @@ function EditorSurfaceComponent({
     trackingActive: cursorTrackingActive,
   });
 
-  // Eagerly warm the active model's TextMate tokens on idle after open/switch.
-  // @monaco-editor/react swaps the model when `path` changes, so this re-runs on
-  // every document switch: it adopts the new active model and (inside `start`)
-  // cancels any pending warming for the previous one, so a stale tab's model can
-  // never keep tokenizing. The cleanup stops warming on unmount/switch, and the
-  // tokenizer re-checks `model.isDisposed()` before each idle slice.
-  useEffect(() => {
-    const tokenizer = backgroundTokenizerRef.current;
-
-    if (!editorApi || !activeDocumentPath || !tokenizer) {
-      return;
-    }
-
-    if (activeDocumentIsLargeSmart) {
-      tokenizer.stop();
-      return;
-    }
-
-    const requestedPath = activeDocumentPath;
-    const model = editorApi.getModel();
-
-    // Only warm the model that actually backs the requested document. During a
-    // switch the editor can still hold the previous model for a frame; warming
-    // it would tokenize the wrong file, so we wait for the next effect run.
-    if (!model || !modelMatchesProject(model, workspaceRoot, requestedPath)) {
-      return;
-    }
-
-    tokenizer.start(model as unknown as BackgroundTokenizableModel);
-
-    return () => tokenizer.stop();
-  }, [activeDocumentPath, activeDocumentIsLargeSmart, editorApi, workspaceRoot]);
-
-  // Permanent teardown so a disposed surface leaves no pending idle slice.
-  useEffect(() => {
-    const tokenizer = backgroundTokenizerRef.current;
-    return () => tokenizer?.dispose();
-  }, []);
+  useBackgroundTokenizationLifecycle({
+    activeDocumentIsLargeSmart,
+    activeDocumentPath,
+    editor: editorApi,
+    tokenizerRef: backgroundTokenizerRef,
+    workspaceRoot,
+  });
 
   useEffect(() => {
     if (!activeDocument || !workspaceRoot) {
@@ -3544,285 +3373,15 @@ function EditorSurfaceComponent({
     return () => disposable.dispose();
   }, [editorApi, generatedSurfaceId, runtime]);
 
-  const appliedRestoredViewStateKeysRef = useRef(new Set<string>());
-
-  useEffect(() => {
-    if (!editorApi || !activeDocumentPath || !workspaceRoot) {
-      return;
-    }
-
-    const viewState = restoredViewStates[activeDocumentPath];
-
-    if (!viewState) {
-      return;
-    }
-
-    const applicationKey = `${workspaceRoot}\0${activeDocumentPath}\0${restoredViewStateRevision}`;
-
-    if (appliedRestoredViewStateKeysRef.current.has(applicationKey)) {
-      return;
-    }
-
-    let active = true;
-    let positionApplied = false;
-    let restorationModel: Monaco.editor.ITextModel | null = null;
-    let retryDisposable: Monaco.IDisposable | null = null;
-
-    const activeModel = () => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-        return null;
-      }
-
-      return model;
-    };
-
-    const applyPosition = (model: Monaco.editor.ITextModel) => {
-      if (positionApplied) {
-        return false;
-      }
-
-      const lineNumber = Math.min(Math.max(viewState.line, 1), Math.max(model.getLineCount(), 1));
-      const column = Math.min(Math.max(viewState.column, 1), model.getLineMaxColumn(lineNumber));
-      const position = { column, lineNumber };
-
-      editorApi.setPosition(position);
-      editorApi.revealPositionInCenter(position);
-
-      if (viewState.scrollTop !== undefined) {
-        editorApi.setScrollTop(viewState.scrollTop);
-      }
-
-      positionApplied = true;
-      return true;
-    };
-
-    const finish = () => {
-      if (!active) {
-        return;
-      }
-
-      appliedRestoredViewStateKeysRef.current.add(applicationKey);
-    };
-
-    const finishFoldingRestore = (model: Monaco.editor.ITextModel) => {
-      if (!active || activeModel() !== model) {
-        return;
-      }
-
-      if (viewState.scrollTop !== undefined) {
-        editorApi.setScrollTop(viewState.scrollTop);
-      }
-
-      finish();
-    };
-
-    const collapsePersistedLines = (
-      model: Monaco.editor.ITextModel,
-      foldingModel: FoldingModelViewState,
-    ) => {
-      if (activeModel() !== model) {
-        return false;
-      }
-
-      const validFoldedLines = (viewState.foldedLines ?? []).filter(
-        (line) => line >= 1 && line <= model.getLineCount(),
-      );
-      const foldedLines = new Set(validFoldedLines);
-      const regions: FoldingRegionViewState[] = [];
-      let matched = validFoldedLines.length === 0;
-
-      for (let index = 0; index < foldingModel.regions.length; index += 1) {
-        const startLineNumber = foldingModel.regions.getStartLineNumber(index);
-
-        if (!foldedLines.has(startLineNumber)) {
-          continue;
-        }
-
-        matched = true;
-
-        if (foldingModel.regions.isCollapsed(index)) {
-          continue;
-        }
-
-        regions.push(foldingModel.regions.toRegion(index));
-      }
-
-      if (regions.length > 0) {
-        foldingModel.toggleCollapseState(regions);
-      }
-
-      return matched;
-    };
-
-    const applyFolding = async (model: Monaco.editor.ITextModel) => {
-      const foldingModel = await foldingModelForEditor(editorApi);
-
-      if (!active || activeModel() !== model) {
-        return;
-      }
-
-      if ((viewState.foldedLines?.length ?? 0) === 0) {
-        finish();
-        return;
-      }
-
-      if (!foldingModel) {
-        finishFoldingRestore(model);
-        return;
-      }
-
-      if (collapsePersistedLines(model, foldingModel)) {
-        finishFoldingRestore(model);
-        return;
-      }
-
-      retryDisposable = foldingModel.onDidChange(() => {
-        retryDisposable?.dispose();
-        retryDisposable = null;
-        collapsePersistedLines(model, foldingModel);
-        finishFoldingRestore(model);
-      });
-    };
-
-    const applyViewState = () => {
-      const model = activeModel();
-
-      if (!model) {
-        return;
-      }
-
-      if (restorationModel !== model) {
-        restorationModel = model;
-        positionApplied = false;
-        retryDisposable?.dispose();
-        retryDisposable = null;
-      }
-
-      if (!applyPosition(model)) {
-        return;
-      }
-
-      void applyFolding(model);
-    };
-
-    applyViewState();
-
-    if (appliedRestoredViewStateKeysRef.current.has(applicationKey)) {
-      return;
-    }
-
-    const disposable = editorApi.onDidChangeModel(applyViewState);
-
-    return () => {
-      active = false;
-      disposable.dispose();
-      retryDisposable?.dispose();
-    };
-  }, [activeDocumentPath, editorApi, restoredViewStateRevision, restoredViewStates, workspaceRoot]);
-
-  useEffect(() => {
-    if (!editorApi || !activeDocumentPath || !editorViewStateCaptureEnabled) {
-      return;
-    }
-
-    let active = true;
-    let foldingBindingRevision = 0;
-    let foldingModel: FoldingModelViewState | null = null;
-    let foldingDisposable: Monaco.IDisposable | null = null;
-
-    const resetFoldingBinding = () => {
-      foldingBindingRevision += 1;
-      foldingDisposable?.dispose();
-      foldingDisposable = null;
-      foldingModel = null;
-    };
-
-    const captureViewState = async () => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
-        return;
-      }
-
-      const position = editorApi.getPosition();
-
-      if (!position) {
-        return;
-      }
-
-      if (!foldingModel) {
-        const bindingRevision = foldingBindingRevision;
-        const resolvedFoldingModel = await foldingModelForEditor(editorApi);
-
-        if (
-          !active ||
-          bindingRevision !== foldingBindingRevision ||
-          editorApi.getModel() !== model
-        ) {
-          return;
-        }
-
-        foldingModel = resolvedFoldingModel;
-
-        if (foldingModel && !foldingDisposable) {
-          foldingDisposable = foldingModel.onDidChange(() => {
-            void captureViewState();
-          });
-        }
-      }
-
-      const currentModel = editorApi.getModel();
-
-      if (!currentModel || !modelMatchesProject(currentModel, workspaceRoot, activeDocumentPath)) {
-        return;
-      }
-
-      const foldedLines: number[] = [];
-
-      if (foldingModel) {
-        for (
-          let index = 0;
-          index < foldingModel.regions.length && foldedLines.length < 500;
-          index += 1
-        ) {
-          if (!foldingModel.regions.isCollapsed(index)) {
-            continue;
-          }
-
-          foldedLines.push(foldingModel.regions.getStartLineNumber(index));
-        }
-      }
-
-      onEditorViewStateChangeRef.current?.(activeDocumentPath, {
-        column: position.column,
-        ...(foldedLines.length === 0 ? {} : { foldedLines }),
-        line: position.lineNumber,
-        scrollTop: editorApi.getScrollTop(),
-      });
-    };
-
-    void captureViewState();
-    const cursorDisposable = editorApi.onDidChangeCursorPosition(() => {
-      void captureViewState();
-    });
-    const scrollDisposable = editorApi.onDidScrollChange(() => {
-      void captureViewState();
-    });
-    const modelDisposable = editorApi.onDidChangeModel(() => {
-      resetFoldingBinding();
-      void captureViewState();
-    });
-
-    return () => {
-      active = false;
-      cursorDisposable.dispose();
-      modelDisposable.dispose();
-      resetFoldingBinding();
-      scrollDisposable.dispose();
-    };
-  }, [activeDocumentPath, editorApi, editorViewStateCaptureEnabled, workspaceRoot]);
+  useEditorModelViewStateLifecycle({
+    activeDocumentPath,
+    captureEnabled: editorViewStateCaptureEnabled,
+    editor: editorApi,
+    onViewStateChangeRef: onEditorViewStateChangeRef,
+    restoredViewStateRevision,
+    restoredViewStates,
+    workspaceRoot,
+  });
 
   useEffect(() => {
     if (
@@ -4471,707 +4030,3 @@ export const EditorSurface = memo(function EditorSurface(props: EditorSurfacePro
     </EditorRuntimeHost>
   );
 });
-
-// The selection context captured when the Surround With quick-pick opens. It is
-// snapshotted up front so the wrap is always applied to the exact range the
-// developer triggered the command on, even if focus moves to the picker.
-interface SurroundWithRequest {
-  eol: string;
-  indent: string;
-  indentUnit: string;
-  // Absolute path of the document the request was captured on. The apply path
-  // re-checks it against the live model so a wrap can never land on another tab.
-  path: string;
-  modelUri: string;
-  selection: {
-    endColumn: number;
-    endLineNumber: number;
-    startColumn: number;
-    startLineNumber: number;
-  };
-  text: string;
-}
-
-// Snapshots the active selection (or the current line when the selection is
-// empty) along with the document's indentation settings, so the chosen template
-// can be applied later from the picker without re-reading editor state.
-function surroundWithRequestFromEditor(
-  monaco: typeof Monaco,
-  editor: Monaco.editor.IStandaloneCodeEditor,
-): SurroundWithRequest | null {
-  const model = editor.getModel();
-  const selection = editor.getSelection();
-
-  if (!model || !selection) {
-    return null;
-  }
-
-  const path = modelPath(model);
-
-  if (!path) {
-    return null;
-  }
-
-  const range = surroundWithTargetRange(monaco, model, selection);
-  const firstLine = model.getLineContent(range.startLineNumber);
-  const indent = leadingWhitespace(firstLine);
-  const text = dedentSurroundWithText(model.getValueInRange(range), indent);
-
-  return {
-    eol: model.getEOL(),
-    indent,
-    indentUnit: indentUnitFromModel(model),
-    modelUri: model.uri.toString(),
-    path,
-    selection: {
-      endColumn: range.endColumn,
-      endLineNumber: range.endLineNumber,
-      startColumn: range.startColumn,
-      startLineNumber: range.startLineNumber,
-    },
-    text,
-  };
-}
-
-// Removes the wrapper's base indentation from every captured line so the helper
-// re-indents the body relative to the new block. The relative indentation
-// between body lines is preserved because only the shared leading prefix is
-// stripped.
-function dedentSurroundWithText(text: string, indent: string): string {
-  if (indent.length === 0) {
-    return text;
-  }
-
-  return text
-    .split(/\r\n|\r|\n/)
-    .map((line) => (line.startsWith(indent) ? line.slice(indent.length) : line))
-    .join("\n");
-}
-
-// Expands an empty selection to cover the whole current line so the developer
-// can surround a line without first selecting it (PhpStorm behaviour). A real
-// selection is normalised to a full-line range at both ends so the replacement
-// snippet's own indentation is authoritative.
-function surroundWithTargetRange(
-  monaco: typeof Monaco,
-  model: Monaco.editor.ITextModel,
-  selection: Monaco.Selection,
-): Monaco.Range {
-  const startLineNumber = Math.min(selection.startLineNumber, selection.endLineNumber);
-  const endLineNumber = Math.max(selection.startLineNumber, selection.endLineNumber);
-
-  return new monaco.Range(startLineNumber, 1, endLineNumber, model.getLineMaxColumn(endLineNumber));
-}
-
-function indentUnitFromModel(model: Monaco.editor.ITextModel): string {
-  const options = model.getOptions();
-
-  if (!options.insertSpaces) {
-    return "\t";
-  }
-
-  const size = options.indentSize || options.tabSize || 4;
-  return " ".repeat(size);
-}
-
-// Joins every line above the caret line into a single source string. The
-// completion analyser uses it to detect when the caret is nested inside a
-// multiline construct (an array, call or block opened earlier) so it can stay a
-// no-op instead of corrupting the enclosing statement.
-function precedingLinesSource(model: Monaco.editor.ITextModel, lineNumber: number): string {
-  if (lineNumber <= 1) {
-    return "";
-  }
-
-  const lines: string[] = [];
-
-  for (let line = 1; line < lineNumber; line += 1) {
-    lines.push(model.getLineContent(line));
-  }
-
-  return `${lines.join("\n")}\n`;
-}
-
-// Word characters for the hippie prefix under the caret. Mirrors the domain
-// module's WORD_CHAR set (PHP `$user`, JS `foo_bar2`) so the prefix we slice and
-// the candidates we match agree.
-const HIPPIE_WORD_CHAR = /[A-Za-z0-9_$]/;
-
-// Cyclic Expand Word (PhpStorm "Cyclic Expand Word" / Emacs hippie, Alt+/).
-// Expands the word prefix before the caret to the nearest matching buffer word;
-// pressing again immediately cycles through the remaining candidates and wraps
-// back to the typed prefix. Pure text from the live buffer only - no LSP/disk.
-function applyCyclicExpandWord(
-  monaco: typeof Monaco,
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  sessionRef: MutableRefObject<HippieSession | null>,
-): void {
-  const model = editor.getModel();
-  const position = editor.getPosition();
-
-  if (!model || !position) {
-    sessionRef.current = null;
-    return;
-  }
-
-  const documentText = model.getValue();
-  const cursorOffset = model.getOffsetAt(position);
-  const session = continueOrStartHippieSession(sessionRef.current, documentText, cursorOffset);
-
-  if (!session) {
-    sessionRef.current = null;
-    return;
-  }
-
-  const replaceEndOffset = currentHippieEndOffset(sessionRef.current, session);
-  const startPosition = model.getPositionAt(session.anchorOffset);
-  const endPosition = model.getPositionAt(replaceEndOffset);
-
-  editor.executeEdits("mockor.cyclicExpandWord", [
-    {
-      forceMoveMarkers: true,
-      range: new monaco.Range(
-        startPosition.lineNumber,
-        startPosition.column,
-        endPosition.lineNumber,
-        endPosition.column,
-      ),
-      text: session.word,
-    },
-  ]);
-
-  const caretPosition = model.getPositionAt(session.anchorOffset + session.word.length);
-  editor.setPosition(caretPosition);
-  sessionRef.current = session;
-}
-
-// Decides whether the previous expansion is still live (same anchor, and the
-// buffer at the anchor still holds exactly the last inserted word ending at the
-// caret). If so we cycle to the next candidate; otherwise we start a fresh
-// expansion from the prefix currently under the caret.
-function continueOrStartHippieSession(
-  previous: HippieSession | null,
-  documentText: string,
-  cursorOffset: number,
-): HippieSession | null {
-  if (previous && isLiveHippieSession(previous, documentText, cursorOffset)) {
-    return advanceHippieSession(previous);
-  }
-
-  const prefix = hippiePrefixBefore(documentText, cursorOffset);
-  return startHippieSession(documentText, prefix, cursorOffset);
-}
-
-function isLiveHippieSession(
-  session: HippieSession,
-  documentText: string,
-  cursorOffset: number,
-): boolean {
-  const expectedEnd = session.anchorOffset + session.word.length;
-
-  if (cursorOffset !== expectedEnd) {
-    return false;
-  }
-
-  return documentText.slice(session.anchorOffset, expectedEnd) === session.word;
-}
-
-// The offset where the text being replaced ends. On a fresh expansion the caret
-// sits at the end of the typed prefix (anchor + prefix length); when cycling we
-// replace the previously inserted word (anchor + previous word length).
-function currentHippieEndOffset(previous: HippieSession | null, session: HippieSession): number {
-  if (previous && previous.anchorOffset === session.anchorOffset) {
-    return previous.anchorOffset + previous.word.length;
-  }
-
-  return session.anchorOffset + session.prefix.length;
-}
-
-function hippiePrefixBefore(documentText: string, cursorOffset: number): string {
-  let start = cursorOffset;
-
-  while (start > 0 && HIPPIE_WORD_CHAR.test(documentText[start - 1])) {
-    start -= 1;
-  }
-
-  return documentText.slice(start, cursorOffset);
-}
-
-// Moves the whole statement (or brace block) under the caret up or down past its
-// adjacent statement (PhpStorm Cmd+Shift+Up / Down). The pure analyser computes a
-// balanced line range swap; when it declines (ambiguous, file edge, multi-line
-// fragment) this returns false so the caller falls back to Monaco's Move Line.
-// Returns true only when an edit was applied to the live model.
-function applyMoveStatement(
-  monaco: typeof Monaco,
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  direction: MoveStatementDirection,
-): boolean {
-  const model = editor.getModel();
-  const position = editor.getPosition();
-
-  if (!model || !position) {
-    return false;
-  }
-
-  const edit = phpMoveStatement(model.getValue(), position.lineNumber, direction);
-
-  if (!edit) {
-    return false;
-  }
-
-  const range = new monaco.Range(
-    edit.startLine,
-    1,
-    edit.endLine,
-    model.getLineMaxColumn(edit.endLine),
-  );
-
-  editor.executeEdits("mockor.moveStatement", [
-    {
-      forceMoveMarkers: true,
-      range,
-      text: edit.newText,
-    },
-  ]);
-  editor.setPosition({
-    column: position.column,
-    lineNumber: clampLine(model, edit.caretLine),
-  });
-  editor.focus();
-
-  return true;
-}
-
-function clampLine(model: Monaco.editor.ITextModel, lineNumber: number): number {
-  if (lineNumber < 1) {
-    return 1;
-  }
-
-  const lineCount = model.getLineCount();
-
-  return lineNumber > lineCount ? lineCount : lineNumber;
-}
-
-// Completes the statement on the caret's line (PhpStorm Cmd+Shift+Enter): the
-// pure analyser decides the smallest safe edit, then it is applied to the live
-// model. A `replaceLine` result rewrites the line and parks the caret at the
-// reported column; an `insertBlock` result opens a brace block whose body holds
-// the caret (via the snippet controller's `$0` tab-stop where available).
-function applyCompleteStatement(
-  monaco: typeof Monaco,
-  editor: Monaco.editor.IStandaloneCodeEditor,
-): void {
-  const model = editor.getModel();
-  const position = editor.getPosition();
-
-  if (!model || !position) {
-    return;
-  }
-
-  const lineNumber = position.lineNumber;
-  const lineText = model.getLineContent(lineNumber);
-  const precedingSource = precedingLinesSource(model, lineNumber);
-  const completion = completePhpStatement(lineText, position.column, precedingSource);
-
-  if (!completion) {
-    return;
-  }
-
-  const lineRange = new monaco.Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber));
-
-  if (completion.kind === "replaceLine") {
-    editor.executeEdits("mockor.completeStatement", [
-      {
-        forceMoveMarkers: true,
-        range: lineRange,
-        text: completion.newText,
-      },
-    ]);
-    editor.setPosition({ column: completion.caretColumn, lineNumber });
-    editor.focus();
-    return;
-  }
-
-  insertStatementBlock(monaco, editor, model, completion, lineRange);
-}
-
-// Replaces the control header line with `<header> {`, a blank indented body
-// line, and a closing brace, leaving the caret inside the body. The snippet
-// controller is preferred so the body tab-stop is real; the fallback computes
-// the caret position itself so the command still works without the controller.
-function insertStatementBlock(
-  monaco: typeof Monaco,
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  model: Monaco.editor.ITextModel,
-  completion: { indent: string; keepHeader: string },
-  lineRange: Monaco.Range,
-): void {
-  const eol = model.getEOL();
-  const unit = indentUnitFromModel(model);
-  const bodyIndent = completion.indent + unit;
-  const snippetController =
-    editor.getContribution<SnippetInsertingContribution>("snippetController2");
-
-  if (snippetController) {
-    editor.setSelection(
-      new monaco.Selection(
-        lineRange.startLineNumber,
-        lineRange.startColumn,
-        lineRange.endLineNumber,
-        lineRange.endColumn,
-      ),
-    );
-    snippetController.insert(
-      `${escapeStatementSnippet(completion.keepHeader)}${eol}${escapeStatementSnippet(bodyIndent)}$0${eol}${escapeStatementSnippet(completion.indent)}}`,
-    );
-    editor.focus();
-    return;
-  }
-
-  const text = `${completion.keepHeader}${eol}${bodyIndent}${eol}${completion.indent}}`;
-
-  editor.executeEdits("mockor.completeStatement", [
-    {
-      forceMoveMarkers: true,
-      range: lineRange,
-      text,
-    },
-  ]);
-  editor.setPosition({
-    column: bodyIndent.length + 1,
-    lineNumber: lineRange.startLineNumber + 1,
-  });
-  editor.focus();
-}
-
-// Escapes the snippet meta-characters so literal header / indentation text is
-// reproduced verbatim around the body's `$0` tab-stop.
-function escapeStatementSnippet(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/\$/g, "\\$").replace(/}/g, "\\}");
-}
-
-// Replaces the captured range with the wrapped block, inserting it through the
-// snippet controller so the placeholders become tab-stops the developer can tab
-// through (condition / loop variables first, then the body / catch clause).
-function applySurroundWith(
-  monaco: typeof Monaco,
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  request: SurroundWithRequest,
-  templateId: SurroundWithTemplateId,
-): void {
-  const model = editor.getModel();
-
-  // The picker may outlive a tab switch; never apply a wrap captured on one
-  // document to a different one that is now active in this reused surface.
-  if (!model || model.uri.toString() !== request.modelUri || modelPath(model) !== request.path) {
-    return;
-  }
-
-  const snippet = surroundWithSnippet({
-    eol: request.eol,
-    id: templateId,
-    indent: request.indent,
-    indentUnit: request.indentUnit,
-    text: request.text,
-  });
-
-  editor.focus();
-  editor.setSelection(
-    new monaco.Selection(
-      request.selection.startLineNumber,
-      request.selection.startColumn,
-      request.selection.endLineNumber,
-      request.selection.endColumn,
-    ),
-  );
-
-  const snippetController =
-    editor.getContribution<SnippetInsertingContribution>("snippetController2");
-
-  if (snippetController) {
-    snippetController.insert(snippet);
-    return;
-  }
-
-  editor.executeEdits("mockor.surroundWith", [
-    {
-      forceMoveMarkers: true,
-      range: new monaco.Range(
-        request.selection.startLineNumber,
-        request.selection.startColumn,
-        request.selection.endLineNumber,
-        request.selection.endColumn,
-      ),
-      text: plainSnippetText(snippet),
-    },
-  ]);
-}
-
-// Renders a Monaco snippet as the literal text it represents, for the rare
-// fallback path where the snippet controller is unavailable. Placeholders
-// (`${1:default}`) collapse to their default text, the final caret stop (`$0`)
-// is dropped, and the snippet escaping applied in `surroundWithSnippet`
-// (`\` -> `\\`, `$` -> `\$`, `}` -> `\}`) is reversed so the body text is
-// inserted verbatim instead of carrying stray backslashes (e.g. `\$total`).
-//
-// The placeholder / caret strips only match structural markers that are NOT
-// preceded by a backslash. Body characters are always escaped by
-// `surroundWithSnippet`, so a literal `$0` or `${1:...}` inside the selected
-// text appears as `\$0` / `\${1:...}` and is left untouched by the strips, then
-// un-escaped back to its literal form by the final pass.
-function plainSnippetText(snippet: string): string {
-  return snippet
-    .replace(/(?<!\\)\$\{\d+:((?:\\.|[^}])*)\}/g, "$1")
-    .replace(/(?<!\\)\$0/g, "")
-    .replace(/\\([$}\\])/g, "$1");
-}
-
-interface SnippetInsertingContribution extends Monaco.editor.IEditorContribution {
-  insert(template: string): void;
-}
-
-// Runs a built-in Monaco editor action by id, so an ergonomics command (move /
-// duplicate / delete line, multi-cursor) registered through the keymap drives
-// the exact same Monaco behaviour as its native keybinding. Guarded on a live
-// model so the action is a no-op when the surface shows the placeholder.
-function triggerEditorAction(editor: Monaco.editor.IStandaloneCodeEditor, actionId: string): void {
-  if (!editor.getModel()) {
-    return;
-  }
-
-  editor.trigger("keyboard", actionId, {});
-}
-
-function triggerEditorSurfaceCommand(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  commandId: EditorSurfaceCommandId,
-): void {
-  if (!editor.getModel()) {
-    return;
-  }
-
-  if (commandId === "editor.quickFix" && !editor.getPosition()) {
-    return;
-  }
-
-  const actionId = editorActionForSurfaceCommand(commandId);
-
-  if (!actionId) {
-    return;
-  }
-
-  editor.trigger("keyboard", actionId, {});
-}
-
-function createEditorSurfaceCommandRunner({
-  captureScope,
-  changeHunksRef,
-  editor,
-  isImportActionEnabled,
-  runImportAction,
-}: {
-  captureScope(): EditorSurfaceCommandInvocationScope | null;
-  changeHunksRef: MutableRefObject<readonly EditorChangeHunk[]>;
-  editor: Monaco.editor.IStandaloneCodeEditor;
-  isImportActionEnabled(commandId: EditorSurfaceCommandId): boolean;
-  runImportAction(commandId: EditorSurfaceCommandId): void;
-}): EditorSurfaceCommandRunner {
-  const runner: EditorSurfaceCommandRunner = (commandId, scope) => {
-    if (scope && !runner.isScopeCurrent?.(scope)) {
-      return;
-    }
-
-    if (!captureScope()) {
-      return;
-    }
-
-    if (isEditorSurfaceImportCommand(commandId)) {
-      if (isImportActionEnabled(commandId)) {
-        editor.focus();
-        runImportAction(commandId);
-      }
-      return;
-    }
-
-    editor.focus();
-
-    if (commandId === "editor.nextChange") {
-      jumpToChangeHunk(editor, changeHunksRef.current, "next");
-      return;
-    }
-
-    if (commandId === "editor.previousChange") {
-      jumpToChangeHunk(editor, changeHunksRef.current, "previous");
-      return;
-    }
-
-    triggerEditorSurfaceCommand(editor, commandId);
-  };
-  runner.captureScope = captureScope;
-  runner.isScopeCurrent = (scope) => {
-    const currentScope = captureScope();
-
-    if (!currentScope) {
-      return false;
-    }
-
-    return editorSurfaceCommandInvocationScopesEqual(scope, currentScope);
-  };
-  runner.isEnabled = (commandId, scope) => {
-    if (scope && !runner.isScopeCurrent?.(scope)) {
-      return false;
-    }
-
-    if (!captureScope()) {
-      return false;
-    }
-
-    if (isEditorSurfaceImportCommand(commandId)) {
-      return isImportActionEnabled(commandId);
-    }
-
-    if (commandId === "editor.nextChange" || commandId === "editor.previousChange") {
-      return changeHunksRef.current.length > 0;
-    }
-
-    return true;
-  };
-
-  return runner;
-}
-
-function isEditorSurfaceImportCommand(commandId: EditorSurfaceCommandId): boolean {
-  return (
-    commandId === "editor.action.organizeImports" ||
-    commandId === "typescript.sortImports" ||
-    commandId === "javascript.sortImports" ||
-    commandId === "typescript.removeUnusedImports" ||
-    commandId === "javascript.removeUnusedImports"
-  );
-}
-
-function expandEditorSelection(
-  monaco: typeof Monaco,
-  editor: Monaco.editor.IStandaloneCodeEditor,
-): boolean {
-  const model = editor.getModel();
-  const position = editor.getPosition();
-
-  if (!model || !position) {
-    return false;
-  }
-
-  const line = model.getLineContent(position.lineNumber);
-  const selection = editor.getSelection();
-  const currentRange = currentEditorTextRange(position, selection);
-  const nextRange = nextEditorSelectionExpansionRange(line, position.column - 1, currentRange);
-
-  if (!nextRange) {
-    return false;
-  }
-
-  editor.setSelection(
-    new monaco.Range(
-      position.lineNumber,
-      nextRange.start + 1,
-      position.lineNumber,
-      nextRange.end + 1,
-    ),
-  );
-  return true;
-}
-
-function currentEditorTextRange(
-  position: Monaco.Position,
-  selection: Monaco.Selection | null,
-): EditorSelectionTextRange {
-  if (!selection || selection.startLineNumber !== selection.endLineNumber) {
-    const offset = Math.max(0, position.column - 1);
-    return { end: offset, start: offset };
-  }
-
-  return {
-    end: Math.max(selection.startColumn, selection.endColumn) - 1,
-    start: Math.min(selection.startColumn, selection.endColumn) - 1,
-  };
-}
-
-// Shared stable empty path list for the optional path-set props. A fresh `[]`
-// default would change identity on every render, re-running the model-dispose
-// effect (which depends on these arrays) on internal re-renders and risking a
-// double-dispose. The single frozen identity keeps the effect quiet until the
-// caller actually changes the path set.
-const EMPTY_PATHS: readonly string[] = Object.freeze([]);
-const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
-const EMPTY_BREAKPOINTS: readonly Breakpoint[] = Object.freeze([]);
-const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
-const noopLocalPhpDiagnosticsChange = () => undefined;
-// Stable empty identities so an absent breadcrumb symbol set / path does not
-// produce a fresh array each render and break the breadcrumb path memo.
-const EMPTY_BREADCRUMB_SYMBOLS: LanguageServerDocumentSymbol[] = [];
-const EMPTY_BREADCRUMB_PATH: LanguageServerDocumentSymbol[] = [];
-
-// Stable placeholder model identity used while no document is open, so Monaco
-// keeps a single mounted instance instead of remounting when the first file
-// opens.
-const PLACEHOLDER_PATH = "inmemory://workbench/empty";
-const PLACEHOLDER_LANGUAGE = "plaintext";
-
-// Rendered via the Monaco `loading` prop. Monaco's default loading element is a
-// white "Loading…" box; this matches the editor surface background so the very
-// first Monaco chunk load does not flash white.
-function EditorLoadingPlaceholder() {
-  return <div className="editor-loading-placeholder" aria-hidden="true" />;
-}
-
-// A single stable element identity for Monaco's `loading` prop. Recreating it on
-// every render would feed @monaco-editor/react a fresh reference and break its
-// memo, defeating the cursor-move stabilisation below.
-const EDITOR_LOADING_PLACEHOLDER = <EditorLoadingPlaceholder />;
-
-function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
-  // Apply a matching built-in dark/light theme synchronously so Monaco paints
-  // the correct background on its first frame. Without this, Monaco renders the
-  // default white `vs` theme until the async Shiki setup below resolves and
-  // calls `setTheme`, producing a white flash on dark themes.
-  applyImmediateFallbackTheme(monaco, theme);
-  configureShikiLanguageFeatures(monaco);
-  setupEmmet(monaco);
-  setupShikiTokenization(monaco, theme).catch((error) => {
-    console.error("Shiki tokenization setup failed", error);
-  });
-}
-
-function pruneClosedPaths<Value>(
-  cache: Record<string, Value>,
-  openPaths: Set<string>,
-): Record<string, Value> {
-  const stalePaths = Object.keys(cache).filter((path) => !openPaths.has(path));
-
-  if (stalePaths.length === 0) {
-    return cache;
-  }
-
-  const next = { ...cache };
-  stalePaths.forEach((path) => delete next[path]);
-  return next;
-}
-
-async function foldingModelForEditor(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-): Promise<FoldingModelViewState | null> {
-  const contribution = editor.getContribution(
-    "editor.contrib.folding",
-  ) as unknown as FoldingControllerViewState | null;
-
-  if (typeof contribution?.getFoldingModel !== "function") {
-    return null;
-  }
-
-  try {
-    return await contribution.getFoldingModel();
-  } catch {
-    return null;
-  }
-}
