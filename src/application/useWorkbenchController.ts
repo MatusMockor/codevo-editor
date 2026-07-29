@@ -16,7 +16,6 @@ import {
   adoptLegacyCachedWorkspaceState,
   removeWorkspaceIdentityMappings,
   resolveAdmittedDocumentSaveOwnership,
-  withWorkspaceIdentityLease,
   workspaceSettingsIdentity,
 } from "./workbenchController/workspaceIdentityPolicy";
 export {
@@ -55,6 +54,12 @@ import {
   useManagedLanguageServerInstallSubscriptions,
 } from "./workbenchController/useManagedLanguageServerInstallLifecycle";
 import { useWorkspaceOpenRequestLifecycle } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
+import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
+import {
+  useWorkspaceDirectoryLoader,
+  type InFlightDirectoryLoad,
+} from "./workbenchController/useWorkspaceDirectoryLoader";
+import { useWorkspaceSessionRestorer } from "./workbenchController/useWorkspaceSessionRestorer";
 import { useWorkbenchSettingsPersistence } from "./workbenchController/useWorkbenchSettingsPersistence";
 import {
   useWorkbenchLatencyReporting,
@@ -164,11 +169,7 @@ import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroup
 import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveService";
 import { WorkbenchOwnerDocumentSaveAdapters } from "./workbenchOwnerDocumentSaveAdapters";
 import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
-import {
-  isSessionPathInWorkspace,
-  restoreWorkspaceSession as restorePersistedWorkspaceSession,
-  restoredBottomPanelView,
-} from "./documentSessionState";
+import { isSessionPathInWorkspace } from "./documentSessionState";
 import {
   useWorkspaceStateCache,
   workspaceIdentityStateCacheKey,
@@ -184,7 +185,6 @@ import {
   type WorkbenchCloseLifecycleDependencies,
   type WorkspaceCloseOwnership,
   type WorkspaceCloseSessionPort,
-  type WorkspaceIdentityReleaseOutcome,
 } from "./useWorkbenchCloseLifecycle";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
@@ -403,7 +403,6 @@ import {
   type SettingsGateway,
   type SettingsSection,
   type StatusBarItemVisibility,
-  type WorkspaceSessionState,
   type WorkspaceSessionViewState,
   type WorkspaceSettings,
 } from "../domain/settings";
@@ -427,12 +426,10 @@ import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
 import { measureLatency, type LatencyTracker } from "../domain/latencyTracker";
 import {
   createWorkspaceTextFileWithContent,
-  detectLanguage,
   getFileName,
   getParentPath,
   isDirty,
   joinWorkspacePath,
-  readWorkspaceTextFileSnapshot,
   workspaceRelativePath,
   visibleEditorPaths,
   type EditorDocument,
@@ -455,22 +452,9 @@ interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
 }
 
-interface WorkspaceIdentityAdmissionLease {
-  generation: number;
-  workspaceId: string;
-}
-
 interface PendingWorkspaceSettingsLoad {
   legacyRawKeys: readonly string[];
   promise: Promise<WorkspaceSettings>;
-}
-
-interface InFlightDirectoryLoad {
-  generation: number;
-  path: string;
-  promise: Promise<FileEntry[]>;
-  requestId: symbol;
-  rootPath: string | null;
 }
 
 function restoreRuntimeStatusCacheEntry(
@@ -1140,178 +1124,26 @@ export function useWorkbenchController(
     },
     [],
   );
-  const unregisterWorkspaceIdentityIfUnused = useCallback(
-    async (
-      workspaceId: string,
-      requestedReleaseGeneration?: number,
-    ): Promise<WorkspaceIdentityReleaseOutcome> => {
-      const releaseGeneration =
-        requestedReleaseGeneration ??
-        workspaceIdentityReleaseGenerationByIdRef.current[workspaceId];
-      const ownedGeneration = ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId];
-      if (
-        ownedWorkspaceIdentityIdsRef.current.has(workspaceId) &&
-        releaseGeneration === undefined
-      ) {
-        return "deferred";
-      }
-
-      if (releaseGeneration !== undefined && ownedGeneration !== releaseGeneration) {
-        if (workspaceIdentityReleaseGenerationByIdRef.current[workspaceId] === releaseGeneration) {
-          delete workspaceIdentityReleaseGenerationByIdRef.current[workspaceId];
-        }
-        return "deferred";
-      }
-
-      if (pendingWorkspaceIdentityAdmissionsRef.current[workspaceId]?.size) {
-        return "deferred";
-      }
-
-      if (pendingWorkspaceIdentityRequestTokensRef.current.size > 0) {
-        deferredWorkspaceIdentityCleanupIdsRef.current.add(workspaceId);
-        return "deferred";
-      }
-
-      const pendingUnregister = workspaceIdentityUnregisterByIdRef.current[workspaceId];
-      if (pendingUnregister) {
-        await pendingUnregister;
-        return releasedWorkspaceIdentityIdsRef.current.has(workspaceId) ? "released" : "deferred";
-      }
-
-      const request = workspaceGateways.identity.unregister(workspaceId);
-      deferredWorkspaceIdentityCleanupIdsRef.current.delete(workspaceId);
-      workspaceIdentityUnregisterByIdRef.current[workspaceId] = request;
-      let requestStillCurrent = true;
-      try {
-        await request;
-      } finally {
-        if (workspaceIdentityUnregisterByIdRef.current[workspaceId] !== request) {
-          requestStillCurrent = false;
-        }
-
-        if (requestStillCurrent) {
-          delete workspaceIdentityUnregisterByIdRef.current[workspaceId];
-        }
-      }
-      if (!requestStillCurrent) {
-        return "deferred";
-      }
-
-      if (releaseGeneration === undefined) {
-        return "released";
-      }
-
-      if (workspaceIdentityReleaseGenerationByIdRef.current[workspaceId] === releaseGeneration) {
-        delete workspaceIdentityReleaseGenerationByIdRef.current[workspaceId];
-      }
-      if (ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId] !== releaseGeneration) {
-        return "deferred";
-      }
-
-      ownedWorkspaceIdentityIdsRef.current.delete(workspaceId);
-      delete ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId];
-      releasedWorkspaceIdentityIdsRef.current.add(workspaceId);
-      return "released";
-    },
-    [workspaceGateways.identity],
-  );
-  const flushDeferredWorkspaceIdentityCleanup = useCallback(() => {
-    if (pendingWorkspaceIdentityRequestTokensRef.current.size > 0) {
-      return;
-    }
-
-    const workspaceIds = [...deferredWorkspaceIdentityCleanupIdsRef.current];
-    for (const workspaceId of workspaceIds) {
-      void unregisterWorkspaceIdentityIfUnused(workspaceId).catch((error) => {
-        if (!workbenchMountedRef.current) {
-          return;
-        }
-        reportError("Workspace", error);
-      });
-    }
-  }, [reportError, unregisterWorkspaceIdentityIfUnused]);
-  const beginWorkspaceIdentityAdmission = useCallback(
-    (workspaceId: string): WorkspaceIdentityAdmissionLease => {
-      const generation = workspaceIdentityAdmissionGenerationRef.current + 1;
-      workspaceIdentityAdmissionGenerationRef.current = generation;
-      const pending = pendingWorkspaceIdentityAdmissionsRef.current[workspaceId] ?? new Set();
-      pending.add(generation);
-      pendingWorkspaceIdentityAdmissionsRef.current[workspaceId] = pending;
-      return { generation, workspaceId };
-    },
-    [],
-  );
-  const adoptWorkspaceIdentityAdmission = useCallback((lease: WorkspaceIdentityAdmissionLease) => {
-    const pending = pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
-    pending?.delete(lease.generation);
-    if (pending?.size === 0) {
-      delete pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
-    }
-    ownedWorkspaceIdentityIdsRef.current.add(lease.workspaceId);
-    releasedWorkspaceIdentityIdsRef.current.delete(lease.workspaceId);
-    ownedWorkspaceIdentityGenerationByIdRef.current[lease.workspaceId] = lease.generation;
-  }, []);
-  const releaseWorkspaceIdentityAdmission = useCallback(
-    async (lease: WorkspaceIdentityAdmissionLease) => {
-      const pending = pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
-      pending?.delete(lease.generation);
-      if (pending?.size === 0) {
-        delete pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
-      }
-      await unregisterWorkspaceIdentityIfUnused(lease.workspaceId);
-    },
-    [unregisterWorkspaceIdentityIfUnused],
-  );
-  const releaseOwnedWorkspaceIdentity = useCallback(
-    async (workspaceId: string): Promise<WorkspaceIdentityReleaseOutcome> => {
-      const claimedGeneration = workspaceRuntimeOwnerClaimsRef.current.generationFor(workspaceId);
-      if (releasedWorkspaceIdentityIdsRef.current.has(workspaceId)) {
-        if (claimedGeneration !== undefined) {
-          retireWorkspaceRuntimeOwnerClaim(workspaceId, claimedGeneration);
-        }
-        return "released";
-      }
-
-      const ownershipGeneration = ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId];
-      if (ownershipGeneration === undefined) {
-        const outcome = await unregisterWorkspaceIdentityIfUnused(workspaceId);
-        if (outcome === "released" && claimedGeneration !== undefined) {
-          retireWorkspaceRuntimeOwnerClaim(workspaceId, claimedGeneration);
-        }
-        return outcome;
-      }
-
-      workspaceIdentityReleaseGenerationByIdRef.current[workspaceId] = ownershipGeneration;
-      const outcome = await unregisterWorkspaceIdentityIfUnused(workspaceId, ownershipGeneration);
-      if (outcome === "released") {
-        retireWorkspaceRuntimeOwnerClaim(workspaceId, ownershipGeneration);
-      }
-      return outcome;
-    },
-    [retireWorkspaceRuntimeOwnerClaim, unregisterWorkspaceIdentityIfUnused],
-  );
-  const withManagedWorkspaceIdentityLease = useCallback(
-    async (
-      descriptor: WorkspaceIdentityDescriptor,
-      useLease: (adopt: () => void) => Promise<void>,
-    ): Promise<void> => {
-      const lease = beginWorkspaceIdentityAdmission(descriptor.workspaceId);
-      await withWorkspaceIdentityLease(
-        descriptor,
-        () => releaseWorkspaceIdentityAdmission(lease),
-        (adoptLease) =>
-          useLease(() => {
-            adoptWorkspaceIdentityAdmission(lease);
-            adoptLease();
-          }),
-      );
-    },
-    [
-      adoptWorkspaceIdentityAdmission,
-      beginWorkspaceIdentityAdmission,
-      releaseWorkspaceIdentityAdmission,
-    ],
-  );
+  const {
+    flushDeferredCleanup: flushDeferredWorkspaceIdentityCleanup,
+    releaseOwned: releaseOwnedWorkspaceIdentity,
+    withManagedLease: withManagedWorkspaceIdentityLease,
+  } = useManagedWorkspaceIdentityOwnership({
+    deferredCleanupIdsRef: deferredWorkspaceIdentityCleanupIdsRef,
+    identityGateway: workspaceGateways.identity,
+    identityRequestTokensRef: pendingWorkspaceIdentityRequestTokensRef,
+    mountedRef: workbenchMountedRef,
+    nextAdmissionGenerationRef: workspaceIdentityAdmissionGenerationRef,
+    ownedGenerationByIdRef: ownedWorkspaceIdentityGenerationByIdRef,
+    ownedIdsRef: ownedWorkspaceIdentityIdsRef,
+    pendingAdmissionsRef: pendingWorkspaceIdentityAdmissionsRef,
+    releasedIdsRef: releasedWorkspaceIdentityIdsRef,
+    releaseGenerationByIdRef: workspaceIdentityReleaseGenerationByIdRef,
+    reportError,
+    retireRuntimeOwnerClaim: retireWorkspaceRuntimeOwnerClaim,
+    runtimeOwnerClaimsRef: workspaceRuntimeOwnerClaimsRef,
+    unregisterByIdRef: workspaceIdentityUnregisterByIdRef,
+  });
   const workspaceCloseGenerationByRootRef = useRef<Record<string, number>>({});
   const workspaceCloseOwnershipGenerationRef = useRef(0);
   const workspaceCloseOwnershipByKeyRef = useRef<Record<string, number>>({});
@@ -2797,134 +2629,16 @@ export function useWorkbenchController(
     ],
   );
 
-  const loadDirectory = useCallback(
-    async (
-      path: string,
-      options: {
-        clearMessage?: boolean;
-        isMutationOwnerCurrent?: () => boolean;
-        requireActiveRoot?: boolean;
-      } = {},
-    ): Promise<FileEntry[] | undefined> => {
-      const rootPath = currentWorkspaceRootRef.current;
-      const generation = openWorkspaceRequestTokenRef.current;
-      const normalizedPath = normalizedWorkspaceRootKey(path);
-      const clearMessage = options.clearMessage !== false;
-      const isMutationOwnerCurrent = options.isMutationOwnerCurrent;
-      const requireActiveRoot = options.requireActiveRoot ?? false;
-      const requestKey = JSON.stringify([
-        normalizedWorkspaceRootKey(rootPath),
-        generation,
-        normalizedPath,
-      ]);
-      const activeRequest = inFlightDirectoryLoadsRef.current.get(requestKey);
-
-      // Subdirectory loads stay valid as long as the path still belongs to the
-      // live workspace root. The workspace-root load sub-task instead opts into
-      // exact-root matching so that switching to a parent workspace (whose root
-      // a now-stale nested root would still "belong to") cannot let stale
-      // entries leak into the active tree.
-      const isActiveRoot = () =>
-        openWorkspaceRequestTokenRef.current === generation &&
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
-        (!isMutationOwnerCurrent || isMutationOwnerCurrent()) &&
-        (requireActiveRoot
-          ? workspaceRootKeysEqual(currentWorkspaceRootRef.current, normalizedPath)
-          : workspacePathBelongsToRoot(normalizedPath, currentWorkspaceRootRef.current));
-
-      let sharedRead = activeRequest?.promise;
-
-      if (!sharedRead) {
-        setLoadingDirectories((current) => new Set(current).add(normalizedPath));
-
-        const requestId = Symbol(requestKey);
-        const request = (async () => {
-          // Let the request enter the registry before a synchronous gateway
-          // failure can reach cleanup.
-          await Promise.resolve();
-
-          try {
-            return await workspaceFiles.readDirectory(normalizedPath);
-          } finally {
-            const registeredRequest = inFlightDirectoryLoadsRef.current.get(requestKey);
-
-            if (registeredRequest?.requestId === requestId) {
-              inFlightDirectoryLoadsRef.current.delete(requestKey);
-            }
-
-            setLoadingDirectories((current) => {
-              const hasActiveRequestForPath = [...inFlightDirectoryLoadsRef.current.values()].some(
-                (candidate) =>
-                  candidate.generation === openWorkspaceRequestTokenRef.current &&
-                  workspaceRootKeysEqual(candidate.rootPath, currentWorkspaceRootRef.current) &&
-                  candidate.path === normalizedPath,
-              );
-
-              if (hasActiveRequestForPath || !current.has(normalizedPath)) {
-                return current;
-              }
-
-              const next = new Set(current);
-              next.delete(normalizedPath);
-              return next;
-            });
-          }
-        })();
-
-        inFlightDirectoryLoadsRef.current.set(requestKey, {
-          generation,
-          path: normalizedPath,
-          promise: request,
-          requestId,
-          rootPath,
-        });
-        sharedRead = request;
-      }
-
-      try {
-        const entries = await sharedRead;
-        if (!isActiveRoot()) {
-          return;
-        }
-
-        setEntriesByDirectory((current) => ({
-          ...current,
-          [normalizedPath]: entries,
-        }));
-        if (clearMessage) {
-          setMessage(null);
-        }
-        return entries;
-      } catch (error) {
-        if (!isActiveRoot()) {
-          return;
-        }
-
-        const message =
-          error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-        const isMissingDirectory =
-          message.includes("enoent") ||
-          message.includes("no such file") ||
-          message.includes("not a directory");
-
-        if (isMissingDirectory) {
-          setEntriesByDirectory((current) => {
-            if (!(normalizedPath in current)) {
-              return current;
-            }
-
-            const next = { ...current };
-            delete next[normalizedPath];
-            return next;
-          });
-          return;
-        }
-
-        reportError("Workspace", error);
-      }
-    },
-    [reportError, workspaceFiles],
-  );
+  const loadDirectory = useWorkspaceDirectoryLoader({
+    currentWorkspaceRootRef,
+    inFlightLoadsRef: inFlightDirectoryLoadsRef,
+    openWorkspaceRequestTokenRef,
+    reportError,
+    setEntriesByDirectory,
+    setLoadingDirectories,
+    setMessage,
+    workspaceFiles,
+  });
 
   const loadPackageScripts = useCallback(
     async (
@@ -2958,91 +2672,19 @@ export function useWorkbenchController(
     [readTestFileIfExists],
   );
 
-  const restoreWorkspaceSession = useCallback(
-    async (
-      rootPath: string,
-      session: WorkspaceSessionState,
-      isMutationOwnerCurrent?: () => boolean,
-    ) => {
-      if (editorGroupsUniquePaths(session.editor).length === 0) {
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
-          (isMutationOwnerCurrent && !isMutationOwnerCurrent())
-        ) {
-          return;
-        }
-        workspaceEditorViewStatesRef.current[editorSessionOwnerKeyForRoot(rootPath)] =
-          session.viewStates ?? {};
-        setSidebarView(session.sidebarView);
-        setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
-        return;
-      }
-      const openFileRequestToken = openFileRequestTokenRef.current;
-      const restored = await restorePersistedWorkspaceSession(
-        rootPath,
-        session,
-        async (path): Promise<EditorDocument> => {
-          const snapshot = await readWorkspaceTextFileSnapshot(workspaceFiles, path);
-          return {
-            content: snapshot.content,
-            language: detectLanguage(path),
-            name: getFileName(path),
-            path,
-            revision: snapshot.revision,
-            savedContent: snapshot.content,
-          };
-        },
-      );
-
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
-        (isMutationOwnerCurrent && !isMutationOwnerCurrent())
-      ) {
-        return;
-      }
-      if (openFileRequestTokenRef.current !== openFileRequestToken) {
-        return;
-      }
-      workspaceEditorViewStatesRef.current[editorSessionOwnerKeyForRoot(rootPath)] =
-        restored.viewStates;
-      setDocuments(restored.documents);
-      updateEditorGroups(() => restored.editor);
-      setSidebarView(session.sidebarView);
-      setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
-
-      const restoredActivePath = restored.editor.groups[restored.editor.activeGroupId]?.activePath;
-      const restoredActiveDocument = restoredActivePath
-        ? restored.documents[restoredActivePath]
-        : null;
-
-      if (restoredActiveDocument?.language === "php") {
-        updateLocalPhpDiagnostics(
-          restoredActiveDocument.path,
-          localPhpDiagnosticsFromSource(restoredActiveDocument.content, []),
-        );
-      }
-
-      if (restored.failedPaths.length === 0) {
-        return;
-      }
-
-      setNotices((current) => [
-        createWorkbenchNotice(
-          "warning",
-          "Session",
-          `Could not restore ${restored.failedPaths.length} tab${restored.failedPaths.length === 1 ? "" : "s"}.`,
-        ),
-        ...current,
-      ]);
-    },
-    [
-      editorSessionOwnerKeyForRoot,
-      setDocuments,
-      updateEditorGroups,
-      updateLocalPhpDiagnostics,
-      workspaceFiles,
-    ],
-  );
+  const restoreWorkspaceSession = useWorkspaceSessionRestorer({
+    currentWorkspaceRootRef,
+    editorSessionOwnerKeyForRoot,
+    openFileRequestTokenRef,
+    setBottomPanelView,
+    setDocuments,
+    setNotices,
+    setSidebarView,
+    updateEditorGroups,
+    updateLocalPhpDiagnostics,
+    viewStatesRef: workspaceEditorViewStatesRef,
+    workspaceFiles,
+  });
 
   const runWithIssuedWriteDrainRef = useRef<RunWithDocumentSaveExclusion>(
     async (_scope, operation) => operation(),
