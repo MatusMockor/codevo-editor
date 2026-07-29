@@ -27,10 +27,52 @@ export function emptyDisposable(): Disposable {
   return { dispose: () => undefined };
 }
 
-export function disposeAll(disposables: readonly Disposable[]): void {
+export function disposeAll(
+  disposables: readonly Disposable[],
+  onError?: (error: unknown) => void,
+): void {
+  const errors: unknown[] = [];
+
   for (const disposable of disposables) {
-    disposable.dispose();
+    try {
+      disposable.dispose();
+    } catch (error) {
+      if (onError) {
+        try {
+          onError(error);
+        } catch (reportingError) {
+          errors.push(reportingError);
+        }
+      } else {
+        errors.push(error);
+      }
+    }
   }
+
+  if (errors.length > 0) {
+    throw errors[0];
+  }
+}
+
+export function registerTransactionally(
+  register: (track: (disposable: Disposable) => Disposable) => void,
+): Disposable {
+  const disposables: Disposable[] = [];
+  const track = (disposable: Disposable) => {
+    disposables.push(disposable);
+    return disposable;
+  };
+
+  try {
+    register(track);
+  } catch (error) {
+    disposeAll([...disposables].reverse(), () => undefined);
+    throw error;
+  }
+
+  return {
+    dispose: () => disposeAll(disposables),
+  };
 }
 
 export function createMonacoEventEmitter<T>(): MonacoEventEmitter<T> {

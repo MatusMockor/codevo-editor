@@ -11,6 +11,7 @@ import {
   mergeAliasedWorkspaceEditDocumentChanges,
 } from "../../domain/workspaceEditDocuments";
 import { validateStagedWorkspaceEditModels } from "../../domain/workspaceEditModelValidation";
+import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import type { PhpCodeActionWorkspaceEditApplier } from "../../application/phpCodeActionTypes";
 import type {
   WorkspaceEditApplicationContext,
@@ -33,6 +34,8 @@ export interface WorkspaceEditProviderContext {
     edit: LanguageServerWorkspaceEdit,
     context: WorkspaceEditApplicationContext,
   ): Promise<WorkspaceEditApplicationDecision | void> | WorkspaceEditApplicationDecision | void;
+  getWorkspaceRoot?(): string | null;
+  isProviderRegistrationActive?(): boolean;
 }
 
 interface StagedOpenModelEdit {
@@ -149,6 +152,7 @@ export async function applyWorkspaceEditWithOpenModels(
   options: {
     expectedClosedFileHashes?: Readonly<Record<string, string>>;
     expectedOpenPaths?: readonly string[];
+    isStillActive?: () => boolean;
     requireWorkspaceApplier?: boolean;
   } = {},
 ): Promise<WorkspaceEditApplicationDecision> {
@@ -164,12 +168,47 @@ export async function applyWorkspaceEditWithOpenModels(
     return { kind: "rejected", reason: "atomicWorkspaceEditUnavailable" };
   }
   let commitResult: WorkspaceEditOpenModelCommitResult | undefined;
+  const requiresActiveFinalization = Boolean(
+    options.isStillActive || context.isProviderRegistrationActive,
+  );
+  const isStillActive = () =>
+    context.isProviderRegistrationActive?.() !== false &&
+    options.isStillActive?.() !== false &&
+    workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? rootPath, rootPath);
+  const rollbackCommit = () => {
+    if (commitResult?.kind === "applied") {
+      commitResult.rollback?.();
+    }
+  };
   const applyOpenModels = () => {
     if (commitResult) {
       return commitResult;
     }
 
-    commitResult = applyStagedOpenModelEdits(monaco, stagedEdits);
+    if (!isStillActive()) {
+      return {
+        kind: "rejected" as const,
+        path: stagedEdits[0]?.path ?? rootPath,
+        reason: "invalidOpenModelEdits" as const,
+      };
+    }
+
+    const applied = applyStagedOpenModelEdits(monaco, stagedEdits);
+    commitResult =
+      applied.kind === "applied" && requiresActiveFinalization
+        ? {
+            ...applied,
+            rollback: applied.rollback,
+            finalize: () =>
+              isStillActive()
+                ? applied
+                : {
+                    kind: "rejected",
+                    path: stagedEdits[0]?.path ?? rootPath,
+                    reason: "invalidOpenModelEdits",
+                  },
+          }
+        : applied;
     return commitResult;
   };
 
@@ -177,14 +216,25 @@ export async function applyWorkspaceEditWithOpenModels(
     applyOpenModels,
     expectedClosedFileHashes: options.expectedClosedFileHashes,
     openPaths: stagedEdits.map(({ path }) => path),
+    ...(requiresActiveFinalization ? { requiresAtomicFinalization: true } : {}),
     rootPath,
   });
 
   if (decision?.kind === "rejected") {
+    rollbackCommit();
     return decision;
   }
 
+  if (!isStillActive()) {
+    rollbackCommit();
+    return { kind: "rejected", reason: "inactiveWorkspace" };
+  }
+
   applyOpenModels();
+  if (!isStillActive()) {
+    rollbackCommit();
+    return { kind: "rejected", reason: "inactiveWorkspace" };
+  }
   return { kind: "accepted" };
 }
 
@@ -209,7 +259,9 @@ export async function applyWorkspaceEditEvent(
     return;
   }
 
-  await applyWorkspaceEditWithOpenModels(monaco, context, event.edit, event.rootPath);
+  await applyWorkspaceEditWithOpenModels(monaco, context, event.edit, event.rootPath, {
+    isStillActive: () => isWorkspaceEditEventActive(context, event),
+  });
 }
 
 function workspaceEditForRoot(

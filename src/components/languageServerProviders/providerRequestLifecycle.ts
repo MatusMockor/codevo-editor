@@ -3,7 +3,15 @@ import {
   canUseLanguageServerFeature,
   toLanguageServerTextDocumentPosition,
   type LanguageServerWorkspaceEditEvent,
+  type IdentifiedLanguageServerRequest,
+  type IdentifiedLanguageServerRequestsPort,
+  type LanguageServerFeaturesGateway,
 } from "../../domain/languageServerFeatures";
+import {
+  FEATURE_REQUEST_CANCELLED,
+  FEATURE_REQUEST_TIMED_OUT,
+  runBoundedLanguageServerRequest,
+} from "../languageServerRequestCancellation";
 import { isLanguageServerDocument } from "../../domain/languageServerDocumentSync";
 import {
   isLargeSmartDocument,
@@ -25,7 +33,7 @@ type MonacoPosition = Monaco.Position;
 
 export const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
 export const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
-export const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
+export { FEATURE_REQUEST_CANCELLED, FEATURE_REQUEST_TIMED_OUT };
 
 export interface LanguageServerMonacoDocumentRequestLease {
   readonly lifecycleIdentity: number;
@@ -40,6 +48,7 @@ export interface ProviderRequestLifecycleContext extends PhpMonacoDocumentContex
   getDocumentLifecycleIdentity?(rootPath: string, path: string): number | null;
   getLargeSmartDocumentPolicy?(): LargeSmartDocumentPolicy;
   isDocumentLeaseCurrent?(lease: LanguageServerMonacoDocumentRequestLease): boolean;
+  isProviderRegistrationActive?(): boolean;
   reportError(error: unknown): void;
   requestDocumentLease?(
     rootPath: string,
@@ -248,14 +257,75 @@ export function runningRuntimeStatusForRoot(
 export function raceInteractiveFeatureRequest<T>(
   request: Promise<T>,
   timeoutMs: number = INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
-): Promise<T | typeof FEATURE_REQUEST_TIMED_OUT> {
+  options?: {
+    readonly cancelRequest: (
+      rootPath: string,
+      sessionId: number,
+      requestId: number,
+    ) => Promise<void>;
+    readonly identifiedRequest: IdentifiedLanguageServerRequest<T>;
+    readonly rootPath: string;
+    readonly token?: Monaco.CancellationToken;
+  },
+): Promise<T | typeof FEATURE_REQUEST_CANCELLED | typeof FEATURE_REQUEST_TIMED_OUT> {
+  if (options) {
+    return runBoundedLanguageServerRequest(
+      options.identifiedRequest,
+      options.token,
+      options.rootPath,
+      timeoutMs,
+      options.cancelRequest,
+    );
+  }
+
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
     timeoutHandle = setTimeout(() => resolve(FEATURE_REQUEST_TIMED_OUT), timeoutMs);
   });
-
   return Promise.race([request, timeout]).finally(() => {
     clearTimeout(timeoutHandle);
+  });
+}
+
+export function runOptionalIdentifiedFeatureRequest<T>(
+  gateway: LanguageServerFeaturesGateway,
+  rootPath: string,
+  sessionId: number,
+  token: Monaco.CancellationToken | undefined,
+  timeoutMs: number | undefined,
+  legacyRequest: () => Promise<T>,
+  identifiedRequest: (
+    port: IdentifiedLanguageServerRequestsPort,
+    sessionId: number,
+  ) => IdentifiedLanguageServerRequest<T>,
+): Promise<T | typeof FEATURE_REQUEST_CANCELLED | typeof FEATURE_REQUEST_TIMED_OUT> {
+  const port = gateway.identifiedRequests;
+
+  if (!port) {
+    return raceInteractiveFeatureRequest(legacyRequest(), timeoutMs);
+  }
+
+  const request = identifiedRequest(port, sessionId);
+  if (request.sessionId !== sessionId) {
+    void request.catch(() => undefined);
+    if (
+      Number.isSafeInteger(request.sessionId) &&
+      request.sessionId > 0 &&
+      Number.isSafeInteger(request.requestId) &&
+      request.requestId > 0
+    ) {
+      void port
+        .cancelRequest(rootPath, request.sessionId, request.requestId)
+        .catch(() => undefined);
+    }
+    return Promise.resolve(FEATURE_REQUEST_CANCELLED);
+  }
+  return raceInteractiveFeatureRequest(request, timeoutMs, {
+    cancelRequest: (requestRoot, requestSession, requestId) =>
+      port.cancelRequest(requestRoot, requestSession, requestId),
+    identifiedRequest: request,
+    rootPath,
+    token,
   });
 }
 
@@ -269,6 +339,10 @@ export function isFeatureRequestActive(
     sessionId: number;
   },
 ): boolean {
+  if (context.isProviderRegistrationActive?.() === false) {
+    return false;
+  }
+
   if (request.documentLease && context.isDocumentLeaseCurrent) {
     return context.isDocumentLeaseCurrent(request.documentLease);
   }

@@ -2,6 +2,7 @@ import type * as Monaco from "monaco-editor";
 import type { DocumentHighlightRequestTracker } from "../../domain/documentHighlightRequestTracker";
 import {
   toLanguageServerTextDocumentPosition,
+  type IdentifiedLanguageServerRequestsPort,
   type LanguageServerLocation,
   type LanguageServerTextDocumentPosition,
 } from "../../domain/languageServerFeatures";
@@ -18,6 +19,7 @@ import {
 } from "../languageServerMonacoMappings";
 import type { LanguageServerMonacoProviderContext } from "./languageServerProviderContext";
 import {
+  FEATURE_REQUEST_CANCELLED,
   FEATURE_REQUEST_TIMED_OUT,
   featureDocumentRequestContext,
   featureRequestContext,
@@ -25,7 +27,7 @@ import {
   isDocumentLifecyclePayloadActive,
   isFeatureRequestActive,
   reportErrorForActiveRequest,
-  raceInteractiveFeatureRequest,
+  runOptionalIdentifiedFeatureRequest,
   shouldSkipLargePhpSmartProviders,
   workspaceSymbolRequestContext,
 } from "./providerRequestLifecycle";
@@ -67,11 +69,18 @@ async function provideNavigationLocations(
       return null;
     }
 
-    const locations = await raceInteractiveFeatureRequest(
-      requestLocations(request.rootPath, request.position),
+    const locations = await runOptionalIdentifiedFeatureRequest(
+      context.featuresGateway,
+      request.rootPath,
+      request.sessionId,
+      token,
+      undefined,
+      () => requestLocations(request.rootPath, request.position),
+      (port, sessionId) =>
+        identifiedNavigationRequest(port, feature, request.rootPath, request.position, sessionId),
     );
 
-    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+    if (locations === FEATURE_REQUEST_TIMED_OUT || locations === FEATURE_REQUEST_CANCELLED) {
       return null;
     }
 
@@ -94,6 +103,27 @@ async function provideNavigationLocations(
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
+  }
+}
+
+function identifiedNavigationRequest(
+  requests: IdentifiedLanguageServerRequestsPort,
+  feature: "declaration" | "definition" | "implementation" | "references" | "typeDefinition",
+  rootPath: string,
+  position: LanguageServerTextDocumentPosition,
+  sessionId: number,
+): ReturnType<IdentifiedLanguageServerRequestsPort["definition"]> {
+  switch (feature) {
+    case "declaration":
+      return requests.declaration(rootPath, position, sessionId);
+    case "definition":
+      return requests.definition(rootPath, position, sessionId);
+    case "implementation":
+      return requests.implementation(rootPath, position, sessionId);
+    case "references":
+      return requests.references(rootPath, position, sessionId);
+    case "typeDefinition":
+      return requests.typeDefinition(rootPath, position, sessionId);
   }
 }
 
@@ -197,7 +227,9 @@ export async function provideRenameEdits(
     }
 
     if (context.applyWorkspaceEdit) {
-      await applyWorkspaceEditWithOpenModels(monaco, context, edit, request.rootPath);
+      await applyWorkspaceEditWithOpenModels(monaco, context, edit, request.rootPath, {
+        isStillActive: () => isFeatureRequestActive(context, request),
+      });
 
       if (!isFeatureRequestActive(context, request)) {
         return null;

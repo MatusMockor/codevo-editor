@@ -1,5 +1,9 @@
 import type * as Monaco from "monaco-editor";
-import { disposeAll, type Disposable, type MonacoApi } from "./providerRegistrationTypes";
+import {
+  registerTransactionally,
+  type Disposable,
+  type MonacoApi,
+} from "./providerRegistrationTypes";
 
 export interface InteractiveLanguageServerProviderDelegates {
   readonly provideCodeActions: Monaco.languages.CodeActionProvider["provideCodeActions"];
@@ -14,39 +18,47 @@ export function registerInteractiveLanguageServerProviders(
   monaco: MonacoApi,
   delegates: InteractiveLanguageServerProviderDelegates,
 ): Disposable {
-  const hover = monaco.languages.registerHoverProvider("php", {
-    provideHover: delegates.provideHover,
+  return registerTransactionally((track) => {
+    track(
+      monaco.languages.registerHoverProvider("php", {
+        provideHover: delegates.provideHover,
+      }),
+    );
+    track(
+      monaco.languages.registerCompletionItemProvider("php", {
+        triggerCharacters: ["$", ">", ":", "'", '"', "."],
+        provideCompletionItems: delegates.provideCompletionItems,
+      }),
+    );
+    track(
+      monaco.languages.registerSignatureHelpProvider("php", {
+        signatureHelpRetriggerCharacters: [","],
+        signatureHelpTriggerCharacters: ["(", ","],
+        provideSignatureHelp: delegates.provideSignatureHelp,
+      }),
+    );
+    track(
+      monaco.languages.registerCodeActionProvider(
+        "php",
+        {
+          provideCodeActions: delegates.provideCodeActions,
+          resolveCodeAction: delegates.resolveCodeAction,
+        },
+        {
+          providedCodeActionKinds: [
+            "quickfix",
+            "refactor",
+            "source",
+            "source.fixAll",
+            "source.organizeImports",
+          ],
+        },
+      ),
+    );
+    track(
+      monaco.languages.registerSelectionRangeProvider("php", {
+        provideSelectionRanges: delegates.provideSelectionRanges,
+      }),
+    );
   });
-  const completion = monaco.languages.registerCompletionItemProvider("php", {
-    triggerCharacters: ["$", ">", ":", "'", '"', "."],
-    provideCompletionItems: delegates.provideCompletionItems,
-  });
-  const signature = monaco.languages.registerSignatureHelpProvider("php", {
-    signatureHelpRetriggerCharacters: [","],
-    signatureHelpTriggerCharacters: ["(", ","],
-    provideSignatureHelp: delegates.provideSignatureHelp,
-  });
-  const codeActions = monaco.languages.registerCodeActionProvider(
-    "php",
-    {
-      provideCodeActions: delegates.provideCodeActions,
-      resolveCodeAction: delegates.resolveCodeAction,
-    },
-    {
-      providedCodeActionKinds: [
-        "quickfix",
-        "refactor",
-        "source",
-        "source.fixAll",
-        "source.organizeImports",
-      ],
-    },
-  );
-  const selectionRange = monaco.languages.registerSelectionRangeProvider("php", {
-    provideSelectionRanges: delegates.provideSelectionRanges,
-  });
-
-  return {
-    dispose: () => disposeAll([hover, completion, signature, codeActions, selectionRange]),
-  };
 }

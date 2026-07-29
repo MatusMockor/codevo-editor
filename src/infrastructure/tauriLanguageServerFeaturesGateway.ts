@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyLanguageServerCompletionList,
   type IdentifiedLanguageServerRequest,
+  type IdentifiedLanguageServerRequestsPort,
   type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerCallHierarchyItem,
   type LanguageServerCodeAction,
@@ -40,6 +41,7 @@ import {
 
 type InvokeCommand = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 type RuntimeDetector = () => boolean;
+export type LanguageServerRequestServerKind = "php" | "javascriptTypeScript";
 
 const invokeCommand: InvokeCommand = (command, args) => invoke(command, args);
 const allocateRequestId = createMonotonicLanguageServerRequestIdAllocator();
@@ -194,11 +196,50 @@ export interface TauriLanguageServerFeatureCommands {
 }
 
 export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptLanguageServerFeaturesGateway {
+  readonly identifiedRequests: IdentifiedLanguageServerRequestsPort = {
+    cancelRequest: (rootPath, sessionId, requestId) =>
+      this.cancelRequest(rootPath, sessionId, requestId),
+    completion: (rootPath, position, context, sessionId) =>
+      this.completion(rootPath, position, context, sessionId),
+    declaration: (rootPath, position, sessionId) => this.declaration(rootPath, position, sessionId),
+    definition: (rootPath, position, sessionId) => this.definition(rootPath, position, sessionId),
+    hover: (rootPath, position, sessionId) => this.hover(rootPath, position, sessionId),
+    implementation: (rootPath, position, sessionId) =>
+      this.implementation(rootPath, position, sessionId),
+    references: (rootPath, position, sessionId) => this.references(rootPath, position, sessionId),
+    signatureHelp: (rootPath, position, context, sessionId) =>
+      this.signatureHelp(rootPath, position, context, sessionId),
+    sourceDefinition: (rootPath, position, sessionId) =>
+      this.sourceDefinition(rootPath, position, sessionId),
+    typeDefinition: (rootPath, position, sessionId) =>
+      this.typeDefinition(rootPath, position, sessionId),
+  };
+
   constructor(
     private readonly invokeFeatureCommand: InvokeCommand = invokeCommand,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
     private readonly commands: TauriLanguageServerFeatureCommands = DEFAULT_FEATURE_COMMANDS,
+    private readonly requestServerKind: LanguageServerRequestServerKind = "php",
   ) {}
+
+  cancelRequest(rootPath: string, sessionId: number, requestId: number): Promise<void> {
+    if (!isAuthorityId(sessionId) || !isAuthorityId(requestId)) {
+      return Promise.reject(
+        new TypeError("Language-server cancellation requires positive safe integer identifiers."),
+      );
+    }
+
+    return this.invokeWhenAvailable(
+      "cancel_lsp_request",
+      {
+        requestId,
+        rootPath,
+        serverKind: this.requestServerKind,
+        sessionId,
+      },
+      undefined,
+    );
+  }
 
   hover(
     rootPath: string,
@@ -663,9 +704,12 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
     if (isJavaScriptTypeScriptRequest && !isAuthorityId(sessionId)) {
       throw new Error("JavaScript/TypeScript language-server request requires an active session.");
     }
+    if (sessionId !== undefined && !isAuthorityId(sessionId)) {
+      throw new Error("Language-server request requires a valid active session.");
+    }
     const requestId = allocateRequestId();
     const identifiedSessionId = sessionId ?? 0;
-    const invokeArgs = isJavaScriptTypeScriptRequest
+    const invokeArgs = isAuthorityId(sessionId)
       ? { ...args, requestId, sessionId: identifiedSessionId }
       : args;
     return Object.assign(this.invokeWhenAvailable(command, invokeArgs, fallback), {

@@ -963,6 +963,120 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     });
   });
 
+  it("identifies cancellable PHP navigation and cursor requests without changing legacy calls", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => []);
+    const gateway = new TauriLanguageServerFeaturesGateway(invokeCommand, () => true);
+    const identified = gateway.identifiedRequests;
+    const requestPosition = position();
+    const sessionId = 23;
+    const requests = [
+      {
+        command: "text_document_hover",
+        request: identified.hover("/project", requestPosition, sessionId),
+      },
+      {
+        command: "text_document_completion",
+        request: identified.completion("/project", requestPosition, undefined, sessionId),
+      },
+      {
+        command: "text_document_definition",
+        request: identified.definition("/project", requestPosition, sessionId),
+      },
+      {
+        command: "text_document_declaration",
+        request: identified.declaration("/project", requestPosition, sessionId),
+      },
+      {
+        command: "text_document_implementation",
+        request: identified.implementation("/project", requestPosition, sessionId),
+      },
+      {
+        command: "text_document_type_definition",
+        request: identified.typeDefinition("/project", requestPosition, sessionId),
+      },
+      {
+        command: "text_document_references",
+        request: identified.references("/project", requestPosition, sessionId),
+      },
+      {
+        command: "text_document_signature_help",
+        request: identified.signatureHelp("/project", requestPosition, undefined, sessionId),
+      },
+    ];
+
+    expect(new Set(requests.map(({ request }) => request.requestId)).size).toBe(requests.length);
+    await Promise.all(
+      requests.map(async ({ command, request }) => {
+        expect(request.sessionId).toBe(sessionId);
+        expect(invokeCommand).toHaveBeenCalledWith(command, {
+          position: requestPosition,
+          requestId: request.requestId,
+          rootPath: "/project",
+          sessionId,
+        });
+        await request;
+      }),
+    );
+
+    await identified.cancelRequest("/project", sessionId, requests[0]!.request.requestId);
+    expect(invokeCommand).toHaveBeenCalledWith("cancel_lsp_request", {
+      requestId: requests[0]!.request.requestId,
+      rootPath: "/project",
+      serverKind: "php",
+      sessionId,
+    });
+  });
+
+  it.each([-1, 0, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid PHP identified-request session authority %s before IPC",
+    (sessionId) => {
+      const invokeCommand = vi.fn<InvokeCommand>();
+      const gateway = new TauriLanguageServerFeaturesGateway(invokeCommand, () => true);
+
+      expect(() =>
+        gateway.identifiedRequests.definition("/project", position(), sessionId),
+      ).toThrow("Language-server request requires a valid active session.");
+      expect(invokeCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it("routes cancellation from explicit server family even when the command map is mixed", async () => {
+    const phpInvokeCommand = vi.fn<InvokeCommand>().mockResolvedValue(undefined);
+    const javascriptTypeScriptInvokeCommand = vi.fn<InvokeCommand>().mockResolvedValue(undefined);
+    const mixedCommands = {
+      ...JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      hover: "custom_hover",
+    };
+    const phpGateway = new TauriLanguageServerFeaturesGateway(
+      phpInvokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "php",
+    );
+    const javascriptTypeScriptGateway = new TauriLanguageServerFeaturesGateway(
+      javascriptTypeScriptInvokeCommand,
+      () => true,
+      mixedCommands,
+      "javascriptTypeScript",
+    );
+
+    await phpGateway.identifiedRequests.cancelRequest("/project", 11, 101);
+    await javascriptTypeScriptGateway.identifiedRequests.cancelRequest("/project", 12, 102);
+
+    expect(phpInvokeCommand).toHaveBeenCalledWith("cancel_lsp_request", {
+      requestId: 101,
+      rootPath: "/project",
+      serverKind: "php",
+      sessionId: 11,
+    });
+    expect(javascriptTypeScriptInvokeCommand).toHaveBeenCalledWith("cancel_lsp_request", {
+      requestId: 102,
+      rootPath: "/project",
+      serverKind: "javascriptTypeScript",
+      sessionId: 12,
+    });
+  });
+
   it("identifies cancellable JavaScript and TypeScript navigation and cursor requests", async () => {
     const definition = [
       {

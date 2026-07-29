@@ -103,6 +103,7 @@ export function createWorkbenchComposition() {
       undefined,
       undefined,
       JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "javascriptTypeScript",
     ),
     javaScriptTypeScriptLanguageServerRefreshGateway: new TauriLanguageServerRefreshGateway(
       undefined,

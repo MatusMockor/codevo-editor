@@ -1,14 +1,12 @@
 import type * as Monaco from "monaco-editor";
 import type { EditorDocument } from "../domain/workspace";
 import {
-  pathFromLanguageServerUri,
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionList,
   type LanguageServerCodeLens,
   type LanguageServerInlayHint,
-  type LanguageServerLocation,
   type LanguageServerSignature,
   type LanguageServerSignatureHelp,
   type LanguageServerSignatureHelpContext,
@@ -36,7 +34,6 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionNewFile,
-  PhpCodeActionRange,
   PhpCodeActionTextEdit,
 } from "../application/phpCodeActionTypes";
 import type {
@@ -53,7 +50,6 @@ import {
   isPhpDocumentContextActive,
   modelPath,
   modelSource,
-  offsetAtMonacoPosition,
   registerWorkspaceIdentityDescriptor,
   toWorkspaceMonacoUri,
 } from "./phpMonacoDocumentContext";
@@ -64,6 +60,14 @@ import {
 } from "./languageServerMonacoMappings";
 import { registerDocumentLanguageServerProviders } from "./languageServerProviders/documentProviderRegistration";
 import { registerInteractiveLanguageServerProviders } from "./languageServerProviders/interactiveProviderRegistration";
+import { provideHover } from "./languageServerProviders/interactiveCapabilityProviders";
+import {
+  canApplyPhpWorkspaceEditDescriptor,
+  isLanguageServerActionAlreadyResolved,
+  isUnsupportedCodeActionResolveError,
+  phpCodeActionOffsetRange,
+  phpSourceCodeActionKindRequested,
+} from "./languageServerProviders/codeActionCapabilityPolicy";
 import type { LanguageServerMonacoProviderContext } from "./languageServerProviders/languageServerProviderContext";
 import { registerNavigationLanguageServerProviders } from "./languageServerProviders/navigationProviderRegistration";
 import {
@@ -93,28 +97,29 @@ import {
   semanticTokensLegendForActiveRuntime,
 } from "./languageServerProviders/semanticCapabilityProviders";
 import {
+  FEATURE_REQUEST_CANCELLED,
   FEATURE_REQUEST_TIMED_OUT,
-  HOVER_FEATURE_REQUEST_TIMEOUT_MS,
   featureDocumentRequestContext,
   featureRequestContext,
   flushPendingDocumentChangeForActiveRequest,
   isDocumentLifecyclePayloadActive,
   isExecuteCommandPayloadActive,
   isFeatureRequestActive,
-  isPathInWorkspaceRoot,
   isLargePhpDocumentContext,
-  raceInteractiveFeatureRequest,
+  runOptionalIdentifiedFeatureRequest,
   reportErrorForActiveRequest,
   reportErrorForActiveWorkspaceEditEvent,
   runningRuntimeStatusForRoot,
 } from "./languageServerProviders/providerRequestLifecycle";
 import {
   toMonacoLocation,
+  toMonacoShowReferencesCommand,
   toMonacoWorkspaceEdit,
   workspaceEditContext,
   type WorkspaceEditContext,
 } from "./languageServerProviders/providerProjections";
 import { createMonacoEventEmitter } from "./languageServerProviders/providerRegistrationTypes";
+import { registerProviderFacade } from "./languageServerProviders/providerRegistrationLifecycle";
 import {
   applyWorkspaceEditEvent,
   applyWorkspaceEditWithOpenModels,
@@ -255,140 +260,141 @@ const PHP_SIGNATURE_MERGE_WINDOW_EXPIRED = Symbol("phpSignatureMergeWindowExpire
 
 export function registerLanguageServerMonacoProviders(
   monaco: MonacoApi,
-  context: LanguageServerMonacoProviderContext,
+  unscopedContext: LanguageServerMonacoProviderContext,
 ): Disposable {
-  const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
-  const unregisterWorkspaceIdentity = identityDescriptor
-    ? registerWorkspaceIdentityDescriptor(
-        identityDescriptor,
-        context.getWorkspaceRoot?.() ?? identityDescriptor.canonicalRoot,
-      )
-    : () => undefined;
-  const documentHighlightTracker =
-    createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
-  const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
-  const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
-  const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
-  let refreshUnsubscribe: (() => void) | null = null;
-  let refreshSubscriptionDisposed = false;
-  const refreshSubscriptionDisposable = {
-    dispose: () => {
-      refreshSubscriptionDisposed = true;
-      refreshUnsubscribe?.();
-      refreshUnsubscribe = null;
-    },
-  };
-  let workspaceEditUnsubscribe: (() => void) | null = null;
-  let workspaceEditSubscriptionDisposed = false;
-  const workspaceEditSubscriptionDisposable = {
-    dispose: () => {
-      workspaceEditSubscriptionDisposed = true;
-      workspaceEditUnsubscribe?.();
-      workspaceEditUnsubscribe = null;
-    },
-  };
+  return registerProviderFacade(monaco, unscopedContext, (context, trackForRollback) => {
+    const identityDescriptor = context.getWorkspaceIdentityDescriptor?.();
+    const unregisterWorkspaceIdentity = identityDescriptor
+      ? registerWorkspaceIdentityDescriptor(
+          identityDescriptor,
+          context.getWorkspaceRoot?.() ?? identityDescriptor.canonicalRoot,
+        )
+      : () => undefined;
+    trackForRollback({ dispose: unregisterWorkspaceIdentity });
+    const documentHighlightTracker =
+      createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
+    const codeLensRefreshEmitter = trackForRollback(createMonacoEventEmitter<void>());
+    const inlayHintRefreshEmitter = trackForRollback(createMonacoEventEmitter<void>());
+    const semanticTokensRefreshEmitter = trackForRollback(createMonacoEventEmitter<void>());
+    let refreshUnsubscribe: (() => void) | null = null;
+    let refreshSubscriptionDisposed = false;
+    const refreshSubscriptionDisposable = {
+      dispose: () => {
+        refreshSubscriptionDisposed = true;
+        refreshUnsubscribe?.();
+        refreshUnsubscribe = null;
+      },
+    };
+    trackForRollback(refreshSubscriptionDisposable);
+    let workspaceEditUnsubscribe: (() => void) | null = null;
+    let workspaceEditSubscriptionDisposed = false;
+    const workspaceEditSubscriptionDisposable = {
+      dispose: () => {
+        workspaceEditSubscriptionDisposed = true;
+        workspaceEditUnsubscribe?.();
+        workspaceEditUnsubscribe = null;
+      },
+    };
+    trackForRollback(workspaceEditSubscriptionDisposable);
 
-  if (context.refreshGateway) {
-    context.refreshGateway
-      .subscribeRefreshEvents((event) => {
-        handleLanguageServerRefreshEvent(
-          context,
-          event,
-          codeLensRefreshEmitter,
-          inlayHintRefreshEmitter,
-          semanticTokensRefreshEmitter,
-        );
-      })
-      .then((unsubscribe) => {
-        if (refreshSubscriptionDisposed) {
-          unsubscribe();
-          return;
-        }
-
-        refreshUnsubscribe = unsubscribe;
-      })
-      .catch((error) => context.reportError(error));
-  }
-
-  if (context.workspaceEditGateway) {
-    context.workspaceEditGateway
-      .subscribeWorkspaceEdits((event) => {
-        void applyWorkspaceEditEvent(monaco, context, event).catch((error) => {
-          reportErrorForActiveWorkspaceEditEvent(context, event, error);
-        });
-      })
-      .then((unsubscribe) => {
-        if (workspaceEditSubscriptionDisposed) {
-          unsubscribe();
-          return;
-        }
-
-        workspaceEditUnsubscribe = unsubscribe;
-      })
-      .catch((error) => context.reportError(error));
-  }
-
-  const command = monaco.editor.addCommand({
-    id: EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID,
-    run: async (_accessor, payload: ExecuteCommandPayload | undefined) => {
-      if (!payload) {
-        return;
-      }
-
-      if (payload.sessionId == null || !isExecuteCommandPayloadActive(context, payload)) {
-        return;
-      }
-
-      try {
-        if (payload.path) {
-          await context.flushPendingDocumentChange(payload.path);
-
-          if (!isExecuteCommandPayloadActive(context, payload)) {
+    if (context.refreshGateway) {
+      context.refreshGateway
+        .subscribeRefreshEvents((event) => {
+          handleLanguageServerRefreshEvent(
+            context,
+            event,
+            codeLensRefreshEmitter,
+            inlayHintRefreshEmitter,
+            semanticTokensRefreshEmitter,
+          );
+        })
+        .then((unsubscribe) => {
+          if (refreshSubscriptionDisposed) {
+            unsubscribe();
             return;
           }
-        }
 
-        const edit = await context.featuresGateway.executeCommand(
-          payload.rootPath,
-          payload.command,
-        );
+          refreshUnsubscribe = unsubscribe;
+        })
+        .catch((error) => {
+          if (context.getWorkspaceRoot?.()) {
+            context.reportError(error);
+          }
+        });
+    }
 
-        if (!isExecuteCommandPayloadActive(context, payload)) {
-          return;
-        }
+    if (context.workspaceEditGateway) {
+      context.workspaceEditGateway
+        .subscribeWorkspaceEdits((event) => {
+          void applyWorkspaceEditEvent(monaco, context, event).catch((error) => {
+            reportErrorForActiveWorkspaceEditEvent(context, event, error);
+          });
+        })
+        .then((unsubscribe) => {
+          if (workspaceEditSubscriptionDisposed) {
+            unsubscribe();
+            return;
+          }
 
-        if (edit) {
-          await applyWorkspaceEditWithOpenModels(monaco, context, edit, payload.rootPath);
-        }
-      } catch (error) {
-        if (isExecuteCommandPayloadActive(context, payload)) {
-          context.reportError(error);
-        }
-      }
-    },
-  });
-  const resolveAndApplyCodeActionCommand = monaco.editor.addCommand({
-    id: RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID,
-    run: async (_accessor, payload: ResolveAndApplyCodeActionPayload | undefined) => {
-      if (
-        !payload ||
-        payload.sessionId == null ||
-        !isDocumentLifecyclePayloadActive(
-          context,
-          payload.rootPath,
-          payload.sessionId,
-          payload.path,
-          payload.lifecycleIdentity,
-        )
-      ) {
-        return;
-      }
+          workspaceEditUnsubscribe = unsubscribe;
+        })
+        .catch((error) => {
+          if (context.getWorkspaceRoot?.()) {
+            context.reportError(error);
+          }
+        });
+    }
 
-      try {
-        if (payload.editContext.path) {
-          await context.flushPendingDocumentChange(payload.editContext.path);
+    const command = trackForRollback(
+      monaco.editor.addCommand({
+        id: EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID,
+        run: async (_accessor, payload: ExecuteCommandPayload | undefined) => {
+          if (!payload) {
+            return;
+          }
 
+          if (payload.sessionId == null || !isExecuteCommandPayloadActive(context, payload)) {
+            return;
+          }
+
+          try {
+            if (payload.path) {
+              await context.flushPendingDocumentChange(payload.path);
+
+              if (!isExecuteCommandPayloadActive(context, payload)) {
+                return;
+              }
+            }
+
+            const edit = await context.featuresGateway.executeCommand(
+              payload.rootPath,
+              payload.command,
+            );
+
+            if (!isExecuteCommandPayloadActive(context, payload)) {
+              return;
+            }
+
+            if (edit) {
+              await applyWorkspaceEditWithOpenModels(monaco, context, edit, payload.rootPath, {
+                isStillActive: () => isExecuteCommandPayloadActive(context, payload),
+              });
+            }
+          } catch (error) {
+            if (isExecuteCommandPayloadActive(context, payload)) {
+              context.reportError(error);
+            }
+          }
+        },
+      }),
+    );
+    const resolveAndApplyCodeActionCommand = trackForRollback(
+      monaco.editor.addCommand({
+        id: RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID,
+        run: async (_accessor, payload: ResolveAndApplyCodeActionPayload | undefined) => {
           if (
+            !payload ||
+            payload.sessionId == null ||
             !isDocumentLifecyclePayloadActive(
               context,
               payload.rootPath,
@@ -399,202 +405,289 @@ export function registerLanguageServerMonacoProviders(
           ) {
             return;
           }
-        }
 
-        const resolved = isLanguageServerActionAlreadyResolved(payload.action)
-          ? payload.action
-          : await context.featuresGateway.resolveCodeAction(payload.rootPath, payload.action);
+          try {
+            if (payload.editContext.path) {
+              await context.flushPendingDocumentChange(payload.editContext.path);
 
-        if (
-          !isDocumentLifecyclePayloadActive(
-            context,
-            payload.rootPath,
-            payload.sessionId,
-            payload.path,
-            payload.lifecycleIdentity,
-          )
-        ) {
-          return;
-        }
+              if (
+                !isDocumentLifecyclePayloadActive(
+                  context,
+                  payload.rootPath,
+                  payload.sessionId,
+                  payload.path,
+                  payload.lifecycleIdentity,
+                )
+              ) {
+                return;
+              }
+            }
 
-        if (resolved.edit) {
-          await applyWorkspaceEditWithOpenModels(monaco, context, resolved.edit, payload.rootPath);
-        }
+            const resolved = isLanguageServerActionAlreadyResolved(payload.action)
+              ? payload.action
+              : await context.featuresGateway.resolveCodeAction(payload.rootPath, payload.action);
 
-        if (resolved.command) {
-          const edit = await context.featuresGateway.executeCommand(
-            payload.rootPath,
-            resolved.command,
+            if (
+              !isDocumentLifecyclePayloadActive(
+                context,
+                payload.rootPath,
+                payload.sessionId,
+                payload.path,
+                payload.lifecycleIdentity,
+              )
+            ) {
+              return;
+            }
+
+            if (resolved.edit) {
+              await applyWorkspaceEditWithOpenModels(
+                monaco,
+                context,
+                resolved.edit,
+                payload.rootPath,
+                {
+                  isStillActive: () =>
+                    isDocumentLifecyclePayloadActive(
+                      context,
+                      payload.rootPath,
+                      payload.sessionId,
+                      payload.path,
+                      payload.lifecycleIdentity,
+                    ),
+                },
+              );
+            }
+
+            if (resolved.command) {
+              const edit = await context.featuresGateway.executeCommand(
+                payload.rootPath,
+                resolved.command,
+              );
+
+              if (
+                edit &&
+                isDocumentLifecyclePayloadActive(
+                  context,
+                  payload.rootPath,
+                  payload.sessionId,
+                  payload.path,
+                  payload.lifecycleIdentity,
+                )
+              ) {
+                await applyWorkspaceEditWithOpenModels(monaco, context, edit, payload.rootPath, {
+                  isStillActive: () =>
+                    isDocumentLifecyclePayloadActive(
+                      context,
+                      payload.rootPath,
+                      payload.sessionId,
+                      payload.path,
+                      payload.lifecycleIdentity,
+                    ),
+                });
+              }
+            }
+          } catch (error) {
+            if (
+              !isUnsupportedCodeActionResolveError(error) &&
+              isDocumentLifecyclePayloadActive(
+                context,
+                payload.rootPath,
+                payload.sessionId,
+                payload.path,
+                payload.lifecycleIdentity,
+              )
+            ) {
+              context.reportError(error);
+            }
+          }
+        },
+      }),
+    );
+    const applyNewFileCommand = trackForRollback(
+      monaco.editor.addCommand({
+        id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
+        run: async (_accessor, payload: ApplyPhpCodeActionNewFilePayload | undefined) => {
+          if (!payload?.newFile || !context.applyPhpCodeActionNewFile) {
+            return;
+          }
+          const registrationRoot = context.getWorkspaceRoot?.() ?? null;
+
+          if (!registrationRoot) {
+            return;
+          }
+
+          try {
+            if (payload.sourcePath) {
+              await context.flushPendingDocumentChange(payload.sourcePath);
+
+              if (!workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? null, registrationRoot)) {
+                return;
+              }
+            }
+
+            // The controller callback owns the gateway disk write, the file-tree
+            // refresh, the tab open AND the per-project isolation (requested-root
+            // capture + re-check after each await), so a tab switch mid-write drops
+            // the stale result. It resolves `true` ONLY when the interface file was
+            // freshly written; we apply the paired in-document edits only then, so a
+            // pre-existing target or a failed creation cannot leave a partial class
+            // edit behind.
+            const interfaceFileWritten = await context.applyPhpCodeActionNewFile(payload.newFile);
+
+            if (
+              interfaceFileWritten &&
+              workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? null, registrationRoot)
+            ) {
+              if (payload.sourcePath) {
+                context.clearLanguageServerDiagnosticsForPath?.(payload.sourcePath);
+              }
+
+              applyPhpCodeActionDocumentEdits(monaco, payload);
+            }
+          } catch (error) {
+            if (workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? null, registrationRoot)) {
+              context.reportError(error);
+            }
+          }
+        },
+      }),
+    );
+    const applyCodeActionWorkspaceEditCommand = trackForRollback(
+      monaco.editor.addCommand({
+        id: APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID,
+        run: async (_accessor, payload: ApplyPhpCodeActionWorkspaceEditPayload | undefined) => {
+          if (!payload?.edit || !payload.rootPath) {
+            return;
+          }
+
+          try {
+            if (!workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? null, payload.rootPath)) {
+              return;
+            }
+            await applyWorkspaceEditWithOpenModels(monaco, context, payload.edit, payload.rootPath);
+          } catch (error) {
+            if (
+              workspaceRootKeysEqual(
+                context.getWorkspaceRoot?.() ?? null,
+                payload?.rootPath ?? null,
+              )
+            ) {
+              context.reportError(error);
+            }
+          }
+        },
+      }),
+    );
+    const openPhpChangeSignatureCommand = trackForRollback(
+      monaco.editor.addCommand({
+        id: OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID,
+        run: (_accessor, payload: OpenPhpChangeSignaturePayload | undefined) => {
+          if (!payload || payload.kind !== "change-signature") return;
+          if (!workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? null, payload.rootPath))
+            return;
+          context.openPhpChangeSignature?.(
+            payload,
+            createOpenModelWorkspaceEditApplier(monaco, context),
           );
-
-          if (
-            edit &&
-            isDocumentLifecyclePayloadActive(
-              context,
-              payload.rootPath,
-              payload.sessionId,
-              payload.path,
-              payload.lifecycleIdentity,
-            )
-          ) {
-            await applyWorkspaceEditWithOpenModels(monaco, context, edit, payload.rootPath);
-          }
-        }
-      } catch (error) {
-        if (
-          !isUnsupportedCodeActionResolveError(error) &&
-          isDocumentLifecyclePayloadActive(
+        },
+      }),
+    );
+    const interactiveProviders = trackForRollback(
+      registerInteractiveLanguageServerProviders(monaco, {
+        provideCodeActions: (model, range, actionContext) =>
+          provideCodeActions(monaco, context, model, range, actionContext),
+        provideCompletionItems: (model, position, completionContext, token) =>
+          provideCompletionItems(monaco, context, model, position, completionContext, token),
+        provideHover: (model, position, token) =>
+          provideHover(monaco, context, model, position, token),
+        provideSelectionRanges: (model, positions) =>
+          provideSelectionRanges(monaco, context, model, positions),
+        provideSignatureHelp: (model, position, token, signatureContext) =>
+          provideSignatureHelp(monaco, context, model, position, token, signatureContext),
+        resolveCodeAction: (action) => resolveCodeAction(monaco, context, action),
+      }),
+    );
+    const navigationProviders = trackForRollback(
+      registerNavigationLanguageServerProviders(monaco, {
+        provideDeclaration: (model, position, token) =>
+          provideDeclaration(monaco, context, model, position, token),
+        provideDefinition: (model, position, token) =>
+          provideDefinition(monaco, context, model, position, token),
+        provideDocumentHighlights: (model, position, token) =>
+          provideDocumentHighlights(
+            monaco,
             context,
-            payload.rootPath,
-            payload.sessionId,
-            payload.path,
-            payload.lifecycleIdentity,
-          )
-        ) {
-          context.reportError(error);
-        }
-      }
-    },
-  });
-  const applyNewFileCommand = monaco.editor.addCommand({
-    id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
-    run: async (_accessor, payload: ApplyPhpCodeActionNewFilePayload | undefined) => {
-      if (!payload?.newFile || !context.applyPhpCodeActionNewFile) {
-        return;
-      }
+            documentHighlightTracker,
+            model,
+            position,
+            token,
+          ),
+        provideDocumentSymbols: (model) => provideDocumentSymbols(monaco, context, model),
+        provideImplementation: (model, position, token) =>
+          provideImplementation(monaco, context, model, position, token),
+        provideReferences: (model, position, _referenceContext, token) =>
+          provideReferences(monaco, context, model, position, token),
+        provideRenameEdits: (model, position, newName) =>
+          provideRenameEdits(monaco, context, model, position, newName),
+        provideTypeDefinition: (model, position, token) =>
+          provideTypeDefinition(monaco, context, model, position, token),
+        provideWorkspaceSymbols: (query) => provideWorkspaceSymbols(monaco, context, query),
+        resolveRenameLocation: (model, position) => prepareRename(monaco, context, model, position),
+      }),
+    );
+    const documentProviders = trackForRollback(
+      registerDocumentLanguageServerProviders(monaco, {
+        getSemanticTokensLegend: () => semanticTokensLegendForActiveRuntime(context),
+        onDidChangeCodeLens: codeLensRefreshEmitter.event as unknown as NonNullable<
+          Monaco.languages.CodeLensProvider["onDidChange"]
+        >,
+        onDidChangeInlayHints: inlayHintRefreshEmitter.event,
+        onDidChangeSemanticTokens: semanticTokensRefreshEmitter.event,
+        onTypeFormattingTriggerCharacters: onTypeFormattingTriggerCharacters(context),
+        provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
+        provideDocumentFormattingEdits: (model, options) =>
+          provideDocumentFormattingEdits(monaco, context, model, options),
+        provideDocumentLinks: (model) => provideDocumentLinks(monaco, context, model),
+        provideDocumentRangeFormattingEdits: (model, range, options) =>
+          provideDocumentRangeFormattingEdits(monaco, context, model, range, options),
+        provideDocumentRangeSemanticTokens: (model, range) =>
+          provideDocumentRangeSemanticTokens(context, model, range),
+        provideDocumentSemanticTokens: (model) => provideDocumentSemanticTokens(context, model),
+        provideFoldingRanges: (model) => provideFoldingRanges(monaco, context, model),
+        provideInlayHints: (model, range) => provideInlayHints(monaco, context, model, range),
+        provideLinkedEditingRanges: (model, position) =>
+          provideLinkedEditingRanges(monaco, context, model, position),
+        provideOnTypeFormattingEdits: (model, position, ch, options) =>
+          provideOnTypeFormattingEdits(monaco, context, model, position, ch, options),
+        resolveCodeLens: (model, lens) => resolveCodeLens(monaco, context, model, lens),
+        resolveDocumentLink: (link) => resolveDocumentLink(monaco, context, link),
+        resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
+      }),
+    );
+    const templateLanguageProviders = trackForRollback(
+      registerTemplateLanguageMonacoProviders(monaco, context, {
+        toCodeAction: toPhpCodeAction,
+      }),
+    );
 
-      try {
-        if (payload.sourcePath) {
-          await context.flushPendingDocumentChange(payload.sourcePath);
-        }
-
-        // The controller callback owns the gateway disk write, the file-tree
-        // refresh, the tab open AND the per-project isolation (requested-root
-        // capture + re-check after each await), so a tab switch mid-write drops
-        // the stale result. It resolves `true` ONLY when the interface file was
-        // freshly written; we apply the paired in-document edits only then, so a
-        // pre-existing target or a failed creation cannot leave a partial class
-        // edit behind.
-        const interfaceFileWritten = await context.applyPhpCodeActionNewFile(payload.newFile);
-
-        if (interfaceFileWritten) {
-          if (payload.sourcePath) {
-            context.clearLanguageServerDiagnosticsForPath?.(payload.sourcePath);
-          }
-
-          applyPhpCodeActionDocumentEdits(monaco, payload);
-        }
-      } catch (error) {
-        context.reportError(error);
-      }
-    },
+    return [
+      refreshSubscriptionDisposable,
+      workspaceEditSubscriptionDisposable,
+      codeLensRefreshEmitter,
+      inlayHintRefreshEmitter,
+      semanticTokensRefreshEmitter,
+      command,
+      resolveAndApplyCodeActionCommand,
+      applyNewFileCommand,
+      applyCodeActionWorkspaceEditCommand,
+      openPhpChangeSignatureCommand,
+      interactiveProviders,
+      navigationProviders,
+      documentProviders,
+      templateLanguageProviders,
+      { dispose: unregisterWorkspaceIdentity },
+    ];
   });
-  const applyCodeActionWorkspaceEditCommand = monaco.editor.addCommand({
-    id: APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID,
-    run: async (_accessor, payload: ApplyPhpCodeActionWorkspaceEditPayload | undefined) => {
-      if (!payload?.edit || !payload.rootPath) {
-        return;
-      }
-
-      try {
-        await applyWorkspaceEditWithOpenModels(monaco, context, payload.edit, payload.rootPath);
-      } catch (error) {
-        context.reportError(error);
-      }
-    },
-  });
-  const openPhpChangeSignatureCommand = monaco.editor.addCommand({
-    id: OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID,
-    run: (_accessor, payload: OpenPhpChangeSignaturePayload | undefined) => {
-      if (!payload || payload.kind !== "change-signature") return;
-      if (!workspaceRootKeysEqual(context.getWorkspaceRoot?.() ?? null, payload.rootPath)) return;
-      context.openPhpChangeSignature?.(
-        payload,
-        createOpenModelWorkspaceEditApplier(monaco, context),
-      );
-    },
-  });
-  const interactiveProviders = registerInteractiveLanguageServerProviders(monaco, {
-    provideCodeActions: (model, range, actionContext) =>
-      provideCodeActions(monaco, context, model, range, actionContext),
-    provideCompletionItems: (model, position, completionContext, token) =>
-      provideCompletionItems(monaco, context, model, position, completionContext, token),
-    provideHover: (model, position, token) => provideHover(monaco, context, model, position, token),
-    provideSelectionRanges: (model, positions) =>
-      provideSelectionRanges(monaco, context, model, positions),
-    provideSignatureHelp: (model, position, token, signatureContext) =>
-      provideSignatureHelp(monaco, context, model, position, token, signatureContext),
-    resolveCodeAction: (action) => resolveCodeAction(monaco, context, action),
-  });
-  const navigationProviders = registerNavigationLanguageServerProviders(monaco, {
-    provideDeclaration: (model, position, token) =>
-      provideDeclaration(monaco, context, model, position, token),
-    provideDefinition: (model, position, token) =>
-      provideDefinition(monaco, context, model, position, token),
-    provideDocumentHighlights: (model, position, token) =>
-      provideDocumentHighlights(monaco, context, documentHighlightTracker, model, position, token),
-    provideDocumentSymbols: (model) => provideDocumentSymbols(monaco, context, model),
-    provideImplementation: (model, position, token) =>
-      provideImplementation(monaco, context, model, position, token),
-    provideReferences: (model, position, _referenceContext, token) =>
-      provideReferences(monaco, context, model, position, token),
-    provideRenameEdits: (model, position, newName) =>
-      provideRenameEdits(monaco, context, model, position, newName),
-    provideTypeDefinition: (model, position, token) =>
-      provideTypeDefinition(monaco, context, model, position, token),
-    provideWorkspaceSymbols: (query) => provideWorkspaceSymbols(monaco, context, query),
-    resolveRenameLocation: (model, position) => prepareRename(monaco, context, model, position),
-  });
-  const documentProviders = registerDocumentLanguageServerProviders(monaco, {
-    getSemanticTokensLegend: () => semanticTokensLegendForActiveRuntime(context),
-    onDidChangeCodeLens: codeLensRefreshEmitter.event as unknown as NonNullable<
-      Monaco.languages.CodeLensProvider["onDidChange"]
-    >,
-    onDidChangeInlayHints: inlayHintRefreshEmitter.event,
-    onDidChangeSemanticTokens: semanticTokensRefreshEmitter.event,
-    onTypeFormattingTriggerCharacters: onTypeFormattingTriggerCharacters(context),
-    provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
-    provideDocumentFormattingEdits: (model, options) =>
-      provideDocumentFormattingEdits(monaco, context, model, options),
-    provideDocumentLinks: (model) => provideDocumentLinks(monaco, context, model),
-    provideDocumentRangeFormattingEdits: (model, range, options) =>
-      provideDocumentRangeFormattingEdits(monaco, context, model, range, options),
-    provideDocumentRangeSemanticTokens: (model, range) =>
-      provideDocumentRangeSemanticTokens(context, model, range),
-    provideDocumentSemanticTokens: (model) => provideDocumentSemanticTokens(context, model),
-    provideFoldingRanges: (model) => provideFoldingRanges(monaco, context, model),
-    provideInlayHints: (model, range) => provideInlayHints(monaco, context, model, range),
-    provideLinkedEditingRanges: (model, position) =>
-      provideLinkedEditingRanges(monaco, context, model, position),
-    provideOnTypeFormattingEdits: (model, position, ch, options) =>
-      provideOnTypeFormattingEdits(monaco, context, model, position, ch, options),
-    resolveCodeLens: (model, lens) => resolveCodeLens(monaco, context, model, lens),
-    resolveDocumentLink: (link) => resolveDocumentLink(monaco, context, link),
-    resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
-  });
-  const templateLanguageProviders = registerTemplateLanguageMonacoProviders(monaco, context, {
-    toCodeAction: toPhpCodeAction,
-  });
-
-  return {
-    dispose: () => {
-      refreshSubscriptionDisposable.dispose();
-      workspaceEditSubscriptionDisposable.dispose();
-      codeLensRefreshEmitter.dispose();
-      inlayHintRefreshEmitter.dispose();
-      semanticTokensRefreshEmitter.dispose();
-      command.dispose();
-      resolveAndApplyCodeActionCommand.dispose();
-      applyNewFileCommand.dispose();
-      applyCodeActionWorkspaceEditCommand.dispose();
-      openPhpChangeSignatureCommand.dispose();
-      interactiveProviders.dispose();
-      navigationProviders.dispose();
-      documentProviders.dispose();
-      templateLanguageProviders.dispose();
-      unregisterWorkspaceIdentity();
-    },
-  };
 }
 
 async function provideCodeLenses(
@@ -1080,65 +1173,6 @@ async function providePhpSourceCodeActions(
  * has no matching action, so it is left to the language server. This keeps us
  * from ever surfacing an off-context action.
  */
-function phpSourceCodeActionKindRequested(only: string | undefined): boolean {
-  if (!only) {
-    return true;
-  }
-
-  return (
-    only.startsWith("quickfix") ||
-    only.startsWith("refactor") ||
-    phpOrganizeImportsKindRequested(only)
-  );
-}
-
-/**
- * True when the `only` scope targets the organize-imports family that our
- * "Optimize imports" action belongs to: the bare `source` group, or
- * `source.organizeImports` (and its sub-scopes). A more specific sibling scope
- * like `source.fixAll` returns false so we do not run for an action we never
- * emit.
- */
-function phpOrganizeImportsKindRequested(only: string): boolean {
-  return (
-    only === "source" ||
-    only === "source.organizeImports" ||
-    only.startsWith("source.organizeImports.")
-  );
-}
-
-/**
- * Converts the Monaco selection range Monaco hands the code-action provider into
- * the 0-based character offset span the controller's position-aware actions
- * consume. An empty selection collapses to `start === end` (the bare cursor).
- */
-function phpCodeActionOffsetRange(source: string, range: Monaco.Range): PhpCodeActionRange {
-  const start = offsetAtMonacoPosition(source, {
-    column: range.startColumn,
-    lineNumber: range.startLineNumber,
-  } as MonacoPosition);
-  const end = offsetAtMonacoPosition(source, {
-    column: range.endColumn,
-    lineNumber: range.endLineNumber,
-  } as MonacoPosition);
-
-  return start <= end ? { end, start } : { end: start, start: end };
-}
-
-function canApplyPhpWorkspaceEditDescriptor(
-  context: LanguageServerMonacoProviderContext,
-  descriptor: PhpCodeActionDescriptor,
-): boolean {
-  if (!descriptor.workspaceEdit) {
-    return true;
-  }
-
-  return Boolean(
-    context.applyWorkspaceEdit &&
-    (descriptor.workspaceRoot ?? context.getWorkspaceRoot?.() ?? null),
-  );
-}
-
 function toPhpCodeAction(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
@@ -1457,34 +1491,6 @@ async function resolveCodeAction(
 
     return action;
   }
-}
-
-/**
- * A lazy LSP code action can be applied directly once it already carries an
- * inline `edit` or a `command`; only `data`-only actions still need a
- * `codeAction/resolve` round-trip. Our own PHP actions (Implement / Override
- * methods, getters, constructor) always ship an inline `edit`, so this guard
- * keeps them working without an extra resolve request — and avoids asking a
- * server that does not support `codeAction/resolve` to fill in what is already
- * present.
- */
-function isLanguageServerActionAlreadyResolved(action: LanguageServerCodeAction): boolean {
-  return Boolean(action.edit) || Boolean(action.command);
-}
-
-/**
- * Some servers (e.g. phpactor) advertise `codeActionProvider` but ship lazy
- * actions without a `codeAction/resolve` handler. Resolving such an edit-less
- * action surfaces a JSON-RPC "Handler codeAction/resolve not found" error. The
- * Rust side already skips the resolve request when the server does not advertise
- * `resolveProvider`; this guard is the matching client-side defence so the user
- * never sees a confusing "Handler not found" notice when an edit-less action
- * simply cannot be resolved.
- */
-function isUnsupportedCodeActionResolveError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-
-  return /codeAction\/resolve.*not found|not found.*codeAction\/resolve/i.test(message);
 }
 
 function provideLocalCodeActions(
@@ -2084,116 +2090,6 @@ function toMonacoCodeLensCommand(
   );
 }
 
-function toMonacoShowReferencesCommand(
-  monaco: MonacoApi,
-  rootPath: string,
-  command: LanguageServerCodeActionCommand,
-): Monaco.languages.Command | undefined {
-  const [uri, position, locations] = command.arguments ?? [];
-  const sourceUri = toMonacoFileUri(monaco, rootPath, uri);
-  const monacoPosition = toMonacoCommandPosition(position);
-
-  if (!sourceUri || !monacoPosition || !Array.isArray(locations)) {
-    return undefined;
-  }
-
-  return {
-    arguments: [
-      sourceUri,
-      monacoPosition,
-      locations.flatMap((location) =>
-        toMonacoLocation(monaco, rootPath, location as LanguageServerLocation),
-      ),
-    ],
-    id: "editor.action.showReferences",
-    title: command.title,
-  };
-}
-
-function toMonacoFileUri(
-  monaco: MonacoApi,
-  rootPath: string,
-  value: unknown,
-): ReturnType<MonacoApi["Uri"]["file"]> | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const path = pathFromLanguageServerUri(value);
-
-  if (!path || !isPathInWorkspaceRoot(rootPath, path)) {
-    return null;
-  }
-
-  return toWorkspaceMonacoUri(monaco, rootPath, path);
-}
-
-function toMonacoCommandPosition(value: unknown): Monaco.IPosition | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const line = (value as { line?: unknown }).line;
-  const character = (value as { character?: unknown }).character;
-
-  if (typeof line !== "number" || typeof character !== "number") {
-    return null;
-  }
-
-  return {
-    column: Math.max(1, character + 1),
-    lineNumber: Math.max(1, line + 1),
-  };
-}
-
-async function provideHover(
-  _monaco: MonacoApi,
-  context: LanguageServerMonacoProviderContext,
-  model: MonacoModel,
-  position: MonacoPosition,
-  token?: Monaco.CancellationToken,
-): Promise<Monaco.languages.Hover | null> {
-  const request = featureRequestContext(context, model, position, "hover");
-
-  if (!request) {
-    return null;
-  }
-
-  try {
-    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
-      return null;
-    }
-
-    const hover = await raceInteractiveFeatureRequest(
-      context.featuresGateway.hover(request.rootPath, request.position),
-      HOVER_FEATURE_REQUEST_TIMEOUT_MS,
-    );
-
-    if (hover === FEATURE_REQUEST_TIMED_OUT) {
-      return null;
-    }
-
-    if (token?.isCancellationRequested) {
-      return null;
-    }
-
-    if (!isFeatureRequestActive(context, request)) {
-      return null;
-    }
-
-    if (!hover) {
-      return null;
-    }
-
-    return {
-      contents: [{ value: hover.contents }],
-    };
-  } catch (error) {
-    reportErrorForActiveRequest(context, request, error);
-    return null;
-  }
-}
-
 async function provideCompletionItems(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
@@ -2258,7 +2154,7 @@ async function provideCompletionItems(
   // targets. In that context the local framework collector is authoritative.
   const lspCompletion = isFrameworkStringCompletion
     ? null
-    : requestPhpLanguageServerCompletion(context, model, position);
+    : requestPhpLanguageServerCompletion(context, model, position, token);
   const methodSuggestions = await phpMethodSuggestions(
     monaco,
     context,
@@ -2514,6 +2410,7 @@ async function requestPhpLanguageServerCompletion(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<PhpLanguageServerCompletionResolution> {
   const request = featureRequestContext(context, model, position, "completion");
 
@@ -2528,11 +2425,18 @@ async function requestPhpLanguageServerCompletion(
 
     const recordCompletionLatency = context.recordCompletionLatency;
     const completionStart = recordCompletionLatency ? performance.now() : 0;
-    const completion = await raceInteractiveFeatureRequest(
-      context.featuresGateway.completion(request.rootPath, request.position),
+    const completion = await runOptionalIdentifiedFeatureRequest(
+      context.featuresGateway,
+      request.rootPath,
+      request.sessionId,
+      token,
+      undefined,
+      () => context.featuresGateway.completion(request.rootPath, request.position),
+      (port, sessionId) =>
+        port.completion(request.rootPath, request.position, undefined, sessionId),
     );
 
-    if (completion === FEATURE_REQUEST_TIMED_OUT) {
+    if (completion === FEATURE_REQUEST_TIMED_OUT || completion === FEATURE_REQUEST_CANCELLED) {
       return { kind: "timedOut" };
     }
 
@@ -2788,6 +2692,7 @@ async function provideSignatureHelp(
     model,
     position,
     signatureContext,
+    token,
   );
   const localSignature = await requestLocalPhpSignatureHelp(
     context,
@@ -2919,6 +2824,7 @@ async function requestPhpLanguageServerSignatureHelp(
   model: MonacoModel,
   position: MonacoPosition,
   signatureContext?: Monaco.languages.SignatureHelpContext,
+  token?: Monaco.CancellationToken,
 ): Promise<PhpLanguageServerSignatureResolution> {
   const request = featureRequestContext(context, model, position, "signatureHelp");
 
@@ -2932,13 +2838,24 @@ async function requestPhpLanguageServerSignatureHelp(
     }
 
     const lspContext = toPhpLanguageServerSignatureHelpContext(signatureContext);
-    const signatureHelp = await raceInteractiveFeatureRequest(
-      lspContext
-        ? context.featuresGateway.signatureHelp(request.rootPath, request.position, lspContext)
-        : context.featuresGateway.signatureHelp(request.rootPath, request.position),
+    const signatureHelp = await runOptionalIdentifiedFeatureRequest(
+      context.featuresGateway,
+      request.rootPath,
+      request.sessionId,
+      token,
+      undefined,
+      () =>
+        lspContext
+          ? context.featuresGateway.signatureHelp(request.rootPath, request.position, lspContext)
+          : context.featuresGateway.signatureHelp(request.rootPath, request.position),
+      (port, sessionId) =>
+        port.signatureHelp(request.rootPath, request.position, lspContext, sessionId),
     );
 
-    if (signatureHelp === FEATURE_REQUEST_TIMED_OUT) {
+    if (
+      signatureHelp === FEATURE_REQUEST_TIMED_OUT ||
+      signatureHelp === FEATURE_REQUEST_CANCELLED
+    ) {
       return { kind: "timedOut" };
     }
 

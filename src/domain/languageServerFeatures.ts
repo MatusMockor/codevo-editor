@@ -350,7 +350,59 @@ export interface IdentifiedLanguageServerRequest<T> extends Promise<T> {
   readonly sessionId: number;
 }
 
+export interface IdentifiedLanguageServerRequestsPort {
+  cancelRequest(rootPath: string, sessionId: number, requestId: number): Promise<void>;
+  hover(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerHover | null>;
+  completion(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    context: LanguageServerCompletionContext | undefined,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCompletionList>;
+  definition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  sourceDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  declaration(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  implementation(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  typeDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  references(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  signatureHelp(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    context: LanguageServerSignatureHelpContext | undefined,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerSignatureHelp | null>;
+}
+
 export interface LanguageServerFeaturesGateway {
+  readonly identifiedRequests?: IdentifiedLanguageServerRequestsPort;
   hover(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

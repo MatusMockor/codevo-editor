@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import {
   pathFromLanguageServerUri,
+  type LanguageServerCodeActionCommand,
   type LanguageServerDocumentLink,
   type LanguageServerLocation,
   type LanguageServerWorkspaceEdit,
@@ -78,6 +79,68 @@ export function toMonacoLocation(
   }
 
   return [{ range: toMonacoRange(monaco, location.range), uri }];
+}
+
+export function toMonacoShowReferencesCommand(
+  monaco: MonacoApi,
+  rootPath: string,
+  command: LanguageServerCodeActionCommand,
+): Monaco.languages.Command | undefined {
+  const [uri, position, locations] = command.arguments ?? [];
+  const sourceUri = toMonacoFileUri(monaco, rootPath, uri);
+  const monacoPosition = toMonacoCommandPosition(position);
+
+  if (!sourceUri || !monacoPosition || !Array.isArray(locations)) {
+    return undefined;
+  }
+
+  return {
+    arguments: [
+      sourceUri,
+      monacoPosition,
+      locations.flatMap((location) =>
+        toMonacoLocation(monaco, rootPath, location as LanguageServerLocation),
+      ),
+    ],
+    id: "editor.action.showReferences",
+    title: command.title,
+  };
+}
+
+function toMonacoFileUri(
+  monaco: MonacoApi,
+  rootPath: string,
+  value: unknown,
+): ReturnType<MonacoApi["Uri"]["file"]> | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const path = pathFromLanguageServerUri(value);
+
+  if (!path || !isPathInWorkspaceRoot(rootPath, path)) {
+    return null;
+  }
+
+  return toWorkspaceMonacoUri(monaco, rootPath, path);
+}
+
+function toMonacoCommandPosition(value: unknown): Monaco.IPosition | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const line = (value as { line?: unknown }).line;
+  const character = (value as { character?: unknown }).character;
+
+  if (typeof line !== "number" || typeof character !== "number") {
+    return null;
+  }
+
+  return {
+    column: Math.max(1, character + 1),
+    lineNumber: Math.max(1, line + 1),
+  };
 }
 
 export function toMonacoWorkspaceSymbol(

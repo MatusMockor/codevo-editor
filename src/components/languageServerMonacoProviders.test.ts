@@ -16,6 +16,7 @@ import type {
   LanguageServerFeaturesGateway,
   LanguageServerHover,
   LanguageServerInlayHint,
+  IdentifiedLanguageServerRequestsPort,
   LanguageServerLinkedEditingRanges,
   LanguageServerLocation,
   LanguageServerRange,
@@ -30,13 +31,8 @@ import type {
   LanguageServerRuntimeCapabilities,
   LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
-import type {
-  PhpMethodCompletion,
-  PhpMethodSignature,
-} from "../domain/phpMethodCompletions";
-import {
-  phpFrameworkScopedStringCompletionContextAt,
-} from "../domain/phpFrameworkProviders";
+import type { PhpMethodCompletion, PhpMethodSignature } from "../domain/phpMethodCompletions";
+import { phpFrameworkScopedStringCompletionContextAt } from "../domain/phpFrameworkProviders";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
@@ -49,21 +45,11 @@ describe("registerLanguageServerMonacoProviders", () => {
   it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, workspace symbol, document link, code lens, inlay hint, folding range, formatting, range formatting, on type formatting, linked editing range and semantic token providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
-    const disposable = registerLanguageServerMonacoProviders(
-      registered.monaco,
-      context,
-    );
+    const disposable = registerLanguageServerMonacoProviders(registered.monaco, context);
 
     expect(registered.hoverLanguage).toBe("php");
     expect(registered.completionLanguage).toBe("php");
-    expect(registered.completionProvider.triggerCharacters).toEqual([
-      "$",
-      ">",
-      ":",
-      "'",
-      "\"",
-      ".",
-    ]);
+    expect(registered.completionProvider.triggerCharacters).toEqual(["$", ">", ":", "'", '"', "."]);
     expect(registered.signatureLanguage).toBe("php");
     expect(registered.codeActionLanguage).toBe("php");
     expect(registered.latteCodeActionLanguage).toBe("latte");
@@ -83,21 +69,15 @@ describe("registerLanguageServerMonacoProviders", () => {
       "neon",
       "php",
     ]);
-    expect(registered.renameProvider).toBe(
-      registered.renameProvidersByLanguage.php,
-    );
-    expect(registered.referenceProvider).toBe(
-      registered.referenceProvidersByLanguage.php,
-    );
+    expect(registered.renameProvider).toBe(registered.renameProvidersByLanguage.php);
+    expect(registered.referenceProvider).toBe(registered.referenceProvidersByLanguage.php);
     expect(registered.definitionLanguage).toBe("php");
     expect(registered.declarationLanguage).toBe("php");
     expect(registered.implementationLanguage).toBe("php");
     expect(registered.typeDefinitionLanguage).toBe("php");
     expect(registered.documentHighlightLanguage).toBe("php");
     expect(registered.documentSymbolLanguage).toBe("php");
-    expect(
-      registered.monaco.languages.registerWorkspaceSymbolProvider,
-    ).toHaveBeenCalledTimes(1);
+    expect(registered.monaco.languages.registerWorkspaceSymbolProvider).toHaveBeenCalledTimes(1);
     expect(registered.workspaceSymbolProvider).toEqual(
       expect.objectContaining({
         provideWorkspaceSymbols: expect.any(Function),
@@ -110,9 +90,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentFormattingLanguage).toBe("php");
     expect(registered.rangeFormattingLanguage).toBe("php");
     expect(registered.onTypeFormattingLanguage).toBe("php");
-    expect(registered.onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual(
-      [],
-    );
+    expect(registered.onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual([]);
     expect(registered.linkedEditingRangeLanguage).toBe("php");
     expect(registered.documentSemanticTokensLanguage).toBe("php");
     expect(registered.rangeSemanticTokensLanguage).toBe("php");
@@ -158,18 +136,14 @@ describe("registerLanguageServerMonacoProviders", () => {
 
   it("fires PHP provider refresh events only for the active root and session", async () => {
     const registered = createRegisteredProviders();
-    let refreshListener: ((event: LanguageServerRefreshEvent) => void) | null =
-      null;
+    let refreshListener: ((event: LanguageServerRefreshEvent) => void) | null = null;
     const refreshGateway: LanguageServerRefreshGateway = {
       subscribeRefreshEvents: vi.fn(async (listener) => {
         refreshListener = listener;
         return () => undefined;
       }),
     };
-    registerLanguageServerMonacoProviders(
-      registered.monaco,
-      providerContext({ refreshGateway }),
-    );
+    registerLanguageServerMonacoProviders(registered.monaco, providerContext({ refreshGateway }));
     await Promise.resolve();
     const codeLensChanged = vi.fn();
     const inlayHintsChanged = vi.fn();
@@ -245,9 +219,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    await expect(
-      registered.hoverProvider.provideHover(model(), position()),
-    ).resolves.toBeNull();
+    await expect(registered.hoverProvider.provideHover(model(), position())).resolves.toBeNull();
     expect(gateway.hover).not.toHaveBeenCalled();
   });
 
@@ -273,10 +245,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.hoverProvider.provideHover(
-        model({ path: "/workspace/src/User.php" }),
-        position(),
-      ),
+      registered.hoverProvider.provideHover(model({ path: "/workspace/src/User.php" }), position()),
     ).resolves.toBeNull();
     expect(flushPendingDocumentChange).not.toHaveBeenCalled();
     expect(gateway.hover).not.toHaveBeenCalled();
@@ -309,14 +278,9 @@ describe("registerLanguageServerMonacoProviders", () => {
     registerLanguageServerMonacoProviders(registered.monaco, context);
     const largeModel = model({ path: largeDocument.path });
 
+    await expect(registered.hoverProvider.provideHover(largeModel, position())).resolves.toBeNull();
     await expect(
-      registered.hoverProvider.provideHover(largeModel, position()),
-    ).resolves.toBeNull();
-    await expect(
-      registered.completionProvider.provideCompletionItems(
-        largeModel,
-        position(),
-      ),
+      registered.completionProvider.provideCompletionItems(largeModel, position()),
     ).resolves.toEqual({ suggestions: [] });
     await expect(
       registered.definitionProvider.provideDefinition(largeModel, position()),
@@ -325,23 +289,19 @@ describe("registerLanguageServerMonacoProviders", () => {
       registered.referenceProvider.provideReferences(largeModel, position(), {}),
     ).resolves.toBeNull();
     await expect(
-      registered.implementationProvider.provideImplementation(
-        largeModel,
-        position(),
-      ),
+      registered.implementationProvider.provideImplementation(largeModel, position()),
     ).resolves.toBeNull();
     await expect(
-      registered.typeDefinitionProvider.provideTypeDefinition(
-        largeModel,
-        position(),
-      ),
+      registered.typeDefinitionProvider.provideTypeDefinition(largeModel, position()),
     ).resolves.toBeNull();
-    await expect(
-      registered.documentLinkProvider.provideLinks(largeModel),
-    ).resolves.toEqual({ dispose: expect.any(Function), links: [] });
-    await expect(
-      registered.codeLensProvider.provideCodeLenses(largeModel),
-    ).resolves.toEqual({ dispose: expect.any(Function), lenses: [] });
+    await expect(registered.documentLinkProvider.provideLinks(largeModel)).resolves.toEqual({
+      dispose: expect.any(Function),
+      links: [],
+    });
+    await expect(registered.codeLensProvider.provideCodeLenses(largeModel)).resolves.toEqual({
+      dispose: expect.any(Function),
+      lenses: [],
+    });
     await expect(
       registered.inlayHintsProvider.provideInlayHints(
         largeModel,
@@ -352,9 +312,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       registered.foldingRangeProvider.provideFoldingRanges(largeModel),
     ).resolves.toBeNull();
     await expect(
-      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
-        largeModel,
-      ),
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(largeModel),
     ).resolves.toBeNull();
     await expect(
       registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
@@ -395,9 +353,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    await expect(
-      registered.hoverProvider.provideHover(model(), position()),
-    ).resolves.toBeNull();
+    await expect(registered.hoverProvider.provideHover(model(), position())).resolves.toBeNull();
     expect(flushPendingDocumentChange).not.toHaveBeenCalled();
     expect(gateway.hover).not.toHaveBeenCalled();
   });
@@ -414,22 +370,15 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    await expect(
-      registered.hoverProvider.provideHover(model(), position()),
-    ).resolves.toEqual({
+    await expect(registered.hoverProvider.provideHover(model(), position())).resolves.toEqual({
       contents: [{ value: "**User**" }],
     });
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.hover).toHaveBeenCalledWith(
-      "/project",
-      {
-        character: 4,
-        line: 10,
-        path: "/project/src/User.php",
-      },
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.hover).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
   });
 
   it("drops in-flight PHP hover when no project tab is active", async () => {
@@ -444,24 +393,18 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const hoverPromise = registered.hoverProvider.provideHover(
-      model(),
-      position(),
-    );
+    const hoverPromise = registered.hoverProvider.provideHover(model(), position());
 
     await Promise.resolve();
     activeRoot = null;
     hover.resolve({ contents: "**Stale user**" });
 
     await expect(hoverPromise).resolves.toBeNull();
-    expect(gateway.hover).toHaveBeenCalledWith(
-      "/project",
-      {
-        character: 4,
-        line: 10,
-        path: "/project/src/User.php",
-      },
-    );
+    expect(gateway.hover).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
   });
 
   it("drops in-flight PHP hover after same-root session restart", async () => {
@@ -479,24 +422,18 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const hoverPromise = registered.hoverProvider.provideHover(
-      model(),
-      position(),
-    );
+    const hoverPromise = registered.hoverProvider.provideHover(model(), position());
 
     await Promise.resolve();
     activeSessionId = 2;
     hover.resolve({ contents: "**Stale user**" });
 
     await expect(hoverPromise).resolves.toBeNull();
-    expect(gateway.hover).toHaveBeenCalledWith(
-      "/project",
-      {
-        character: 4,
-        line: 10,
-        path: "/project/src/User.php",
-      },
-    );
+    expect(gateway.hover).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
   });
 
   it("drops PHP hover when the Monaco cancellation token is cancelled after the response", async () => {
@@ -508,11 +445,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     const token = { isCancellationRequested: false };
-    const hoverPromise = registered.hoverProvider.provideHover(
-      model(),
-      position(),
-      token,
-    );
+    const hoverPromise = registered.hoverProvider.provideHover(model(), position(), token);
 
     await Promise.resolve();
     token.isCancellationRequested = true;
@@ -533,11 +466,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       registerLanguageServerMonacoProviders(registered.monaco, context);
 
       const token = { isCancellationRequested: false };
-      const hoverPromise = registered.hoverProvider.provideHover(
-        model(),
-        position(),
-        token,
-      );
+      const hoverPromise = registered.hoverProvider.provideHover(model(), position(), token);
 
       await vi.advanceTimersByTimeAsync(5000);
 
@@ -559,11 +488,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       registerLanguageServerMonacoProviders(registered.monaco, context);
 
       const token = { isCancellationRequested: false };
-      const hoverPromise = registered.hoverProvider.provideHover(
-        model(),
-        position(),
-        token,
-      );
+      const hoverPromise = registered.hoverProvider.provideHover(model(), position(), token);
 
       await vi.advanceTimersByTimeAsync(700);
 
@@ -573,6 +498,124 @@ describe("registerLanguageServerMonacoProviders", () => {
     }
   });
 
+  it("cancels the identified backend hover request when the Monaco timeout wins", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const hover = createDeferred<LanguageServerHover | null>();
+      const cancelRequest = vi.fn(async () => undefined);
+      const gateway = Object.assign(featuresGateway(), {
+        identifiedRequests: identifiedRequestsPort({
+          cancelRequest,
+          hover: identifiedRequest(hover.promise, 41, 1),
+        }),
+      });
+      registerLanguageServerMonacoProviders(
+        registered.monaco,
+        providerContext({ featuresGateway: gateway }),
+      );
+
+      const pending = registered.hoverProvider.provideHover(model(), position(), {
+        isCancellationRequested: false,
+      });
+      await vi.advanceTimersByTimeAsync(700);
+
+      await expect(pending).resolves.toBeNull();
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, 41);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the identified backend hover request when Monaco cancels", async () => {
+    const registered = createRegisteredProviders();
+    const hover = createDeferred<LanguageServerHover | null>();
+    const cancelRequest = vi.fn(async () => undefined);
+    const gateway = Object.assign(featuresGateway(), {
+      identifiedRequests: identifiedRequestsPort({
+        cancelRequest,
+        hover: identifiedRequest(hover.promise, 42, 1),
+      }),
+    });
+    let cancel: (() => void) | undefined;
+    const token = {
+      isCancellationRequested: false,
+      onCancellationRequested: (listener: () => void) => {
+        cancel = listener;
+        return { dispose: vi.fn() };
+      },
+    };
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    const pending = registered.hoverProvider.provideHover(model(), position(), token);
+    await vi.waitFor(() => expect(cancel).toBeDefined());
+    cancel?.();
+
+    await expect(pending).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, 42);
+  });
+
+  it("rejects and cancels an identified hover response owned by another session", async () => {
+    const registered = createRegisteredProviders();
+    const cancelRequest = vi.fn(async () => undefined);
+    const gateway = Object.assign(featuresGateway(), {
+      identifiedRequests: identifiedRequestsPort({
+        cancelRequest,
+        hover: identifiedRequest(Promise.resolve({ contents: "foreign" }), 43, 8),
+      }),
+    });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    await expect(registered.hoverProvider.provideHover(model(), position())).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 8, 43);
+  });
+
+  it("consumes a late rejection from a foreign identified hover request", async () => {
+    const registered = createRegisteredProviders();
+    const hover = createDeferred<LanguageServerHover | null>();
+    const cancelRequest = vi.fn(async () => undefined);
+    const gateway = Object.assign(featuresGateway(), {
+      identifiedRequests: identifiedRequestsPort({
+        cancelRequest,
+        hover: identifiedRequest(hover.promise, 44, 8),
+      }),
+    });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    await expect(registered.hoverProvider.provideHover(model(), position())).resolves.toBeNull();
+    hover.reject(new Error("foreign late failure"));
+    await Promise.resolve();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 8, 44);
+  });
+
+  it("does not send malformed foreign authority ids to the cancel port", async () => {
+    const registered = createRegisteredProviders();
+    const cancelRequest = vi.fn(async () => undefined);
+    const gateway = Object.assign(featuresGateway(), {
+      identifiedRequests: identifiedRequestsPort({
+        cancelRequest,
+        hover: identifiedRequest(Promise.resolve({ contents: "malformed" }), 0, 0),
+      }),
+    });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    await expect(registered.hoverProvider.provideHover(model(), position())).resolves.toBeNull();
+    expect(cancelRequest).not.toHaveBeenCalled();
+  });
+
   it("keeps the full navigation timeout budget for PHP definition (still pending at the hover timeout)", async () => {
     vi.useFakeTimers();
 
@@ -580,9 +623,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       const registered = createRegisteredProviders();
       const locations = createDeferred<LanguageServerLocation[]>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.definition).mockImplementationOnce(
-        async () => locations.promise,
-      );
+      vi.mocked(gateway.definition).mockImplementationOnce(async () => locations.promise);
       const context = providerContext({ featuresGateway: gateway });
       registerLanguageServerMonacoProviders(registered.monaco, context);
 
@@ -629,9 +670,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const registered = createRegisteredProviders();
     const locations = createDeferred<LanguageServerLocation[]>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.definition).mockImplementationOnce(
-      async () => locations.promise,
-    );
+    vi.mocked(gateway.definition).mockImplementationOnce(async () => locations.promise);
     const context = providerContext({ featuresGateway: gateway });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
@@ -661,9 +700,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       const registered = createRegisteredProviders();
       const locations = createDeferred<LanguageServerLocation[]>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.definition).mockImplementationOnce(
-        async () => locations.promise,
-      );
+      vi.mocked(gateway.definition).mockImplementationOnce(async () => locations.promise);
       const context = providerContext({ featuresGateway: gateway });
       registerLanguageServerMonacoProviders(registered.monaco, context);
 
@@ -703,10 +740,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.completionProvider.provideCompletionItems(
-        model({ content: source }),
-        position(),
-      ),
+      registered.completionProvider.provideCompletionItems(model({ content: source }), position()),
     ).resolves.toEqual({
       suggestions: [
         {
@@ -738,14 +772,11 @@ describe("registerLanguageServerMonacoProviders", () => {
         },
       ],
     });
-    expect(gateway.completion).toHaveBeenCalledWith(
-      "/project",
-      {
-        character: 4,
-        line: 10,
-        path: "/project/src/User.php",
-      },
-    );
+    expect(gateway.completion).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
   });
 
   it("maps PHP completion additional text edits to Monaco edits", async () => {
@@ -778,9 +809,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       model({ content: source }),
       position(),
     );
-    const suggestion = result.suggestions.find(
-      (item: { label: string }) => item.label === "User",
-    );
+    const suggestion = result.suggestions.find((item: { label: string }) => item.label === "User");
 
     expect(suggestion.additionalTextEdits).toEqual([
       {
@@ -829,9 +858,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       model({ content: source }),
       position(),
     );
-    const suggestion = result.suggestions.find(
-      (item: { label: string }) => item.label === "User",
-    );
+    const suggestion = result.suggestions.find((item: { label: string }) => item.label === "User");
 
     expect(suggestion.additionalTextEdits).toEqual([
       {
@@ -914,9 +941,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       const source = phpCompletionFixtureSource();
       const completion = createDeferred<LanguageServerCompletionList>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.completion).mockImplementationOnce(
-        async () => completion.promise,
-      );
+      vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
       const recordCompletionLatency = vi.fn();
       const context = {
         ...providerContext({ featuresGateway: gateway }),
@@ -924,11 +949,10 @@ describe("registerLanguageServerMonacoProviders", () => {
       };
       registerLanguageServerMonacoProviders(registered.monaco, context);
 
-      const completionPromise =
-        registered.completionProvider.provideCompletionItems(
-          model({ content: source }),
-          position(),
-        );
+      const completionPromise = registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+      );
 
       await vi.advanceTimersByTimeAsync(5000);
       await completionPromise;
@@ -949,17 +973,14 @@ describe("registerLanguageServerMonacoProviders", () => {
       const source = phpCompletionFixtureSource();
       const completion = createDeferred<LanguageServerCompletionList>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.completion).mockImplementationOnce(
-        async () => completion.promise,
-      );
+      vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
       const context = providerContext({ featuresGateway: gateway });
       registerLanguageServerMonacoProviders(registered.monaco, context);
 
-      const completionPromise =
-        registered.completionProvider.provideCompletionItems(
-          model({ content: source }),
-          position(),
-        );
+      const completionPromise = registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+      );
 
       await vi.advanceTimersByTimeAsync(5000);
 
@@ -990,20 +1011,17 @@ describe("registerLanguageServerMonacoProviders", () => {
     const source = phpCompletionFixtureSource();
     const completion = createDeferred<LanguageServerCompletionList>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(
-      async () => completion.promise,
-    );
+    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
     const context = providerContext({ featuresGateway: gateway });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     const token = { isCancellationRequested: false };
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: source }),
-        position(),
-        undefined,
-        token,
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+      undefined,
+      token,
+    );
 
     for (
       let tick = 0;
@@ -1040,11 +1058,10 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: source }),
-        position(),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: source }),
+      position(),
+    );
 
     // The language-server completion must be issued while the method collector
     // is still pending; a serial implementation would not call it until the
@@ -1068,20 +1085,17 @@ describe("registerLanguageServerMonacoProviders", () => {
     let activeRoot: string | null = "/project";
     const completion = createDeferred<LanguageServerCompletionList>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(
-      async () => completion.promise,
-    );
+    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
     const context = providerContext({
       featuresGateway: gateway,
       getWorkspaceRoot: () => activeRoot,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: phpCompletionFixtureSource() }),
-        position(),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: phpCompletionFixtureSource() }),
+      position(),
+    );
 
     for (
       let tick = 0;
@@ -1107,14 +1121,11 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
 
     await expect(completionPromise).resolves.toEqual({ suggestions: [] });
-    expect(gateway.completion).toHaveBeenCalledWith(
-      "/project",
-      {
-        character: 4,
-        line: 10,
-        path: "/project/src/User.php",
-      },
-    );
+    expect(gateway.completion).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
   });
 
   it("drops in-flight PHP completions after same-root session restart", async () => {
@@ -1122,9 +1133,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     let activeSessionId = 1;
     const completion = createDeferred<LanguageServerCompletionList>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(
-      async () => completion.promise,
-    );
+    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
     const context = providerContext({
       featuresGateway: gateway,
       getRuntimeStatus: () => ({
@@ -1134,11 +1143,10 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: phpCompletionFixtureSource() }),
-        position(),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: phpCompletionFixtureSource() }),
+      position(),
+    );
 
     for (
       let tick = 0;
@@ -1164,14 +1172,11 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
 
     await expect(completionPromise).resolves.toEqual({ suggestions: [] });
-    expect(gateway.completion).toHaveBeenCalledWith(
-      "/project",
-      {
-        character: 4,
-        line: 10,
-        path: "/project/src/User.php",
-      },
-    );
+    expect(gateway.completion).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
   });
 
   it("drops a lifecycle-1 completion after the same path reopens in lifecycle 2", async () => {
@@ -1179,28 +1184,20 @@ describe("registerLanguageServerMonacoProviders", () => {
     let lifecycleIdentity = 1;
     const completion = createDeferred<LanguageServerCompletionList>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(
-      async () => completion.promise,
-    );
-    const getDocumentLifecycleIdentity = vi.fn(
-      () => lifecycleIdentity,
-    );
+    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
+    const getDocumentLifecycleIdentity = vi.fn(() => lifecycleIdentity);
     registerLanguageServerMonacoProviders(
       registered.monaco,
       providerContext({ featuresGateway: gateway, getDocumentLifecycleIdentity }),
     );
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: phpCompletionFixtureSource() }),
-        position(),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: phpCompletionFixtureSource() }),
+      position(),
+    );
 
     await vi.waitFor(() => expect(gateway.completion).toHaveBeenCalledTimes(1));
-    expect(getDocumentLifecycleIdentity).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
+    expect(getDocumentLifecycleIdentity).toHaveBeenCalledWith("/project", "/project/src/User.php");
 
     lifecycleIdentity = 2;
     completion.resolve({
@@ -1239,17 +1236,13 @@ describe("registerLanguageServerMonacoProviders", () => {
       }),
     );
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: phpCompletionFixtureSource() }),
-        position(),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: phpCompletionFixtureSource() }),
+      position(),
+    );
 
     await vi.waitFor(() =>
-      expect(requestDocumentLease).toHaveBeenCalledWith(
-        "/project",
-        "/project/src/User.php",
-      ),
+      expect(requestDocumentLease).toHaveBeenCalledWith("/project", "/project/src/User.php"),
     );
     expect(gateway.completion).not.toHaveBeenCalled();
 
@@ -1302,9 +1295,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     let leaseIsCurrent = true;
     const completion = createDeferred<LanguageServerCompletionList>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(
-      async () => completion.promise,
-    );
+    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
     const documentLease = {
       lifecycleIdentity: 7,
       path: "/project/src/User.php",
@@ -1321,11 +1312,10 @@ describe("registerLanguageServerMonacoProviders", () => {
       }),
     );
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: phpCompletionFixtureSource() }),
-        position(),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: phpCompletionFixtureSource() }),
+      position(),
+    );
 
     await vi.waitFor(() => expect(gateway.completion).toHaveBeenCalledTimes(1));
     leaseIsCurrent = false;
@@ -1368,9 +1358,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       ),
     ).resolves.toEqual({ suggestions: [] });
 
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.completion).not.toHaveBeenCalled();
   });
 
@@ -1380,9 +1368,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const completion = createDeferred<LanguageServerCompletionList>();
     const gateway = featuresGateway();
     const reportError = vi.fn();
-    vi.mocked(gateway.completion).mockImplementationOnce(
-      async () => completion.promise,
-    );
+    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
     registerLanguageServerMonacoProviders(
       registered.monaco,
       providerContext({
@@ -1392,11 +1378,10 @@ describe("registerLanguageServerMonacoProviders", () => {
       }),
     );
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: phpCompletionFixtureSource() }),
-        position(),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: phpCompletionFixtureSource() }),
+      position(),
+    );
 
     await vi.waitFor(() => expect(gateway.completion).toHaveBeenCalledTimes(1));
     lifecycleIdentity = 2;
@@ -1428,9 +1413,9 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     lifecycleIdentity = 2;
     const backedLens = provided.lenses[0];
-    await expect(
-      registered.codeLensProvider.resolveCodeLens(model(), backedLens),
-    ).resolves.toBe(backedLens);
+    await expect(registered.codeLensProvider.resolveCodeLens(model(), backedLens)).resolves.toBe(
+      backedLens,
+    );
     expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
   });
 
@@ -1464,8 +1449,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       },
     );
     const payload = actions.actions[0].command?.arguments?.[0];
-    const runResolveAndApply =
-      registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
+    const runResolveAndApply = registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
 
     expect(payload).toMatchObject({
       lifecycleIdentity: 1,
@@ -1651,10 +1635,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.completionProvider.provideCompletionItems(
-        model({ content: source }),
-        position(),
-      ),
+      registered.completionProvider.provideCompletionItems(model({ content: source }), position()),
     ).resolves.toEqual({
       suggestions: [
         {
@@ -1683,8 +1664,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         isIncomplete: false,
         items: [
           {
-            detail:
-              "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
+            detail: "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
             documentation: null,
             insertText: "forceDestroy",
             kind: 2,
@@ -1696,8 +1676,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->forceD\n}\n",
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->forceD\n}\n",
       },
       featuresGateway: gateway,
     });
@@ -1807,8 +1786,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(): string\n{\n    return route('comments.sh');\n}\n",
+        content: "<?php\nfunction show(): string\n{\n    return route('comments.sh');\n}\n",
       },
       featuresGateway: featuresGateway({
         completion: {
@@ -1869,8 +1847,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(): string\n{\n    return route('comments.sh');\n}\n",
+        content: "<?php\nfunction show(): string\n{\n    return route('comments.sh');\n}\n",
       },
       featuresGateway: featuresGateway({
         completion: {
@@ -1923,8 +1900,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction name(): string\n{\n    return config('app.na');\n}\n",
+        content: "<?php\nfunction name(): string\n{\n    return config('app.na');\n}\n",
       },
       featuresGateway: featuresGateway({
         completion: {
@@ -1984,8 +1960,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction name(): string\n{\n    return env('APP_NA');\n}\n",
+        content: "<?php\nfunction name(): string\n{\n    return env('APP_NA');\n}\n",
       },
       featuresGateway: featuresGateway({
         completion: {
@@ -2033,10 +2008,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
-        declaringClassName:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-        detail:
-          "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        declaringClassName: "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        detail: "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
         documentation: "Nette AJAX snippet\n\nmailLogslisting",
         insertText: "mailLogslisting",
         kind: "nette.ajax-snippet" as const,
@@ -2077,15 +2050,13 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(result.suggestions).toEqual([
       expect.objectContaining({
         command: undefined,
-        detail:
-          "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        detail: "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
         documentation: "Nette AJAX snippet\n\nmailLogslisting",
         insertText: "mailLogslisting",
         insertTextRules: undefined,
         kind: 12,
         label: {
-          description:
-            "snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+          description: "snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
           detail: "",
           label: "mailLogslisting",
         },
@@ -2124,8 +2095,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction connection(): mixed\n{\n    return DB::connection('pg');\n}\n",
+        content: "<?php\nfunction connection(): mixed\n{\n    return DB::connection('pg');\n}\n",
       },
       featuresGateway: gateway,
       providePhpMethodCompletions,
@@ -2188,8 +2158,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction label(): string\n{\n    return __('messages.we');\n}\n",
+        content: "<?php\nfunction label(): string\n{\n    return __('messages.we');\n}\n",
       },
       featuresGateway: featuresGateway({
         completion: {
@@ -2249,8 +2218,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(): string\n{\n    return view('comments.sh');\n}\n",
+        content: "<?php\nfunction show(): string\n{\n    return view('comments.sh');\n}\n",
       },
       featuresGateway: featuresGateway({
         completion: {
@@ -2279,8 +2247,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(result.suggestions).toEqual([
       expect.objectContaining({
         command: undefined,
-        detail:
-          "Laravel view - resources/views/comments/show.blade.php",
+        detail: "Laravel view - resources/views/comments/show.blade.php",
         documentation: "Laravel view\n\ncomments.show",
         insertText: "show",
         insertTextRules: 4,
@@ -2301,8 +2268,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         isIncomplete: false,
         items: [
           {
-            detail:
-              "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
+            detail: "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
             documentation: null,
             filterText: "forceDestroy",
             insertText: "forceDestroy",
@@ -2325,8 +2291,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
       },
       featuresGateway: gateway,
       providePhpMethodCompletions,
@@ -2350,8 +2315,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(result.suggestions).toHaveLength(1);
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
-        detail:
-          "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
+        detail: "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
         filterText: "forceDestroy",
         insertText: "forceDestroy(${1:ids})$0",
         label: {
@@ -2372,24 +2336,26 @@ describe("registerLanguageServerMonacoProviders", () => {
       featuresGateway: featuresGateway({
         completion: {
           isIncomplete: true,
-          items: [{
-            deprecated: true,
-            detail: "function collect(iterable $value): Collection",
-            documentation: "Creates a **collection**.",
-            documentationKind: "markdown",
-            filterText: "collect helper",
-            insertText: "collect(${1:value})$0",
-            insertTextFormat: 2,
-            kind: 3,
-            label: "collect",
-            labelDetails: {
-              description: "Illuminate\\Support",
-              detail: "(iterable $value)",
+          items: [
+            {
+              deprecated: true,
+              detail: "function collect(iterable $value): Collection",
+              documentation: "Creates a **collection**.",
+              documentationKind: "markdown",
+              filterText: "collect helper",
+              insertText: "collect(${1:value})$0",
+              insertTextFormat: 2,
+              kind: 3,
+              label: "collect",
+              labelDetails: {
+                description: "Illuminate\\Support",
+                detail: "(iterable $value)",
+              },
+              preselect: true,
+              sortText: "0007",
+              tags: [1],
             },
-            preselect: true,
-            sortText: "0007",
-            tags: [1],
-          }],
+          ],
         },
       }),
     });
@@ -2460,9 +2426,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       }),
       { column: 10, lineNumber: 3 },
     );
-    const labels = result.suggestions.map(
-      (item: { label: string }) => item.label,
-    );
+    const labels = result.suggestions.map((item: { label: string }) => item.label);
 
     expect(labels).toContain("refresh");
     expect(labels).not.toContain("rotateSecret");
@@ -2475,8 +2439,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         isIncomplete: false,
         items: [
           {
-            detail:
-              "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
+            detail: "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
             documentation: null,
             insertText: "forceDelete",
             kind: 2,
@@ -2496,8 +2459,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
       },
       featuresGateway: gateway,
       providePhpMethodCompletions,
@@ -2521,8 +2483,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(result.suggestions).toHaveLength(1);
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
-        detail:
-          "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
+        detail: "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
         insertText: "forceDelete()$0",
         label: {
           description: "method - Illuminate\\Database\\Eloquent\\Model",
@@ -2540,8 +2501,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         isIncomplete: false,
         items: [
           {
-            detail:
-              "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
+            detail: "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
             documentation: null,
             insertText: "forceDelete",
             kind: null,
@@ -2561,8 +2521,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
       },
       featuresGateway: gateway,
       providePhpMethodCompletions,
@@ -2604,8 +2563,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         isIncomplete: false,
         items: [
           {
-            detail:
-              "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
+            detail: "Illuminate\\Database\\Eloquent\\Model::forceDelete(): bool",
             documentation: null,
             insertText: "forceDelete",
             kind: null,
@@ -2625,8 +2583,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
       },
       featuresGateway: gateway,
       providePhpMethodCompletions,
@@ -2680,8 +2637,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->ref\n}\n",
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->ref\n}\n",
       },
       featuresGateway: gateway,
     });
@@ -2734,8 +2690,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content:
-          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->ref\n}\n",
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->ref\n}\n",
       },
       featuresGateway: gateway,
     });
@@ -2782,7 +2737,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content: "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get\n}\n",
+        content:
+          "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get\n}\n",
       },
       providePhpMethodCompletions,
     });
@@ -2817,8 +2773,7 @@ describe("registerLanguageServerMonacoProviders", () => {
           insertTextRules: 4,
           kind: 2,
           label: {
-            description:
-              "method - Symfony\\Component\\HttpFoundation\\Request",
+            description: "method - Symfony\\Component\\HttpFoundation\\Request",
             detail: "()",
             label: "get",
           },
@@ -3114,16 +3069,13 @@ function store($request): void
     expect(gateway.completion).toHaveBeenCalled();
     expect(
       suggestions.some(
-        (suggestion) => suggestion.insertTextRules === 4 &&
+        (suggestion) =>
+          suggestion.insertTextRules === 4 &&
           typeof suggestion.insertText === "string" &&
           suggestion.insertText.includes("{\n\t$0\n}"),
       ),
     ).toBe(false);
-    expect(
-      suggestions.some(
-        (suggestion) => suggestion.label === "$banana",
-      ),
-    ).toBe(true);
+    expect(suggestions.some((suggestion) => suggestion.label === "$banana")).toBe(true);
   });
 
   it("offers PHP snippet completions for a typed prefix as InsertAsSnippet", async () => {
@@ -3285,9 +3237,7 @@ function store($request): void
 
     expect(lsp?.sortText).toBeDefined();
     expect(snippet?.sortText).toBeDefined();
-    expect(
-      String(snippet?.sortText).localeCompare(String(lsp?.sortText)),
-    ).toBeGreaterThan(0);
+    expect(String(snippet?.sortText).localeCompare(String(lsp?.sortText))).toBeGreaterThan(0);
   });
 
   it("does not offer PHP snippets inside member access completions", async () => {
@@ -3462,7 +3412,8 @@ function store($request): void
             label: "query",
           },
           {
-            detail: "App\\Models\\Comment::whereNull(string $column): Illuminate\\Database\\Eloquent\\Builder",
+            detail:
+              "App\\Models\\Comment::whereNull(string $column): Illuminate\\Database\\Eloquent\\Builder",
             documentation: null,
             insertText: "whereNull",
             kind: 3,
@@ -3496,11 +3447,7 @@ function store($request): void
       },
     );
 
-    expect(completionLabels(result.suggestions)).toEqual([
-      "STATUS_ACTIVE",
-      "query",
-      "whereNull",
-    ]);
+    expect(completionLabels(result.suggestions)).toEqual(["STATUS_ACTIVE", "query", "whereNull"]);
   });
 
   it("orders Model:: static completions by category and above phpactor noise", async () => {
@@ -3510,8 +3457,7 @@ function store($request): void
         isIncomplete: false,
         items: [
           {
-            detail:
-              "App\\Models\\Comment::query(): Illuminate\\Database\\Eloquent\\Builder",
+            detail: "App\\Models\\Comment::query(): Illuminate\\Database\\Eloquent\\Builder",
             documentation: null,
             insertText: "query",
             kind: 2,
@@ -3590,16 +3536,9 @@ function store($request): void
     );
 
     const rows = result.suggestions.map(
-      (suggestion: {
-        kind: number;
-        label: string | { label: string };
-        sortText?: string;
-      }) => ({
+      (suggestion: { kind: number; label: string | { label: string }; sortText?: string }) => ({
         kind: suggestion.kind,
-        name:
-          typeof suggestion.label === "string"
-            ? suggestion.label
-            : suggestion.label.label,
+        name: typeof suggestion.label === "string" ? suggestion.label : suggestion.label.label,
         sortText: suggestion.sortText,
       }),
     );
@@ -3861,16 +3800,9 @@ function store($request): void
     );
 
     const rows = result.suggestions.map(
-      (suggestion: {
-        kind: number;
-        label: string | { label: string };
-        sortText?: string;
-      }) => ({
+      (suggestion: { kind: number; label: string | { label: string }; sortText?: string }) => ({
         kind: suggestion.kind,
-        name:
-          typeof suggestion.label === "string"
-            ? suggestion.label
-            : suggestion.label.label,
+        name: typeof suggestion.label === "string" ? suggestion.label : suggestion.label.label,
         sortText: suggestion.sortText,
       }),
     );
@@ -4013,8 +3945,7 @@ function store($request): void
         isIncomplete: false,
         items: [
           {
-            detail:
-              "App\\Models\\Post::active(): Illuminate\\Database\\Eloquent\\Builder",
+            detail: "App\\Models\\Post::active(): Illuminate\\Database\\Eloquent\\Builder",
             documentation: null,
             insertText: "active",
             kind: 2,
@@ -4228,20 +4159,18 @@ function store($request): void
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content: "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
+        content:
+          "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
       },
       providePhpMethodSignature,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.signatureProvider.provideSignatureHelp(
-        model(),
-        {
-          column: 24,
-          lineNumber: 4,
-        },
-      ),
+      registered.signatureProvider.provideSignatureHelp(model(), {
+        column: 24,
+        lineNumber: 4,
+      }),
     ).resolves.toEqual({
       dispose: expect.any(Function),
       value: {
@@ -4251,10 +4180,7 @@ function store($request): void
           {
             documentation: "Symfony\\Component\\HttpFoundation\\Request",
             label: "get(string $key, mixed $default = null): mixed",
-            parameters: [
-              { label: "string $key" },
-              { label: "mixed $default = null" },
-            ],
+            parameters: [{ label: "string $key" }, { label: "mixed $default = null" }],
           },
         ],
       },
@@ -4268,9 +4194,7 @@ function store($request): void
     try {
       const registered = createRegisteredProviders();
       const gateway = featuresGateway();
-      gateway.signatureHelp = vi.fn(
-        () => new Promise<never>(() => undefined),
-      );
+      gateway.signatureHelp = vi.fn(() => new Promise<never>(() => undefined));
       const context = providerContext({
         activeDocument: {
           ...document(),
@@ -4285,29 +4209,29 @@ function store($request): void
             parameters: "string $key",
             returnType: "mixed",
           },
-          parameters: [{
-            defaultValue: null,
-            name: "$key",
-            optional: false,
-            raw: "string $key",
-            type: "string",
-          }],
+          parameters: [
+            {
+              defaultValue: null,
+              name: "$key",
+              optional: false,
+              raw: "string $key",
+              type: "string",
+            },
+          ],
         })),
       });
       registerLanguageServerMonacoProviders(registered.monaco, context);
 
-      const pending = registered.signatureProvider.provideSignatureHelp(
-        model(),
-        { column: 19, lineNumber: 2 },
-      );
+      const pending = registered.signatureProvider.provideSignatureHelp(model(), {
+        column: 19,
+        lineNumber: 2,
+      });
       await vi.advanceTimersByTimeAsync(21);
 
       await expect(pending).resolves.toEqual(
         expect.objectContaining({
           value: expect.objectContaining({
-            signatures: [
-              expect.objectContaining({ label: "get(string $key): mixed" }),
-            ],
+            signatures: [expect.objectContaining({ label: "get(string $key): mixed" })],
           }),
         }),
       );
@@ -4381,12 +4305,9 @@ function store($request): void
     );
 
     expect(result?.value.activeSignature).toBe(1);
-    expect(result?.value.signatures.map(
-      (signature: { label: string }) => signature.label,
-    )).toEqual([
-      "get(string $key, mixed $default = null): mixed",
-      "get(array $keys): array",
-    ]);
+    expect(result?.value.signatures.map((signature: { label: string }) => signature.label)).toEqual(
+      ["get(string $key, mixed $default = null): mixed", "get(array $keys): array"],
+    );
     expect(gateway.signatureHelp).toHaveBeenCalledWith(
       "/project",
       expect.any(Object),
@@ -4401,9 +4322,8 @@ function store($request): void
   it("drops stale PHP LSP signature help after a project switch", async () => {
     const registered = createRegisteredProviders();
     let activeRoot = "/project";
-    const signature = createDeferred<
-      Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>
-    >();
+    const signature =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>>();
     const gateway = featuresGateway();
     gateway.signatureHelp = vi.fn(async () => signature.promise);
     const context = providerContext({
@@ -4413,20 +4333,22 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const pending = registered.signatureProvider.provideSignatureHelp(
-      model(),
-      { column: 15, lineNumber: 2 },
-    );
+    const pending = registered.signatureProvider.provideSignatureHelp(model(), {
+      column: 15,
+      lineNumber: 2,
+    });
     await Promise.resolve();
     activeRoot = "/other";
     signature.resolve({
       activeParameter: 0,
       activeSignature: 0,
-      signatures: [{
-        documentation: null,
-        label: "collect(iterable $value): Collection",
-        parameters: [{ documentation: null, label: "iterable $value" }],
-      }],
+      signatures: [
+        {
+          documentation: null,
+          label: "collect(iterable $value): Collection",
+          parameters: [{ documentation: null, label: "iterable $value" }],
+        },
+      ],
     });
 
     await expect(pending).resolves.toBeNull();
@@ -4440,20 +4362,18 @@ function store($request): void
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content: "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
+        content:
+          "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
       },
       getWorkspaceRoot: () => activeRoot,
       providePhpMethodSignature,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const signaturePromise = registered.signatureProvider.provideSignatureHelp(
-      model(),
-      {
-        column: 24,
-        lineNumber: 4,
-      },
-    );
+    const signaturePromise = registered.signatureProvider.provideSignatureHelp(model(), {
+      column: 24,
+      lineNumber: 4,
+    });
 
     await Promise.resolve();
     activeRoot = null;
@@ -4495,20 +4415,18 @@ function store($request): void
     const context = providerContext({
       activeDocument: {
         ...document(),
-        content: "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
+        content:
+          "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
       },
       getWorkspaceRoot: () => activeRoot,
       providePhpMethodSignature,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const signaturePromise = registered.signatureProvider.provideSignatureHelp(
-      model(),
-      {
-        column: 24,
-        lineNumber: 4,
-      },
-    );
+    const signaturePromise = registered.signatureProvider.provideSignatureHelp(model(), {
+      column: 24,
+      lineNumber: 4,
+    });
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -4563,14 +4481,8 @@ function store($request): void
           data: null,
           edit: {
             changes: {
-              ...workspaceEdit(
-                "file:///project/src/User.php",
-                "use App\\Models\\User;\n",
-              ).changes,
-              ...workspaceEdit(
-                "file:///project-neighbor/src/User.php",
-                "leak",
-              ).changes,
+              ...workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n").changes,
+              ...workspaceEdit("file:///project-neighbor/src/User.php", "leak").changes,
             },
           },
           isPreferred: true,
@@ -4608,9 +4520,7 @@ function store($request): void
       },
     );
 
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.codeActions).toHaveBeenCalledWith(
       "/project",
       "/project/src/User.php",
@@ -4682,29 +4592,24 @@ function store($request): void
     const registered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
     const codeActions =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.codeActions).mockImplementationOnce(
-      async () => codeActions.promise,
-    );
+    vi.mocked(gateway.codeActions).mockImplementationOnce(async () => codeActions.promise);
     const context = providerContext({
       featuresGateway: gateway,
       getWorkspaceRoot: () => activeRoot,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const codeActionsPromise =
-      registered.codeActionProvider.provideCodeActions(
-        model(),
-        new registered.monaco.Range(3, 5, 3, 9),
-        {
-          markers: [],
-          only: "quickfix",
-          trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
-        },
-      );
+    const codeActionsPromise = registered.codeActionProvider.provideCodeActions(
+      model(),
+      new registered.monaco.Range(3, 5, 3, 9),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
 
     await Promise.resolve();
     activeRoot = null;
@@ -4739,13 +4644,9 @@ function store($request): void
     const registered = createRegisteredProviders();
     let activeSessionId = 1;
     const codeActions =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.codeActions).mockImplementationOnce(
-      async () => codeActions.promise,
-    );
+    vi.mocked(gateway.codeActions).mockImplementationOnce(async () => codeActions.promise);
     const context = providerContext({
       featuresGateway: gateway,
       getRuntimeStatus: () => ({
@@ -4755,16 +4656,15 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const codeActionsPromise =
-      registered.codeActionProvider.provideCodeActions(
-        model(),
-        new registered.monaco.Range(3, 5, 3, 9),
-        {
-          markers: [],
-          only: "quickfix",
-          trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
-        },
-      );
+    const codeActionsPromise = registered.codeActionProvider.provideCodeActions(
+      model(),
+      new registered.monaco.Range(3, 5, 3, 9),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -4907,23 +4807,19 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const selectionRanges =
-      await registered.selectionRangeProvider.provideSelectionRanges(model(), [
+    const selectionRanges = await registered.selectionRangeProvider.provideSelectionRanges(
+      model(),
+      [
         { column: 12, lineNumber: 4 },
         { column: 7, lineNumber: 10 },
-      ]);
-
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.selectionRanges).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-      [
-        { character: 11, line: 3 },
-        { character: 6, line: 9 },
       ],
     );
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.selectionRanges).toHaveBeenCalledWith("/project", "/project/src/User.php", [
+      { character: 11, line: 3 },
+      { character: 6, line: 9 },
+    ]);
     expect(selectionRanges).toEqual([
       [
         {
@@ -5050,23 +4946,19 @@ function store($request): void
     const registered = createRegisteredProviders();
     let activeRoot = "/project";
     const selectionRanges =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.selectionRanges).mockImplementationOnce(
-      async () => selectionRanges.promise,
-    );
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(async () => selectionRanges.promise);
     const context = providerContext({
       featuresGateway: gateway,
       getWorkspaceRoot: () => activeRoot,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const selectionRangesPromise =
-      registered.selectionRangeProvider.provideSelectionRanges(model(), [
-        { column: 12, lineNumber: 4 },
-      ]);
+    const selectionRangesPromise = registered.selectionRangeProvider.provideSelectionRanges(
+      model(),
+      [{ column: 12, lineNumber: 4 }],
+    );
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -5078,34 +4970,28 @@ function store($request): void
     ]);
 
     await expect(selectionRangesPromise).resolves.toBeNull();
-    expect(gateway.selectionRanges).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-      [{ character: 11, line: 3 }],
-    );
+    expect(gateway.selectionRanges).toHaveBeenCalledWith("/project", "/project/src/User.php", [
+      { character: 11, line: 3 },
+    ]);
   });
 
   it("drops in-flight PHP selection ranges when no project tab is active", async () => {
     const registered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
     const selectionRanges =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.selectionRanges).mockImplementationOnce(
-      async () => selectionRanges.promise,
-    );
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(async () => selectionRanges.promise);
     const context = providerContext({
       featuresGateway: gateway,
       getWorkspaceRoot: () => activeRoot,
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const selectionRangesPromise =
-      registered.selectionRangeProvider.provideSelectionRanges(model(), [
-        { column: 12, lineNumber: 4 },
-      ]);
+    const selectionRangesPromise = registered.selectionRangeProvider.provideSelectionRanges(
+      model(),
+      [{ column: 12, lineNumber: 4 }],
+    );
 
     await Promise.resolve();
     activeRoot = null;
@@ -5117,11 +5003,9 @@ function store($request): void
     ]);
 
     await expect(selectionRangesPromise).resolves.toBeNull();
-    expect(gateway.selectionRanges).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-      [{ character: 11, line: 3 }],
-    );
+    expect(gateway.selectionRanges).toHaveBeenCalledWith("/project", "/project/src/User.php", [
+      { character: 11, line: 3 },
+    ]);
   });
 
   it("maps nested PHP DocumentSymbol responses with deprecated tags", async () => {
@@ -5231,13 +5115,8 @@ function store($request): void
         tags: [],
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.documentSymbols).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.documentSymbols).toHaveBeenCalledWith("/project", "/project/src/User.php");
   });
 
   it("does not request PHP DocumentSymbol when capability is disabled or runtime root mismatches", async () => {
@@ -5359,16 +5238,11 @@ function store($request): void
     );
 
     const syncedResult =
-      await syncedRegistered.documentSymbolProvider.provideDocumentSymbols(
-        model(),
-      );
+      await syncedRegistered.documentSymbolProvider.provideDocumentSymbols(model());
 
     expect(syncedResult).not.toBeNull();
     expect(syncedFlush).toHaveBeenCalledWith("/project/src/User.php");
-    expect(syncedGateway.documentSymbols).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
+    expect(syncedGateway.documentSymbols).toHaveBeenCalledWith("/project", "/project/src/User.php");
     expect(syncedSeen).toContainEqual({
       path: "/project/src/User.php",
       rootPath: "/project",
@@ -5379,9 +5253,7 @@ function store($request): void
     const sessionRegistered = createRegisteredProviders();
     let activeSessionId = 1;
     const sessionSymbols =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>>();
     const sessionGateway = featuresGateway();
     vi.mocked(sessionGateway.documentSymbols).mockImplementationOnce(
       async () => sessionSymbols.promise,
@@ -5397,8 +5269,7 @@ function store($request): void
       }),
     );
 
-    const sessionPromise =
-      sessionRegistered.documentSymbolProvider.provideDocumentSymbols(model());
+    const sessionPromise = sessionRegistered.documentSymbolProvider.provideDocumentSymbols(model());
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -5419,13 +5290,9 @@ function store($request): void
     const rootRegistered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
     const rootSymbols =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>>();
     const rootGateway = featuresGateway();
-    vi.mocked(rootGateway.documentSymbols).mockImplementationOnce(
-      async () => rootSymbols.promise,
-    );
+    vi.mocked(rootGateway.documentSymbols).mockImplementationOnce(async () => rootSymbols.promise);
     registerLanguageServerMonacoProviders(
       rootRegistered.monaco,
       providerContext({
@@ -5434,8 +5301,7 @@ function store($request): void
       }),
     );
 
-    const rootPromise =
-      rootRegistered.documentSymbolProvider.provideDocumentSymbols(model());
+    const rootPromise = rootRegistered.documentSymbolProvider.provideDocumentSymbols(model());
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -5547,8 +5413,7 @@ function store($request): void
       providerContext({ featuresGateway: gateway }),
     );
 
-    const symbols =
-      await registered.workspaceSymbolProvider.provideWorkspaceSymbols("User");
+    const symbols = await registered.workspaceSymbolProvider.provideWorkspaceSymbols("User");
 
     expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
     expect(symbols).toEqual([
@@ -5621,9 +5486,7 @@ function store($request): void
     const sessionRegistered = createRegisteredProviders();
     let activeSessionId = 1;
     const sessionSymbols =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
     const sessionGateway = featuresGateway();
     vi.mocked(sessionGateway.workspaceSymbols).mockImplementationOnce(
       async () => sessionSymbols.promise,
@@ -5657,21 +5520,14 @@ function store($request): void
     ]);
 
     await expect(sessionPromise).resolves.toEqual([]);
-    expect(sessionGateway.workspaceSymbols).toHaveBeenCalledWith(
-      "/project",
-      "User",
-    );
+    expect(sessionGateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
 
     const rootRegistered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
     const rootSymbols =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
     const rootGateway = featuresGateway();
-    vi.mocked(rootGateway.workspaceSymbols).mockImplementationOnce(
-      async () => rootSymbols.promise,
-    );
+    vi.mocked(rootGateway.workspaceSymbols).mockImplementationOnce(async () => rootSymbols.promise);
     registerLanguageServerMonacoProviders(
       rootRegistered.monaco,
       providerContext({
@@ -5680,8 +5536,7 @@ function store($request): void
       }),
     );
 
-    const rootPromise =
-      rootRegistered.workspaceSymbolProvider.provideWorkspaceSymbols("User");
+    const rootPromise = rootRegistered.workspaceSymbolProvider.provideWorkspaceSymbols("User");
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -5698,10 +5553,7 @@ function store($request): void
     ]);
 
     await expect(rootPromise).resolves.toEqual([]);
-    expect(rootGateway.workspaceSymbols).toHaveBeenCalledWith(
-      "/project",
-      "User",
-    );
+    expect(rootGateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
   });
 
   it("maps PHP FoldingRange responses with a kind", async () => {
@@ -5724,25 +5576,16 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    await expect(
-      registered.foldingRangeProvider.provideFoldingRanges(model()),
-    ).resolves.toEqual([
+    await expect(registered.foldingRangeProvider.provideFoldingRanges(model())).resolves.toEqual([
       {
         end: 9,
         kind: { value: "region" },
         start: 3,
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.foldingRanges).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
-    expect(
-      registered.monaco.languages.FoldingRangeKind.fromValue,
-    ).toHaveBeenCalledWith("region");
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.foldingRanges).toHaveBeenCalledWith("/project", "/project/src/User.php");
+    expect(registered.monaco.languages.FoldingRangeKind.fromValue).toHaveBeenCalledWith("region");
   });
 
   it("maps PHP FoldingRange responses without a kind", async () => {
@@ -5761,18 +5604,14 @@ function store($request): void
     const context = providerContext({ featuresGateway: gateway });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    await expect(
-      registered.foldingRangeProvider.provideFoldingRanges(model()),
-    ).resolves.toEqual([
+    await expect(registered.foldingRangeProvider.provideFoldingRanges(model())).resolves.toEqual([
       {
         end: 7,
         kind: undefined,
         start: 2,
       },
     ]);
-    expect(
-      registered.monaco.languages.FoldingRangeKind.fromValue,
-    ).not.toHaveBeenCalled();
+    expect(registered.monaco.languages.FoldingRangeKind.fromValue).not.toHaveBeenCalled();
   });
 
   it("does not request PHP FoldingRange when capability is disabled or runtime root mismatches", async () => {
@@ -5841,9 +5680,7 @@ function store($request): void
     const sessionRegistered = createRegisteredProviders();
     let activeSessionId = 1;
     const sessionRanges =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>>>();
     const sessionGateway = featuresGateway();
     vi.mocked(sessionGateway.foldingRanges).mockImplementationOnce(
       async () => sessionRanges.promise,
@@ -5859,8 +5696,7 @@ function store($request): void
       }),
     );
 
-    const sessionPromise =
-      sessionRegistered.foldingRangeProvider.provideFoldingRanges(model());
+    const sessionPromise = sessionRegistered.foldingRangeProvider.provideFoldingRanges(model());
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -5879,13 +5715,9 @@ function store($request): void
     const rootRegistered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
     const rootRanges =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>>>();
     const rootGateway = featuresGateway();
-    vi.mocked(rootGateway.foldingRanges).mockImplementationOnce(
-      async () => rootRanges.promise,
-    );
+    vi.mocked(rootGateway.foldingRanges).mockImplementationOnce(async () => rootRanges.promise);
     registerLanguageServerMonacoProviders(
       rootRegistered.monaco,
       providerContext({
@@ -5894,8 +5726,7 @@ function store($request): void
       }),
     );
 
-    const rootPromise =
-      rootRegistered.foldingRangeProvider.provideFoldingRanges(model());
+    const rootPromise = rootRegistered.foldingRangeProvider.provideFoldingRanges(model());
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -5930,10 +5761,10 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.documentFormattingProvider.provideDocumentFormattingEdits(
-        model(),
-        { insertSpaces: false, tabSize: 2 },
-      ),
+      registered.documentFormattingProvider.provideDocumentFormattingEdits(model(), {
+        insertSpaces: false,
+        tabSize: 2,
+      }),
     ).resolves.toEqual([
       {
         range: expect.objectContaining({
@@ -5945,17 +5776,11 @@ function store($request): void
         text: "<?php\nfunction show(): void {}\n",
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.formatting).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-      {
-        insertSpaces: false,
-        tabSize: 2,
-      },
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.formatting).toHaveBeenCalledWith("/project", "/project/src/User.php", {
+      insertSpaces: false,
+      tabSize: 2,
+    });
   });
 
   it("maps PHP range formatting edits, range and options", async () => {
@@ -6012,9 +5837,7 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     expect(registered.onTypeFormattingLanguage).toBe("php");
-    expect(
-      registered.onTypeFormattingProvider.autoFormatTriggerCharacters,
-    ).toEqual([";", "}"]);
+    expect(registered.onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual([";", "}"]);
   });
 
   it("falls back to empty PHP on-type formatting trigger characters", () => {
@@ -6026,9 +5849,7 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    expect(
-      registered.onTypeFormattingProvider.autoFormatTriggerCharacters,
-    ).toEqual([]);
+    expect(registered.onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual([]);
   });
 
   it("ignores PHP on-type formatting trigger characters from a mismatched runtime root", () => {
@@ -6044,9 +5865,7 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    expect(
-      registered.onTypeFormattingProvider.autoFormatTriggerCharacters,
-    ).toEqual([]);
+    expect(registered.onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual([]);
   });
 
   it("maps PHP on-type formatting edits, position, character and options", async () => {
@@ -6084,9 +5903,7 @@ function store($request): void
         text: "    }\n",
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.onTypeFormatting).toHaveBeenCalledWith(
       "/project",
       "/project/src/User.php",
@@ -6175,9 +5992,7 @@ function store($request): void
     const sessionRegistered = createRegisteredProviders();
     let activeSessionId = 1;
     const sessionEdits =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>>>();
     const sessionGateway = featuresGateway();
     vi.mocked(sessionGateway.onTypeFormatting).mockImplementationOnce(
       async () => sessionEdits.promise,
@@ -6193,13 +6008,12 @@ function store($request): void
       }),
     );
 
-    const sessionPromise =
-      sessionRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
-        model(),
-        { column: 6, lineNumber: 5 },
-        "}",
-        { insertSpaces: true, tabSize: 4 },
-      );
+    const sessionPromise = sessionRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
+      model(),
+      { column: 6, lineNumber: 5 },
+      "}",
+      { insertSpaces: true, tabSize: 4 },
+    );
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -6210,13 +6024,9 @@ function store($request): void
     const rootRegistered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
     const rootEdits =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>>>();
     const rootGateway = featuresGateway();
-    vi.mocked(rootGateway.onTypeFormatting).mockImplementationOnce(
-      async () => rootEdits.promise,
-    );
+    vi.mocked(rootGateway.onTypeFormatting).mockImplementationOnce(async () => rootEdits.promise);
     registerLanguageServerMonacoProviders(
       rootRegistered.monaco,
       providerContext({
@@ -6225,13 +6035,12 @@ function store($request): void
       }),
     );
 
-    const rootPromise =
-      rootRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
-        model(),
-        { column: 6, lineNumber: 5 },
-        ";",
-        { insertSpaces: false, tabSize: 2 },
-      );
+    const rootPromise = rootRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
+      model(),
+      { column: 6, lineNumber: 5 },
+      ";",
+      { insertSpaces: false, tabSize: 2 },
+    );
 
     await Promise.resolve();
     activeRoot = null;
@@ -6270,10 +6079,10 @@ function store($request): void
     );
 
     await expect(
-      disabledRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
-        model(),
-        { insertSpaces: true, tabSize: 4 },
-      ),
+      disabledRegistered.documentFormattingProvider.provideDocumentFormattingEdits(model(), {
+        insertSpaces: true,
+        tabSize: 4,
+      }),
     ).resolves.toEqual([]);
     await expect(
       disabledRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
@@ -6303,10 +6112,10 @@ function store($request): void
     );
 
     await expect(
-      mismatchedRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
-        model(),
-        { insertSpaces: true, tabSize: 4 },
-      ),
+      mismatchedRegistered.documentFormattingProvider.provideDocumentFormattingEdits(model(), {
+        insertSpaces: true,
+        tabSize: 4,
+      }),
     ).resolves.toEqual([]);
     await expect(
       mismatchedRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
@@ -6324,17 +6133,11 @@ function store($request): void
     const sessionRegistered = createRegisteredProviders();
     let activeSessionId = 1;
     const documentEdits =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>>();
     const rangeEdits =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>>>();
     const sessionGateway = featuresGateway();
-    vi.mocked(sessionGateway.formatting).mockImplementationOnce(
-      async () => documentEdits.promise,
-    );
+    vi.mocked(sessionGateway.formatting).mockImplementationOnce(async () => documentEdits.promise);
     vi.mocked(sessionGateway.rangeFormatting).mockImplementationOnce(
       async () => rangeEdits.promise,
     );
@@ -6350,10 +6153,10 @@ function store($request): void
     );
 
     const documentPromise =
-      sessionRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
-        model(),
-        { insertSpaces: true, tabSize: 4 },
-      );
+      sessionRegistered.documentFormattingProvider.provideDocumentFormattingEdits(model(), {
+        insertSpaces: true,
+        tabSize: 4,
+      });
     const rangePromise =
       sessionRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
         model(),
@@ -6372,17 +6175,11 @@ function store($request): void
     const rootRegistered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
     const rootDocumentEdits =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>>();
     const rootRangeEdits =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>>>();
     const rootGateway = featuresGateway();
-    vi.mocked(rootGateway.formatting).mockImplementationOnce(
-      async () => rootDocumentEdits.promise,
-    );
+    vi.mocked(rootGateway.formatting).mockImplementationOnce(async () => rootDocumentEdits.promise);
     vi.mocked(rootGateway.rangeFormatting).mockImplementationOnce(
       async () => rootRangeEdits.promise,
     );
@@ -6395,10 +6192,10 @@ function store($request): void
     );
 
     const rootDocumentPromise =
-      rootRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
-        model(),
-        { insertSpaces: true, tabSize: 4 },
-      );
+      rootRegistered.documentFormattingProvider.provideDocumentFormattingEdits(model(), {
+        insertSpaces: true,
+        tabSize: 4,
+      });
     const rootRangePromise =
       rootRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
         model(),
@@ -6408,12 +6205,8 @@ function store($request): void
 
     await Promise.resolve();
     activeRoot = null;
-    rootDocumentEdits.resolve([
-      { newText: "<?php\n", range: range(0, 0, 1, 0) },
-    ]);
-    rootRangeEdits.resolve([
-      { newText: "echo $user;", range: range(3, 0, 3, 10) },
-    ]);
+    rootDocumentEdits.resolve([{ newText: "<?php\n", range: range(0, 0, 1, 0) }]);
+    rootRangeEdits.resolve([{ newText: "echo $user;", range: range(3, 0, 3, 10) }]);
 
     await expect(rootDocumentPromise).resolves.toEqual([]);
     await expect(rootRangePromise).resolves.toEqual([]);
@@ -6438,9 +6231,7 @@ function store($request): void
     );
 
     await expect(
-      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
-        model(),
-      ),
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(model()),
     ).resolves.toEqual({
       data: Uint32Array.from(tokenData),
       resultId: "full-1",
@@ -6483,13 +6274,8 @@ function store($request): void
         "operator",
       ],
     });
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.semanticTokens).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.semanticTokens).toHaveBeenCalledWith("/project", "/project/src/User.php");
   });
 
   it("maps PHP range semantic tokens and range", async () => {
@@ -6518,9 +6304,7 @@ function store($request): void
     ).resolves.toEqual({
       data: Uint32Array.from(tokenData),
     });
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
       "/project",
       "/project/src/User.php",
@@ -6551,9 +6335,7 @@ function store($request): void
     );
 
     await expect(
-      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
-        model(),
-      ),
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(model()),
     ).resolves.toBeNull();
     await expect(
       registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
@@ -6571,9 +6353,7 @@ function store($request): void
     let activeSessionId = 1;
     const fullTokens = createDeferred<LanguageServerSemanticTokens | null>();
     const sessionGateway = featuresGateway();
-    vi.mocked(sessionGateway.semanticTokens).mockImplementationOnce(
-      async () => fullTokens.promise,
-    );
+    vi.mocked(sessionGateway.semanticTokens).mockImplementationOnce(async () => fullTokens.promise);
     registerLanguageServerMonacoProviders(
       sessionRegistered.monaco,
       providerContext({
@@ -6586,9 +6366,7 @@ function store($request): void
     );
 
     const fullPromise =
-      sessionRegistered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
-        model(),
-      );
+      sessionRegistered.documentSemanticTokensProvider.provideDocumentSemanticTokens(model());
 
     for (
       let tick = 0;
@@ -6629,8 +6407,7 @@ function store($request): void
 
     for (
       let tick = 0;
-      tick < 5 &&
-      vi.mocked(rootGateway.rangeSemanticTokens).mock.calls.length === 0;
+      tick < 5 && vi.mocked(rootGateway.rangeSemanticTokens).mock.calls.length === 0;
       tick += 1
     ) {
       await Promise.resolve();
@@ -6661,10 +6438,7 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.linkedEditingRangeProvider.provideLinkedEditingRanges(
-        model(),
-        position(),
-      ),
+      registered.linkedEditingRangeProvider.provideLinkedEditingRanges(model(), position()),
     ).resolves.toEqual({
       ranges: [
         expect.objectContaining({
@@ -6682,9 +6456,7 @@ function store($request): void
       ],
       wordPattern: /[A-Za-z_][A-Za-z0-9_]*/,
     });
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.linkedEditingRanges).toHaveBeenCalledWith("/project", {
       character: 4,
       line: 10,
@@ -6701,10 +6473,7 @@ function store($request): void
     );
 
     await expect(
-      nullRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
-        model(),
-        position(),
-      ),
+      nullRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(model(), position()),
     ).resolves.toBeNull();
 
     const emptyRegistered = createRegisteredProviders();
@@ -6720,10 +6489,7 @@ function store($request): void
     );
 
     await expect(
-      emptyRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
-        model(),
-        position(),
-      ),
+      emptyRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(model(), position()),
     ).resolves.toBeNull();
   });
 
@@ -6741,10 +6507,7 @@ function store($request): void
     );
 
     await expect(
-      registered.linkedEditingRangeProvider.provideLinkedEditingRanges(
-        model(),
-        position(),
-      ),
+      registered.linkedEditingRangeProvider.provideLinkedEditingRanges(model(), position()),
     ).resolves.toEqual({
       ranges: [
         expect.objectContaining({
@@ -6776,10 +6539,7 @@ function store($request): void
     );
 
     await expect(
-      disabledRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
-        model(),
-        position(),
-      ),
+      disabledRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(model(), position()),
     ).resolves.toBeNull();
     expect(disabledFlush).not.toHaveBeenCalled();
     expect(disabledGateway.linkedEditingRanges).not.toHaveBeenCalled();
@@ -6834,11 +6594,10 @@ function store($request): void
       }),
     );
 
-    const sessionPromise =
-      sessionRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
-        model(),
-        position(),
-      );
+    const sessionPromise = sessionRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+      model(),
+      position(),
+    );
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -6864,11 +6623,10 @@ function store($request): void
       }),
     );
 
-    const rootPromise =
-      rootRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
-        model(),
-        position(),
-      );
+    const rootPromise = rootRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+      model(),
+      position(),
+    );
 
     await Promise.resolve();
     activeRoot = null;
@@ -6892,10 +6650,7 @@ function store($request): void
     };
     const resolvedAction = {
       ...unresolvedAction,
-      edit: workspaceEdit(
-        "file:///project/src/User.php",
-        "use App\\Models\\User;\n",
-      ),
+      edit: workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n"),
     };
     const gateway = featuresGateway({
       codeActions: [unresolvedAction],
@@ -6913,14 +6668,9 @@ function store($request): void
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
-    const resolved = await registered.codeActionProvider.resolveCodeAction(
-      actions.actions[0],
-    );
+    const resolved = await registered.codeActionProvider.resolveCodeAction(actions.actions[0]);
 
-    expect(gateway.resolveCodeAction).toHaveBeenCalledWith(
-      "/project",
-      unresolvedAction,
-    );
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith("/project", unresolvedAction);
     expect(resolved).toEqual(
       expect.objectContaining({
         edit: {
@@ -6962,10 +6712,7 @@ function store($request): void
     };
     const resolvedAction = {
       ...unresolvedAction,
-      edit: workspaceEdit(
-        "file:///project/src/User.php",
-        "use App\\Models\\User;\n",
-      ),
+      edit: workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n"),
     };
     const openModel = {
       ...model({ content: "", path: openPath }),
@@ -7006,8 +6753,7 @@ function store($request): void
       }),
     );
 
-    const runResolveAndApply =
-      registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
+    const runResolveAndApply = registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
 
     if (!runResolveAndApply) {
       throw new Error("PHP resolve-and-apply code action command was not registered");
@@ -7016,10 +6762,7 @@ function store($request): void
     await runResolveAndApply(null, actionCommand.arguments[0]);
 
     expect(flushPendingDocumentChange).toHaveBeenCalledWith(openPath);
-    expect(gateway.resolveCodeAction).toHaveBeenCalledWith(
-      "/project",
-      unresolvedAction,
-    );
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith("/project", unresolvedAction);
     expect(openModel.pushEditOperations).toHaveBeenCalledWith(
       [],
       [
@@ -7037,6 +6780,8 @@ function store($request): void
     );
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(resolvedAction.edit, {
       applyOpenModels: expect.any(Function),
+      expectedClosedFileHashes: undefined,
+      requiresAtomicFinalization: true,
       openPaths: [openPath],
       rootPath: "/project",
     });
@@ -7053,10 +6798,7 @@ function store($request): void
       __languageServerAction: {
         command: null,
         data: { id: "override-method" },
-        edit: workspaceEdit(
-          "file:///project/src/User.php",
-          "public function handle(): void {}\n",
-        ),
+        edit: workspaceEdit("file:///project/src/User.php", "public function handle(): void {}\n"),
         isPreferred: true,
         kind: "quickfix",
         title: "Override one of 3 methods",
@@ -7079,8 +6821,7 @@ function store($request): void
       title: "Override one of 3 methods",
     };
 
-    const resolved =
-      await registered.codeActionProvider.resolveCodeAction(inlineEditAction);
+    const resolved = await registered.codeActionProvider.resolveCodeAction(inlineEditAction);
 
     expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
     expect(resolved).toBe(inlineEditAction);
@@ -7120,10 +6861,7 @@ function store($request): void
       ],
     });
     const applyWorkspaceEdit = vi.fn(
-      async (
-        _edit: LanguageServerWorkspaceEdit,
-        _context: PhpWorkspaceEditApplicationContext,
-      ) => ({
+      async (_edit: LanguageServerWorkspaceEdit, _context: PhpWorkspaceEditApplicationContext) => ({
         kind: "rejected" as const,
         path: openPath,
         reason: "staleDocumentVersion" as const,
@@ -7148,8 +6886,7 @@ function store($request): void
     expect(action.edit).toBeUndefined();
     expect(action.command?.id).toBe("mockor.php.resolveAndApplyCodeAction");
 
-    const runApply =
-      registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
+    const runApply = registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
     if (!runApply) {
       throw new Error("PHP staged code action command was not registered");
     }
@@ -7159,6 +6896,8 @@ function store($request): void
     expect(openModel.pushEditOperations).not.toHaveBeenCalled();
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(edit, {
       applyOpenModels: expect.any(Function),
+      expectedClosedFileHashes: undefined,
+      requiresAtomicFinalization: true,
       openPaths: [openPath],
       rootPath: "/project",
     });
@@ -7192,8 +6931,7 @@ function store($request): void
       title: "Fix all",
     };
 
-    const resolved =
-      await registered.codeActionProvider.resolveCodeAction(commandAction);
+    const resolved = await registered.codeActionProvider.resolveCodeAction(commandAction);
 
     expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
     expect(resolved).toBe(commandAction);
@@ -7211,8 +6949,7 @@ function store($request): void
 
     const editlessAction = backedCodeAction();
 
-    const resolved =
-      await registered.codeActionProvider.resolveCodeAction(editlessAction);
+    const resolved = await registered.codeActionProvider.resolveCodeAction(editlessAction);
 
     expect(resolved).toBe(editlessAction);
     expect(reportError).not.toHaveBeenCalled();
@@ -7222,9 +6959,7 @@ function store($request): void
     const registered = createRegisteredProviders();
     let activeSessionId = 1;
     const resolvedCodeAction =
-      createDeferred<
-        Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>>
-      >();
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>>>();
     const gateway = featuresGateway();
     vi.mocked(gateway.resolveCodeAction).mockImplementationOnce(
       async () => resolvedCodeAction.promise,
@@ -7239,18 +6974,14 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
     const backedAction = backedCodeAction();
 
-    const resolvePromise =
-      registered.codeActionProvider.resolveCodeAction(backedAction);
+    const resolvePromise = registered.codeActionProvider.resolveCodeAction(backedAction);
 
     await Promise.resolve();
     activeSessionId = 2;
     resolvedCodeAction.resolve({
       command: null,
       data: null,
-      edit: workspaceEdit(
-        "file:///project/src/User.php",
-        "use App\\Models\\User;\n",
-      ),
+      edit: workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n"),
       isPreferred: true,
       kind: "quickfix",
       title: "Import User",
@@ -7269,10 +7000,7 @@ function store($request): void
       resolvedCodeAction: {
         command: null,
         data: null,
-        edit: workspaceEdit(
-          "file:///project/src/User.php",
-          "use App\\Models\\User;\n",
-        ),
+        edit: workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n"),
         isPreferred: true,
         kind: "quickfix",
         title: "Import User",
@@ -7289,9 +7017,9 @@ function store($request): void
 
     const backedAction = backedCodeAction();
 
-    await expect(
-      registered.codeActionProvider.resolveCodeAction(backedAction),
-    ).resolves.toBe(backedAction);
+    await expect(registered.codeActionProvider.resolveCodeAction(backedAction)).resolves.toBe(
+      backedAction,
+    );
     if (!registered.commandRun) {
       throw new Error("PHP language server command was not registered");
     }
@@ -7307,10 +7035,7 @@ function store($request): void
       resolvedCodeAction: {
         command: null,
         data: null,
-        edit: workspaceEdit(
-          "file:///project/src/User.php",
-          "use App\\Models\\User;\n",
-        ),
+        edit: workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n"),
         isPreferred: true,
         kind: "quickfix",
         title: "Import User",
@@ -7324,9 +7049,9 @@ function store($request): void
 
     const backedAction = backedCodeAction();
 
-    await expect(
-      registered.codeActionProvider.resolveCodeAction(backedAction),
-    ).resolves.toBe(backedAction);
+    await expect(registered.codeActionProvider.resolveCodeAction(backedAction)).resolves.toBe(
+      backedAction,
+    );
     if (!registered.commandRun) {
       throw new Error("PHP language server command was not registered");
     }
@@ -7342,10 +7067,7 @@ function store($request): void
       resolvedCodeAction: {
         command: null,
         data: null,
-        edit: workspaceEdit(
-          "file:///project/src/User.php",
-          "use App\\Models\\User;\n",
-        ),
+        edit: workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n"),
         isPreferred: true,
         kind: "quickfix",
         title: "Import User",
@@ -7359,9 +7081,9 @@ function store($request): void
 
     const backedAction = backedCodeAction();
 
-    await expect(
-      registered.codeActionProvider.resolveCodeAction(backedAction),
-    ).resolves.toBe(backedAction);
+    await expect(registered.codeActionProvider.resolveCodeAction(backedAction)).resolves.toBe(
+      backedAction,
+    );
     if (!registered.commandRun) {
       throw new Error("PHP language server command was not registered");
     }
@@ -7450,10 +7172,7 @@ function store($request): void
         {
           command: null,
           data: null,
-          edit: workspaceEdit(
-            "file:///project/src/User.php",
-            "use App\\Models\\User;\n",
-          ),
+          edit: workspaceEdit("file:///project/src/User.php", "use App\\Models\\User;\n"),
           isPreferred: true,
           kind: "quickfix",
           title: "Import User",
@@ -7492,10 +7211,10 @@ function store($request): void
       },
     );
 
-    expect(providePhpCodeActions).toHaveBeenCalledWith(
-      "<?php\nclass Foo implements Bar\n{\n}\n",
-      { end: 6, start: 6 },
-    );
+    expect(providePhpCodeActions).toHaveBeenCalledWith("<?php\nclass Foo implements Bar\n{\n}\n", {
+      end: 6,
+      start: 6,
+    });
     expect(actions.actions).toEqual([
       expect.objectContaining({
         edit: {
@@ -7634,8 +7353,7 @@ function store($request): void
         isPreferred: true,
         kind: "quickfix",
         newFile: {
-          content:
-            "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+          content: "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
           path: "/project/src/MailDispatcher.php",
         },
         title: "Create class MailDispatcher",
@@ -7657,9 +7375,7 @@ function store($request): void
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
-    const titles = actions.actions.map(
-      (action: { title: string }) => action.title,
-    );
+    const titles = actions.actions.map((action: { title: string }) => action.title);
 
     expect(titles[0]).toBe("Create class MailDispatcher");
     expect(titles.slice(0, 4)).not.toContain("Create interface MailDispatcher");
@@ -7672,18 +7388,10 @@ function store($request): void
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
       codeActions: [
-        phpactorCreateTypeAction(
-          "Create default file CodevoQaGeneratedService.php",
-        ),
-        phpactorCreateTypeAction(
-          "Create interface file CodevoQaGeneratedService.php",
-        ),
-        phpactorCreateTypeAction(
-          "Create trait file CodevoQaGeneratedService.php",
-        ),
-        phpactorCreateTypeAction(
-          "Create enum file CodevoQaGeneratedService.php",
-        ),
+        phpactorCreateTypeAction("Create default file CodevoQaGeneratedService.php"),
+        phpactorCreateTypeAction("Create interface file CodevoQaGeneratedService.php"),
+        phpactorCreateTypeAction("Create trait file CodevoQaGeneratedService.php"),
+        phpactorCreateTypeAction("Create enum file CodevoQaGeneratedService.php"),
         {
           command: {
             arguments: [],
@@ -7728,23 +7436,13 @@ function store($request): void
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
-    const titles = actions.actions.map(
-      (action: { title: string }) => action.title,
-    );
+    const titles = actions.actions.map((action: { title: string }) => action.title);
 
     expect(titles[0]).toBe("Create class CodevoQaGeneratedService");
-    expect(titles).not.toContain(
-      "Create default file CodevoQaGeneratedService.php",
-    );
-    expect(titles).not.toContain(
-      "Create interface file CodevoQaGeneratedService.php",
-    );
-    expect(titles).not.toContain(
-      "Create trait file CodevoQaGeneratedService.php",
-    );
-    expect(titles).not.toContain(
-      "Create enum file CodevoQaGeneratedService.php",
-    );
+    expect(titles).not.toContain("Create default file CodevoQaGeneratedService.php");
+    expect(titles).not.toContain("Create interface file CodevoQaGeneratedService.php");
+    expect(titles).not.toContain("Create trait file CodevoQaGeneratedService.php");
+    expect(titles).not.toContain("Create enum file CodevoQaGeneratedService.php");
     expect(titles).toContain("Add missing properties");
   });
 
@@ -7774,8 +7472,7 @@ function store($request): void
         isPreferred: true,
         kind: "quickfix",
         newFile: {
-          content:
-            "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
+          content: "<?php\n\nnamespace App\\Services;\n\nclass MailDispatcher\n{\n}\n",
           path: "/project/src/MailDispatcher.php",
         },
         title: "Create class MailDispatcher",
@@ -7797,15 +7494,11 @@ function store($request): void
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
-    const titles = actions.actions.map(
-      (action: { title: string }) => action.title,
-    );
+    const titles = actions.actions.map((action: { title: string }) => action.title);
 
-    expect(
-      titles.filter(
-        (title: string) => title === "Create class MailDispatcher",
-      ),
-    ).toHaveLength(1);
+    expect(titles.filter((title: string) => title === "Create class MailDispatcher")).toHaveLength(
+      1,
+    );
     expect(titles[0]).toBe("Create class MailDispatcher");
     expect(titles).toContain("Add missing properties");
   });
@@ -7855,7 +7548,10 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     const actions = await registered.codeActionProvider.provideCodeActions(
-      model({ content: "<?php\nclass Service\n{\n    public function run(): void\n    {\n        $this->doWork();\n    }\n}\n" }),
+      model({
+        content:
+          "<?php\nclass Service\n{\n    public function run(): void\n    {\n        $this->doWork();\n    }\n}\n",
+      }),
       new registered.monaco.Range(6, 16, 6, 22),
       {
         markers: [],
@@ -7863,9 +7559,7 @@ function store($request): void
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
-    const titles = actions.actions.map(
-      (action: { title: string }) => action.title,
-    );
+    const titles = actions.actions.map((action: { title: string }) => action.title);
 
     expect(titles[0]).toBe("Create method 'doWork'");
     expect(titles).not.toContain('Create method "doWork"');
@@ -7917,7 +7611,10 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     const actions = await registered.codeActionProvider.provideCodeActions(
-      model({ content: "<?php\nclass Service\n{\n    public function run(): string\n    {\n        return $this->status;\n    }\n}\n" }),
+      model({
+        content:
+          "<?php\nclass Service\n{\n    public function run(): string\n    {\n        return $this->status;\n    }\n}\n",
+      }),
       new registered.monaco.Range(6, 23, 6, 29),
       {
         markers: [],
@@ -7925,9 +7622,7 @@ function store($request): void
         trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
-    const titles = actions.actions.map(
-      (action: { title: string }) => action.title,
-    );
+    const titles = actions.actions.map((action: { title: string }) => action.title);
 
     expect(titles[0]).toBe("Create property 'status'");
     expect(titles).not.toContain("Create property $status");
@@ -7936,9 +7631,11 @@ function store($request): void
 
   it("maps a PHP code action's newFile to a file-create resource edit plus a content insertion", async () => {
     const registered = createRegisteredProviders();
-    (registered.monaco.Uri as typeof registered.monaco.Uri & {
-      parse: typeof URI.parse;
-    }).parse = URI.parse;
+    (
+      registered.monaco.Uri as typeof registered.monaco.Uri & {
+        parse: typeof URI.parse;
+      }
+    ).parse = URI.parse;
     const gateway = featuresGateway();
     const providePhpCodeActions = vi.fn(async () => [
       {
@@ -8017,9 +7714,11 @@ function store($request): void
 
   it("maps a PHP code action's path-scoped edit to the target workspace file", async () => {
     const registered = createRegisteredProviders();
-    (registered.monaco.Uri as typeof registered.monaco.Uri & {
-      parse: typeof URI.parse;
-    }).parse = URI.parse;
+    (
+      registered.monaco.Uri as typeof registered.monaco.Uri & {
+        parse: typeof URI.parse;
+      }
+    ).parse = URI.parse;
     const gateway = featuresGateway();
     const presenterPath = "/project/app/UI/Home/OtherPresenter.php";
     const providePhpCodeActions = vi.fn(async () => [
@@ -8075,9 +7774,11 @@ function store($request): void
     expect(edits).toEqual([
       {
         resource: expect.objectContaining({
-          path: (URI.parse(workspaceModelUri("/project", presenterPath)!) as {
-            path: string;
-          }).path,
+          path: (
+            URI.parse(workspaceModelUri("/project", presenterPath)!) as {
+              path: string;
+            }
+          ).path,
           scheme: "workspace-file",
         }),
         textEdit: {
@@ -8096,9 +7797,11 @@ function store($request): void
 
   it("keeps the stale-edit version guard when a path-scoped edit targets the active model", async () => {
     const registered = createRegisteredProviders();
-    (registered.monaco.Uri as typeof registered.monaco.Uri & {
-      parse: typeof URI.parse;
-    }).parse = URI.parse;
+    (
+      registered.monaco.Uri as typeof registered.monaco.Uri & {
+        parse: typeof URI.parse;
+      }
+    ).parse = URI.parse;
     const gateway = featuresGateway();
     const sourcePath = "/project/app/UI/Home/HomePresenter.php";
     const source = "<?php\nclass HomePresenter\n{\n}\n";
@@ -8208,8 +7911,7 @@ function store($request): void
       pushEditOperations: vi.fn(),
     };
     const newFile = {
-      content:
-        "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
+      content: "<?php\n\ninterface GreeterInterface\n{\n    public function greet(): string;\n}\n",
       path: "/project/src/GreeterInterface.php",
     };
     const providePhpCodeActions = vi.fn(async () => [
@@ -8235,9 +7937,7 @@ function store($request): void
     const applyPhpCodeActionNewFile = vi.fn(async () => true);
     const clearLanguageServerDiagnosticsForPath = vi.fn();
     const flushPendingDocumentChange = vi.fn(async () => undefined);
-    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
-      sourceModel,
-    ]);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([sourceModel]);
     const context = providerContext({
       applyPhpCodeActionNewFile,
       clearLanguageServerDiagnosticsForPath,
@@ -8265,21 +7965,14 @@ function store($request): void
     // The action carries no eager document edit. Its command writes the file
     // first, then applies the implements edit to the original model.
     expect(edits).toEqual([]);
-    expect(extractInterface?.command?.id).toBe(
-      "mockor.php.applyCodeActionNewFile",
-    );
+    expect(extractInterface?.command?.id).toBe("mockor.php.applyCodeActionNewFile");
 
-    const run =
-      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+    const run = registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
     expect(run).toBeDefined();
     await run(null, extractInterface?.command?.arguments?.[0]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(applyPhpCodeActionNewFile).toHaveBeenCalledWith(newFile);
-    expect(clearLanguageServerDiagnosticsForPath).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(clearLanguageServerDiagnosticsForPath).toHaveBeenCalledWith("/project/src/User.php");
     expect(sourceModel.pushEditOperations).toHaveBeenCalledWith(
       [],
       [
@@ -8329,9 +8022,7 @@ function store($request): void
       },
     ]);
     const applyWorkspaceEdit = vi.fn(async () => undefined);
-    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
-      sourceModel,
-    ]);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([sourceModel]);
     const context = providerContext({
       applyWorkspaceEdit,
       featuresGateway: gateway,
@@ -8350,23 +8041,21 @@ function store($request): void
     );
 
     const createMethod = actions.actions.find(
-      (action: { title: string }) =>
-        action.title === "Create method 'helper' in 'Base'",
+      (action: { title: string }) => action.title === "Create method 'helper' in 'Base'",
     );
     expect(createMethod).toBeDefined();
     expect(createMethod?.edit?.edits ?? []).toEqual([]);
-    expect(createMethod?.command?.id).toBe(
-      "mockor.php.applyCodeActionWorkspaceEdit",
-    );
+    expect(createMethod?.command?.id).toBe("mockor.php.applyCodeActionWorkspaceEdit");
 
-    const run =
-      registered.commandRunsById["mockor.php.applyCodeActionWorkspaceEdit"];
+    const run = registered.commandRunsById["mockor.php.applyCodeActionWorkspaceEdit"];
     expect(run).toBeDefined();
     await run(null, createMethod?.command?.arguments?.[0]);
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(
       parentEdit,
       expect.objectContaining({
         applyOpenModels: expect.any(Function),
+        expectedClosedFileHashes: undefined,
+        requiresAtomicFinalization: true,
         openPaths: [],
         rootPath: "/project",
       }),
@@ -8415,9 +8104,9 @@ function store($request): void
       },
     );
 
-    expect(
-      actions.actions.map((action: { title: string }) => action.title),
-    ).not.toContain("Create method 'helper' in 'Base'");
+    expect(actions.actions.map((action: { title: string }) => action.title)).not.toContain(
+      "Create method 'helper' in 'Base'",
+    );
   });
 
   it("passes Change Signature a Monaco-aware atomic workspace-edit applier", async () => {
@@ -8438,14 +8127,9 @@ function store($request): void
     ]);
     const openPhpChangeSignature = vi.fn();
     const applyWorkspaceEdit = vi.fn(
-      async (
-        _edit: LanguageServerWorkspaceEdit,
-        context: PhpWorkspaceEditApplicationContext,
-      ) => {
+      async (_edit: LanguageServerWorkspaceEdit, context: PhpWorkspaceEditApplicationContext) => {
         const commit = context.applyOpenModels?.();
-        return commit?.kind === "rejected"
-          ? commit
-          : { kind: "accepted" as const };
+        return commit?.kind === "rejected" ? commit : { kind: "accepted" as const };
       },
     );
     const openModel = {
@@ -8476,24 +8160,19 @@ function store($request): void
     expect(run).toBeDefined();
     await run(null, action?.command?.arguments?.[0]);
 
-    expect(openPhpChangeSignature).toHaveBeenCalledWith(
-      request,
-      expect.any(Function),
-    );
+    expect(openPhpChangeSignature).toHaveBeenCalledWith(request, expect.any(Function));
     const changeSignatureApplier = openPhpChangeSignature.mock.calls[0]?.[1];
     const edit = workspaceEdit("file:///project/src/User.php", "final ");
     await expect(
-      changeSignatureApplier(
-        edit,
-        "/project",
-        ["/project/src/User.php"],
-        { "/project/src/Closed.php": "sha256" },
-      ),
+      changeSignatureApplier(edit, "/project", ["/project/src/User.php"], {
+        "/project/src/Closed.php": "sha256",
+      }),
     ).resolves.toEqual({ kind: "accepted" });
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(
       edit,
       expect.objectContaining({
         applyOpenModels: expect.any(Function),
+        requiresAtomicFinalization: true,
         expectedClosedFileHashes: {
           "/project/src/Closed.php": "sha256",
         },
@@ -8551,9 +8230,9 @@ function store($request): void
       },
     );
 
-    expect(
-      actions.actions.map((action: { title: string }) => action.title),
-    ).not.toContain("Create method 'helper' in 'Base'");
+    expect(actions.actions.map((action: { title: string }) => action.title)).not.toContain(
+      "Create method 'helper' in 'Base'",
+    );
   });
 
   it("does not apply a PHP workspaceEdit command without a payload edit", async () => {
@@ -8562,8 +8241,7 @@ function store($request): void
     const context = providerContext({ applyWorkspaceEdit });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const run =
-      registered.commandRunsById["mockor.php.applyCodeActionWorkspaceEdit"];
+    const run = registered.commandRunsById["mockor.php.applyCodeActionWorkspaceEdit"];
     expect(run).toBeDefined();
     await run(null, undefined);
 
@@ -8605,9 +8283,7 @@ function store($request): void
       throw failure;
     });
     const reportError = vi.fn();
-    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
-      sourceModel,
-    ]);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([sourceModel]);
     const context = providerContext({
       applyPhpCodeActionNewFile,
       featuresGateway: gateway,
@@ -8628,8 +8304,7 @@ function store($request): void
     const extractInterface = actions.actions.find(
       (action: { title: string }) => action.title === "Extract interface",
     );
-    const run =
-      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+    const run = registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
 
     await run(null, extractInterface?.command?.arguments?.[0]);
 
@@ -8673,9 +8348,7 @@ function store($request): void
     // `implements` edit - the class stays untouched and no error is re-reported.
     const applyPhpCodeActionNewFile = vi.fn(async () => false);
     const reportError = vi.fn();
-    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
-      sourceModel,
-    ]);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([sourceModel]);
     const context = providerContext({
       applyPhpCodeActionNewFile,
       featuresGateway: gateway,
@@ -8696,8 +8369,7 @@ function store($request): void
     const extractInterface = actions.actions.find(
       (action: { title: string }) => action.title === "Extract interface",
     );
-    const run =
-      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+    const run = registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
 
     await run(null, extractInterface?.command?.arguments?.[0]);
 
@@ -8716,9 +8388,7 @@ function store($request): void
       pushEditOperations: vi.fn(),
     };
     const applyPhpCodeActionNewFile = vi.fn(async () => true);
-    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
-      sourceModel,
-    ]);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([sourceModel]);
     const context = providerContext({
       applyPhpCodeActionNewFile,
       featuresGateway: gateway,
@@ -8759,8 +8429,7 @@ function store($request): void
     const extractInterface = actions.actions.find(
       (action: { title: string }) => action.title === "Extract interface",
     );
-    const run =
-      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+    const run = registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
 
     await run(null, extractInterface?.command?.arguments?.[0]);
 
@@ -9038,8 +8707,7 @@ function store($request): void
         [outsideUri]: 42,
       },
     };
-    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void =
-      () => undefined;
+    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void = () => undefined;
     const unsubscribe = vi.fn();
     const workspaceEditGateway: LanguageServerWorkspaceEditGateway = {
       subscribeWorkspaceEdits: vi.fn(async (listener) => {
@@ -9094,6 +8762,8 @@ function store($request): void
       },
       {
         applyOpenModels: expect.any(Function),
+        expectedClosedFileHashes: undefined,
+        requiresAtomicFinalization: true,
         openPaths: [openPath],
         rootPath: "/project/",
       },
@@ -9108,8 +8778,7 @@ function store($request): void
     const registered = createRegisteredProviders();
     let activeRoot: string | null = null;
     let activeSessionId = 1;
-    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void =
-      () => undefined;
+    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void = () => undefined;
     const workspaceEditGateway: LanguageServerWorkspaceEditGateway = {
       subscribeWorkspaceEdits: vi.fn(async (listener) => {
         publishWorkspaceEdit = listener;
@@ -9162,6 +8831,8 @@ function store($request): void
       workspaceEdit("file:///project/src/User.php", "Current"),
       {
         applyOpenModels: expect.any(Function),
+        expectedClosedFileHashes: undefined,
+        requiresAtomicFinalization: true,
         openPaths: [],
         rootPath: "/project",
       },
@@ -9176,8 +8847,7 @@ function store($request): void
       ...model({ content: "", path: openPath }),
       pushEditOperations: vi.fn(),
     };
-    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void =
-      () => undefined;
+    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void = () => undefined;
     const workspaceEditGateway: LanguageServerWorkspaceEditGateway = {
       subscribeWorkspaceEdits: vi.fn(async (listener) => {
         publishWorkspaceEdit = listener;
@@ -9215,6 +8885,8 @@ function store($request): void
       },
       {
         applyOpenModels: expect.any(Function),
+        expectedClosedFileHashes: undefined,
+        requiresAtomicFinalization: true,
         openPaths: [openPath],
         rootPath: "/project",
       },
@@ -9251,10 +8923,7 @@ function store($request): void
     }
     await registered.commandRun(null, phpCommandPayload());
 
-    expect(gateway.executeCommand).toHaveBeenCalledWith(
-      "/project",
-      phpCommandPayload().command,
-    );
+    expect(gateway.executeCommand).toHaveBeenCalledWith("/project", phpCommandPayload().command);
     expect(openModel.pushEditOperations).toHaveBeenCalledWith(
       [],
       [
@@ -9272,6 +8941,8 @@ function store($request): void
     );
     expect(applyWorkspaceEdit).toHaveBeenCalledWith(edit, {
       applyOpenModels: expect.any(Function),
+      expectedClosedFileHashes: undefined,
+      requiresAtomicFinalization: true,
       openPaths: [openPath],
       rootPath: "/project",
     });
@@ -9312,15 +8983,10 @@ function store($request): void
     const gateway = featuresGateway();
     vi.mocked(gateway.executeCommand).mockResolvedValueOnce(edit);
     const applyWorkspaceEdit = vi.fn(
-      async (
-        _edit: LanguageServerWorkspaceEdit,
-        context: PhpWorkspaceEditApplicationContext,
-      ) => {
+      async (_edit: LanguageServerWorkspaceEdit, context: PhpWorkspaceEditApplicationContext) => {
         const commit = context.applyOpenModels?.();
 
-        return commit?.kind === "rejected"
-          ? commit
-          : { kind: "accepted" as const };
+        return commit?.kind === "rejected" ? commit : { kind: "accepted" as const };
       },
     );
     vi.mocked(registered.monaco.editor.getModels).mockReturnValue([modelA, modelB]);
@@ -9347,10 +9013,8 @@ function store($request): void
     const gateway = featuresGateway();
     vi.mocked(gateway.executeCommand).mockResolvedValueOnce({
       changes: {
-        ...workspaceEdit("file:///project/src/User.php", "Open fallback")
-          .changes,
-        ...workspaceEdit("file:///project/src/Helper.php", "Closed fallback")
-          .changes,
+        ...workspaceEdit("file:///project/src/User.php", "Open fallback").changes,
+        ...workspaceEdit("file:///project/src/Helper.php", "Closed fallback").changes,
       },
     });
     vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
@@ -9449,11 +9113,7 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.renameProvider.provideRenameEdits(
-        model(),
-        position(),
-        "$account",
-      ),
+      registered.renameProvider.provideRenameEdits(model(), position(), "$account"),
     ).resolves.toEqual({
       edits: [
         {
@@ -9514,11 +9174,7 @@ function store($request): void
     );
 
     await expect(
-      registered.renameProvider.provideRenameEdits(
-        model(),
-        position(),
-        "$account",
-      ),
+      registered.renameProvider.provideRenameEdits(model(), position(), "$account"),
     ).resolves.toEqual({ edits: [] });
     expect(openModel.pushEditOperations).toHaveBeenCalledWith(
       [],
@@ -9544,6 +9200,8 @@ function store($request): void
       },
       {
         applyOpenModels: expect.any(Function),
+        expectedClosedFileHashes: undefined,
+        requiresAtomicFinalization: true,
         openPaths: [openPath],
         rootPath: "/project",
       },
@@ -9553,13 +9211,10 @@ function store($request): void
   it("drops stale PHP prepare rename and suppresses stale errors after same-root session restart", async () => {
     const registered = createRegisteredProviders();
     let activeSessionId = 1;
-    const prepareRename = createDeferred<
-      Awaited<ReturnType<LanguageServerFeaturesGateway["prepareRename"]>>
-    >();
+    const prepareRename =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["prepareRename"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.prepareRename).mockImplementationOnce(
-      async () => prepareRename.promise,
-    );
+    vi.mocked(gateway.prepareRename).mockImplementationOnce(async () => prepareRename.promise);
     const reportError = vi.fn();
     const context = providerContext({
       featuresGateway: gateway,
@@ -9587,9 +9242,7 @@ function store($request): void
   it("drops stale PHP rename edits and suppresses stale errors after same-root session restart", async () => {
     const registered = createRegisteredProviders();
     let activeSessionId = 1;
-    const rename = createDeferred<
-      Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>
-    >();
+    const rename = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>>();
     const gateway = featuresGateway();
     vi.mocked(gateway.rename).mockImplementationOnce(async () => rename.promise);
     const reportError = vi.fn();
@@ -9620,9 +9273,7 @@ function store($request): void
   it("drops stale PHP rename after switching project tabs", async () => {
     const registered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
-    const rename = createDeferred<
-      Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>
-    >();
+    const rename = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>>();
     const gateway = featuresGateway();
     vi.mocked(gateway.rename).mockImplementationOnce(async () => rename.promise);
     const reportError = vi.fn();
@@ -9661,11 +9312,7 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.renameProvider.provideRenameEdits(
-        model(),
-        position(),
-        "$account",
-      ),
+      registered.renameProvider.provideRenameEdits(model(), position(), "$account"),
     ).resolves.toEqual({
       edits: [
         expect.objectContaining({
@@ -9711,9 +9358,7 @@ function store($request): void
         },
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.declaration).toHaveBeenCalledWith("/project", {
       character: 4,
       line: 10,
@@ -9754,9 +9399,7 @@ function store($request): void
         },
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.definition).toHaveBeenCalledWith("/project", {
       character: 4,
       line: 10,
@@ -9976,10 +9619,7 @@ function store($request): void
     );
 
     await expect(
-      definitionRegistered.definitionProvider.provideDefinition(
-        model(),
-        position(),
-      ),
+      definitionRegistered.definitionProvider.provideDefinition(model(), position()),
     ).resolves.toBeNull();
     expect(definitionFlush).not.toHaveBeenCalled();
     expect(definitionGateway.definition).not.toHaveBeenCalled();
@@ -10004,10 +9644,7 @@ function store($request): void
     );
 
     await expect(
-      implementationRegistered.implementationProvider.provideImplementation(
-        model(),
-        position(),
-      ),
+      implementationRegistered.implementationProvider.provideImplementation(model(), position()),
     ).resolves.toBeNull();
     expect(implementationFlush).not.toHaveBeenCalled();
     expect(implementationGateway.implementation).not.toHaveBeenCalled();
@@ -10018,9 +9655,7 @@ function store($request): void
     let activeSessionId = 1;
     const definition = createDeferred<LanguageServerLocation[]>();
     const definitionGateway = featuresGateway();
-    vi.mocked(definitionGateway.definition).mockImplementationOnce(
-      async () => definition.promise,
-    );
+    vi.mocked(definitionGateway.definition).mockImplementationOnce(async () => definition.promise);
     const definitionContext = providerContext({
       featuresGateway: definitionGateway,
       getRuntimeStatus: () => ({
@@ -10028,16 +9663,12 @@ function store($request): void
         sessionId: activeSessionId,
       }),
     });
-    registerLanguageServerMonacoProviders(
-      definitionRegistered.monaco,
-      definitionContext,
-    );
+    registerLanguageServerMonacoProviders(definitionRegistered.monaco, definitionContext);
 
-    const definitionPromise =
-      definitionRegistered.definitionProvider.provideDefinition(
-        model(),
-        position(),
-      );
+    const definitionPromise = definitionRegistered.definitionProvider.provideDefinition(
+      model(),
+      position(),
+    );
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -10061,16 +9692,10 @@ function store($request): void
       featuresGateway: implementationGateway,
       getWorkspaceRoot: () => activeRoot,
     });
-    registerLanguageServerMonacoProviders(
-      implementationRegistered.monaco,
-      implementationContext,
-    );
+    registerLanguageServerMonacoProviders(implementationRegistered.monaco, implementationContext);
 
     const implementationPromise =
-      implementationRegistered.implementationProvider.provideImplementation(
-        model(),
-        position(),
-      );
+      implementationRegistered.implementationProvider.provideImplementation(model(), position());
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -10105,10 +9730,7 @@ function store($request): void
     );
 
     await expect(
-      declarationRegistered.declarationProvider.provideDeclaration(
-        model(),
-        position(),
-      ),
+      declarationRegistered.declarationProvider.provideDeclaration(model(), position()),
     ).resolves.toBeNull();
     expect(declarationFlush).not.toHaveBeenCalled();
     expect(declarationGateway.declaration).not.toHaveBeenCalled();
@@ -10133,10 +9755,7 @@ function store($request): void
     );
 
     await expect(
-      typeDefinitionRegistered.typeDefinitionProvider.provideTypeDefinition(
-        model(),
-        position(),
-      ),
+      typeDefinitionRegistered.typeDefinitionProvider.provideTypeDefinition(model(), position()),
     ).resolves.toBeNull();
     expect(typeDefinitionFlush).not.toHaveBeenCalled();
     expect(typeDefinitionGateway.typeDefinition).not.toHaveBeenCalled();
@@ -10157,16 +9776,12 @@ function store($request): void
         sessionId: activeSessionId,
       }),
     });
-    registerLanguageServerMonacoProviders(
-      declarationRegistered.monaco,
-      declarationContext,
-    );
+    registerLanguageServerMonacoProviders(declarationRegistered.monaco, declarationContext);
 
-    const declarationPromise =
-      declarationRegistered.declarationProvider.provideDeclaration(
-        model(),
-        position(),
-      );
+    const declarationPromise = declarationRegistered.declarationProvider.provideDeclaration(
+      model(),
+      position(),
+    );
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -10190,16 +9805,10 @@ function store($request): void
       featuresGateway: typeDefinitionGateway,
       getWorkspaceRoot: () => activeRoot,
     });
-    registerLanguageServerMonacoProviders(
-      typeDefinitionRegistered.monaco,
-      typeDefinitionContext,
-    );
+    registerLanguageServerMonacoProviders(typeDefinitionRegistered.monaco, typeDefinitionContext);
 
     const typeDefinitionPromise =
-      typeDefinitionRegistered.typeDefinitionProvider.provideTypeDefinition(
-        model(),
-        position(),
-      );
+      typeDefinitionRegistered.typeDefinitionProvider.provideTypeDefinition(model(), position());
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -10262,9 +9871,7 @@ function store($request): void
         },
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.references).toHaveBeenCalledWith("/project", {
       character: 4,
       line: 10,
@@ -10333,9 +9940,7 @@ function store($request): void
     let activeSessionId = 1;
     const references = createDeferred<LanguageServerLocation[]>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.references).mockImplementationOnce(
-      async () => references.promise,
-    );
+    vi.mocked(gateway.references).mockImplementationOnce(async () => references.promise);
     const reportError = vi.fn();
     const context = providerContext({
       featuresGateway: gateway,
@@ -10347,10 +9952,7 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const referencesPromise = registered.referenceProvider.provideReferences(
-      model(),
-      position(),
-    );
+    const referencesPromise = registered.referenceProvider.provideReferences(model(), position());
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -10365,9 +9967,7 @@ function store($request): void
     let activeRoot: string | null = "/project";
     const references = createDeferred<LanguageServerLocation[]>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.references).mockImplementationOnce(
-      async () => references.promise,
-    );
+    vi.mocked(gateway.references).mockImplementationOnce(async () => references.promise);
     const reportError = vi.fn();
     const context = providerContext({
       featuresGateway: gateway,
@@ -10376,10 +9976,7 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const referencesPromise = registered.referenceProvider.provideReferences(
-      model(),
-      position(),
-    );
+    const referencesPromise = registered.referenceProvider.provideReferences(model(), position());
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -10474,23 +10071,13 @@ function store($request): void
         }),
       ],
     });
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.documentLinks).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.documentLinks).toHaveBeenCalledWith("/project", "/project/src/User.php");
 
-    const resolved = await registered.documentLinkProvider.resolveLink(
-      linksList.links[0],
-    );
+    const resolved = await registered.documentLinkProvider.resolveLink(linksList.links[0]);
 
     expect(flushPendingDocumentChange).toHaveBeenCalledTimes(2);
-    expect(gateway.resolveDocumentLink).toHaveBeenCalledWith(
-      "/project",
-      sourceLink,
-    );
+    expect(gateway.resolveDocumentLink).toHaveBeenCalledWith("/project", sourceLink);
     expect(resolved).toEqual(
       expect.objectContaining({
         __languageServerLink: resolvedLink,
@@ -10530,9 +10117,7 @@ function store($request): void
       }),
     );
 
-    await expect(
-      disabledRegistered.documentLinkProvider.provideLinks(model()),
-    ).resolves.toEqual({
+    await expect(disabledRegistered.documentLinkProvider.provideLinks(model())).resolves.toEqual({
       dispose: expect.any(Function),
       links: [],
     });
@@ -10563,9 +10148,7 @@ function store($request): void
       }),
     );
 
-    await expect(
-      mismatchedRegistered.documentLinkProvider.provideLinks(model()),
-    ).resolves.toEqual({
+    await expect(mismatchedRegistered.documentLinkProvider.provideLinks(model())).resolves.toEqual({
       dispose: expect.any(Function),
       links: [],
     });
@@ -10592,8 +10175,7 @@ function store($request): void
       }),
     );
 
-    const sessionPromise =
-      sessionRegistered.documentLinkProvider.provideLinks(model());
+    const sessionPromise = sessionRegistered.documentLinkProvider.provideLinks(model());
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -10614,9 +10196,7 @@ function store($request): void
     let activeRoot: string | null = "/project";
     const rootLinks = createDeferred<LanguageServerDocumentLink[]>();
     const rootGateway = featuresGateway();
-    vi.mocked(rootGateway.documentLinks).mockImplementationOnce(
-      async () => rootLinks.promise,
-    );
+    vi.mocked(rootGateway.documentLinks).mockImplementationOnce(async () => rootLinks.promise);
     registerLanguageServerMonacoProviders(
       rootRegistered.monaco,
       providerContext({
@@ -10682,12 +10262,10 @@ function store($request): void
 
     activeSessionId = 2;
 
-    await expect(
-      registered.documentLinkProvider.resolveLink(backedLink),
-    ).resolves.toBe(backedLink);
-    await expect(
-      registered.documentLinkProvider.resolveLink(unbackedLink),
-    ).resolves.toBe(unbackedLink);
+    await expect(registered.documentLinkProvider.resolveLink(backedLink)).resolves.toBe(backedLink);
+    await expect(registered.documentLinkProvider.resolveLink(unbackedLink)).resolves.toBe(
+      unbackedLink,
+    );
     expect(flushPendingDocumentChange).toHaveBeenCalledTimes(1);
     expect(gateway.resolveDocumentLink).not.toHaveBeenCalled();
 
@@ -10711,15 +10289,14 @@ function store($request): void
       }),
     );
 
-    const rootLinksList =
-      await rootRegistered.documentLinkProvider.provideLinks(model());
+    const rootLinksList = await rootRegistered.documentLinkProvider.provideLinks(model());
     const rootBackedLink = rootLinksList.links[0];
 
     activeRoot = "/other";
 
-    await expect(
-      rootRegistered.documentLinkProvider.resolveLink(rootBackedLink),
-    ).resolves.toBe(rootBackedLink);
+    await expect(rootRegistered.documentLinkProvider.resolveLink(rootBackedLink)).resolves.toBe(
+      rootBackedLink,
+    );
     expect(rootFlushPendingDocumentChange).toHaveBeenCalledTimes(1);
     expect(rootGateway.resolveDocumentLink).not.toHaveBeenCalled();
   });
@@ -10737,9 +10314,7 @@ function store($request): void
     const gateway = featuresGateway({
       documentLinks: [sourceLink],
     });
-    vi.mocked(gateway.resolveDocumentLink).mockImplementationOnce(
-      async () => resolvedLink.promise,
-    );
+    vi.mocked(gateway.resolveDocumentLink).mockImplementationOnce(async () => resolvedLink.promise);
     registerLanguageServerMonacoProviders(
       registered.monaco,
       providerContext({
@@ -10753,14 +10328,10 @@ function store($request): void
 
     const linksList = await registered.documentLinkProvider.provideLinks(model());
     const backedLink = linksList.links[0];
-    const resolvePromise =
-      registered.documentLinkProvider.resolveLink(backedLink);
+    const resolvePromise = registered.documentLinkProvider.resolveLink(backedLink);
 
     await Promise.resolve();
-    expect(gateway.resolveDocumentLink).toHaveBeenCalledWith(
-      "/project",
-      sourceLink,
-    );
+    expect(gateway.resolveDocumentLink).toHaveBeenCalledWith("/project", sourceLink);
 
     activeSessionId = 2;
     resolvedLink.resolve({
@@ -10802,11 +10373,9 @@ function store($request): void
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.documentHighlightProvider.provideDocumentHighlights(
-        model(),
-        position(),
-        { isCancellationRequested: false },
-      ),
+      registered.documentHighlightProvider.provideDocumentHighlights(model(), position(), {
+        isCancellationRequested: false,
+      }),
     ).resolves.toEqual([
       {
         kind: 2,
@@ -10845,9 +10414,7 @@ function store($request): void
         }),
       },
     ]);
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.documentHighlights).toHaveBeenCalledWith("/project", {
       character: 4,
       line: 10,
@@ -10876,11 +10443,9 @@ function store($request): void
     );
 
     await expect(
-      disabledRegistered.documentHighlightProvider.provideDocumentHighlights(
-        model(),
-        position(),
-        { isCancellationRequested: false },
-      ),
+      disabledRegistered.documentHighlightProvider.provideDocumentHighlights(model(), position(), {
+        isCancellationRequested: false,
+      }),
     ).resolves.toBeNull();
     expect(disabledFlush).not.toHaveBeenCalled();
     expect(disabledGateway.documentHighlights).not.toHaveBeenCalled();
@@ -10934,17 +10499,13 @@ function store($request): void
         sessionId: activeSessionId,
       }),
     });
-    registerLanguageServerMonacoProviders(
-      sessionRegistered.monaco,
-      sessionContext,
-    );
+    registerLanguageServerMonacoProviders(sessionRegistered.monaco, sessionContext);
 
-    const sessionPromise =
-      sessionRegistered.documentHighlightProvider.provideDocumentHighlights(
-        model(),
-        position(),
-        { isCancellationRequested: false },
-      );
+    const sessionPromise = sessionRegistered.documentHighlightProvider.provideDocumentHighlights(
+      model(),
+      position(),
+      { isCancellationRequested: false },
+    );
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -10970,12 +10531,11 @@ function store($request): void
     });
     registerLanguageServerMonacoProviders(rootRegistered.monaco, rootContext);
 
-    const rootPromise =
-      rootRegistered.documentHighlightProvider.provideDocumentHighlights(
-        model(),
-        position(),
-        { isCancellationRequested: false },
-      );
+    const rootPromise = rootRegistered.documentHighlightProvider.provideDocumentHighlights(
+      model(),
+      position(),
+      { isCancellationRequested: false },
+    );
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -10993,19 +10553,16 @@ function store($request): void
     const registered = createRegisteredProviders();
     const highlights = createDeferred<LanguageServerDocumentHighlight[]>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.documentHighlights).mockImplementationOnce(
-      async () => highlights.promise,
-    );
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(async () => highlights.promise);
     const context = providerContext({ featuresGateway: gateway });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     const token = { isCancellationRequested: false };
-    const promise =
-      registered.documentHighlightProvider.provideDocumentHighlights(
-        model(),
-        position(),
-        token,
-      );
+    const promise = registered.documentHighlightProvider.provideDocumentHighlights(
+      model(),
+      position(),
+      token,
+    );
 
     await Promise.resolve();
     token.isCancellationRequested = true;
@@ -11034,11 +10591,7 @@ function store($request): void
 
     const token = { isCancellationRequested: false };
     await expect(
-      registered.documentHighlightProvider.provideDocumentHighlights(
-        model(),
-        position(),
-        token,
-      ),
+      registered.documentHighlightProvider.provideDocumentHighlights(model(), position(), token),
     ).resolves.toEqual([
       {
         kind: 2,
@@ -11069,18 +10622,16 @@ function store($request): void
     const sameWordModel = model({ word: { endColumn: 5, startColumn: 2, word: "$user" } });
     const token = { isCancellationRequested: false };
 
-    const first =
-      await registered.documentHighlightProvider.provideDocumentHighlights(
-        sameWordModel,
-        position(),
-        token,
-      );
-    const second =
-      await registered.documentHighlightProvider.provideDocumentHighlights(
-        sameWordModel,
-        position(),
-        token,
-      );
+    const first = await registered.documentHighlightProvider.provideDocumentHighlights(
+      sameWordModel,
+      position(),
+      token,
+    );
+    const second = await registered.documentHighlightProvider.provideDocumentHighlights(
+      sameWordModel,
+      position(),
+      token,
+    );
 
     expect(gateway.documentHighlights).toHaveBeenCalledTimes(1);
     expect(second).toEqual(first);
@@ -11155,24 +10706,13 @@ function store($request): void
         }),
       ],
     });
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.codeLenses).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.codeLenses).toHaveBeenCalledWith("/project", "/project/src/User.php");
 
-    const resolved = await registered.codeLensProvider.resolveCodeLens(
-      model(),
-      lenses.lenses[0],
-    );
+    const resolved = await registered.codeLensProvider.resolveCodeLens(model(), lenses.lenses[0]);
 
     expect(flushPendingDocumentChange).toHaveBeenCalledTimes(2);
-    expect(gateway.resolveCodeLens).toHaveBeenCalledWith(
-      "/project",
-      sourceLens,
-    );
+    expect(gateway.resolveCodeLens).toHaveBeenCalledWith("/project", sourceLens);
     expect(resolved).toEqual(
       expect.objectContaining({
         __languageServerLens: resolvedLens,
@@ -11266,9 +10806,7 @@ function store($request): void
       }),
     );
 
-    await expect(
-      disabledRegistered.codeLensProvider.provideCodeLenses(model()),
-    ).resolves.toEqual({
+    await expect(disabledRegistered.codeLensProvider.provideCodeLenses(model())).resolves.toEqual({
       dispose: expect.any(Function),
       lenses: [],
     });
@@ -11298,12 +10836,12 @@ function store($request): void
       }),
     );
 
-    await expect(
-      mismatchedRegistered.codeLensProvider.provideCodeLenses(model()),
-    ).resolves.toEqual({
-      dispose: expect.any(Function),
-      lenses: [],
-    });
+    await expect(mismatchedRegistered.codeLensProvider.provideCodeLenses(model())).resolves.toEqual(
+      {
+        dispose: expect.any(Function),
+        lenses: [],
+      },
+    );
     expect(mismatchedFlush).not.toHaveBeenCalled();
     expect(mismatchedGateway.codeLenses).not.toHaveBeenCalled();
   });
@@ -11313,9 +10851,7 @@ function store($request): void
     let activeSessionId = 1;
     const codeLenses = createDeferred<LanguageServerCodeLens[]>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.codeLenses).mockImplementationOnce(
-      async () => codeLenses.promise,
-    );
+    vi.mocked(gateway.codeLenses).mockImplementationOnce(async () => codeLenses.promise);
     registerLanguageServerMonacoProviders(
       registered.monaco,
       providerContext({
@@ -11348,9 +10884,7 @@ function store($request): void
     let activeRoot: string | null = "/project";
     const rootCodeLenses = createDeferred<LanguageServerCodeLens[]>();
     const rootGateway = featuresGateway();
-    vi.mocked(rootGateway.codeLenses).mockImplementationOnce(
-      async () => rootCodeLenses.promise,
-    );
+    vi.mocked(rootGateway.codeLenses).mockImplementationOnce(async () => rootCodeLenses.promise);
     registerLanguageServerMonacoProviders(
       rootRegistered.monaco,
       providerContext({
@@ -11359,8 +10893,7 @@ function store($request): void
       }),
     );
 
-    const rootLensesPromise =
-      rootRegistered.codeLensProvider.provideCodeLenses(model());
+    const rootLensesPromise = rootRegistered.codeLensProvider.provideCodeLenses(model());
 
     await Promise.resolve();
     activeRoot = "/other";
@@ -11412,12 +10945,12 @@ function store($request): void
 
     activeRoot = "/other";
 
-    await expect(
-      registered.codeLensProvider.resolveCodeLens(model(), backedLens),
-    ).resolves.toBe(backedLens);
-    await expect(
-      registered.codeLensProvider.resolveCodeLens(model(), unbackedLens),
-    ).resolves.toBe(unbackedLens);
+    await expect(registered.codeLensProvider.resolveCodeLens(model(), backedLens)).resolves.toBe(
+      backedLens,
+    );
+    await expect(registered.codeLensProvider.resolveCodeLens(model(), unbackedLens)).resolves.toBe(
+      unbackedLens,
+    );
     expect(flushPendingDocumentChange).not.toHaveBeenCalled();
     expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
 
@@ -11450,10 +10983,7 @@ function store($request): void
     activeSessionId = 2;
 
     await expect(
-      sessionRegistered.codeLensProvider.resolveCodeLens(
-        model(),
-        sessionBackedLens,
-      ),
+      sessionRegistered.codeLensProvider.resolveCodeLens(model(), sessionBackedLens),
     ).resolves.toBe(sessionBackedLens);
     expect(sessionFlushPendingDocumentChange).not.toHaveBeenCalled();
     expect(sessionGateway.resolveCodeLens).not.toHaveBeenCalled();
@@ -11469,9 +10999,7 @@ function store($request): void
     };
     const resolvedCodeLens = createDeferred<LanguageServerCodeLens>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.resolveCodeLens).mockImplementationOnce(
-      async () => resolvedCodeLens.promise,
-    );
+    vi.mocked(gateway.resolveCodeLens).mockImplementationOnce(async () => resolvedCodeLens.promise);
     registerLanguageServerMonacoProviders(
       registered.monaco,
       providerContext({
@@ -11484,16 +11012,10 @@ function store($request): void
     );
     const backedLens = backedCodeLens(sourceLens);
 
-    const resolvePromise = registered.codeLensProvider.resolveCodeLens(
-      model(),
-      backedLens,
-    );
+    const resolvePromise = registered.codeLensProvider.resolveCodeLens(model(), backedLens);
 
     await Promise.resolve();
-    expect(gateway.resolveCodeLens).toHaveBeenCalledWith(
-      "/project",
-      sourceLens,
-    );
+    expect(gateway.resolveCodeLens).toHaveBeenCalledWith("/project", sourceLens);
 
     activeSessionId = 2;
     resolvedCodeLens.resolve({
@@ -11529,10 +11051,7 @@ function store($request): void
     );
 
     await Promise.resolve();
-    expect(rootGateway.resolveCodeLens).toHaveBeenCalledWith(
-      "/project",
-      sourceLens,
-    );
+    expect(rootGateway.resolveCodeLens).toHaveBeenCalledWith("/project", sourceLens);
 
     activeRoot = "/other";
     rootResolvedCodeLens.resolve({
@@ -11607,9 +11126,7 @@ function store($request): void
       new registered.monaco.Range(2, 1, 5, 12),
     );
 
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.inlayHints).toHaveBeenCalledWith(
       "/project",
       "/project/src/User.php",
@@ -11669,9 +11186,7 @@ function store($request): void
     expect((result.hints[0] as any).__workspaceRoot).toBe("/project");
     expect((result.hints[0] as any).__sourcePath).toBe("/project/src/User.php");
     expect((result.hints[0] as any).__languageServerSessionId).toBe(1);
-    expect(Object.keys(result.hints[0])).not.toContain(
-      "__languageServerInlayHint",
-    );
+    expect(Object.keys(result.hints[0])).not.toContain("__languageServerInlayHint");
   });
 
   it("resolves PHP InlayHint through the stored root and session", async () => {
@@ -11706,17 +11221,10 @@ function store($request): void
     );
     const backedHint = backedInlayHint(sourceHint);
 
-    const resolved = await registered.inlayHintsProvider.resolveInlayHint(
-      backedHint,
-    );
+    const resolved = await registered.inlayHintsProvider.resolveInlayHint(backedHint);
 
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
-      "/project",
-      sourceHint,
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.resolveInlayHint).toHaveBeenCalledWith("/project", sourceHint);
     expect(resolved).toMatchObject({
       kind: registered.monaco.languages.InlayHintKind.Type,
       label: ": User",
@@ -11763,9 +11271,9 @@ function store($request): void
       );
       const backedHint = backedInlayHint(sourceHint);
 
-      await expect(
-        registered.inlayHintsProvider.resolveInlayHint(backedHint),
-      ).resolves.toBe(backedHint);
+      await expect(registered.inlayHintsProvider.resolveInlayHint(backedHint)).resolves.toBe(
+        backedHint,
+      );
       expect(flushPendingDocumentChange).not.toHaveBeenCalled();
       expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
       expect(reportError).not.toHaveBeenCalled();
@@ -11825,9 +11333,7 @@ function store($request): void
     let activeSessionId = 1;
     const inlayHints = createDeferred<LanguageServerInlayHint[]>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.inlayHints).mockImplementationOnce(
-      async () => inlayHints.promise,
-    );
+    vi.mocked(gateway.inlayHints).mockImplementationOnce(async () => inlayHints.promise);
     registerLanguageServerMonacoProviders(
       registered.monaco,
       providerContext({
@@ -11894,12 +11400,12 @@ function store($request): void
 
     activeRoot = "/other";
 
-    await expect(
-      registered.inlayHintsProvider.resolveInlayHint(backedHint),
-    ).resolves.toBe(backedHint);
-    await expect(
-      registered.inlayHintsProvider.resolveInlayHint(unbackedHint),
-    ).resolves.toBe(unbackedHint);
+    await expect(registered.inlayHintsProvider.resolveInlayHint(backedHint)).resolves.toBe(
+      backedHint,
+    );
+    await expect(registered.inlayHintsProvider.resolveInlayHint(unbackedHint)).resolves.toBe(
+      unbackedHint,
+    );
     expect(flushPendingDocumentChange).not.toHaveBeenCalled();
     expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
 
@@ -11983,15 +11489,10 @@ function store($request): void
     );
     const backedHint = backedInlayHint(sourceHint);
 
-    const resolvePromise = registered.inlayHintsProvider.resolveInlayHint(
-      backedHint,
-    );
+    const resolvePromise = registered.inlayHintsProvider.resolveInlayHint(backedHint);
 
     await Promise.resolve();
-    expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
-      "/project",
-      sourceHint,
-    );
+    expect(gateway.resolveInlayHint).toHaveBeenCalledWith("/project", sourceHint);
 
     activeSessionId = 2;
     resolvedInlayHint.resolve({
@@ -12038,9 +11539,7 @@ function store($request): void
     expect(labels).toContain(": int");
     expect(labels).toContain("count:");
     expect(labels).toContain("label:");
-    const parameterHint = result.hints.find(
-      (hint: any) => hint.label === "count:",
-    );
+    const parameterHint = result.hints.find((hint: any) => hint.label === "count:");
     expect(parameterHint).toMatchObject({
       kind: registered.monaco.languages.InlayHintKind.Parameter,
       paddingRight: true,
@@ -12085,9 +11584,7 @@ function store($request): void
   it("drops in-flight TS-fallback PHP parameter hints after switching project tabs", async () => {
     const registered = createRegisteredProviders();
     let activeRoot: string | null = "/project";
-    const parameterHints = createDeferred<
-      { character: number; line: number; name: string }[]
-    >();
+    const parameterHints = createDeferred<{ character: number; line: number; name: string }[]>();
     const providePhpParameterInlayHints = vi.fn(async () => parameterHints.promise);
     const context = providerContext({
       featuresGateway: featuresGateway(),
@@ -12140,20 +11637,11 @@ function store($request): void
     );
 
     const result =
-      await registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
-        model(),
-      );
+      await registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(model());
 
-    expect(registered.documentSemanticTokensProvider.getLegend()).toEqual(
-      customLegend,
-    );
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
-    expect(gateway.semanticTokens).toHaveBeenCalledWith(
-      "/project",
-      "/project/src/User.php",
-    );
+    expect(registered.documentSemanticTokensProvider.getLegend()).toEqual(customLegend);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
+    expect(gateway.semanticTokens).toHaveBeenCalledWith("/project", "/project/src/User.php");
     expect(result).toEqual({
       data: Uint32Array.from(tokens.data),
       resultId: "php-semantic-1",
@@ -12173,18 +11661,15 @@ function store($request): void
       providerContext({ featuresGateway: gateway, flushPendingDocumentChange }),
     );
 
-    const result =
-      await registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
-        model(),
-        new registered.monaco.Range(2, 3, 4, 12),
-      );
+    const result = await registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+      model(),
+      new registered.monaco.Range(2, 3, 4, 12),
+    );
 
     expect(registered.rangeSemanticTokensProvider.getLegend()).toEqual(
       registered.documentSemanticTokensProvider.getLegend(),
     );
-    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-      "/project/src/User.php",
-    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
       "/project",
       "/project/src/User.php",
@@ -12215,9 +11700,7 @@ function store($request): void
     );
 
     await expect(
-      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
-        model(),
-      ),
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(model()),
     ).resolves.toBeNull();
     await expect(
       registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
@@ -12235,9 +11718,7 @@ function store($request): void
     let activeSessionId = 1;
     const semanticTokens = createDeferred<LanguageServerSemanticTokens | null>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.semanticTokens).mockImplementationOnce(
-      async () => semanticTokens.promise,
-    );
+    vi.mocked(gateway.semanticTokens).mockImplementationOnce(async () => semanticTokens.promise);
     registerLanguageServerMonacoProviders(
       registered.monaco,
       providerContext({
@@ -12250,9 +11731,7 @@ function store($request): void
     );
 
     const tokensPromise =
-      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
-        model(),
-      );
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(model());
 
     await Promise.resolve();
     activeSessionId = 2;
@@ -12298,7 +11777,6 @@ function store($request): void
       range(1, 2, 3, 11),
     );
   });
-
 });
 
 describe("registerLanguageServerMonacoProviders blade providers", () => {
@@ -12320,34 +11798,27 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
     let registry = templateRegistry({ provideBladeCompletions: firstCompletions });
     const context = providerContext({ activeDocument });
     context.getTemplateLanguageProviders = () => registry;
-    const disposable = registerLanguageServerMonacoProviders(
-      registered.monaco,
-      context,
-    );
+    const disposable = registerLanguageServerMonacoProviders(registered.monaco, context);
     const providerModel = model({
       content: activeDocument.content,
       path: activeDocument.path,
     });
 
-    await registered.bladeCompletionProvider.provideCompletionItems(
-      providerModel,
-      { column: 5, lineNumber: 1 },
-    );
+    await registered.bladeCompletionProvider.provideCompletionItems(providerModel, {
+      column: 5,
+      lineNumber: 1,
+    });
     registry = templateRegistry({ provideBladeCompletions: latestCompletions });
-    const result = await registered.bladeCompletionProvider.provideCompletionItems(
-      providerModel,
-      { column: 5, lineNumber: 1 },
-    );
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(providerModel, {
+      column: 5,
+      lineNumber: 1,
+    });
 
     expect(firstCompletions).toHaveBeenCalledTimes(1);
     expect(latestCompletions).toHaveBeenCalledTimes(1);
     expect(completionLabels(result.suggestions)).toEqual(["@latest"]);
-    expect(
-      registered.monaco.languages.registerCompletionItemProvider,
-    ).toHaveBeenCalledTimes(4);
-    expect(
-      registered.monaco.languages.registerDefinitionProvider,
-    ).toHaveBeenCalledTimes(4);
+    expect(registered.monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(4);
+    expect(registered.monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(4);
 
     disposable.dispose();
 
@@ -12362,17 +11833,14 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
 
   it("registers blade definition and completion providers and disposes them", () => {
     const registered = createRegisteredProviders();
-    const disposable = registerLanguageServerMonacoProviders(
-      registered.monaco,
-      providerContext(),
-    );
+    const disposable = registerLanguageServerMonacoProviders(registered.monaco, providerContext());
 
     expect(registered.bladeDefinitionLanguage).toBe("blade");
     expect(registered.bladeCompletionLanguage).toBe("blade");
     expect(registered.bladeCompletionProvider.triggerCharacters).toEqual([
       "@",
       "'",
-      "\"",
+      '"',
       "-",
       ".",
       "$",
@@ -12409,10 +11877,10 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.bladeDefinitionProvider.provideDefinition(
-        providerModel,
-        { column, lineNumber: 1 },
-      ),
+      registered.bladeDefinitionProvider.provideDefinition(providerModel, {
+        column,
+        lineNumber: 1,
+      }),
     ).resolves.toBeNull();
     expect(provideBladeDefinition).toHaveBeenCalledTimes(1);
     expect(provideBladeDefinition).toHaveBeenCalledWith(
@@ -12712,9 +12180,7 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
 
     expect(snippet).toEqual(
       expect.objectContaining({
-        insertTextRules:
-          registered.monaco.languages.CompletionItemInsertTextRule
-            .InsertAsSnippet,
+        insertTextRules: registered.monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
         kind: registered.monaco.languages.CompletionItemKind.Snippet,
         label: "@foreach",
         range: expect.objectContaining({
@@ -12749,9 +12215,7 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
 
     expect(
       result.suggestions.some(
-        (item: any) =>
-          item.kind ===
-          registered.monaco.languages.CompletionItemKind.Snippet,
+        (item: any) => item.kind === registered.monaco.languages.CompletionItemKind.Snippet,
       ),
     ).toBe(false);
   });
@@ -12817,10 +12281,7 @@ describe("registerLanguageServerMonacoProviders blade providers", () => {
 describe("registerLanguageServerMonacoProviders latte providers", () => {
   it("registers latte definition and completion providers and disposes them", () => {
     const registered = createRegisteredProviders();
-    const disposable = registerLanguageServerMonacoProviders(
-      registered.monaco,
-      providerContext(),
-    );
+    const disposable = registerLanguageServerMonacoProviders(registered.monaco, providerContext());
 
     expect(registered.latteDefinitionLanguage).toBe("latte");
     expect(registered.latteCompletionLanguage).toBe("latte");
@@ -12831,7 +12292,7 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
       ">",
       "|",
       "'",
-      "\"",
+      '"',
       ".",
       "/",
       ":",
@@ -12996,9 +12457,7 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
       { column: source.indexOf("->") + 3, lineNumber: 1 },
     );
 
-    expect(
-      result.suggestions.map((suggestion: { kind: number }) => suggestion.kind),
-    ).toEqual([
+    expect(result.suggestions.map((suggestion: { kind: number }) => suggestion.kind)).toEqual([
       registered.monaco.languages.CompletionItemKind.Variable,
       registered.monaco.languages.CompletionItemKind.Field,
       registered.monaco.languages.CompletionItemKind.Function,
@@ -13093,10 +12552,7 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
 describe("registerLanguageServerMonacoProviders neon providers", () => {
   it("registers neon definition and completion providers and disposes them", () => {
     const registered = createRegisteredProviders();
-    const disposable = registerLanguageServerMonacoProviders(
-      registered.monaco,
-      providerContext(),
-    );
+    const disposable = registerLanguageServerMonacoProviders(registered.monaco, providerContext());
 
     expect(registered.neonDefinitionLanguage).toBe("neon");
     expect(registered.neonCompletionLanguage).toBe("neon");
@@ -13315,14 +12771,8 @@ describe("registerLanguageServerMonacoProviders PHP presenter-link completion", 
       positionForOffset(source, offset),
     );
 
-    expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(
-      source,
-      offset,
-    );
-    expect(isPhpPresenterLinkCompletionContext).toHaveBeenCalledWith(
-      source,
-      offset,
-    );
+    expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(source, offset);
+    expect(isPhpPresenterLinkCompletionContext).toHaveBeenCalledWith(source, offset);
     expect(gateway.completion).not.toHaveBeenCalled();
     expect(result.suggestions).toEqual([
       expect.objectContaining({
@@ -13397,10 +12847,7 @@ describe("registerLanguageServerMonacoProviders PHP presenter-link completion", 
         positionForOffset(source, offset),
       ),
     ).resolves.toEqual({ suggestions: [] });
-    expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(
-      source,
-      offset,
-    );
+    expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(source, offset);
     expect(gateway.completion).toHaveBeenCalled();
   });
 
@@ -13424,10 +12871,7 @@ describe("registerLanguageServerMonacoProviders PHP presenter-link completion", 
         positionForOffset(source, offset),
       ),
     ).resolves.toEqual({ suggestions: [] });
-    expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(
-      source,
-      offset,
-    );
+    expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith(source, offset);
     expect(gateway.completion).not.toHaveBeenCalled();
   });
 
@@ -13473,9 +12917,7 @@ describe("registerLanguageServerMonacoProviders PHP presenter-link completion", 
         replaceStart: number;
       }>
     >();
-    const providePhpPresenterLinkCompletions = vi.fn(
-      async () => completion.promise,
-    );
+    const providePhpPresenterLinkCompletions = vi.fn(async () => completion.promise);
     const reportError = vi.fn();
     const gateway = featuresGateway();
     const context = providerContext({
@@ -13486,11 +12928,10 @@ describe("registerLanguageServerMonacoProviders PHP presenter-link completion", 
     });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    const completionPromise =
-      registered.completionProvider.provideCompletionItems(
-        model({ content: source, path: "/project/src/User.php" }),
-        positionForOffset(source, offset),
-      );
+    const completionPromise = registered.completionProvider.provideCompletionItems(
+      model({ content: source, path: "/project/src/User.php" }),
+      positionForOffset(source, offset),
+    );
 
     activeRoot = null;
     completion.resolve([
@@ -13506,6 +12947,111 @@ describe("registerLanguageServerMonacoProviders PHP presenter-link completion", 
 
     await expect(completionPromise).resolves.toEqual({ suggestions: [] });
     expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("rolls back partial provider registration when a later registration throws", () => {
+    const registered = createRegisteredProviders();
+    const failure = new Error("signature registration failed");
+    registered.monaco.languages.registerSignatureHelpProvider.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    expect(() =>
+      registerLanguageServerMonacoProviders(registered.monaco, providerContext()),
+    ).toThrow(failure);
+    expect(registered.hoverDispose).toHaveBeenCalledOnce();
+    expect(registered.completionDispose).toHaveBeenCalledOnce();
+    expect(registered.commandDispose).toHaveBeenCalled();
+  });
+
+  it("continues disposing providers after one handle throws and reports the failure", () => {
+    const registered = createRegisteredProviders();
+    const failure = new Error("hover dispose failed");
+    const reportError = vi.fn();
+    registered.hoverDispose.mockImplementationOnce(() => {
+      throw failure;
+    });
+    const disposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ reportError }),
+    );
+
+    expect(() => disposable.dispose()).not.toThrow();
+    expect(reportError).toHaveBeenCalledWith(failure);
+    expect(registered.completionDispose).toHaveBeenCalledOnce();
+    expect(registered.documentSemanticTokensDispose).toHaveBeenCalledOnce();
+  });
+
+  it("disposes a provider registration at most once", () => {
+    const registered = createRegisteredProviders();
+    const disposable = registerLanguageServerMonacoProviders(registered.monaco, providerContext());
+
+    disposable.dispose();
+    disposable.dispose();
+
+    expect(registered.commandDispose).toHaveBeenCalledTimes(5);
+    expect(registered.hoverDispose).toHaveBeenCalledOnce();
+    expect(registered.documentSemanticTokensDispose).toHaveBeenCalledOnce();
+  });
+
+  it("drops a late hover from a replaced registration for the same workspace and session", async () => {
+    const registered = createRegisteredProviders();
+    const hover = createDeferred<LanguageServerHover | null>();
+    const oldGateway = featuresGateway();
+    oldGateway.hover = vi.fn(() => hover.promise);
+    const oldDisposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: oldGateway,
+        isDocumentLeaseCurrent: () => true,
+        requestDocumentLease: async () => ({
+          lifecycleIdentity: 11,
+          path: "/project/src/User.php",
+          rootPath: "/project",
+          sessionId: 7,
+          syncGeneration: 4,
+        }),
+      }),
+    );
+    const oldHoverProvider = registered.hoverProvider;
+    const pending = oldHoverProvider.provideHover(model(), position());
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: featuresGateway({
+          hover: { contents: "new registration" },
+        }),
+      }),
+    );
+
+    hover.resolve({ contents: "stale registration" });
+
+    await expect(pending).resolves.toBeNull();
+    oldDisposable.dispose();
+  });
+
+  it("restores the previous registration authority when replacement registration rolls back", async () => {
+    const registered = createRegisteredProviders();
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: featuresGateway({
+          hover: { contents: "still active" },
+        }),
+      }),
+    );
+    const oldHoverProvider = registered.hoverProvider;
+    const failure = new Error("replacement reference registration failed");
+    registered.monaco.languages.registerReferenceProvider.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    expect(() =>
+      registerLanguageServerMonacoProviders(registered.monaco, providerContext()),
+    ).toThrow(failure);
+    await expect(oldHoverProvider.provideHover(model(), position())).resolves.toEqual({
+      contents: [{ value: "still active" }],
+    });
   });
 });
 
@@ -13590,10 +13136,7 @@ function createRegisteredProviders() {
     codeLensProvider: any;
     commandDispose: ReturnType<typeof vi.fn>;
     commandRun: ((accessor: unknown, payload?: unknown) => unknown) | null;
-    commandRunsById: Record<
-      string,
-      (accessor: unknown, payload?: unknown) => unknown
-    >;
+    commandRunsById: Record<string, (accessor: unknown, payload?: unknown) => unknown>;
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
@@ -14068,9 +13611,7 @@ function createRegisteredProviders() {
   return registered;
 }
 
-function completionLabels(
-  suggestions: Array<{ label: string | { label: string } }>,
-): string[] {
+function completionLabels(suggestions: Array<{ label: string | { label: string } }>): string[] {
   return suggestions.map((suggestion) =>
     typeof suggestion.label === "string" ? suggestion.label : suggestion.label.label,
   );
@@ -14086,7 +13627,9 @@ function providerContext(
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["applyWorkspaceEdit"]
     >;
     clearLanguageServerDiagnosticsForPath: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["clearLanguageServerDiagnosticsForPath"]
+      Parameters<
+        typeof registerLanguageServerMonacoProviders
+      >[1]["clearLanguageServerDiagnosticsForPath"]
     >;
     coordinatePhpDocumentSymbols: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["coordinatePhpDocumentSymbols"]
@@ -14132,16 +13675,24 @@ function providerContext(
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
     >["neon"]["provideDefinition"];
     providePhpPresenterLinkCompletions: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpPresenterLinkCompletions"]
+      Parameters<
+        typeof registerLanguageServerMonacoProviders
+      >[1]["providePhpPresenterLinkCompletions"]
     >;
     providePhpPresenterLinkDefinition: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpPresenterLinkDefinition"]
+      Parameters<
+        typeof registerLanguageServerMonacoProviders
+      >[1]["providePhpPresenterLinkDefinition"]
     >;
     isPhpPresenterLinkCompletionContext: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["isPhpPresenterLinkCompletionContext"]
+      Parameters<
+        typeof registerLanguageServerMonacoProviders
+      >[1]["isPhpPresenterLinkCompletionContext"]
     >;
     isPhpFrameworkStringCompletionContext: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["isPhpFrameworkStringCompletionContext"]
+      Parameters<
+        typeof registerLanguageServerMonacoProviders
+      >[1]["isPhpFrameworkStringCompletionContext"]
     >;
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
@@ -14173,8 +13724,7 @@ function providerContext(
   return {
     applyPhpCodeActionNewFile: overrides.applyPhpCodeActionNewFile,
     applyWorkspaceEdit: overrides.applyWorkspaceEdit,
-    clearLanguageServerDiagnosticsForPath:
-      overrides.clearLanguageServerDiagnosticsForPath,
+    clearLanguageServerDiagnosticsForPath: overrides.clearLanguageServerDiagnosticsForPath,
     coordinatePhpDocumentSymbols: overrides.coordinatePhpDocumentSymbols,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
@@ -14187,40 +13737,28 @@ function providerContext(
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
     getTemplateLanguageProviders: () => ({
       blade: {
-        provideCodeActions:
-          overrides.provideBladeCodeActions ?? (async () => []),
-        provideCompletions:
-          overrides.provideBladeCompletions ?? (async () => []),
-        provideDefinition:
-          overrides.provideBladeDefinition ?? (async () => false),
+        provideCodeActions: overrides.provideBladeCodeActions ?? (async () => []),
+        provideCompletions: overrides.provideBladeCompletions ?? (async () => []),
+        provideDefinition: overrides.provideBladeDefinition ?? (async () => false),
       },
       latte: {
-        provideCodeActions:
-          overrides.provideLatteCodeActions ?? (async () => []),
-        provideCompletions:
-          overrides.provideLatteCompletions ?? (async () => []),
-        provideDefinition:
-          overrides.provideLatteDefinition ?? (async () => false),
+        provideCodeActions: overrides.provideLatteCodeActions ?? (async () => []),
+        provideCompletions: overrides.provideLatteCompletions ?? (async () => []),
+        provideDefinition: overrides.provideLatteDefinition ?? (async () => false),
       },
       neon: {
-        provideCompletions:
-          overrides.provideNeonCompletions ?? (async () => []),
-        provideDefinition:
-          overrides.provideNeonDefinition ?? (async () => false),
+        provideCompletions: overrides.provideNeonCompletions ?? (async () => []),
+        provideDefinition: overrides.provideNeonDefinition ?? (async () => false),
       },
     }),
     getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     isDocumentSynced: overrides.isDocumentSynced,
     isPhpInlayHintsEnabled: overrides.isPhpInlayHintsEnabled,
-    limitNavigationResultsToOpenModels:
-      overrides.limitNavigationResultsToOpenModels,
-    providePhpPresenterLinkCompletions:
-      overrides.providePhpPresenterLinkCompletions,
-    providePhpPresenterLinkDefinition:
-      overrides.providePhpPresenterLinkDefinition,
-    isPhpPresenterLinkCompletionContext:
-      overrides.isPhpPresenterLinkCompletionContext,
+    limitNavigationResultsToOpenModels: overrides.limitNavigationResultsToOpenModels,
+    providePhpPresenterLinkCompletions: overrides.providePhpPresenterLinkCompletions,
+    providePhpPresenterLinkDefinition: overrides.providePhpPresenterLinkDefinition,
+    isPhpPresenterLinkCompletionContext: overrides.isPhpPresenterLinkCompletionContext,
     isPhpFrameworkStringCompletionContext:
       overrides.isPhpFrameworkStringCompletionContext ??
       ((source, position) =>
@@ -14266,76 +13804,45 @@ function templateRegistry({
 
 function featuresGateway(
   responses: Partial<{
-    codeActions: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["codeActions"]>
-    >;
-    codeLenses: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["codeLenses"]>
-    >;
+    codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
+    codeLenses: Awaited<ReturnType<LanguageServerFeaturesGateway["codeLenses"]>>;
     completion: LanguageServerCompletionList;
     declaration: LanguageServerLocation[];
     definition: LanguageServerLocation[];
     documentHighlights: LanguageServerDocumentHighlight[];
     documentLinks: LanguageServerDocumentLink[];
-    documentSymbols: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
-    >;
-    foldingRanges: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>
-    >;
+    documentSymbols: Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>;
+    foldingRanges: Awaited<ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>>;
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     hover: LanguageServerHover | null;
     implementation: LanguageServerLocation[];
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
-    linkedEditingRanges: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>
-    >;
-    onTypeFormatting: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>
-    >;
-    prepareRename: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
-    >;
-    rangeFormatting: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>
-    >;
-    rangeSemanticTokens: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["rangeSemanticTokens"]>
-    >;
+    linkedEditingRanges: Awaited<ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>>;
+    onTypeFormatting: Awaited<ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>>;
+    prepareRename: Awaited<ReturnType<LanguageServerFeaturesGateway["prepareRename"]>>;
+    rangeFormatting: Awaited<ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>>;
+    rangeSemanticTokens: Awaited<ReturnType<LanguageServerFeaturesGateway["rangeSemanticTokens"]>>;
     references: LanguageServerLocation[];
-    resolvedCodeAction: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
-    >;
-    resolvedCodeLens: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["resolveCodeLens"]>
-    >;
-    resolvedDocumentLink: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["resolveDocumentLink"]>
-    >;
+    resolvedCodeAction: Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>>;
+    resolvedCodeLens: Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeLens"]>>;
+    resolvedDocumentLink: Awaited<ReturnType<LanguageServerFeaturesGateway["resolveDocumentLink"]>>;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
-    selectionRanges: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>
-    >;
-    semanticTokens: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["semanticTokens"]>
-    >;
-    signatureHelp: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
-    >;
+    selectionRanges: Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>;
+    semanticTokens: Awaited<ReturnType<LanguageServerFeaturesGateway["semanticTokens"]>>;
+    signatureHelp: Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>;
     typeDefinition: LanguageServerLocation[];
-    workspaceSymbols: Awaited<
-      ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>
-    >;
+    workspaceSymbols: Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>;
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
     codeActions: vi.fn(async () => responses.codeActions ?? []),
     codeLenses: vi.fn(async () => responses.codeLenses ?? []),
-    completion: vi.fn(async () =>
-      responses.completion ?? {
-        isIncomplete: false,
-        items: [],
-      },
+    completion: vi.fn(
+      async () =>
+        responses.completion ?? {
+          isIncomplete: false,
+          items: [],
+        },
     ),
     declaration: vi.fn(async () => responses.declaration ?? []),
     definition: vi.fn(async () => responses.definition ?? []),
@@ -14363,9 +13870,7 @@ function featuresGateway(
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
-    rangeSemanticTokens: vi.fn(
-      async () => responses.rangeSemanticTokens ?? null,
-    ),
+    rangeSemanticTokens: vi.fn(async () => responses.rangeSemanticTokens ?? null),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
@@ -14380,15 +13885,34 @@ function featuresGateway(
     willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
-    resolveCodeAction: vi.fn(
-      async (_rootPath, action) => responses.resolvedCodeAction ?? action,
-    ),
-    resolveCodeLens: vi.fn(
-      async (_rootPath, lens) => responses.resolvedCodeLens ?? lens,
-    ),
-    resolveDocumentLink: vi.fn(
-      async (_rootPath, link) => responses.resolvedDocumentLink ?? link,
-    ),
+    resolveCodeAction: vi.fn(async (_rootPath, action) => responses.resolvedCodeAction ?? action),
+    resolveCodeLens: vi.fn(async (_rootPath, lens) => responses.resolvedCodeLens ?? lens),
+    resolveDocumentLink: vi.fn(async (_rootPath, link) => responses.resolvedDocumentLink ?? link),
+  };
+}
+
+function identifiedRequest<T>(promise: Promise<T>, requestId: number, sessionId: number) {
+  return Object.assign(promise, { requestId, sessionId });
+}
+
+function identifiedRequestsPort({
+  cancelRequest = vi.fn(async () => undefined),
+  hover = identifiedRequest(Promise.resolve(null), 1, 7),
+}: {
+  cancelRequest?: IdentifiedLanguageServerRequestsPort["cancelRequest"];
+  hover?: ReturnType<IdentifiedLanguageServerRequestsPort["hover"]>;
+} = {}): IdentifiedLanguageServerRequestsPort {
+  return {
+    cancelRequest,
+    completion: () => identifiedRequest(Promise.resolve({ isIncomplete: false, items: [] }), 2, 7),
+    declaration: () => identifiedRequest(Promise.resolve([]), 3, 7),
+    definition: () => identifiedRequest(Promise.resolve([]), 4, 7),
+    hover: () => hover,
+    implementation: () => identifiedRequest(Promise.resolve([]), 5, 7),
+    references: () => identifiedRequest(Promise.resolve([]), 6, 7),
+    signatureHelp: () => identifiedRequest(Promise.resolve(null), 7, 7),
+    sourceDefinition: () => identifiedRequest(Promise.resolve([]), 8, 7),
+    typeDefinition: () => identifiedRequest(Promise.resolve([]), 9, 7),
   };
 }
 
@@ -14635,10 +14159,13 @@ function model(
       startColumn: overrides.word?.startColumn ?? 2,
       word: overrides.word?.word ?? "$user",
     })),
-    getWordUntilPosition: vi.fn(() => overrides.word ?? {
-      endColumn: 5,
-      startColumn: 2,
-    }),
+    getWordUntilPosition: vi.fn(
+      () =>
+        overrides.word ?? {
+          endColumn: 5,
+          startColumn: 2,
+        },
+    ),
     uri: {
       fsPath: overrides.path ?? "/project/src/User.php",
       path: overrides.path ?? "/project/src/User.php",
@@ -14676,9 +14203,7 @@ function phpactorCreateTypeAction(title: string): LanguageServerCodeAction {
     data: { id: title },
     edit: {
       changes: {},
-      fileOperations: [
-        { kind: "create", uri: "file:///project/src/MailDispatcher.php" },
-      ],
+      fileOperations: [{ kind: "create", uri: "file:///project/src/MailDispatcher.php" }],
     },
     isPreferred: false,
     kind: "quickfix",

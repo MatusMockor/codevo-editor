@@ -1,7 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import {
-  disposeAll,
   emptyDisposable,
+  registerTransactionally,
   type Disposable,
   type MonacoApi,
 } from "./providerRegistrationTypes";
@@ -32,80 +32,86 @@ export function registerDocumentLanguageServerProviders(
   delegates: DocumentLanguageServerProviderDelegates,
 ): Disposable {
   const registry = monaco.languages as Partial<typeof monaco.languages>;
-  const documentLink = monaco.languages.registerLinkProvider
-    ? monaco.languages.registerLinkProvider("php", {
-        provideLinks: delegates.provideDocumentLinks,
-        resolveLink: delegates.resolveDocumentLink,
-      })
-    : emptyDisposable();
-  const codeLens = monaco.languages.registerCodeLensProvider
-    ? monaco.languages.registerCodeLensProvider("php", {
-        onDidChange: delegates.onDidChangeCodeLens,
-        provideCodeLenses: delegates.provideCodeLenses,
-        resolveCodeLens: delegates.resolveCodeLens,
-      })
-    : emptyDisposable();
-  const inlayHints = monaco.languages.registerInlayHintsProvider
-    ? monaco.languages.registerInlayHintsProvider("php", {
-        onDidChangeInlayHints: delegates.onDidChangeInlayHints,
-        provideInlayHints: delegates.provideInlayHints,
-        resolveInlayHint: delegates.resolveInlayHint,
-      })
-    : emptyDisposable();
-  const foldingRange = monaco.languages.registerFoldingRangeProvider
-    ? monaco.languages.registerFoldingRangeProvider("php", {
-        provideFoldingRanges: delegates.provideFoldingRanges,
-      })
-    : emptyDisposable();
-  const documentFormatting = monaco.languages.registerDocumentFormattingEditProvider
-    ? monaco.languages.registerDocumentFormattingEditProvider("php", {
-        provideDocumentFormattingEdits: delegates.provideDocumentFormattingEdits,
-      })
-    : emptyDisposable();
-  const rangeFormatting = monaco.languages.registerDocumentRangeFormattingEditProvider
-    ? monaco.languages.registerDocumentRangeFormattingEditProvider("php", {
-        provideDocumentRangeFormattingEdits: delegates.provideDocumentRangeFormattingEdits,
-      })
-    : emptyDisposable();
-  const onTypeFormatting = monaco.languages.registerOnTypeFormattingEditProvider
-    ? monaco.languages.registerOnTypeFormattingEditProvider("php", {
-        autoFormatTriggerCharacters: [...delegates.onTypeFormattingTriggerCharacters],
-        provideOnTypeFormattingEdits: delegates.provideOnTypeFormattingEdits,
-      })
-    : emptyDisposable();
-  const linkedEditingRange = monaco.languages.registerLinkedEditingRangeProvider
-    ? monaco.languages.registerLinkedEditingRangeProvider("php", {
-        provideLinkedEditingRanges: delegates.provideLinkedEditingRanges,
-      })
-    : emptyDisposable();
-  const semanticTokens = registry.registerDocumentSemanticTokensProvider
-    ? registry.registerDocumentSemanticTokensProvider("php", {
-        onDidChange: delegates.onDidChangeSemanticTokens,
-        getLegend: delegates.getSemanticTokensLegend,
-        provideDocumentSemanticTokens: delegates.provideDocumentSemanticTokens,
-        releaseDocumentSemanticTokens: () => undefined,
-      })
-    : emptyDisposable();
-  const rangeSemanticTokens = registry.registerDocumentRangeSemanticTokensProvider
-    ? registry.registerDocumentRangeSemanticTokensProvider("php", {
-        getLegend: delegates.getSemanticTokensLegend,
-        provideDocumentRangeSemanticTokens: delegates.provideDocumentRangeSemanticTokens,
-      })
-    : emptyDisposable();
-
-  return {
-    dispose: () =>
-      disposeAll([
-        documentLink,
-        codeLens,
-        inlayHints,
-        foldingRange,
-        documentFormatting,
-        rangeFormatting,
-        onTypeFormatting,
-        linkedEditingRange,
-        semanticTokens,
-        rangeSemanticTokens,
-      ]),
-  };
+  return registerTransactionally((track) => {
+    track(
+      monaco.languages.registerLinkProvider
+        ? monaco.languages.registerLinkProvider("php", {
+            provideLinks: delegates.provideDocumentLinks,
+            resolveLink: delegates.resolveDocumentLink,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerCodeLensProvider
+        ? monaco.languages.registerCodeLensProvider("php", {
+            onDidChange: delegates.onDidChangeCodeLens,
+            provideCodeLenses: delegates.provideCodeLenses,
+            resolveCodeLens: delegates.resolveCodeLens,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerInlayHintsProvider
+        ? monaco.languages.registerInlayHintsProvider("php", {
+            onDidChangeInlayHints: delegates.onDidChangeInlayHints,
+            provideInlayHints: delegates.provideInlayHints,
+            resolveInlayHint: delegates.resolveInlayHint,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerFoldingRangeProvider
+        ? monaco.languages.registerFoldingRangeProvider("php", {
+            provideFoldingRanges: delegates.provideFoldingRanges,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerDocumentFormattingEditProvider
+        ? monaco.languages.registerDocumentFormattingEditProvider("php", {
+            provideDocumentFormattingEdits: delegates.provideDocumentFormattingEdits,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerDocumentRangeFormattingEditProvider
+        ? monaco.languages.registerDocumentRangeFormattingEditProvider("php", {
+            provideDocumentRangeFormattingEdits: delegates.provideDocumentRangeFormattingEdits,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerOnTypeFormattingEditProvider
+        ? monaco.languages.registerOnTypeFormattingEditProvider("php", {
+            autoFormatTriggerCharacters: [...delegates.onTypeFormattingTriggerCharacters],
+            provideOnTypeFormattingEdits: delegates.provideOnTypeFormattingEdits,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerLinkedEditingRangeProvider
+        ? monaco.languages.registerLinkedEditingRangeProvider("php", {
+            provideLinkedEditingRanges: delegates.provideLinkedEditingRanges,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      registry.registerDocumentSemanticTokensProvider
+        ? registry.registerDocumentSemanticTokensProvider("php", {
+            onDidChange: delegates.onDidChangeSemanticTokens,
+            getLegend: delegates.getSemanticTokensLegend,
+            provideDocumentSemanticTokens: delegates.provideDocumentSemanticTokens,
+            releaseDocumentSemanticTokens: () => undefined,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      registry.registerDocumentRangeSemanticTokensProvider
+        ? registry.registerDocumentRangeSemanticTokensProvider("php", {
+            getLegend: delegates.getSemanticTokensLegend,
+            provideDocumentRangeSemanticTokens: delegates.provideDocumentRangeSemanticTokens,
+          })
+        : emptyDisposable(),
+    );
+  });
 }

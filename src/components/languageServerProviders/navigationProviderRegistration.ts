@@ -1,7 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import {
-  disposeAll,
   emptyDisposable,
+  registerTransactionally,
   type Disposable,
   type MonacoApi,
   type MonacoWorkspaceSymbolRegistry,
@@ -28,66 +28,71 @@ export function registerNavigationLanguageServerProviders(
   monaco: MonacoApi,
   delegates: NavigationLanguageServerProviderDelegates,
 ): Disposable {
-  const rename = monaco.languages.registerRenameProvider
-    ? monaco.languages.registerRenameProvider("php", {
-        provideRenameEdits: delegates.provideRenameEdits,
-        resolveRenameLocation: delegates.resolveRenameLocation,
-      })
-    : emptyDisposable();
-  const references = monaco.languages.registerReferenceProvider
-    ? monaco.languages.registerReferenceProvider("php", {
-        provideReferences: delegates.provideReferences,
-      })
-    : emptyDisposable();
-  const definition = monaco.languages.registerDefinitionProvider
-    ? monaco.languages.registerDefinitionProvider("php", {
-        provideDefinition: delegates.provideDefinition,
-      })
-    : emptyDisposable();
-  const declaration = monaco.languages.registerDeclarationProvider
-    ? monaco.languages.registerDeclarationProvider("php", {
-        provideDeclaration: delegates.provideDeclaration,
-      })
-    : emptyDisposable();
-  const implementation = monaco.languages.registerImplementationProvider
-    ? monaco.languages.registerImplementationProvider("php", {
-        provideImplementation: delegates.provideImplementation,
-      })
-    : emptyDisposable();
-  const typeDefinition = monaco.languages.registerTypeDefinitionProvider
-    ? monaco.languages.registerTypeDefinitionProvider("php", {
-        provideTypeDefinition: delegates.provideTypeDefinition,
-      })
-    : emptyDisposable();
-  const documentHighlight = monaco.languages.registerDocumentHighlightProvider
-    ? monaco.languages.registerDocumentHighlightProvider("php", {
-        provideDocumentHighlights: delegates.provideDocumentHighlights,
-      })
-    : emptyDisposable();
-  const documentSymbol = monaco.languages.registerDocumentSymbolProvider
-    ? monaco.languages.registerDocumentSymbolProvider("php", {
-        provideDocumentSymbols: delegates.provideDocumentSymbols,
-      })
-    : emptyDisposable();
   const workspaceSymbolRegistry = monaco.languages as MonacoWorkspaceSymbolRegistry;
-  const workspaceSymbol = workspaceSymbolRegistry.registerWorkspaceSymbolProvider
-    ? workspaceSymbolRegistry.registerWorkspaceSymbolProvider({
-        provideWorkspaceSymbols: delegates.provideWorkspaceSymbols,
-      })
-    : emptyDisposable();
-
-  return {
-    dispose: () =>
-      disposeAll([
-        rename,
-        references,
-        definition,
-        declaration,
-        implementation,
-        typeDefinition,
-        documentHighlight,
-        documentSymbol,
-        workspaceSymbol,
-      ]),
-  };
+  return registerTransactionally((track) => {
+    track(
+      monaco.languages.registerRenameProvider
+        ? monaco.languages.registerRenameProvider("php", {
+            provideRenameEdits: delegates.provideRenameEdits,
+            resolveRenameLocation: delegates.resolveRenameLocation,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerReferenceProvider
+        ? monaco.languages.registerReferenceProvider("php", {
+            provideReferences: delegates.provideReferences,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerDefinitionProvider
+        ? monaco.languages.registerDefinitionProvider("php", {
+            provideDefinition: delegates.provideDefinition,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerDeclarationProvider
+        ? monaco.languages.registerDeclarationProvider("php", {
+            provideDeclaration: delegates.provideDeclaration,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerImplementationProvider
+        ? monaco.languages.registerImplementationProvider("php", {
+            provideImplementation: delegates.provideImplementation,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerTypeDefinitionProvider
+        ? monaco.languages.registerTypeDefinitionProvider("php", {
+            provideTypeDefinition: delegates.provideTypeDefinition,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerDocumentHighlightProvider
+        ? monaco.languages.registerDocumentHighlightProvider("php", {
+            provideDocumentHighlights: delegates.provideDocumentHighlights,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      monaco.languages.registerDocumentSymbolProvider
+        ? monaco.languages.registerDocumentSymbolProvider("php", {
+            provideDocumentSymbols: delegates.provideDocumentSymbols,
+          })
+        : emptyDisposable(),
+    );
+    track(
+      workspaceSymbolRegistry.registerWorkspaceSymbolProvider
+        ? workspaceSymbolRegistry.registerWorkspaceSymbolProvider({
+            provideWorkspaceSymbols: delegates.provideWorkspaceSymbols,
+          })
+        : emptyDisposable(),
+    );
+  });
 }
