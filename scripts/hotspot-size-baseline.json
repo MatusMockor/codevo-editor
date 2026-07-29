@@ -10,22 +10,22 @@
       ],
       "members": [
         "src/application/useWorkbenchController.preview.test.tsx",
-        "src/application/useWorkbenchController.preview/editing-file-events-settings-and-outline.test.tsx",
-        "src/application/useWorkbenchController.preview/editing-trust-runtime-and-renames.test.tsx",
-        "src/application/useWorkbenchController.preview/laravel-latte-blade-and-navigation.test.tsx",
-        "src/application/useWorkbenchController.preview/laravel-routes-config-translations-and-definitions.test.tsx",
-        "src/application/useWorkbenchController.preview/navigation-php-hierarchies-and-definitions.test.tsx",
-        "src/application/useWorkbenchController.preview/navigation-search-and-symbols.test.tsx",
-        "src/application/useWorkbenchController.preview/php-diagnostics-relations-and-definitions.test.tsx",
-        "src/application/useWorkbenchController.preview/php-refactors-and-quickfixes.test.tsx",
+        "src/application/useWorkbenchController.preview/editing-trust-events-and-settings.test.tsx",
+        "src/application/useWorkbenchController.preview/language-navigation-hierarchies-and-symbols.test.tsx",
+        "src/application/useWorkbenchController.preview/laravel-blade-translations-and-navigation.test.tsx",
+        "src/application/useWorkbenchController.preview/laravel-routes-config-and-views.test.tsx",
+        "src/application/useWorkbenchController.preview/php-refactors-completions-and-quickfixes.test.tsx",
+        "src/application/useWorkbenchController.preview/php-relations-and-diagnostics.test.tsx",
         "src/application/useWorkbenchController.preview/php-resolution-generics-and-inference.test.tsx",
         "src/application/useWorkbenchController.preview/testSupport.ts",
-        "src/application/useWorkbenchController.preview/workspace-lifecycle-identity-and-commands.test.tsx",
-        "src/application/useWorkbenchController.preview/workspace-save-runtime-switch-and-cleanup.test.tsx",
-        "src/application/useWorkbenchController.preview/workspace-session-git-and-editor.test.tsx"
+        "src/application/useWorkbenchController.preview/workspace-diagnostics-cleanup-and-commands.test.tsx",
+        "src/application/useWorkbenchController.preview/workspace-git-session-and-editor.test.tsx",
+        "src/application/useWorkbenchController.preview/workspace-identity-and-project-lifecycle.test.tsx",
+        "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
+        "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx"
       ],
-      "rawLines": 71702,
-      "structuralTokens": 336382
+      "rawLines": 71701,
+      "structuralTokens": 336377
     }
   },
   "files": {
@@ -39,19 +39,19 @@
     },
     "src-tauri/src/git.rs": { "rawLines": 7113, "structuralTokens": 44029 },
     "src-tauri/src/index.rs": { "rawLines": 2090, "structuralTokens": 10277 },
-    "src-tauri/src/lib.rs": { "rawLines": 307, "structuralTokens": 1386 },
+    "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 812 },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 1312,
       "structuralTokens": 7703
     },
     "src-tauri/src/lsp_session.rs": {
-      "rawLines": 6514,
-      "structuralTokens": 33085
+      "rawLines": 4500,
+      "structuralTokens": 23631
     },
     "src-tauri/src/lsp.rs": { "rawLines": 2364, "structuralTokens": 10802 },
     "src-tauri/src/workspace_file_commands.rs": {
-      "rawLines": 3126,
-      "structuralTokens": 19903
+      "rawLines": 2431,
+      "structuralTokens": 15773
     },
     "src/App.tsx": { "rawLines": 1654, "structuralTokens": 8363 },
     "src/application/useDocumentSync.ts": {
@@ -63,20 +63,20 @@
       "structuralTokens": 6737
     },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 8579,
-      "structuralTokens": 31427
+      "rawLines": 8221,
+      "structuralTokens": 29650
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 3380,
-      "structuralTokens": 14087
+      "rawLines": 2508,
+      "structuralTokens": 10441
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
       "rawLines": 2720,
       "structuralTokens": 11417
     },
     "src/components/languageServerMonacoProviders.ts": {
-      "rawLines": 4080,
-      "structuralTokens": 10496
+      "rawLines": 3055,
+      "structuralTokens": 7431
     },
     "src/components/SettingsDialog.tsx": {
       "rawLines": 1762,

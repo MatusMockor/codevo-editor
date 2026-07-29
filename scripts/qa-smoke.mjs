@@ -11,23 +11,23 @@ const defaultProjectQaTargetUrl = "localhost:1420";
 
 export const workbenchControllerPreviewSuites = [
   "src/application/useWorkbenchController.preview.test.tsx",
-  "src/application/useWorkbenchController.preview/editing-file-events-settings-and-outline.test.tsx",
-  "src/application/useWorkbenchController.preview/editing-trust-runtime-and-renames.test.tsx",
-  "src/application/useWorkbenchController.preview/laravel-latte-blade-and-navigation.test.tsx",
-  "src/application/useWorkbenchController.preview/laravel-routes-config-translations-and-definitions.test.tsx",
-  "src/application/useWorkbenchController.preview/navigation-php-hierarchies-and-definitions.test.tsx",
-  "src/application/useWorkbenchController.preview/navigation-search-and-symbols.test.tsx",
-  "src/application/useWorkbenchController.preview/php-diagnostics-relations-and-definitions.test.tsx",
-  "src/application/useWorkbenchController.preview/php-refactors-and-quickfixes.test.tsx",
+  "src/application/useWorkbenchController.preview/editing-trust-events-and-settings.test.tsx",
+  "src/application/useWorkbenchController.preview/language-navigation-hierarchies-and-symbols.test.tsx",
+  "src/application/useWorkbenchController.preview/laravel-blade-translations-and-navigation.test.tsx",
+  "src/application/useWorkbenchController.preview/laravel-routes-config-and-views.test.tsx",
+  "src/application/useWorkbenchController.preview/php-refactors-completions-and-quickfixes.test.tsx",
+  "src/application/useWorkbenchController.preview/php-relations-and-diagnostics.test.tsx",
   "src/application/useWorkbenchController.preview/php-resolution-generics-and-inference.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-lifecycle-identity-and-commands.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-save-runtime-switch-and-cleanup.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-session-git-and-editor.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-diagnostics-cleanup-and-commands.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-git-session-and-editor.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-identity-and-project-lifecycle.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
+  "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx",
 ];
 
 const laravelWorkbenchControllerPreviewSuites = [
-  "src/application/useWorkbenchController.preview/laravel-latte-blade-and-navigation.test.tsx",
-  "src/application/useWorkbenchController.preview/laravel-routes-config-translations-and-definitions.test.tsx",
+  "src/application/useWorkbenchController.preview/laravel-blade-translations-and-navigation.test.tsx",
+  "src/application/useWorkbenchController.preview/laravel-routes-config-and-views.test.tsx",
 ];
 
 export const qaSmokeProfiles = {

@@ -25,81 +25,35 @@ import {
 } from "../useWorkbenchController";
 
 // Shared test-only dependency surface for split controller suites.
-export { callHierarchyRows } from "../../domain/callHierarchy";
-export type { DebugGateway } from "../../domain/debug";
-export { debugBreakpointStorageKey } from "../../domain/debugBreakpointPersistence";
-export { deserializeBreakpoints, serializeBreakpoints } from "../../domain/debugBreakpoints";
-export { createInitialEditorGroupsState } from "../../domain/editorGroups";
-export { emptyGitStatus, gitChangeKey } from "../../domain/git";
-export type { GitChangedFile, GitGateway } from "../../domain/git";
+export * from "../../domain/callHierarchy";
+export * from "../../domain/debug";
+export * from "../../domain/debugBreakpointPersistence";
+export * from "../../domain/debugBreakpoints";
+export * from "../../domain/editorGroups";
+export * from "../../domain/git";
 export type { IndexProgressGateway, MetadataScanCompletionEvent } from "../../domain/indexProgress";
-export type { SmartModeGateway } from "../../domain/intelligence";
-export { defaultKeymapSettings } from "../../domain/keymap";
-export type {
-  LanguageServerGateway,
-  LanguageServerPlan,
-  PhpLanguageServerPlanOptions,
-} from "../../domain/languageServer";
-export type {
-  LanguageServerDiagnosticEvent,
-  LanguageServerDiagnosticsGateway,
-} from "../../domain/languageServerDiagnostics";
-export { fileUriFromPath } from "../../domain/languageServerDocumentSync";
-export type {
-  LanguageServerCodeAction,
-  LanguageServerFeaturesGateway,
-  LanguageServerTextEdit,
-  LanguageServerWorkspaceEdit,
-} from "../../domain/languageServerFeatures";
-export { emptyLanguageServerCapabilities } from "../../domain/languageServerRuntime";
-export type {
-  LanguageServerRuntimeGateway,
-  LanguageServerRuntimeStatus,
-} from "../../domain/languageServerRuntime";
-export { emptyPhpFileOutline } from "../../domain/phpFileOutline";
-export type { PhpFileOutlineGateway } from "../../domain/phpFileOutline";
-export type { PhpTreeGateway } from "../../domain/phpTree";
-export type {
-  ProjectSymbolSearchGateway,
-  ProjectSymbolSearchResult,
-} from "../../domain/projectSymbols";
-export { referenceRows } from "../../domain/referencesView";
-export {
-  defaultAppSettings,
-  defaultWorkspaceSettings,
-  normalizeWorkspaceSession,
-} from "../../domain/settings";
-export type { SettingsGateway } from "../../domain/settings";
-export type { WorkspaceTrustGateway, WorkspaceTrustState } from "../../domain/trust";
-export { typeHierarchyRows } from "../../domain/typeHierarchy";
-export { defaultTextSearchOptions } from "../../domain/workspace";
-export type {
-  FileEntry,
-  FileSearchResult,
-  TextSearchResult,
-  WorkspaceDescriptor,
-} from "../../domain/workspace";
-export type { WorkspaceFileChangeEvent } from "../../domain/workspaceFileChange";
-export { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
-export type { WorkspaceRuntimeLifecycleGateway } from "../../domain/workspaceRuntimeLifecycle";
-export {
-  flushTextSearchDebounce,
-  resolveInReactAct,
-  waitForReact,
-} from "../../test/reactTestLifecycle";
-export {
-  featuresGateway,
-  flushAsyncTurns,
-  javaScriptTypeScriptWorkspaceDescriptor,
-  setupWorkbenchControllerTestHarness,
-} from "../../test/workbenchControllerTestHarness";
-export type { WorkbenchController } from "../../test/workbenchControllerTestHarness";
-export { EditorActiveLiveDocumentSaveCoordinator } from "../editorActiveLiveDocumentSaveCoordinator";
-export {
-  adoptLegacyCachedWorkspaceState,
-  withWorkspaceIdentityLease,
-} from "../useWorkbenchController";
-export type { WorkbenchWorkspaceGateways } from "../useWorkbenchController";
+export * from "../../domain/intelligence";
+export * from "../../domain/keymap";
+export * from "../../domain/languageServer";
+export * from "../../domain/languageServerDiagnostics";
+export * from "../../domain/languageServerDocumentSync";
+export * from "../../domain/languageServerFeatures";
+export * from "../../domain/languageServerRuntime";
+export * from "../../domain/phpFileOutline";
+export * from "../../domain/phpTree";
+export * from "../../domain/projectSymbols";
+export * from "../../domain/referencesView";
+export * from "../../domain/settings";
+export * from "../../domain/trust";
+export * from "../../domain/typeHierarchy";
+export * from "../../domain/workspace";
+export * from "../../domain/workspaceFileChange";
+export * from "../../domain/workspaceRootKey";
+export * from "../../domain/workspaceRuntimeLifecycle";
+export * from "../../test/reactTestLifecycle";
+export * from "../../test/workbenchControllerTestHarness";
+export * from "../editorActiveLiveDocumentSaveCoordinator";
+export * from "../useWorkbenchController";
 export { act } from "react";
 export { describe, expect, it, vi } from "vitest";
 
@@ -194,14 +148,9 @@ export const flushWorkspaceDirectoryRefresh = () => flushAfter(150);
 export const flushSearchEverywhereDebounce = () => flushAfter(150);
 export const flushFilePrefetch = () => flushAfter(150);
 
-export interface ManagedPhpactorInstallHarness {
-  phpTools: WorkbenchWorkspaceGateways["phpTools"];
-  emitCompletion: (event: ManagedPhpactorInstallCompletionEvent) => void;
-}
-
 export function createManagedPhpactorInstallHarness(
   overrides: Partial<WorkbenchWorkspaceGateways["phpTools"]> = {},
-): ManagedPhpactorInstallHarness {
+) {
   const listeners = new Set<(event: ManagedPhpactorInstallCompletionEvent) => void>();
 
   const phpTools: WorkbenchWorkspaceGateways["phpTools"] = {
@@ -221,7 +170,7 @@ export function createManagedPhpactorInstallHarness(
 
   return {
     phpTools,
-    emitCompletion(event) {
+    emitCompletion(event: ManagedPhpactorInstallCompletionEvent) {
       for (const listener of listeners) {
         listener(event);
       }
@@ -229,7 +178,7 @@ export function createManagedPhpactorInstallHarness(
   };
 }
 
-export async function waitForClassSearch(): Promise<void> {
+export async function waitForClassSearch() {
   await act(async () => {
     await new Promise((resolve) => window.setTimeout(resolve, 160));
     await Promise.resolve();
@@ -531,11 +480,11 @@ export function positionAfter(source: string, needle: string): EditorPosition {
   };
 }
 
-export function lineNumberOf(source: string, needle: string): number {
+export function lineNumberOf(source: string, needle: string) {
   return positionAfter(source, needle).lineNumber;
 }
 
-export function monacoPositionToOffset(source: string, lineNumber: number, column: number): number {
+function monacoPositionToOffset(source: string, lineNumber: number, column: number) {
   const lines = source.split("\n");
   let offset = 0;
 

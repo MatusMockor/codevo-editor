@@ -5,11 +5,12 @@ import {
   act,
   createDeferred,
   defaultAppSettings,
-  defaultWorkspaceSettings,
   describe,
   emptyLanguageServerCapabilities,
   expect,
+  featuresGateway,
   fileEntry,
+  type FileSearchResult,
   fileUriFromPath,
   flushAsyncTurns,
   it,
@@ -19,17 +20,2157 @@ import {
   lineNumberOf,
   phpWorkspaceDescriptor,
   positionAfter,
-  type ProjectSymbolSearchGateway,
   type ProjectSymbolSearchResult,
-  resolveInReactAct,
   setupWorkbenchControllerTestHarness,
-  type TextSearchResult,
   vi,
   waitForReact,
   type WorkbenchController,
+  defaultWorkspaceSettings,
+  type ProjectSymbolSearchGateway,
   type WorkbenchWorkspaceGateways,
   type WorkspaceFileChangeEvent,
 } from "./testSupport";
+
+describe("useWorkbenchController PHP language intelligence", () => {
+  const { renderController } = setupWorkbenchControllerTestHarness();
+  it("infers Laravel relation query callback builders", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const artistPath = "/workspace/app/Models/Artist.php";
+    const postPath = "/workspace/app/Models/Post.php";
+    const trackPath = "/workspace/app/Models/Track.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+use App\\Models\\Post;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::query()->whereHas('tracks', function ($query): void {
+            $query->pub
+            $query->published()->ord
+            $track = $query->first();
+            $track->get
+        });
+
+        Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->pub);
+
+        Album::query()->with(['tracks.artist' => function ($artistQuery): void {
+            $artistQuery->pub
+            $artistQuery->published()->ord
+            $artist = $artistQuery->first();
+            $artist->get
+        }]);
+
+        Album::query()->whereHasMorph('commentable', [Post::class], function ($morphQuery): void {
+            $morphQuery->pub
+            $morphQuery->published()->ord
+            $post = $morphQuery->first();
+            $post->get
+        });
+
+        Album::query()->when($flag, function ($whenQuery): void {
+            $whenQuery->pub
+            $whenQuery->published()->ord
+            $whenAlbum = $whenQuery->first();
+            $whenAlbum->get
+        });
+
+        Album::query()->unless($flag, function ($unlessQuery): void {
+            $unlessQuery->pub
+            $unlessQuery->published()->ord
+            $unlessAlbum = $unlessQuery->first();
+            $unlessAlbum->get
+        });
+
+        Album::query()->tap(function ($tapQuery): void {
+            $tapQuery->pub
+            $tapQuery->published()->ord
+            $tapAlbum = $tapQuery->first();
+            $tapAlbum->get
+        });
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Album",
+          kind: "class",
+          lineNumber: 7,
+          name: "Album",
+          path: albumPath,
+          relativePath: "app/Models/Album.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Artist",
+          kind: "class",
+          lineNumber: 7,
+          name: "Artist",
+          path: artistPath,
+          relativePath: "app/Models/Artist.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Post",
+          kind: "class",
+          lineNumber: 7,
+          name: "Post",
+          path: postPath,
+          relativePath: "app/Models/Post.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Track",
+          kind: "class",
+          lineNumber: 7,
+          name: "Track",
+          path: trackPath,
+          relativePath: "app/Models/Track.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+
+class Album
+{
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
+
+    public function tracks(): HasMany
+    {
+        $related = Track::class;
+        return $this->hasMany($related);
+    }
+
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+`;
+        }
+
+        if (path === artistPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Artist
+{
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
+}
+`;
+        }
+
+        if (path === postPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Post
+{
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
+}
+`;
+        }
+
+        if (path === trackPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+
+class Track
+{
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
+
+    public function artist(): BelongsTo
+    {
+        return $this->belongsTo(Artist::class);
+    }
+}
+`;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    /** @return static */
+    public function orderBy($column, $direction = 'asc') {}
+
+    /** @return TModel|null */
+    public function first($columns = ['*']) {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Track",
+        kind: "scope",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$track->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Track",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$arrowQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Track",
+        kind: "scope",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$morphQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Post",
+        kind: "scope",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$artistQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Artist",
+        kind: "scope",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$artistQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$artist->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Artist",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$morphQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$post->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Post",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$whenQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        kind: "scope",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$whenQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$whenAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$unlessQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        kind: "scope",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$unlessQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$unlessAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$tapQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        kind: "scope",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$tapQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$tapAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+  it("opens Laravel fluent builder methods from chained calls", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        $album = Album::query()->whereNull('parent_id')->first();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    public function whereNull($columns, $boolean = 'and')
+    {
+        return $this;
+    }
+
+    public function first($columns = ['*'])
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(positionAfter(controllerSource, "->first"));
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(builderPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: builderPath,
+      position: {
+        column: 21,
+        lineNumber: 11,
+      },
+    });
+  });
+  it("opens Laravel model scopes and builder magic methods", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::published()->findOrFail(1);
+        $query = Album::query();
+        $query->published()->first();
+        Album::whereNull('parent_id')->first();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Album
+{
+    public function scopePublished(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    public function whereNull($columns, $boolean = 'and', $not = false)
+    {
+        return $this;
+    }
+
+    public function findOrFail($id)
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Album::published"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(albumPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: albumPath,
+      position: {
+        column: 21,
+        lineNumber: 8,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$query->published"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(albumPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: albumPath,
+      position: {
+        column: 21,
+        lineNumber: 8,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Album::whereNull"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(builderPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: builderPath,
+      position: {
+        column: 21,
+        lineNumber: 6,
+      },
+    });
+  });
+  it("opens PHPDoc magic method definitions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const factoryPath = "/workspace/app/Factories/CommentFactory.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Factories\\CommentFactory;
+
+class CommentController
+{
+    public function store(): void
+    {
+        CommentFactory::fromNamed('draft');
+        CommentFactory::findForSlug('draft');
+        CommentFactory::activeComments();
+        CommentFactory::archiveQuietly('draft');
+        CommentFactory::restoreBySlug('draft');
+    }
+}
+`;
+    const factorySource = `<?php
+namespace App\\Factories;
+
+/**
+ * @method static object fromNamed(string $name)
+ * @method static findForSlug(string $slug)
+ * @method static \\Illuminate\\Support\\Collection<int, Comment> activeComments()
+ * @phpstan-method static bool archiveQuietly(string $slug)
+ * @psalm-method static restoreBySlug(string $slug)
+ */
+class CommentFactory
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === factoryPath) {
+          return factorySource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::fromNamed"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: 26,
+        lineNumber: 5,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::findForSlug"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: 19,
+        lineNumber: lineNumberOf(factorySource, "findForSlug"),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::activeComments"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const activeCommentsPosition = positionAfter(factorySource, "activeComments");
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: activeCommentsPosition.column - "activeComments".length,
+        lineNumber: activeCommentsPosition.lineNumber,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::archiveQuietly"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const archiveQuietlyPosition = positionAfter(factorySource, "archiveQuietly");
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: archiveQuietlyPosition.column - "archiveQuietly".length,
+        lineNumber: archiveQuietlyPosition.lineNumber,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::restoreBySlug"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const restoreBySlugPosition = positionAfter(factorySource, "restoreBySlug");
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: restoreBySlugPosition.column - "restoreBySlug".length,
+        lineNumber: restoreBySlugPosition.lineNumber,
+      },
+    });
+  });
+  it("opens implemented interface PHPDoc magic method definitions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/PublishesComments.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->publish();
+        $comment->missingPublish();
+    }
+}
+`;
+    const commentSource = `<?php
+namespace App\\Models;
+
+use App\\Contracts\\PublishesComments;
+
+class Comment implements PublishesComments
+{
+}
+`;
+    const interfaceSource = `<?php
+namespace App\\Contracts;
+
+/**
+ * @method void publish()
+ */
+interface PublishesComments
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentSource;
+        }
+
+        if (path === interfacePath) {
+          return interfaceSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->publish"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: 17,
+        lineNumber: 5,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->missingPublish"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(controllerPath);
+  });
+  it("opens PHPDoc magic property definitions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/HasExternalId.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->externalId;
+        $comment->slug;
+        $comment->hidden;
+        $comment->missingProperty;
+    }
+}
+`;
+    const commentSource = `<?php
+namespace App\\Models;
+
+use App\\Contracts\\HasExternalId;
+
+class Comment implements HasExternalId
+{
+}
+`;
+    const interfaceSource = `<?php
+namespace App\\Contracts;
+
+/**
+ * @property-read string $externalId
+ * @phpstan-property-read string $slug
+ * @psalm-property-write bool $hidden
+ */
+interface HasExternalId
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentSource;
+        }
+
+        if (path === interfacePath) {
+          return interfaceSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->externalId"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: 27,
+        lineNumber: 5,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(positionAfter(controllerSource, "$comment->slug"));
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const slugPosition = positionAfter(interfaceSource, "$slug");
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: slugPosition.column - "slug".length,
+        lineNumber: slugPosition.lineNumber,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->hidden"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const hiddenPosition = positionAfter(interfaceSource, "$hidden");
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: hiddenPosition.column - "hidden".length,
+        lineNumber: hiddenPosition.lineNumber,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->missingProperty"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(controllerPath);
+  });
+  it("falls back to verified PHP filename lookup before the index is warm", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
+    const commentPath = "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use App\\Http\\Requests\\GetOneCommentRequest;
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->get
+    }
+}
+`;
+    const searchFiles = vi.fn(async (_root: string, query: string): Promise<FileSearchResult[]> => {
+      if (query === "CommentRepositoryInterface.php") {
+        return [
+          {
+            name: "CommentRepositoryInterface.php",
+            path: repositoryInterfacePath,
+            relativePath:
+              "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
+          },
+        ];
+      }
+
+      if (query === "Comment.php") {
+        return [
+          {
+            name: "Comment.php",
+            path: commentPath,
+            relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
+          },
+        ];
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      projectSymbols: [],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace Kontentino\\Communication\\Interfaces;
+
+use Kontentino\\Communication\\Models\\Comment;
+
+interface CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment;
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "CommentRepositoryInterface.php", 40);
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
+  });
+  it("suggests model methods from repository interface naming when return types are unavailable", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use App\\Http\\Requests\\GetOneCommentRequest;
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->get
+    }
+}
+`;
+    const searchFiles = vi.fn(async (_root: string, query: string): Promise<FileSearchResult[]> =>
+      query === "Comment.php"
+        ? [
+            {
+              name: "Comment.php",
+              path: commentPath,
+              relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
+            },
+          ]
+        : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      projectSymbols: [],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
+  });
+  it("suggests Laravel model attributes from repository interface naming when return types are unavailable", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use App\\Http\\Requests\\GetOneCommentRequest;
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->
+    }
+}
+`;
+    const searchFiles = vi.fn(async (_root: string, query: string): Promise<FileSearchResult[]> =>
+      query === "Comment.php"
+        ? [
+            {
+              name: "Comment.php",
+              path: commentPath,
+              relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
+            },
+          ]
+        : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      projectSymbols: [],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+class Comment
+{
+    protected $fillable = [
+        'account_id',
+        'content',
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+        'meta' => 'array',
+    ];
+
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->"),
+      ),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        {
+          declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+          kind: "property",
+          name: "account_id",
+          parameters: "",
+          returnType: "mixed",
+        },
+        {
+          declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+          kind: "property",
+          name: "is_pinned",
+          parameters: "",
+          returnType: "bool",
+        },
+        {
+          declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+          kind: "property",
+          name: "meta",
+          parameters: "",
+          returnType: "array",
+        },
+        {
+          declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+          name: "getContent",
+          parameters: "",
+          returnType: "string",
+        },
+      ]),
+    );
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
+  });
+  it("offers Laravel Eloquent model completions after fluent findOrFail chains", async () => {
+    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(int $threadId, int $id): void
+    {
+        $comment = Comment::where('thread_id', $threadId)->findOrFail($id);
+        $comment->
+        $comment->visible();
+        $missing = Comment::where('thread_id', $threadId)->definitelyMissingMagic();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 144,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const diagnosticPosition = (needle: string) => {
+      const position = positionAfter(controllerSource, needle);
+
+      return {
+        character: position.column - needle.length - 1,
+        line: position.lineNumber - 1,
+      };
+    };
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'content',
+        'thread_id',
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+        'meta' => 'array',
+    ];
+
+    public function replies(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_id');
+    }
+
+    public function approve(int $actorId): void {}
+
+    public function scopeVisible(Builder $query, bool $pinned = false): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->"),
+      ),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "content",
+          parameters: "",
+          returnType: "mixed",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "is_pinned",
+          parameters: "",
+          returnType: "bool",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "meta",
+          parameters: "",
+          returnType: "array",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "replies",
+          parameters: "",
+          returnType: "App\\Models\\Comment",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "scope",
+          name: "visible",
+          parameters: "bool $pinned = false",
+          returnType: "Builder",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          name: "approve",
+          parameters: "int $actorId",
+          returnType: "void",
+        },
+      ]),
+    );
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            ...diagnosticPosition("where"),
+            message: "Method App\\Models\\Comment::where() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...diagnosticPosition("findOrFail"),
+            message: "Method Illuminate\\Database\\Eloquent\\Builder::findOrFail() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...diagnosticPosition("visible"),
+            message: "Method App\\Models\\Comment::visible() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...diagnosticPosition("definitelyMissingMagic"),
+            message:
+              "Method Illuminate\\Database\\Eloquent\\Builder::definitelyMissingMagic() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...diagnosticPosition("where"),
+        message: "Method App\\Models\\Comment::where() does not exist",
+        severity: "hint",
+        source: "laravel-magic",
+      },
+      {
+        ...diagnosticPosition("findOrFail"),
+        message: "Method Illuminate\\Database\\Eloquent\\Builder::findOrFail() does not exist",
+        severity: "hint",
+        source: "laravel-magic",
+      },
+      {
+        ...diagnosticPosition("definitelyMissingMagic"),
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::definitelyMissingMagic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+  it("surfaces derived local scopes as their own category without raw or duplicate members", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/ReportController.php";
+    const reportRunPath = "/workspace/app/Models/ReportRun.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\ReportRun;
+
+class ReportController
+{
+    public function index(): void
+    {
+        /** @var ReportRun $report */
+        $report->
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === reportRunPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasOne;
+
+class ReportRun extends Model
+{
+    public string $status;
+
+    public function owner(): HasOne
+    {
+        return $this->hasOne(User::class);
+    }
+
+    public function process(): void {}
+
+    public function scopeInFlight(Builder $query): Builder {}
+
+    #[Scope]
+    protected function failed(Builder $query): void {}
+
+    public function scopeStale(Builder $query): Builder {}
+
+    public function scopeStatus(Builder $query): Builder {}
+
+    public function scopeOwner(Builder $query): Builder {}
+
+    public function scopeProcess(Builder $query): Builder {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "ReportController.php"));
+    });
+
+    const completions = await getWorkbench().providePhpMethodCompletions(
+      controllerSource,
+      positionAfter(controllerSource, "$report->"),
+    );
+    const byName = (name: string) => completions.filter((completion) => completion.name === name);
+
+    // Derived scopes (classic `scopeX` and `#[Scope]`) carry `kind: "scope"` so
+    // the ordering layer can group them into their own category.
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        {
+          declaringClassName: "App\\Models\\ReportRun",
+          kind: "scope",
+          name: "inFlight",
+          parameters: "",
+          returnType: "Builder",
+        },
+        {
+          declaringClassName: "App\\Models\\ReportRun",
+          kind: "scope",
+          name: "failed",
+          parameters: "",
+          returnType: "Illuminate\\Database\\Eloquent\\Builder",
+        },
+        {
+          declaringClassName: "App\\Models\\ReportRun",
+          kind: "scope",
+          name: "stale",
+          parameters: "",
+          returnType: "Builder",
+        },
+      ]),
+    );
+
+    // No raw `scopeX` source method leaks alongside the derived scope.
+    expect(
+      completions.filter((completion) => completion.name.toLowerCase().startsWith("scope")),
+    ).toEqual([]);
+
+    // The `#[Scope]` source method `failed` is represented exactly once - the
+    // derived scope - never duplicated by the raw attributed method.
+    expect(byName("failed")).toHaveLength(1);
+    expect(byName("inFlight")).toHaveLength(1);
+    expect(byName("stale")).toHaveLength(1);
+
+    // A scope whose name collides with a property keeps both, each in its own
+    // kind, and still drops the raw `scopeX` source.
+    expect(
+      byName("status")
+        .map((completion) => completion.kind)
+        .sort(),
+    ).toEqual(["property", "scope"]);
+
+    // A scope whose name collides with a relation or a plain method survives the
+    // collision: the derived scope is present exactly once (the raw `scopeX`
+    // source is already proven dropped above) and the colliding member remains.
+    expect(byName("owner").filter((completion) => completion.kind === "scope")).toHaveLength(1);
+    expect(byName("owner").some((completion) => completion.kind !== "scope")).toBe(true);
+    expect(byName("process").filter((completion) => completion.kind === "scope")).toHaveLength(1);
+    expect(byName("process").some((completion) => (completion.kind ?? "method") === "method")).toBe(
+      true,
+    );
+  });
+  it("uses filename lookup when Composer PSR-4 points at a missing model path", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
+    const expectedPsrModelPath = "/workspace/app/Models/Comment.php";
+    const actualModelPath = "/workspace/packages/domain/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\CommentRepository;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepository $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $comment = $this->commentRepository->findOrFail(1);
+        $comment->get
+    }
+}
+`;
+    const searchFiles = vi.fn(async (_root: string, query: string): Promise<FileSearchResult[]> => {
+      if (query === "Comment.php") {
+        return [
+          {
+            name: "Comment.php",
+            path: actualModelPath,
+            relativePath: "packages/domain/Models/Comment.php",
+          },
+        ];
+      }
+
+      return [];
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === repositoryPath) {
+        return `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+
+class CommentRepository
+{
+    public function findOrFail(int $id): Comment {}
+}
+`;
+      }
+
+      if (path === expectedPsrModelPath) {
+        throw new Error("missing PSR-4 model path");
+      }
+
+      if (path === actualModelPath) {
+        return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      projectSymbols: [],
+      readTextFile,
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    expect(readTextFile).toHaveBeenCalledWith(expectedPsrModelPath);
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
+  });
+  it("opens Laravel database connection methods inferred from return expressions", async () => {
+    const localUserPath = "/workspace/app/Models/LocalUser.php";
+    const userAccountPath = "/workspace/app/Models/UserAccount.php";
+    const userAccountModelPath = "/workspace/app/Kontentino/src/Eloquent/UserAccountModel.php";
+    const eloquentModelPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Model.php";
+    const connectionPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Connection.php";
+    const queryBuilderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Query/Builder.php";
+    const localUserSource = `<?php
+namespace App\\Models;
+
+class LocalUser
+{
+    /** @var UserAccount */
+    private $userAccount = null;
+
+    public function loadByLogin($login)
+    {
+        $connection = $this->userAccount->getDatabaseConnection();
+        $userData = $connection->table('users')->get();
+        $connection->table('users')->wh
+        $userQuery = $connection->table('users')->where('login', $login);
+        $userQuery->ord
+    }
+}
+`;
+    const workspaceDescriptor = phpWorkspaceDescriptor();
+    workspaceDescriptor.php?.psr4Roots.push({
+      dev: false,
+      namespace: "Kontentino\\",
+      paths: ["app/Kontentino/src/"],
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === localUserPath) {
+        return localUserSource;
+      }
+
+      if (path === userAccountPath) {
+        return `<?php
+namespace App\\Models;
+
+use Kontentino\\Eloquent\\UserAccountModel;
+
+class UserAccount
+{
+    public function getDatabaseConnection()
+    {
+        return new UserAccountModel()->getConnection();
+    }
+}
+`;
+      }
+
+      if (path === userAccountModelPath) {
+        return `<?php
+namespace Kontentino\\Eloquent;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class UserAccountModel extends Model
+{
+}
+`;
+      }
+
+      if (path === eloquentModelPath) {
+        return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Model
+{
+    /**
+     * @return \\Illuminate\\Database\\Connection
+     */
+    public function getConnection()
+    {
+    }
+}
+`;
+      }
+
+      if (path === connectionPath) {
+        return `<?php
+namespace Illuminate\\Database;
+
+class Connection
+{
+    public function table($table, $as = null)
+    {
+    }
+}
+`;
+      }
+
+      if (path === queryBuilderPath) {
+        return `<?php
+namespace Illuminate\\Database\\Query;
+
+class Builder
+{
+    public function where($column, $operator = null, $value = null, $boolean = 'and')
+    {
+    }
+
+    public function orderBy($column, $direction = 'asc')
+    {
+    }
+
+    public function first($columns = ['*'])
+    {
+    }
+}
+`;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      readTextFile,
+      workspaceDescriptor,
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(localUserPath, "LocalUser.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(localUserSource, "$connection->table"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect({
+      activePath: getWorkbench().activePath,
+      editorRevealTarget: getWorkbench().editorRevealTarget,
+      message: getWorkbench().message,
+    }).toEqual({
+      activePath: connectionPath,
+      editorRevealTarget: {
+        path: connectionPath,
+        position: {
+          column: 21,
+          lineNumber: 6,
+        },
+      },
+      message: "Opened table() Connection.php:6:21",
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        localUserSource,
+        positionAfter(localUserSource, "$connection->table('users')->wh"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Query\\Builder",
+        name: "where",
+        parameters: "$column, $operator = null, $value = null, $boolean = 'and'",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        localUserSource,
+        positionAfter(localUserSource, "$userQuery->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Query\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: null,
+      },
+    ]);
+  });
+  it("resolves Laravel route action strings to the paired controller method before LSP fallback", async () => {
+    const routesPath = "/workspace/routes/comments.php";
+    const commentControllerPath =
+      "/workspace/app/Http/Controllers/communication/CommentController.php";
+    const reactionControllerPath =
+      "/workspace/app/Http/Controllers/communication/ReactionController.php";
+    const languageServerFeaturesGateway = featuresGateway();
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 21,
+        containerName: "App\\Http\\Controllers\\communication\\ReactionController",
+        fullyQualifiedName: "App\\Http\\Controllers\\communication\\ReactionController::store",
+        kind: "method",
+        lineNumber: 8,
+        name: "store",
+        path: reactionControllerPath,
+        relativePath: "app/Http/Controllers/communication/ReactionController.php",
+      },
+      {
+        column: 21,
+        containerName: "App\\Http\\Controllers\\communication\\CommentController",
+        fullyQualifiedName: "App\\Http\\Controllers\\communication\\CommentController::store",
+        kind: "method",
+        lineNumber: 12,
+        name: "store",
+        path: commentControllerPath,
+        relativePath: "app/Http/Controllers/communication/CommentController.php",
+      },
+    ];
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: workspaceAppSettings(),
+      languageServerFeaturesGateway,
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === routesPath) {
+          return `<?php
+use App\\Http\\Controllers\\communication\\CommentController;
+use App\\Http\\Controllers\\communication\\ReactionController;
+
+Route::post('/comments', [CommentController::class, 'store']);
+Route::post('/reactions', [ReactionController::class, 'store']);
+`;
+        }
+
+        return "<?php\nclass Controller { public function store() {} }\n";
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(routesPath, "comments.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 54,
+        lineNumber: 5,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.projectSymbols.searchProjectSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "store",
+      50,
+    );
+    expect(getWorkbench().activePath).toBe(commentControllerPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentControllerPath,
+      position: {
+        column: 21,
+        lineNumber: 12,
+      },
+    });
+  });
+});
 
 describe("useWorkbenchController PHP language intelligence", () => {
   const { renderController } = setupWorkbenchControllerTestHarness();
@@ -3886,3366 +6027,5 @@ class CommentPublisher
         returnType: "void",
       },
     ]);
-  });
-  it("resolves generic trait method returns through PHPDoc use", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
-    const traitPath = "/workspace/app/Support/FindsModels.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Repositories\\CommentRepository;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepository $commentRepository,
-    ) {}
-
-    public function getOne(): void
-    {
-        $comment = $this->commentRepository->findOrFail(1);
-        $comment->get
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Repositories\\CommentRepository",
-          kind: "class",
-          lineNumber: 9,
-          name: "CommentRepository",
-          path: repositoryPath,
-          relativePath: "app/Repositories/CommentRepository.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Support\\FindsModels",
-          kind: "trait",
-          lineNumber: 7,
-          name: "FindsModels",
-          path: traitPath,
-          relativePath: "app/Support/FindsModels.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Models\\Comment",
-          kind: "class",
-          lineNumber: 5,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Models/Comment.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === repositoryPath) {
-          return `<?php
-namespace App\\Repositories;
-
-use App\\Models\\Comment;
-use App\\Support\\FindsModels;
-
-/**
- * @use FindsModels<Comment>
- */
-class CommentRepository
-{
-    use FindsModels;
-}
-`;
-        }
-
-        if (path === traitPath) {
-          return `<?php
-namespace App\\Support;
-
-/**
- * @template TModel of object
- */
-trait FindsModels
-{
-    /** @return TModel */
-    public function findOrFail(int $id) {}
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-class Comment
-{
-    public function getContent(): string {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$this->commentRepository->find"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Support\\FindsModels",
-        name: "findOrFail",
-        parameters: "int $id",
-        returnType: "App\\Models\\Comment",
-      },
-    ]);
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->get"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "getContent",
-        parameters: "",
-        returnType: "string",
-      },
-    ]);
-  });
-  it("completes trait $this host method from one same-source trait host", async () => {
-    const source = `<?php
-namespace App\\Models;
-
-trait HasHostHooks
-{
-    public function bootHooks(): void
-    {
-        $this->host
-    }
-}
-
-class User
-{
-    use HasHostHooks;
-
-    public function hostHook(): void {}
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(source, positionAfter(source, "$this->host")),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\User",
-        name: "hostHook",
-        parameters: "",
-        returnType: "void",
-      },
-    ]);
-  });
-  async function expectSameSourceTraitOverrideCompletion(
-    crossFileReturnType: string | null,
-    expectedReturnType: string | null,
-  ): Promise<void> {
-    const crossFileHostPath = "/workspace/app/Models/Admin.php";
-    const source = `<?php
-namespace App\\Models;
-
-trait HasHostHooks
-{
-    public function resolveHook(): TraitResult
-    {
-        $this->resolve
-    }
-}
-
-class User
-{
-    use HasHostHooks;
-
-    public function resolveHook(): LocalResult {}
-}
-`;
-    const crossFileHostSource = crossFileReturnType
-      ? `<?php
-namespace App\\Models;
-class Admin
-{
-    use \\App\\Models\\HasHostHooks;
-    public function resolveHook(): ${crossFileReturnType} {}
-}
-`
-      : null;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: crossFileHostSource
-        ? [
-            {
-              column: 7,
-              containerName: null,
-              fullyQualifiedName: "App\\Models\\Admin",
-              kind: "class",
-              lineNumber: 3,
-              name: "Admin",
-              path: crossFileHostPath,
-              relativePath: "app/Models/Admin.php",
-            },
-          ]
-        : [],
-      readTextFile: vi.fn(async (path: string) =>
-        path === crossFileHostPath && crossFileHostSource
-          ? crossFileHostSource
-          : `<?php\n// ${path}\n`,
-      ),
-      searchText: vi.fn(async (_root, query) =>
-        query === "HasHostHooks" && crossFileHostSource
-          ? [
-              {
-                column: 5,
-                lineNumber: 5,
-                lineText: "    use \\App\\Models\\HasHostHooks;",
-                path: crossFileHostPath,
-                relativePath: "app/Models/Admin.php",
-              },
-            ]
-          : [],
-      ),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(source, positionAfter(source, "$this->resolve")),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\User",
-        name: "resolveHook",
-        parameters: "",
-        returnType: expectedReturnType,
-      },
-    ]);
-  }
-  it("lets a same-source host override the trait return type", async () => {
-    await expectSameSourceTraitOverrideCompletion(null, "LocalResult");
-  });
-  it("nulls conflicting same-source and cross-file host override returns", async () => {
-    await expectSameSourceTraitOverrideCompletion("CrossResult", null);
-  });
-  it("keeps identical same-source and cross-file host override returns typed", async () => {
-    await expectSameSourceTraitOverrideCompletion("LocalResult", "LocalResult");
-  });
-  it("does not complete trait $this host method for trait-only source", async () => {
-    const source = `<?php
-namespace App\\Models;
-
-trait HasHostHooks
-{
-    public function bootHooks(): void
-    {
-        $this->host
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(source, positionAfter(source, "$this->host")),
-    ).resolves.toEqual([]);
-  });
-  it("does not complete trait $this host method when two same-source trait hosts exist", async () => {
-    const source = `<?php
-namespace App\\Models;
-
-trait HasHostHooks
-{
-    public function bootHooks(): void
-    {
-        $this->host
-    }
-}
-
-class User
-{
-    use HasHostHooks;
-
-    public function hostHook(): void {}
-}
-
-class Admin
-{
-    use HasHostHooks;
-
-    public function hostHook(): void {}
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(source, positionAfter(source, "$this->host")),
-    ).resolves.toEqual([]);
-  });
-  it("intersects cross-file trait hosts and includes inherited methods and properties", async () => {
-    const traitPath = "/workspace/app/Traits/SortableTrait.php";
-    const articlePath = "/workspace/app/Repositories/ArticleRepository.php";
-    const postPath = "/workspace/app/Repositories/PostRepository.php";
-    const articleBasePath = "/workspace/app/Base/ArticleRepositoryBase.php";
-    const postBasePath = "/workspace/app/Base/PostRepositoryBase.php";
-    const source = `<?php
-namespace App\\Traits;
-
-trait SortableTrait
-{
-    public function moveUp(): void
-    {
-        $this->get
-        $this->upd
-        $this->sorting
-        $this->only
-    }
-}
-`;
-    const sources = new Map<string, string>([
-      [traitPath, source],
-      [
-        articlePath,
-        `<?php
-namespace App\\Repositories;
-use App\\Base\\ArticleRepositoryBase;
-use App\\Traits\\SortableTrait;
-class ArticleRepository extends ArticleRepositoryBase { use SortableTrait; }
-`,
-      ],
-      [
-        postPath,
-        `<?php
-namespace App\\Repositories;
-use App\\Base\\PostRepositoryBase;
-use App\\Traits\\SortableTrait;
-class PostRepository extends PostRepositoryBase { use SortableTrait; }
-`,
-      ],
-      [
-        articleBasePath,
-        `<?php
-namespace App\\Base;
-class ArticleRepositoryBase
-{
-    protected string $sortingColumn = 'sorting';
-    protected int $sortingStep = 100;
-    public function getTable(): object {}
-    public function update(): bool {}
-    public function onlyArticle(): void {}
-}
-`,
-      ],
-      [
-        postBasePath,
-        `<?php
-namespace App\\Base;
-class PostRepositoryBase
-{
-    protected string $sortingColumn = 'sorting';
-    protected int $sortingStep = 100;
-    public function getTable(): object {}
-    public function update(): bool {}
-    public function onlyPost(): void {}
-}
-`,
-      ],
-    ]);
-    const symbols: ProjectSymbolSearchResult[] = [
-      ["App\\Traits\\SortableTrait", "trait", traitPath],
-      ["App\\Repositories\\ArticleRepository", "class", articlePath],
-      ["App\\Repositories\\PostRepository", "class", postPath],
-      ["App\\Base\\ArticleRepositoryBase", "class", articleBasePath],
-      ["App\\Base\\PostRepositoryBase", "class", postBasePath],
-    ].map(([fullyQualifiedName, kind, path]) => ({
-      column: 1,
-      containerName: null,
-      fullyQualifiedName,
-      kind: kind as "class" | "trait",
-      lineNumber: 1,
-      name: fullyQualifiedName.split("\\").pop() ?? fullyQualifiedName,
-      path,
-      relativePath: path.slice("/workspace/".length),
-    }));
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: symbols,
-      readTextFile: vi.fn(async (path: string) => sources.get(path) ?? "<?php\n"),
-      searchText: vi.fn(async (_root, query) =>
-        query === "SortableTrait"
-          ? [articlePath, postPath].map((path) => ({
-              column: 5,
-              lineNumber: 4,
-              lineText: "use SortableTrait;",
-              path,
-              relativePath: path.slice("/workspace/".length),
-            }))
-          : [],
-      ),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    const completionNamesAfter = async (needle: string) =>
-      (await getWorkbench().providePhpMethodCompletions(source, positionAfter(source, needle))).map(
-        (completion) => completion.name,
-      );
-
-    await expect(completionNamesAfter("$this->get")).resolves.toEqual(["getTable"]);
-    await expect(completionNamesAfter("$this->upd")).resolves.toEqual(["update"]);
-    await expect(completionNamesAfter("$this->sorting")).resolves.toEqual([
-      "sortingColumn",
-      "sortingStep",
-    ]);
-    await expect(completionNamesAfter("$this->only")).resolves.toEqual([]);
-  });
-  it("resolves generic mixin method returns through PHPDoc mixin", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
-    const mixinPath = "/workspace/app/Support/RepositoryMixin.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Repositories\\CommentRepository;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepository $commentRepository,
-    ) {}
-
-    public function getOne(): void
-    {
-        $comment = $this->commentRepository->findForDisplay(1);
-        $comment->get
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Repositories\\CommentRepository",
-          kind: "class",
-          lineNumber: 10,
-          name: "CommentRepository",
-          path: repositoryPath,
-          relativePath: "app/Repositories/CommentRepository.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Support\\RepositoryMixin",
-          kind: "class",
-          lineNumber: 7,
-          name: "RepositoryMixin",
-          path: mixinPath,
-          relativePath: "app/Support/RepositoryMixin.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Models\\Comment",
-          kind: "class",
-          lineNumber: 5,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Models/Comment.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === repositoryPath) {
-          return `<?php
-namespace App\\Repositories;
-
-use App\\Models\\Comment;
-use App\\Support\\RepositoryMixin;
-
-/**
- * @phpstan-mixin RepositoryMixin<Comment>
- */
-class CommentRepository
-{
-}
-`;
-        }
-
-        if (path === mixinPath) {
-          return `<?php
-namespace App\\Support;
-
-/**
- * @template TModel of object
- */
-class RepositoryMixin
-{
-    /** @return TModel */
-    public function findForDisplay(int $id) {}
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-class Comment
-{
-    public function getContent(): string {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$this->commentRepository->find"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Support\\RepositoryMixin",
-        name: "findForDisplay",
-        parameters: "int $id",
-        returnType: "App\\Models\\Comment",
-      },
-    ]);
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->get"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "getContent",
-        parameters: "",
-        returnType: "string",
-      },
-    ]);
-  });
-  it("uses Laravel container bindings to infer interface implementation return types", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
-    const repositoryInterfacePath = "/workspace/app/Contracts/CommentRepositoryInterface.php";
-    const repositoryPath = "/workspace/app/Repositories/EloquentCommentRepository.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Http\\Requests\\GetOneCommentRequest;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepositoryInterface $commentRepository,
-    ) {}
-
-    public function getOne(GetOneCommentRequest $request): void
-    {
-        $comment = $this->commentRepository->findOrFail($request->getCommentId());
-        $comment->force
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === providerPath) {
-          return `<?php
-namespace App\\Providers;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Repositories\\EloquentCommentRepository;
-
-class AppServiceProvider
-{
-    public function register(): void
-    {
-        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
-    }
-}
-`;
-        }
-
-        if (path === repositoryInterfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-interface CommentRepositoryInterface
-{
-}
-`;
-        }
-
-        if (path === repositoryPath) {
-          return `<?php
-namespace App\\Repositories;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Models\\Comment;
-
-class EloquentCommentRepository implements CommentRepositoryInterface
-{
-    public function findOrFail(int $id): Comment
-    {
-    }
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-class Comment
-{
-    public function forceDelete(): bool
-    {
-    }
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      searchText: vi.fn(async (_root, query) =>
-        query === "CommentRepositoryInterface::class"
-          ? [
-              {
-                column: 26,
-                lineNumber: 11,
-                lineText:
-                  "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
-                path: providerPath,
-                relativePath: "app/Providers/AppServiceProvider.php",
-              },
-            ]
-          : [],
-      ),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->force"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "forceDelete",
-        parameters: "",
-        returnType: "bool",
-      },
-    ]);
-
-    act(() => {
-      getWorkbench().updateActiveEditorPosition(positionAfter(controllerSource, "findOrFail"));
-    });
-
-    await act(async () => {
-      await getWorkbench()
-        .commands.find((candidate) => candidate.id === "editor.goToDefinition")
-        ?.run();
-    });
-
-    expect(getWorkbench().activePath).toBe(repositoryPath);
-    expect(getWorkbench().editorRevealTarget).toEqual({
-      path: repositoryPath,
-      position: {
-        column: 21,
-        lineNumber: 9,
-      },
-    });
-  });
-  it("stops stale Laravel container binding search after switching project tabs", async () => {
-    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
-    const providerPath = "/workspace-a/app/Providers/AppServiceProvider.php";
-    const repositoryInterfacePath = "/workspace-a/app/Contracts/CommentRepositoryInterface.php";
-    const repositoryPath = "/workspace-a/app/Repositories/EloquentCommentRepository.php";
-    const commentPath = "/workspace-a/app/Models/Comment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Http\\Requests\\GetOneCommentRequest;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepositoryInterface $commentRepository,
-    ) {}
-
-    public function getOne(GetOneCommentRequest $request): void
-    {
-        $comment = $this->commentRepository->findOrFail($request->getCommentId());
-        $comment->force
-    }
-}
-`;
-    const providerSource = `<?php
-namespace App\\Providers;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Repositories\\EloquentCommentRepository;
-
-class AppServiceProvider
-{
-    public function register(): void
-    {
-        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
-    }
-}
-`;
-    const staleBindingSearch = createDeferred<TextSearchResult[]>();
-    const searchText = vi.fn(async (_root, query) =>
-      query === "CommentRepositoryInterface::class" ? staleBindingSearch.promise : [],
-    );
-    let providerReadCount = 0;
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === providerPath) {
-          providerReadCount += 1;
-          return providerSource;
-        }
-
-        if (path === repositoryInterfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-interface CommentRepositoryInterface
-{
-}
-`;
-        }
-
-        if (path === repositoryPath) {
-          return `<?php
-namespace App\\Repositories;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Models\\Comment;
-
-class EloquentCommentRepository implements CommentRepositoryInterface
-{
-    public function findOrFail(int $id): Comment
-    {
-    }
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-class Comment
-{
-    public function forceDelete(): bool
-    {
-    }
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      searchText,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    const completions = getWorkbench().providePhpMethodCompletions(
-      controllerSource,
-      positionAfter(controllerSource, "$comment->force"),
-    );
-    await waitForReact(() => {
-      expect(searchText).toHaveBeenCalledWith(
-        "/workspace-a",
-        "CommentRepositoryInterface::class",
-        200,
-      );
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
-
-    staleBindingSearch.resolve([
-      {
-        column: 26,
-        lineNumber: 11,
-        lineText:
-          "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
-        path: providerPath,
-        relativePath: "app/Providers/AppServiceProvider.php",
-      },
-    ]);
-
-    await expect(completions).resolves.toEqual([]);
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(providerReadCount).toBe(0);
-  });
-  it("refreshes Laravel container binding completions after editing service provider files", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
-    const repositoryInterfacePath = "/workspace/app/Contracts/CommentRepositoryInterface.php";
-    const eloquentRepositoryPath = "/workspace/app/Repositories/EloquentCommentRepository.php";
-    const cachedRepositoryPath = "/workspace/app/Repositories/CachedCommentRepository.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const archivedCommentPath = "/workspace/app/Models/ArchivedComment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Http\\Requests\\GetOneCommentRequest;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepositoryInterface $commentRepository,
-    ) {}
-
-    public function getOne(GetOneCommentRequest $request): void
-    {
-        $comment = $this->commentRepository->findOrFail($request->getCommentId());
-        $comment->for
-    }
-}
-`;
-    const updatedControllerSource = controllerSource.replace("$comment->for", "$comment->arc");
-    const unrelatedControllerSource = controllerSource.replace("$comment->for", "$comment->for ");
-    const eloquentProviderSource = `<?php
-namespace App\\Providers;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Repositories\\EloquentCommentRepository;
-
-class AppServiceProvider
-{
-    public function register(): void
-    {
-        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
-    }
-}
-`;
-    const cachedProviderSource = `<?php
-namespace App\\Providers;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Repositories\\CachedCommentRepository;
-
-class AppServiceProvider
-{
-    public function register(): void
-    {
-        $this->app->bind(CommentRepositoryInterface::class, CachedCommentRepository::class);
-    }
-}
-`;
-    const readTextFile = vi.fn(async (path: string) => {
-      if (path === controllerPath) {
-        return controllerSource;
-      }
-
-      if (path === providerPath) {
-        return eloquentProviderSource;
-      }
-
-      if (path === repositoryInterfacePath) {
-        return `<?php
-namespace App\\Contracts;
-
-interface CommentRepositoryInterface
-{
-}
-`;
-      }
-
-      if (path === eloquentRepositoryPath) {
-        return `<?php
-namespace App\\Repositories;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Models\\Comment;
-
-class EloquentCommentRepository implements CommentRepositoryInterface
-{
-    public function findOrFail(int $id): Comment
-    {
-    }
-}
-`;
-      }
-
-      if (path === cachedRepositoryPath) {
-        return `<?php
-namespace App\\Repositories;
-
-use App\\Contracts\\CommentRepositoryInterface;
-use App\\Models\\ArchivedComment;
-
-class CachedCommentRepository implements CommentRepositoryInterface
-{
-    public function findOrFail(int $id): ArchivedComment
-    {
-    }
-}
-`;
-      }
-
-      if (path === commentPath) {
-        return `<?php
-namespace App\\Models;
-
-class Comment
-{
-    public function forceDelete(): bool
-    {
-    }
-}
-`;
-      }
-
-      if (path === archivedCommentPath) {
-        return `<?php
-namespace App\\Models;
-
-class ArchivedComment
-{
-    public function archive(): void
-    {
-    }
-}
-`;
-      }
-
-      return `<?php\n// ${path}\n`;
-    });
-    const searchText = vi.fn(async (_root, query) =>
-      query === "CommentRepositoryInterface::class"
-        ? [
-            {
-              column: 26,
-              lineNumber: 11,
-              lineText:
-                "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
-              path: providerPath,
-              relativePath: "app/Providers/AppServiceProvider.php",
-            },
-          ]
-        : [],
-    );
-    const bindingSearchCount = () =>
-      searchText.mock.calls.filter(([, query]) => query === "CommentRepositoryInterface::class")
-        .length;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      readTextFile,
-      searchText,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    const provideCompletions = (source: string, marker: string) =>
-      resolveInReactAct(() =>
-        getWorkbench().providePhpMethodCompletions(source, positionAfter(source, marker)),
-      );
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(provideCompletions(controllerSource, "$comment->for")).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "forceDelete",
-        parameters: "",
-        returnType: "bool",
-      },
-    ]);
-    expect(bindingSearchCount()).toBe(1);
-
-    act(() => {
-      getWorkbench().updateActiveDocument(unrelatedControllerSource);
-    });
-    await expect(provideCompletions(unrelatedControllerSource, "$comment->for")).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "forceDelete",
-        parameters: "",
-        returnType: "bool",
-      },
-    ]);
-    // The first member-completion request warms Laravel provider-source
-    // registries in the background; the settled source signature gets one
-    // fresh binding lookup, then the cache is reused.
-    expect(bindingSearchCount()).toBe(2);
-
-    await expect(provideCompletions(unrelatedControllerSource, "$comment->for")).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "forceDelete",
-        parameters: "",
-        returnType: "bool",
-      },
-    ]);
-    expect(bindingSearchCount()).toBe(2);
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(providerPath, "AppServiceProvider.php"));
-    });
-    act(() => {
-      getWorkbench().updateActiveDocument(cachedProviderSource);
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-    act(() => {
-      getWorkbench().updateActiveDocument(updatedControllerSource);
-    });
-    expect(
-      getWorkbench().openDocuments.find((document) => document.path === providerPath)?.content,
-    ).toBe(cachedProviderSource);
-
-    await expect(provideCompletions(updatedControllerSource, "$comment->arc")).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\ArchivedComment",
-        name: "archive",
-        parameters: "",
-        returnType: "void",
-      },
-    ]);
-    expect(bindingSearchCount()).toBe(3);
-  });
-  it("invalidates a cached Laravel binding miss after external PHP changes", async () => {
-    let publishFileChange: ((event: WorkspaceFileChangeEvent) => void) | null = null;
-    let bindingFileExists = false;
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const interfacePath = "/workspace/app/Contracts/CommentStoreContract.php";
-    const repositoryPath = "/workspace/app/Storage/DatabaseCommentStore.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const bindingPath = "/workspace/src/Bindings.php";
-    const unrelatedPath = "/workspace/src/Unrelated.php";
-    const unreadablePath = "/workspace/src/Unreadable.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Contracts\\CommentStoreContract;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentStoreContract $commentStore,
-    ) {}
-
-    public function show(): void
-    {
-        $comment = $this->commentStore->findOrFail(1);
-        $comment->for
-    }
-}
-`;
-    const bindingSource = `<?php
-namespace App\\Support;
-
-use App\\Contracts\\CommentStoreContract;
-use App\\Storage\\DatabaseCommentStore;
-
-app()->bind(CommentStoreContract::class, DatabaseCommentStore::class);
-`;
-    const readTextFile = vi.fn(async (path: string) => {
-      if (path === controllerPath) {
-        return controllerSource;
-      }
-
-      if (path === interfacePath) {
-        return `<?php
-namespace App\\Contracts;
-
-interface CommentStoreContract {}
-`;
-      }
-
-      if (path === repositoryPath) {
-        return `<?php
-namespace App\\Storage;
-
-use App\\Contracts\\CommentStoreContract;
-use App\\Models\\Comment;
-
-class DatabaseCommentStore implements CommentStoreContract
-{
-    public function findOrFail(int $id): Comment {}
-}
-`;
-      }
-
-      if (path === commentPath) {
-        return `<?php
-namespace App\\Models;
-
-class Comment
-{
-    public function forceDelete(): bool {}
-}
-`;
-      }
-
-      if (path === bindingPath && bindingFileExists) {
-        return bindingSource;
-      }
-
-      if (path === unrelatedPath) {
-        return `<?php
-use App\\Contracts\\CommentStoreContract;
-
-final class Unrelated
-{
-    public const CONTRACT = CommentStoreContract::class;
-}
-`;
-      }
-
-      if (path === unreadablePath) {
-        throw new Error("transient external read failure");
-      }
-
-      return `<?php\n// ${path}\n`;
-    });
-    const searchText = vi.fn(async (_root, query) => {
-      if (query !== "CommentStoreContract::class") {
-        return [];
-      }
-
-      if (!bindingFileExists) {
-        return [
-          {
-            column: 29,
-            lineNumber: 6,
-            lineText: "    public const CONTRACT = CommentStoreContract::class;",
-            path: unrelatedPath,
-            relativePath: "src/Unrelated.php",
-          },
-        ];
-      }
-
-      return [
-        {
-          column: 13,
-          lineNumber: 7,
-          lineText: "app()->bind(CommentStoreContract::class, DatabaseCommentStore::class);",
-          path: bindingPath,
-          relativePath: "src/Bindings.php",
-        },
-      ];
-    });
-    const bindingSearchCount = () =>
-      searchText.mock.calls.filter(([, query]) => query === "CommentStoreContract::class").length;
-    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] = {
-      startWatching: vi.fn(async () => undefined),
-      subscribeFileChanges: vi.fn(async (listener) => {
-        publishFileChange = listener;
-        return () => undefined;
-      }),
-    };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      readTextFile,
-      searchText,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-      workspaceFileChangeGateway,
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->for"),
-      ),
-    ).resolves.toEqual([]);
-    expect(bindingSearchCount()).toBe(1);
-
-    await act(async () => {
-      publishFileChange?.({
-        kind: "modified",
-        path: unrelatedPath,
-        relativePath: "src/Unrelated.php",
-        rootPath: "/workspace",
-      });
-      await flushAsyncTurns();
-    });
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->for"),
-      ),
-    ).resolves.toEqual([]);
-    expect(bindingSearchCount()).toBe(2);
-
-    await act(async () => {
-      publishFileChange?.({
-        kind: "modified",
-        path: unreadablePath,
-        relativePath: "src/Unreadable.php",
-        rootPath: "/workspace",
-      });
-      await flushAsyncTurns();
-    });
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->for"),
-      ),
-    ).resolves.toEqual([]);
-    expect(bindingSearchCount()).toBe(3);
-
-    bindingFileExists = true;
-    await act(async () => {
-      publishFileChange?.({
-        kind: "created",
-        path: bindingPath,
-        relativePath: "src/Bindings.php",
-        rootPath: "/workspace",
-      });
-      await flushAsyncTurns();
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->for"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "forceDelete",
-        parameters: "",
-        returnType: "bool",
-      },
-    ]);
-    expect(bindingSearchCount()).toBe(4);
-
-    bindingFileExists = false;
-    await act(async () => {
-      publishFileChange?.({
-        kind: "deleted",
-        path: bindingPath,
-        relativePath: "src/Bindings.php",
-        rootPath: "/workspace",
-      });
-      await flushAsyncTurns();
-    });
-    await getWorkbench().providePhpMethodCompletions(
-      controllerSource,
-      positionAfter(controllerSource, "$comment->for"),
-    );
-    expect(bindingSearchCount()).toBe(5);
-  });
-  it("keeps Laravel repository completions stable during container binding warm-up", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
-    const repositoryInterfacePath = "/workspace/app/Contracts/CommentLookupInterface.php";
-    const repositoryPath = "/workspace/app/Repositories/EloquentCommentRepository.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Contracts\\CommentLookupInterface;
-use App\\Http\\Requests\\GetOneCommentRequest;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentLookupInterface $commentRepository,
-    ) {}
-
-    public function getOne(GetOneCommentRequest $request): void
-    {
-        $comment = $this->commentRepository->findOrFail($request->getCommentId());
-        $comment->force
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === providerPath) {
-          return `<?php
-namespace App\\Providers;
-
-use App\\Contracts\\CommentLookupInterface;
-use App\\Repositories\\EloquentCommentRepository;
-
-class AppServiceProvider
-{
-    public function register(): void
-    {
-        $this->app->bind(CommentLookupInterface::class, EloquentCommentRepository::class);
-    }
-}
-`;
-        }
-
-        if (path === repositoryInterfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-interface CommentLookupInterface
-{
-}
-`;
-        }
-
-        if (path === repositoryPath) {
-          return `<?php
-namespace App\\Repositories;
-
-use App\\Contracts\\CommentLookupInterface;
-use App\\Models\\Comment;
-
-class EloquentCommentRepository implements CommentLookupInterface
-{
-    public function findOrFail(int $id): Comment
-    {
-    }
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-class Comment
-{
-    public function forceDelete(): bool
-    {
-    }
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      searchText: vi.fn(async (_root, query) => {
-        if (query !== "CommentLookupInterface::class") {
-          return [];
-        }
-
-        return [
-          {
-            column: 26,
-            lineNumber: 11,
-            lineText:
-              "        $this->app->bind(CommentLookupInterface::class, EloquentCommentRepository::class);",
-            path: providerPath,
-            relativePath: "app/Providers/AppServiceProvider.php",
-          },
-        ];
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->force"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "forceDelete",
-        parameters: "",
-        returnType: "bool",
-      },
-    ]);
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->force"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "forceDelete",
-        parameters: "",
-        returnType: "bool",
-      },
-    ]);
-  });
-  it("offers model methods and properties after typed repository findOrFail assignments", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const repositoryInterfacePath =
-      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
-    const commentPath = "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers\\communication;
-
-use App\\Http\\Requests\\GetOneCommentRequest;
-use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepositoryInterface $commentRepository,
-    ) {}
-
-    public function getOne(GetOneCommentRequest $request): void
-    {
-        $comment = $this->commentRepository->findOrFail($request->getCommentId());
-        $comment->
-
-        $builderComment = $comment->newQuery()->first();
-        $builderComment->get
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: [
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface",
-          kind: "interface",
-          lineNumber: 7,
-          name: "CommentRepositoryInterface",
-          path: repositoryInterfacePath,
-          relativePath:
-            "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Models\\Comment",
-          kind: "class",
-          lineNumber: 7,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === repositoryInterfacePath) {
-          return `<?php
-namespace Kontentino\\Communication\\Interfaces;
-
-use Kontentino\\Communication\\Models\\Comment;
-
-interface CommentRepositoryInterface
-{
-    public function findOrFail(int $id): Comment;
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace Kontentino\\Communication\\Models;
-
-use Illuminate\\Database\\Eloquent\\Casts\\Attribute;
-use Kontentino\\Communication\\Enums\\CommentType;
-
-/**
- * @property string $body
- */
-class Comment
-{
-    protected $appends = ['summary'];
-
-    protected $fillable = [
-        'account_id',
-        'user_id',
-        'model_name',
-        'model_id',
-        'parent_id',
-        'content',
-        'type',
-        'thread',
-    ];
-
-    protected $attributes = [
-        'is_visible' => true,
-        'label' => 'draft',
-    ];
-
-    protected array $casts = [
-        'is_pinned' => 'bool',
-        'meta' => 'array',
-        'type' => CommentType::class,
-    ];
-
-    protected function casts(): array
-    {
-        return [
-            'priority' => 'integer',
-        ];
-    }
-
-    public string $status;
-
-    public function getContent(): string {}
-
-    /** @return Attribute<string, never> */
-    protected function displayName(): Attribute
-    {
-        return Attribute::make(get: fn () => '');
-    }
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "account_id",
-        parameters: "",
-        returnType: "mixed",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "body",
-        parameters: "",
-        returnType: "string",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "content",
-        parameters: "",
-        returnType: "mixed",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "display_name",
-        parameters: "",
-        returnType: "string",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        name: "getContent",
-        parameters: "",
-        returnType: "string",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "is_pinned",
-        parameters: "",
-        returnType: "bool",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "is_visible",
-        parameters: "",
-        returnType: "bool",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "label",
-        parameters: "",
-        returnType: "string",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "meta",
-        parameters: "",
-        returnType: "array",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "model_id",
-        parameters: "",
-        returnType: "mixed",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "model_name",
-        parameters: "",
-        returnType: "mixed",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "parent_id",
-        parameters: "",
-        returnType: "mixed",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "priority",
-        parameters: "",
-        returnType: "int",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "status",
-        parameters: "",
-        returnType: "string",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "summary",
-        parameters: "",
-        returnType: "mixed",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "thread",
-        parameters: "",
-        returnType: "mixed",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "type",
-        parameters: "",
-        returnType: "Kontentino\\Communication\\Enums\\CommentType",
-      },
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        kind: "property",
-        name: "user_id",
-        parameters: "",
-        returnType: "mixed",
-      },
-    ]);
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$builderComment->get"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
-        name: "getContent",
-        parameters: "",
-        returnType: "string",
-      },
-    ]);
-  });
-  it("infers model completions from untyped repository body terminal Eloquent finder returns", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Repositories\\CommentRepository;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepository $commentRepository,
-    ) {}
-
-    public function getOne(): void
-    {
-        $comment = $this->commentRepository->findOrFail(1);
-        $comment->
-
-        $staticComment = $this->commentRepository->findStaticOrFail(1);
-        $staticComment->get
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Repositories\\CommentRepository",
-          kind: "class",
-          lineNumber: 7,
-          name: "CommentRepository",
-          path: repositoryPath,
-          relativePath: "app/Repositories/CommentRepository.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Models\\Comment",
-          kind: "class",
-          lineNumber: 5,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Models/Comment.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === repositoryPath) {
-          return `<?php
-namespace App\\Repositories;
-
-use App\\Models\\Comment;
-
-class CommentRepository
-{
-    public function findOrFail(int $id)
-    {
-        return Comment::query()->whereKey($id)->firstOrFail();
-    }
-
-    public function findStaticOrFail(int $id)
-    {
-        return Comment::findOrFail($id);
-    }
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-/**
- * @property string $body
- */
-class Comment
-{
-    protected $fillable = ['content'];
-
-    public function getContent(): string {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->"),
-      ),
-    ).resolves.toEqual(
-      expect.arrayContaining([
-        {
-          declaringClassName: "App\\Models\\Comment",
-          kind: "property",
-          name: "body",
-          parameters: "",
-          returnType: "string",
-        },
-        {
-          declaringClassName: "App\\Models\\Comment",
-          kind: "property",
-          name: "content",
-          parameters: "",
-          returnType: "mixed",
-        },
-        {
-          declaringClassName: "App\\Models\\Comment",
-          name: "getContent",
-          parameters: "",
-          returnType: "string",
-        },
-      ]),
-    );
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$staticComment->get"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Models\\Comment",
-        name: "getContent",
-        parameters: "",
-        returnType: "string",
-      },
-    ]);
-  });
-  it("offers PHPDoc mixin members on inferred model receivers", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const repositoryInterfacePath =
-      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
-    const commentPath = "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
-    const helperPath = "/workspace/app/Kontentino/src/Communication/Models/CommentIdeHelper.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers\\communication;
-
-use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepositoryInterface $commentRepository,
-    ) {}
-
-    public function getOne(): void
-    {
-        $comment = $this->commentRepository->findOrFail(1);
-        $comment->hel
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: [
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface",
-          kind: "interface",
-          lineNumber: 7,
-          name: "CommentRepositoryInterface",
-          path: repositoryInterfacePath,
-          relativePath:
-            "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Models\\Comment",
-          kind: "class",
-          lineNumber: 7,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Models\\CommentIdeHelper",
-          kind: "class",
-          lineNumber: 3,
-          name: "CommentIdeHelper",
-          path: helperPath,
-          relativePath: "app/Kontentino/src/Communication/Models/CommentIdeHelper.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === repositoryInterfacePath) {
-          return `<?php
-namespace Kontentino\\Communication\\Interfaces;
-
-use Kontentino\\Communication\\Models\\Comment;
-
-interface CommentRepositoryInterface
-{
-    public function findOrFail(int $id): Comment;
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace Kontentino\\Communication\\Models;
-
-/**
- * @mixin CommentIdeHelper
- */
-class Comment
-{
-}
-`;
-        }
-
-        if (path === helperPath) {
-          return `<?php
-namespace Kontentino\\Communication\\Models;
-
-class CommentIdeHelper
-{
-    public function helpful(string $mode = 'fast'): string {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->hel"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "Kontentino\\Communication\\Models\\CommentIdeHelper",
-        name: "helpful",
-        parameters: "string $mode = 'fast'",
-        returnType: "string",
-      },
-    ]);
-  });
-  it("offers implemented interface PHPDoc method completions on inferred receivers", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const interfacePath = "/workspace/app/Contracts/PublishesComments.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Models\\Comment;
-
-class CommentController
-{
-    public function show(Comment $comment): void
-    {
-        $comment->pub
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Models\\Comment",
-          kind: "class",
-          lineNumber: 7,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Models/Comment.php",
-        },
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "App\\Contracts\\PublishesComments",
-          kind: "interface",
-          lineNumber: 7,
-          name: "PublishesComments",
-          path: interfacePath,
-          relativePath: "app/Contracts/PublishesComments.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-use App\\Contracts\\PublishesComments;
-
-class Comment implements PublishesComments
-{
-}
-`;
-        }
-
-        if (path === interfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-/**
- * @method void publish(bool $quietly = false)
- */
-interface PublishesComments
-{
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->pub"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Contracts\\PublishesComments",
-        name: "publish",
-        parameters: "bool $quietly = false",
-        returnType: "void",
-      },
-    ]);
-  });
-  it("offers returnless PHPDoc method completions on inferred receivers", async () => {
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const interfacePath = "/workspace/app/Contracts/ArchivesComments.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Models\\Comment;
-
-class CommentController
-{
-    public function show(Comment $comment): void
-    {
-        $comment->arc
-    }
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Models\\Comment",
-          kind: "class",
-          lineNumber: 7,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Models/Comment.php",
-        },
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "App\\Contracts\\ArchivesComments",
-          kind: "interface",
-          lineNumber: 7,
-          name: "ArchivesComments",
-          path: interfacePath,
-          relativePath: "app/Contracts/ArchivesComments.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-use App\\Contracts\\ArchivesComments;
-
-class Comment implements ArchivesComments
-{
-}
-`;
-        }
-
-        if (path === interfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-/**
- * @method archive(bool $quietly = false)
- */
-interface ArchivesComments
-{
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns();
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-
-    await act(async () => {
-      await getWorkbench().openFile(fileEntry(controllerPath, "CommentController.php"));
-    });
-
-    await expect(
-      getWorkbench().providePhpMethodCompletions(
-        controllerSource,
-        positionAfter(controllerSource, "$comment->arc"),
-      ),
-    ).resolves.toEqual([
-      {
-        declaringClassName: "App\\Contracts\\ArchivesComments",
-        name: "archive",
-        parameters: "bool $quietly = false",
-        returnType: null,
-      },
-    ]);
-  });
-  it("suppresses PHPDoc mixin member-method diagnostics on inferred receivers", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const repositoryInterfacePath =
-      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
-    const commentPath = "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
-    const helperPath = "/workspace/app/Kontentino/src/Communication/Models/CommentIdeHelper.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers\\communication;
-
-use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepositoryInterface $commentRepository,
-    ) {}
-
-    public function getOne(): void
-    {
-        $comment = $this->commentRepository->findOrFail(1);
-        $comment->helpful();
-        $comment->missingHelpful();
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 23,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const methodDiagnosticPosition = (methodName: string) => {
-      const position = positionAfter(controllerSource, `$comment->${methodName}`);
-
-      return {
-        character: position.column - methodName.length - 1,
-        line: position.lineNumber - 1,
-      };
-    };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      projectSymbols: [
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface",
-          kind: "interface",
-          lineNumber: 7,
-          name: "CommentRepositoryInterface",
-          path: repositoryInterfacePath,
-          relativePath:
-            "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Models\\Comment",
-          kind: "class",
-          lineNumber: 7,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
-        },
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "Kontentino\\Communication\\Models\\CommentIdeHelper",
-          kind: "class",
-          lineNumber: 3,
-          name: "CommentIdeHelper",
-          path: helperPath,
-          relativePath: "app/Kontentino/src/Communication/Models/CommentIdeHelper.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === repositoryInterfacePath) {
-          return `<?php
-namespace Kontentino\\Communication\\Interfaces;
-
-use Kontentino\\Communication\\Models\\Comment;
-
-interface CommentRepositoryInterface
-{
-    public function findOrFail(int $id): Comment;
-}
-`;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace Kontentino\\Communication\\Models;
-
-/**
- * @mixin CommentIdeHelper
- */
-class Comment
-{
-}
-`;
-        }
-
-        if (path === helperPath) {
-          return `<?php
-namespace Kontentino\\Communication\\Models;
-
-class CommentIdeHelper
-{
-    public function helpful(string $mode = 'fast'): string {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    const helpfulPosition = methodDiagnosticPosition("helpful");
-    const missingPosition = methodDiagnosticPosition("missingHelpful");
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            ...helpfulPosition,
-            message: "Method Kontentino\\Communication\\Models\\Comment::helpful() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...missingPosition,
-            message:
-              "Method Kontentino\\Communication\\Models\\Comment::missingHelpful() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
-      {
-        ...missingPosition,
-        message:
-          "Method Kontentino\\Communication\\Models\\Comment::missingHelpful() does not exist",
-        severity: "error",
-        source: "phpactor",
-      },
-    ]);
-  });
-  it("suppresses implemented interface member-method diagnostics on inferred receivers", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
-    const repositoryInterfacePath = "/workspace/app/Contracts/CommentRepositoryInterface.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Repositories\\CommentRepository;
-
-class CommentController
-{
-    public function __construct(
-        protected readonly CommentRepository $commentRepository,
-    ) {}
-
-    public function getOne(): void
-    {
-        $this->commentRepository->findOrFail(1);
-        $this->commentRepository->missingMethod();
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 24,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const methodDiagnosticPosition = (methodName: string) => {
-      const position = positionAfter(controllerSource, `$this->commentRepository->${methodName}`);
-
-      return {
-        character: position.column - methodName.length - 1,
-        line: position.lineNumber - 1,
-      };
-    };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Repositories\\CommentRepository",
-          kind: "class",
-          lineNumber: 6,
-          name: "CommentRepository",
-          path: repositoryPath,
-          relativePath: "app/Repositories/CommentRepository.php",
-        },
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "App\\Contracts\\CommentRepositoryInterface",
-          kind: "interface",
-          lineNumber: 5,
-          name: "CommentRepositoryInterface",
-          path: repositoryInterfacePath,
-          relativePath: "app/Contracts/CommentRepositoryInterface.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === repositoryPath) {
-          return `<?php
-namespace App\\Repositories;
-
-use App\\Contracts\\CommentRepositoryInterface;
-
-class CommentRepository implements CommentRepositoryInterface
-{
-}
-`;
-        }
-
-        if (path === repositoryInterfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-interface CommentRepositoryInterface
-{
-    public function findOrFail(int $id): object;
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    const findPosition = methodDiagnosticPosition("findOrFail");
-    const missingPosition = methodDiagnosticPosition("missingMethod");
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            ...findPosition,
-            message: "Method App\\Repositories\\CommentRepository::findOrFail() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...missingPosition,
-            message: "Method App\\Repositories\\CommentRepository::missingMethod() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
-      {
-        ...missingPosition,
-        message: "Method App\\Repositories\\CommentRepository::missingMethod() does not exist",
-        severity: "error",
-        source: "phpactor",
-      },
-    ]);
-  });
-  it("stops stale PHP method hierarchy diagnostic traversal after switching project tabs", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
-    const commentPath = "/workspace-a/app/Models/Comment.php";
-    const workspaceBBaseCommentPath = "/workspace-b/app/Models/BaseComment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Models\\Comment;
-
-class CommentController
-{
-    public function show(Comment $comment): void
-    {
-        $comment->knownHook();
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 36,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const staleCommentRead = createDeferred<string>();
-    let commentReadCount = 0;
-    let workspaceBBaseCommentReadCount = 0;
-    const diagnosticPosition = positionAfter(controllerSource, "knownHook");
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === commentPath) {
-          commentReadCount += 1;
-          return staleCommentRead.promise;
-        }
-
-        if (path === workspaceBBaseCommentPath) {
-          workspaceBBaseCommentReadCount += 1;
-          return `<?php
-namespace App\\Models;
-
-class BaseComment
-{
-    public function knownHook(): void {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            character: diagnosticPosition.column - "knownHook".length - 1,
-            line: diagnosticPosition.lineNumber - 1,
-            message: "Method App\\Models\\Comment::knownHook() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace-a",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await waitForReact(() => {
-      expect(commentReadCount).toBe(1);
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
-
-    staleCommentRead.resolve(`<?php
-namespace App\\Models;
-
-class Comment extends BaseComment
-{
-}
-`);
-    await flushAsyncTurns(24);
-
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(workspaceBBaseCommentReadCount).toBe(0);
-  });
-  it("suppresses implemented interface PHPDoc method diagnostics on inferred receivers", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const interfacePath = "/workspace/app/Contracts/PublishesComments.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Models\\Comment;
-
-class CommentController
-{
-    public function show(Comment $comment): void
-    {
-        $comment->publish();
-        $comment->archive();
-        $comment->restore();
-        $comment->missingPublish();
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 27,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const methodDiagnosticPosition = (methodName: string) => {
-      const position = positionAfter(controllerSource, `$comment->${methodName}`);
-
-      return {
-        character: position.column - methodName.length - 1,
-        line: position.lineNumber - 1,
-      };
-    };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Models\\Comment",
-          kind: "class",
-          lineNumber: 7,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Models/Comment.php",
-        },
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "App\\Contracts\\PublishesComments",
-          kind: "interface",
-          lineNumber: 7,
-          name: "PublishesComments",
-          path: interfacePath,
-          relativePath: "app/Contracts/PublishesComments.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-use App\\Contracts\\PublishesComments;
-
-class Comment implements PublishesComments
-{
-}
-`;
-        }
-
-        if (path === interfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-/**
- * @method void publish()
- * @phpstan-method archive()
- * @psalm-method restore()
- */
-interface PublishesComments
-{
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    const publishPosition = methodDiagnosticPosition("publish");
-    const archivePosition = methodDiagnosticPosition("archive");
-    const restorePosition = methodDiagnosticPosition("restore");
-    const missingPosition = methodDiagnosticPosition("missingPublish");
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            ...publishPosition,
-            message: "Method App\\Models\\Comment::publish() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...archivePosition,
-            message: "Method App\\Models\\Comment::archive() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...restorePosition,
-            message: "Method App\\Models\\Comment::restore() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...missingPosition,
-            message: "Method App\\Models\\Comment::missingPublish() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
-      {
-        ...missingPosition,
-        message: "Method App\\Models\\Comment::missingPublish() does not exist",
-        severity: "error",
-        source: "phpactor",
-      },
-    ]);
-  });
-  it("suppresses existing static-method diagnostics without hiding instance-only methods", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const factoryPath = "/workspace/app/Factories/CommentFactory.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Factories\\CommentFactory;
-
-class CommentController
-{
-    public function store(): void
-    {
-        CommentFactory::make();
-        CommentFactory::fromNamed('draft');
-        CommentFactory::restoreBySlug('draft');
-        CommentFactory::makeInstance();
-        CommentFactory::missingStatic();
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 25,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const methodDiagnosticPosition = (methodName: string) => {
-      const position = positionAfter(controllerSource, `CommentFactory::${methodName}`);
-
-      return {
-        character: position.column - methodName.length - 1,
-        line: position.lineNumber - 1,
-      };
-    };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Factories\\CommentFactory",
-          kind: "class",
-          lineNumber: 8,
-          name: "CommentFactory",
-          path: factoryPath,
-          relativePath: "app/Factories/CommentFactory.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === factoryPath) {
-          return `<?php
-namespace App\\Factories;
-
-/**
- * @method static object fromNamed(string $name)
- * @psalm-method static restoreBySlug(string $slug)
- */
-class CommentFactory
-{
-    public static function make(): object {}
-    public function makeInstance(): object {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    const makePosition = methodDiagnosticPosition("make");
-    const fromNamedPosition = methodDiagnosticPosition("fromNamed");
-    const restoreBySlugPosition = methodDiagnosticPosition("restoreBySlug");
-    const makeInstancePosition = methodDiagnosticPosition("makeInstance");
-    const missingPosition = methodDiagnosticPosition("missingStatic");
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            ...makePosition,
-            message: "Method App\\Factories\\CommentFactory::make() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...fromNamedPosition,
-            message: "Method App\\Factories\\CommentFactory::fromNamed() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...restoreBySlugPosition,
-            message: "Method App\\Factories\\CommentFactory::restoreBySlug() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...makeInstancePosition,
-            message: "Method App\\Factories\\CommentFactory::makeInstance() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...missingPosition,
-            message: "Method App\\Factories\\CommentFactory::missingStatic() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
-      {
-        ...makeInstancePosition,
-        message: "Method App\\Factories\\CommentFactory::makeInstance() does not exist",
-        severity: "error",
-        source: "phpactor",
-      },
-      {
-        ...missingPosition,
-        message: "Method App\\Factories\\CommentFactory::missingStatic() does not exist",
-        severity: "error",
-        source: "phpactor",
-      },
-    ]);
-  });
-  it("stops stale PHP static method hierarchy diagnostic traversal after switching project tabs", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
-    const factoryPath = "/workspace-a/app/Factories/CommentFactory.php";
-    const workspaceBBaseFactoryPath = "/workspace-b/app/Factories/BaseCommentFactory.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Factories\\CommentFactory;
-
-class CommentController
-{
-    public function store(): void
-    {
-        CommentFactory::make();
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 37,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const staleFactoryRead = createDeferred<string>();
-    let factoryReadCount = 0;
-    let workspaceBBaseFactoryReadCount = 0;
-    const diagnosticPosition = positionAfter(controllerSource, "make");
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === factoryPath) {
-          factoryReadCount += 1;
-          return staleFactoryRead.promise;
-        }
-
-        if (path === workspaceBBaseFactoryPath) {
-          workspaceBBaseFactoryReadCount += 1;
-          return `<?php
-namespace App\\Factories;
-
-class BaseCommentFactory
-{
-    public static function make(): object {}
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            character: diagnosticPosition.column - "make".length - 1,
-            line: diagnosticPosition.lineNumber - 1,
-            message: "Method App\\Factories\\CommentFactory::make() does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace-a",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await waitForReact(() => {
-      expect(factoryReadCount).toBe(1);
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
-
-    staleFactoryRead.resolve(`<?php
-namespace App\\Factories;
-
-class CommentFactory extends BaseCommentFactory
-{
-}
-`);
-    await flushAsyncTurns(24);
-
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(workspaceBBaseFactoryReadCount).toBe(0);
-  });
-  it("suppresses implemented interface PHPDoc property diagnostics on inferred receivers", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
-    const commentPath = "/workspace/app/Models/Comment.php";
-    const interfacePath = "/workspace/app/Contracts/HasExternalId.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Models\\Comment;
-
-class CommentController
-{
-    public function show(Comment $comment): void
-    {
-        $comment->externalId;
-        $comment->slug;
-        $comment->hidden;
-        $comment->missingProperty;
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 26,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const propertyDiagnosticPosition = (propertyName: string) => {
-      const position = positionAfter(controllerSource, `$comment->${propertyName}`);
-
-      return {
-        character: position.column - propertyName.length - 1,
-        line: position.lineNumber - 1,
-      };
-    };
-    const { getWorkbench } = renderController({
-      appSettings: workspaceAppSettings(),
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      projectSymbols: [
-        {
-          column: 7,
-          containerName: null,
-          fullyQualifiedName: "App\\Models\\Comment",
-          kind: "class",
-          lineNumber: 6,
-          name: "Comment",
-          path: commentPath,
-          relativePath: "app/Models/Comment.php",
-        },
-        {
-          column: 11,
-          containerName: null,
-          fullyQualifiedName: "App\\Contracts\\HasExternalId",
-          kind: "interface",
-          lineNumber: 6,
-          name: "HasExternalId",
-          path: interfacePath,
-          relativePath: "app/Contracts/HasExternalId.php",
-        },
-      ],
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === commentPath) {
-          return `<?php
-namespace App\\Models;
-
-use App\\Contracts\\HasExternalId;
-
-class Comment implements HasExternalId
-{
-}
-`;
-        }
-
-        if (path === interfacePath) {
-          return `<?php
-namespace App\\Contracts;
-
-/**
- * @property-read string $externalId
- * @phpstan-property-read string $slug
- * @psalm-property-write bool $hidden
- */
-interface HasExternalId
-{
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-    await act(async () => {
-      await getWorkbench().setSmartMode("fullSmart");
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    const externalIdPosition = propertyDiagnosticPosition("externalId");
-    const slugPosition = propertyDiagnosticPosition("slug");
-    const hiddenPosition = propertyDiagnosticPosition("hidden");
-    const missingPosition = propertyDiagnosticPosition("missingProperty");
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            ...externalIdPosition,
-            message: "Property App\\Models\\Comment::$externalId does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...slugPosition,
-            message: "Property App\\Models\\Comment::$slug does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...hiddenPosition,
-            message: "Property App\\Models\\Comment::$hidden does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-          {
-            ...missingPosition,
-            message: "Property App\\Models\\Comment::$missingProperty does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
-      {
-        ...missingPosition,
-        message: "Property App\\Models\\Comment::$missingProperty does not exist",
-        severity: "error",
-        source: "phpactor",
-      },
-    ]);
-  });
-  it("stops stale PHP property hierarchy diagnostic traversal after switching project tabs", async () => {
-    let diagnosticsListener: ((event: LanguageServerDiagnosticEvent) => void) | null = null;
-    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
-    const commentPath = "/workspace-a/app/Models/Comment.php";
-    const workspaceBBaseCommentPath = "/workspace-b/app/Models/BaseComment.php";
-    const controllerSource = `<?php
-namespace App\\Http\\Controllers;
-
-use App\\Models\\Comment;
-
-class CommentController
-{
-    public function show(Comment $comment): void
-    {
-        $comment->externalId;
-    }
-}
-`;
-    const runningStatus: LanguageServerRuntimeStatus = {
-      capabilities: emptyLanguageServerCapabilities(),
-      kind: "running",
-      sessionId: 38,
-    };
-    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
-      subscribeDiagnostics: vi.fn(async (listener) => {
-        diagnosticsListener = listener;
-        return () => undefined;
-      }),
-    };
-    const staleCommentRead = createDeferred<string>();
-    let commentReadCount = 0;
-    let workspaceBBaseCommentReadCount = 0;
-    const diagnosticPosition = positionAfter(controllerSource, "externalId");
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
-      languageServerDiagnosticsGateway: diagnosticsGateway,
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === controllerPath) {
-          return controllerSource;
-        }
-
-        if (path === commentPath) {
-          commentReadCount += 1;
-          return staleCommentRead.promise;
-        }
-
-        if (path === workspaceBBaseCommentPath) {
-          workspaceBBaseCommentReadCount += 1;
-          return `<?php
-namespace App\\Models;
-
-class BaseComment
-{
-    public string $externalId;
-}
-`;
-        }
-
-        return `<?php\n// ${path}\n`;
-      }),
-      runtimeStatus: runningStatus,
-      workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await flushAsyncTurns(24);
-
-    expect(diagnosticsListener).not.toBeNull();
-
-    act(() => {
-      diagnosticsListener?.({
-        diagnostics: [
-          {
-            character: diagnosticPosition.column - "externalId".length - 1,
-            line: diagnosticPosition.lineNumber - 1,
-            message: "Property App\\Models\\Comment::$externalId does not exist",
-            severity: "error",
-            source: "phpactor",
-          },
-        ],
-        rootPath: "/workspace-a",
-        sessionId: runningStatus.sessionId,
-        uri: fileUriFromPath(controllerPath),
-        version: null,
-      });
-    });
-    await waitForReact(() => {
-      expect(commentReadCount).toBe(1);
-    });
-
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
-    });
-    await flushAsyncTurns();
-
-    staleCommentRead.resolve(`<?php
-namespace App\\Models;
-
-class Comment extends BaseComment
-{
-}
-`);
-    await flushAsyncTurns(24);
-
-    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
-    expect(workspaceBBaseCommentReadCount).toBe(0);
   });
 });
