@@ -11,7 +11,8 @@ use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use super::{normalize_path, workspace_guard_path, DiagnosticsSink};
+use super::workspace_runtime_identity::normalize_path;
+use super::{workspace_guard_path, DiagnosticsSink};
 
 #[derive(Clone, Copy)]
 struct DiagnosticAuthorityLimits {
