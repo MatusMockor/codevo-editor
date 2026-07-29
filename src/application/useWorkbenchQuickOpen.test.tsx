@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { createLatencyTracker } from "../domain/latencyTracker";
-import type { FileSearchResult } from "../domain/workspace";
+import type { FileSearchResponse, FileSearchResult } from "../domain/workspace";
 import {
   useWorkbenchQuickOpen,
   type WorkbenchQuickOpen,
@@ -43,11 +43,7 @@ function renderQuickOpen(deps: WorkbenchQuickOpenDependencies): Harness {
     quickOpen: null,
   };
 
-  function HarnessComponent({
-    deps,
-  }: {
-    deps: WorkbenchQuickOpenDependencies;
-  }) {
+  function HarnessComponent({ deps }: { deps: WorkbenchQuickOpenDependencies }) {
     captured.quickOpen = useWorkbenchQuickOpen(deps);
     return null;
   }
@@ -105,7 +101,9 @@ describe("useWorkbenchQuickOpen", () => {
       relativePath: "src/UserModel.ts",
     };
     const deps = makeDeps({
-      fileSearch: { searchFiles: vi.fn(async () => [backendResult]) },
+      fileSearch: {
+        searchFiles: vi.fn(async () => [backendResult]),
+      },
     });
     const harness = renderQuickOpen(deps);
 
@@ -171,9 +169,7 @@ describe("useWorkbenchQuickOpen", () => {
       "/workspace-b/src/OnlyB.ts",
     ]);
     expect(harness.quickOpen().quickOpenResults).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ path: "/workspace-a/src/OnlyA.ts" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ path: "/workspace-a/src/OnlyA.ts" })]),
     );
 
     harness.unmount();
@@ -211,4 +207,221 @@ describe("useWorkbenchQuickOpen", () => {
     harness.unmount();
     vi.useRealTimers();
   });
+
+  it("searches a path location by its path and retains the parsed position", async () => {
+    vi.useFakeTimers();
+    const searchFiles = vi.fn(async () => []);
+    const deps = makeDeps({ fileSearch: { searchFiles } });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("src/foo.ts:42:7");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    expect(searchFiles).toHaveBeenLastCalledWith("/workspace", "src/foo.ts", 80);
+    expect(harness.quickOpen().quickOpenRequest).toEqual({
+      kind: "fileLocation",
+      column: 7,
+      line: 42,
+      pathQuery: "src/foo.ts",
+    });
+
+    harness.unmount();
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["@method", "openCurrentFileSymbols", "method"],
+    [">Toggle Terminal", "openCommands", "Toggle Terminal"],
+    ["#handler", "openWorkspaceSymbols", "handler"],
+  ] as const)("preserves the parsed seed when pasted as %s", (input, callback, seed) => {
+    const route = vi.fn();
+    const deps = makeDeps({ [callback]: route });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery(input);
+    });
+
+    expect(route).toHaveBeenCalledWith(seed);
+    expect(harness.quickOpen().quickOpenOpen).toBe(false);
+
+    harness.unmount();
+  });
+
+  it("dispatches a typed workspace-symbol prefix without a seed query", () => {
+    const openWorkspaceSymbols = vi.fn();
+    const deps = makeDeps({ openWorkspaceSymbols });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+    });
+    act(() => {
+      harness.quickOpen().setQuickOpenQuery((current) => `${current}#`);
+    });
+
+    expect(openWorkspaceSymbols).toHaveBeenCalledWith("");
+    expect(harness.quickOpen().quickOpenOpen).toBe(false);
+
+    harness.unmount();
+  });
+
+  it("keeps a bare line open until the user confirms it", () => {
+    const deps = makeDeps();
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery(":42");
+    });
+
+    expect(harness.quickOpen().quickOpenOpen).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("surfaces backend walk truncation independently of the result count", async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps({
+      fileSearch: {
+        searchFiles: vi.fn(async () => []),
+        searchFilesWithMetadata: vi.fn(async (_root, _query, _limit, requestGeneration = "") => ({
+          requestGeneration,
+          results: [],
+          truncated: true,
+        })),
+      },
+    });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("needle");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    expect(harness.quickOpen().quickOpenTruncated).toBe(true);
+
+    harness.unmount();
+    vi.useRealTimers();
+  });
+
+  it("treats A-B-A searches as distinct generations and drops late responses", async () => {
+    vi.useFakeTimers();
+    const searchA1 = deferred<FileSearchResponse>();
+    const searchB = deferred<FileSearchResponse>();
+    const searchA2 = deferred<FileSearchResponse>();
+    const searchFilesWithMetadata = vi
+      .fn()
+      .mockImplementationOnce(() => searchA1.promise)
+      .mockImplementationOnce(() => searchB.promise)
+      .mockImplementationOnce(() => searchA2.promise);
+    const depsA = makeDeps({
+      fileSearch: { searchFiles: vi.fn(async () => []), searchFilesWithMetadata },
+      workspaceRoot: "/workspace-a",
+    });
+    const harness = renderQuickOpen(depsA);
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("needle");
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(120));
+    const generationA1 = searchFilesWithMetadata.mock.calls[0]?.[3] as string;
+
+    const depsB = { ...depsA, workspaceRoot: "/workspace-b" };
+    harness.rerender(depsB);
+    await act(async () => vi.advanceTimersByTimeAsync(120));
+    const generationB = searchFilesWithMetadata.mock.calls[1]?.[3] as string;
+
+    harness.rerender(depsA);
+    await act(async () => vi.advanceTimersByTimeAsync(120));
+    const generationA2 = searchFilesWithMetadata.mock.calls[2]?.[3] as string;
+    expect(new Set([generationA1, generationB, generationA2]).size).toBe(3);
+
+    await act(async () => {
+      searchA1.resolve({
+        requestGeneration: generationA1,
+        results: [file("/workspace-a/stale-a.ts")],
+        truncated: false,
+      });
+      searchB.resolve({
+        requestGeneration: generationB,
+        results: [file("/workspace-b/stale-b.ts")],
+        truncated: false,
+      });
+      await Promise.resolve();
+    });
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+
+    await act(async () => {
+      searchA2.resolve({
+        requestGeneration: generationA2,
+        results: [file("/workspace-a/fresh.ts")],
+        truncated: false,
+      });
+      await Promise.resolve();
+    });
+    expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
+      "/workspace-a/fresh.ts",
+    ]);
+
+    harness.unmount();
+    vi.useRealTimers();
+  });
+
+  it("rejects a current response with a foreign request generation", async () => {
+    vi.useFakeTimers();
+    const reportError = vi.fn();
+    const deps = makeDeps({
+      fileSearch: {
+        searchFiles: vi.fn(async () => []),
+        searchFilesWithMetadata: vi.fn(async () => ({
+          requestGeneration: "foreign",
+          results: [file("/workspace/stale.ts")],
+          truncated: true,
+        })),
+      },
+      reportError,
+    });
+    const harness = renderQuickOpen(deps);
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("stale");
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(120));
+
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+    expect(harness.quickOpen().quickOpenTruncated).toBe(false);
+    expect(reportError).toHaveBeenCalledWith(
+      "Quick Open",
+      expect.objectContaining({ message: "File search returned a mismatched request generation." }),
+    );
+
+    harness.unmount();
+    vi.useRealTimers();
+  });
 });
+
+function file(path: string): FileSearchResult {
+  return {
+    name: path.split("/").pop() ?? path,
+    path,
+    relativePath: path.split("/").slice(-1)[0] ?? path,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}

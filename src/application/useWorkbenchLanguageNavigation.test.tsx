@@ -3,7 +3,11 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
+import type {
+  IdentifiedLanguageServerRequest,
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
+  LanguageServerFeaturesGateway,
+} from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { emptyLanguageServerCapabilities } from "../domain/languageServerRuntime";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
@@ -93,6 +97,49 @@ function languageServerGateway(): LanguageServerFeaturesGateway {
   };
 }
 
+let nextRequestId = 1;
+
+function identifiedRequest<T>(value: T, sessionId: number): IdentifiedLanguageServerRequest<T> {
+  return Object.assign(Promise.resolve(value), {
+    requestId: nextRequestId++,
+    sessionId,
+  });
+}
+
+function javaScriptTypeScriptLanguageServerGateway(): JavaScriptTypeScriptLanguageServerFeaturesGateway {
+  return {
+    ...languageServerGateway(),
+    codeActions: vi.fn((_rootPath, _path, _range, _context, sessionId) =>
+      identifiedRequest([], sessionId),
+    ),
+    workspaceSymbols: vi.fn((_rootPath, _query, sessionId) => identifiedRequest([], sessionId)),
+    completion: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedRequest({ isIncomplete: false, items: [] }, sessionId),
+    ),
+    declaration: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    definition: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    documentHighlights: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedRequest([], sessionId),
+    ),
+    hover: vi.fn((_rootPath, _position, sessionId) => identifiedRequest(null, sessionId)),
+    implementation: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    linkedEditingRanges: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedRequest(null, sessionId),
+    ),
+    rangeSemanticTokens: vi.fn((_rootPath, _path, _range, sessionId) =>
+      identifiedRequest(null, sessionId),
+    ),
+    references: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    resolveCodeAction: vi.fn((_rootPath, action, sessionId) =>
+      identifiedRequest(action, sessionId),
+    ),
+    semanticTokens: vi.fn((_rootPath, _path, sessionId) => identifiedRequest(null, sessionId)),
+    signatureHelp: vi.fn((_rootPath, _position, sessionId) => identifiedRequest(null, sessionId)),
+    sourceDefinition: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    typeDefinition: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+  };
+}
+
 function workspaceFiles(): WorkspaceFileGateway {
   return {
     applyWorkspaceEdit: vi.fn(async () => 0),
@@ -106,9 +153,7 @@ function workspaceFiles(): WorkspaceFileGateway {
   };
 }
 
-function renderNavigation(
-  overrides: Partial<WorkbenchLanguageNavigationDependencies> = {},
-) {
+function renderNavigation(overrides: Partial<WorkbenchLanguageNavigationDependencies> = {}) {
   const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
   const source = "{varType App\\Model\\Consent $consent}\n{$consent->name}";
   const activeDocument: EditorDocument = {
@@ -143,7 +188,7 @@ function renderNavigation(
     identifierAtEditorPosition: () => "name",
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: vi.fn(() => true),
     isLanguageServerSessionActiveForRoot: vi.fn(() => true),
-    javaScriptTypeScriptLanguageServerFeaturesGateway: languageServerGateway(),
+    javaScriptTypeScriptLanguageServerFeaturesGateway: javaScriptTypeScriptLanguageServerGateway(),
     javaScriptTypeScriptLanguageServerRuntimeStatus: null,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot: null,
     languageServerFeaturesGateway: languageServerGateway(),
@@ -410,8 +455,7 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
       await bladeHarness.api().goToDefinition();
     });
 
-    const bladeRequest = vi.mocked(bladeHarness.deps.provideBladeDefinition)
-      .mock.calls[0]?.[2];
+    const bladeRequest = vi.mocked(bladeHarness.deps.provideBladeDefinition).mock.calls[0]?.[2];
     expect(bladeRequest?.canNavigate()).toBe(true);
 
     const latteHarness = renderNavigation();
@@ -420,15 +464,12 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
       await latteHarness.api().goToDefinition();
     });
 
-    const latteRequest = vi.mocked(
-      latteHarness.deps.provideLatteDefinitionOutcome,
-    ).mock.calls[0]?.[2];
-    const contextualRequest = vi.mocked(
-      latteHarness.deps.goToContextualPhpDefinition,
-    ).mock.calls[0]?.[0];
-    const indexedRequest = vi.mocked(
-      latteHarness.deps.goToIndexedSymbolDefinition,
-    ).mock.calls[0]?.[0];
+    const latteRequest = vi.mocked(latteHarness.deps.provideLatteDefinitionOutcome).mock
+      .calls[0]?.[2];
+    const contextualRequest = vi.mocked(latteHarness.deps.goToContextualPhpDefinition).mock
+      .calls[0]?.[0];
+    const indexedRequest = vi.mocked(latteHarness.deps.goToIndexedSymbolDefinition).mock
+      .calls[0]?.[0];
 
     expect(latteRequest?.canNavigate()).toBe(true);
     expect(contextualRequest?.canNavigate()).toBe(true);
@@ -471,21 +512,19 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
     const collaboratorMutation = vi.fn();
     const goToContextualPhpDefinition = vi.fn(async () => false);
     const goToIndexedSymbolDefinition = vi.fn(async () => false);
-    const provideLatteDefinitionOutcome = vi.fn(async (
-      _source: string,
-      _offset: number,
-      request?: NavigationRequest,
-    ) => {
-      currentOwner = replacementOwner;
+    const provideLatteDefinitionOutcome = vi.fn(
+      async (_source: string, _offset: number, request?: NavigationRequest) => {
+        currentOwner = replacementOwner;
 
-      if (request?.canNavigate()) {
-        collaboratorMutation();
-        recordNavigationLocationSnapshot(null);
-        setImplementationChooser({ targets: [], title: "stale" });
-      }
+        if (request?.canNavigate()) {
+          collaboratorMutation();
+          recordNavigationLocationSnapshot(null);
+          setImplementationChooser({ targets: [], title: "stale" });
+        }
 
-      return { handled: false, shouldBlockFallback: false };
-    });
+        return { handled: false, shouldBlockFallback: false };
+      },
+    );
     const harness = renderNavigation({
       goToContextualPhpDefinition,
       goToIndexedSymbolDefinition,
@@ -520,20 +559,19 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
     const recordNavigationLocationSnapshot = vi.fn();
     const setImplementationChooser = vi.fn();
     const collaboratorMutation = vi.fn();
-    const goToIndexedPhpImplementation = vi.fn(async (
-      _position?: { column: number; lineNumber: number },
-      request?: NavigationRequest,
-    ) => {
-      currentOwner = replacementOwner;
+    const goToIndexedPhpImplementation = vi.fn(
+      async (_position?: { column: number; lineNumber: number }, request?: NavigationRequest) => {
+        currentOwner = replacementOwner;
 
-      if (request?.canNavigate()) {
-        collaboratorMutation();
-        recordNavigationLocationSnapshot(null);
-        setImplementationChooser({ targets: [], title: "stale" });
-      }
+        if (request?.canNavigate()) {
+          collaboratorMutation();
+          recordNavigationLocationSnapshot(null);
+          setImplementationChooser({ targets: [], title: "stale" });
+        }
 
-      return false;
-    });
+        return false;
+      },
+    );
     const harness = renderNavigation({
       goToIndexedPhpImplementation,
       recordNavigationLocationSnapshot,
@@ -601,9 +639,7 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
   }
 
   it("delegates a vendor PHP definition to the centralized open boundary", async () => {
-    const harness = renderPhpNavigation(
-      `${ROOT}/vendor/acme/package/src/Service.php`,
-    );
+    const harness = renderPhpNavigation(`${ROOT}/vendor/acme/package/src/Service.php`);
 
     await act(async () => {
       await harness.api().goToDefinition();
@@ -642,13 +678,8 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
       await harness.api().goToDefinition();
     });
 
-    expect(requestLease).toHaveBeenCalledWith(
-      ROOT,
-      harness.deps.activeDocumentRef.current?.path,
-    );
-    expect(
-      harness.deps.languageServerFeaturesGateway.definition,
-    ).not.toHaveBeenCalled();
+    expect(requestLease).toHaveBeenCalledWith(ROOT, harness.deps.activeDocumentRef.current?.path);
+    expect(harness.deps.languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
 
     harness.root.unmount();
   });
@@ -664,9 +695,7 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
     });
 
     expect(isLeaseCurrent).toHaveBeenCalledTimes(1);
-    expect(
-      harness.deps.languageServerFeaturesGateway.definition,
-    ).not.toHaveBeenCalled();
+    expect(harness.deps.languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
 
     harness.root.unmount();
   });
@@ -753,13 +782,12 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
 
   it("passes the PHP lease predicate to the open commit boundary", async () => {
     let leaseCurrent = true;
-    const openPathForNavigation = vi.fn(async (
-      _path: string,
-      options?: { shouldCommit?: () => boolean },
-    ) => {
-      leaseCurrent = false;
-      return options?.shouldCommit?.() !== false;
-    });
+    const openPathForNavigation = vi.fn(
+      async (_path: string, options?: { shouldCommit?: () => boolean }) => {
+        leaseCurrent = false;
+        return options?.shouldCommit?.() !== false;
+      },
+    );
     const harness = renderPhpNavigation(`${ROOT}/app/Services/Service.php`, {
       isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => leaseCurrent),
       openPathForNavigation,
@@ -819,6 +847,171 @@ function navigationLocation(path: string, line = 3) {
   };
 }
 
+describe("useWorkbenchLanguageNavigation JavaScript and TypeScript definitions", () => {
+  function renderTypeScriptDefinitionNavigation(
+    locations: ReturnType<typeof navigationLocation>[],
+  ) {
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    vi.mocked(gateway.definition).mockResolvedValue(locations);
+    const source = "service();";
+
+    return renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "typescript",
+          name: "source.ts",
+          path: `${ROOT}/packages/app/src/source.ts`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      },
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+  }
+
+  it("keeps Cmd+B on the custom cross-file opener", async () => {
+    const targetPath = `${ROOT}/packages/service/src/definition.ts`;
+    const harness = renderTypeScriptDefinitionNavigation([navigationLocation(targetPath)]);
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      targetPath,
+      expect.objectContaining({
+        readOnly: false,
+        shouldCommit: expect.any(Function),
+      }),
+    );
+    expect(harness.deps.setEditorRevealTarget).toHaveBeenCalledWith({
+      path: targetPath,
+      position: { column: 3, lineNumber: 4 },
+    });
+    harness.root.unmount();
+  });
+
+  it("opens an outside-workspace definition read-only", async () => {
+    const targetPath = "/Library/Developer/TypeScript/lib/lib.es2022.d.ts";
+    const harness = renderTypeScriptDefinitionNavigation([navigationLocation(targetPath)]);
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      targetPath,
+      expect.objectContaining({
+        readOnly: true,
+        shouldCommit: expect.any(Function),
+      }),
+    );
+    harness.root.unmount();
+  });
+
+  it("shows the ImplementationChooser for multiple definition locations", async () => {
+    const firstPath = `${ROOT}/packages/service/src/first.ts`;
+    const secondPath = `${ROOT}/packages/service/src/second.ts`;
+    const harness = renderTypeScriptDefinitionNavigation([
+      navigationLocation(firstPath, 1),
+      navigationLocation(secondPath, 2),
+    ]);
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.setImplementationChooser).toHaveBeenCalledWith({
+      targets: expect.arrayContaining([
+        expect.objectContaining({ path: firstPath }),
+        expect.objectContaining({ path: secondPath }),
+      ]),
+      title: "Definitions for name",
+    });
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+
+  it("passes the captured session and drops an A-B-A result after session replacement", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a-generation-1", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-a-generation-2", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    let currentSessionId = 7;
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    vi.mocked(gateway.definition).mockImplementation((_rootPath, _position, sessionId) => {
+      currentOwner = replacementOwner;
+      currentOwner = secondOwner;
+      currentSessionId = 8;
+      return identifiedRequest(
+        [navigationLocation(`${ROOT}/packages/service/src/stale.ts`)],
+        sessionId,
+      );
+    });
+    const source = "service();";
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "typescript",
+          name: "source.ts",
+          path: `${ROOT}/packages/app/src/source.ts`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: vi.fn(
+        (_rootPath, sessionId) => sessionId === currentSessionId,
+      ),
+      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      },
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(gateway.definition).toHaveBeenCalledWith(
+      ROOT,
+      {
+        character: 1,
+        line: 0,
+        path: `${ROOT}/packages/app/src/source.ts`,
+      },
+      7,
+    );
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+    expect(harness.deps.recordNavigationLocationSnapshot).not.toHaveBeenCalled();
+    expect(harness.deps.setEditorRevealTarget).not.toHaveBeenCalled();
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
+    expect(harness.deps.setImplementationChooser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ targets: expect.any(Array) }),
+    );
+    harness.root.unmount();
+  });
+});
+
 describe.each([
   ["PHP", "php"],
   ["JavaScript/TypeScript", "typescript"],
@@ -829,7 +1022,8 @@ describe.each([
       const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
       const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
       let currentOwner: WorkspaceRuntimeOwner = firstOwner;
-      const gateway = languageServerGateway();
+      const gateway = javaScriptTypeScriptLanguageServerGateway();
+      const genericGateway = languageServerGateway();
       const locations =
         feature === "implementation"
           ? [
@@ -837,7 +1031,11 @@ describe.each([
               navigationLocation(`${ROOT}/src/Second.ts`, 2),
             ]
           : [navigationLocation(`${ROOT}/src/Target.ts`)];
-      vi.mocked(gateway[feature]).mockImplementation(async () => {
+      vi.mocked(gateway[feature]).mockImplementation((_rootPath, _position, sessionId) => {
+        currentOwner = replacementOwner;
+        return identifiedRequest(locations, sessionId);
+      });
+      vi.mocked(genericGateway[feature]).mockImplementation(async () => {
         currentOwner = replacementOwner;
         return locations;
       });
@@ -862,11 +1060,10 @@ describe.each([
         activeDocumentRef: { current: activeDocument },
         activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
         javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
-        javaScriptTypeScriptLanguageServerRuntimeStatus:
-          language === "typescript" ? status : null,
+        javaScriptTypeScriptLanguageServerRuntimeStatus: language === "typescript" ? status : null,
         javaScriptTypeScriptLanguageServerRuntimeStatusRoot:
           language === "typescript" ? ROOT : null,
-        languageServerFeaturesGateway: gateway,
+        languageServerFeaturesGateway: genericGateway,
         languageServerRuntimeStatus: language === "php" ? status : null,
         languageServerRuntimeStatusRoot: language === "php" ? ROOT : null,
         resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
@@ -901,10 +1098,10 @@ describe("useWorkbenchLanguageNavigation owner alias transfer", () => {
       return [navigationLocation(`${ROOT}/src/Target.php`)];
     });
     const isSessionActive = vi.fn(() => true);
-    const openPathForNavigation = vi.fn(async (
-      _path: string,
-      options?: { shouldCommit?: () => boolean },
-    ) => options?.shouldCommit?.() !== false);
+    const openPathForNavigation = vi.fn(
+      async (_path: string, options?: { shouldCommit?: () => boolean }) =>
+        options?.shouldCommit?.() !== false,
+    );
     const source = "<?php service();";
     const harness = renderNavigation({
       activeDocumentRef: {
@@ -955,8 +1152,13 @@ describe.each([
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
     const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
     let currentOwner: WorkspaceRuntimeOwner = firstOwner;
-    const gateway = languageServerGateway();
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    const genericGateway = languageServerGateway();
     vi.mocked(gateway.implementation).mockResolvedValue([
+      navigationLocation(`${ROOT}/src/First.ts`, 1),
+      navigationLocation(`${ROOT}/src/Second.ts`, 2),
+    ]);
+    vi.mocked(genericGateway.implementation).mockResolvedValue([
       navigationLocation(`${ROOT}/src/First.ts`, 1),
       navigationLocation(`${ROOT}/src/Second.ts`, 2),
     ]);
@@ -987,11 +1189,9 @@ describe.each([
       },
       activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
       javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
-      javaScriptTypeScriptLanguageServerRuntimeStatus:
-        language === "typescript" ? status : null,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot:
-        language === "typescript" ? ROOT : null,
-      languageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: language === "typescript" ? status : null,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: language === "typescript" ? ROOT : null,
+      languageServerFeaturesGateway: genericGateway,
       languageServerRuntimeStatus: language === "php" ? status : null,
       languageServerRuntimeStatusRoot: language === "php" ? ROOT : null,
       resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
@@ -1019,16 +1219,13 @@ describe("useWorkbenchLanguageNavigation target-open fence", () => {
     const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
     let currentOwner: WorkspaceRuntimeOwner = firstOwner;
     const gateway = languageServerGateway();
-    vi.mocked(gateway.definition).mockResolvedValue([
-      navigationLocation(`${ROOT}/src/Target.php`),
-    ]);
-    const openPathForNavigation = vi.fn(async (
-      _path: string,
-      options?: { shouldCommit?: () => boolean },
-    ) => {
-      currentOwner = replacementOwner;
-      return options?.shouldCommit?.() !== false;
-    });
+    vi.mocked(gateway.definition).mockResolvedValue([navigationLocation(`${ROOT}/src/Target.php`)]);
+    const openPathForNavigation = vi.fn(
+      async (_path: string, options?: { shouldCommit?: () => boolean }) => {
+        currentOwner = replacementOwner;
+        return options?.shouldCommit?.() !== false;
+      },
+    );
     const source = "<?php service();";
     const harness = renderNavigation({
       activeDocumentRef: {

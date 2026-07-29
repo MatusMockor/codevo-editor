@@ -6,8 +6,8 @@ import type * as Monaco from "monaco-editor";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyLanguageServerCapabilities } from "../domain/languageServerRuntime";
 import type {
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerCodeAction,
-  LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
 import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import type { EditorDocument } from "../domain/workspace";
@@ -70,7 +70,11 @@ describe("useEditorSurfaceImportActions", () => {
     const workspaceRootRef = { current: "/workspace" };
     let actions!: ReturnType<typeof useEditorSurfaceImportActions>;
 
-    const Harness = ({ featureGateway }: { featureGateway: LanguageServerFeaturesGateway }) => {
+    const Harness = ({
+      featureGateway,
+    }: {
+      featureGateway: JavaScriptTypeScriptLanguageServerFeaturesGateway;
+    }) => {
       actions = useEditorSurfaceImportActions({
         activeDocumentRef,
         captureScope: () => ({ ...scope, modelIdentity: model }),
@@ -124,11 +128,23 @@ function ref<Value>(current: Value): MutableRefObject<Value> {
   return { current };
 }
 
-function gateway(codeActions: ReturnType<typeof vi.fn>): LanguageServerFeaturesGateway {
+function gateway(
+  codeActions: ReturnType<typeof vi.fn>,
+): JavaScriptTypeScriptLanguageServerFeaturesGateway {
+  const invokeCodeActions = codeActions as unknown as (...args: unknown[]) => unknown;
   return {
-    codeActions,
-    resolveCodeAction: async (_rootPath: string, action: LanguageServerCodeAction) => action,
-  } as unknown as LanguageServerFeaturesGateway;
+    codeActions: vi.fn(
+      (rootPath: string, path: string, range: unknown, context: unknown, sessionId: number) =>
+        Object.assign(Promise.resolve(invokeCodeActions(rootPath, path, range, context)), {
+          requestId: 1,
+          sessionId,
+        }),
+    ),
+    resolveCodeAction: vi.fn(
+      (_rootPath: string, action: LanguageServerCodeAction, sessionId: number) =>
+        Object.assign(Promise.resolve(action), { requestId: 2, sessionId }),
+    ),
+  } as unknown as JavaScriptTypeScriptLanguageServerFeaturesGateway;
 }
 
 function importSortAction() {

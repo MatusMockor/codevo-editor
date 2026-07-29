@@ -7,28 +7,27 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import {
-  shouldIndexWorkspace,
-} from "../domain/intelligence";
+import { shouldIndexWorkspace } from "../domain/intelligence";
 import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
+  type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerFeaturesGateway,
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import {
-  cachedLanguageServerRuntimeStatusForRoot,
-} from "../domain/languageServerRuntimeStatusCache";
+import { projectSymbolKindFromLanguageServerSymbolKind } from "../domain/languageServerWorkspaceSymbolKind";
+import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
 import {
   isTypeProjectSymbol,
-  type ProjectSymbolKind,
   type ProjectSymbolSearchGateway,
   type ProjectSymbolSearchResult,
 } from "../domain/projectSymbols";
 import type { IntelligenceMode } from "../domain/workspace";
 import { getFileName } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import { requestJavaScriptTypeScriptWorkspaceSymbols } from "./javaScriptTypeScriptWorkspaceSymbolRequest";
 
 export interface WorkbenchClassOpenDependencies {
   workspaceRoot: string | null;
@@ -43,18 +42,23 @@ export interface WorkbenchClassOpenDependencies {
   languageServerRuntimeStatusByRootRef: MutableRefObject<
     Record<string, LanguageServerRuntimeStatus>
   >;
-  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerFeaturesGateway: Pick<
+    JavaScriptTypeScriptLanguageServerFeaturesGateway,
+    "workspaceSymbols"
+  >;
   javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
-  javaScriptTypeScriptLanguageServerRuntimeStatusRef: MutableRefObject<
-    LanguageServerRuntimeStatus | null
-  >;
-  javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: MutableRefObject<
-    string | null
-  >;
+  javaScriptTypeScriptLanguageServerRuntimeStatusRef: MutableRefObject<LanguageServerRuntimeStatus | null>;
+  javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: MutableRefObject<string | null>;
   javaScriptTypeScriptRuntimeStatusByRootRef: MutableRefObject<
     Record<string, LanguageServerRuntimeStatus>
   >;
+  cancelJavaScriptTypeScriptLanguageServerRequest: (
+    rootPath: string,
+    sessionId: number,
+    requestId: number,
+  ) => Promise<void>;
+  resolveWorkspaceRuntimeOwner: (rootPath: string) => WorkspaceRuntimeOwner | null;
   reportError: (source: string, error: unknown) => void;
   setMessage: Dispatch<SetStateAction<string | null>>;
 }
@@ -72,6 +76,7 @@ export interface WorkbenchClassOpen {
   searchClassOpenSymbols: (
     query: string,
     limit: number,
+    signal?: AbortSignal,
   ) => Promise<ProjectSymbolSearchResult[]>;
 }
 
@@ -95,6 +100,8 @@ export function useWorkbenchClassOpen(
     javaScriptTypeScriptLanguageServerRuntimeStatusRef,
     javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
     javaScriptTypeScriptRuntimeStatusByRootRef,
+    cancelJavaScriptTypeScriptLanguageServerRequest,
+    resolveWorkspaceRuntimeOwner,
     reportError,
     setMessage,
   } = dependencies;
@@ -102,32 +109,30 @@ export function useWorkbenchClassOpen(
   const [classOpenOpen, setClassOpenOpen] = useState(false);
   const [classOpenQuery, setClassOpenQuery] = useState("");
   const [classOpenLoading, setClassOpenLoading] = useState(false);
-  const [classOpenResults, setClassOpenResults] = useState<
-    ProjectSymbolSearchResult[]
-  >([]);
+  const [classOpenResults, setClassOpenResults] = useState<ProjectSymbolSearchResult[]>([]);
 
   const canSearchClassOpenSymbols = useMemo(
     () =>
       Boolean(
         shouldIndexWorkspace(intelligenceMode) ||
-          (isRunningLanguageServerForWorkspace(
-            languageServerRuntimeStatus,
-            languageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-            canUseLanguageServerFeature(
-              languageServerRuntimeStatus.capabilities,
-              "workspaceSymbol",
-            )) ||
-          (isRunningLanguageServerForWorkspace(
-            javaScriptTypeScriptLanguageServerRuntimeStatus,
-            javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-            workspaceRoot,
-          ) &&
-            canUseLanguageServerFeature(
-              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-              "workspaceSymbol",
-            )),
+        (isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) &&
+          canUseLanguageServerFeature(
+            languageServerRuntimeStatus.capabilities,
+            "workspaceSymbol",
+          )) ||
+        (isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) &&
+          canUseLanguageServerFeature(
+            javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+            "workspaceSymbol",
+          )),
       ),
     [
       intelligenceMode,
@@ -176,7 +181,11 @@ export function useWorkbenchClassOpen(
   );
 
   const searchClassOpenSymbols = useCallback(
-    async (query: string, limit: number): Promise<ProjectSymbolSearchResult[]> => {
+    async (
+      query: string,
+      limit: number,
+      signal?: AbortSignal,
+    ): Promise<ProjectSymbolSearchResult[]> => {
       if (!workspaceRoot) {
         return [];
       }
@@ -185,9 +194,7 @@ export function useWorkbenchClassOpen(
       const searches: Array<Promise<ProjectSymbolSearchResult[]>> = [];
 
       if (shouldIndexWorkspace(intelligenceMode)) {
-        searches.push(
-          projectSymbolSearch.searchProjectSymbols(requestedRoot, query, limit),
-        );
+        searches.push(projectSymbolSearch.searchProjectSymbols(requestedRoot, query, limit));
       }
 
       if (
@@ -196,10 +203,7 @@ export function useWorkbenchClassOpen(
           languageServerRuntimeStatusRoot,
           requestedRoot,
         ) &&
-        canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "workspaceSymbol",
-        )
+        canUseLanguageServerFeature(languageServerRuntimeStatus.capabilities, "workspaceSymbol")
       ) {
         const requestedSessionId = languageServerRuntimeStatus.sessionId;
         const isRequestedWorkspaceSymbolSessionActive = () =>
@@ -215,15 +219,9 @@ export function useWorkbenchClassOpen(
 
               return symbols
                 .map((symbol) =>
-                  projectSymbolFromLanguageServerWorkspaceSymbol(
-                    requestedRoot,
-                    symbol,
-                  ),
+                  projectSymbolFromLanguageServerWorkspaceSymbol(requestedRoot, symbol),
                 )
-                .filter(
-                  (symbol): symbol is ProjectSymbolSearchResult =>
-                    symbol !== null,
-                );
+                .filter((symbol): symbol is ProjectSymbolSearchResult => symbol !== null);
             })
             .catch((error) => {
               if (!isRequestedWorkspaceSymbolSessionActive()) {
@@ -247,33 +245,42 @@ export function useWorkbenchClassOpen(
           "workspaceSymbol",
         )
       ) {
-        const requestedSessionId =
-          javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
-        const isRequestedWorkspaceSymbolSessionActive = () =>
-          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-            requestedRoot,
-            requestedSessionId,
+        const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+        const requestedOwner = resolveWorkspaceRuntimeOwner(requestedRoot);
+        const isRequestedWorkspaceSymbolSessionActive = () => {
+          const currentOwner = resolveWorkspaceRuntimeOwner(requestedRoot);
+          return (
+            requestedOwner !== null &&
+            signal?.aborted !== true &&
+            currentOwner?.ownerKey === requestedOwner.ownerKey &&
+            currentOwner === requestedOwner &&
+            isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+              requestedRoot,
+              requestedSessionId,
+            )
           );
+        };
 
         searches.push(
-          javaScriptTypeScriptLanguageServerFeaturesGateway
-            .workspaceSymbols(requestedRoot, query)
+          requestJavaScriptTypeScriptWorkspaceSymbols({
+            cancelRequest: cancelJavaScriptTypeScriptLanguageServerRequest,
+            gateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
+            isAuthorityCurrent: isRequestedWorkspaceSymbolSessionActive,
+            query,
+            rootPath: requestedRoot,
+            sessionId: requestedSessionId,
+            signal,
+          })
             .then((symbols) => {
               if (!isRequestedWorkspaceSymbolSessionActive()) {
                 return [];
               }
 
-              return symbols
-                .map((symbol) =>
-                  projectSymbolFromLanguageServerWorkspaceSymbol(
-                    requestedRoot,
-                    symbol,
-                  ),
-                )
-                .filter(
-                  (symbol): symbol is ProjectSymbolSearchResult =>
-                    symbol !== null,
-                );
+              return projectSymbolsFromLanguageServerWorkspaceSymbols(
+                requestedRoot,
+                symbols,
+                limit,
+              );
             })
             .catch((error) => {
               if (!isRequestedWorkspaceSymbolSessionActive()) {
@@ -287,7 +294,10 @@ export function useWorkbenchClassOpen(
       }
 
       const results = (await Promise.all(searches)).flat();
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (
+        signal?.aborted ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
         return [];
       }
 
@@ -295,6 +305,7 @@ export function useWorkbenchClassOpen(
     },
     [
       currentWorkspaceRootRef,
+      cancelJavaScriptTypeScriptLanguageServerRequest,
       intelligenceMode,
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       isLanguageServerSessionActiveForRoot,
@@ -306,35 +317,31 @@ export function useWorkbenchClassOpen(
       languageServerRuntimeStatusRoot,
       projectSymbolSearch,
       reportError,
+      resolveWorkspaceRuntimeOwner,
       workspaceRoot,
     ],
   );
 
   useEffect(() => {
-    if (
-      !classOpenOpen ||
-      !workspaceRoot ||
-      !classOpenQuery.trim() ||
-      !canSearchClassOpenSymbols
-    ) {
+    if (!classOpenOpen || !workspaceRoot || !classOpenQuery.trim() || !canSearchClassOpenSymbols) {
       setClassOpenResults([]);
       setClassOpenLoading(false);
       return;
     }
 
     let active = true;
+    const abort = new AbortController();
+    setClassOpenResults([]);
     setClassOpenLoading(true);
 
     const timeout = window.setTimeout(() => {
-      searchClassOpenSymbols(classOpenQuery, 120)
+      searchClassOpenSymbols(classOpenQuery, 120, abort.signal)
         .then((results) => {
           if (!active) {
             return;
           }
 
-          setClassOpenResults(
-            results.filter(isTypeProjectSymbol).slice(0, 80),
-          );
+          setClassOpenResults(results.filter(isTypeProjectSymbol).slice(0, 80));
           setMessage(null);
         })
         .catch((error) => {
@@ -356,6 +363,7 @@ export function useWorkbenchClassOpen(
 
     return () => {
       active = false;
+      abort.abort();
       window.clearTimeout(timeout);
     };
   }, [
@@ -407,35 +415,21 @@ function projectSymbolFromLanguageServerWorkspaceSymbol(
   };
 }
 
-function projectSymbolKindFromLanguageServerSymbolKind(
-  kind: number,
-): ProjectSymbolKind | null {
-  if (kind === 5) {
-    return "class";
+function projectSymbolsFromLanguageServerWorkspaceSymbols(
+  workspaceRoot: string,
+  symbols: readonly LanguageServerWorkspaceSymbol[],
+  limit: number,
+): ProjectSymbolSearchResult[] {
+  const projected: ProjectSymbolSearchResult[] = [];
+  for (const symbol of symbols) {
+    const result = projectSymbolFromLanguageServerWorkspaceSymbol(workspaceRoot, symbol);
+    if (result) projected.push(result);
+    if (projected.length >= limit) break;
   }
-
-  if (kind === 6) {
-    return "method";
-  }
-
-  if (kind === 10) {
-    return "enum";
-  }
-
-  if (kind === 11) {
-    return "interface";
-  }
-
-  if (kind === 12) {
-    return "function";
-  }
-
-  return null;
+  return projected;
 }
 
-function uniqueProjectSymbols(
-  symbols: ProjectSymbolSearchResult[],
-): ProjectSymbolSearchResult[] {
+function uniqueProjectSymbols(symbols: ProjectSymbolSearchResult[]): ProjectSymbolSearchResult[] {
   const seen = new Set<string>();
   const unique: ProjectSymbolSearchResult[] = [];
 
@@ -477,17 +471,12 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
 function isLanguageServerSessionCurrentForRoot(
   rootPath: string,
   sessionId: number,
-  runtimeStatusByRootRef: MutableRefObject<
-    Record<string, LanguageServerRuntimeStatus>
-  >,
+  runtimeStatusByRootRef: MutableRefObject<Record<string, LanguageServerRuntimeStatus>>,
   runtimeStatusRef: MutableRefObject<LanguageServerRuntimeStatus | null>,
   runtimeStatusRootRef: MutableRefObject<string | null>,
 ): boolean {
   const currentRuntimeStatus =
-    cachedLanguageServerRuntimeStatusForRoot(
-      runtimeStatusByRootRef.current,
-      rootPath,
-    ) ??
+    cachedLanguageServerRuntimeStatusForRoot(runtimeStatusByRootRef.current, rootPath) ??
     (workspaceRootKeysEqual(runtimeStatusRootRef.current, rootPath)
       ? runtimeStatusRef.current
       : null);
@@ -533,10 +522,7 @@ function isLanguageServerStatusForWorkspace(
     return false;
   }
 
-  const rootedStatus =
-    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
+  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
 
-  return (
-    Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
-  );
+  return Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }

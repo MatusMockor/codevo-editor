@@ -1,6 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyLanguageServerCompletionList,
+  type IdentifiedLanguageServerRequest,
+  type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerCallHierarchyItem,
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
@@ -15,7 +17,6 @@ import {
   type LanguageServerDocumentSymbol,
   type LanguageServerFoldingRange,
   type LanguageServerFormattingOptions,
-  type LanguageServerFeaturesGateway,
   type LanguageServerHover,
   type LanguageServerIncomingCall,
   type LanguageServerInlayHint,
@@ -41,7 +42,7 @@ type InvokeCommand = (command: string, args?: Record<string, unknown>) => Promis
 type RuntimeDetector = () => boolean;
 
 const invokeCommand: InvokeCommand = (command, args) => invoke(command, args);
-let nextRequestId = Date.now() * 1_000;
+const allocateRequestId = createMonotonicLanguageServerRequestIdAllocator();
 const DEFAULT_FEATURE_COMMANDS = {
   codeActionResolve: "text_document_code_action_resolve",
   codeActions: "text_document_code_actions",
@@ -192,7 +193,7 @@ export interface TauriLanguageServerFeatureCommands {
   workspaceSymbols: string;
 }
 
-export class TauriLanguageServerFeaturesGateway implements LanguageServerFeaturesGateway {
+export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptLanguageServerFeaturesGateway {
   constructor(
     private readonly invokeFeatureCommand: InvokeCommand = invokeCommand,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
@@ -202,19 +203,22 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
   hover(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerHover | null> {
-    return this.invokeFeatureRequest(this.commands.hover, { position, rootPath }, null);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerHover | null> {
+    return this.invokeFeatureRequest(this.commands.hover, { position, rootPath }, null, sessionId);
   }
 
   completion(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
     context?: LanguageServerCompletionContext,
-  ): Promise<LanguageServerCompletionList> {
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCompletionList> {
     return this.invokeFeatureRequest(
       this.commands.completion,
       { ...(context ? { context } : {}), position, rootPath },
       emptyLanguageServerCompletionList(),
+      sessionId,
     );
   }
 
@@ -228,36 +232,66 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
   definition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.definition, { position, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]> {
+    return this.invokeFeatureRequest(
+      this.commands.definition,
+      { position, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   sourceDefinition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.sourceDefinition, { position, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]> {
+    return this.invokeFeatureRequest(
+      this.commands.sourceDefinition,
+      { position, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   declaration(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.declaration, { position, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]> {
+    return this.invokeFeatureRequest(
+      this.commands.declaration,
+      { position, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   implementation(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.implementation, { position, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]> {
+    return this.invokeFeatureRequest(
+      this.commands.implementation,
+      { position, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   typeDefinition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.typeDefinition, { position, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]> {
+    return this.invokeFeatureRequest(
+      this.commands.typeDefinition,
+      { position, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   inlayHints(
@@ -282,8 +316,14 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
   documentHighlights(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerDocumentHighlight[]> {
-    return this.invokeWhenAvailable(this.commands.documentHighlights, { position, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerDocumentHighlight[]> {
+    return this.invokeFeatureRequest(
+      this.commands.documentHighlights,
+      { position, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   documentLinks(rootPath: string, path: string): Promise<LanguageServerDocumentLink[]> {
@@ -301,15 +341,30 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
     return this.invokeWhenAvailable(this.commands.foldingRanges, { path, rootPath }, []);
   }
 
-  workspaceSymbols(rootPath: string, query: string): Promise<LanguageServerWorkspaceSymbol[]> {
-    return this.invokeWhenAvailable(this.commands.workspaceSymbols, { query, rootPath }, []);
+  workspaceSymbols(
+    rootPath: string,
+    query: string,
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerWorkspaceSymbol[]> {
+    return this.invokeFeatureRequest(
+      this.commands.workspaceSymbols,
+      { query, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   references(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.references, { position, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]> {
+    return this.invokeFeatureRequest(
+      this.commands.references,
+      { position, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   selectionRanges(
@@ -327,27 +382,40 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
   linkedEditingRanges(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLinkedEditingRanges | null> {
-    return this.invokeWhenAvailable(
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLinkedEditingRanges | null> {
+    return this.invokeFeatureRequest(
       this.commands.linkedEditingRanges,
       { position, rootPath },
       null,
+      sessionId,
     );
   }
 
-  semanticTokens(rootPath: string, path: string): Promise<LanguageServerSemanticTokens | null> {
-    return this.invokeFeatureRequest(this.commands.semanticTokens, { path, rootPath }, null);
+  semanticTokens(
+    rootPath: string,
+    path: string,
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerSemanticTokens | null> {
+    return this.invokeFeatureRequest(
+      this.commands.semanticTokens,
+      { path, rootPath },
+      null,
+      sessionId,
+    );
   }
 
   rangeSemanticTokens(
     rootPath: string,
     path: string,
     range: LanguageServerRange,
-  ): Promise<LanguageServerSemanticTokens | null> {
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerSemanticTokens | null> {
     return this.invokeFeatureRequest(
       this.commands.rangeSemanticTokens,
       { path, range, rootPath },
       null,
+      sessionId,
     );
   }
 
@@ -355,7 +423,8 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
     context?: LanguageServerSignatureHelpContext,
-  ): Promise<LanguageServerSignatureHelp | null> {
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerSignatureHelp | null> {
     return this.invokeFeatureRequest(
       this.commands.signatureHelp,
       {
@@ -364,6 +433,7 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
         rootPath,
       },
       null,
+      sessionId,
     );
   }
 
@@ -387,19 +457,27 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
     path: string,
     range: LanguageServerRange,
     context: LanguageServerCodeActionContext,
-  ): Promise<LanguageServerCodeAction[]> {
-    return this.invokeWhenAvailable(
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCodeAction[]> {
+    return this.invokeFeatureRequest(
       this.commands.codeActions,
       { context, path, range, rootPath },
       [],
+      sessionId,
     );
   }
 
   resolveCodeAction(
     rootPath: string,
     action: LanguageServerCodeAction,
-  ): Promise<LanguageServerCodeAction> {
-    return this.invokeWhenAvailable(this.commands.codeActionResolve, { action, rootPath }, action);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCodeAction> {
+    return this.invokeFeatureRequest(
+      this.commands.codeActionResolve,
+      { action, rootPath },
+      action,
+      sessionId,
+    );
   }
 
   codeLenses(rootPath: string, path: string): Promise<LanguageServerCodeLens[]> {
@@ -579,21 +657,41 @@ export class TauriLanguageServerFeaturesGateway implements LanguageServerFeature
     command: string,
     args: Record<string, unknown>,
     fallback: T,
-  ): Promise<T> {
-    if (!command.startsWith("javascript_typescript_")) {
-      return this.invokeWhenAvailable(command, args, fallback);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<T> {
+    const isJavaScriptTypeScriptRequest = command.startsWith("javascript_typescript_");
+    if (isJavaScriptTypeScriptRequest && !isAuthorityId(sessionId)) {
+      throw new Error("JavaScript/TypeScript language-server request requires an active session.");
     }
     const requestId = allocateRequestId();
-    return Object.assign(this.invokeWhenAvailable(command, { ...args, requestId }, fallback), {
+    const identifiedSessionId = sessionId ?? 0;
+    const invokeArgs = isJavaScriptTypeScriptRequest
+      ? { ...args, requestId, sessionId: identifiedSessionId }
+      : args;
+    return Object.assign(this.invokeWhenAvailable(command, invokeArgs, fallback), {
       requestId,
+      sessionId: identifiedSessionId,
     });
   }
 }
 
-function allocateRequestId(): number {
-  if (nextRequestId >= Number.MAX_SAFE_INTEGER) {
-    nextRequestId = 1_000_000;
+export function createMonotonicLanguageServerRequestIdAllocator(
+  initialRequestId: number = Date.now() * 1_000,
+): () => number {
+  if (!Number.isSafeInteger(initialRequestId) || initialRequestId < 0) {
+    throw new TypeError("Initial language-server request identifier must be a safe integer.");
   }
-  nextRequestId += 1;
-  return nextRequestId;
+
+  let nextRequestId = initialRequestId;
+  return () => {
+    if (nextRequestId >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("Language-server request identifier space is exhausted.");
+    }
+    nextRequestId += 1;
+    return nextRequestId;
+  };
+}
+
+function isAuthorityId(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
 }

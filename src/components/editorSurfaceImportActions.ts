@@ -7,8 +7,8 @@ import {
   type WorkspaceRootDescriptor,
 } from "../domain/workspacePath";
 import type {
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerCodeAction,
-  LanguageServerFeaturesGateway,
   LanguageServerTextEdit,
 } from "../domain/languageServerFeatures";
 import {
@@ -22,12 +22,18 @@ import {
 } from "../domain/organizeImportsOnSave";
 import type { EditorSurfaceCommandId } from "../domain/editorSurfaceCommand";
 
+export type EditorSurfaceImportActionFeaturesGateway = Pick<
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
+  "codeActions" | "resolveCodeAction"
+>;
+
 export interface EditorSurfaceImportActionRequest {
   readonly content: string;
-  readonly gateway: LanguageServerFeaturesGateway;
+  readonly gateway: EditorSurfaceImportActionFeaturesGateway;
   readonly kind: JavaScriptTypeScriptOnSaveSourceActionKind;
   readonly path: string;
   readonly rootPath: string;
+  readonly sessionId: number;
   readonly version: () => number | null;
   readonly workspacePathPolicy?: WorkspacePathPolicy;
   apply(edits: readonly LanguageServerTextEdit[]): boolean;
@@ -75,6 +81,7 @@ export async function executeEditorSurfaceImportAction(
       request.path,
       fullDocumentRange(request.content),
       organizeImportsCodeActionContext(request.kind),
+      request.sessionId,
     );
     if (!request.isCurrent() || request.version() !== version) return false;
 
@@ -91,7 +98,11 @@ export async function executeEditorSurfaceImportAction(
     let invalidRanges = selection.invalidRanges;
     if (!edits) {
       for (const unresolved of unresolvedActions(actions, request.kind)) {
-        const resolved = await request.gateway.resolveCodeAction(request.rootPath, unresolved);
+        const resolved = await request.gateway.resolveCodeAction(
+          request.rootPath,
+          unresolved,
+          request.sessionId,
+        );
         if (!request.isCurrent() || request.version() !== version) return false;
         selection = selectValidatedSameFileEdits(
           [resolved],

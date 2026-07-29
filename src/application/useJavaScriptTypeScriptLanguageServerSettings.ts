@@ -1,12 +1,7 @@
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
 import type { LanguageServerPlan } from "../domain/languageServer";
-import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
+import type { JavaScriptTypeScriptLanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
 import {
   isLanguageServerActive,
   type LanguageServerRuntimeGateway,
@@ -31,15 +26,14 @@ export interface JavaScriptTypeScriptLanguageServerSettingsDependencies {
   workspaceRoot: string | null;
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   activeEditorConfigRef: MutableRefObject<ResolvedEditorConfig>;
-  autoStartedJavaScriptTypeScriptLanguageServerRootRef: MutableRefObject<
-    string | null
-  >;
+  autoStartedJavaScriptTypeScriptLanguageServerRootRef: MutableRefObject<string | null>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerFeaturesGateway: Pick<
+    JavaScriptTypeScriptLanguageServerFeaturesGateway,
+    "didChangeConfiguration"
+  >;
   javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway;
-  javaScriptTypeScriptLanguageServerRuntimeStatus:
-    | LanguageServerRuntimeStatus
-    | null;
+  javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
   isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: (
     rootPath: string,
@@ -94,10 +88,7 @@ export function useJavaScriptTypeScriptLanguageServerSettings(
       rootPath,
       requestIsCurrent,
     }: JavaScriptTypeScriptSettingsChangeInput) => {
-      const changeKind = javaScriptTypeScriptSettingsChangeKind(
-        previousSettings,
-        nextSettings,
-      );
+      const changeKind = javaScriptTypeScriptSettingsChangeKind(previousSettings, nextSettings);
 
       if (
         changeKind === "configuration" &&
@@ -108,8 +99,7 @@ export function useJavaScriptTypeScriptLanguageServerSettings(
           rootPath,
         )
       ) {
-        const requestedSessionId =
-          javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+        const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
 
         try {
           await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration(
@@ -122,10 +112,7 @@ export function useJavaScriptTypeScriptLanguageServerSettings(
           );
         } catch (error) {
           if (
-            isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-              rootPath,
-              requestedSessionId,
-            )
+            isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(rootPath, requestedSessionId)
           ) {
             throw error;
           }
@@ -186,19 +173,14 @@ export function useJavaScriptTypeScriptLanguageServerSettings(
 
   const openJavaScriptTypeScriptServiceLog = useCallback(async () => {
     if (!workspaceRoot) {
-      setMessage(
-        "Open a workspace before opening the JavaScript/TypeScript service log.",
-      );
+      setMessage("Open a workspace before opening the JavaScript/TypeScript service log.");
       return;
     }
 
     const requestedRoot = workspaceRoot;
 
     try {
-      const logPath =
-        await javaScriptTypeScriptLanguageServerRuntimeGateway.openLog(
-          requestedRoot,
-        );
+      const logPath = await javaScriptTypeScriptLanguageServerRuntimeGateway.openLog(requestedRoot);
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
@@ -210,11 +192,7 @@ export function useJavaScriptTypeScriptLanguageServerSettings(
           : "JavaScript/TypeScript service log is unavailable in this runtime.",
       );
     } catch (error) {
-      reportErrorForActiveWorkspaceRoot(
-        requestedRoot,
-        "JavaScript/TypeScript",
-        error,
-      );
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "JavaScript/TypeScript", error);
     }
   }, [
     currentWorkspaceRootRef,
@@ -273,10 +251,7 @@ function isLanguageServerStatusForWorkspace(
     return false;
   }
 
-  const rootedStatus =
-    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
+  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
 
-  return (
-    Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
-  );
+  return Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }

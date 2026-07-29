@@ -16,9 +16,12 @@ import type {
 import { buildJsTestExplorerTree } from "../domain/jsTestExplorerTree";
 import { buildPackageDependencyTree } from "../domain/packageDependencyTree";
 import type { TestGutterTarget } from "../domain/testGutterTargets";
+import { defaultTextSearchOptions, type TextSearchResult } from "../domain/workspace";
 import { waitForReact } from "../test/reactTestLifecycle";
+import { useWorkspacePackageGraph } from "../application/useWorkspacePackageGraph";
 import { BottomPanel } from "./BottomPanel";
 import { DebugPanel } from "./DebugPanel";
+import { TextSearch } from "./TextSearch";
 import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./useWorkspaceExpressRoutesWorkbenchPanel";
 
 interface CapturedTerminalPanelProps {
@@ -461,7 +464,7 @@ describe("BottomPanel terminal links", () => {
     expect(discoveryGateway.enumerateJavaScriptSourceFiles).not.toHaveBeenCalled();
   });
 
-  it("keeps rendered package grouping stable while a save-triggered manifest rescan is pending", async () => {
+  it("shows pending package attribution while a save-triggered manifest rescan is pending", async () => {
     let releaseRescan: () => void = () => undefined;
     const pendingRescan = new Promise<void>((resolve) => {
       releaseRescan = resolve;
@@ -498,19 +501,28 @@ describe("BottomPanel terminal links", () => {
     packageHeader?.focus();
 
     act(() => {
-      host.querySelector<HTMLButtonElement>('button[aria-label="Simulate JavaScript save"]')?.click();
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Simulate JavaScript save"]')
+        ?.click();
     });
     await waitForReact(() => expect(enumerationCount).toBe(2));
 
     expect(host.textContent).not.toContain("Package (degraded)");
     expect(host.textContent).not.toContain("Package unknown (workspace scan bounded)");
-    expect(host.querySelector(".problems-package-header")?.textContent).toContain("@repo/api");
-    expect(document.activeElement).toBe(packageHeader);
+    expect(host.querySelector(".problems-package-header")?.textContent).toContain(
+      "Package pending (workspace scan loading)",
+    );
+    expect(host.querySelector('[data-package-key="@repo/api"]')).toBeNull();
+    expect(document.activeElement).not.toBe(packageHeader);
 
-    await act(async () => {
+    act(() => {
       releaseRescan();
-      await pendingRescan;
     });
+    await pendingRescan;
+    await waitForReact(() =>
+      expect(host.querySelector(".problems-package-header")?.textContent).toContain("@repo/api"),
+    );
+    expect(host.textContent).not.toContain("Package pending (workspace scan loading)");
   });
 
   it("reads the root package manifest once per discovery version", async () => {
@@ -534,23 +546,31 @@ describe("BottomPanel terminal links", () => {
 
     expect(rootManifestReads()).toHaveLength(1);
     act(() => {
-      host.querySelector<HTMLButtonElement>('button[aria-label="Simulate JavaScript save"]')?.click();
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="Simulate JavaScript save"]')
+        ?.click();
     });
     await waitForReact(() => expect(rootManifestReads()).toHaveLength(2));
   });
 
   it("renders non-JavaScript workspace package controls without a degraded scan claim", async () => {
-    await renderPanel(root, "/workspace", vi.fn(async () => true), undefined, {
-      activeView: "problems",
-      hasJsWorkspace: false,
-      notices: [problemForPackageApi()],
-      workspacePackageDiscovery: {
-        authority: "bounded",
-        incompleteDirectories: [],
-        packageManifests: [],
-        unscopedAuthorityUncertain: true,
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "problems",
+        hasJsWorkspace: false,
+        notices: [problemForPackageApi()],
+        workspacePackageDiscovery: {
+          authority: "bounded",
+          incompleteDirectories: [],
+          packageManifests: [],
+          unscopedAuthorityUncertain: true,
+        },
       },
-    });
+    );
 
     expect(host.textContent).toContain("No package");
     expect(host.textContent).not.toContain("Package (degraded)");
@@ -842,6 +862,24 @@ describe("BottomPanel terminal links", () => {
     expect(labels).toContain("Debug");
   });
 
+  it("renders the persistent search view in the panel", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "search",
+        search: <div aria-label="Persistent workspace search">results</div>,
+      },
+    );
+
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe("Search");
+    expect(host.querySelector('[aria-label="Persistent workspace search"]')?.textContent).toBe(
+      "results",
+    );
+  });
+
   it("renders the debug panel with pass-through props for the debug view", async () => {
     const onStep = vi.fn();
     await renderPanel(
@@ -985,6 +1023,120 @@ describe("BottomPanel terminal links", () => {
   });
 });
 
+describe("BottomPanel docked search lifecycle", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("preserves search selection and collapsed files across panel tab switches", async () => {
+    const results: TextSearchResult[] = [
+      {
+        column: 1,
+        lineNumber: 1,
+        lineText: "needle",
+        matchEnd: 6,
+        matchStart: 0,
+        path: "/workspace/a.ts",
+        relativePath: "a.ts",
+      },
+      {
+        column: 1,
+        lineNumber: 2,
+        lineText: "needle",
+        matchEnd: 6,
+        matchStart: 0,
+        path: "/workspace/b.ts",
+        relativePath: "b.ts",
+      },
+    ];
+    const search = (
+      <TextSearch
+        dismissedPaths={new Set()}
+        isLoading={false}
+        isOpen
+        onChangeOptions={vi.fn()}
+        onChangeQuery={vi.fn()}
+        onChangeReplacement={vi.fn()}
+        onClose={vi.fn()}
+        onDismissFile={vi.fn()}
+        onOpen={vi.fn()}
+        onReplaceAll={vi.fn()}
+        onReplaceInFile={vi.fn()}
+        onRestoreDismissedFiles={vi.fn()}
+        options={defaultTextSearchOptions()}
+        query="needle"
+        replaceBusy={false}
+        replacement=""
+        results={results}
+      />
+    );
+
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "search",
+        search,
+      },
+    );
+    const firstGroup = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Collapse a.ts, 1 match"]',
+    );
+    let secondResult = host.querySelector<HTMLButtonElement>(
+      '[aria-label="b.ts, line 2, column 1"]',
+    );
+    expect(firstGroup).not.toBeNull();
+    expect(secondResult).not.toBeNull();
+
+    act(() => {
+      firstGroup?.click();
+    });
+    secondResult = host.querySelector<HTMLButtonElement>('[aria-label="b.ts, line 2, column 1"]');
+    act(() => secondResult?.focus());
+    expect(firstGroup?.getAttribute("aria-expanded")).toBe("false");
+    expect(secondResult?.getAttribute("aria-selected")).toBe("true");
+
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "terminal",
+        search,
+      },
+    );
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "search",
+        search,
+      },
+    );
+
+    expect(firstGroup?.isConnected).toBe(true);
+    expect(firstGroup?.getAttribute("aria-expanded")).toBe("false");
+    expect(secondResult?.isConnected).toBe(true);
+    expect(secondResult?.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
 function terminalProps(): CapturedTerminalPanelProps {
   return bottomPanelMocks.terminalProps[
     bottomPanelMocks.terminalProps.length - 1
@@ -1038,6 +1190,13 @@ function ProductionProblemsPanel({
   const bottomPanelView: string = "problems";
   const expressWorkspaceManifestSignal = false;
   const [discoveryVersion, setDiscoveryVersion] = useState(0);
+  const packageDiscovery = useWorkspacePackageGraph({
+    discoveryVersion,
+    enabled: true,
+    gateway: discoveryGateway,
+    rootPath: "/workspace",
+    workspaceId: "workspace",
+  });
   const expressRoutesPanel = useOwnedWorkspaceExpressRoutesWorkbenchPanel({
     activeDocument: null,
     discoveryGateway,
@@ -1047,6 +1206,7 @@ function ProductionProblemsPanel({
       (bottomPanelVisible && bottomPanelView === "expressRoutes") || expressWorkspaceManifestSignal,
     onOpenLocation: async () => true,
     openDocuments: [],
+    packageDiscovery,
     rootPath: "/workspace",
     workspaceId: "workspace",
   });
@@ -1079,6 +1239,7 @@ function ProductionProblemsPanel({
         terminalGateway={terminalGateway()}
         terminalShellIntegrationEnabled={false}
         terminalTheme={terminalThemeForAppTheme("dark")}
+        workspacePackageDiscovery={packageDiscovery}
         workspaceRoot="/workspace"
         workspaceTrusted
       />

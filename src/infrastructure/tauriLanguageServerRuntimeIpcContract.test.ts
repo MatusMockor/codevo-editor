@@ -14,6 +14,7 @@ describe("language-server runtime Tauri IPC contract", () => {
     expectTypeOf<LanguageServerRuntimeIpcArgs<"cancelRequest">>().toEqualTypeOf<{
       readonly requestId: number;
       readonly rootPath: string;
+      readonly sessionId: number;
     }>();
     expectTypeOf<LanguageServerRuntimeIpcArgs<"openLog">>().toEqualTypeOf<{
       readonly kind: "phpactor" | "tsserver";
@@ -65,12 +66,14 @@ describe("language-server runtime Tauri IPC contract", () => {
       {
         requestId: 42,
         rootPath: "/workspace",
+        sessionId: 7,
       },
     );
 
     expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("cancel_lsp_request", {
       requestId: 42,
       rootPath: "/workspace",
+      sessionId: 7,
     });
   });
 
@@ -115,6 +118,30 @@ describe("language-server runtime Tauri IPC contract", () => {
         sessionId: 4,
       }),
     ).toThrow("running.capabilities.inlayHintResolve must be a boolean when present");
+  });
+
+  it.each([
+    { changeKind: "delta", openClose: true, save: { kind: "unsupported" } },
+    { changeKind: "incremental", openClose: "yes", save: { kind: "unsupported" } },
+    { changeKind: "incremental", openClose: true, save: { kind: "supported" } },
+    {
+      changeKind: "incremental",
+      extra: true,
+      openClose: true,
+      save: { kind: "unsupported" },
+    },
+  ])("rejects malformed document-sync capability %#", (documentSync) => {
+    expect(() =>
+      decodeLanguageServerRuntimeStatus({
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          documentSync,
+        },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 4,
+      }),
+    ).toThrow("running.capabilities.documentSync");
   });
 
   it("validates the runtime log response", () => {

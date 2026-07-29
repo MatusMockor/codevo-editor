@@ -5,23 +5,56 @@ import {
 } from "./typescriptJavascriptDefaults";
 
 describe("Monaco JavaScript and TypeScript built-ins", () => {
-  it("coalesces repeated effective configuration for one Monaco runtime", () => {
+  it("coalesces repeated configuration and restores A-B-A-B authority on one Monaco runtime", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
     const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
 
-    expect(configureTypescriptJavascriptDefaultsOnce(monaco as never)).toBe(true);
-    expect(configureTypescriptJavascriptDefaultsOnce(monaco as never)).toBe(false);
-    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(1);
-    expect(javascriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(1);
-
+    expect(
+      configureTypescriptJavascriptDefaultsOnce(monaco as never, {
+        managedLanguageServerActive: false,
+      }),
+    ).toBe(true);
     expect(
       configureTypescriptJavascriptDefaultsOnce(monaco as never, {
         managedLanguageServerActive: true,
       }),
     ).toBe(true);
-    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(2);
-    expect(javascriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(2);
+    expect(
+      configureTypescriptJavascriptDefaultsOnce(monaco as never, {
+        managedLanguageServerActive: true,
+      }),
+    ).toBe(false);
+    expect(
+      configureTypescriptJavascriptDefaultsOnce(monaco as never, {
+        managedLanguageServerActive: false,
+      }),
+    ).toBe(true);
+    expect(
+      configureTypescriptJavascriptDefaultsOnce(monaco as never, {
+        managedLanguageServerActive: true,
+      }),
+    ).toBe(true);
+
+    for (const defaults of [typescriptDefaults, javascriptDefaults]) {
+      expect(defaults.setCompilerOptions).toHaveBeenCalledTimes(4);
+      expect(defaults.setEagerModelSync.mock.calls.map(([enabled]) => enabled)).toEqual([
+        true,
+        false,
+        true,
+        false,
+      ]);
+      expect(
+        defaults.setDiagnosticsOptions.mock.calls.map(
+          ([options]) => options.noSemanticValidation,
+        ),
+      ).toEqual([false, true, false, true]);
+      expect(
+        defaults.setModeConfiguration.mock.calls.map(
+          ([configuration]) => configuration.completionItems,
+        ),
+      ).toEqual([true, false, true, false]);
+    }
   });
 
   it("configures compiler options, eager sync, and diagnostics for TypeScript and JavaScript", () => {
@@ -236,9 +269,16 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
         onTypeFormattingEdits: true,
       }),
     );
+    for (const defaults of [typescriptDefaults, javascriptDefaults]) {
+      const worker = retainedModelSyncHarness(defaults, 100);
+
+      worker.start();
+
+      expect(worker.mirroredModelUris()).toHaveLength(100);
+    }
   });
 
-  it("keeps on-type formatting but disables Monaco semantic JS/TS providers and diagnostics while the matching-root managed runtime owns them", () => {
+  it("does not eagerly mirror 100 retained models while the matching-root managed runtime owns semantic JS/TS features", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
     const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
@@ -268,6 +308,17 @@ describe("Monaco JavaScript and TypeScript built-ins", () => {
       rename: false,
       signatureHelp: false,
     });
+    for (const defaults of [typescriptDefaults, javascriptDefaults]) {
+      const worker = retainedModelSyncHarness(defaults, 100);
+
+      worker.start();
+
+      expect(worker.mirroredModelUris()).toEqual([]);
+
+      worker.requestModel(worker.retainedModelUris[73]);
+
+      expect(worker.mirroredModelUris()).toEqual([worker.retainedModelUris[73]]);
+    }
   });
 
   it("enables Monaco built-in JS/TS providers and diagnostics for a stale-root managed runtime", () => {
@@ -324,5 +375,34 @@ function languageDefaults() {
     setDiagnosticsOptions: vi.fn(),
     setEagerModelSync: vi.fn(),
     setModeConfiguration: vi.fn(),
+  };
+}
+
+function retainedModelSyncHarness(
+  defaults: ReturnType<typeof languageDefaults>,
+  retainedModelCount: number,
+): {
+  mirroredModelUris: () => string[];
+  requestModel: (modelUri: string) => void;
+  retainedModelUris: string[];
+  start: () => void;
+} {
+  const retainedModelUris = Array.from(
+    { length: retainedModelCount },
+    (_, index) => `file:///workspace/retained-${index}.ts`,
+  );
+  const mirroredModelUris = new Set<string>();
+
+  return {
+    mirroredModelUris: () => [...mirroredModelUris],
+    requestModel: (modelUri) => {
+      mirroredModelUris.add(modelUri);
+    },
+    retainedModelUris,
+    start: () => {
+      if (defaults.setEagerModelSync.mock.lastCall?.[0] === true) {
+        retainedModelUris.forEach((modelUri) => mirroredModelUris.add(modelUri));
+      }
+    },
   };
 }

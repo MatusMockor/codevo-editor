@@ -1256,6 +1256,152 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
 });
 
 describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
+  it("does not duplicate legacy didOpen while an exact incremental lifecycle owns the path", async () => {
+    const harness = createHarness();
+    const document = tsDocument({ content: "bounded" });
+    harness.deps.javaScriptTypeScriptIncrementalSyncRef = ref(
+      incrementalLifecycle({
+        ownsLifecycle: () => true,
+        requestLifecycleLease: () => TEST_INCREMENTAL_LIFECYCLE_LEASE,
+      }),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+
+    await api().syncOpenJavaScriptTypeScriptDocument(document);
+
+    expect(harness.jstsGateway.didOpen).not.toHaveBeenCalled();
+    expect(harness.jsts.syncedPaths.current.size).toBe(0);
+  });
+
+  it("revalidates an exact legacy handoff guard after the open queue wait", async () => {
+    const harness = createHarness();
+    const document = tsDocument({ content: "queued" });
+    const syncKey = languageServerDocumentSyncKey(ROOT, document.path);
+    const queue = deferred<void>();
+    harness.jsts.syncQueues.current[syncKey] = queue.promise;
+    let current = true;
+    const { api } = renderDocumentSync(harness.deps);
+
+    const opening = api().syncOpenJavaScriptTypeScriptDocument(document, () => current);
+    current = false;
+    queue.resolve();
+    await opening;
+
+    expect(harness.jstsGateway.didOpen).not.toHaveBeenCalled();
+    expect(harness.jsts.syncedPaths.current.has(syncKey)).toBe(false);
+  });
+
+  it("drains exact incremental ownership before didSave without a legacy didChange", async () => {
+    const harness = createHarness();
+    const exactLiveContent = "incremental latest";
+    const document = tsDocument({ content: exactLiveContent });
+    const prepareSave = vi.fn(async () => ({
+      content: exactLiveContent,
+      permit: TEST_INCREMENTAL_SAVE_PERMIT,
+      revision: 2,
+    }));
+    harness.deps.javaScriptTypeScriptIncrementalSyncRef = ref(
+      incrementalLifecycle({
+        confirmSave: () => true,
+        isLeaseCurrent: () => true,
+        isSavePermitCurrent: () => true,
+        ownsLifecycle: () => true,
+        prepareSave,
+        requestLifecycleLease: () => TEST_INCREMENTAL_LIFECYCLE_LEASE,
+      }),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+
+    await api().syncSavedJavaScriptTypeScriptDocument(ROOT, document);
+
+    expect(prepareSave).toHaveBeenCalledWith(TEST_INCREMENTAL_LIFECYCLE_LEASE);
+    expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didSave).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ path: document.path, text: exactLiveContent }),
+      SESSION,
+    );
+  });
+
+  it("does not retire a healthy incremental channel when an edit lands during committed didSave", async () => {
+    const harness = createHarness();
+    const document = tsDocument({ content: "saved exact content" });
+    const didSave = deferred<void>();
+    vi.mocked(harness.jstsGateway.didSave).mockImplementation(() => didSave.promise);
+    const fallbackToLegacy = vi.fn(async () => undefined);
+    harness.deps.javaScriptTypeScriptIncrementalSyncRef = ref(
+      incrementalLifecycle({
+        confirmSave: () => true,
+        fallbackToLegacy,
+        isLeaseCurrent: () => true,
+        isSavePermitCurrent: () => false,
+        ownsLifecycle: () => true,
+        prepareSave: async () => ({
+          content: document.content,
+          permit: TEST_INCREMENTAL_SAVE_PERMIT,
+          revision: 2,
+        }),
+        requestLifecycleLease: () => TEST_INCREMENTAL_LIFECYCLE_LEASE,
+      }),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+
+    const saving = api().syncSavedJavaScriptTypeScriptDocument(ROOT, document);
+    await flushMicrotasks();
+    didSave.resolve();
+    await saving;
+
+    expect(fallbackToLegacy).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didSave).toHaveBeenCalledOnce();
+  });
+
+  it("emits no didSave and does not retire when the disk save content is already stale", async () => {
+    const harness = createHarness();
+    const document = tsDocument({ content: "disk content" });
+    const fallbackToLegacy = vi.fn(async () => undefined);
+    harness.deps.javaScriptTypeScriptIncrementalSyncRef = ref(
+      incrementalLifecycle({
+        confirmSave: () => true,
+        fallbackToLegacy,
+        isLeaseCurrent: () => true,
+        ownsLifecycle: () => true,
+        prepareSave: async () => ({
+          content: "newer live content",
+          permit: TEST_INCREMENTAL_SAVE_PERMIT,
+          revision: 3,
+        }),
+        requestLifecycleLease: () => TEST_INCREMENTAL_LIFECYCLE_LEASE,
+      }),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+
+    await api().syncSavedJavaScriptTypeScriptDocument(ROOT, document);
+
+    expect(harness.jstsGateway.didSave).not.toHaveBeenCalled();
+    expect(fallbackToLegacy).not.toHaveBeenCalled();
+  });
+
+  it("retires only the legacy lifecycle for an incremental handoff without coordinator recursion", async () => {
+    const harness = createHarness();
+    const document = tsDocument({ content: "legacy" });
+    const closeDocument = vi.fn(async () => true);
+    harness.deps.javaScriptTypeScriptIncrementalSyncRef = ref(
+      incrementalLifecycle({
+        closeDocument,
+      }),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    await api().syncOpenJavaScriptTypeScriptDocument(document);
+
+    await expect(
+      api().retireLegacyJavaScriptTypeScriptDocumentForIncrementalHandoff(ROOT, document.path),
+    ).resolves.toBe(true);
+
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
+    expect(closeDocument).not.toHaveBeenCalled();
+    expect(api().isJavaScriptTypeScriptLegacyHandoffSafe(ROOT, document.path)).toBe(true);
+  });
+
   it("opens a syncable document with version 1 (no PHP warm-up)", async () => {
     const harness = createHarness();
     const { api } = renderDocumentSync(harness.deps);
@@ -1276,6 +1422,34 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     );
     expect(harness.jsts.syncedPaths.current.has(key)).toBe(true);
     expect(harness.warmUp).not.toHaveBeenCalled();
+  });
+
+  it("retires and reopens an unchanged document when the large-file policy shrinks and expands", async () => {
+    const harness = createHarness();
+    const rendered = renderDocumentSync(harness.deps);
+    const document = tsDocument({
+      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+    });
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(document);
+
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 500,
+    };
+    rendered.rerender(harness.deps);
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(document);
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
+    expect(harness.jsts.syncedPaths.current).not.toContain(
+      languageServerDocumentSyncKey(ROOT, document.path),
+    );
+
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+      lineLimit: 5_000,
+    };
+    rendered.rerender(harness.deps);
+    await rendered.api().syncOpenJavaScriptTypeScriptDocument(document);
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledTimes(2);
   });
 
   it("reports a JS/TS sync version only after exact didOpen settlement and while policy-eligible", async () => {
@@ -2319,6 +2493,33 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.jstsGateway.didOpen).not.toHaveBeenCalled();
   });
 });
+
+const TEST_INCREMENTAL_LIFECYCLE_LEASE = Object.freeze({
+  kind: "javascript-typescript-incremental-sync-lifecycle-lease" as const,
+});
+const TEST_INCREMENTAL_SAVE_PERMIT = Object.freeze({
+  kind: "javascript-typescript-incremental-sync-save-permit" as const,
+});
+
+function incrementalLifecycle(
+  overrides: Partial<
+    import("./javaScriptTypeScriptIncrementalSyncProduction").JavaScriptTypeScriptIncrementalSyncDocumentLifecyclePort
+  > = {},
+): import("./javaScriptTypeScriptIncrementalSyncProduction").JavaScriptTypeScriptIncrementalSyncDocumentLifecyclePort {
+  return {
+    closeDocument: async () => false,
+    closeRoot: async () => undefined,
+    confirmSave: () => false,
+    drainBeforeSave: async () => false,
+    fallbackToLegacy: async () => undefined,
+    isLeaseCurrent: () => false,
+    isSavePermitCurrent: () => false,
+    ownsLifecycle: () => false,
+    prepareSave: async () => null,
+    requestLifecycleLease: () => null,
+    ...overrides,
+  };
+}
 
 describe("useDocumentSync - cross-family isolation", () => {
   it("closing all synced PHP documents for a root sends didClose per document and resets", async () => {

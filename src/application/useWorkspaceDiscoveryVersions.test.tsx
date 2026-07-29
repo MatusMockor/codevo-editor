@@ -42,6 +42,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
       netteDiscoveryVersion: 0,
       nodePackageScriptDiscoveryVersion: 0,
       symfonyDiscoveryVersion: 0,
+      workspacePackageDiscoveryVersion: 0,
     });
 
     harness.publish(event({ relativePath: "src/routes.test.ts" }));
@@ -53,6 +54,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
       netteDiscoveryVersion: 0,
       nodePackageScriptDiscoveryVersion: 0,
       symfonyDiscoveryVersion: 0,
+      workspacePackageDiscoveryVersion: 0,
     });
 
     harness.publish(event({ relativePath: "package.json" }));
@@ -64,6 +66,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
       netteDiscoveryVersion: 0,
       nodePackageScriptDiscoveryVersion: 1,
       symfonyDiscoveryVersion: 0,
+      workspacePackageDiscoveryVersion: 1,
     });
 
     harness.publish(event({ fileKind: "directory", kind: "created", relativePath: "src/http" }));
@@ -75,6 +78,7 @@ describe("useWorkspaceDiscoveryVersions", () => {
       netteDiscoveryVersion: 0,
       nodePackageScriptDiscoveryVersion: 2,
       symfonyDiscoveryVersion: 1,
+      workspacePackageDiscoveryVersion: 2,
     });
 
     harness.publish(event({ relativePath: "config/routes.yaml" }));
@@ -105,6 +109,45 @@ describe("useWorkspaceDiscoveryVersions", () => {
       symfonyDiscoveryVersion: 3,
     });
 
+    harness.unmount();
+  });
+
+  it("does not restart package discovery for repeated excluded directory churn", () => {
+    const harness = renderHook();
+    const excludedRoots = ["node_modules", "vendor", "dist", "build", "coverage", "target"];
+
+    for (let index = 0; index < 128; index += 1) {
+      harness.publish(
+        event({
+          fileKind: "directory",
+          kind: "created",
+          relativePath: `${excludedRoots[index % excludedRoots.length]}/generated-${index}`,
+        }),
+      );
+      harness.publish(
+        event({
+          fileKind: "directory",
+          kind: "deleted",
+          relativePath: `${excludedRoots[index % excludedRoots.length]}/removed-${index}`,
+        }),
+      );
+    }
+
+    expect(harness.current().workspacePackageDiscoveryVersion).toBe(0);
+
+    harness.publish(event({ kind: "created", relativePath: "packages/new/package.json" }));
+
+    expect(harness.current().workspacePackageDiscoveryVersion).toBe(1);
+    harness.unmount();
+  });
+
+  it("restarts package discovery for ignore-rule changes and watcher rescan recovery", () => {
+    const harness = renderHook();
+
+    harness.publish(event({ relativePath: "packages/.gitignore" }));
+    harness.publish(event({ kind: "rescanRequired", relativePath: "" }));
+
+    expect(harness.current().workspacePackageDiscoveryVersion).toBe(2);
     harness.unmount();
   });
 

@@ -8,7 +8,7 @@ export interface NavigationHistory {
   ownerKey?: string;
 }
 
-const MAX_STACK_DEPTH = 100;
+export const MAX_STACK_DEPTH = 100;
 
 export function createNavigationHistory(): NavigationHistory {
   return {

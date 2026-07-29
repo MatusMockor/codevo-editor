@@ -1,9 +1,6 @@
 import { useCallback, type MutableRefObject } from "react";
 import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
-import {
-  planFormatOnSave,
-  type FormatOnSavePlan,
-} from "../domain/formatOnSave";
+import { planFormatOnSave, type FormatOnSavePlan } from "../domain/formatOnSave";
 import {
   fullDocumentRange,
   javaScriptTypeScriptOnSaveSourceActionKinds,
@@ -16,10 +13,9 @@ import { optimizePhpImportsSource } from "../domain/phpImportsOrganizer";
 import type { WorkspaceSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
-import {
-  isLanguageServerDocument,
-} from "../domain/languageServerDocumentSync";
+import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type {
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerFeaturesGateway,
   LanguageServerTextEdit,
 } from "../domain/languageServerFeatures";
@@ -34,11 +30,11 @@ export interface DocumentSavePipelineDependencies {
   javaScriptTypeScriptLanguageServerRuntimeStatusRef: MutableRefObject<LanguageServerRuntimeStatus | null>;
   javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: MutableRefObject<string | null>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
-  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
-  flushPendingDocumentChangeForRoot: (
-    rootPath: string,
-    path: string,
-  ) => Promise<void>;
+  javaScriptTypeScriptLanguageServerFeaturesGateway: Pick<
+    JavaScriptTypeScriptLanguageServerFeaturesGateway,
+    "codeActions" | "formatting" | "resolveCodeAction"
+  >;
+  flushPendingDocumentChangeForRoot: (rootPath: string, path: string) => Promise<void>;
   flushPendingJavaScriptTypeScriptDocumentChangeForRoot: (
     rootPath: string,
     path: string,
@@ -67,14 +63,8 @@ export interface DocumentSavePipelineOwnerContext {
 }
 
 export interface DocumentSavePipeline {
-  formattedContentForSave: (
-    document: EditorDocument,
-    requestedRoot: string,
-  ) => Promise<string>;
-  optimizedImportsContentForSave: (
-    document: EditorDocument,
-    content: string,
-  ) => string;
+  formattedContentForSave: (document: EditorDocument, requestedRoot: string) => Promise<string>;
+  optimizedImportsContentForSave: (document: EditorDocument, content: string) => string;
   organizedImportsContentForSave: (
     document: EditorDocument,
     content: string,
@@ -137,38 +127,21 @@ export function useDocumentSavePipeline(
         );
       }
 
-      return languageServerFeaturesGateway.formatting(
-        requestedRoot,
-        path,
-        options,
-      );
+      return languageServerFeaturesGateway.formatting(requestedRoot, path, options);
     },
-    [
-      javaScriptTypeScriptLanguageServerFeaturesGateway,
-      languageServerFeaturesGateway,
-    ],
+    [javaScriptTypeScriptLanguageServerFeaturesGateway, languageServerFeaturesGateway],
   );
 
   const flushPendingDocumentChangeForFormatOnSave = useCallback(
-    async (
-      plan: FormatOnSavePlan,
-      requestedRoot: string,
-      path: string,
-    ): Promise<void> => {
+    async (plan: FormatOnSavePlan, requestedRoot: string, path: string): Promise<void> => {
       if (plan.provider === "javaScriptTypeScript") {
-        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
-          requestedRoot,
-          path,
-        );
+        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(requestedRoot, path);
         return;
       }
 
       await flushPendingDocumentChangeForRoot(requestedRoot, path);
     },
-    [
-      flushPendingDocumentChangeForRoot,
-      flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
-    ],
+    [flushPendingDocumentChangeForRoot, flushPendingJavaScriptTypeScriptDocumentChangeForRoot],
   );
 
   const formattedContentForOwnerSave = useCallback(
@@ -209,20 +182,12 @@ export function useDocumentSavePipeline(
               plan.sessionId,
               context.owner,
             )
-          : isLanguageServerSessionActiveForRoot(
-              requestedRoot,
-              plan.sessionId,
-              context.owner,
-            );
+          : isLanguageServerSessionActiveForRoot(requestedRoot, plan.sessionId, context.owner);
 
       try {
         // Flush any debounced document change so the language server formats the
         // current content rather than the stale snapshot it last received.
-        await flushPendingDocumentChangeForFormatOnSave(
-          plan,
-          requestedRoot,
-          document.path,
-        );
+        await flushPendingDocumentChangeForFormatOnSave(plan, requestedRoot, document.path);
 
         if (!isRequestedSessionActive()) {
           return document.content;
@@ -257,24 +222,26 @@ export function useDocumentSavePipeline(
     ],
   );
 
-  const activeContext = useCallback((): DocumentSavePipelineOwnerContext => ({
-    canUseLanguageServerDocument: true,
-    hasPhpWorkspace,
-    javaScriptTypeScriptRuntimeStatus:
-      javaScriptTypeScriptLanguageServerRuntimeStatusRef.current,
-    javaScriptTypeScriptRuntimeStatusRoot:
-      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
-    phpRuntimeStatus: languageServerRuntimeStatusRef.current,
-    phpRuntimeStatusRoot: languageServerRuntimeStatusRootRef.current,
-    settings: workspaceSettingsRef.current,
-  }), [
-    hasPhpWorkspace,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRef,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-    languageServerRuntimeStatusRef,
-    languageServerRuntimeStatusRootRef,
-    workspaceSettingsRef,
-  ]);
+  const activeContext = useCallback(
+    (): DocumentSavePipelineOwnerContext => ({
+      canUseLanguageServerDocument: true,
+      hasPhpWorkspace,
+      javaScriptTypeScriptRuntimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatusRef.current,
+      javaScriptTypeScriptRuntimeStatusRoot:
+        javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+      phpRuntimeStatus: languageServerRuntimeStatusRef.current,
+      phpRuntimeStatusRoot: languageServerRuntimeStatusRootRef.current,
+      settings: workspaceSettingsRef.current,
+    }),
+    [
+      hasPhpWorkspace,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
+      languageServerRuntimeStatusRef,
+      languageServerRuntimeStatusRootRef,
+      workspaceSettingsRef,
+    ],
+  );
 
   const formattedContentForSave = useCallback(
     (document: EditorDocument, requestedRoot: string) =>
@@ -330,14 +297,13 @@ export function useDocumentSavePipeline(
       }
 
       const plan = planOrganizeImportsOnSave({
+        content,
         document,
         javaScriptTypeScript: {
           status: context.javaScriptTypeScriptRuntimeStatus,
           statusRoot: context.javaScriptTypeScriptRuntimeStatusRoot,
         },
-        sourceActionKinds: javaScriptTypeScriptOnSaveSourceActionKinds(
-          context.settings,
-        ),
+        sourceActionKinds: javaScriptTypeScriptOnSaveSourceActionKinds(context.settings),
         workspaceRoot: requestedRoot,
       });
 
@@ -355,10 +321,7 @@ export function useDocumentSavePipeline(
       try {
         // Flush any debounced change so the server organizes the current content
         // rather than the stale snapshot it last received.
-        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
-          requestedRoot,
-          document.path,
-        );
+        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(requestedRoot, document.path);
 
         if (!isRequestedSessionActive()) {
           return content;
@@ -368,35 +331,29 @@ export function useDocumentSavePipeline(
 
         for (const sourceActionKind of plan.sourceActionKinds) {
           try {
-            const actions =
-              await javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
-                requestedRoot,
-                document.path,
-                fullDocumentRange(currentContent),
-                organizeImportsCodeActionContext(sourceActionKind),
-              );
+            const actions = await javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
+              requestedRoot,
+              document.path,
+              fullDocumentRange(currentContent),
+              organizeImportsCodeActionContext(sourceActionKind),
+              plan.sessionId,
+            );
 
             if (!isRequestedSessionActive()) {
               return content;
             }
 
-            let edits = organizeImportsTextEditsForPath(
-              actions,
-              document.path,
-              sourceActionKind,
-            );
+            let edits = organizeImportsTextEditsForPath(actions, document.path, sourceActionKind);
 
             if (!edits || edits.length === 0) {
-              const actionToResolve = organizeImportsCodeActionToResolve(
-                actions,
-                sourceActionKind,
-              );
+              const actionToResolve = organizeImportsCodeActionToResolve(actions, sourceActionKind);
 
               if (actionToResolve) {
                 const resolvedAction =
                   await javaScriptTypeScriptLanguageServerFeaturesGateway.resolveCodeAction(
                     requestedRoot,
                     actionToResolve,
+                    plan.sessionId,
                   );
 
                 if (!isRequestedSessionActive()) {
@@ -412,10 +369,7 @@ export function useDocumentSavePipeline(
             }
 
             if (edits && edits.length > 0) {
-              currentContent = applyLanguageServerTextEdits(
-                currentContent,
-                edits,
-              );
+              currentContent = applyLanguageServerTextEdits(currentContent, edits);
               break;
             }
           } catch {
@@ -437,12 +391,7 @@ export function useDocumentSavePipeline(
 
   const organizedImportsContentForSave = useCallback(
     (document: EditorDocument, content: string, requestedRoot: string) =>
-      organizedImportsContentForOwnerSave(
-        activeContext(),
-        document,
-        content,
-        requestedRoot,
-      ),
+      organizedImportsContentForOwnerSave(activeContext(), document, content, requestedRoot),
     [activeContext, organizedImportsContentForOwnerSave],
   );
 

@@ -38,6 +38,20 @@ export const keymapCommands = [
     label: "Close Tab or Window",
   },
   {
+    category: "Editor",
+    defaultShortcut: "Ctrl+Tab",
+    id: "editor.nextRecentlyUsedEditor",
+    label: "Open Next Recently Used Editor",
+    rebindable: false,
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Ctrl+Shift+Tab",
+    id: "editor.previousRecentlyUsedEditor",
+    label: "Open Previous Recently Used Editor",
+    rebindable: false,
+  },
+  {
     category: "Editor Groups",
     defaultShortcut: "Cmd+\\",
     id: "editor.splitRight",
@@ -45,43 +59,43 @@ export const keymapCommands = [
   },
   {
     category: "Editor Groups",
-    defaultShortcut: "",
+    defaultShortcut: "Cmd+K Cmd+\\",
     id: "editor.splitDown",
     label: "Split Editor Down",
   },
   {
     category: "Editor Groups",
-    defaultShortcut: "",
+    defaultShortcut: "Cmd+K Cmd+ArrowRight",
     id: "editor.focusNextGroup",
     label: "Focus Next Editor Group",
   },
   {
     category: "Editor Groups",
-    defaultShortcut: "",
+    defaultShortcut: "Cmd+K Cmd+ArrowLeft",
     id: "editor.focusPreviousGroup",
     label: "Focus Previous Editor Group",
   },
   {
     category: "Editor Groups",
-    defaultShortcut: "",
+    defaultShortcut: "Cmd+K Cmd+Shift+ArrowRight",
     id: "editor.moveTabToNextGroup",
     label: "Move Tab to Next Group",
   },
   {
     category: "Editor Groups",
-    defaultShortcut: "",
+    defaultShortcut: "Cmd+K Cmd+Shift+ArrowLeft",
     id: "editor.moveTabToPreviousGroup",
     label: "Move Tab to Previous Group",
   },
   {
     category: "Editor Groups",
-    defaultShortcut: "",
+    defaultShortcut: "Cmd+K W",
     id: "editor.closeGroup",
     label: "Close Editor Group",
   },
   {
     category: "Editor",
-    defaultShortcut: "",
+    defaultShortcut: "Cmd+Shift+Alt+T",
     id: "editor.reopenClosedTab",
     label: "Reopen Closed Tab",
   },
@@ -858,9 +872,16 @@ export const keymapCommands = [
   },
 ] as const;
 
+export type KeymapCommand = (typeof keymapCommands)[number];
 export type KeymapCommandId = (typeof keymapCommands)[number]["id"];
+export type RebindableKeymapCommand = Exclude<KeymapCommand, { readonly rebindable: false }>;
+export type RebindableKeymapCommandId = RebindableKeymapCommand["id"];
 export type KeymapPlatform = "linux" | "mac" | "other" | "windows";
 export type KeymapSettings = Record<KeymapCommandId, string>;
+
+export const rebindableKeymapCommands = keymapCommands.filter(
+  (command): command is RebindableKeymapCommand => !("rebindable" in command),
+);
 
 export interface ParsedShortcut {
   alt: boolean;
@@ -945,7 +966,10 @@ export function defaultKeymapSettings(
   platform: KeymapPlatform = detectKeymapPlatform(),
 ): KeymapSettings {
   return Object.fromEntries(
-    keymapCommands.map((command) => [command.id, defaultShortcutForCommand(command.id, platform)]),
+    rebindableKeymapCommands.map((command) => [
+      command.id,
+      defaultShortcutForCommand(command.id, platform),
+    ]),
   ) as KeymapSettings;
 }
 
@@ -984,7 +1008,7 @@ export function normalizeKeymapSettings(
 
   const keymap = { ...defaults };
 
-  for (const command of keymapCommands) {
+  for (const command of rebindableKeymapCommands) {
     const shortcut = value[command.id];
 
     if (typeof shortcut !== "string") {
@@ -1006,7 +1030,8 @@ export function shortcutForCommand(
   commandId: KeymapCommandId,
   platform: KeymapPlatform = detectKeymapPlatform(),
 ): string {
-  return keymap[commandId] ?? defaultKeymapSettings(platform)[commandId];
+  const reboundShortcut = (keymap as Partial<Record<KeymapCommandId, string>>)[commandId];
+  return reboundShortcut ?? defaultShortcutForCommand(commandId, platform);
 }
 
 export function keymapCommandIdForShortcut(
@@ -1030,8 +1055,8 @@ export function keymapCommandIdsForShortcut(
   const matches: KeymapCommandId[] = [];
   const collected = new Set<KeymapCommandId>();
 
-  for (let index = keymapCommands.length - 1; index >= 0; index -= 1) {
-    const command = keymapCommands[index];
+  for (let index = rebindableKeymapCommands.length - 1; index >= 0; index -= 1) {
+    const command = rebindableKeymapCommands[index];
     if (!command || collected.has(command.id)) {
       continue;
     }

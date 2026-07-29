@@ -1,7 +1,5 @@
-import {
-  fileUriFromPath,
-  isJavaScriptTypeScriptLanguageServerDocument,
-} from "./languageServerDocumentSync";
+import { fileUriFromPath } from "./languageServerDocumentSync";
+import { canUseJavaScriptTypeScriptLanguageServerSaveParticipant } from "./javaScriptTypeScriptSaveParticipantPolicy";
 import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
@@ -24,8 +22,7 @@ export const organizeImportsCodeActionKind = "source.organizeImports";
 export const addMissingImportsCodeActionKind = "source.addMissingImports.ts";
 export const fixAllCodeActionKind = "source.fixAll.ts";
 export const removeUnusedCodeActionKind = "source.removeUnused.ts";
-export const removeUnusedImportsCodeActionKind =
-  "source.removeUnusedImports.ts";
+export const removeUnusedImportsCodeActionKind = "source.removeUnusedImports.ts";
 export const sortImportsCodeActionKind = "source.sortImports.ts";
 
 export type JavaScriptTypeScriptOnSaveSourceActionKind =
@@ -42,6 +39,7 @@ export interface OrganizeImportsOnSaveRuntime {
 }
 
 export interface OrganizeImportsOnSavePlanInput {
+  content: string;
   document: EditorDocument;
   javaScriptTypeScript: OrganizeImportsOnSaveRuntime;
   sourceActionKinds: JavaScriptTypeScriptOnSaveSourceActionKind[];
@@ -102,7 +100,7 @@ export function planOrganizeImportsOnSave(
     return null;
   }
 
-  if (!isJavaScriptTypeScriptLanguageServerDocument(input.document)) {
+  if (!canUseJavaScriptTypeScriptLanguageServerSaveParticipant(input.document, input.content)) {
     return null;
   }
 
@@ -213,10 +211,7 @@ function isRequestedSourceAction(
   action: LanguageServerCodeAction,
   kind: JavaScriptTypeScriptOnSaveSourceActionKind,
 ): boolean {
-  return (
-    typeof action.kind === "string" &&
-    action.kind.startsWith(kind)
-  );
+  return typeof action.kind === "string" && action.kind.startsWith(kind);
 }
 
 function textEditsForTargetUri(

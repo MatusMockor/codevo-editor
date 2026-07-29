@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  BrowserSettingsGateway,
-  type KeyValueStorage,
-} from "./browserSettingsGateway";
+import { BrowserSettingsGateway, type KeyValueStorage } from "./browserSettingsGateway";
 import { defaultKeymapSettings } from "../domain/keymap";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -35,24 +32,29 @@ describe("BrowserSettingsGateway", () => {
       session: sessionFor("/project-b/B.ts"),
     });
 
-    await expect(gateway.loadWorkspaceSettings("/project-a"))
-      .resolves.toMatchObject({ session: sessionFor("/project-a/A.ts") });
-    await expect(gateway.loadWorkspaceSettings("/project-b"))
-      .resolves.toMatchObject({ session: sessionFor("/project-b/B.ts") });
+    await expect(gateway.loadWorkspaceSettings("/project-a")).resolves.toMatchObject({
+      session: sessionFor("/project-a/A.ts"),
+    });
+    await expect(gateway.loadWorkspaceSettings("/project-b")).resolves.toMatchObject({
+      session: sessionFor("/project-b/B.ts"),
+    });
   });
 
   it("migrates and round trips a legacy flat session as version one", async () => {
     const storage = memoryStorage();
     const key = "editor.settings.workspace:%2Flegacy";
-    storage.setItem(key, JSON.stringify({
-      session: {
-        activePath: "/legacy/Preview.ts",
-        bottomPanelView: "history",
-        openPaths: ["/legacy/A.ts", "/legacy/Preview.ts"],
-        previewPath: "/legacy/Preview.ts",
-        sidebarView: "git",
-      },
-    }));
+    storage.setItem(
+      key,
+      JSON.stringify({
+        session: {
+          activePath: "/legacy/Preview.ts",
+          bottomPanelView: "history",
+          openPaths: ["/legacy/A.ts", "/legacy/Preview.ts"],
+          previewPath: "/legacy/Preview.ts",
+          sidebarView: "git",
+        },
+      }),
+    );
     const gateway = new BrowserSettingsGateway(storage);
     const settings = await gateway.loadWorkspaceSettings("/legacy");
 
@@ -70,9 +72,7 @@ describe("BrowserSettingsGateway", () => {
     });
 
     await gateway.saveWorkspaceSettings("/legacy", settings);
-    expect(JSON.parse(storage.getItem(key) ?? "{}").session).toEqual(
-      settings.session,
-    );
+    expect(JSON.parse(storage.getItem(key) ?? "{}").session).toEqual(settings.session);
   });
 
   it("keeps raw trailing-slash keys backward compatible", async () => {
@@ -85,9 +85,7 @@ describe("BrowserSettingsGateway", () => {
 
     await gateway.saveWorkspaceSettings("/project/", settings);
 
-    await expect(gateway.loadWorkspaceSettings("/project/")).resolves.toEqual(
-      settings,
-    );
+    await expect(gateway.loadWorkspaceSettings("/project/")).resolves.toEqual(settings);
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual(
       defaultWorkspaceSettings(),
     );
@@ -98,8 +96,7 @@ describe("BrowserSettingsGateway", () => {
     const directKey = "editor.settings.workspace:%2Freal%2Fproject";
     const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
     const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
-    const legacyValue =
-      '{"defaultTabSize":2,"futureSetting":{"enabled":true}}';
+    const legacyValue = '{"defaultTabSize":2,"futureSetting":{"enabled":true}}';
     storage.setItem(directKey, legacyValue);
     const gateway = new BrowserSettingsGateway(storage);
 
@@ -137,8 +134,7 @@ describe("BrowserSettingsGateway", () => {
   it("persists identity-aware saves under the canonical key", async () => {
     const storage = memoryStorage();
     const legacyKey = "editor.settings.workspace:%2Falias%2Fproject";
-    const canonicalKey =
-      "editor.settings.workspace:canonical:workspace-1";
+    const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
     storage.setItem(legacyKey, JSON.stringify({ defaultTabSize: 8 }));
     const gateway = new BrowserSettingsGateway(storage);
     const settings = {
@@ -214,20 +210,13 @@ describe("BrowserSettingsGateway", () => {
     expect(settings.defaultTabSize).toBe(8);
     expect(storage.getItem(directKey)).toBe(malformedValue);
     expect(storage.getItem(aliasKey)).toBeNull();
-    expect(storage.getItem("editor.settings.workspace:canonical:workspace-1"))
-      .toBe(aliasValue);
+    expect(storage.getItem("editor.settings.workspace:canonical:workspace-1")).toBe(aliasValue);
   });
 
   it("does not delete any legacy settings when the canonical migration write fails", async () => {
     const values = new Map<string, string>([
-      [
-        "editor.settings.workspace:%2Freal%2Fproject",
-        JSON.stringify({ defaultTabSize: 2 }),
-      ],
-      [
-        "editor.settings.workspace:%2Falias%2Fproject",
-        JSON.stringify({ defaultTabSize: 8 }),
-      ],
+      ["editor.settings.workspace:%2Freal%2Fproject", JSON.stringify({ defaultTabSize: 2 })],
+      ["editor.settings.workspace:%2Falias%2Fproject", JSON.stringify({ defaultTabSize: 8 })],
     ]);
     const storage: KeyValueStorage = {
       getItem: (key) => values.get(key) ?? null,
@@ -244,10 +233,8 @@ describe("BrowserSettingsGateway", () => {
         legacyRawKeys: ["/real/project", "/alias/project"],
       }),
     ).rejects.toThrow("quota exceeded");
-    expect(storage.getItem("editor.settings.workspace:%2Freal%2Fproject"))
-      .not.toBeNull();
-    expect(storage.getItem("editor.settings.workspace:%2Falias%2Fproject"))
-      .not.toBeNull();
+    expect(storage.getItem("editor.settings.workspace:%2Freal%2Fproject")).not.toBeNull();
+    expect(storage.getItem("editor.settings.workspace:%2Falias%2Fproject")).not.toBeNull();
   });
 
   it("does not delete any legacy settings when a canonical save fails", async () => {
@@ -279,12 +266,139 @@ describe("BrowserSettingsGateway", () => {
     expect(storage.getItem(aliasKey)).not.toBeNull();
   });
 
+  it("reduces only the current transient session when quota is exhausted", async () => {
+    const olderKey = "editor.settings.workspace:canonical:older";
+    const currentKey = "editor.settings.workspace:canonical:current";
+    const olderValue = JSON.stringify({
+      ...defaultWorkspaceSettings(),
+      defaultTabSize: 8,
+    });
+    const values = new Map<string, string>([[olderKey, olderValue]]);
+    const events: string[] = [];
+    const storage: KeyValueStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      removeItem: (key) => {
+        events.push(`remove:${key}`);
+        values.delete(key);
+      },
+      setItem: (key, value) => {
+        const session = JSON.parse(value).session;
+        events.push(
+          session.navigation
+            ? "write:navigation"
+            : session.editor.groups.main
+              ? "write:session"
+              : "write:default-session",
+        );
+        if (session.navigation || session.editor.groups.main) {
+          throw new DOMException("Quota exceeded", "QuotaExceededError");
+        }
+        values.set(key, value);
+      },
+    };
+    const gateway = new BrowserSettingsGateway(storage);
+
+    await expect(
+      gateway.saveWorkspaceSettings(
+        { canonicalKey: "current" },
+        {
+          ...defaultWorkspaceSettings(),
+          session: {
+            ...defaultWorkspaceSettings().session,
+            editor: {
+              activeGroupId: "main",
+              groups: {
+                main: {
+                  activePath: "/current/a.ts",
+                  openPaths: ["/current/a.ts"],
+                  previewPath: null,
+                },
+              },
+              layout: { kind: "group", groupId: "main" },
+            },
+            navigation: {
+              backStack: [],
+              forwardStack: [],
+              recentFiles: [{ name: "a.ts", path: "a.ts" }],
+              recentLocations: [],
+            },
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(values.get(olderKey)).toBe(olderValue);
+    expect(values.has(currentKey)).toBe(true);
+    expect(JSON.parse(values.get(currentKey) ?? "{}").session).toEqual(
+      defaultWorkspaceSettings().session,
+    );
+    expect(events).toEqual(["write:navigation", "write:session", "write:default-session"]);
+  });
+
+  it("preserves every workspace across A-B-A when all bounded current reductions exceed quota", async () => {
+    const workspaceAKey = "editor.settings.workspace:canonical:workspace-a";
+    const workspaceBKey = "editor.settings.workspace:canonical:workspace-b";
+    const legacyKey = "editor.settings.workspace:%2Falias%2Fproject";
+    const workspaceAValue = JSON.stringify({
+      ...defaultWorkspaceSettings(),
+      defaultTabSize: 2,
+    });
+    const workspaceBValue = JSON.stringify({
+      ...defaultWorkspaceSettings(),
+      defaultTabSize: 6,
+    });
+    const legacyValue = JSON.stringify({ defaultTabSize: 8 });
+    const values = new Map<string, string>([
+      [workspaceAKey, workspaceAValue],
+      [workspaceBKey, workspaceBValue],
+      [legacyKey, legacyValue],
+    ]);
+    const removed: string[] = [];
+    const storage: KeyValueStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      removeItem: (key) => {
+        removed.push(key);
+        values.delete(key);
+      },
+      setItem: () => {
+        throw new DOMException("Quota exceeded", "QuotaExceededError");
+      },
+    };
+    const gateway = new BrowserSettingsGateway(storage);
+
+    await expect(
+      gateway.saveWorkspaceSettings(
+        {
+          canonicalKey: "workspace-b",
+          legacyRawKeys: ["/alias/project"],
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          defaultTabSize: 4,
+        },
+      ),
+    ).rejects.toMatchObject({ name: "QuotaExceededError" });
+
+    expect(removed).toEqual([]);
+    expect(values.get(workspaceAKey)).toBe(workspaceAValue);
+    expect(values.get(workspaceBKey)).toBe(workspaceBValue);
+    expect(values.get(legacyKey)).toBe(legacyValue);
+    await expect(
+      gateway.loadWorkspaceSettings({ canonicalKey: "workspace-a" }),
+    ).resolves.toMatchObject({ defaultTabSize: 2 });
+    await expect(
+      gateway.loadWorkspaceSettings({ canonicalKey: "workspace-b" }),
+    ).resolves.toMatchObject({ defaultTabSize: 6 });
+    await expect(
+      gateway.loadWorkspaceSettings({ canonicalKey: "workspace-a" }),
+    ).resolves.toMatchObject({ defaultTabSize: 2 });
+  });
+
   it("returns defaults when settings are missing", async () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
-      editorFontFamily:
-        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -591,8 +705,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
-      editorFontFamily:
-        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),

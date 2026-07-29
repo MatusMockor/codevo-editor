@@ -5,13 +5,26 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import type { LocalHistoryGateway } from "../domain/localHistory";
+import { MAX_LIVE_DOCUMENT_METADATA_UTF16_UNITS } from "../domain/liveDocumentContentAuthority";
 import { defaultWorkspaceSettings } from "../domain/settings";
-import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
+import type {
+  EditorDocument,
+  WorkspaceFileGateway,
+  WorkspaceFileRevision,
+  WorkspaceWriteResult,
+} from "../domain/workspace";
+import type { ActiveDocumentSaveStorePort } from "./activeDocumentSaveStore";
 import {
   createEslintFixOnSaveParticipant,
   orderedDocumentSaveParticipants,
   type DocumentSaveParticipant,
 } from "./documentSaveParticipants";
+import {
+  EditorActiveLiveDocumentSaveCoordinator,
+  type EditorActiveLiveDocumentSaveAdmissionPort,
+  type EditorActiveLiveDocumentSaveRejectionReason,
+} from "./editorActiveLiveDocumentSaveCoordinator";
+import { createRegisteredDocumentSaveIdentity } from "./documentSaveIdentity";
 import { createPrettierSaveParticipant } from "./prettierSaveParticipant";
 import {
   useDocumentSaveLifecycle,
@@ -45,9 +58,18 @@ function document(content = "edited", savedContent = "saved"): EditorDocument {
   };
 }
 
-function workspaceFiles(
-  overrides: Partial<WorkspaceFileGateway> = {},
-): WorkspaceFileGateway {
+function revision(contentHash: string): WorkspaceFileRevision {
+  return {
+    contentHash,
+    device: "1",
+    inode: "2",
+    modifiedNanoseconds: 3,
+    modifiedSeconds: 4,
+    size: 5,
+  };
+}
+
+function workspaceFiles(overrides: Partial<WorkspaceFileGateway> = {}): WorkspaceFileGateway {
   return {
     applyWorkspaceEdit: vi.fn(async () => 0),
     createDirectory: vi.fn(async () => undefined),
@@ -61,9 +83,7 @@ function workspaceFiles(
   } as WorkspaceFileGateway;
 }
 
-function localHistoryGateway(
-  overrides: Partial<LocalHistoryGateway> = {},
-): LocalHistoryGateway {
+function localHistoryGateway(overrides: Partial<LocalHistoryGateway> = {}): LocalHistoryGateway {
   return {
     listVersions: vi.fn(async () => []),
     readVersion: vi.fn(async () => ""),
@@ -102,10 +122,7 @@ function renderLifecycle(
     current: initialDocument as EditorDocument | null,
   };
   const documentsRef = {
-    current: { [initialDocument.path]: initialDocument } as Record<
-      string,
-      EditorDocument
-    >,
+    current: { [initialDocument.path]: initialDocument } as Record<string, EditorDocument>,
   };
   const files = workspaceFiles();
   const history = localHistoryGateway();
@@ -124,21 +141,14 @@ function renderLifecycle(
     activeDocumentRef,
     documentsRef,
     filePrefetchCacheRef: { current: new FilePrefetchCache() },
-    setDocuments: ((
-      update: Parameters<DocumentSaveLifecycleDependencies["setDocuments"]>[0],
-    ) => {
-      documentsRef.current =
-        typeof update === "function" ? update(documentsRef.current) : update;
+    setDocuments: ((update: Parameters<DocumentSaveLifecycleDependencies["setDocuments"]>[0]) => {
+      documentsRef.current = typeof update === "function" ? update(documentsRef.current) : update;
     }) as DocumentSaveLifecycleDependencies["setDocuments"],
     setMessage,
     localHistoryGateway: history,
     workspaceFiles: files,
-    formattedContentForSave: vi.fn(
-      async (item: EditorDocument) => item.content,
-    ),
-    optimizedImportsContentForSave: vi.fn(
-      (_item: EditorDocument, content: string) => content,
-    ),
+    formattedContentForSave: vi.fn(async (item: EditorDocument) => item.content),
+    optimizedImportsContentForSave: vi.fn((_item: EditorDocument, content: string) => content),
     organizedImportsContentForSave: vi.fn(
       async (_item: EditorDocument, content: string) => content,
     ),
@@ -146,6 +156,7 @@ function renderLifecycle(
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     beginDocumentSelfWrite: () => null,
+    activeLiveDocumentSaveCoordinator: fallbackLiveSaveCoordinator(),
     reportErrorForActiveWorkspaceRoot: vi.fn(),
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
@@ -209,6 +220,143 @@ afterEach(() => {
 });
 
 describe("useDocumentSaveLifecycle", () => {
+  it("blocks an active TypeScript save before its exact-live binding is published", async () => {
+    const staleReactDocument = {
+      ...document("stale react", "saved"),
+      language: "typescript",
+      name: "User.ts",
+    };
+    const onDidSaveDocument = vi.fn();
+    const harness = renderLifecycle({
+      activeDocument: staleReactDocument,
+      activeLiveDocumentSaveCoordinator: new EditorActiveLiveDocumentSaveCoordinator(),
+      onDidSaveDocument,
+    });
+
+    let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+    await act(async () => {
+      result = await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(result).toEqual({
+      reason: "exactLiveDocumentUnavailable",
+      status: "blocked",
+    });
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(onDidSaveDocument).not.toHaveBeenCalled();
+    expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "The live editor content changed before it could be captured safely. Try saving again.",
+    );
+    harness.unmount();
+  });
+
+  it.each([
+    [
+      "document-too-large",
+      "exactLiveDocumentTooLarge",
+      "The live editor content is too large to save safely. Reduce the file size and try again.",
+    ],
+    [
+      "exact-live-unavailable",
+      "exactLiveDocumentUnavailable",
+      "The live editor content changed before it could be captured safely. Try saving again.",
+    ],
+  ] as const)(
+    "blocks Ctrl+S for %s exact-live capture without writing stale React content",
+    async (liveReason, resultReason, message) => {
+      const staleReactDocument = {
+        ...document("stale react", "saved"),
+        language: "typescript",
+        name: "User.ts",
+      };
+      const onDidSaveDocument = vi.fn();
+      const activeLiveDocumentSaveCoordinator = rejectingLiveSaveCoordinator(liveReason);
+      const harness = renderLifecycle({
+        activeDocument: staleReactDocument,
+        activeLiveDocumentSaveCoordinator,
+        onDidSaveDocument,
+      });
+
+      let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+      await act(async () => {
+        result = await harness.lifecycle().saveDocument(PATH);
+      });
+
+      expect(result).toEqual({ reason: resultReason, status: "blocked" });
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(onDidSaveDocument).not.toHaveBeenCalled();
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
+      expect(harness.setMessage).toHaveBeenCalledWith(message);
+      harness.unmount();
+    },
+  );
+
+  it("keeps oversized exact-live autosave dirty and writes zero bytes", async () => {
+    vi.useFakeTimers();
+    const staleReactDocument = {
+      ...document("stale react", "saved"),
+      language: "typescript",
+      name: "User.ts",
+    };
+    const onDidSaveDocument = vi.fn();
+    const harness = renderLifecycle({
+      activeDocument: staleReactDocument,
+      activeLiveDocumentSaveCoordinator: rejectingLiveSaveCoordinator("document-too-large"),
+      onDidSaveDocument,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: true,
+      },
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(900));
+
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(onDidSaveDocument).not.toHaveBeenCalled();
+    expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "The live editor content is too large to save safely. Reduce the file size and try again.",
+    );
+    harness.unmount();
+  });
+
+  it("does not present a rejected exact-live save after its workspace authority rotates", async () => {
+    const staleReactDocument = {
+      ...document("stale react", "saved"),
+      language: "typescript",
+      name: "User.ts",
+    };
+    let rotateWorkspace = () => undefined;
+    const coordinator: EditorActiveLiveDocumentSaveAdmissionPort = {
+      admit: vi.fn(() => {
+        rotateWorkspace();
+        return { reason: "exact-live-unavailable" as const, status: "rejected" as const };
+      }),
+      publish: vi.fn(),
+    };
+    const harness = renderLifecycle({
+      activeDocument: staleReactDocument,
+      activeLiveDocumentSaveCoordinator: coordinator,
+    });
+    rotateWorkspace = () => {
+      harness.currentWorkspaceRootRef.current = "/replacement";
+      harness.workspaceRequestTokenRef.current += 1;
+    };
+
+    let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+    await act(async () => {
+      result = await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(result).toEqual({ reason: "exactLiveDocumentUnavailable", status: "blocked" });
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(harness.setMessage).not.toHaveBeenCalled();
+    expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
+    harness.unmount();
+  });
+
   it("returns a saved result for a path-targeted non-active document", async () => {
     const otherPath = `${ROOT}/src/Other.php`;
     const otherDocument: EditorDocument = {
@@ -233,10 +381,7 @@ describe("useDocumentSaveLifecycle", () => {
         document: expect.objectContaining({ path: otherPath }),
       }),
     );
-    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
-      otherPath,
-      "other",
-    );
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(otherPath, "other");
     expect(harness.activeDocumentRef.current?.path).toBe(PATH);
     harness.unmount();
   });
@@ -275,9 +420,7 @@ describe("useDocumentSaveLifecycle", () => {
       result = await harness.lifecycle().saveDocument(PATH);
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({ status: "conflict", snapshot }),
-    );
+    expect(result).toEqual(expect.objectContaining({ status: "conflict", snapshot }));
     expect(detectSaveConflict).toHaveBeenCalledWith(
       ROOT,
       harness.documentsRef.current[PATH],
@@ -328,23 +471,32 @@ describe("useDocumentSaveLifecycle", () => {
 
   it("shares a canonical save lane while writing each selected alias", async () => {
     const aliasPath = `${ROOT}/src/Alias.php`;
-    const firstWrite = deferred<void>();
-    const writeTextFile = vi
+    const beforeRevision = revision("before");
+    const afterRevision = revision("after");
+    const firstWrite = deferred<WorkspaceWriteResult>();
+    const writeOwnerRelative = vi
       .fn()
       .mockImplementationOnce(() => firstWrite.promise)
-      .mockResolvedValue(undefined);
-    const resolveDocumentSaveOwnership = vi.fn(() => ({
-      canonicalRoot: "/real/workspace",
-      workspaceRelativePath: "src/User.php",
-    }));
+      .mockResolvedValue({ status: "success", revision: afterRevision });
+    const resolveDocumentSaveOwnership = vi.fn(() =>
+      createRegisteredDocumentSaveIdentity("workspace-a", "/real/workspace", "src/User.php"),
+    );
+    const selectedDocument = {
+      ...document(),
+      revision: beforeRevision,
+    };
     const harness = renderLifecycle({
+      activeDocument: selectedDocument,
       resolveDocumentSaveOwnership,
-      workspaceFiles: workspaceFiles({ writeTextFile }),
+      workspaceOwnerRelativeFiles: {
+        writeTextFileForWorkspaceRelativePath: writeOwnerRelative,
+      },
     });
     const aliasDocument = {
       ...document("alias edited"),
       name: "Alias.php",
       path: aliasPath,
+      revision: beforeRevision,
     };
     harness.documentsRef.current = {
       ...harness.documentsRef.current,
@@ -352,9 +504,9 @@ describe("useDocumentSaveLifecycle", () => {
     };
 
     const selectedSave = harness.lifecycle().saveDocument(PATH);
-    await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(writeOwnerRelative).toHaveBeenCalledOnce());
     const aliasSave = harness.lifecycle().saveDocument(aliasPath);
-    firstWrite.resolve();
+    firstWrite.resolve({ status: "success", revision: afterRevision });
 
     await act(async () => {
       await Promise.all([selectedSave, aliasSave]);
@@ -362,17 +514,22 @@ describe("useDocumentSaveLifecycle", () => {
 
     expect(resolveDocumentSaveOwnership).toHaveBeenCalledTimes(2);
     expect(resolveDocumentSaveOwnership).toHaveBeenNthCalledWith(1, ROOT, PATH);
-    expect(resolveDocumentSaveOwnership).toHaveBeenNthCalledWith(
-      2,
-      ROOT,
-      aliasPath,
+    expect(resolveDocumentSaveOwnership).toHaveBeenNthCalledWith(2, ROOT, aliasPath);
+    expect(writeOwnerRelative).toHaveBeenNthCalledWith(
+      1,
+      "workspace-a",
+      "src/User.php",
+      "edited",
+      beforeRevision,
     );
-    expect(writeTextFile).toHaveBeenNthCalledWith(1, PATH, "edited");
-    expect(writeTextFile).toHaveBeenNthCalledWith(
+    expect(writeOwnerRelative).toHaveBeenNthCalledWith(
       2,
-      aliasPath,
+      "workspace-a",
+      "src/User.php",
       "alias edited",
+      beforeRevision,
     );
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
     expect(harness.localHistoryGateway.recordSnapshot).toHaveBeenNthCalledWith(
       2,
       ROOT,
@@ -398,15 +555,12 @@ describe("useDocumentSaveLifecycle", () => {
       path: outsidePath,
     };
 
-    await expect(
-      harness.lifecycle().saveDocument(outsidePath),
-    ).resolves.toEqual({ status: "stale" });
+    await expect(harness.lifecycle().saveDocument(outsidePath)).resolves.toEqual({
+      status: "stale",
+    });
 
     expect(resolveDocumentSaveOwnership).toHaveBeenCalledOnce();
-    expect(resolveDocumentSaveOwnership).toHaveBeenCalledWith(
-      ROOT,
-      outsidePath,
-    );
+    expect(resolveDocumentSaveOwnership).toHaveBeenCalledWith(ROOT, outsidePath);
     expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
     harness.unmount();
   });
@@ -419,9 +573,9 @@ describe("useDocumentSaveLifecycle", () => {
       path: outsidePath,
     };
 
-    await expect(
-      harness.lifecycle().saveDocument(outsidePath),
-    ).resolves.toEqual({ status: "stale" });
+    await expect(harness.lifecycle().saveDocument(outsidePath)).resolves.toEqual({
+      status: "stale",
+    });
 
     expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
     harness.unmount();
@@ -479,9 +633,7 @@ describe("useDocumentSaveLifecycle", () => {
         return;
       }
       if (terminalStatus === "conflict") {
-        expect(results[1]).toEqual(
-          expect.objectContaining({ status: "conflict", snapshot }),
-        );
+        expect(results[1]).toEqual(expect.objectContaining({ status: "conflict", snapshot }));
         harness.unmount();
         return;
       }
@@ -522,9 +674,7 @@ describe("useDocumentSaveLifecycle", () => {
       expect.objectContaining({ path: PATH, content: "edited" }),
       expect.any(Function),
     );
-    expect(
-      harness.syncSavedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledWith(
+    expect(harness.syncSavedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ path: PATH, content: "edited" }),
       expect.any(Function),
@@ -571,9 +721,7 @@ describe("useDocumentSaveLifecycle", () => {
       expect(invalidatePrefetch).not.toHaveBeenCalled();
       expect(harness.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
       expect(harness.syncSavedDocument).not.toHaveBeenCalled();
-      expect(
-        harness.syncSavedJavaScriptTypeScriptDocument,
-      ).not.toHaveBeenCalled();
+      expect(harness.syncSavedJavaScriptTypeScriptDocument).not.toHaveBeenCalled();
       expect(harness[analysisSpy]).not.toHaveBeenCalled();
       harness.unmount();
     },
@@ -618,9 +766,7 @@ describe("useDocumentSaveLifecycle", () => {
         expect.objectContaining({ content: "baseline" }),
         expect.any(Function),
       );
-      expect(
-        harness.syncSavedJavaScriptTypeScriptDocument,
-      ).toHaveBeenCalledWith(
+      expect(harness.syncSavedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(
         ROOT,
         expect.objectContaining({ content: "baseline" }),
         expect.any(Function),
@@ -640,9 +786,7 @@ describe("useDocumentSaveLifecycle", () => {
 
       const save = harness.lifecycle().saveActiveDocument();
       await vi.waitFor(() =>
-        expect(
-          harness.dependencies.formattedContentForSave,
-        ).toHaveBeenCalledOnce(),
+        expect(harness.dependencies.formattedContentForSave).toHaveBeenCalledOnce(),
       );
       if (guard === "root") {
         harness.currentWorkspaceRootRef.current = "/other";
@@ -674,9 +818,7 @@ describe("useDocumentSaveLifecycle", () => {
       "invalidate",
     );
     const save = harness.lifecycle().saveDocument(PATH);
-    await vi.waitFor(() =>
-      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce(),
-    );
+    await vi.waitFor(() => expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce());
     harness.replaceDocument(document("C2", "saved"));
     harness.workspaceRequestTokenRef.current += 1;
 
@@ -687,13 +829,9 @@ describe("useDocumentSaveLifecycle", () => {
       expect.objectContaining({ content: "C2", savedContent: "edited" }),
     );
     expect(invalidatePrefetch).not.toHaveBeenCalled();
-    expect(
-      harness.localHistoryGateway.recordSnapshot,
-    ).not.toHaveBeenCalled();
+    expect(harness.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
     expect(harness.syncSavedDocument).not.toHaveBeenCalled();
-    expect(
-      harness.syncSavedJavaScriptTypeScriptDocument,
-    ).not.toHaveBeenCalled();
+    expect(harness.syncSavedJavaScriptTypeScriptDocument).not.toHaveBeenCalled();
     expect(harness.setMessage).not.toHaveBeenCalled();
     expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
     harness.unmount();
@@ -720,26 +858,18 @@ describe("useDocumentSaveLifecycle", () => {
       }),
     });
     const save = harness.lifecycle().saveActiveDocument();
-    await vi.waitFor(() =>
-      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce(),
-    );
+    await vi.waitFor(() => expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce());
     const operation = vi.fn(async () => {
       events.push("operation");
       return "done";
     });
     const exclusion = harness
       .lifecycle()
-      .runWithDocumentSaveExclusion(
-        { kind: "file", rootPath: ROOT, path: PATH },
-        operation,
-      );
+      .runWithDocumentSaveExclusion({ kind: "file", rootPath: ROOT, path: PATH }, operation);
 
     expect(operation).not.toHaveBeenCalled();
     write.resolve();
-    await expect(Promise.all([save, exclusion])).resolves.toEqual([
-      undefined,
-      "done",
-    ]);
+    await expect(Promise.all([save, exclusion])).resolves.toEqual([undefined, "done"]);
     expect(events).toEqual(["write", "history", "didSave", "operation"]);
     harness.unmount();
   });
@@ -766,14 +896,11 @@ describe("useDocumentSaveLifecycle", () => {
       .finally(() => {
         saveSettled = true;
       });
-    await vi.waitFor(() =>
-      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce(),
-    );
+    await vi.waitFor(() => expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce());
 
-    const drain = harness.lifecycle().runWithIssuedWriteDrain(
-      { kind: "workspace", rootPath: ROOT },
-      operation,
-    );
+    const drain = harness
+      .lifecycle()
+      .runWithIssuedWriteDrain({ kind: "workspace", rootPath: ROOT }, operation);
     expect(operation).not.toHaveBeenCalled();
 
     write.resolve();
@@ -794,18 +921,13 @@ describe("useDocumentSaveLifecycle", () => {
       }),
     });
     const firstSave = harness.lifecycle().saveActiveDocument();
-    await vi.waitFor(() =>
-      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce(),
-    );
+    await vi.waitFor(() => expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce());
     harness.replaceDocument(document("pending"));
     const pendingSave = harness.lifecycle().saveActiveDocument();
     const operation = vi.fn(async () => undefined);
     const exclusion = harness
       .lifecycle()
-      .runWithDocumentSaveExclusion(
-        { kind: "workspace", rootPath: ROOT },
-        operation,
-      );
+      .runWithDocumentSaveExclusion({ kind: "workspace", rootPath: ROOT }, operation);
     harness.replaceDocument(document("new"));
     const newSave = harness.lifecycle().saveActiveDocument();
 
@@ -837,10 +959,9 @@ describe("useDocumentSaveLifecycle", () => {
     const formatting = deferred<string>();
     const aliasRoot = "/workspace-alias";
     const aliasPath = `${aliasRoot}/src/User.php`;
-    const resolveDocumentSaveOwnership = vi.fn(() => ({
-      canonicalRoot: "/real/workspace",
-      workspaceRelativePath: "src/User.php",
-    }));
+    const resolveDocumentSaveOwnership = vi.fn(() =>
+      createRegisteredDocumentSaveIdentity("workspace-a", "/real/workspace", "src/User.php"),
+    );
     const harness = renderLifecycle({
       formattedContentForSave: vi.fn(() => formatting.promise),
       resolveDocumentSaveOwnership,
@@ -848,19 +969,14 @@ describe("useDocumentSaveLifecycle", () => {
 
     const save = harness.lifecycle().saveActiveDocument();
     await vi.waitFor(() =>
-      expect(
-        harness.dependencies.formattedContentForSave,
-      ).toHaveBeenCalledOnce(),
+      expect(harness.dependencies.formattedContentForSave).toHaveBeenCalledOnce(),
     );
 
     harness.lifecycle().invalidateDocumentSave(aliasRoot, aliasPath);
     formatting.resolve("formatted");
     await save;
 
-    expect(resolveDocumentSaveOwnership).toHaveBeenLastCalledWith(
-      aliasRoot,
-      aliasPath,
-    );
+    expect(resolveDocumentSaveOwnership).toHaveBeenLastCalledWith(aliasRoot, aliasPath);
     expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
     harness.unmount();
   });
@@ -872,10 +988,9 @@ describe("useDocumentSaveLifecycle", () => {
       const aliasRoot = "/workspace-alias";
       const aliasPath = `${aliasRoot}/src/User.php`;
       const events: string[] = [];
-      const resolveDocumentSaveOwnership = vi.fn(() => ({
-        canonicalRoot: "/real/workspace",
-        workspaceRelativePath: "src/User.php",
-      }));
+      const resolveDocumentSaveOwnership = vi.fn(() =>
+        createRegisteredDocumentSaveIdentity("workspace-a", "/real/workspace", "src/User.php"),
+      );
       const harness = renderLifecycle({
         formattedContentForSave: vi.fn(async () => {
           const content = await formatting.promise;
@@ -887,9 +1002,7 @@ describe("useDocumentSaveLifecycle", () => {
 
       const save = harness.lifecycle().saveActiveDocument();
       await vi.waitFor(() =>
-        expect(
-          harness.dependencies.formattedContentForSave,
-        ).toHaveBeenCalledOnce(),
+        expect(harness.dependencies.formattedContentForSave).toHaveBeenCalledOnce(),
       );
       const operation = vi.fn(async () => {
         events.push("operation");
@@ -898,9 +1011,7 @@ describe("useDocumentSaveLifecycle", () => {
         kind === "file"
           ? { kind, rootPath: aliasRoot, path: aliasPath }
           : { kind, rootPath: aliasRoot };
-      const exclusion = harness
-        .lifecycle()
-        .runWithDocumentSaveExclusion(scope, operation);
+      const exclusion = harness.lifecycle().runWithDocumentSaveExclusion(scope, operation);
 
       expect(operation).not.toHaveBeenCalled();
       formatting.resolve("formatted");
@@ -917,10 +1028,7 @@ describe("useDocumentSaveLifecycle", () => {
 
     await act(async () => harness.lifecycle().saveActiveDocument());
 
-    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
-      PATH,
-      "edited",
-    );
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(PATH, "edited");
     harness.unmount();
   });
 
@@ -931,9 +1039,7 @@ describe("useDocumentSaveLifecycle", () => {
     });
     const save = harness.lifecycle().saveActiveDocument();
     await vi.waitFor(() =>
-      expect(
-        harness.dependencies.formattedContentForSave,
-      ).toHaveBeenCalledOnce(),
+      expect(harness.dependencies.formattedContentForSave).toHaveBeenCalledOnce(),
     );
 
     harness.unmount();
@@ -982,12 +1088,10 @@ describe("useDocumentSaveLifecycle", () => {
       order.push("format");
       return `${item.content}+formatted`;
     });
-    const organizedImportsContentForSave = vi.fn(
-      async (_item: EditorDocument, content: string) => {
-        order.push("organize");
-        return `${content}+organized`;
-      },
-    );
+    const organizedImportsContentForSave = vi.fn(async (_item: EditorDocument, content: string) => {
+      order.push("organize");
+      return `${content}+organized`;
+    });
     const harness = renderLifecycle({
       formattedContentForSave,
       organizedImportsContentForSave,
@@ -1002,6 +1106,128 @@ describe("useDocumentSaveLifecycle", () => {
       PATH,
       "edited+formatted+organized+participant",
     );
+    harness.unmount();
+  });
+
+  it("runs save participants for the admitted exact-live document instead of the stale React object", async () => {
+    const staleReactDocument = {
+      ...document("stale react", "saved"),
+      language: "typescript",
+      name: "User.ts",
+    };
+    const exactDocument = Object.freeze({
+      ...staleReactDocument,
+      content: "exact live",
+    });
+    const participant: DocumentSaveParticipant = {
+      id: "test.exact-live",
+      appliesTo: () => true,
+      run: vi.fn(async (content, context) => {
+        expect(context.document).toBe(exactDocument);
+        expect(context.isStale()).toBe(false);
+        return `${content}+participant`;
+      }),
+    };
+    const admission = exactLiveSaveAdmission(exactDocument);
+    const harness = renderLifecycle({
+      activeDocument: staleReactDocument,
+      activeLiveDocumentSaveCoordinator: admission.coordinator,
+      saveParticipants: [participant],
+    });
+
+    await act(async () => {
+      await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(participant.run).toHaveBeenCalledOnce();
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+      PATH,
+      "exact live+participant",
+    );
+    expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
+    harness.unmount();
+  });
+
+  it.each(["edit", "retirement", "workspace A → B → A"] as const)(
+    "stops an exact-live participant save when %s invalidates its authority during await",
+    async (invalidation) => {
+      const participantResult = deferred<string>();
+      const staleReactDocument = {
+        ...document("stale react", "saved"),
+        language: "typescript",
+        name: "User.ts",
+      };
+      const exactDocument = Object.freeze({
+        ...staleReactDocument,
+        content: "exact live",
+      });
+      const participant: DocumentSaveParticipant = {
+        id: "test.slow-exact-live",
+        appliesTo: () => true,
+        run: vi.fn(() => participantResult.promise),
+      };
+      const admission = exactLiveSaveAdmission(exactDocument);
+      const harness = renderLifecycle({
+        activeDocument: staleReactDocument,
+        activeLiveDocumentSaveCoordinator: admission.coordinator,
+        saveParticipants: [participant],
+      });
+
+      const save = harness.lifecycle().saveDocument(PATH);
+      await vi.waitFor(() => expect(participant.run).toHaveBeenCalledOnce());
+      admission.retire();
+      if (invalidation === "workspace A → B → A") {
+        harness.currentWorkspaceRootRef.current = "/other";
+        harness.workspaceRequestTokenRef.current += 1;
+        harness.currentWorkspaceRootRef.current = ROOT;
+      }
+      participantResult.resolve("must not be written");
+      await save;
+
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
+      harness.unmount();
+    },
+  );
+
+  it("rejects an oversized exact-live participant transform through write admission without mutating React state", async () => {
+    const staleReactDocument = {
+      ...document("stale react", "saved"),
+      language: "typescript",
+      name: "User.ts",
+    };
+    const exactDocument = Object.freeze({
+      ...staleReactDocument,
+      content: "exact live",
+    });
+    const oversized = "x".repeat(MAX_LIVE_DOCUMENT_METADATA_UTF16_UNITS + 1);
+    const participant: DocumentSaveParticipant = {
+      id: "test.oversized-transform",
+      appliesTo: () => true,
+      run: vi.fn(async () => oversized),
+    };
+    const admission = exactLiveSaveAdmission(exactDocument, {
+      acceptPreparedContent: (content) => content.length <= MAX_LIVE_DOCUMENT_METADATA_UTF16_UNITS,
+    });
+    const harness = renderLifecycle({
+      activeDocument: staleReactDocument,
+      activeLiveDocumentSaveCoordinator: admission.coordinator,
+      saveParticipants: [participant],
+    });
+
+    let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+    await act(async () => {
+      result = await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(result).toEqual({ status: "stale" });
+    expect(admission.prepareIssuedWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      exactDocument,
+      expect.objectContaining({ content: oversized }),
+    );
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(harness.documentsRef.current[PATH]).toBe(staleReactDocument);
     harness.unmount();
   });
 
@@ -1022,10 +1248,7 @@ describe("useDocumentSaveLifecycle", () => {
 
     await act(async () => harness.lifecycle().saveActiveDocument());
 
-    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
-      PATH,
-      "edited",
-    );
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(PATH, "edited");
     expect(harness.documentsRef.current[PATH].savedContent).toBe("edited");
     expect(reportErrorForActiveWorkspaceRoot).toHaveBeenCalledWith(
       ROOT,
@@ -1082,17 +1305,19 @@ describe("useDocumentSaveLifecycle", () => {
     const eslintFixOnSave = createEslintFixOnSaveParticipant({
       analyseDocument: async () => ({
         status: "ok",
-        diagnostics: [{
-          filePath: "src/file.ts",
-          line: 1,
-          column: 1,
-          endLine: 1,
-          endColumn: 2,
-          message: "Fixable",
-          identifier: "test-rule",
-          severity: 2,
-          fix: { range: [16, 17], text: "" },
-        }],
+        diagnostics: [
+          {
+            filePath: "src/file.ts",
+            line: 1,
+            column: 1,
+            endLine: 1,
+            endColumn: 2,
+            message: "Fixable",
+            identifier: "test-rule",
+            severity: 2,
+            fix: { range: [16, 17], text: "" },
+          },
+        ],
         totals: { errorCount: 1, warningCount: 0, fileCount: 1 },
       }),
     });
@@ -1116,10 +1341,7 @@ describe("useDocumentSaveLifecycle", () => {
       await harness.lifecycle().saveDocument(PATH);
     });
 
-    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
-      PATH,
-      "const value = 1;\n",
-    );
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(PATH, "const value = 1;\n");
     expect(harness.documentsRef.current[PATH]).toEqual(
       expect.objectContaining({
         content: "const value = 1;\n",
@@ -1144,9 +1366,7 @@ describe("useDocumentSaveLifecycle", () => {
     });
     const harness = renderLifecycle({
       activeDocument: clean,
-      formattedContentForSave: vi.fn(
-        async (item: EditorDocument) => `${item.content}formatted\n`,
-      ),
+      formattedContentForSave: vi.fn(async (item: EditorDocument) => `${item.content}formatted\n`),
       saveParticipants: orderedDocumentSaveParticipants({
         eslintFixOnSave,
         prettierFormatOnSave: createPrettierSaveParticipant({
@@ -1188,3 +1408,62 @@ describe("useDocumentSaveLifecycle", () => {
     expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
   });
 });
+
+function rejectingLiveSaveCoordinator(
+  reason: EditorActiveLiveDocumentSaveRejectionReason,
+): EditorActiveLiveDocumentSaveAdmissionPort {
+  return {
+    admit: vi.fn(() => ({ reason, status: "rejected" as const })),
+    publish: vi.fn(),
+  };
+}
+
+function fallbackLiveSaveCoordinator(): EditorActiveLiveDocumentSaveAdmissionPort {
+  return {
+    admit: vi.fn(() => ({ status: "fallback" as const })),
+    publish: vi.fn(),
+  };
+}
+
+function exactLiveSaveAdmission(
+  exactDocument: EditorDocument,
+  options: {
+    acceptPreparedContent?: (content: string) => boolean;
+  } = {},
+): {
+  coordinator: EditorActiveLiveDocumentSaveAdmissionPort;
+  prepareIssuedWrite: ReturnType<typeof vi.fn>;
+  retire: () => void;
+} {
+  let retired = false;
+  const prepareIssuedWrite = vi.fn(
+    (_target: unknown, expectedDocument: EditorDocument, savedDocument: EditorDocument) =>
+      !retired &&
+      expectedDocument === exactDocument &&
+      (options.acceptPreparedContent?.(savedDocument.content) ?? true),
+  );
+  const saveStore: ActiveDocumentSaveStorePort = {
+    current: () => (retired ? null : exactDocument),
+    acknowledgeIssuedWrite: () => !retired,
+    prepareIssuedWrite,
+    reconcileUnchangedPreparedContent: () => (retired ? null : exactDocument),
+    updateRevision: () => undefined,
+    updateRevisionForIssuedWrite: () => undefined,
+  };
+
+  return {
+    coordinator: {
+      admit: vi.fn((input) => ({
+        saveStore,
+        settle: () => undefined,
+        status: "admitted" as const,
+        target: input.target,
+      })),
+      publish: vi.fn(),
+    },
+    prepareIssuedWrite,
+    retire: () => {
+      retired = true;
+    },
+  };
+}

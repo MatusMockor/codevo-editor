@@ -1,10 +1,13 @@
-use std::io::{self, BufRead, Write};
+#[cfg(test)]
+use std::io::Write;
+use std::io::{self, BufRead};
 
-const MAX_LSP_FRAME_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_LSP_FRAME_BYTES: usize = 32 * 1024 * 1024;
 const MAX_LSP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_LSP_HEADER_LINES: usize = 64;
 const MAX_LSP_HEADER_LINE_BYTES: usize = 8 * 1024;
 
+#[cfg(test)]
 pub fn write_message<W: Write>(writer: &mut W, payload: &[u8]) -> io::Result<()> {
     if payload.len() > MAX_LSP_FRAME_BYTES {
         return Err(invalid_data("LSP message exceeds frame byte limit"));

@@ -53,32 +53,21 @@ export interface ExistingDocumentOpenInput {
   readOnly: boolean;
 }
 
-export interface ExistingDocumentOpenResult
-  extends DocumentTabSessionCommitResult {
+export interface ExistingDocumentOpenResult extends DocumentTabSessionCommitResult {
   document: EditorDocument;
 }
 
 export interface DocumentTabSessionPort {
   activate(path: string): void;
   commitImageOpen(image: ImageTab): DocumentTabSessionCommitResult;
-  commitTextOpen(
-    input: TextDocumentOpenCommit,
-  ): DocumentTabSessionCommitResult;
+  commitTextOpen(input: TextDocumentOpenCommit): DocumentTabSessionCommitResult;
   getActivePath(): string | null;
   getDocument(path: string): DeepReadonly<EditorDocument> | null;
   getTabDisplayName(path: string): string | null;
-  openExistingDocument(
-    input: ExistingDocumentOpenInput,
-  ): ExistingDocumentOpenResult | null;
-  openReadOnlyDocument(
-    document: EditorDocument,
-    pin: boolean,
-  ): DocumentTabSessionCommitResult;
+  openExistingDocument(input: ExistingDocumentOpenInput): ExistingDocumentOpenResult | null;
+  openReadOnlyDocument(document: EditorDocument, pin: boolean): DocumentTabSessionCommitResult;
   pin(path: string): void;
-  refreshCleanDocument(
-    path: string,
-    content: string,
-  ): EditorDocument | null;
+  refreshCleanDocument(path: string, content: string): EditorDocument | null;
   removeDocument(path: string): DocumentTabSessionRemoveResult;
   snapshot(): DocumentTabSessionView;
 }
@@ -87,9 +76,7 @@ export function activateDocumentTabSessionPath(
   snapshot: DocumentTabSessionSnapshot,
   path: string,
 ): DocumentTabSessionSnapshot {
-  return updateActiveGroup(snapshot, (group) =>
-    activateEditorGroupPath(group, path),
-  );
+  return updateActiveGroup(snapshot, (group) => activateEditorGroupPath(group, path));
 }
 
 export function pinDocumentTabSessionPath(
@@ -97,11 +84,7 @@ export function pinDocumentTabSessionPath(
   path: string,
 ): DocumentTabSessionSnapshot {
   return updateActiveGroup(snapshot, (group) => {
-    const transition = pinDocumentSessionPath(
-      group.openPaths,
-      group.previewPath,
-      path,
-    );
+    const transition = pinDocumentSessionPath(group.openPaths, group.previewPath, path);
 
     return {
       ...group,
@@ -119,30 +102,26 @@ export function commitTextDocumentOpen(
   snapshot: DocumentTabSessionSnapshot;
 } {
   const group = activeGroup(snapshot.editorGroups);
-  const activeDocument = group.activePath
-    ? snapshot.documents[group.activePath] ?? null
-    : null;
+  const activeDocument = group.activePath ? (snapshot.documents[group.activePath] ?? null) : null;
   const replaceablePreview = replaceableDocumentSessionPreview(
     activeDocument,
     snapshot.documents,
     group.openPaths,
     group.previewPath,
   );
-  const replacement = replaceablePreview?.path === input.document.path
-    ? null
-    : replaceablePreview;
+  const replacement = replaceablePreview?.path === input.document.path ? null : replaceablePreview;
   const replacedPath = replacement?.path ?? null;
-  const currentPreview = group.previewPath
-    ? snapshot.documents[group.previewPath] ?? null
-    : null;
-  const dirtyPreviewPath = currentPreview &&
+  const currentPreview = group.previewPath ? (snapshot.documents[group.previewPath] ?? null) : null;
+  const dirtyPreviewPath =
+    currentPreview &&
     currentPreview.path !== input.document.path &&
     currentPreview.content !== currentPreview.savedContent
-    ? currentPreview.path
-    : null;
-  const openPaths = dirtyPreviewPath && !group.openPaths.includes(dirtyPreviewPath)
-    ? [...group.openPaths, dirtyPreviewPath]
-    : group.openPaths;
+      ? currentPreview.path
+      : null;
+  const openPaths =
+    dirtyPreviewPath && !group.openPaths.includes(dirtyPreviewPath)
+      ? [...group.openPaths, dirtyPreviewPath]
+      : group.openPaths;
   const pathTransition = documentSessionPathTransitionForOpenedPath({
     openPaths,
     path: input.document.path,
@@ -163,9 +142,7 @@ export function commitTextDocumentOpen(
         editorGroupVisiblePaths(candidate).includes(replacedPath),
       )
     : false;
-  const replacedDocument = replacement && !replacementStillVisible
-    ? replacement
-    : null;
+  const replacedDocument = replacement && !replacementStillVisible ? replacement : null;
 
   if (replacedDocument) {
     delete documents[replacedDocument.path];
@@ -190,9 +167,7 @@ export function openExistingDocumentInSession(
     return { result: null, snapshot };
   }
 
-  const document = input.readOnly && !current.readOnly
-    ? { ...current, readOnly: true }
-    : current;
+  const document = input.readOnly && !current.readOnly ? { ...current, readOnly: true } : current;
 
   if (input.pin) {
     const transition = openPinnedDocumentPreservingPreview(snapshot, document);
@@ -225,25 +200,22 @@ export function commitImageTabOpen(
   snapshot: DocumentTabSessionSnapshot;
 } {
   const group = activeGroup(snapshot.editorGroups);
-  const activeDocument = group.activePath
-    ? snapshot.documents[group.activePath] ?? null
-    : null;
+  const activeDocument = group.activePath ? (snapshot.documents[group.activePath] ?? null) : null;
   const replacement = replaceableDocumentSessionPreview(
     activeDocument,
     snapshot.documents,
     group.openPaths,
     group.previewPath,
   );
-  const currentPreview = group.previewPath
-    ? snapshot.documents[group.previewPath] ?? null
-    : null;
-  const dirtyPreviewPath = currentPreview &&
-    currentPreview.content !== currentPreview.savedContent
-    ? currentPreview.path
-    : null;
-  const openPaths = dirtyPreviewPath && !group.openPaths.includes(dirtyPreviewPath)
-    ? [...group.openPaths, dirtyPreviewPath]
-    : group.openPaths;
+  const currentPreview = group.previewPath ? (snapshot.documents[group.previewPath] ?? null) : null;
+  const dirtyPreviewPath =
+    currentPreview && currentPreview.content !== currentPreview.savedContent
+      ? currentPreview.path
+      : null;
+  const openPaths =
+    dirtyPreviewPath && !group.openPaths.includes(dirtyPreviewPath)
+      ? [...group.openPaths, dirtyPreviewPath]
+      : group.openPaths;
   const transition = documentSessionPathTransitionForOpenedPath({
     openPaths,
     path: image.path,
@@ -261,9 +233,7 @@ export function commitImageTabOpen(
         editorGroupVisiblePaths(candidate).includes(replacement.path),
       )
     : false;
-  const replacedDocument = replacement && !replacementStillVisible
-    ? replacement
-    : null;
+  const replacedDocument = replacement && !replacementStillVisible ? replacement : null;
   const documents = { ...snapshot.documents };
 
   if (replacedDocument) {
@@ -273,9 +243,9 @@ export function commitImageTabOpen(
   return {
     result: { replacedDocument },
     snapshot: synchronizeSnapshotView({
-    ...nextSnapshot,
-    documents,
-    imageTabs: { ...snapshot.imageTabs, [image.path]: image },
+      ...nextSnapshot,
+      documents,
+      imageTabs: { ...snapshot.imageTabs, [image.path]: image },
     }),
   };
 }
@@ -307,9 +277,7 @@ function openPinnedDocumentPreservingPreview(
     openPaths: group.openPaths.includes(document.path)
       ? group.openPaths
       : [...group.openPaths, document.path],
-    previewPath: group.previewPath === document.path
-      ? null
-      : group.previewPath,
+    previewPath: group.previewPath === document.path ? null : group.previewPath,
   }));
 
   return synchronizeSnapshotView({
@@ -393,11 +361,13 @@ export function removeDocumentFromSession(
 }
 
 function activeGroup(editorGroups: EditorGroupsState): EditorGroup {
-  return editorGroups.groups[editorGroups.activeGroupId] ?? {
-    activePath: null,
-    openPaths: [],
-    previewPath: null,
-  };
+  return (
+    editorGroups.groups[editorGroups.activeGroupId] ?? {
+      activePath: null,
+      openPaths: [],
+      previewPath: null,
+    }
+  );
 }
 
 function updateActiveGroup(
@@ -430,18 +400,19 @@ export function synchronizeSnapshotView(
   snapshot: Omit<
     DocumentTabSessionSnapshot,
     "activeDocument" | "activePath" | "openPaths" | "previewPath"
-  > & Partial<Pick<
-    DocumentTabSessionSnapshot,
-    "activeDocument" | "activePath" | "openPaths" | "previewPath"
-  >>,
+  > &
+    Partial<
+      Pick<
+        DocumentTabSessionSnapshot,
+        "activeDocument" | "activePath" | "openPaths" | "previewPath"
+      >
+    >,
 ): DocumentTabSessionSnapshot {
   const group = activeGroup(snapshot.editorGroups);
 
   return {
     ...snapshot,
-    activeDocument: group.activePath
-      ? snapshot.documents[group.activePath] ?? null
-      : null,
+    activeDocument: group.activePath ? (snapshot.documents[group.activePath] ?? null) : null,
     activePath: group.activePath,
     openPaths: group.openPaths,
     previewPath: group.previewPath,

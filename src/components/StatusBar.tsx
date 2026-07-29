@@ -7,13 +7,22 @@ import type { LargeSmartDocumentStatus } from "../domain/largeDocumentPolicy";
 import type { IdeActivityState } from "../domain/ideActivity";
 import type { IntelligenceMode } from "../domain/workspace";
 import type { NodeRunStatusPresentation } from "../application/nodeRunWithoutDebuggingPresentation";
+import type { EditorCursorStorePort } from "../application/editorCursorStore";
+import type { EditorCursorAuthority } from "../application/editorCursorStore";
+import { cursorSnapshotMatchesAuthority } from "../application/editorCursorAuthority";
+import { useActiveEditorCursorSnapshot } from "../application/useEditorCursorSnapshot";
+import type { EditorOwnerDirtyCountProjection } from "../application/editorSessionDirtyProjection";
+import { useEditorOwnerDirtyCountSnapshot } from "../application/useEditorSessionDirtyProjection";
 import { NodeRunStatusAction } from "./NodeRunStatusAction";
 
 interface StatusBarProps {
   activeLanguage: string | null;
   activePath: string | null;
   cursorPosition?: EditorPosition | null;
+  cursorAuthority?: EditorCursorAuthority | null;
+  cursorStore?: EditorCursorStorePort | null;
   dirtyCount: number;
+  dirtyCountProjection?: EditorOwnerDirtyCountProjection | null;
   errorCount?: number;
   gitBranch?: string | null;
   /**
@@ -89,7 +98,10 @@ function StatusBarComponent({
   activeLanguage,
   activePath,
   cursorPosition = null,
+  cursorAuthority = null,
+  cursorStore = null,
   dirtyCount,
+  dirtyCountProjection = null,
   errorCount = 0,
   gitBranch = null,
   gitBranchRepositoryLabel = null,
@@ -121,6 +133,15 @@ function StatusBarComponent({
     () => activePathStatusLabel(workspaceRoot, activePath),
     [activePath, workspaceRoot],
   );
+  const projectedDirtyCount = useEditorOwnerDirtyCountSnapshot(dirtyCountProjection);
+  // C1 keeps the unconditional legacy document projection alive. Until that
+  // path is retired with an explicit coverage lease, the exact store value is
+  // a lower bound: it may lead the legacy path, but must never make stale or
+  // rejected live attachment coverage look clean.
+  const effectiveDirtyCount =
+    projectedDirtyCount.status === "available"
+      ? Math.max(dirtyCount, projectedDirtyCount.dirtyCount)
+      : dirtyCount;
 
   useEffect(() => {
     setVisibleMessage(message);
@@ -230,20 +251,21 @@ function StatusBarComponent({
           {largeDocumentStatus.label}
         </span>
       ) : null}
-      {statusBar.cursorPosition && cursorPosition ? (
-        <button
-          aria-label={cursorPositionLabel(cursorPosition)}
-          className="status-cursor-position"
-          onClick={onShowGoToLine}
-          style={statusButtonStyle}
-          title="Go to Line/Column"
-          type="button"
-        >
-          {cursorPositionLabel(cursorPosition)}
-        </button>
+      {statusBar.cursorPosition ? (
+        cursorStore ? (
+          <CursorPositionStoreItem
+            authority={cursorAuthority}
+            onShowGoToLine={onShowGoToLine}
+            store={cursorStore}
+          />
+        ) : (
+          <CursorPositionItem onShowGoToLine={onShowGoToLine} position={cursorPosition} />
+        )
       ) : null}
       {statusBar.language && activeLanguage ? <span>{activeLanguage}</span> : null}
-      {statusBar.dirtyCount && dirtyCount > 0 ? <span>{dirtyCount} unsaved</span> : null}
+      {statusBar.dirtyCount && effectiveDirtyCount > 0 ? (
+        <span>{effectiveDirtyCount} unsaved</span>
+      ) : null}
       {statusBar.message && visibleMessage ? (
         <span className="status-message">{visibleMessage}</span>
       ) : null}
@@ -275,6 +297,48 @@ function StatusBarComponent({
 }
 
 export const StatusBar = memo(StatusBarComponent);
+
+function CursorPositionStoreItem({
+  authority,
+  onShowGoToLine,
+  store,
+}: {
+  readonly authority: EditorCursorAuthority | null;
+  readonly onShowGoToLine?: () => void;
+  readonly store: EditorCursorStorePort;
+}) {
+  const snapshot = useActiveEditorCursorSnapshot(store);
+  const position =
+    authority &&
+    snapshot.status === "available" &&
+    cursorSnapshotMatchesAuthority(snapshot, authority)
+      ? snapshot.position
+      : null;
+  return <CursorPositionItem onShowGoToLine={onShowGoToLine} position={position} />;
+}
+
+function CursorPositionItem({
+  onShowGoToLine,
+  position,
+}: {
+  readonly onShowGoToLine?: () => void;
+  readonly position: Readonly<EditorPosition> | null;
+}) {
+  if (!position) return null;
+
+  return (
+    <button
+      aria-label={cursorPositionLabel(position)}
+      className="status-cursor-position"
+      onClick={onShowGoToLine}
+      style={statusButtonStyle}
+      title="Go to Line/Column"
+      type="button"
+    >
+      {cursorPositionLabel(position)}
+    </button>
+  );
+}
 
 // The headline label plus an optional per-runtime mini-overview (PHPactor/TS
 // Server/Index lines), so hovering the chip shows what is actually running for

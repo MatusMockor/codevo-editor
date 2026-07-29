@@ -67,7 +67,7 @@ export function workbenchFloatingSurfaceCommands({
   openClassOpen,
   openWorkspaceSymbols,
   openSearchEverywhere,
-  openTextSearch,
+  openTextSearch: openDockedTextSearch,
 }: WorkbenchFloatingSurfaceCommandsOptions): Command[] {
   return [
     {
@@ -125,7 +125,7 @@ export function workbenchFloatingSurfaceCommands({
       category: "Search",
       shortcut: shortcut("search.text"),
       isEnabled: (context) => context.hasWorkspace,
-      run: openTextSearch,
+      run: openDockedTextSearch,
     },
   ];
 }

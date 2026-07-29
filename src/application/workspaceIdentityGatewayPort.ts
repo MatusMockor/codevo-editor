@@ -31,3 +31,14 @@ export interface WorkspaceIdentityGateway {
   getDescriptor(workspaceId: string): Promise<NativeWorkspaceDescriptor>;
   unregister(workspaceId: string): Promise<void>;
 }
+
+export interface WorkspaceIdentityPathMatch {
+  descriptor: WorkspaceIdentityDescriptor;
+  matchedRoot: string;
+  relativePath: string;
+}
+
+export interface WorkspaceIdentityDescriptorResolver {
+  descriptorForPath(path: string): WorkspaceIdentityDescriptor | null;
+  matchForPath?(path: string, workspaceId?: string): WorkspaceIdentityPathMatch | null;
+}

@@ -1,8 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSettings } from "../domain/settings";
-import { createWorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
+import {
+  createWorkspaceSettingsSaveCoordinator,
+  WORKSPACE_SETTINGS_NAVIGATION_SAVE_DEBOUNCE_MS,
+} from "./workspaceSettingsSaveCoordinator";
 
 describe("workspace settings save coordinator", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("serializes saves and keeps the latest successful settings committed", async () => {
     const coordinator = createWorkspaceSettingsSaveCoordinator();
     const baseline = settings(false);
@@ -44,12 +51,8 @@ describe("workspace settings save coordinator", () => {
     const firstWrite = deferred<void>();
     const latestWrite = deferred<void>();
 
-    const firstSave = coordinator.save(ROOT, baseline, settings(true), () =>
-      firstWrite.promise,
-    );
-    const latestSave = coordinator.save(ROOT, baseline, settings(true), () =>
-      latestWrite.promise,
-    );
+    const firstSave = coordinator.save(ROOT, baseline, settings(true), () => firstWrite.promise);
+    const latestSave = coordinator.save(ROOT, baseline, settings(true), () => latestWrite.promise);
     await Promise.resolve();
 
     firstWrite.reject(new Error("first failed"));
@@ -60,6 +63,64 @@ describe("workspace settings save coordinator", () => {
     await expect(latestSave).rejects.toThrow("latest failed");
 
     expect(coordinator.committed(ROOT)).toBe(baseline);
+  });
+
+  it("trailing-debounces navigation saves and flushes only the latest task", async () => {
+    vi.useFakeTimers();
+    const coordinator = createWorkspaceSettingsSaveCoordinator();
+    const calls: string[] = [];
+
+    coordinator.scheduleNavigationSave(ROOT, async () => {
+      calls.push("first");
+    });
+    coordinator.scheduleNavigationSave(ROOT, async () => {
+      calls.push("latest");
+    });
+
+    await vi.advanceTimersByTimeAsync(WORKSPACE_SETTINGS_NAVIGATION_SAVE_DEBOUNCE_MS - 1);
+    expect(calls).toEqual([]);
+    await coordinator.flushNavigationSave(ROOT);
+
+    expect(calls).toEqual(["latest"]);
+    await vi.advanceTimersByTimeAsync(WORKSPACE_SETTINGS_NAVIGATION_SAVE_DEBOUNCE_MS);
+    expect(calls).toEqual(["latest"]);
+  });
+
+  it("does not resolve a flush before its scheduled write completes", async () => {
+    const coordinator = createWorkspaceSettingsSaveCoordinator();
+    const write = deferred<void>();
+    let settled = false;
+
+    coordinator.scheduleNavigationSave(ROOT, () => write.promise);
+    const flush = coordinator.flushNavigationSave(ROOT).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(coordinator.hasScheduledNavigationSave(ROOT)).toBe(true);
+    const secondFlush = coordinator.flushNavigationSave(ROOT);
+    write.resolve();
+    await Promise.all([flush, secondFlush]);
+    expect(settled).toBe(true);
+    expect(coordinator.hasScheduledNavigationSave(ROOT)).toBe(false);
+  });
+
+  it("cancels pending navigation work without running it", async () => {
+    vi.useFakeTimers();
+    const coordinator = createWorkspaceSettingsSaveCoordinator();
+    const task = vi.fn(async () => undefined);
+
+    expect(coordinator.hasScheduledNavigationSave(ROOT)).toBe(false);
+    expect(coordinator.cancelNavigationSave(ROOT)).toBe(false);
+    coordinator.scheduleNavigationSave(ROOT, task);
+    expect(coordinator.cancelNavigationSave(ROOT)).toBe(true);
+    expect(coordinator.hasScheduledNavigationSave(ROOT)).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(WORKSPACE_SETTINGS_NAVIGATION_SAVE_DEBOUNCE_MS);
+    expect(task).not.toHaveBeenCalled();
   });
 });
 

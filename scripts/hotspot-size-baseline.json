@@ -11,61 +11,46 @@
       "rawLines": 2623,
       "structuralTokens": 15582
     },
-    "src-tauri/src/git.rs": {
-      "rawLines": 7113,
-      "structuralTokens": 44029
-    },
-    "src-tauri/src/index.rs": {
-      "rawLines": 2090,
-      "structuralTokens": 10277
-    },
-    "src-tauri/src/lib.rs": {
-      "rawLines": 10162,
-      "structuralTokens": 58855
-    },
+    "src-tauri/src/git.rs": { "rawLines": 7113, "structuralTokens": 44029 },
+    "src-tauri/src/index.rs": { "rawLines": 2090, "structuralTokens": 10277 },
+    "src-tauri/src/lib.rs": { "rawLines": 10016, "structuralTokens": 58047 },
     "src-tauri/src/lsp_features.rs": {
-      "rawLines": 4503,
-      "structuralTokens": 25032
+      "rawLines": 4174,
+      "structuralTokens": 23118
     },
     "src-tauri/src/lsp_session.rs": {
-      "rawLines": 8149,
-      "structuralTokens": 41500
+      "rawLines": 7962,
+      "structuralTokens": 40740
     },
-    "src-tauri/src/lsp.rs": {
-      "rawLines": 2364,
-      "structuralTokens": 10802
-    },
+    "src-tauri/src/lsp.rs": { "rawLines": 2364, "structuralTokens": 10802 },
     "src-tauri/src/workspace_file_commands.rs": {
-      "rawLines": 4005,
-      "structuralTokens": 26158
+      "rawLines": 3929,
+      "structuralTokens": 25494
     },
-    "src/App.tsx": {
-      "rawLines": 1654,
-      "structuralTokens": 8486
-    },
+    "src/App.tsx": { "rawLines": 1654, "structuralTokens": 8363 },
     "src/application/useDocumentSync.ts": {
-      "rawLines": 1877,
-      "structuralTokens": 6499
+      "rawLines": 1850,
+      "structuralTokens": 6425
     },
     "src/application/useLanguageServerRuntimeLifecycle.ts": {
       "rawLines": 2455,
       "structuralTokens": 8820
     },
     "src/application/useWorkbenchController.preview.test.tsx": {
-      "rawLines": 74651,
-      "structuralTokens": 345163
+      "rawLines": 73856,
+      "structuralTokens": 340493
     },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 10089,
-      "structuralTokens": 38250
+      "rawLines": 10040,
+      "structuralTokens": 37946
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 5279,
-      "structuralTokens": 21983
+      "rawLines": 5161,
+      "structuralTokens": 21594
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
-      "rawLines": 3846,
-      "structuralTokens": 17172
+      "rawLines": 3813,
+      "structuralTokens": 16769
     },
     "src/components/languageServerMonacoProviders.ts": {
       "rawLines": 5907,

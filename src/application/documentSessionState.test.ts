@@ -295,8 +295,9 @@ describe("documentSessionState", () => {
     });
   });
 
-  it("restores terminal bottom panel sessions as problems", () => {
+  it("restores transient bottom panel sessions as problems", () => {
     expect(restoredBottomPanelView("terminal")).toBe("problems");
+    expect(restoredBottomPanelView("search")).toBe("problems");
     expect(restoredBottomPanelView("runtime")).toBe("runtime");
   });
 

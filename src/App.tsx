@@ -11,14 +11,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import {
+  EMPTY_EDITOR_CHANGE_HUNKS,
+  useEditorActiveLiveDocumentChangeHunksController,
+} from "./application/editorActiveLiveDocumentBinding";
+import { useEditorChromeActions } from "./application/useEditorChromeActions";
+import { editorCursorAuthority } from "./application/editorCursorAuthority";
+import {
   CLOSED_PHP_CHANGE_SIGNATURE,
   EMPTY_FILE_STATUSES_BY_PATH,
 } from "./application/appClosedState";
-import { presentNodeRunWithoutDebugging } from "./application/nodeRunWithoutDebuggingPresentation";
+import { presentOptionalNodeRunWithoutDebugging } from "./application/nodeRunWithoutDebuggingPresentation";
 import { useAppFrameworkBottomPanels } from "./application/useAppFrameworkBottomPanels";
 import { useNoticeToastRenderers } from "./components/useNoticeToastRenderers";
 import { useAppSyntaxHighlighterPreload, useAppWindowTitle } from "./application/useAppBootEffects";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
+import { BrowserEditorChangeHunksGateway } from "./infrastructure/browserEditorChangeHunksGateway";
 import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
 import { useDebugCommandBridges } from "./application/useDebugCommandBridges";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
@@ -33,9 +40,13 @@ import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
+import { dockedTextSearchProps } from "./components/dockedTextSearchProps";
+import { commandPaletteProps } from "./components/commandPaletteProps";
+import { editorChangeHunksStatus } from "./components/editorChangeHunksStatus";
 import { phpTestBottomPanelProps } from "./components/phpTestBottomPanelProps";
 import { useAppTestDebugPanels } from "./components/useAppTestDebugPanels";
 import { usePhpCoverageEditorSurfaceProps } from "./components/usePhpCoverageEditorSurfaceProps";
+import { quickOpenProps } from "./components/quickOpenProps";
 import { jsTestEditorSurfaceProps } from "./components/jsTestEditorSurfaceProps";
 import {
   areFileStatusesByPathEqual,
@@ -50,9 +61,15 @@ import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { ScopedEditorSurface } from "./components/ScopedEditorSurface";
-import { EditorArea } from "./components/EditorArea";
 import type { EditorGroupSurface } from "./components/EditorGroupView";
-import { EditorRuntimeHost } from "./components/EditorRuntimeHost";
+import { WorkbenchEditorHost } from "./components/WorkbenchEditorHost";
+import {
+  useEditorGroupContentRevisionPresenter,
+  useStableJsTestEditorSurfaceSource,
+  useStableLatestCallback,
+  useWorkbenchEditorHostPresenter,
+  workbenchEditorHostProps,
+} from "./components/workbenchEditorHostPresenter";
 import { ExternalFileConflictBar } from "./components/ExternalFileConflictBar";
 import { ExternalFileCompareDialog } from "./components/ExternalFileCompareDialog";
 import { FileHistoryPanel } from "./components/FileHistoryPanel";
@@ -85,7 +102,10 @@ import { WindowChrome } from "./components/WindowChrome";
 import { WorkbenchSidebar } from "./components/WorkbenchSidebar";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import { languageServerStatusLabel } from "./domain/languageServerRuntime";
-import { largeSmartDocumentStatus } from "./domain/largeDocumentPolicy";
+import {
+  defaultLargeSmartDocumentPolicy,
+  largeSmartDocumentStatus,
+} from "./domain/largeDocumentPolicy";
 import type { EditorPosition } from "./domain/languageServerFeatures";
 import { ideProgressIndicator } from "./domain/ideProgress";
 import {
@@ -93,7 +113,6 @@ import {
   ideActivityStatus,
   phpLanguageServerActivityLabel,
 } from "./domain/ideActivity";
-import { editorChangeHunks } from "./domain/editorChangeMarkers";
 import type { GitChangeStatus } from "./domain/git";
 import { createWorkspaceEditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import { monacoThemeForAppTheme, terminalThemeForAppTheme } from "./domain/settings";
@@ -109,12 +128,15 @@ import "./App.css";
 
 const {
   artisanRoutesGateway,
+  cancelJavaScriptTypeScriptLanguageServerRequest,
+  cursorStore,
   debugGateway,
   dirtyCloseDecisionCoordinator,
   gitGateway,
   gitHistoryGateway,
   indexProgressGateway,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+  javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
   javaScriptTypeScriptLanguageServerDocumentSyncGateway,
   javaScriptTypeScriptLanguageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerRefreshGateway,
@@ -129,6 +151,7 @@ const {
   languageServerGateway,
   languageServerRefreshGateway,
   languageServerRuntimeGateway,
+  liveDocumentRuntime,
   localHistoryGateway,
   netteWorkspacePresentersGateway,
   netteWorkspaceRoutesGateway,
@@ -160,6 +183,7 @@ const {
   workspaceTrustGateway,
 } = workbenchComposition;
 const debugTextClipboard = new BrowserTextClipboardGateway();
+const editorChangeHunksGateway = new BrowserEditorChangeHunksGateway();
 
 // Warm the Shiki highlighter in the background as soon as the app boots so the
 // first opened file gets correct syntax colors immediately instead of showing
@@ -176,7 +200,6 @@ function App() {
   useAppSyntaxHighlighterPreload(createAppHighlighter);
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
-  const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
   const editorGroupFocusRunnerRef = useRef<EditorGroupFocusRunner | null>(null);
   const editorGroupFocusRunner = useCallback<EditorGroupFocusRunner>(
     (groupId) => editorGroupFocusRunnerRef.current?.(groupId) ?? false,
@@ -210,6 +233,8 @@ function App() {
     menu: editorMenuCommandRunner,
     phpstanIgnore: editorSurfacePhpstanIgnoreRunner,
   } = editorRunners.activeRunners;
+  const { activeFileRevealSignal, markActiveFileRevealSignal, showGoToLine } =
+    useEditorChromeActions(editorMenuCommandRunner);
   const closeGitHistoryDiffDocumentsRef = useRef<(paths: readonly string[]) => void>(
     () => undefined,
   );
@@ -241,6 +266,9 @@ function App() {
     workbenchPrompter,
     {
       editorMenuCommandRunner,
+      editorCursorStore: cursorStore,
+      cancelJavaScriptTypeScriptLanguageServerRequest,
+      javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway,
       editorSurfaceBufferFixRunner,
       editorSurfaceCommandRunner,
       debugWatchAtCursorCaptureReader,
@@ -264,6 +292,7 @@ function App() {
       workspaceSourceDiscoveryGateway,
     },
   );
+  const editorHost = useWorkbenchEditorHostPresenter(workbench);
   const editorSessionOwnerKey = workbench.workspaceRoot
     ? createWorkspaceEditorSessionOwnerKey(
         workbench.workspaceRoot,
@@ -272,16 +301,9 @@ function App() {
     : null;
   const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
-  const hasJsWorkspace: boolean = !!workbench.workspaceDescriptor?.javaScriptTypeScript;
   const {
-    navigateBackward,
-    navigateForwardInHistory,
-    goToDefinition: requestGoToDefinition,
-    goToImplementationAt: requestGoToImplementationAt,
-    goToSuperMethod: requestGoToSuperMethod,
     runCommand,
-    setClassOpenOpen,
-    setQuickOpenOpen,
+    setTextSearchOpen: setDockedTextSearchOpen,
     showBottomPanelView,
     workspaceRoot,
   } = workbench;
@@ -290,6 +312,7 @@ function App() {
     ...(workbench.phpChangeSignature ?? {}),
     state: workbench.phpChangeSignature?.state ?? CLOSED_PHP_CHANGE_SIGNATURE.state,
   };
+  const openPhpChangeSignature = useStableLatestCallback(phpChangeSignature.open);
   const artisanRoutes = useArtisanRoutes({
     gateway: artisanRoutesGateway,
     isOpen: workbench.bottomPanelVisible && (workbench.bottomPanelView as string) === "routes",
@@ -299,10 +322,11 @@ function App() {
     activeDocument: workbench.activeDocument,
     discoveryGateway: workspaceSourceDiscoveryGateway,
     discoveryVersion: workbench.expressRouteDiscoveryVersion,
-    hasJavaScriptTypeScriptWorkspace: hasJsWorkspace,
+    hasJavaScriptTypeScriptWorkspace: !!workbench.workspaceDescriptor?.javaScriptTypeScript,
     isPanelOpen: workbench.bottomPanelVisible && workbench.bottomPanelView === "expressRoutes",
     onOpenLocation: workbench.openDebugLocation,
     openDocuments: workbench.openDocuments,
+    packageDiscovery: workbench.workspacePackageDiscovery,
     rootPath: workbench.workspaceRoot,
     workspaceId,
   });
@@ -330,6 +354,7 @@ function App() {
       workspaceTestDiscoveryGateway,
       workspaceTrusted,
     });
+  const jsTestEditorSurfaceSource = useStableJsTestEditorSurfaceSource(jsTestExplorerPanel);
   const phpCoverageEditorSurfaceProps = usePhpCoverageEditorSurfaceProps({
     report: phpCloverCoverage.report,
     rootPath: workbench.workspaceRoot,
@@ -459,6 +484,11 @@ function App() {
       previewPath: editorPreviewPath,
     });
   }, [editorActivePath, editorAreaDocuments, editorGroups, editorPreviewPath]);
+  const cursorAuthority = editorCursorAuthority(
+    editorSessionOwnerKey,
+    editorGroupsState.activeGroupId,
+    workbench.activePath,
+  );
   useEffect(() => {
     activateRunnerGroup(editorGroupsState.activeGroupId);
   }, [activateRunnerGroup, editorGroupsState.activeGroupId]);
@@ -506,21 +536,20 @@ function App() {
       workbench.workspaceSymbolsOpen,
     ],
   );
-  // Depend on the inputs editorChangeHunks actually reads (baseline + current
-  // content strings) rather than the whole activeDocument object. A cursor move
-  // hands down a new activeDocument identity with identical content, so keying
-  // on the strings keeps this array reference stable and stops the downstream
-  // change-hunk decoration effect from re-running when nothing changed. When the
-  // content genuinely changes (a keystroke) the hunks recompute as expected.
-  const activeEditorChangeHunks = useMemo(
-    () =>
-      activeDocumentContent !== null && activeDocumentSavedContent !== null
-        ? editorChangeHunks(
-            workbench.activeDocumentGitBaseline ?? activeDocumentSavedContent,
-            activeDocumentContent,
-          )
-        : [],
-    [activeDocumentContent, activeDocumentSavedContent, workbench.activeDocumentGitBaseline],
+  const { changeHunksState: activeEditorChangeHunksState, onActiveLiveDocumentBindingChange } =
+    useEditorActiveLiveDocumentChangeHunksController({
+      activeDocument: workbench.activeDocument,
+      activeGroupId: editorGroupsState.activeGroupId,
+      exactBindingRequired: workbench.workspaceIdentityDescriptor !== null,
+      gateway: editorChangeHunksGateway,
+      legacyBaselineContent: workbench.activeDocumentGitBaseline ?? activeDocumentSavedContent,
+      legacyOwnerKey: editorSessionOwnerKey,
+      policy: workbench.workspaceSettings.largeFileMode ?? defaultLargeSmartDocumentPolicy,
+    });
+  const activeEditorChangeHunks = activeEditorChangeHunksState.hunks;
+  const activeEditorDegradedStatus = editorChangeHunksStatus(
+    activeLargeDocumentStatus,
+    activeEditorChangeHunksState,
   );
   const activeBookmarkedLineNumbers = useMemo(() => {
     const activePath = workbench.activeDocument?.path;
@@ -781,46 +810,45 @@ function App() {
         return;
       }
 
+      if (view === "search") {
+        setDockedTextSearchOpen(true);
+        return;
+      }
+
       showBottomPanelView(view as BottomPanelView);
     },
-    [runCommand, showBottomPanelView],
+    [runCommand, setDockedTextSearchOpen, showBottomPanelView],
   );
-  const showGoToLine = useCallback(() => {
-    editorMenuCommandRunner?.("gotoLine");
-  }, [editorMenuCommandRunner]);
   const goBack = useCallback(() => {
-    void navigateBackward();
-  }, [navigateBackward]);
+    void editorHost.navigateBackward();
+  }, [editorHost]);
   const goForward = useCallback(() => {
-    void navigateForwardInHistory();
-  }, [navigateForwardInHistory]);
+    void editorHost.navigateForwardInHistory();
+  }, [editorHost]);
   const goToDefinition = useCallback(() => {
-    void requestGoToDefinition();
-  }, [requestGoToDefinition]);
+    void editorHost.goToDefinition();
+  }, [editorHost]);
   const goToImplementationAt = useCallback(
     (position: EditorPosition) => {
-      void requestGoToImplementationAt(position);
+      void editorHost.goToImplementationAt(position);
     },
-    [requestGoToImplementationAt],
+    [editorHost],
   );
   const goToSuperMethod = useCallback(() => {
-    void requestGoToSuperMethod();
-  }, [requestGoToSuperMethod]);
-  const markActiveFileRevealSignal = useCallback(() => {
-    setActiveFileRevealSignal((current) => current + 1);
-  }, []);
+    void editorHost.goToSuperMethod();
+  }, [editorHost]);
   const openClass = useCallback(() => {
     if (workspaceRoot) {
-      setQuickOpenOpen(false);
-      setClassOpenOpen(true);
+      editorHost.setQuickOpenOpen(false);
+      editorHost.setClassOpenOpen(true);
     }
-  }, [setClassOpenOpen, setQuickOpenOpen, workspaceRoot]);
+  }, [editorHost, workspaceRoot]);
   const openFile = useCallback(() => {
     if (workspaceRoot) {
-      setClassOpenOpen(false);
-      setQuickOpenOpen(true);
+      editorHost.setClassOpenOpen(false);
+      editorHost.setQuickOpenOpen(true);
     }
-  }, [setClassOpenOpen, setQuickOpenOpen, workspaceRoot]);
+  }, [editorHost, workspaceRoot]);
   const editorMenuCommandContext = useMemo(() => {
     if (editorMenuCommandRunner) {
       return workbench.commandContext;
@@ -832,34 +860,25 @@ function App() {
     };
   }, [editorMenuCommandRunner, workbench.commandContext]);
 
-  const activateEditorGroupTab = useCallback(
-    (groupId: EditorGroupId, path: string) => {
-      if (workbench.activateEditorGroupTab) {
-        workbench.activateEditorGroupTab(groupId, path);
-        return;
-      }
-      workbench.setActivePath(path);
-    },
-    [workbench],
-  );
-
-  const closeEditorGroupTab = useCallback(
+  const closeEditorGroupTab = useStableLatestCallback(
     async (groupId: EditorGroupId, path: string) => {
-      if (workbench.closeDocumentInEditorGroup) {
-        await workbench.closeDocumentInEditorGroup(groupId, path);
+      if (editorHost.closeDocumentInEditorGroup) {
+        await editorHost.closeDocumentInEditorGroup(groupId, path);
         return;
       }
-      await workbench.closeDocument(path);
+      await editorHost.closeDocument(path);
     },
-    [workbench],
   );
   const renderEditorDocumentForGroup = useCallback(
     (document: EditorDocument | null, groupId: EditorGroupId) => {
+      const workbench = editorHost;
       const groupIsActive = editorGroupsState.activeGroupId === groupId;
       const phpCoverageSurface = phpCoverageEditorSurfaceProps(document, groupIsActive);
       return (
         <ScopedEditorSurface
           activeDocument={document}
+          cursorStore={cursorStore}
+          cursorTrackingActive={groupIsActive}
           activeDocumentContentReady={!document || editorContentReadyPaths.has(document.path)}
           embeddedInGroupPanel
           editorConfig={groupIsActive ? workbench.activeEditorConfig : {}}
@@ -875,12 +894,12 @@ function App() {
           applyPhpLanguageServerWorkspaceEdit={workbench.applyPhpLanguageServerWorkspaceEdit}
           clearLanguageServerDiagnosticsForPath={workbench.clearLanguageServerDiagnosticsForPath}
           bookmarkedLineNumbers={groupIsActive ? activeBookmarkedLineNumbers : []}
-          breakpoints={workbench.debugSession.breakpoints}
-          breakpointActions={workbench.debugSession}
+          breakpoints={workbench.breakpoints}
+          breakpointActions={workbench.breakpointActions}
           onBreakpointMutationError={workbench.reportCommandError}
           debugStoppedLocation={workbench.debugStoppedLocation}
-          debugInlineValueContext={workbench.debugSession.inlineValueContext}
-          changeHunks={groupIsActive ? activeEditorChangeHunks : []}
+          debugInlineValueContext={workbench.debugInlineValueContext}
+          changeHunks={groupIsActive ? activeEditorChangeHunks : EMPTY_EDITOR_CHANGE_HUNKS}
           editorRevealTarget={groupIsActive ? workbench.editorRevealTarget : null}
           flushPendingLanguageServerDocument={workbench.flushPendingLanguageServerDocument}
           getLanguageServerDocumentLifecycleIdentity={
@@ -899,7 +918,7 @@ function App() {
           formatOnPaste={workbench.workspaceSettings.formatOnPaste}
           gitBlameEnabled={groupIsActive && workbench.isActiveDocumentGitBlameEnabled}
           isActiveDocumentJsTest={groupIsActive && workbench.isActiveDocumentJsTest}
-          {...jsTestEditorSurfaceProps(groupIsActive, jsTestExplorerPanel)}
+          {...jsTestEditorSurfaceProps(groupIsActive, jsTestEditorSurfaceSource)}
           {...phpCoverageSurface}
           isActiveDocumentPhpTest={groupIsActive && workbench.isActiveDocumentPhpTest}
           isLanguageServerDocumentSynced={workbench.isLanguageServerDocumentSynced}
@@ -995,7 +1014,7 @@ function App() {
           onOpenFileStructure={workbench.openFileStructure}
           onChange={workbench.updateActiveDocument}
           onLanguageServerError={workbench.reportLanguageServerError}
-          onOpenPhpChangeSignature={phpChangeSignature.open}
+          onOpenPhpChangeSignature={openPhpChangeSignature}
           onRecordCompletionLatency={workbench.recordCompletionLatency}
           onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
           onRevealTargetHandled={workbench.clearEditorRevealTarget}
@@ -1019,6 +1038,7 @@ function App() {
       activeBookmarkedLineNumbers,
       activeEditorChangeHunks,
       editorContentReadyPaths,
+      editorHost,
       editorGroupsState,
       goBack,
       goForward,
@@ -1026,14 +1046,14 @@ function App() {
       goToImplementationAt,
       goToSuperMethod,
       focusRunnerGroup,
-      jsTestExplorerPanel,
+      jsTestEditorSurfaceSource,
       markActiveFileRevealSignal,
       monacoTheme,
       navigationHistoryPaths,
       openClass,
       openDocumentPaths,
       openFile,
-      phpChangeSignature.open,
+      openPhpChangeSignature,
       phpCoverageEditorSurfaceProps,
       transientEditorWidgetDismissKey,
       updateEditorMenuCommandRunner,
@@ -1045,13 +1065,13 @@ function App() {
       updateDebugInlineBreakpointCaptureReader,
       updateEditorSurfaceEslintDisableRunner,
       updateEditorSurfacePhpstanIgnoreRunner,
-      workbench,
       workspaceTrusted,
     ],
   );
 
   const renderEditorGroupContent = useCallback(
     (surface: EditorGroupSurface, groupId: EditorGroupId) => {
+      const workbench = editorHost;
       if (surface.kind === "empty") {
         return renderEditorDocumentForGroup(null, groupId);
       }
@@ -1110,12 +1130,28 @@ function App() {
     },
     [
       closeEditorGroupTab,
+      editorHost,
       gitHistoryDiffDocuments.documentsByPath,
       monacoTheme,
       renderEditorDocumentForGroup,
-      workbench,
     ],
   );
+  const editorContentRevisionForGroup = useEditorGroupContentRevisionPresenter({
+    activeBookmarkedLineNumbers,
+    activeChangeHunks: activeEditorChangeHunks,
+    activeContentReadyPaths: editorContentReadyPaths,
+    activeGroupId: editorGroupsState.activeGroupId,
+    activeHostRevision: editorHost.activeContentRevision,
+    gitHistoryDocuments: gitHistoryDiffDocuments.documentsByPath,
+    inactiveHostRevision: editorHost.inactiveContentRevision,
+    jsTestSource: jsTestEditorSurfaceSource,
+    monacoTheme,
+    navigationHistoryPaths,
+    openDocumentPaths,
+    phpCoverageProjection: phpCoverageEditorSurfaceProps,
+    transientWidgetDismissKey: transientEditorWidgetDismissKey,
+    workspaceTrusted,
+  });
 
   return (
     <main className="app-shell" data-theme={workbench.appSettings.theme} style={shellStyle}>
@@ -1243,28 +1279,21 @@ function App() {
             onAction={workbench.handleExternalFileConflictAction}
           />
         ) : null}
-        <EditorRuntimeHost
-          debugHover={workbench.debugSession.debugHover}
-          onGroupFocusRunnerChange={updateEditorGroupFocusRunner}
-        >
-          <EditorArea
-            documents={editorAreaDocuments}
-            editorSessionOwnerKey={editorSessionOwnerKey}
-            fileStatusesByPath={fileStatusesByPath}
-            onActivateGroup={workbench.activateEditorGroup}
-            onActivateTab={activateEditorGroupTab}
-            onCloseTab={closeEditorGroupTab}
-            onMoveTab={workbench.moveEditorGroupTab}
-            onPinTab={workbench.pinEditorGroupTab}
-            onReorderTab={(groupId, fromPath, toPath, position) =>
-              workbench.reorderEditorGroupTab?.(groupId, fromPath, toPath, position)
-            }
-            onResizeSplit={(splitPath, sizes) => workbench.resizeEditorSplit?.(splitPath, sizes)}
-            projectId={workbench.workspaceRoot ?? "no-workspace"}
-            renderContent={renderEditorGroupContent}
-            state={editorGroupsState}
-          />
-        </EditorRuntimeHost>
+        <WorkbenchEditorHost
+          {...workbenchEditorHostProps({
+            activeGroupId: editorGroupsState.activeGroupId,
+            contentRevisionForGroup: editorContentRevisionForGroup,
+            documents: editorAreaDocuments,
+            editorHost,
+            editorSessionOwnerKey,
+            fileStatusesByPath,
+            liveDocumentRuntime,
+            onActiveLiveDocumentBindingChange,
+            onGroupFocusRunnerChange: updateEditorGroupFocusRunner,
+            renderContent: renderEditorGroupContent,
+            state: editorGroupsState,
+          })}
+        />
         {workbench.bottomPanelVisible ? (
           <BottomPanel
             {...frameworkBottomPanels}
@@ -1283,10 +1312,22 @@ function App() {
             indexHealthLogs={workbench.indexHealthLogs}
             indexProgress={workbench.indexProgress}
             notices={workbench.notices}
+            search={
+              <TextSearch
+                {...dockedTextSearchProps({
+                  setOpen: setDockedTextSearchOpen,
+                  workbench,
+                })}
+              />
+            }
             onClearProblems={workbench.clearNotices}
             onClose={() => {
               artisanRoutes.clear();
               phpTestResults.clear();
+              if (workbench.bottomPanelView === "search") {
+                setDockedTextSearchOpen(false);
+                return;
+              }
               workbench.hideBottomPanel();
             }}
             onHardReindex={workbench.startHardReindex}
@@ -1302,9 +1343,7 @@ function App() {
             onResizeStart={startBottomPanelResize}
             onSelectView={selectBottomPanelView}
             onSoftReindex={workbench.startIndexScan}
-            workspacePackageDiscovery={
-              hasJsWorkspace ? expressRoutesPanel.workspacePackageDiscovery : undefined
-            }
+            workspacePackageDiscovery={workbench.workspacePackageDiscovery}
             gitHistoryGateway={gitHistoryGateway}
             runtimeObservabilityGateway={runtimeObservabilityGateway}
             runtimeMode={workbench.intelligenceMode}
@@ -1325,19 +1364,19 @@ function App() {
       <StatusBar
         activeLanguage={activeLanguage}
         activePath={workbench.activePath}
-        cursorPosition={workbench.activeEditorPosition}
+        cursorAuthority={cursorAuthority}
+        cursorStore={cursorStore}
         dirtyCount={workbench.dirtyCount}
+        dirtyCountProjection={workbench.documentSessionAuthorityRevision.ownerDirtyCountProjection}
         errorCount={workbench.diagnosticsSummary.errors}
-        gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch ?? null}
+        gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch}
         gitBranchRepositoryLabel={workbench.gitBranchRepositoryLabel}
         intelligenceMode={workbench.intelligenceMode}
-        largeDocumentStatus={activeLargeDocumentStatus}
+        largeDocumentStatus={activeEditorDegradedStatus}
         message={workbench.message}
-        nodeRunStatus={
-          workbench.nodeRunWithoutDebugging.state
-            ? presentNodeRunWithoutDebugging(workbench.nodeRunWithoutDebugging.state)
-            : null
-        }
+        nodeRunStatus={presentOptionalNodeRunWithoutDebugging(
+          workbench.nodeRunWithoutDebugging.state,
+        )}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
         onOpenRuntimePanel={openRuntimePanel}
         onStopNodeRun={workbench.nodeRunWithoutDebugging.stop}
@@ -1373,13 +1412,7 @@ function App() {
         state={phpChangeSignature.state}
       />
 
-      <CommandPalette
-        commands={workbench.commands}
-        context={workbench.commandContext}
-        isOpen={workbench.paletteOpen}
-        onCommandError={workbench.reportCommandError}
-        onClose={() => workbench.setPaletteOpen(false)}
-      />
+      <CommandPalette {...commandPaletteProps(workbench)} />
 
       <ArtisanMakePalette
         isOpen={workbench.artisanMakePaletteOpen}
@@ -1387,15 +1420,7 @@ function App() {
         runInActiveTerminal={workbench.runInActiveTerminal}
       />
 
-      <QuickOpen
-        isLoading={workbench.quickOpenLoading}
-        isOpen={workbench.quickOpenOpen}
-        onChangeQuery={workbench.setQuickOpenQuery}
-        onClose={() => workbench.setQuickOpenOpen(false)}
-        onOpen={workbench.openSearchResult}
-        query={workbench.quickOpenQuery}
-        results={workbench.quickOpenResults}
-      />
+      <QuickOpen {...quickOpenProps(workbench)} />
 
       <RecentFilesSwitcher
         entries={workbench.recentFilesSwitcherEntries}
@@ -1441,29 +1466,10 @@ function App() {
         query={workbench.searchEverywhereQuery}
       />
 
-      <TextSearch
-        dismissedPaths={workbench.dismissedTextSearchPaths}
-        isLoading={workbench.textSearchLoading}
-        isOpen={workbench.textSearchOpen}
-        onChangeOptions={workbench.setTextSearchOptions}
-        onChangeQuery={workbench.setTextSearchQuery}
-        onChangeReplacement={workbench.setTextReplacement}
-        onClose={() => workbench.setTextSearchOpen(false)}
-        onDismissFile={workbench.dismissTextSearchFile}
-        onOpen={workbench.openTextSearchResult}
-        onReplaceAll={workbench.replaceAllInPath}
-        onReplaceInFile={workbench.replaceInFile}
-        onRestoreDismissedFiles={workbench.restoreDismissedTextSearchFiles}
-        options={workbench.textSearchOptions}
-        query={workbench.textSearchQuery}
-        replaceBusy={workbench.textReplaceBusy}
-        replacement={workbench.textReplacement}
-        results={workbench.textSearchResults}
-      />
-
       <FileStructure
         canIncludeInheritedMembers={workbench.fileStructureCanIncludeInheritedMembers}
         fileName={workbench.activeDocument?.name ?? null}
+        initialQuery={workbench.fileStructureInitialQuery}
         isLoading={workbench.fileStructureLoading}
         isOpen={workbench.fileStructureOpen}
         onChangeScope={workbench.setFileStructureScopeMode}

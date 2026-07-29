@@ -14,6 +14,12 @@ export interface NodeRunStatusPresentation {
   readonly stopLabel: string;
 }
 
+export function presentOptionalNodeRunWithoutDebugging(
+  state: NodeRunWithoutDebuggingState | null,
+): NodeRunStatusPresentation | null {
+  return state ? presentNodeRunWithoutDebugging(state) : null;
+}
+
 export function presentNodeRunWithoutDebugging(
   state: NodeRunWithoutDebuggingState,
 ): NodeRunStatusPresentation | null {

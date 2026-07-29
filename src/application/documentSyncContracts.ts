@@ -8,6 +8,7 @@ import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntim
 import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { EditorDocument } from "../domain/workspace";
 import type { LatestValueDrainMailbox } from "./latestValueDrainMailbox";
+import type { JavaScriptTypeScriptIncrementalSyncDocumentLifecyclePort } from "./javaScriptTypeScriptIncrementalSyncProduction";
 
 /** Shell-owned collaborators and mutable state required by document sync. */
 export interface DocumentSyncDependencies {
@@ -58,6 +59,7 @@ export interface DocumentSyncDependencies {
   javaScriptTypeScriptRuntimeStatusByRootRef: MutableRefObject<
     Record<string, LanguageServerRuntimeStatus>
   >;
+  javaScriptTypeScriptIncrementalSyncRef?: MutableRefObject<JavaScriptTypeScriptIncrementalSyncDocumentLifecyclePort | null>;
 
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   languageServerRuntimeStatusRoot: string | null;
@@ -120,8 +122,17 @@ export interface LanguageServerDocumentRequestLease {
 }
 
 export interface DocumentSync {
+  isJavaScriptTypeScriptLegacyHandoffSafe: (rootPath: string, path: string) => boolean;
+  retireLegacyJavaScriptTypeScriptDocumentForIncrementalHandoff: (
+    rootPath: string,
+    path: string,
+    isCurrent?: () => boolean,
+  ) => Promise<boolean>;
   syncOpenDocument: (document: EditorDocument) => Promise<void>;
-  syncOpenJavaScriptTypeScriptDocument: (document: EditorDocument) => Promise<void>;
+  syncOpenJavaScriptTypeScriptDocument: (
+    document: EditorDocument,
+    isCurrent?: () => boolean,
+  ) => Promise<void>;
   scheduleDocumentChange: (document: EditorDocument) => void;
   scheduleJavaScriptTypeScriptDocumentChange: (document: EditorDocument) => void;
   flushPendingDocumentChange: (path: string) => Promise<void>;

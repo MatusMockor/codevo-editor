@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileSearchResult } from "./workspace";
-import {
-  QUICK_OPEN_RESULT_LIMIT,
-  mergeQuickOpenResults,
-} from "./quickOpenRanking";
+import { QUICK_OPEN_RESULT_LIMIT, mergeQuickOpenResults } from "./quickOpenRanking";
 
 function result(relativePath: string): FileSearchResult {
   const parts = relativePath.split("/");
@@ -36,11 +33,7 @@ describe("mergeQuickOpenResults", () => {
     };
 
     expect(
-      mergeQuickOpenResults(
-        [recent],
-        [result("src/User.ts"), result("src/User.test.ts")],
-        "user",
-      ),
+      mergeQuickOpenResults([recent], [result("src/User.ts"), result("src/User.test.ts")], "user"),
     ).toEqual([recent, result("src/User.test.ts")]);
   });
 
@@ -61,21 +54,37 @@ describe("mergeQuickOpenResults", () => {
         [result("src/Active.ts"), result("src/Previous.ts")],
         "",
       ),
-    ).toEqual([
-      result("src/Previous.ts"),
-      result("src/Older.ts"),
-      result("src/Active.ts"),
-    ]);
+    ).toEqual([result("src/Previous.ts"), result("src/Older.ts"), result("src/Active.ts")]);
   });
 
   it("caps the merged result count at the existing quick-open limit", () => {
-    const backend = Array.from(
-      { length: QUICK_OPEN_RESULT_LIMIT + 10 },
-      (_, index) => result(`src/File${index}.ts`),
+    const backend = Array.from({ length: QUICK_OPEN_RESULT_LIMIT + 10 }, (_, index) =>
+      result(`src/File${index}.ts`),
     );
 
-    expect(
-      mergeQuickOpenResults([result("src/Recent.ts")], backend, ""),
-    ).toHaveLength(QUICK_OPEN_RESULT_LIMIT);
+    expect(mergeQuickOpenResults([result("src/Recent.ts")], backend, "")).toHaveLength(
+      QUICK_OPEN_RESULT_LIMIT,
+    );
+  });
+
+  it("keeps the expected plain-query ordering and serialized fields", () => {
+    const recent = [
+      result("src/UserController.ts"),
+      result("src/OrderController.ts"),
+      result("src/UserService.ts"),
+    ];
+    const backend = [
+      result("src/UserService.ts"),
+      result("src/UserModel.ts"),
+      result("test/UserController.test.ts"),
+    ];
+    const legacyBytes = JSON.stringify([
+      result("src/UserController.ts"),
+      result("src/UserService.ts"),
+      result("src/UserModel.ts"),
+      result("test/UserController.test.ts"),
+    ]);
+
+    expect(JSON.stringify(mergeQuickOpenResults(recent, backend, "usr"))).toBe(legacyBytes);
   });
 });

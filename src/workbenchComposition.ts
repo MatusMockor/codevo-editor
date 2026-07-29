@@ -1,14 +1,18 @@
 import { DirtyCloseDecisionCoordinator } from "./application/dirtyCloseDecisionCoordinator";
+import { EditorCursorStore } from "./application/editorCursorStore";
+import { LiveDocumentRuntime } from "./application/liveDocumentRuntime";
 import { QuickInputCoordinator } from "./application/quickInputCoordinator";
 import { WorkspaceNetteServicesGateway } from "./application/workspaceNetteServicesGateway";
 import { WorkspaceNettePresentersGateway } from "./application/workspaceNettePresentersGateway";
 import { WorkspaceNetteRoutesGateway } from "./application/workspaceNetteRoutesGateway";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
+import { BrowserDirtyTextSearchGateway } from "./infrastructure/browserDirtyTextSearchGateway";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
 import { TauriDebugGateway } from "./infrastructure/tauriDebugGateway";
 import { TauriGitGateway, TauriGitHistoryGateway } from "./infrastructure/tauriGitGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
+import { TauriIncrementalLanguageServerDocumentSyncGateway } from "./infrastructure/tauriIncrementalLanguageServerDocumentSyncGateway";
 import { TauriJsTestGateway } from "./infrastructure/tauriJsTestGateway";
 import { TauriJsTestCoverageGateway } from "./infrastructure/tauriJsTestCoverageGateway";
 import { TauriJsTestWatchGateway } from "./infrastructure/tauriJsTestWatchGateway";
@@ -30,6 +34,7 @@ import {
   TauriLanguageServerRefreshGateway,
 } from "./infrastructure/tauriLanguageServerRefreshGateway";
 import {
+  cancelJavaScriptTypeScriptLanguageServerRequest,
   JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
   TauriLanguageServerRuntimeGateway,
 } from "./infrastructure/tauriLanguageServerRuntimeGateway";
@@ -77,7 +82,9 @@ export function createWorkbenchComposition() {
   const quickInputCoordinator = new QuickInputCoordinator();
 
   return {
+    cursorStore: new EditorCursorStore(),
     artisanRoutesGateway: new TauriArtisanRoutesGateway(),
+    cancelJavaScriptTypeScriptLanguageServerRequest,
     debugGateway: new TauriDebugGateway(),
     dirtyCloseDecisionCoordinator: new DirtyCloseDecisionCoordinator(),
     gitGateway: new TauriGitGateway(),
@@ -88,6 +95,8 @@ export function createWorkbenchComposition() {
       undefined,
       JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
     ),
+    javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway:
+      new TauriIncrementalLanguageServerDocumentSyncGateway(),
     javaScriptTypeScriptLanguageServerDocumentSyncGateway:
       new TauriLanguageServerDocumentSyncGateway(),
     javaScriptTypeScriptLanguageServerFeaturesGateway: new TauriLanguageServerFeaturesGateway(
@@ -121,6 +130,7 @@ export function createWorkbenchComposition() {
     languageServerGateway: new TauriLanguageServerGateway(),
     languageServerRefreshGateway: new TauriLanguageServerRefreshGateway(),
     languageServerRuntimeGateway: new TauriLanguageServerRuntimeGateway(),
+    liveDocumentRuntime: new LiveDocumentRuntime(),
     localHistoryGateway: new TauriLocalHistoryGateway(),
     nodeDebugAttachCandidateGateway: new TauriNodeDebugAttachCandidateGateway(),
     nodeDebugAttachCandidateStart: new TauriNodeDebugAttachStartGateway(),
@@ -148,6 +158,7 @@ export function createWorkbenchComposition() {
     workbenchPrompter: new BrowserWorkbenchPrompter(quickInputCoordinator),
     workspaceGateways: {
       detection: workspaceGateway,
+      dirtyTextSearch: new BrowserDirtyTextSearchGateway(),
       fileChanges: workspaceFileChangeGateway,
       fileSearch: workspaceGateway,
       files: workspaceGateway,

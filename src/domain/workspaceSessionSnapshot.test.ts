@@ -3,12 +3,16 @@ import { createInitialEditorGroupsState } from "./editorGroups";
 import type { MarkdownPreviewTab } from "./markdownPreview";
 import type { EditorDocument, ImageTab } from "./workspace";
 import {
+  buildWorkspaceNavigationSnapshot,
+  buildWorkspaceSessionSnapshot,
   buildEditorSurfaceSnapshot,
   isPersistableEditorDocumentPath,
   restoredActivePath,
+  selectWorkspaceNavigationRestore,
   selectEditorSurfaceRestore,
   type EditorSurfaceSnapshot,
 } from "./workspaceSessionSnapshot";
+import { normalizeWorkspaceSession } from "./settings";
 
 function document(path: string): EditorDocument {
   return {
@@ -42,15 +46,9 @@ function markdownPreviewTab(sourcePath: string): MarkdownPreviewTab {
 describe("isPersistableEditorDocumentPath", () => {
   it("rejects pseudo-tab paths and accepts file paths", () => {
     expect(isPersistableEditorDocumentPath("/src/a.ts")).toBe(true);
-    expect(isPersistableEditorDocumentPath("mockor-git-diff:/src/a.ts")).toBe(
-      false,
-    );
-    expect(
-      isPersistableEditorDocumentPath("mockor-git-history-diff:/src/a.ts"),
-    ).toBe(false);
-    expect(
-      isPersistableEditorDocumentPath("mockor-markdown-preview:/readme.md"),
-    ).toBe(false);
+    expect(isPersistableEditorDocumentPath("mockor-git-diff:/src/a.ts")).toBe(false);
+    expect(isPersistableEditorDocumentPath("mockor-git-history-diff:/src/a.ts")).toBe(false);
+    expect(isPersistableEditorDocumentPath("mockor-markdown-preview:/readme.md")).toBe(false);
   });
 });
 
@@ -67,9 +65,7 @@ describe("buildEditorSurfaceSnapshot", () => {
     const documents = {
       "/src/a.ts": document("/src/a.ts"),
       "mockor-git-diff:/src/a.ts": document("mockor-git-diff:/src/a.ts"),
-      "mockor-git-history-diff:/src/a.ts": document(
-        "mockor-git-history-diff:/src/a.ts",
-      ),
+      "mockor-git-history-diff:/src/a.ts": document("mockor-git-history-diff:/src/a.ts"),
     };
     const imageTabs = { "/logo.png": imageTab("/logo.png") };
     const markdownPreviewTabs = {
@@ -158,6 +154,248 @@ describe("buildEditorSurfaceSnapshot", () => {
   });
 });
 
+describe("workspace navigation snapshot", () => {
+  it("survives a simulated restart with recent files, locations, and back-forward history", () => {
+    const navigation = buildWorkspaceNavigationSnapshot({
+      navigationHistory: {
+        backStack: [
+          {
+            path: "/workspace/a.ts",
+            position: { column: 2, lineNumber: 3 },
+          },
+        ],
+        forwardStack: [
+          {
+            path: "/workspace/b.ts",
+            position: { column: 4, lineNumber: 5 },
+          },
+        ],
+      },
+      recentFiles: [{ name: "a.ts", path: "/workspace/a.ts" }],
+      recentLocations: [
+        {
+          column: 2,
+          line: 3,
+          name: "a.ts",
+          path: "/workspace/a.ts",
+          relativePath: "a.ts",
+          snippet: "const a = 1;",
+        },
+      ],
+      rootPath: "/workspace",
+    });
+    expect(navigation.backStack[0]?.path).toBe("a.ts");
+    expect(navigation.recentFiles[0]?.path).toBe("a.ts");
+    const persisted = JSON.parse(
+      JSON.stringify({
+        ...normalizeWorkspaceSession({}),
+        navigation,
+      }),
+    );
+    const restored = selectWorkspaceNavigationRestore(
+      normalizeWorkspaceSession(persisted),
+      "/workspace",
+    );
+
+    expect(restored.recentFiles).toEqual([{ name: "a.ts", path: "/workspace/a.ts" }]);
+    expect(restored.recentLocations[0]?.snippet).toBe("const a = 1;");
+    expect(restored.navigationHistory).toEqual({
+      backStack: [
+        {
+          path: "/workspace/a.ts",
+          position: { column: 2, lineNumber: 3 },
+        },
+      ],
+      forwardStack: [
+        {
+          path: "/workspace/b.ts",
+          position: { column: 4, lineNumber: 5 },
+        },
+      ],
+    });
+  });
+
+  it("enforces entry and byte caps when writing a snapshot", () => {
+    const snapshot = buildWorkspaceNavigationSnapshot({
+      navigationHistory: {
+        backStack: Array.from({ length: 150 }, (_, index) => ({
+          path: `/workspace/back-${index}.ts`,
+          position: { column: 1, lineNumber: index + 1 },
+        })),
+        forwardStack: Array.from({ length: 150 }, (_, index) => ({
+          path: `/workspace/forward-${index}.ts`,
+          position: { column: 1, lineNumber: index + 1 },
+        })),
+      },
+      recentFiles: Array.from({ length: 75 }, (_, index) => ({
+        name: `file-${index}.ts`,
+        path: `/workspace/file-${index}.ts`,
+      })),
+      recentLocations: Array.from({ length: 75 }, (_, index) => ({
+        column: 1,
+        line: index + 1,
+        name: `file-${index}.ts`,
+        path: `/workspace/file-${index}.ts`,
+        relativePath: `file-${index}.ts`,
+        snippet: "x".repeat(4_000),
+      })),
+      rootPath: "/workspace",
+    });
+
+    expect(snapshot.recentFiles).toHaveLength(50);
+    expect(snapshot.recentLocations.length).toBeLessThanOrEqual(50);
+    expect(snapshot.backStack.length).toBeLessThanOrEqual(100);
+    expect(snapshot.forwardStack.length).toBeLessThanOrEqual(100);
+    expect(new TextEncoder().encode(JSON.stringify(snapshot)).byteLength).toBeLessThanOrEqual(
+      128 * 1_024,
+    );
+  });
+
+  it("restores stale entries without eager filesystem work", () => {
+    const stalePath = "/workspace/deleted.ts";
+    const restored = selectWorkspaceNavigationRestore(
+      normalizeWorkspaceSession({
+        ...normalizeWorkspaceSession({}),
+        navigation: {
+          backStack: [
+            {
+              path: stalePath,
+              position: { column: 1, lineNumber: 1 },
+            },
+          ],
+          forwardStack: [],
+          recentFiles: [{ name: "deleted.ts", path: stalePath }],
+          recentLocations: [
+            {
+              column: 1,
+              line: 1,
+              name: "deleted.ts",
+              path: stalePath,
+              relativePath: "deleted.ts",
+              snippet: "deleted",
+            },
+          ],
+        },
+      }),
+      "/workspace",
+    );
+
+    expect(restored.recentFiles[0]?.path).toBe(stalePath);
+    expect(restored.recentLocations[0]?.path).toBe(stalePath);
+    expect(restored.navigationHistory.backStack[0]?.path).toBe(stalePath);
+  });
+
+  it("keeps workspace snapshots isolated across A to B to A", () => {
+    const sessions = new Map<string, ReturnType<typeof normalizeWorkspaceSession>>();
+    const build = (root: string) =>
+      normalizeWorkspaceSession({
+        ...normalizeWorkspaceSession({}),
+        navigation: buildWorkspaceNavigationSnapshot({
+          navigationHistory: { backStack: [], forwardStack: [] },
+          recentFiles: [{ name: "index.ts", path: `${root}/index.ts` }],
+          recentLocations: [],
+          rootPath: root,
+        }),
+      });
+
+    sessions.set("/workspace-a", build("/workspace-a"));
+    sessions.set("/workspace-b", build("/workspace-b"));
+
+    expect(
+      selectWorkspaceNavigationRestore(sessions.get("/workspace-a")!, "/workspace-a").recentFiles[0]
+        ?.path,
+    ).toBe("/workspace-a/index.ts");
+    expect(
+      selectWorkspaceNavigationRestore(sessions.get("/workspace-b")!, "/workspace-b").recentFiles[0]
+        ?.path,
+    ).toBe("/workspace-b/index.ts");
+    expect(
+      selectWorkspaceNavigationRestore(sessions.get("/workspace-a")!, "/workspace-a").recentFiles[0]
+        ?.path,
+    ).toBe("/workspace-a/index.ts");
+  });
+
+  it("restores relative paths beneath the selected workspace alias", () => {
+    const session = normalizeWorkspaceSession({
+      ...normalizeWorkspaceSession({}),
+      navigation: {
+        backStack: [{ path: "src/a.ts", position: { column: 1, lineNumber: 2 } }],
+        forwardStack: [],
+        recentFiles: [{ name: "a.ts", path: "src/a.ts" }],
+        recentLocations: [],
+      },
+    });
+
+    const restored = selectWorkspaceNavigationRestore(session, "/alias/workspace");
+
+    expect(restored.navigationHistory.backStack[0]?.path).toBe("/alias/workspace/src/a.ts");
+    expect(restored.recentFiles[0]?.path).toBe("/alias/workspace/src/a.ts");
+  });
+
+  it("removes an empty navigation key after the final entry is cleared", () => {
+    const session = normalizeWorkspaceSession({
+      ...normalizeWorkspaceSession({}),
+      navigation: {
+        backStack: [{ path: "a.ts", position: { column: 1, lineNumber: 1 } }],
+        forwardStack: [],
+        recentFiles: [],
+        recentLocations: [],
+      },
+    });
+    const navigation = buildWorkspaceNavigationSnapshot({
+      navigationHistory: { backStack: [], forwardStack: [] },
+      recentFiles: [],
+      recentLocations: [],
+      rootPath: "/workspace",
+    });
+
+    expect(buildWorkspaceSessionSnapshot(session, session.navigation, navigation).navigation).toBe(
+      undefined,
+    );
+  });
+
+  it("drops foreign workspace paths on write and restore", () => {
+    const navigation = buildWorkspaceNavigationSnapshot({
+      navigationHistory: {
+        backStack: [
+          {
+            path: "/workspace-b/foreign.ts",
+            position: { column: 1, lineNumber: 1 },
+          },
+        ],
+        forwardStack: [],
+      },
+      recentFiles: [
+        { name: "owned.ts", path: "/workspace-a/owned.ts" },
+        { name: "foreign.ts", path: "/workspace-b/foreign.ts" },
+      ],
+      recentLocations: [],
+      rootPath: "/workspace-a",
+    });
+
+    expect(navigation.backStack).toEqual([]);
+    expect(navigation.recentFiles).toEqual([{ name: "owned.ts", path: "owned.ts" }]);
+
+    const restored = selectWorkspaceNavigationRestore(
+      normalizeWorkspaceSession({
+        ...normalizeWorkspaceSession({}),
+        navigation: {
+          ...navigation,
+          backStack: [
+            {
+              path: "/workspace-b/foreign.ts",
+              position: { column: 1, lineNumber: 1 },
+            },
+          ],
+        },
+      }),
+      "/workspace-a",
+    );
+
+    expect(restored.navigationHistory.backStack).toEqual([]);
+  });
+});
+
 describe("selectEditorSurfaceRestore", () => {
   it("round-trips a built snapshot", () => {
     const documents = {
@@ -170,12 +408,7 @@ describe("selectEditorSurfaceRestore", () => {
     };
     const editorGroups = createInitialEditorGroupsState("editor-main", {
       activePath: "/src/a.ts",
-      openPaths: [
-        "/src/a.ts",
-        "/src/b.ts",
-        "/logo.png",
-        "mockor-markdown-preview:/readme.md",
-      ],
+      openPaths: ["/src/a.ts", "/src/b.ts", "/logo.png", "mockor-markdown-preview:/readme.md"],
       previewPath: null,
     });
     const snapshot = buildEditorSurfaceSnapshot({
@@ -184,12 +417,7 @@ describe("selectEditorSurfaceRestore", () => {
       editorGroups,
       imageTabs,
       markdownPreviewTabs,
-      openPaths: [
-        "/src/a.ts",
-        "/src/b.ts",
-        "/logo.png",
-        "mockor-markdown-preview:/readme.md",
-      ],
+      openPaths: ["/src/a.ts", "/src/b.ts", "/logo.png", "mockor-markdown-preview:/readme.md"],
       previewPath: null,
     });
 
@@ -208,12 +436,7 @@ describe("selectEditorSurfaceRestore", () => {
     expect(restore.activePath).toBe("/src/a.ts");
     expect(restore.editorGroups.groups["editor-main"]).toEqual({
       activePath: "/src/a.ts",
-      openPaths: [
-        "/src/a.ts",
-        "/src/b.ts",
-        "/logo.png",
-        "mockor-markdown-preview:/readme.md",
-      ],
+      openPaths: ["/src/a.ts", "/src/b.ts", "/logo.png", "mockor-markdown-preview:/readme.md"],
       previewPath: null,
     });
   });

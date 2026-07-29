@@ -2,10 +2,15 @@ import type { ReactNode } from "react";
 import type { EditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { EditorGroupId, EditorGroupsState } from "../domain/editorGroups";
 import type { TabDropPosition } from "../domain/tabOrdering";
-import { EditorGroupView, type EditorGroupDocument, type EditorGroupSurface } from "./EditorGroupView";
+import {
+  EditorGroupView,
+  type EditorGroupDocument,
+  type EditorGroupSurface,
+} from "./EditorGroupView";
 import { EditorSplit } from "./EditorSplit";
 
 export interface EditorAreaProps {
+  contentRevisionForGroup?(groupId: EditorGroupId): unknown;
   documents: readonly EditorGroupDocument[];
   editorSessionOwnerKey: EditorSessionOwnerKey | null;
   fileStatusesByPath?: React.ComponentProps<typeof EditorGroupView>["fileStatusesByPath"];
@@ -16,13 +21,21 @@ export interface EditorAreaProps {
   onCloseTab(groupId: EditorGroupId, path: string): void;
   onMoveTab(fromGroupId: EditorGroupId, toGroupId: EditorGroupId, path: string): void;
   onPinTab(groupId: EditorGroupId, path: string): void;
-  onReorderTab(groupId: EditorGroupId, fromPath: string, toPath: string, position: TabDropPosition): void;
+  onReorderTab(
+    groupId: EditorGroupId,
+    fromPath: string,
+    toPath: string,
+    position: TabDropPosition,
+  ): void;
   onResizeSplit(splitPath: readonly number[], sizes: readonly [number, number]): void;
   renderContent(surface: EditorGroupSurface, groupId: EditorGroupId): ReactNode;
 }
 
 export function EditorArea(props: EditorAreaProps) {
-  function renderLayout(layout: EditorGroupsState["layout"], splitPath: readonly number[]): ReactNode {
+  function renderLayout(
+    layout: EditorGroupsState["layout"],
+    splitPath: readonly number[],
+  ): ReactNode {
     if (layout.kind === "group") {
       const group = props.state.groups[layout.groupId];
       if (!group) {
@@ -32,6 +45,7 @@ export function EditorArea(props: EditorAreaProps) {
         <EditorGroupView
           key={`${props.editorSessionOwnerKey ?? "no-workspace"}:${layout.groupId}`}
           active={props.state.activeGroupId === layout.groupId}
+          contentRevision={props.contentRevisionForGroup?.(layout.groupId)}
           documents={props.documents}
           fileStatusesByPath={props.fileStatusesByPath}
           group={group}
@@ -65,7 +79,10 @@ export function EditorArea(props: EditorAreaProps) {
   }
 
   return (
-    <div className="editor-area" style={{ height: "100%", minHeight: 0, minWidth: 0, width: "100%" }}>
+    <div
+      className="editor-area"
+      style={{ height: "100%", minHeight: 0, minWidth: 0, width: "100%" }}
+    >
       {renderLayout(props.state.layout, [])}
     </div>
   );

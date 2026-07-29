@@ -1,33 +1,37 @@
 // @vitest-environment jsdom
 
-import { useEffect } from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   flushTextSearchDebounce,
   resolveInReactAct,
   waitForReact,
 } from "../test/reactTestLifecycle";
-import { createStoppedTerminalGateway } from "../test/stoppedTerminalGateway";
-import type { WorkbenchPrompter } from "./workbenchPrompter";
+import {
+  createInMemoryLocalHistoryGateway,
+  documentSyncGatewayMock,
+  featuresGateway,
+  flushAsyncTurns,
+  javaScriptTypeScriptWorkspaceDescriptor,
+  setupWorkbenchControllerTestHarness,
+  type WorkbenchController,
+} from "../test/workbenchControllerTestHarness";
+import { createLocalHistorySaveWritersFixture } from "../test/localHistorySaveWritersFixture";
 import type { DebugEvent, DebugGateway } from "../domain/debug";
 import { debugBreakpointStorageKey } from "../domain/debugBreakpointPersistence";
 import { deserializeBreakpoints, serializeBreakpoints } from "../domain/debugBreakpoints";
 import { emptyGitStatus, gitChangeKey, type GitChangedFile, type GitGateway } from "../domain/git";
-import type { LocalHistoryGateway, LocalHistoryVersion } from "../domain/localHistory";
+import type { LocalHistoryGateway } from "../domain/localHistory";
 import { callHierarchyRows } from "../domain/callHierarchy";
 import { typeHierarchyRows } from "../domain/typeHierarchy";
 import { referenceRows } from "../domain/referencesView";
 import {
   adoptLegacyCachedWorkspaceState,
-  resolveAdmittedDocumentSaveOwnership,
-  useWorkbenchController,
   withWorkspaceIdentityLease,
   type PhpCodeActionDescriptor,
-  type WorkbenchControllerOptions,
   type WorkbenchWorkspaceGateways,
 } from "./useWorkbenchController";
+import { EditorActiveLiveDocumentSaveCoordinator } from "./editorActiveLiveDocumentSaveCoordinator";
 import type { IndexProgressGateway, MetadataScanCompletionEvent } from "../domain/indexProgress";
 import type { SmartModeGateway } from "../domain/intelligence";
 import type {
@@ -39,13 +43,7 @@ import type {
   LanguageServerDiagnosticEvent,
   LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
-import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
-import {
-  fileUriFromPath,
-  sessionBoundLanguageServerDocumentSyncGateway,
-  type LanguageServerDocumentSyncGateway,
-  type SessionBoundLanguageServerDocumentSyncGateway,
-} from "../domain/languageServerDocumentSync";
+import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import type {
   EditorPosition,
   LanguageServerCodeAction,
@@ -74,7 +72,6 @@ import {
 } from "../domain/settings";
 import { createInitialEditorGroupsState } from "../domain/editorGroups";
 import { defaultKeymapSettings } from "../domain/keymap";
-import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
@@ -84,40 +81,9 @@ import {
   type FileSearchResult,
   type ManagedPhpactorInstallCompletionEvent,
   type PhpProjectDescriptor,
-  type ReplaceInPathResult,
-  type TextSearchOptions,
   type TextSearchResult,
   type WorkspaceDescriptor,
-  type WorkspaceOwnerFileGateway,
 } from "../domain/workspace";
-
-type WorkbenchController = ReturnType<typeof useWorkbenchController>;
-
-interface ControllerDependencies {
-  controllerOptions: WorkbenchControllerOptions;
-  documentSyncGateway: SessionBoundLanguageServerDocumentSyncGateway;
-  gitGateway: GitGateway;
-  localHistoryGateway: LocalHistoryGateway;
-  indexProgressGateway: IndexProgressGateway;
-  languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
-  languageServerDocumentSyncGateway: SessionBoundLanguageServerDocumentSyncGateway;
-  languageServerFeaturesGateway: LanguageServerFeaturesGateway;
-  languageServerGateway: LanguageServerGateway;
-  languageServerRuntimeGateway: LanguageServerRuntimeGateway;
-  javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
-  javaScriptTypeScriptLanguageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
-  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
-  javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway;
-  phpFileOutlineGateway: PhpFileOutlineGateway;
-  phpTreeGateway: PhpTreeGateway;
-  prompter: WorkbenchPrompter;
-  settingsGateway: SettingsGateway;
-  smartModeGateway: SmartModeGateway;
-  terminalGateway: TerminalGateway;
-  workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway;
-  workspaceGateways: WorkbenchWorkspaceGateways;
-  workspaceTrustGateway: WorkspaceTrustGateway;
-}
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -126,25 +92,7 @@ interface Deferred<T> {
 }
 
 describe("useWorkbenchController preview tabs", () => {
-  let host: HTMLDivElement;
-  let root: Root;
-
-  beforeEach(() => {
-    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  });
-
-  afterEach(async () => {
-    vi.useRealTimers();
-    await flushAsyncTurns();
-    await act(async () => {
-      root.unmount();
-      await Promise.resolve();
-    });
-    host.remove();
-  });
+  const { getRoot, renderController } = setupWorkbenchControllerTestHarness();
 
   it("routes image extensions to isolated read-only image tabs", async () => {
     const readTextFile = vi.fn(async () => "text");
@@ -1501,11 +1449,12 @@ describe("useWorkbenchController preview tabs", () => {
       modifiedSeconds: 4,
       size: 14,
     };
-    const revertedRevision = { ...initialRevision, contentHash: "reverted" };
-    const writeTextFileForWorkspace = vi.fn(async () => ({
-      status: "success" as const,
-      revision: revertedRevision,
-    }));
+    const saveWriters = createLocalHistorySaveWritersFixture({
+      absolutePath: "/workspace/src/User.php",
+      initialRevision,
+      relativePath: "src/User.php",
+      workspaceId: "workspace-local-history",
+    });
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -1518,8 +1467,9 @@ describe("useWorkbenchController preview tabs", () => {
           content: "<?php // initial\n",
           revision: initialRevision,
         })),
-        writeTextFileForWorkspace,
+        ...saveWriters.workspaceFiles,
       },
+      workspaceOwnerFiles: saveWriters.workspaceOwnerFiles,
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
         openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
@@ -1551,7 +1501,8 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().saveActiveDocument();
     });
     await flushAsyncTurns();
-    vi.mocked(dependencies.workspaceGateways.files.writeTextFile).mockClear();
+
+    saveWriters.assertPreparedWrites("<?php // v1\n", "<?php // v2\n");
 
     await act(async () => {
       await getWorkbench().openLocalHistory();
@@ -1567,12 +1518,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     // The reverted content (v1) is written back to disk and reflected in the
     // open document.
-    expect(writeTextFileForWorkspace).toHaveBeenLastCalledWith(
-      "workspace-local-history",
-      "/workspace/src/User.php",
-      "<?php // v1\n",
-      initialRevision,
-    );
+    saveWriters.assertRevertWrite("<?php // v1\n");
     expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
     const active = getWorkbench().openDocuments.find(
       (document) => document.path === "/workspace/src/User.php",
@@ -2721,14 +2667,21 @@ describe("useWorkbenchController preview tabs", () => {
 
     act(() => {
       getWorkbench().recordCompletionLatency(12, "/workspace-a");
+      getWorkbench().recordCompletionLatency(18, "/workspace-a", "definition");
     });
 
-    expect(getWorkbench().getLatencySnapshot()).toEqual([
-      expect.objectContaining({
-        kind: "completion",
-        stats: expect.objectContaining({ count: 1, last: 12 }),
-      }),
-    ]);
+    expect(getWorkbench().getLatencySnapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "completion",
+          stats: expect.objectContaining({ count: 1, last: 12 }),
+        }),
+        expect.objectContaining({
+          kind: "definition",
+          stats: expect.objectContaining({ count: 1, last: 18 }),
+        }),
+      ]),
+    );
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
@@ -2754,12 +2707,18 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().getLatencySnapshot()).toEqual([
-      expect.objectContaining({
-        kind: "completion",
-        stats: expect.objectContaining({ count: 1, last: 12 }),
-      }),
-    ]);
+    expect(getWorkbench().getLatencySnapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "completion",
+          stats: expect.objectContaining({ count: 1, last: 12 }),
+        }),
+        expect.objectContaining({
+          kind: "definition",
+          stats: expect.objectContaining({ count: 1, last: 18 }),
+        }),
+      ]),
+    );
   });
 
   it("does not restore synthetic Git diff tabs from the workspace cache", async () => {
@@ -7859,6 +7818,40 @@ describe("useWorkbenchController preview tabs", () => {
         205,
       );
     }
+  });
+
+  it("keeps an active TypeScript save fail-closed when the real live-save coordinator has no binding", async () => {
+    const path = "/workspace/src/App.ts";
+    const { dependencies, getWorkbench } = renderController({
+      activeLiveDocumentSaveCoordinator: new EditorActiveLiveDocumentSaveCoordinator(),
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
+    expect(getWorkbench().activeDocument?.content).toBe("export const value = 2;\n");
   });
 
   it("ignores JavaScript and TypeScript runtime status events without an explicit workspace root", async () => {
@@ -22581,14 +22574,14 @@ describe("useWorkbenchController preview tabs", () => {
       );
     });
 
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    let switchPromise = Promise.resolve();
+    void act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
-    await flushAsyncTurns();
 
     await act(async () => {
       sessionSave.reject(new Error("stale session save"));
-      await Promise.resolve();
+      await switchPromise;
     });
     await flushAsyncTurns();
 
@@ -68895,43 +68888,6 @@ class PostRepository
   });
 
   describe("find in path", () => {
-    it("forwards the active filters to the text search gateway", async () => {
-      const searchText = vi.fn(async () => []);
-      const { getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-          workspaceTabs: ["/workspace"],
-        },
-        searchText,
-      });
-      await flushAsyncTurns();
-      await waitForReact(() => {
-        expect(getWorkbench().workspaceRoot).toBe("/workspace");
-      });
-
-      act(() => {
-        getWorkbench().setTextSearchOpen(true);
-        getWorkbench().setTextSearchOptions({
-          caseSensitive: true,
-          wholeWord: true,
-          isRegex: true,
-          preserveCase: false,
-          fileMask: "*.php,!vendor",
-        });
-        getWorkbench().setTextSearchQuery("needle");
-      });
-
-      await flushTextSearchDebounce();
-      expect(searchText).toHaveBeenCalledWith("/workspace", "needle", 100, {
-        caseSensitive: true,
-        wholeWord: true,
-        isRegex: true,
-        preserveCase: false,
-        fileMask: "*.php,!vendor",
-      });
-    });
-
     it("does not replace when the destructive confirmation is declined", async () => {
       const replaceInPath = vi.fn(async () => ({
         files: [],
@@ -69140,18 +69096,6 @@ class PostRepository
     });
 
     it("reveals the match position when a result is opened", async () => {
-      const { getWorkbench } = renderController({
-        appSettings: {
-          ...defaultAppSettings(),
-          recentWorkspacePath: "/workspace",
-          workspaceTabs: ["/workspace"],
-        },
-      });
-      await flushAsyncTurns();
-      await waitForReact(() => {
-        expect(getWorkbench().workspaceRoot).toBe("/workspace");
-      });
-
       const result: TextSearchResult = {
         column: 13,
         lineNumber: 7,
@@ -69161,16 +69105,35 @@ class PostRepository
         path: "/workspace/app/Services/UserService.php",
         relativePath: "app/Services/UserService.php",
       };
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        searchText: vi.fn(async () => [result]),
+      });
+      await flushAsyncTurns();
+      await waitForReact(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      });
+
+      act(() => {
+        getWorkbench().setTextSearchOpen(true);
+        getWorkbench().setTextSearchQuery("UserService");
+      });
+      await flushTextSearchDebounce();
+      expect(getWorkbench().textSearchResults).toEqual([result]);
 
       await act(async () => {
-        await getWorkbench().openTextSearchResult(result);
+        await getWorkbench().openTextSearchResult(getWorkbench().textSearchResults[0]!);
       });
 
       expect(getWorkbench().editorRevealTarget).toEqual({
         path: "/workspace/app/Services/UserService.php",
         position: { column: 13, lineNumber: 7 },
       });
-      expect(getWorkbench().textSearchOpen).toBe(false);
+      expect(getWorkbench().textSearchOpen).toBe(true);
     });
 
     it("resets filters to the default baseline between workspace tabs", async () => {
@@ -69923,84 +69886,6 @@ MissingClass::class;
       line: 4,
       scrollTop: 140,
     });
-  });
-
-  it("resolves save ownership from an admitted remembered alias", () => {
-    const descriptor = {
-      ...trustedDescriptor("ws-save-alias", "/selected/workspace"),
-      canonicalRoot: "/real/workspace",
-    };
-    const rememberedRoot = "/remembered/workspace";
-    const rememberedPath = `${rememberedRoot}/src/User.php`;
-    const matchForPath = vi.fn((path: string, workspaceId?: string) => {
-      if (workspaceId && workspaceId !== descriptor.workspaceId) {
-        return null;
-      }
-      if (path === rememberedRoot) {
-        return { descriptor, matchedRoot: rememberedRoot, relativePath: "" };
-      }
-      if (path === rememberedPath) {
-        return {
-          descriptor,
-          matchedRoot: rememberedRoot,
-          relativePath: "src/User.php",
-        };
-      }
-      return null;
-    });
-    const identityGateway = {
-      getDescriptor: vi.fn(),
-      matchForPath,
-      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-      unregister: vi.fn(async () => undefined),
-    };
-
-    expect(
-      resolveAdmittedDocumentSaveOwnership(
-        { [descriptor.canonicalRoot]: descriptor },
-        identityGateway,
-        rememberedRoot,
-        rememberedPath,
-      ),
-    ).toEqual({
-      canonicalRoot: descriptor.canonicalRoot,
-      workspaceRelativePath: "src/User.php",
-    });
-    expect(matchForPath).toHaveBeenNthCalledWith(1, rememberedRoot);
-    expect(matchForPath).toHaveBeenNthCalledWith(2, rememberedPath, descriptor.workspaceId);
-  });
-
-  it("falls back to the admitted descriptor and rejects outside paths", () => {
-    const descriptor = {
-      ...trustedDescriptor("ws-save-map", "/selected/workspace"),
-      canonicalRoot: "/real/workspace",
-    };
-    const identityGateway = {
-      getDescriptor: vi.fn(),
-      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-      unregister: vi.fn(async () => undefined),
-    };
-    const identities = { [descriptor.selectedPath]: descriptor };
-
-    expect(
-      resolveAdmittedDocumentSaveOwnership(
-        identities,
-        identityGateway,
-        descriptor.selectedPath,
-        `${descriptor.selectedPath}/src/User.php`,
-      ),
-    ).toEqual({
-      canonicalRoot: descriptor.canonicalRoot,
-      workspaceRelativePath: "src/User.php",
-    });
-    expect(
-      resolveAdmittedDocumentSaveOwnership(
-        identities,
-        identityGateway,
-        descriptor.selectedPath,
-        "/outside/User.php",
-      ),
-    ).toBeNull();
   });
 
   it("keeps the active workspace unchanged when the trusted picker is cancelled", async () => {
@@ -71653,7 +71538,7 @@ MissingClass::class;
       await Promise.resolve();
     });
     await act(async () => {
-      root.unmount();
+      getRoot().unmount();
       await Promise.resolve();
     });
     admission.resolve(descriptor);
@@ -71698,7 +71583,7 @@ MissingClass::class;
       expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledOnce();
     });
     await act(async () => {
-      root.unmount();
+      getRoot().unmount();
       await Promise.resolve();
     });
     settings.resolve(defaultWorkspaceSettings());
@@ -71973,7 +71858,7 @@ MissingClass::class;
     expect(getWorkbench().workspaceTabs).toEqual([descriptor.selectedPath]);
 
     await act(async () => {
-      root.unmount();
+      getRoot().unmount();
       await Promise.resolve();
     });
 
@@ -72838,168 +72723,6 @@ MissingClass::class;
     expect(getWorkbench().bottomPanelVisible).toBe(true);
   });
 
-  function renderController({
-    appSettings = defaultAppSettings(),
-    debugBreakpointStorage,
-    debugGateway,
-    editorGroupFocusRunner,
-    gitGateway,
-    localHistoryGateway,
-    markdownPreviewRenderer,
-    javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
-    indexProgressGateway,
-    javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-    javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerPlan,
-    javaScriptTypeScriptLanguageServerRuntimeGateway,
-    javaScriptTypeScriptRuntimeStatus = { kind: "stopped" as const },
-    languageServerGateway,
-    languageServerPlan,
-    languageServerDiagnosticsGateway,
-    languageServerDocumentSyncGateway,
-    languageServerFeaturesGateway,
-    languageServerRuntimeGateway,
-    phpToolGateway,
-    prettierFormattingGateway,
-    projectSymbols = [],
-    prompter,
-    readDirectory,
-    readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
-    runtimeStatus = { kind: "stopped" as const },
-    searchFiles = vi.fn(async () => []),
-    searchText,
-    replaceInPath,
-    settingsGateway,
-    smartModeGateway,
-    workspaceDetectionGateway,
-    workspaceDescriptor,
-    workspaceFileChangeGateway,
-    workspaceIdentityGateway,
-    workspaceFiles,
-    workspaceRuntimeLifecycleGateway,
-    workspaceSettings = defaultWorkspaceSettings(),
-    workspaceTrustGateway,
-  }: {
-    appSettings?: ReturnType<typeof defaultAppSettings>;
-    debugBreakpointStorage?: WorkbenchControllerOptions["debugBreakpointStorage"];
-    debugGateway?: WorkbenchControllerOptions["debugGateway"];
-    editorGroupFocusRunner?: WorkbenchControllerOptions["editorGroupFocusRunner"];
-    gitGateway?: GitGateway;
-    localHistoryGateway?: LocalHistoryGateway;
-    markdownPreviewRenderer?: WorkbenchControllerOptions["markdownPreviewRenderer"];
-    indexProgressGateway?: IndexProgressGateway;
-    javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
-    javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
-    javaScriptTypeScriptLanguageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
-    javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
-    javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
-    javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
-    javaScriptTypeScriptRuntimeStatus?: LanguageServerRuntimeStatus;
-    languageServerGateway?: LanguageServerGateway;
-    languageServerPlan?: LanguageServerPlan;
-    languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
-    languageServerDocumentSyncGateway?: SessionBoundLanguageServerDocumentSyncGateway;
-    languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
-    languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
-    phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
-    prettierFormattingGateway?: WorkbenchControllerOptions["prettierFormattingGateway"];
-    projectSymbols?: ProjectSymbolSearchResult[];
-    prompter?: WorkbenchPrompter;
-    readDirectory?: (path: string) => Promise<FileEntry[]>;
-    readTextFile?: (path: string) => Promise<string>;
-    runtimeStatus?: LanguageServerRuntimeStatus;
-    searchFiles?: (root: string, query: string, limit: number) => Promise<FileSearchResult[]>;
-    searchText?: (root: string, query: string, limit: number) => Promise<TextSearchResult[]>;
-    replaceInPath?: (
-      root: string,
-      query: string,
-      replacement: string,
-      options?: TextSearchOptions,
-      scopePath?: string,
-    ) => Promise<ReplaceInPathResult>;
-    settingsGateway?: SettingsGateway;
-    smartModeGateway?: SmartModeGateway;
-    workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
-    workspaceDescriptor?: WorkspaceDescriptor;
-    workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
-    workspaceIdentityGateway?: WorkbenchWorkspaceGateways["identity"];
-    workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"] & WorkspaceOwnerFileGateway>;
-    workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
-    workspaceSettings?: Omit<ReturnType<typeof defaultWorkspaceSettings>, "session"> & {
-      session: unknown;
-    };
-    workspaceTrustGateway?: WorkspaceTrustGateway;
-  } = {}) {
-    let workbench: WorkbenchController | null = null;
-    const dependencies = createControllerDependencies({
-      appSettings,
-      gitGateway,
-      localHistoryGateway,
-      indexProgressGateway,
-      javaScriptTypeScriptInitialRuntimeStatus,
-      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-      javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-      javaScriptTypeScriptLanguageServerFeaturesGateway,
-      javaScriptTypeScriptLanguageServerPlan,
-      javaScriptTypeScriptLanguageServerRuntimeGateway,
-      javaScriptTypeScriptRuntimeStatus,
-      languageServerGateway,
-      languageServerPlan,
-      languageServerDiagnosticsGateway,
-      languageServerDocumentSyncGateway,
-      languageServerFeaturesGateway,
-      languageServerRuntimeGateway,
-      phpToolGateway,
-      projectSymbols,
-      prompter,
-      readDirectory,
-      readTextFile,
-      runtimeStatus,
-      searchFiles,
-      searchText,
-      replaceInPath,
-      settingsGateway,
-      smartModeGateway,
-      workspaceDetectionGateway,
-      workspaceDescriptor,
-      workspaceFileChangeGateway,
-      workspaceIdentityGateway,
-      workspaceFiles,
-      workspaceRuntimeLifecycleGateway,
-      workspaceSettings: {
-        ...workspaceSettings,
-        session: normalizeWorkspaceSession(workspaceSettings.session),
-      },
-      workspaceTrustGateway,
-    });
-    dependencies.controllerOptions.markdownPreviewRenderer = markdownPreviewRenderer;
-    dependencies.controllerOptions.editorGroupFocusRunner = editorGroupFocusRunner;
-    dependencies.controllerOptions.prettierFormattingGateway = prettierFormattingGateway;
-    dependencies.controllerOptions.debugBreakpointStorage = debugBreakpointStorage;
-    dependencies.controllerOptions.debugGateway = debugGateway;
-    const getWorkbench = () => {
-      if (!workbench) {
-        throw new Error("Workbench controller was not rendered.");
-      }
-
-      return workbench;
-    };
-
-    act(() => {
-      root.render(
-        <WorkbenchHarness
-          dependencies={dependencies}
-          onWorkbench={(nextWorkbench) => {
-            workbench = nextWorkbench;
-          }}
-        />,
-      );
-    });
-
-    return { dependencies, getWorkbench };
-  }
-
   describe("bookmarks", () => {
     it("toggles a bookmark at the active cursor line capturing the line preview", async () => {
       const readTextFile = vi.fn(async () => "line one\nline two\nline three\n");
@@ -73604,483 +73327,8 @@ MissingClass::class;
   });
 });
 
-function WorkbenchHarness({
-  dependencies,
-  onWorkbench,
-}: {
-  dependencies: ControllerDependencies;
-  onWorkbench(workbench: WorkbenchController): void;
-}) {
-  const workbench = useWorkbenchController(
-    dependencies.workspaceGateways,
-    dependencies.smartModeGateway,
-    dependencies.workspaceTrustGateway,
-    dependencies.indexProgressGateway,
-    dependencies.phpFileOutlineGateway,
-    dependencies.phpTreeGateway,
-    dependencies.gitGateway,
-    dependencies.localHistoryGateway,
-    dependencies.languageServerGateway,
-    dependencies.languageServerRuntimeGateway,
-    dependencies.languageServerDocumentSyncGateway,
-    dependencies.languageServerDiagnosticsGateway,
-    dependencies.languageServerFeaturesGateway,
-    dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
-    dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-    dependencies.javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-    dependencies.javaScriptTypeScriptLanguageServerFeaturesGateway,
-    dependencies.workspaceRuntimeLifecycleGateway,
-    dependencies.terminalGateway,
-    dependencies.settingsGateway,
-    dependencies.prompter,
-    dependencies.controllerOptions,
-  );
-
-  useEffect(() => {
-    onWorkbench(workbench);
-  }, [onWorkbench, workbench]);
-
-  return null;
-}
-
 function completion(fields: Record<string, unknown>) {
   return expect.objectContaining(fields);
-}
-
-// jsdom's requestAnimationFrame only fires after a macrotask, which the
-// microtask-based `flushAsyncTurns` helper never advances. Tests therefore drive
-// the diagnostics coalescer through a microtask scheduler so a single
-// `flushAsyncTurns()` after `publishDiagnostics` still applies the batch, exactly
-// as production applies it one frame later.
-let microtaskFlushSequence: Promise<void> = Promise.resolve();
-const microtaskDiagnosticsFlushScheduler: DiagnosticsFlushScheduler = (() => {
-  let nextHandle = 1;
-  const cancelled = new Set<number>();
-  return {
-    cancel: (handle: number) => {
-      cancelled.add(handle);
-    },
-    schedule: (flush: () => void): number => {
-      const handle = nextHandle;
-      nextHandle += 1;
-      microtaskFlushSequence = microtaskFlushSequence.then(() => {
-        if (cancelled.has(handle)) {
-          cancelled.delete(handle);
-          return;
-        }
-
-        flush();
-      });
-      return handle;
-    },
-  };
-})();
-
-// In-memory Local History gateway for controller tests: exercises the real
-// dedupe (identical-to-latest is a no-op), newest-first listing, and content
-// read behaviour against real collaborators, with no Tauri/disk involvement.
-function createInMemoryLocalHistoryGateway(): LocalHistoryGateway {
-  const buckets = new Map<string, LocalHistoryVersion[]>();
-  const contents = new Map<string, string>();
-  const lastContent = new Map<string, string>();
-  let sequence = 0;
-
-  const key = (rootPath: string, relativePath: string) => `${rootPath}\0${relativePath}`;
-
-  return {
-    recordSnapshot: vi.fn(async (rootPath: string, relativePath: string, content: string) => {
-      const bucketKey = key(rootPath, relativePath);
-
-      if (lastContent.get(bucketKey) === content) {
-        return null;
-      }
-
-      sequence += 1;
-      const version: LocalHistoryVersion = {
-        id: `${sequence}`.padStart(12, "0"),
-        sizeBytes: content.length,
-        timestampMs: 1_700_000_000_000 + sequence,
-      };
-      const existing = buckets.get(bucketKey) ?? [];
-      existing.push(version);
-      buckets.set(bucketKey, existing);
-      contents.set(`${bucketKey}\0${version.id}`, content);
-      lastContent.set(bucketKey, content);
-      return version;
-    }),
-    listVersions: vi.fn(async (rootPath: string, relativePath: string) => {
-      const bucket = buckets.get(key(rootPath, relativePath)) ?? [];
-      return [...bucket].reverse();
-    }),
-    readVersion: vi.fn(async (rootPath: string, relativePath: string, versionId: string) => {
-      const bucketKey = key(rootPath, relativePath);
-      const content = contents.get(`${bucketKey}\0${versionId}`);
-
-      if (content === undefined) {
-        throw new Error(`Unknown local history version: ${versionId}`);
-      }
-
-      return content;
-    }),
-  };
-}
-
-function createControllerDependencies({
-  appSettings,
-  gitGateway,
-  localHistoryGateway,
-  indexProgressGateway,
-  javaScriptTypeScriptInitialRuntimeStatus,
-  javaScriptTypeScriptLanguageServerDiagnosticsGateway,
-  javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-  javaScriptTypeScriptLanguageServerFeaturesGateway,
-  javaScriptTypeScriptLanguageServerPlan,
-  javaScriptTypeScriptLanguageServerRuntimeGateway,
-  javaScriptTypeScriptRuntimeStatus,
-  languageServerGateway,
-  languageServerPlan,
-  languageServerFeaturesGateway,
-  languageServerDiagnosticsGateway,
-  languageServerDocumentSyncGateway,
-  languageServerRuntimeGateway,
-  phpToolGateway,
-  projectSymbols,
-  prompter,
-  readDirectory,
-  readTextFile,
-  runtimeStatus,
-  searchFiles,
-  searchText,
-  replaceInPath,
-  settingsGateway,
-  smartModeGateway,
-  workspaceDetectionGateway,
-  workspaceDescriptor,
-  workspaceFileChangeGateway,
-  workspaceIdentityGateway,
-  workspaceFiles,
-  workspaceRuntimeLifecycleGateway,
-  workspaceSettings,
-  workspaceTrustGateway,
-}: {
-  appSettings: ReturnType<typeof defaultAppSettings>;
-  gitGateway?: GitGateway;
-  localHistoryGateway?: LocalHistoryGateway;
-  indexProgressGateway?: IndexProgressGateway;
-  javaScriptTypeScriptInitialRuntimeStatus: LanguageServerRuntimeStatus;
-  javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
-  javaScriptTypeScriptLanguageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
-  javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
-  javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
-  javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
-  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus;
-  languageServerGateway?: LanguageServerGateway;
-  languageServerPlan?: LanguageServerPlan;
-  languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
-  languageServerDocumentSyncGateway?: SessionBoundLanguageServerDocumentSyncGateway;
-  languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
-  languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
-  phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
-  projectSymbols: ProjectSymbolSearchResult[];
-  prompter?: WorkbenchPrompter;
-  readDirectory?: (path: string) => Promise<FileEntry[]>;
-  readTextFile(path: string): Promise<string>;
-  runtimeStatus: LanguageServerRuntimeStatus;
-  searchFiles(root: string, query: string, limit: number): Promise<FileSearchResult[]>;
-  searchText?(root: string, query: string, limit: number): Promise<TextSearchResult[]>;
-  replaceInPath?(
-    root: string,
-    query: string,
-    replacement: string,
-    options?: TextSearchOptions,
-    scopePath?: string,
-  ): Promise<ReplaceInPathResult>;
-  settingsGateway?: SettingsGateway;
-  smartModeGateway?: SmartModeGateway;
-  workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
-  workspaceDescriptor?: WorkspaceDescriptor;
-  workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
-  workspaceIdentityGateway?: WorkbenchWorkspaceGateways["identity"];
-  workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"] & WorkspaceOwnerFileGateway>;
-  workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
-  workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
-  workspaceTrustGateway?: WorkspaceTrustGateway;
-}): ControllerDependencies {
-  const defaultDocumentSyncGateway = documentSyncGatewayMock();
-  const phpDocumentSyncGateway = languageServerDocumentSyncGateway ?? defaultDocumentSyncGateway;
-  const javaScriptTypeScriptDocumentSyncGateway =
-    javaScriptTypeScriptLanguageServerDocumentSyncGateway ?? defaultDocumentSyncGateway;
-  const controllerOptions: WorkbenchControllerOptions = {
-    diagnosticsFlushScheduler: microtaskDiagnosticsFlushScheduler,
-  };
-  const workspaceGateways: WorkbenchWorkspaceGateways = {
-    identity: workspaceIdentityGateway ?? {
-      getDescriptor: vi.fn(),
-      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
-      unregister: vi.fn(async () => undefined),
-    },
-    detection: workspaceDetectionGateway ?? {
-      detectWorkspace: vi.fn(async (path) => ({
-        javaScriptTypeScript: workspaceDescriptor?.javaScriptTypeScript ?? null,
-        php: workspaceDescriptor?.php ?? null,
-        rootPath: path,
-      })),
-    },
-    fileChanges: workspaceFileChangeGateway ?? {
-      startWatching: vi.fn(async () => undefined),
-      subscribeFileChanges: vi.fn(async () => () => undefined),
-    },
-    fileSearch: {
-      searchFiles,
-    },
-    files: {
-      applyWorkspaceEdit: vi.fn(async () => 0),
-      createDirectory: vi.fn(async () => undefined),
-      createTextFile: vi.fn(async () => undefined),
-      deletePath: vi.fn(async () => undefined),
-      readDirectory: vi.fn(readDirectory ?? (async () => [])),
-      readTextFile,
-      renamePath: vi.fn(async () => undefined),
-      writeTextFile: vi.fn(async () => undefined),
-      ...workspaceFiles,
-    },
-    phpTools: phpToolGateway ?? {
-      detectPhpTools: vi.fn(async () => ({
-        intelephense: null,
-        phpactor: null,
-      })),
-      installManagedPhpactor: vi.fn(async () => undefined),
-      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
-    },
-    projectSymbols: {
-      searchProjectSymbols: vi.fn(async () => projectSymbols),
-    },
-    textSearch: {
-      searchText: vi.fn(searchText ?? (async () => [])),
-      replaceInPath: vi.fn(replaceInPath ?? (async () => ({ files: [], totalReplacements: 0 }))),
-    },
-  };
-
-  return {
-    controllerOptions,
-    documentSyncGateway: phpDocumentSyncGateway,
-    gitGateway: gitGateway ?? {
-      blame: vi.fn(async () => []),
-      fileHistory: vi.fn(async () => []),
-      fileCommitDiff: vi.fn(async (_rootPath, relativePath) => ({
-        change: {
-          isStaged: false,
-          isUnversioned: false,
-          oldPath: null,
-          oldRelativePath: null,
-          path: relativePath,
-          relativePath,
-          status: "modified" as const,
-        },
-        language: "plaintext",
-        modifiedContent: "",
-        originalContent: "",
-      })),
-      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      getDiff: vi.fn(async (_rootPath, change) => ({
-        change,
-        language: "plaintext",
-        modifiedContent: "",
-        originalContent: "",
-      })),
-      getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      getFileHunks: vi.fn(async () => []),
-      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      stageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      unstageHunk: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      stashSave: vi.fn(async () => undefined),
-      stashList: vi.fn(async () => []),
-      stashApply: vi.fn(async () => undefined),
-      stashPop: vi.fn(async () => undefined),
-      stashShow: vi.fn(async () => ""),
-      stashDrop: vi.fn(async () => undefined),
-      branchList: vi.fn(async () => []),
-      currentBranch: vi.fn(async () => null),
-      createBranch: vi.fn(async () => undefined),
-      switchBranch: vi.fn(async () => undefined),
-    },
-    localHistoryGateway: localHistoryGateway ?? createInMemoryLocalHistoryGateway(),
-    indexProgressGateway: indexProgressGateway ?? {
-      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "cleared" as const,
-      })),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "started" as const,
-      })),
-      startReindex: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "started" as const,
-      })),
-      subscribeIndexProgress: vi.fn(async () => () => undefined),
-      subscribeMetadataScanCompletion: vi.fn(async () => () => undefined),
-    },
-    languageServerDiagnosticsGateway: languageServerDiagnosticsGateway ?? {
-      subscribeDiagnostics: vi.fn(async () => () => undefined),
-    },
-    languageServerDocumentSyncGateway: phpDocumentSyncGateway,
-    languageServerFeaturesGateway: languageServerFeaturesGateway ?? featuresGateway(),
-    languageServerGateway: languageServerGateway ?? {
-      planJavaScriptTypeScriptLanguageServer: vi.fn(
-        async () =>
-          javaScriptTypeScriptLanguageServerPlan ??
-          ({
-            command: null,
-            initializeRequest: null,
-            message: "JavaScript/TypeScript language server unavailable in test.",
-            provider: "typeScriptLanguageServer" as const,
-            status: "unavailable" as const,
-          } satisfies LanguageServerPlan),
-      ),
-      planPhpLanguageServer: vi.fn(
-        async () =>
-          languageServerPlan ?? {
-            command: null,
-            initializeRequest: null,
-            message: "Language server unavailable in test.",
-            provider: "phpactor" as const,
-            status: "unavailable" as const,
-          },
-      ),
-    },
-    languageServerRuntimeGateway: languageServerRuntimeGateway ?? {
-      getStatus: vi.fn(async (rootPath) => runtimeStatusWithRootForTest(runtimeStatus, rootPath)),
-      openLog: vi.fn(async () => null),
-      start: vi.fn(async (rootPath) => runtimeStatusWithRootForTest(runtimeStatus, rootPath)),
-      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
-      subscribeStatus: vi.fn(async () => () => undefined),
-    },
-    javaScriptTypeScriptLanguageServerDiagnosticsGateway:
-      javaScriptTypeScriptLanguageServerDiagnosticsGateway ?? {
-        subscribeDiagnostics: vi.fn(async () => () => undefined),
-      },
-    javaScriptTypeScriptLanguageServerDocumentSyncGateway: javaScriptTypeScriptDocumentSyncGateway,
-    javaScriptTypeScriptLanguageServerFeaturesGateway:
-      javaScriptTypeScriptLanguageServerFeaturesGateway ?? featuresGateway(),
-    javaScriptTypeScriptLanguageServerRuntimeGateway:
-      javaScriptTypeScriptLanguageServerRuntimeGateway ?? {
-        getStatus: vi.fn(async (rootPath) =>
-          runtimeStatusWithRootForTest(javaScriptTypeScriptInitialRuntimeStatus, rootPath),
-        ),
-        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
-        start: vi.fn(async (rootPath) =>
-          runtimeStatusWithRootForTest(javaScriptTypeScriptRuntimeStatus, rootPath),
-        ),
-        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
-        subscribeStatus: vi.fn(async () => () => undefined),
-      },
-    phpFileOutlineGateway: {
-      getPhpFileOutline: vi.fn(async () => ({ nodes: [] })),
-      parsePhpFileOutline: vi.fn(async () => ({ nodes: [] })),
-    },
-    phpTreeGateway: {
-      getPhpTree: vi.fn(async () => ({ nodes: [] })),
-    },
-    prompter: prompter ?? {
-      confirm: vi.fn(() => true),
-      prompt: vi.fn(() => null),
-    },
-    settingsGateway: settingsGateway ?? {
-      loadAppSettings: vi.fn(async () => appSettings),
-      loadWorkspaceSettings: vi.fn(async () => workspaceSettings),
-      saveAppSettings: vi.fn(async () => undefined),
-      saveWorkspaceSettings: vi.fn(async () => undefined),
-    },
-    smartModeGateway: smartModeGateway ?? {
-      getState: vi.fn(async () => ({
-        message: "Basic",
-        mode: "basic" as const,
-        status: "off" as const,
-      })),
-      setMode: vi.fn(async (_rootPath, mode) => ({
-        message: "Updated",
-        mode,
-        status: "ready" as const,
-      })),
-    },
-    terminalGateway: createStoppedTerminalGateway(),
-    workspaceRuntimeLifecycleGateway: workspaceRuntimeLifecycleGateway ?? {
-      disposeWorkspace: vi.fn(async () => undefined),
-    },
-    workspaceGateways,
-    workspaceTrustGateway: workspaceTrustGateway ?? {
-      getTrust: vi.fn(async (rootPath) => ({
-        rootPath,
-        trusted: true,
-      })),
-      setTrust: vi.fn(async (rootPath, trusted) => ({
-        rootPath,
-        trusted,
-      })),
-    },
-  };
-}
-
-function featuresGateway(): LanguageServerFeaturesGateway {
-  return {
-    codeActions: vi.fn(async () => []),
-    codeLenses: vi.fn(async () => []),
-    completion: vi.fn(async () => ({
-      isIncomplete: false,
-      items: [],
-    })),
-    declaration: vi.fn(async () => []),
-    definition: vi.fn(async () => []),
-    didChangeConfiguration: vi.fn(async () => undefined),
-    didChangeWatchedFiles: vi.fn(async () => undefined),
-    didCreateFiles: vi.fn(async () => undefined),
-    didDeleteFiles: vi.fn(async () => undefined),
-    didRenameFiles: vi.fn(async () => undefined),
-    documentHighlights: vi.fn(async () => []),
-    documentLinks: vi.fn(async () => []),
-    documentSymbols: vi.fn(async () => []),
-    executeCommand: vi.fn(async () => null),
-    executeCommandLocations: vi.fn(async () => []),
-    foldingRanges: vi.fn(async () => []),
-    formatting: vi.fn(async () => []),
-    hover: vi.fn(async () => null),
-    incomingCalls: vi.fn(async () => []),
-    implementation: vi.fn(async () => []),
-    inlayHints: vi.fn(async () => []),
-    resolveInlayHint: vi.fn(async (_rootPath, hint) => hint),
-    linkedEditingRanges: vi.fn(async () => null),
-    onTypeFormatting: vi.fn(async () => []),
-    outgoingCalls: vi.fn(async () => []),
-    prepareCallHierarchy: vi.fn(async () => []),
-    prepareRename: vi.fn(async () => null),
-    prepareTypeHierarchy: vi.fn(async () => []),
-    rangeFormatting: vi.fn(async () => []),
-    rangeSemanticTokens: vi.fn(async () => null),
-    references: vi.fn(async () => []),
-    rename: vi.fn(async () => null),
-    selectionRanges: vi.fn(async () => []),
-    semanticTokens: vi.fn(async () => null),
-    signatureHelp: vi.fn(async () => null),
-    sourceDefinition: vi.fn(async () => []),
-    typeDefinition: vi.fn(async () => []),
-    typeHierarchySubtypes: vi.fn(async () => []),
-    typeHierarchySupertypes: vi.fn(async () => []),
-    willCreateFiles: vi.fn(async () => null),
-    willDeleteFiles: vi.fn(async () => null),
-    willRenameFiles: vi.fn(async () => null),
-    workspaceSymbols: vi.fn(async () => []),
-    resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
-    resolveCodeAction: vi.fn(async (_rootPath, action) => action),
-    resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
-    resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
-  };
 }
 
 function readyJavaScriptTypeScriptPlan(rootPath: string): LanguageServerPlan {
@@ -74116,13 +73364,6 @@ function trustedDescriptor(workspaceId: string, root: string) {
   };
 }
 
-function runtimeStatusWithRootForTest(
-  status: LanguageServerRuntimeStatus,
-  rootPath: string,
-): LanguageServerRuntimeStatus {
-  return status.rootPath ? status : { ...status, rootPath };
-}
-
 function runningStatus(rootPath: string, sessionId: number): LanguageServerRuntimeStatus {
   return {
     capabilities: emptyLanguageServerCapabilities(),
@@ -74149,25 +73390,6 @@ function createDeferred<T>(): Deferred<T> {
       resolveValue?.(value);
     },
   };
-}
-
-function documentSyncGatewayMock(): LanguageServerDocumentSyncGateway &
-  SessionBoundLanguageServerDocumentSyncGateway {
-  return {
-    [sessionBoundLanguageServerDocumentSyncGateway]: true,
-    didChange: vi.fn(async () => undefined),
-    didClose: vi.fn(async () => undefined),
-    didOpen: vi.fn(async () => undefined),
-    didSave: vi.fn(async () => undefined),
-  };
-}
-
-async function flushAsyncTurns(count = 12): Promise<void> {
-  await act(async () => {
-    for (let index = 0; index < count; index += 1) {
-      await Promise.resolve();
-    }
-  });
 }
 
 async function flushWorkspaceDirectoryRefresh(): Promise<void> {
@@ -74309,24 +73531,6 @@ function netteWorkspaceDescriptor(): WorkspaceDescriptor {
       },
     ],
   });
-}
-
-function javaScriptTypeScriptWorkspaceDescriptor(): WorkspaceDescriptor {
-  return {
-    javaScriptTypeScript: {
-      frameworks: [],
-      hasJsconfig: false,
-      hasPackageJson: true,
-      hasTsconfig: true,
-      packageManager: "npm",
-      packageName: "app",
-      typeScriptDependencyVersion: "^5.0.0",
-      usesTypeScript: true,
-      workspaceTypeScriptVersion: "5.0.0",
-    },
-    php: null,
-    rootPath: "/workspace",
-  };
 }
 
 function phpProjectDescriptor(overrides: Partial<PhpProjectDescriptor> = {}): PhpProjectDescriptor {

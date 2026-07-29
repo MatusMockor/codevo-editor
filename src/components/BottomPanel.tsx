@@ -45,10 +45,7 @@ interface ProblemsExpressRoutesPanelProps extends ExpressRoutesPanelProps {
 
 type ProblemsWorkspacePackageDiscovery = Pick<
   WorkspacePackageDiscovery,
-  | "authority"
-  | "incompleteDirectories"
-  | "packageManifests"
-  | "unscopedAuthorityUncertain"
+  "authority" | "incompleteDirectories" | "packageManifests" | "unscopedAuthorityUncertain"
 >;
 
 function problemsPackageAuthority(
@@ -64,6 +61,7 @@ function problemsPackageAuthority(
 interface BottomPanelProps {
   activeView: WorkbenchBottomPanelView;
   debug?: ReactNode;
+  search?: ReactNode;
   artisanRoutes?: ArtisanRoute[];
   artisanRoutesError?: string | null;
   artisanRoutesLoading?: boolean;
@@ -139,6 +137,7 @@ const bottomPanelViews: WorkbenchBottomPanelView[] = [
   "history",
   "terminal",
   "debug",
+  "search",
 ];
 const LazyTerminalTabsPanel = lazy(() =>
   import("./TerminalTabsPanel").then((module) => ({
@@ -149,6 +148,7 @@ const LazyTerminalTabsPanel = lazy(() =>
 export function BottomPanel({
   activeView,
   debug,
+  search,
   artisanRoutes = [],
   artisanRoutesError = null,
   artisanRoutesLoading = false,
@@ -280,6 +280,7 @@ export function BottomPanel({
   const activePanel = renderActivePanel({
     activeView: effectiveActiveView,
     debug,
+    search,
     artisanRoutes,
     artisanRoutesError,
     artisanRoutesLoading,
@@ -327,10 +328,9 @@ export function BottomPanel({
     runtimeMode,
     getLatencySnapshot,
     onSoftReindex,
-    workspacePackageDiscovery:
-      hasJsWorkspace
-        ? (workspacePackageDiscovery ?? expressRoutesPanel?.workspacePackageDiscovery)
-        : undefined,
+    workspacePackageDiscovery: hasJsWorkspace
+      ? (workspacePackageDiscovery ?? expressRoutesPanel?.workspacePackageDiscovery)
+      : undefined,
     workspaceRoot,
   });
 
@@ -450,6 +450,15 @@ export function BottomPanel({
         </button>
       </header>
       <div className="bottom-panel-body">
+        {search ? (
+          <div
+            aria-label="Search"
+            hidden={effectiveActiveView !== "search"}
+            role="tabpanel"
+          >
+            {search}
+          </div>
+        ) : null}
         {activePanel}
         {terminalMounted ? (
           <Suspense
@@ -520,6 +529,7 @@ function terminalTabsOwnerKey(ownerKey: string | null, rootPath: string | null):
 interface RenderActivePanelOptions {
   activeView: WorkbenchBottomPanelView;
   debug?: ReactNode;
+  search?: ReactNode;
   artisanRoutes: ArtisanRoute[];
   artisanRoutesError: string | null;
   artisanRoutesLoading: boolean;
@@ -643,6 +653,10 @@ function renderActivePanel({
   workspacePackageDiscovery,
   workspaceRoot,
 }: RenderActivePanelOptions) {
+  if (activeView === "search") {
+    return null;
+  }
+
   if (activeView === "nette") {
     return hasNette && netteWorkspacePanel ? (
       <NetteOperationalWorkspacePanel {...netteWorkspacePanel} />

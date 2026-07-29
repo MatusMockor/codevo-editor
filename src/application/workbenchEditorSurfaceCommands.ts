@@ -3,7 +3,12 @@ import type {
   EditorSurfaceCommandId,
   EditorSurfaceCommandRunner,
 } from "../domain/editorSurfaceCommand";
+import type { LanguageServerFeature } from "../domain/languageServerFeatures";
 import type { Command, CommandContext } from "./commandRegistry";
+import {
+  javaScriptTypeScriptCommandSupports,
+  type JavaScriptTypeScriptFeatureAvailability,
+} from "./workbenchLanguageServerCommandEnablement";
 
 interface WorkbenchEditorSurfaceCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;
@@ -11,6 +16,7 @@ interface WorkbenchEditorSurfaceCommandsOptions {
   canReopenClosedDocument: boolean;
   canRunJavaScriptTypeScriptImportActions?: boolean;
   canRunJavaScriptTypeScriptRefactors?: boolean;
+  javaScriptTypeScriptFeatureAvailability: JavaScriptTypeScriptFeatureAvailability;
   javaScriptTypeScriptImportLanguage?: "javascript" | "typescript" | null;
   saveActiveDocument: Command["run"];
   closeActiveSurface: Command["run"];
@@ -24,6 +30,7 @@ export function workbenchEditorSurfaceCommands({
   canReopenClosedDocument,
   canRunJavaScriptTypeScriptImportActions = false,
   canRunJavaScriptTypeScriptRefactors = false,
+  javaScriptTypeScriptFeatureAvailability,
   javaScriptTypeScriptImportLanguage = null,
   saveActiveDocument,
   closeActiveSurface,
@@ -62,6 +69,7 @@ export function workbenchEditorSurfaceCommands({
         importLanguage,
         javaScriptTypeScriptImportAction,
         javaScriptTypeScriptRefactor,
+        requiredJavaScriptTypeScriptFeature,
         title,
       }) => ({
         id,
@@ -72,6 +80,11 @@ export function workbenchEditorSurfaceCommands({
           if (
             !context.hasActiveDocument ||
             !editorSurfaceCommandRunner ||
+            (requiredJavaScriptTypeScriptFeature !== undefined &&
+              !javaScriptTypeScriptCommandSupports(
+                javaScriptTypeScriptFeatureAvailability,
+                requiredJavaScriptTypeScriptFeature,
+              )) ||
             (javaScriptTypeScriptImportAction && !canRunJavaScriptTypeScriptImportActions) ||
             (javaScriptTypeScriptRefactor && !canRunJavaScriptTypeScriptRefactors) ||
             (importLanguage !== undefined && importLanguage !== javaScriptTypeScriptImportLanguage)
@@ -104,16 +117,19 @@ const editorSurfaceRunnerCommands: ReadonlyArray<{
   importLanguage?: "javascript" | "typescript";
   javaScriptTypeScriptImportAction?: boolean;
   javaScriptTypeScriptRefactor?: boolean;
+  requiredJavaScriptTypeScriptFeature?: LanguageServerFeature;
   title: string;
 }> = [
   {
     category: "Editor",
     id: "editor.quickDefinition",
+    requiredJavaScriptTypeScriptFeature: "definition",
     title: "Quick Definition",
   },
   {
     category: "Editor",
     id: "editor.rename",
+    requiredJavaScriptTypeScriptFeature: "rename",
     title: "Rename Symbol",
   },
   {
@@ -124,11 +140,13 @@ const editorSurfaceRunnerCommands: ReadonlyArray<{
   {
     category: "Editor",
     id: "editor.formatDocument",
+    requiredJavaScriptTypeScriptFeature: "formatting",
     title: "Format Document",
   },
   {
     category: "Editor",
     id: "editor.formatSelection",
+    requiredJavaScriptTypeScriptFeature: "rangeFormatting",
     title: "Format Selection",
   },
   {
@@ -168,6 +186,7 @@ const editorSurfaceRunnerCommands: ReadonlyArray<{
   {
     category: "Editor",
     id: "editor.quickFix",
+    requiredJavaScriptTypeScriptFeature: "codeAction",
     title: "Context Actions",
   },
   {

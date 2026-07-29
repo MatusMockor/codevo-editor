@@ -2,6 +2,7 @@ import type * as Monaco from "monaco-editor";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { modelMatchesWorkspacePath, modelPath } from "./phpMonacoDocumentContext";
 import { MAX_MONACO_DIAGNOSTIC_ITEMS } from "./editorDiagnosticMonacoMappings";
+import { monacoModelRegistry, type MonacoRuntimeRetentionPublisher } from "./monacoModelRegistry";
 
 export const EDITOR_PLACEHOLDER_MODEL_PATH = "inmemory://workbench/empty";
 
@@ -59,8 +60,10 @@ export function disposeUnretainedEditorRuntimeModels(
   workspaceRoot: string | null,
   memberships: readonly EditorRuntimeModelRetention[],
   disposedModels: WeakSet<Monaco.editor.ITextModel> = new WeakSet(),
+  retentionPublisher?: MonacoRuntimeRetentionPublisher,
 ): void {
   const retainPaths = new Set<string>([EDITOR_PLACEHOLDER_MODEL_PATH]);
+  const modelRegistry = monacoModelRegistry(monacoApi);
 
   memberships.forEach((membership) => {
     membership.retainPaths.forEach((path) => retainPaths.add(path));
@@ -68,6 +71,7 @@ export function disposeUnretainedEditorRuntimeModels(
       retainPaths.add(membership.activePath);
     }
   });
+  retentionPublisher?.replace(workspaceRoot, retainPaths);
 
   monacoApi.editor.getModels().forEach((model) => {
     const path = modelPath(model);
@@ -76,6 +80,8 @@ export function disposeUnretainedEditorRuntimeModels(
       !path ||
       !modelMatchesProject(model, workspaceRoot, path) ||
       retainPaths.has(path) ||
+      model.isAttachedToEditor?.() ||
+      modelRegistry.hasActiveLease(model) ||
       disposedModels.has(model)
     ) {
       return;

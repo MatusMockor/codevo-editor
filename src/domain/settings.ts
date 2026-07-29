@@ -1,15 +1,8 @@
 import type { IntelligenceMode } from "./workspace";
-import {
-  defaultKeymapSettings,
-  normalizeKeymapSettings,
-  type KeymapSettings,
-} from "./keymap";
+import { defaultKeymapSettings, normalizeKeymapSettings, type KeymapSettings } from "./keymap";
 import { normalizeUserSnippets, type UserSnippet } from "./snippets";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
-import {
-  gitDirectoryMappingPaths,
-  normalizeGitDirectoryMappings,
-} from "./gitRepositoryMapping";
+import { gitDirectoryMappingPaths, normalizeGitDirectoryMappings } from "./gitRepositoryMapping";
 import {
   defaultLargeSmartDocumentPolicy,
   normalizeLargeSmartDocumentPolicy,
@@ -22,6 +15,13 @@ import {
   type EditorGroupId,
   type EditorGroupsState,
 } from "./editorGroups";
+import { MAX_STACK_DEPTH, type NavigationLocation } from "./navigation";
+import { RECENT_FILES_LIMIT, type RecentFileEntry } from "./recentFiles";
+import {
+  RECENT_LOCATION_SNIPPET_MAX_BYTES,
+  RECENT_LOCATIONS_LIMIT,
+  type RecentLocation,
+} from "./recentLocations";
 
 export const appThemeOptions = [
   { id: "dark", label: "Dark" },
@@ -49,39 +49,19 @@ export type MonacoAppTheme =
   | "catppuccin-latte"
   | "one-light"
   | "dark-plus";
-export type BackgroundRuntimePolicy =
-  | "keepAlive"
-  | "singleActive"
-  | "suspendOnBackground";
+export type BackgroundRuntimePolicy = "keepAlive" | "singleActive" | "suspendOnBackground";
 export type JavaScriptTypeScriptImportModuleSpecifierPreference =
-  | "shortest"
-  | "relative"
-  | "non-relative"
-  | "project-relative";
-export type JavaScriptTypeScriptImportModuleSpecifierEnding =
-  | "auto"
-  | "minimal"
-  | "index"
-  | "js";
+  "shortest" | "relative" | "non-relative" | "project-relative";
+export type JavaScriptTypeScriptImportModuleSpecifierEnding = "auto" | "minimal" | "index" | "js";
 export type JavaScriptTypeScriptQuotePreference = "auto" | "single" | "double";
 export type JavaScriptTypeScriptServiceMode = "auto" | "off";
 export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView =
-  | "index"
-  | "problems"
-  | "history"
-  | "terminal"
-  | "runtime";
+  "index" | "problems" | "history" | "terminal" | "runtime" | "search";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php" | "scripts";
 export type SettingsSection =
-  | "general"
-  | "keymap"
-  | "php"
-  | "git"
-  | "index"
-  | "snippets"
-  | "appearance";
+  "general" | "keymap" | "php" | "git" | "index" | "snippets" | "appearance";
 
 export const defaultEditorFontFamily =
   "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
@@ -111,10 +91,7 @@ const editorFontFamilyAliases = [
   "monospace",
 ] as const;
 const editorFontFamilyAliasesByLower = new Map(
-  editorFontFamilyAliases.map((fontFamily) => [
-    fontFamily.toLowerCase(),
-    fontFamily,
-  ]),
+  editorFontFamilyAliases.map((fontFamily) => [fontFamily.toLowerCase(), fontFamily]),
 );
 const genericEditorFontFamilies = new Set([
   "cursive",
@@ -214,16 +191,27 @@ export interface WorkspaceSettings {
 
 export const WORKSPACE_SESSION_VERSION = 1 as const;
 export const DEFAULT_WORKSPACE_EDITOR_GROUP_ID = "editor-main";
+export const WORKSPACE_SESSION_NAVIGATION_MAX_BYTES = 128 * 1_024;
+export const WORKSPACE_SESSION_PATH_MAX_BYTES = 4 * 1_024;
+export const WORKSPACE_SESSION_NAME_MAX_BYTES = 512;
+export const WORKSPACE_SESSION_SNIPPET_MAX_BYTES = RECENT_LOCATION_SNIPPET_MAX_BYTES;
+export const WORKSPACE_SESSION_POSITION_MAX = 10_000_000;
+export const MAX_RECENT_WORKSPACE_PATHS = 25;
+
+export interface WorkspaceSessionNavigation {
+  backStack: NavigationLocation[];
+  forwardStack: NavigationLocation[];
+  recentFiles: RecentFileEntry[];
+  recentLocations: RecentLocation[];
+}
 
 export interface WorkspaceSessionStateV1 {
   bottomPanelView: WorkspaceSessionBottomPanelView;
   editor: EditorGroupsState;
+  navigation?: WorkspaceSessionNavigation;
   sidebarView: WorkspaceSessionSidebarView;
   version: typeof WORKSPACE_SESSION_VERSION;
-  viewStates?: Record<
-    EditorGroupId,
-    Record<string, WorkspaceSessionViewState>
-  >;
+  viewStates?: Record<EditorGroupId, Record<string, WorkspaceSessionViewState>>;
 }
 
 export type WorkspaceSessionState = WorkspaceSessionStateV1;
@@ -235,9 +223,7 @@ export interface WorkspaceSessionViewState {
   scrollTop?: number;
 }
 
-type WorkspaceSessionGroupViewStates = NonNullable<
-  WorkspaceSessionState["viewStates"]
->;
+type WorkspaceSessionGroupViewStates = NonNullable<WorkspaceSessionState["viewStates"]>;
 
 export interface StatusBarItemVisibility {
   activePath: boolean;
@@ -257,9 +243,7 @@ export interface StatusBarItemVisibility {
 export interface SettingsGateway {
   loadAppSettings(): Promise<AppSettings>;
   saveAppSettings(settings: AppSettings): Promise<void>;
-  loadWorkspaceSettings(
-    identity: string | WorkspaceSettingsIdentity,
-  ): Promise<WorkspaceSettings>;
+  loadWorkspaceSettings(identity: string | WorkspaceSettingsIdentity): Promise<WorkspaceSettings>;
   saveWorkspaceSettings(
     identity: string | WorkspaceSettingsIdentity,
     settings: WorkspaceSettings,
@@ -307,10 +291,7 @@ export function normalizeWorkspaceTabSize(value: unknown): number {
 
   const rounded = Math.floor(value);
 
-  return Math.min(
-    Math.max(rounded, minWorkspaceTabSize),
-    maxWorkspaceTabSize,
-  );
+  return Math.min(Math.max(rounded, minWorkspaceTabSize), maxWorkspaceTabSize);
 }
 
 export function normalizeEditorFontFamily(value: unknown): string {
@@ -323,9 +304,7 @@ export function normalizeEditorFontFamily(value: unknown): string {
     .map((fontFamily) => fontFamily.trim())
     .filter(Boolean)
     .map(
-      (fontFamily) =>
-        editorFontFamilyAliasesByLower.get(fontFamily.toLowerCase()) ??
-        fontFamily,
+      (fontFamily) => editorFontFamilyAliasesByLower.get(fontFamily.toLowerCase()) ?? fontFamily,
     );
 
   if (normalizedFamilies.length === 0) {
@@ -460,10 +439,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
   const wordWrapEnabled = normalizeBoolean(value.wordWrapEnabled, false);
   const userSnippets = normalizeUserSnippets(value.userSnippets);
-  const workspaceTabs = normalizeWorkspaceTabs(
-    value.workspaceTabs,
-    recentWorkspacePath,
-  );
+  const workspaceTabs = normalizeWorkspaceTabs(value.workspaceTabs, recentWorkspacePath);
 
   return {
     editorFontFamily,
@@ -482,6 +458,21 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   };
 }
 
+function isNavigationRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+
+  return !Object.keys(value).some(
+    (key) => key === "__proto__" || key === "constructor" || key === "prototype",
+  );
+}
+
 export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
   const defaults = defaultWorkspaceSettings();
 
@@ -495,10 +486,7 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
         ? value.autoSave
         : defaults.autoSave,
     autoSaveConfigured: true,
-    defaultInsertSpaces: normalizeBoolean(
-      value.defaultInsertSpaces,
-      defaults.defaultInsertSpaces,
-    ),
+    defaultInsertSpaces: normalizeBoolean(value.defaultInsertSpaces, defaults.defaultInsertSpaces),
     defaultTabSize:
       value.defaultTabSize === undefined
         ? defaults.defaultTabSize
@@ -507,23 +495,12 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.extraIgnorePatterns,
       defaults.extraIgnorePatterns,
     ),
-    eslintAnalyseOnSave: normalizeBoolean(
-      value.eslintAnalyseOnSave,
-      defaults.eslintAnalyseOnSave,
-    ),
-    eslintFixOnSave: normalizeBoolean(
-      value.eslintFixOnSave,
-      defaults.eslintFixOnSave,
-    ),
+    eslintAnalyseOnSave: normalizeBoolean(value.eslintAnalyseOnSave, defaults.eslintAnalyseOnSave),
+    eslintFixOnSave: normalizeBoolean(value.eslintFixOnSave, defaults.eslintFixOnSave),
     eslintPath: normalizeNullableString(value.eslintPath, defaults.eslintPath),
-    formatOnPaste: normalizeBoolean(
-      value.formatOnPaste,
-      defaults.formatOnPaste,
-    ),
+    formatOnPaste: normalizeBoolean(value.formatOnPaste, defaults.formatOnPaste),
     formatOnSave: normalizeBoolean(value.formatOnSave, defaults.formatOnSave),
-    gitCommitMessageHistory: normalizeGitCommitMessageHistory(
-      value.gitCommitMessageHistory,
-    ),
+    gitCommitMessageHistory: normalizeGitCommitMessageHistory(value.gitCommitMessageHistory),
     gitDirectoryMappings: gitDirectoryMappingPaths(
       normalizeGitDirectoryMappings(value.gitDirectoryMappings),
     ),
@@ -534,10 +511,7 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     intelligenceMode: isIntelligenceMode(value.intelligenceMode)
       ? value.intelligenceMode
       : defaults.intelligenceMode,
-    intelephensePath: normalizeNullableString(
-      value.intelephensePath,
-      defaults.intelephensePath,
-    ),
+    intelephensePath: normalizeNullableString(value.intelephensePath, defaults.intelephensePath),
     javaScriptTypeScriptAutoImports: normalizeBoolean(
       value.javaScriptTypeScriptAutoImports,
       defaults.javaScriptTypeScriptAutoImports,
@@ -594,12 +568,11 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.javaScriptTypeScriptPreferTypeOnlyAutoImports,
       defaults.javaScriptTypeScriptPreferTypeOnlyAutoImports,
     ),
-    javaScriptTypeScriptQuotePreference:
-      isJavaScriptTypeScriptQuotePreference(
-        value.javaScriptTypeScriptQuotePreference,
-      )
-        ? value.javaScriptTypeScriptQuotePreference
-        : defaults.javaScriptTypeScriptQuotePreference,
+    javaScriptTypeScriptQuotePreference: isJavaScriptTypeScriptQuotePreference(
+      value.javaScriptTypeScriptQuotePreference,
+    )
+      ? value.javaScriptTypeScriptQuotePreference
+      : defaults.javaScriptTypeScriptQuotePreference,
     javaScriptTypeScriptService: isJavaScriptTypeScriptServiceMode(
       value.javaScriptTypeScriptService,
     )
@@ -614,37 +587,23 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     )
       ? value.javaScriptTypeScriptVersion
       : defaults.javaScriptTypeScriptVersion,
-    largeFileMode: normalizeLargeSmartDocumentPolicy(
-      value.largeFileMode,
-      defaults.largeFileMode,
-    ),
+    largeFileMode: normalizeLargeSmartDocumentPolicy(value.largeFileMode, defaults.largeFileMode),
     optimizeImportsOnSave: normalizeBoolean(
       value.optimizeImportsOnSave,
       defaults.optimizeImportsOnSave,
     ),
-    phpBackend: isPhpBackendPreference(value.phpBackend)
-      ? value.phpBackend
-      : defaults.phpBackend,
-    phpInlayHints: normalizeBoolean(
-      value.phpInlayHints,
-      defaults.phpInlayHints,
-    ),
+    phpBackend: isPhpBackendPreference(value.phpBackend) ? value.phpBackend : defaults.phpBackend,
+    phpInlayHints: normalizeBoolean(value.phpInlayHints, defaults.phpInlayHints),
     phpstanAnalyseOnSave: normalizeBoolean(
       value.phpstanAnalyseOnSave,
       defaults.phpstanAnalyseOnSave,
     ),
-    phpstanPath: normalizeNullableString(
-      value.phpstanPath,
-      defaults.phpstanPath,
-    ),
+    phpstanPath: normalizeNullableString(value.phpstanPath, defaults.phpstanPath),
     phpVersionOverride: normalizeNullableString(
       value.phpVersionOverride,
       defaults.phpVersionOverride,
     ),
-    phpactorPath: normalizeNullableString(
-      value.phpactorPath,
-      defaults.phpactorPath,
-    ),
+    phpactorPath: normalizeNullableString(value.phpactorPath, defaults.phpactorPath),
     prettierFormatOnSave: normalizeBoolean(
       value.prettierFormatOnSave,
       defaults.prettierFormatOnSave,
@@ -669,12 +628,15 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
     return defaults;
   }
 
-  const editor = value.version === WORKSPACE_SESSION_VERSION
-    ? normalizeEditorGroupsState(value.editor, DEFAULT_WORKSPACE_EDITOR_GROUP_ID)
-    : migrateLegacyWorkspaceSessionEditor(value);
-  const viewStates = value.version === WORKSPACE_SESSION_VERSION
-    ? normalizeWorkspaceSessionGroupViewStates(value.viewStates, editor)
-    : normalizeLegacyWorkspaceSessionViewStates(value.viewStates, editor);
+  const editor =
+    value.version === WORKSPACE_SESSION_VERSION
+      ? normalizeEditorGroupsState(value.editor, DEFAULT_WORKSPACE_EDITOR_GROUP_ID)
+      : migrateLegacyWorkspaceSessionEditor(value);
+  const viewStates =
+    value.version === WORKSPACE_SESSION_VERSION
+      ? normalizeWorkspaceSessionGroupViewStates(value.viewStates, editor)
+      : normalizeLegacyWorkspaceSessionViewStates(value.viewStates, editor);
+  const navigation = normalizeWorkspaceSessionNavigation(value.navigation);
 
   const normalized: WorkspaceSessionState = {
     bottomPanelView: isWorkspaceSessionBottomPanelView(value.bottomPanelView)
@@ -687,6 +649,10 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
     version: WORKSPACE_SESSION_VERSION,
   };
 
+  if (navigation) {
+    normalized.navigation = navigation;
+  }
+
   if (Object.keys(viewStates).length > 0) {
     normalized.viewStates = viewStates;
   }
@@ -694,14 +660,207 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
   return normalized;
 }
 
-function migrateLegacyWorkspaceSessionEditor(
-  value: Record<string, unknown>,
-): EditorGroupsState {
+export function normalizeWorkspaceSessionNavigation(
+  value: unknown,
+): WorkspaceSessionNavigation | undefined {
+  if (!isNavigationRecord(value)) {
+    return undefined;
+  }
+
+  const normalized: WorkspaceSessionNavigation = {
+    backStack: normalizeNavigationLocations(arrayValue(value.backStack), MAX_STACK_DEPTH),
+    forwardStack: normalizeNavigationLocations(arrayValue(value.forwardStack), MAX_STACK_DEPTH),
+    recentFiles: normalizeRecentFiles(arrayValue(value.recentFiles), RECENT_FILES_LIMIT),
+    recentLocations: normalizeRecentLocations(
+      arrayValue(value.recentLocations),
+      RECENT_LOCATIONS_LIMIT,
+    ),
+  };
+
+  let byteLength = jsonByteLength(normalized);
+  while (byteLength > WORKSPACE_SESSION_NAVIGATION_MAX_BYTES) {
+    if (normalized.forwardStack.length > 0) {
+      byteLength -= removedJsonArrayEntryBytes(normalized.forwardStack);
+      continue;
+    }
+
+    if (normalized.backStack.length > 0) {
+      byteLength -= removedJsonArrayEntryBytes(normalized.backStack, "head");
+      continue;
+    }
+
+    if (normalized.recentLocations.length > 0) {
+      byteLength -= removedJsonArrayEntryBytes(normalized.recentLocations);
+      continue;
+    }
+
+    if (normalized.recentFiles.length > 0) {
+      byteLength -= removedJsonArrayEntryBytes(normalized.recentFiles);
+      continue;
+    }
+
+    break;
+  }
+
+  return normalized;
+}
+
+function arrayValue(value: unknown): unknown[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value;
+}
+
+function normalizeNavigationLocations(value: unknown[], limit: number): NavigationLocation[] {
+  const normalized: NavigationLocation[] = [];
+
+  for (const entry of value.slice(0, limit)) {
+    if (!isRecord(entry) || !hasOnlyKeys(entry, ["path", "position"])) {
+      continue;
+    }
+
+    if (
+      !isBoundedString(entry.path, WORKSPACE_SESSION_PATH_MAX_BYTES, false) ||
+      !isRecord(entry.position) ||
+      !hasOnlyKeys(entry.position, ["column", "lineNumber"]) ||
+      !isBoundedPosition(entry.position.column) ||
+      !isBoundedPosition(entry.position.lineNumber)
+    ) {
+      continue;
+    }
+
+    normalized.push({
+      path: entry.path,
+      position: {
+        column: entry.position.column,
+        lineNumber: entry.position.lineNumber,
+      },
+    });
+  }
+
+  return normalized;
+}
+
+function normalizeRecentFiles(value: unknown[], limit: number): RecentFileEntry[] {
+  const normalized: RecentFileEntry[] = [];
+
+  for (const entry of value.slice(0, limit)) {
+    if (
+      !isRecord(entry) ||
+      !hasOnlyKeys(entry, ["name", "path"]) ||
+      !isBoundedString(entry.name, WORKSPACE_SESSION_NAME_MAX_BYTES, false) ||
+      !isBoundedString(entry.path, WORKSPACE_SESSION_PATH_MAX_BYTES, false)
+    ) {
+      continue;
+    }
+
+    normalized.push({ name: entry.name, path: entry.path });
+  }
+
+  return normalized;
+}
+
+function normalizeRecentLocations(value: unknown[], limit: number): RecentLocation[] {
+  const normalized: RecentLocation[] = [];
+
+  for (const entry of value.slice(0, limit)) {
+    if (
+      !isRecord(entry) ||
+      !hasOnlyKeys(entry, ["column", "line", "name", "path", "relativePath", "snippet"]) ||
+      !isBoundedPosition(entry.column) ||
+      !isBoundedPosition(entry.line) ||
+      !isBoundedString(entry.name, WORKSPACE_SESSION_NAME_MAX_BYTES, false) ||
+      !isBoundedString(entry.path, WORKSPACE_SESSION_PATH_MAX_BYTES, false) ||
+      !isBoundedString(entry.relativePath, WORKSPACE_SESSION_PATH_MAX_BYTES, false) ||
+      typeof entry.snippet !== "string"
+    ) {
+      continue;
+    }
+
+    normalized.push({
+      column: entry.column,
+      line: entry.line,
+      name: entry.name,
+      path: entry.path,
+      relativePath: entry.relativePath,
+      snippet: truncateUtf8(entry.snippet, WORKSPACE_SESSION_SNIPPET_MAX_BYTES),
+    });
+  }
+
+  return normalized;
+}
+
+const textEncoder = new TextEncoder();
+
+export function truncateWorkspaceSessionSnippet(value: string): string {
+  return truncateUtf8(value, WORKSPACE_SESSION_SNIPPET_MAX_BYTES);
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (value.length <= maxBytes && textEncoder.encode(value).byteLength <= maxBytes) {
+    return value;
+  }
+
+  const candidate = value.slice(0, maxBytes);
+  const bytes = new Uint8Array(maxBytes);
+  const { read } = textEncoder.encodeInto(candidate, bytes);
+  return candidate.slice(0, read);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isBoundedString(value: unknown, maxBytes: number, allowEmpty: boolean): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  if (!allowEmpty && value.length === 0) {
+    return false;
+  }
+
+  if (value.length > maxBytes) {
+    return false;
+  }
+
+  return textEncoder.encode(value).byteLength <= maxBytes;
+}
+
+function isBoundedPosition(value: unknown): value is number {
+  return (
+    Number.isInteger(value) &&
+    typeof value === "number" &&
+    value > 0 &&
+    value <= WORKSPACE_SESSION_POSITION_MAX
+  );
+}
+
+function jsonByteLength(value: unknown): number {
+  try {
+    return textEncoder.encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function removedJsonArrayEntryBytes<T>(entries: T[], end: "head" | "tail" = "tail"): number {
+  const previousLength = entries.length;
+  const removed = end === "head" ? entries.shift() : entries.pop();
+  if (removed === undefined) {
+    return 0;
+  }
+
+  return textEncoder.encode(JSON.stringify(removed)).byteLength + (previousLength > 1 ? 1 : 0);
+}
+
+function migrateLegacyWorkspaceSessionEditor(value: Record<string, unknown>): EditorGroupsState {
   const openPaths = normalizePathList(value.openPaths);
   const previewPath = normalizeSessionPreviewPath(value.previewPath, openPaths);
-  const pinnedPaths = previewPath
-    ? openPaths.filter((path) => path !== previewPath)
-    : openPaths;
+  const pinnedPaths = previewPath ? openPaths.filter((path) => path !== previewPath) : openPaths;
   const visiblePaths = previewPath ? [...pinnedPaths, previewPath] : pinnedPaths;
   const activePath = normalizeSessionActivePath(value.activePath, visiblePaths);
 
@@ -740,19 +899,14 @@ function normalizeWorkspaceSessionGroupViewStates(
       const visiblePaths = group.previewPath
         ? [...group.openPaths, group.previewPath]
         : group.openPaths;
-      const normalized = normalizeWorkspaceSessionViewStates(
-        value[groupId],
-        visiblePaths,
-      );
+      const normalized = normalizeWorkspaceSessionViewStates(value[groupId], visiblePaths);
 
       return Object.keys(normalized).length > 0 ? [[groupId, normalized]] : [];
     }),
   );
 }
 
-export function normalizeStatusBarItemVisibility(
-  value: unknown,
-): StatusBarItemVisibility {
+export function normalizeStatusBarItemVisibility(value: unknown): StatusBarItemVisibility {
   const defaults = defaultStatusBarItemVisibility();
 
   if (!isRecord(value)) {
@@ -761,32 +915,17 @@ export function normalizeStatusBarItemVisibility(
 
   return {
     activePath: normalizeBoolean(value.activePath, defaults.activePath),
-    cursorPosition: normalizeBoolean(
-      value.cursorPosition,
-      defaults.cursorPosition,
-    ),
+    cursorPosition: normalizeBoolean(value.cursorPosition, defaults.cursorPosition),
     dirtyCount: normalizeBoolean(value.dirtyCount, defaults.dirtyCount),
     gitBranch: normalizeBoolean(value.gitBranch, defaults.gitBranch),
     index: normalizeBoolean(value.index, defaults.index),
     language: normalizeBoolean(value.language, defaults.language),
-    largeFileMode: normalizeBoolean(
-      value.largeFileMode,
-      defaults.largeFileMode,
-    ),
-    languageServer: normalizeBoolean(
-      value.languageServer,
-      defaults.languageServer,
-    ),
+    largeFileMode: normalizeBoolean(value.largeFileMode, defaults.largeFileMode),
+    languageServer: normalizeBoolean(value.languageServer, defaults.languageServer),
     message: normalizeBoolean(value.message, defaults.message),
     mode: normalizeBoolean(value.mode, defaults.mode),
-    workspaceInfo: normalizeBoolean(
-      value.workspaceInfo,
-      defaults.workspaceInfo,
-    ),
-    workspaceTrust: normalizeBoolean(
-      value.workspaceTrust,
-      defaults.workspaceTrust,
-    ),
+    workspaceInfo: normalizeBoolean(value.workspaceInfo, defaults.workspaceInfo),
+    workspaceTrust: normalizeBoolean(value.workspaceTrust, defaults.workspaceTrust),
   };
 }
 
@@ -823,10 +962,7 @@ export interface TerminalTheme {
   yellow: string;
 }
 
-export function resolveAppTheme(
-  theme: AppTheme,
-  prefersLight: boolean,
-): ResolvedAppTheme {
+export function resolveAppTheme(theme: AppTheme, prefersLight: boolean): ResolvedAppTheme {
   if (theme === "light") {
     return "light";
   }
@@ -838,10 +974,7 @@ export function resolveAppTheme(
   return "dark";
 }
 
-export function monacoThemeForAppTheme(
-  theme: AppTheme,
-  prefersLight = false,
-): MonacoAppTheme {
+export function monacoThemeForAppTheme(theme: AppTheme, prefersLight = false): MonacoAppTheme {
   if (theme === "ayuMirage") {
     return "ayu-mirage";
   }
@@ -881,10 +1014,7 @@ export function monacoThemeForAppTheme(
   return "calm-dark";
 }
 
-export function terminalThemeForAppTheme(
-  theme: AppTheme,
-  prefersLight = false,
-): TerminalTheme {
+export function terminalThemeForAppTheme(theme: AppTheme, prefersLight = false): TerminalTheme {
   if (theme === "ayuMirage") {
     return {
       background: "#1f2430",
@@ -1142,23 +1272,15 @@ function isAppTheme(value: unknown): value is AppTheme {
   return appThemeOptions.some((option) => option.id === value);
 }
 
-function isBackgroundRuntimePolicy(
-  value: unknown,
-): value is BackgroundRuntimePolicy {
-  return (
-    value === "keepAlive" ||
-    value === "singleActive" ||
-    value === "suspendOnBackground"
-  );
+function isBackgroundRuntimePolicy(value: unknown): value is BackgroundRuntimePolicy {
+  return value === "keepAlive" || value === "singleActive" || value === "suspendOnBackground";
 }
 
 function isIntelligenceMode(value: unknown): value is IntelligenceMode {
   return value === "basic" || value === "lightSmart" || value === "fullSmart";
 }
 
-function isPhpBackendPreference(
-  value: unknown,
-): value is PhpBackendPreference {
+function isPhpBackendPreference(value: unknown): value is PhpBackendPreference {
   return value === "auto" || value === "phpactor" || value === "intelephense";
 }
 
@@ -1182,12 +1304,7 @@ function isJavaScriptTypeScriptImportModuleSpecifierPreference(
 function isJavaScriptTypeScriptImportModuleSpecifierEnding(
   value: unknown,
 ): value is JavaScriptTypeScriptImportModuleSpecifierEnding {
-  return (
-    value === "auto" ||
-    value === "minimal" ||
-    value === "index" ||
-    value === "js"
-  );
+  return value === "auto" || value === "minimal" || value === "index" || value === "js";
 }
 
 function isJavaScriptTypeScriptQuotePreference(
@@ -1210,20 +1327,16 @@ function isWorkspaceSessionBottomPanelView(
     value === "problems" ||
     value === "history" ||
     value === "terminal" ||
-    value === "runtime"
+    value === "runtime" ||
+    value === "search"
   );
 }
 
-function isWorkspaceSessionSidebarView(
-  value: unknown,
-): value is WorkspaceSessionSidebarView {
+function isWorkspaceSessionSidebarView(value: unknown): value is WorkspaceSessionSidebarView {
   return value === "files" || value === "git" || value === "php" || value === "scripts";
 }
 
-function normalizeNullableString(
-  value: unknown,
-  fallback: string | null,
-): string | null {
+function normalizeNullableString(value: unknown, fallback: string | null): string | null {
   if (value === undefined) {
     return fallback;
   }
@@ -1249,10 +1362,7 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-function normalizePatternList(
-  value: unknown,
-  fallback: string[],
-): string[] {
+function normalizePatternList(value: unknown, fallback: string[]): string[] {
   if (!Array.isArray(value)) {
     return fallback;
   }
@@ -1293,13 +1403,10 @@ function normalizePathList(value: unknown): string[] {
 }
 
 export function normalizeRecentWorkspacePaths(value: unknown): string[] {
-  return normalizePathList(value).slice(0, 10);
+  return normalizePathList(value).slice(0, MAX_RECENT_WORKSPACE_PATHS);
 }
 
-export function pushRecentWorkspacePath(
-  currentPaths: unknown,
-  path: string,
-): string[] {
+export function pushRecentWorkspacePath(currentPaths: unknown, path: string): string[] {
   const normalizedPath = path.trim();
   const current = normalizeRecentWorkspacePaths(currentPaths);
 
@@ -1312,13 +1419,10 @@ export function pushRecentWorkspacePath(
     (currentPath) => normalizedWorkspaceRootKey(currentPath) !== key,
   );
 
-  return [normalizedPath, ...remaining].slice(0, 10);
+  return [normalizedPath, ...remaining].slice(0, MAX_RECENT_WORKSPACE_PATHS);
 }
 
-function normalizeWorkspaceTabs(
-  value: unknown,
-  recentWorkspacePath: string | null,
-): string[] {
+function normalizeWorkspaceTabs(value: unknown, recentWorkspacePath: string | null): string[] {
   const tabs = normalizePathList(value);
 
   if (!recentWorkspacePath) {
@@ -1328,8 +1432,7 @@ function normalizeWorkspaceTabs(
   if (
     tabs.some(
       (path) =>
-        normalizedWorkspaceRootKey(path) ===
-        normalizedWorkspaceRootKey(recentWorkspacePath),
+        normalizedWorkspaceRootKey(path) === normalizedWorkspaceRootKey(recentWorkspacePath),
     )
   ) {
     return tabs;
@@ -1338,10 +1441,7 @@ function normalizeWorkspaceTabs(
   return [...tabs, recentWorkspacePath];
 }
 
-function normalizeSessionActivePath(
-  value: unknown,
-  openPaths: string[],
-): string | null {
+function normalizeSessionActivePath(value: unknown, openPaths: string[]): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -1355,10 +1455,7 @@ function normalizeSessionActivePath(
   return activePath;
 }
 
-function normalizeSessionPreviewPath(
-  value: unknown,
-  openPaths: string[],
-): string | null {
+function normalizeSessionPreviewPath(value: unknown, openPaths: string[]): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -1414,9 +1511,7 @@ function normalizeWorkspaceSessionViewStates(
       column: viewState.column,
       ...(foldedLines.length === 0 ? {} : { foldedLines }),
       line: viewState.line,
-      ...(viewState.scrollTop === undefined
-        ? {}
-        : { scrollTop: viewState.scrollTop }),
+      ...(viewState.scrollTop === undefined ? {} : { scrollTop: viewState.scrollTop }),
     };
   }
 

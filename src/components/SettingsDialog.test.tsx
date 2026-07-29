@@ -1471,6 +1471,34 @@ describe("SettingsDialog", () => {
     );
   });
 
+  it("warns about reserved MRU shortcuts without rendering editable MRU rows", async () => {
+    await act(async () => {
+      root.render(
+        <KeymapSettingsPanel
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings("mac"),
+              "editor.save": "Ctrl+Tab",
+            },
+          }}
+          onChangeShortcut={vi.fn()}
+          platform="mac"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const labels = Array.from(host.querySelectorAll(".keymap-field strong")).map(
+      (label) => label.textContent,
+    );
+    expect(labels).not.toContain("Open Next Recently Used Editor");
+    expect(labels).not.toContain("Open Previous Recently Used Editor");
+    expect(keymapConflictWarning("Save File")?.textContent).toContain(
+      "Also used by Open Next Recently Used Editor",
+    );
+  });
+
   it("does not hijack Shift+Tab or Shift-typed characters in a keymap field", async () => {
     const onSave = vi.fn(async () => undefined);
 

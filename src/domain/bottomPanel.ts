@@ -5,6 +5,7 @@ export type BottomPanelView =
   | "terminal"
   | "runtime"
   | "debug"
+  | "search"
   | "expressRoutes"
   | "packages"
   | "nette"
@@ -29,6 +30,10 @@ export function bottomPanelLabel(view: BottomPanelView): string {
 
   if (view === "debug") {
     return "Debug";
+  }
+
+  if (view === "search") {
+    return "Search";
   }
 
   if (view === "expressRoutes") {

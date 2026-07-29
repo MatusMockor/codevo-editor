@@ -8,6 +8,10 @@ import {
   LARGE_SMART_DOCUMENT_STATUS_TITLE,
 } from "../domain/largeDocumentPolicy";
 import { defaultStatusBarItemVisibility } from "../domain/settings";
+import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import { DocumentSessionStore } from "../application/documentSessionStore";
+import { createDocumentSaveIdentity } from "../application/documentSaveIdentity";
+import { createEditorOwnerDirtyCountProjection } from "../application/editorSessionDirtyProjection";
 import { StatusBar } from "./StatusBar";
 
 describe("StatusBar", () => {
@@ -52,6 +56,74 @@ describe("StatusBar", () => {
     expect(activity?.classList.contains("active")).toBe(true);
     expect(host.textContent).not.toContain("PHPactor: running");
     expect(host.textContent).not.toContain("Index: 608 files");
+  });
+
+  it("merges exact dirty state conservatively until legacy projection retirement", async () => {
+    const store = new DocumentSessionStore();
+    const owner = store.activateOwner({
+      canonicalRoot: "/workspace",
+      ownerKey: createWorkspaceEditorSessionOwnerKey("/workspace"),
+      rootPath: "/workspace",
+      workspaceId: "/workspace",
+    });
+    expect(owner.status).toBe("activated");
+    if (owner.status !== "activated") {
+      return;
+    }
+    const identity = createDocumentSaveIdentity("/workspace", "src/a.ts");
+    expect(identity).not.toBeNull();
+    if (!identity) {
+      return;
+    }
+    const opened = store.open(owner.lease, {
+      document: {
+        content: "saved",
+        language: "typescript",
+        name: "a.ts",
+        path: "/workspace/src/a.ts",
+        savedContent: "saved",
+      },
+      identity,
+    });
+    expect(opened.status).toBe("opened");
+    if (opened.status !== "opened") {
+      return;
+    }
+    const projection = createEditorOwnerDirtyCountProjection(store, owner.lease);
+    const render = (legacyDirtyCount: number, dirtyCountProjection = projection) =>
+      root.render(
+        <StatusBar
+          activeLanguage="typescript"
+          activePath="/workspace/src/a.ts"
+          dirtyCount={legacyDirtyCount}
+          dirtyCountProjection={dirtyCountProjection}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="fullSmart"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+
+    await act(async () => render(0));
+    expect(host.textContent).not.toContain("unsaved");
+    await act(async () => render(1));
+    expect(host.textContent).toContain("1 unsaved");
+    await act(async () => render(0));
+    await act(async () => {
+      store.edit(store.capture(opened.lease)!, "dirty");
+    });
+    expect(host.textContent).toContain("1 unsaved");
+    await act(async () => {
+      store.deactivateOwner(owner.lease);
+    });
+    expect(host.textContent).not.toContain("unsaved");
+    await act(async () => render(7));
+    expect(host.textContent).toContain("7 unsaved");
   });
 
   it("shows aggregated error and warning counts and opens problems on click", async () => {

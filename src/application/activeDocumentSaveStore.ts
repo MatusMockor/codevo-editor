@@ -1,10 +1,7 @@
-import type {
-  Dispatch,
-  MutableRefObject,
-  SetStateAction,
-} from "react";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { RegisteredDocumentSaveIdentity } from "./documentSaveIdentity";
 
 export interface ActiveDocumentSaveLease {
   isCurrent(): boolean;
@@ -21,6 +18,11 @@ export interface DocumentSaveTarget {
   readonly path: string;
   readonly workspaceRequestToken: number;
   readonly lease: ActiveDocumentSaveLease;
+  /**
+   * Immutable owner-relative authority captured before the save lane starts.
+   * Legacy callers omit it and keep the path-routed writer.
+   */
+  readonly registeredIdentity?: RegisteredDocumentSaveIdentity | null;
 }
 
 export interface DocumentSaveAcknowledgement {
@@ -40,16 +42,18 @@ export interface ActiveDocumentSaveStorePort {
   acknowledgeIssuedWrite(
     target: DocumentSaveTarget,
     acknowledgement: DocumentSaveAcknowledgement,
-  ): void;
+  ): boolean | void;
+  prepareIssuedWrite?(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+    savedDocument: EditorDocument,
+  ): boolean;
   updateRevisionForIssuedWrite(
     target: DocumentSaveTarget,
     expectedDocument: EditorDocument,
     revision: EditorDocument["revision"],
   ): void;
-  updateRevision(
-    target: DocumentSaveTarget,
-    revision: EditorDocument["revision"],
-  ): void;
+  updateRevision(target: DocumentSaveTarget, revision: EditorDocument["revision"]): void;
 }
 
 export interface ActiveDocumentSaveStoreDependencies {
@@ -61,9 +65,7 @@ export interface ActiveDocumentSaveStoreDependencies {
 }
 
 export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
-  constructor(
-    private readonly dependencies: ActiveDocumentSaveStoreDependencies,
-  ) {}
+  constructor(private readonly dependencies: ActiveDocumentSaveStoreDependencies) {}
 
   current(target: DocumentSaveTarget): EditorDocument | null {
     if (!this.isCurrent(target)) {
@@ -128,18 +130,12 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
     acknowledgement: DocumentSaveAcknowledgement,
   ): void {
     const requestIsCurrent = this.isCurrent(target);
-    const liveDocument = this.issuedWriteDocument(
-      target,
-      acknowledgement.expectedDocument,
-    );
+    const liveDocument = this.issuedWriteDocument(target, acknowledgement.expectedDocument);
     if (!liveDocument) {
       return;
     }
 
-    const acknowledgedDocument = this.acknowledgedDocument(
-      liveDocument,
-      acknowledgement,
-    );
+    const acknowledgedDocument = this.acknowledgedDocument(liveDocument, acknowledgement);
     if (acknowledgedDocument === liveDocument) {
       return;
     }
@@ -166,10 +162,7 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
       if (
         !requestIsCurrent &&
         existing !== acknowledgedDocument &&
-        !this.isSameDocumentIncarnation(
-          existing,
-          acknowledgement.expectedDocument,
-        )
+        !this.isSameDocumentIncarnation(existing, acknowledgement.expectedDocument)
       ) {
         return current;
       }
@@ -231,10 +224,7 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
     });
   }
 
-  updateRevision(
-    target: DocumentSaveTarget,
-    revision: EditorDocument["revision"],
-  ): void {
+  updateRevision(target: DocumentSaveTarget, revision: EditorDocument["revision"]): void {
     const existing = this.current(target);
     if (!existing) {
       return;
@@ -264,12 +254,8 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
   private isCurrent(target: DocumentSaveTarget): boolean {
     return (
       target.lease.isCurrent() &&
-      this.dependencies.workspaceRequestTokenRef.current ===
-        target.workspaceRequestToken &&
-      workspaceRootKeysEqual(
-        this.dependencies.currentWorkspaceRootRef.current,
-        target.rootPath,
-      )
+      this.dependencies.workspaceRequestTokenRef.current === target.workspaceRequestToken &&
+      workspaceRootKeysEqual(this.dependencies.currentWorkspaceRootRef.current, target.rootPath)
     );
   }
 
@@ -277,8 +263,7 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
     target: DocumentSaveTarget,
     expectedDocument: EditorDocument,
   ): EditorDocument | null {
-    const liveDocument =
-      this.dependencies.documentsRef.current[target.path] ?? null;
+    const liveDocument = this.dependencies.documentsRef.current[target.path] ?? null;
     if (!liveDocument) {
       return null;
     }
@@ -291,9 +276,7 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
     if (!this.isSameRoot(target)) {
       return null;
     }
-    if (
-      !this.isSameDocumentIncarnation(liveDocument, expectedDocument)
-    ) {
+    if (!this.isSameDocumentIncarnation(liveDocument, expectedDocument)) {
       return null;
     }
 

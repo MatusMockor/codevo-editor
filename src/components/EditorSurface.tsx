@@ -42,9 +42,16 @@ import {
   modelForPath,
   modelMatchesProject,
   resolveCompleteWorkspaceIdentityDescriptor,
-  synchronizeActiveDocumentModel,
 } from "./editorSurfaceModelIdentity";
+import {
+  activeDocumentModelForReveal,
+  currentEditorModelForPath,
+  editorSurfaceControlledValue,
+  editorSurfaceModelPath,
+  reconcileActiveDocumentModelContent,
+} from "./editorSurfaceLiveModelContentAuthority";
 import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import type { EditorCursorStorePort } from "../application/editorCursorStore";
 import type { DebugWatchAtCursorCaptureReader } from "../domain/debugWatchAtCursorCapture";
 import type { DebugBreakpointNavigationCaptureReader } from "../domain/debugBreakpointNavigationCapture";
 import type { DebugInlineBreakpointCaptureReader } from "../domain/debugInlineBreakpointCapture";
@@ -62,6 +69,7 @@ import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import type {
   EditorPosition,
   EditorRevealTarget,
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerFeaturesGateway,
   LanguageServerRefreshGateway,
   LanguageServerWorkspaceEdit,
@@ -88,10 +96,7 @@ import {
   runRegisteredCommand,
 } from "../application/commandChain";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
-import {
-  isJavaScriptTypeScriptLanguageServerDocument,
-  isLanguageServerDocument,
-} from "../domain/languageServerDocumentSync";
+import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import {
   defaultLargeSmartDocumentPolicy,
   isLargeSmartDocument,
@@ -99,6 +104,8 @@ import {
   type LargeSmartDocumentPolicy,
 } from "../domain/largeDocumentPolicy";
 import { Breadcrumbs } from "./Breadcrumbs";
+import { CursorAwareBreadcrumbs } from "./CursorAwareBreadcrumbs";
+import { useEditorCursorPublication } from "./useEditorCursorPublication";
 import { SurroundWithPicker } from "./SurroundWithPicker";
 import { surroundWithSnippet, type SurroundWithTemplateId } from "../domain/surroundWith";
 import { completePhpStatement } from "../domain/phpCompleteStatement";
@@ -149,6 +156,11 @@ import {
 } from "../domain/settings";
 import { type JavaScriptTypeScriptWorkspaceEditApplicationContext } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
+  disableJavaScriptTypeScriptDefinitionGesture,
+  javaScriptTypeScriptDefinitionGesture,
+  useJavaScriptTypeScriptTransientNavigationModels,
+} from "./javascriptTypescriptMonacoProviderRegistration";
+import {
   type LanguageServerMonacoDocumentRequestLease,
   type PhpCodeActionDescriptor,
   type PhpCodeActionNewFile,
@@ -156,10 +168,8 @@ import {
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
 import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
-import {
-  conflictMarkerDecorations,
-  registerConflictMarkerCodeActions,
-} from "../application/conflictMarkerCodeActions";
+import { registerConflictMarkerCodeActions } from "../application/conflictMarkerCodeActions";
+import { useConflictMarkerEditorDecorations } from "./useConflictMarkerEditorDecorations";
 import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./useEditorSurfaceLanguageProviderRegistration";
 import { EditorRuntimeHost, type EditorRuntimeSurfaceRegistration } from "./EditorRuntimeHost";
 import { useEditorRuntimeContext } from "./editorRuntimeContext";
@@ -219,8 +229,9 @@ import {
   modelMatchesWorkspacePath,
   modelPath,
   type WorkspaceIdentityDescriptor,
-  workspaceModelUri,
 } from "./phpMonacoDocumentContext";
+import { editorSurfaceBreadcrumbFeaturesGateway } from "./editorSurfaceBreadcrumbGateway";
+import { dismissTransientEditorWidgets } from "./editorTransientWidgetDismissal";
 import { createDebugWatchAtCursorCaptureReader } from "./debugWatchAtCursorMonacoReader";
 import { createDebugBreakpointNavigationCaptureReader } from "./debugBreakpointNavigationMonacoReader";
 import { createDebugInlineBreakpointCaptureReader } from "./debugInlineBreakpointMonacoReader";
@@ -262,7 +273,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   breakpoints?: readonly Breakpoint[];
   breakpointActions?: Partial<DebugBreakpointManagement>;
   onBreakpointMutationError?: (error: unknown) => void;
-  changeHunks: EditorChangeHunk[];
+  changeHunks: readonly EditorChangeHunk[];
   debugStoppedLocation?: { filePath: string; lineNumber: number } | null;
   debugInlineValueContext?: DebugInlineValueContext | null;
   editorRevealTarget: EditorRevealTarget | null;
@@ -280,7 +291,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   formatOnPaste?: boolean;
   gitBlameEnabled?: boolean;
   isLanguageServerDocumentSynced?(path: string): boolean;
-  javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerFeaturesGateway?: JavaScriptTypeScriptLanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRefreshGateway?: LanguageServerRefreshGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -301,6 +312,8 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   runtimeMembership?: EditorRuntimeMembershipInput;
   restoredViewStates?: Record<string, WorkspaceSessionViewState>;
   restoredViewStateRevision?: number;
+  cursorStore?: EditorCursorStorePort | null;
+  cursorTrackingActive?: boolean;
   transientWidgetDismissKey?: string;
   phpInlayHintsEnabled?: boolean;
   phpIdeReadinessVersion?: number;
@@ -355,7 +368,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   onOpenWorkspaceFile?(path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean>;
   onOpenWorkspaceRoot?(path: string): Promise<boolean>;
   onOpenFileStructure(): void;
-  onChange(content: string): void;
+  onChange(content: string, path?: string): boolean | void;
   onLanguageServerError(error: unknown): void;
   onOpenPhpChangeSignature?(
     request: NonNullable<PhpCodeActionDescriptor["interaction"]>,
@@ -366,7 +379,11 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
    * the runtime latency panel. Optional: when omitted the completion provider
    * skips the timestamp delta entirely (no hot-path cost).
    */
-  onRecordCompletionLatency?(durationMs: number, rootPath?: string): void;
+  onRecordCompletionLatency?(
+    durationMs: number,
+    rootPath?: string,
+    feature?: "completion" | "definition",
+  ): void;
   onLocalPhpDiagnosticsChange?(path: string, diagnostics: LanguageServerDiagnostic[]): void;
   onRevealTargetHandled(target: EditorRevealTarget): void;
   onRevertChangeHunk(hunk: EditorChangeHunk): void;
@@ -489,7 +506,7 @@ function EditorSurfaceComponent({
   languageServerRefreshGateway,
   languageServerRuntimeStatus,
   largeSmartDocumentPolicy = defaultLargeSmartDocumentPolicy,
-  javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway,
+  javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway as unknown as JavaScriptTypeScriptLanguageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerRefreshGateway,
   javaScriptTypeScriptLanguageServerRuntimeStatus = null,
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
@@ -508,6 +525,8 @@ function EditorSurfaceComponent({
   runtimeMembership,
   restoredViewStates = {},
   restoredViewStateRevision = 0,
+  cursorStore,
+  cursorTrackingActive = true,
   transientWidgetDismissKey,
   phpInlayHintsEnabled = true,
   phpIdeReadinessVersion = 0,
@@ -593,13 +612,11 @@ function EditorSurfaceComponent({
         : null,
     [workspaceIdentityDescriptor, workspaceRoot],
   );
-  const breakpointModel = editorApi?.getModel();
-  const currentBreakpointModel =
-    breakpointModel &&
-    activeDocumentPath &&
-    modelMatchesProject(breakpointModel, workspaceRoot, activeDocumentPath)
-      ? breakpointModel
-      : null;
+  const currentBreakpointModel = currentEditorModelForPath(
+    editorApi,
+    workspaceRoot,
+    activeDocumentPath,
+  );
   const toggleBreakpointAction = breakpointActions?.toggleBreakpoint ?? onToggleBreakpoint;
   const reportBreakpointMutationError = useCallback(
     (error: unknown) => {
@@ -647,6 +664,15 @@ function EditorSurfaceComponent({
   const completeWorkspaceIdentityDescriptor = resolveCompleteWorkspaceIdentityDescriptor(
     workspaceIdentityDescriptor,
   );
+  const prepareJavaScriptTypeScriptNavigationModels =
+    useJavaScriptTypeScriptTransientNavigationModels({
+      descriptor: completeWorkspaceIdentityDescriptor,
+      editor: editorApi,
+      monaco: monacoApi,
+      openDefinition: onGoToDefinition,
+      policy: largeSmartDocumentPolicy,
+      workspaceRoot,
+    });
   const captureEditorSurfaceScope = useCallback((): EditorSurfaceCommandInvocationScope | null => {
     const document = activeDocumentRef.current;
     const model = editorApi?.getModel();
@@ -788,7 +814,6 @@ function EditorSurfaceComponent({
   const openWorkspaceRootRef = useRef(onOpenWorkspaceRoot);
   const isLanguageServerDocumentSyncedRef = useRef(isLanguageServerDocumentSynced);
   const changeDecorationIdsRef = useRef<string[]>([]);
-  const conflictMarkerDecorationIdsRef = useRef<string[]>([]);
   // Tracks whether persistent column-selection mode is on so the toggle action
   // flips it. Per-editor state (one EditorSurface instance per tab), so it never
   // leaks between open project tabs.
@@ -920,9 +945,7 @@ function EditorSurfaceComponent({
   useEffect(() => {
     changeHunksRef.current = changeHunks;
     setChangePreview((current) => {
-      if (!current) {
-        return null;
-      }
+      if (!current) return null;
 
       const hunk = changeHunks.find((candidate) => candidate.id === current.hunk.id);
 
@@ -1542,7 +1565,7 @@ function EditorSurfaceComponent({
     groupId,
     monacoApi,
     onMarkerUrisChanged: recoverVisibleLocalPhpDiagnostics,
-    onModelContentChange: (content) => onChangeRef.current(content),
+    onModelContentChange: (content, path) => onChangeRef.current(content, path),
     providerDependencies: {
       coordinatePhpDocumentSymbols: runtime?.coordinatePhpDocumentSymbols,
       featuresGateway: languageServerFeaturesGateway,
@@ -1574,7 +1597,9 @@ function EditorSurfaceComponent({
         getUserSnippets: () => userSnippetsRef.current,
         getWorkspaceIdentityDescriptor: () => completeWorkspaceIdentityDescriptor,
         getWorkspaceRoot: () => workspaceRoot,
-        limitNavigationResultsToOpenModels: true,
+        prepareNavigationModels: prepareJavaScriptTypeScriptNavigationModels,
+        recordLatency: (feature, durationMs, rootPath) =>
+          recordCompletionLatencyRef.current?.(durationMs, rootPath, feature),
         refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
         reportError: (error) => errorReporterRef.current(error),
         workspaceEditGateway: javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
@@ -1811,24 +1836,16 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
-  useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    const disposable = editorApi.onDidChangeCursorPosition((event) => {
-      onCursorPositionChangeRef.current(event.position);
-      setCursorPosition((previous) => nextCursorPosition(previous, event.position));
-    });
-    const position = editorApi.getPosition();
-
-    if (position) {
-      onCursorPositionChangeRef.current(position);
-      setCursorPosition((previous) => nextCursorPosition(previous, position));
-    }
-
-    return () => disposable.dispose();
-  }, [editorApi]);
+  useEditorCursorPublication({
+    activeDocumentPath: activeDocumentPath ?? null,
+    cursorStore,
+    editorApi,
+    groupId: runtimeMembership?.groupId ?? null,
+    onPositionRef: onCursorPositionChangeRef,
+    ownerKey: editorSessionOwnerKey,
+    setLegacyPosition: setCursorPosition,
+    trackingActive: cursorTrackingActive,
+  });
 
   // Eagerly warm the active model's TextMate tokens on idle after open/switch.
   // @monaco-editor/react swaps the model when `path` changes, so this re-runs on
@@ -1887,7 +1904,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const breadcrumbGateway = breadcrumbFeaturesGateway(activeDocument, {
+    const breadcrumbGateway = editorSurfaceBreadcrumbFeaturesGateway(activeDocument, {
       javaScriptTypeScript: javaScriptTypeScriptLanguageServerFeaturesGateway,
       php: languageServerFeaturesGateway,
     });
@@ -2603,40 +2620,17 @@ function EditorSurfaceComponent({
     };
   }, [editorApi, monacoApi]);
 
-  useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    const refreshDecorations = () => {
-      const model = editorApi.getModel();
-      const document = activeDocumentRef.current;
-      const matchesActiveDocument =
-        model && document && modelMatchesProject(model, workspaceRootRef.current, document.path);
-      const decorations =
-        matchesActiveDocument && !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current)
-          ? conflictMarkerDecorations(model)
-          : [];
-
-      conflictMarkerDecorationIdsRef.current = editorApi.deltaDecorations(
-        conflictMarkerDecorationIdsRef.current,
-        decorations,
-      );
-    };
-
-    refreshDecorations();
-    const contentChangeDisposable = editorApi.onDidChangeModelContent(refreshDecorations);
-    const modelChangeDisposable = editorApi.onDidChangeModel(refreshDecorations);
-
-    return () => {
-      contentChangeDisposable.dispose();
-      modelChangeDisposable.dispose();
-      conflictMarkerDecorationIdsRef.current = editorApi.deltaDecorations(
-        conflictMarkerDecorationIdsRef.current,
-        [],
-      );
-    };
-  }, [activeDocument?.path, editorApi]);
+  useConflictMarkerEditorDecorations({
+    activeDocumentPath,
+    activeDocumentRef,
+    editor: editorApi,
+    largeDocumentPolicyRef: largeSmartDocumentPolicyRef,
+    ownerKey: editorSessionOwnerKey,
+    surfaceId: generatedSurfaceId,
+    workspaceIdentity: completeWorkspaceIdentityDescriptor,
+    workspaceRoot,
+    workspaceRootRef,
+  });
 
   useEffect(() => {
     if (!editorApi || !monacoApi || !onCloseFloatingSurface) {
@@ -2832,48 +2826,14 @@ function EditorSurfaceComponent({
     toggleBreakpointAction,
   ]);
 
-  // Monaco ships a built-in "go to definition on Cmd/Ctrl" gesture
-  // (`editor.contrib.gotodefinitionatposition`). With `multiCursorModifier: "alt"`
-  // Cmd/Ctrl is the trigger modifier for that contribution, so it navigates on
-  // ITS OWN terms: it fires on mouse-UP whenever Cmd was held at mouse-down on
-  // the same line (a Cmd-hover that registers the faintest tap), it ignores the
-  // primary-button / CONTENT_TEXT guards the onMouseDown handler above enforces,
-  // and it reveals the definition through Monaco's own opener - bypassing the
-  // Laravel/PHP contextual cascade entirely. The net effect a user feels is
-  // being yanked to the definition merely by hovering a symbol with Cmd held.
-  //
-  // Do NOT dispose the contribution. Disposing it tears down the editor mouse /
-  // key listeners it registered while the contribution object stays in Monaco's
-  // contribution map (it is registered `BeforeFirstInteraction`, so reading it
-  // here force-instantiates it); the editor later re-enters and double-disposes
-  // it, leaving Monaco's event delivery in an inconsistent state that surfaces as
-  // a runtime crash ("undefined is not an object") on the next interaction.
-  //
-  // Instead neutralize ONLY the navigation: replace the contribution's
-  // `gotoDefinition` method (the one its onExecute path calls to reveal the
-  // target) with a no-op. Every listener stays wired, the link-hover underline
-  // decorations still render, and Monaco's event system is left fully intact.
-  // Go-to-definition then fires ONLY through the two explicit, guarded paths: the
-  // Cmd+left-click handler above and the Cmd+B keybinding (both run the
-  // controller's onGoToDefinition cascade).
-  //
-  // Per-tab isolation: @monaco-editor/react reuses one editor instance across
-  // document switches, so patching once at mount covers every tab; the effect
-  // re-runs if the editor instance itself changes.
   useEffect(() => {
-    if (!editorApi) {
+    const gesture = javaScriptTypeScriptDefinitionGesture(editorApi);
+
+    if (typeof gesture?.gotoDefinition !== "function") {
       return;
     }
 
-    const gotoDefinitionGesture = editorApi.getContribution(
-      "editor.contrib.gotodefinitionatposition",
-    ) as { gotoDefinition?: (...args: unknown[]) => unknown } | null;
-
-    if (!gotoDefinitionGesture || typeof gotoDefinitionGesture.gotoDefinition !== "function") {
-      return;
-    }
-
-    gotoDefinitionGesture.gotoDefinition = () => Promise.resolve();
+    disableJavaScriptTypeScriptDefinitionGesture(gesture);
   }, [editorApi]);
 
   useEffect(() => {
@@ -3381,20 +3341,6 @@ function EditorSurfaceComponent({
   }, [editorApi, transientWidgetDismissKey]);
 
   useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    const position = editorApi.getPosition();
-
-    if (!position) {
-      return;
-    }
-
-    onCursorPositionChangeRef.current(position);
-  }, [activeDocument?.path, editorApi]);
-
-  useEffect(() => {
     if (!editorRevealTarget) {
       return;
     }
@@ -3418,7 +3364,13 @@ function EditorSurfaceComponent({
     }
 
     const reveal = (): boolean => {
-      const model = synchronizeActiveDocumentModel(editorApi, workspaceRoot, activeDocument);
+      const model = activeDocumentModelForReveal(
+        runtime,
+        groupId,
+        editorApi,
+        workspaceRoot,
+        activeDocument,
+      );
 
       if (!model) {
         return false;
@@ -3460,6 +3412,8 @@ function EditorSurfaceComponent({
     editorRevealTarget,
     isOpeningFile,
     onRevealTargetHandled,
+    groupId,
+    runtime,
     workspaceRoot,
   ]);
 
@@ -3474,7 +3428,13 @@ function EditorSurfaceComponent({
       return;
     }
 
-    synchronizeActiveDocumentModel(editorApi, workspaceRootRef.current, document);
+    reconcileActiveDocumentModelContent(
+      runtime,
+      groupId,
+      editorApi,
+      workspaceRootRef.current,
+      document,
+    );
   };
   applyActiveModelConfigRef.current = () => {
     const document = activeDocumentRef.current;
@@ -4352,32 +4312,44 @@ function EditorSurfaceComponent({
       role={embeddedInGroupPanel ? undefined : "tabpanel"}
     >
       {activeDocument ? (
-        <Breadcrumbs
-          fileName={activeDocument.name}
-          onNavigate={navigateToBreadcrumbSymbol}
-          path={breadcrumbPath}
-          symbols={breadcrumbSymbols}
-        />
+        cursorStore && editorSessionOwnerKey && runtimeMembership ? (
+          <CursorAwareBreadcrumbs
+            documentPath={activeDocument.path}
+            fileName={activeDocument.name}
+            groupId={runtimeMembership.groupId}
+            onNavigate={navigateToBreadcrumbSymbol}
+            ownerKey={editorSessionOwnerKey}
+            store={cursorStore}
+            symbols={breadcrumbSymbols}
+            trackingActive={cursorTrackingActive}
+          />
+        ) : (
+          <Breadcrumbs
+            fileName={activeDocument.name}
+            onNavigate={navigateToBreadcrumbSymbol}
+            path={cursorStore === undefined ? breadcrumbPath : EMPTY_BREADCRUMB_PATH}
+            symbols={breadcrumbSymbols}
+          />
+        )
       ) : null}
       <Editor
         beforeMount={handleBeforeMount}
         height="100%"
         keepCurrentModel
-        language={activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE}
+        language={activeDocument?.language ?? PLACEHOLDER_LANGUAGE}
         loading={EDITOR_LOADING_PLACEHOLDER}
         onMount={handleMount}
         options={editorOptions}
-        path={
-          activeDocument && workspaceRoot
-            ? (workspaceModelUri(workspaceRoot, activeDocument.path) ?? activeDocument.path)
-            : PLACEHOLDER_PATH
-        }
+        path={editorSurfaceModelPath(workspaceRoot, activeDocument, PLACEHOLDER_PATH)}
         theme={monacoTheme}
-        value={
-          activeDocument && activeDocumentContentReady && !isOpeningFile
-            ? activeDocument.content
-            : undefined
-        }
+        value={editorSurfaceControlledValue(
+          runtime,
+          groupId,
+          editorApi,
+          activeDocument,
+          activeDocumentContentReady,
+          isOpeningFile,
+        )}
       />
       {overlay}
       <EditorBreakpointGutterMenu
@@ -5000,7 +4972,7 @@ function createEditorSurfaceCommandRunner({
   runImportAction,
 }: {
   captureScope(): EditorSurfaceCommandInvocationScope | null;
-  changeHunksRef: MutableRefObject<EditorChangeHunk[]>;
+  changeHunksRef: MutableRefObject<readonly EditorChangeHunk[]>;
   editor: Monaco.editor.IStandaloneCodeEditor;
   isImportActionEnabled(commandId: EditorSurfaceCommandId): boolean;
   runImportAction(commandId: EditorSurfaceCommandId): void;
@@ -5077,49 +5049,6 @@ function isEditorSurfaceImportCommand(commandId: EditorSurfaceCommandId): boolea
     commandId === "typescript.removeUnusedImports" ||
     commandId === "javascript.removeUnusedImports"
   );
-}
-
-function dismissTransientEditorWidgets(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  source: string,
-): void {
-  dismissTransientEditorWidgetsNow(editor, source);
-
-  window.setTimeout(() => {
-    dismissTransientEditorWidgetsNow(editor, source);
-  }, 0);
-}
-
-function dismissTransientEditorWidgetsNow(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-  source: string,
-): void {
-  if (!editor.getModel()) {
-    return;
-  }
-
-  editor.trigger(source, "editor.action.hideHover", {});
-  editor.trigger(source, "closeFindWidget", {});
-  editor.trigger(source, "hideSuggestWidget", {});
-  clearMonacoTransientAccessibilityStatus(editor);
-}
-
-function clearMonacoTransientAccessibilityStatus(
-  editor: Monaco.editor.IStandaloneCodeEditor,
-): void {
-  const domNode = editor.getDomNode();
-
-  if (!domNode) {
-    return;
-  }
-
-  const root = domNode.ownerDocument ?? document;
-
-  root
-    .querySelectorAll<HTMLElement>(".monaco-aria-container, .monaco-status")
-    .forEach((element) => {
-      element.textContent = "";
-    });
 }
 
 function expandEditorSelection(
@@ -5201,19 +5130,6 @@ function EditorLoadingPlaceholder() {
 // memo, defeating the cursor-move stabilisation below.
 const EDITOR_LOADING_PLACEHOLDER = <EditorLoadingPlaceholder />;
 
-// Returns the previous cursor position unchanged when the incoming position is
-// identical, so a duplicate Monaco cursor event (e.g. clicking the current spot)
-// preserves referential identity and skips a re-render. A real move on either
-// line or column produces a fresh object so breadcrumbs (keyed on line+column)
-// stay correct.
-function nextCursorPosition(previous: EditorPosition | null, next: EditorPosition): EditorPosition {
-  if (previous && previous.lineNumber === next.lineNumber && previous.column === next.column) {
-    return previous;
-  }
-
-  return { column: next.column, lineNumber: next.lineNumber };
-}
-
 function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
   // Apply a matching built-in dark/light theme synchronously so Monaco paints
   // the correct background on its first frame. Without this, Monaco renders the
@@ -5258,22 +5174,4 @@ async function foldingModelForEditor(
   } catch {
     return null;
   }
-}
-
-function breadcrumbFeaturesGateway(
-  document: EditorDocument,
-  gateways: {
-    javaScriptTypeScript: LanguageServerFeaturesGateway;
-    php: LanguageServerFeaturesGateway;
-  },
-): LanguageServerFeaturesGateway | null {
-  if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-    return gateways.javaScriptTypeScript;
-  }
-
-  if (isLanguageServerDocument(document)) {
-    return gateways.php;
-  }
-
-  return null;
 }

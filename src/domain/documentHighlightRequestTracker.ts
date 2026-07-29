@@ -1,3 +1,5 @@
+export const MAX_DOCUMENT_HIGHLIGHT_RESULTS = 2_000;
+
 /**
  * Per-registration dedup tracker for document-highlight requests.
  *
@@ -25,12 +27,7 @@ export interface DocumentHighlightRequestTracker<THighlight> {
    */
   cached(uri: string, word: string, version: number): THighlight[] | undefined;
   /** Records the highlights resolved for a model URI + word + version triple. */
-  remember(
-    uri: string,
-    word: string,
-    version: number,
-    highlights: THighlight[],
-  ): void;
+  remember(uri: string, word: string, version: number, highlights: THighlight[]): void;
   /** Forgets any cached entry for a model URI (e.g. when the model closes). */
   forget(uri: string): void;
 }

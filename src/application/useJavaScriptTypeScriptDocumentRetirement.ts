@@ -36,7 +36,7 @@ interface JavaScriptTypeScriptDocumentRetirementOptions {
 
 interface JavaScriptTypeScriptDocumentRetirement {
   readonly canOpen: (rootPath: string, path: string) => boolean;
-  readonly retire: (rootPath: string, path: string) => Promise<void>;
+  readonly retire: (rootPath: string, path: string, isCurrent?: () => boolean) => Promise<void>;
 }
 
 export function useJavaScriptTypeScriptDocumentRetirement({
@@ -119,10 +119,11 @@ export function useJavaScriptTypeScriptDocumentRetirement({
   );
 
   const retire = useCallback(
-    async (rootPath: string, path: string) => {
+    async (rootPath: string, path: string, isCurrent: () => boolean = () => true) => {
       const syncKey = languageServerDocumentSyncKey(rootPath, path);
       const expectedLifecycleIdentity = lifecycleIdentitiesRef.current[syncKey];
       if (
+        !isCurrent() ||
         !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
         !syncedPathsRef.current.has(syncKey) ||
         expectedLifecycleIdentity === undefined
@@ -162,6 +163,7 @@ export function useJavaScriptTypeScriptDocumentRetirement({
         sessionId,
         isOwnerCurrent: () =>
           ownerEpochRef.current === ownerEpoch &&
+          isCurrent() &&
           gatewayRef.current === gateway &&
           syncGenerationRef.current === syncGeneration &&
           workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&

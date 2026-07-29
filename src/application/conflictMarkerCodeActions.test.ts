@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  boundedConflictMarkerDecorationsFromSource,
   CONFLICT_MARKER_COMMAND_ID,
+  MAX_CONFLICT_MARKER_DECORATIONS,
   applyConflictMarkerCodeAction,
   conflictMarkerDecorations,
   registerConflictMarkerCodeActions,
 } from "./conflictMarkerCodeActions";
 
-const conflict =
-  "before\n<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\nafter\n";
+const conflict = "before\n<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\nafter\n";
 
 describe("conflict marker editor support", () => {
   it("registers a quick-fix provider for every language and filters by intersecting block", () => {
@@ -26,33 +27,24 @@ describe("conflict marker editor support", () => {
       };
     } = {};
     const registerCodeActionProvider = vi.fn(
-      (
-        _selector: string,
-        provider: NonNullable<typeof registration.provider>,
-      ) => {
+      (_selector: string, provider: NonNullable<typeof registration.provider>) => {
         registration.provider = provider;
         return { dispose: vi.fn() };
       },
     );
     const monaco = createMonaco(registerCodeActionProvider);
 
-    const disposables = registerConflictMarkerCodeActions(monaco as never, {
-      executeEdits: vi.fn(),
-      getModel: vi.fn(() => model),
-    } as never);
+    const disposables = registerConflictMarkerCodeActions(
+      monaco as never,
+      {
+        executeEdits: vi.fn(),
+        getModel: vi.fn(() => model),
+      } as never,
+    );
 
-    expect(registerCodeActionProvider).toHaveBeenCalledWith(
-      "*",
-      expect.any(Object),
-    );
-    const inside = registration.provider?.provideCodeActions(
-      model,
-      range(3, 1, 3, 1),
-    );
-    const outside = registration.provider?.provideCodeActions(
-      model,
-      range(1, 1, 1, 1),
-    );
+    expect(registerCodeActionProvider).toHaveBeenCalledWith("*", expect.any(Object));
+    const inside = registration.provider?.provideCodeActions(model, range(3, 1, 3, 1));
+    const outside = registration.provider?.provideCodeActions(model, range(1, 1, 1, 1));
 
     expect(inside?.actions).toEqual([
       expect.objectContaining({
@@ -80,6 +72,19 @@ describe("conflict marker editor support", () => {
     ]);
   });
 
+  it("fails closed instead of projecting an adversarial number of decorations", () => {
+    const source = "<<<<<<<\n=======\n>>>>>>>\n".repeat(
+      Math.ceil(MAX_CONFLICT_MARKER_DECORATIONS / 7) + 1,
+    );
+
+    expect(source.length).toBeLessThan(512 * 1024);
+    expect(boundedConflictMarkerDecorationsFromSource(source)).toEqual({
+      blockLimit: Math.floor(MAX_CONFLICT_MARKER_DECORATIONS / 7),
+      kind: "degraded",
+      reason: "too-many-conflicts",
+    });
+  });
+
   it("does not read or parse a model rejected by the caller's large-file policy", () => {
     const model = createModel(conflict, "file:///workspace/large.php");
     const getValue = vi.spyOn(model, "getValue");
@@ -91,10 +96,7 @@ describe("conflict marker editor support", () => {
       { executeEdits: vi.fn(), getModel: vi.fn(() => model) } as never,
       { shouldInspectModel: () => false },
     );
-    const actions = registration.provider?.provideCodeActions(
-      model,
-      range(1, 1, 1, 1),
-    );
+    const actions = registration.provider?.provideCodeActions(model, range(1, 1, 1, 1));
 
     expect(actions?.actions).toEqual([]);
     expect(getValue).not.toHaveBeenCalled();
@@ -106,26 +108,21 @@ describe("conflict marker editor support", () => {
     const registration = providerRegistration();
     const monaco = createMonaco(registration.registerCodeActionProvider);
     const executeEdits = vi.fn();
-    const disposables = registerConflictMarkerCodeActions(monaco as never, {
-      executeEdits,
-      getModel: vi.fn(() => model),
-    } as never);
-    const actions = registration.provider?.provideCodeActions(
-      model,
-      range(3, 1, 3, 1),
-    ).actions;
-    const action = actions?.find(
-      (candidate) => candidate.title === "Accept Incoming",
+    const disposables = registerConflictMarkerCodeActions(
+      monaco as never,
+      {
+        executeEdits,
+        getModel: vi.fn(() => model),
+      } as never,
     );
+    const actions = registration.provider?.provideCodeActions(model, range(3, 1, 3, 1)).actions;
+    const action = actions?.find((candidate) => candidate.title === "Accept Incoming");
     const commandId = action?.command?.id;
     const command = commandId ? monaco.editor.getCommand(commandId) : undefined;
 
     expect(commandId).toBe(CONFLICT_MARKER_COMMAND_ID);
     expect(command).toBeDefined();
-    monaco.editor.executeCommand(
-      commandId ?? "",
-      ...(action?.command?.arguments ?? []),
-    );
+    monaco.editor.executeCommand(commandId ?? "", ...(action?.command?.arguments ?? []));
     expect(executeEdits).toHaveBeenCalledWith(CONFLICT_MARKER_COMMAND_ID, [
       {
         forceMoveMarkers: true,
@@ -149,19 +146,12 @@ describe("conflict marker editor support", () => {
     const request = {
       blockEndOffset: 60,
       blockStartOffset: 7,
-      expectedBlock:
-        "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
+      expectedBlock: "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
       modelUri: "file:///workspace/example.ts",
       variant: "both" as const,
     };
 
-    expect(
-      applyConflictMarkerCodeAction(
-        monaco as never,
-        editor as never,
-        request,
-      ),
-    ).toBe(true);
+    expect(applyConflictMarkerCodeAction(monaco as never, editor as never, request)).toBe(true);
     expect(executeEdits).toHaveBeenCalledWith(CONFLICT_MARKER_COMMAND_ID, [
       {
         forceMoveMarkers: true,
@@ -181,8 +171,7 @@ describe("conflict marker editor support", () => {
     const request = {
       blockEndOffset: 60,
       blockStartOffset: 7,
-      expectedBlock:
-        "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
+      expectedBlock: "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
       modelUri: "file:///workspace/example.ts",
       variant: "current" as const,
     };
@@ -212,10 +201,7 @@ describe("conflict marker editor support", () => {
   });
 
   it("does nothing when an edit before the block shifted its offsets", () => {
-    const model = createModel(
-      `inserted\n${conflict}`,
-      "file:///workspace/example.ts",
-    );
+    const model = createModel(`inserted\n${conflict}`, "file:///workspace/example.ts");
     const executeEdits = vi.fn();
 
     expect(
@@ -275,8 +261,7 @@ function conflictRequest(
   return {
     blockEndOffset: 60,
     blockStartOffset: 7,
-    expectedBlock:
-      "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
+    expectedBlock: "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
     modelUri: "file:///workspace/example.ts",
     variant: "current",
     ...overrides,
@@ -318,7 +303,10 @@ function range(
   };
 }
 
-function createModel(initialValue: string, uri: string): {
+function createModel(
+  initialValue: string,
+  uri: string,
+): {
   getLineMaxColumn(lineNumber: number): number;
   getOffsetAt(position: { column: number; lineNumber: number }): number;
   getPositionAt(offset: number): { column: number; lineNumber: number };
@@ -330,13 +318,10 @@ function createModel(initialValue: string, uri: string): {
   const lines = () => value.split("\n");
 
   return {
-    getLineMaxColumn: (lineNumber: number) =>
-      (lines()[lineNumber - 1]?.length ?? 0) + 1,
+    getLineMaxColumn: (lineNumber: number) => (lines()[lineNumber - 1]?.length ?? 0) + 1,
     getOffsetAt: (position: { column: number; lineNumber: number }) => {
       const before = lines().slice(0, position.lineNumber - 1);
-      return before.reduce((length, line) => length + line.length + 1, 0) +
-        position.column -
-        1;
+      return before.reduce((length, line) => length + line.length + 1, 0) + position.column - 1;
     },
     getPositionAt: (offset: number) => {
       const before = value.slice(0, offset).split("\n");
@@ -353,14 +338,11 @@ function createModel(initialValue: string, uri: string): {
   };
 }
 
-function createMonaco(
-  registerCodeActionProvider: ReturnType<typeof vi.fn>,
-): {
+function createMonaco(registerCodeActionProvider: ReturnType<typeof vi.fn>): {
   editor: {
-    addCommand(command: {
-      id: string;
-      run(accessor: unknown, ...args: unknown[]): unknown;
-    }): { dispose(): void };
+    addCommand(command: { id: string; run(accessor: unknown, ...args: unknown[]): unknown }): {
+      dispose(): void;
+    };
     executeCommand(id: string, ...args: unknown[]): unknown;
     getCommand(id: string):
       | {
@@ -381,10 +363,7 @@ function createMonaco(
     startLineNumber: number;
   };
 } {
-  const commands = new Map<
-    string,
-    { run(accessor: unknown, ...args: unknown[]): unknown }
-  >();
+  const commands = new Map<string, { run(accessor: unknown, ...args: unknown[]): unknown }>();
 
   return {
     editor: {

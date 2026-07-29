@@ -5,25 +5,20 @@ import {
   toLanguageServerTextDocumentPosition,
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
-  type LanguageServerCodeActionContext,
   type LanguageServerCodeLens,
   type LanguageServerCompletionContext,
   type LanguageServerCompletionItem,
   type LanguageServerCompletionTextEdit,
-  type LanguageServerDocumentHighlight,
   type LanguageServerDocumentLink,
   type LanguageServerDocumentSymbol,
-  type LanguageServerFeaturesGateway,
   type LanguageServerFeature,
   type LanguageServerFoldingRange,
   type LanguageServerFormattingOptions,
   type LanguageServerInlayHint,
-  type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
   type LanguageServerRange,
   type LanguageServerRefreshEvent,
   type LanguageServerRefreshGateway,
-  type LanguageServerSelectionRange,
   type LanguageServerSignature,
   type LanguageServerSignatureHelp,
   type LanguageServerSignatureHelpContext,
@@ -35,7 +30,14 @@ import {
   type LanguageServerWorkspaceSymbol,
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
+  type JavaScriptTypeScriptLanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
+import {
+  codeActionFitsProjection,
+  codeActionRequestContextFitsProjection,
+  codeActionsFitProjection,
+} from "../domain/codeActionProjection";
+import { toJavaScriptTypeScriptCodeActionContext as toLanguageServerCodeActionContext } from "./javascriptTypescriptCodeActionContext";
 import {
   languageServerCodeActionKindMatchesOnly,
   languageServerCodeActionsMatchingOnly,
@@ -50,8 +52,14 @@ import {
   createDocumentHighlightRequestTracker,
   type DocumentHighlightRequestTracker,
 } from "../domain/documentHighlightRequestTracker";
+import { linkedEditingRangesFitProjection } from "../domain/linkedEditingRangesPolicy";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  WORKSPACE_SYMBOL_REQUEST_TIMEOUT_MS,
+  workspaceSymbolQueryFitsProjection,
+  workspaceSymbolsFitProjection,
+} from "../domain/workspaceSymbolProjection";
 import {
   modelMatchesWorkspacePath,
   modelPath,
@@ -67,12 +75,31 @@ import {
 import type { EditorDocument } from "../domain/workspace";
 import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import {
-  FEATURE_REQUEST_TIMED_OUT,
+  CODE_ACTION_REQUEST_TIMEOUT_MS,
+  CODE_ACTION_RESOLVE_REQUEST_TIMEOUT_MS,
   HOVER_FEATURE_REQUEST_TIMEOUT_MS,
-  observeLanguageServerRequestCancellation,
-  raceInteractiveFeatureRequest,
+  LINKED_EDITING_RANGE_REQUEST_TIMEOUT_MS,
   toMonacoSemanticTokens,
 } from "./languageServerRequestCancellation";
+import { provideJavaScriptTypeScriptDocumentHighlights } from "./javascriptTypescriptDocumentHighlightProvider";
+import {
+  type JavaScriptTypeScriptNavigationFeature,
+  type JavaScriptTypeScriptPreparedNavigationTarget,
+} from "./javascriptTypescriptMonacoProviderRegistration";
+import {
+  javaScriptTypeScriptProviderRequestDidNotComplete as featureRequestDidNotComplete,
+  prepareJavaScriptTypeScriptProviderNavigationModels,
+  runBoundedJavaScriptTypeScriptProviderRequest as runBoundedProviderRequest,
+} from "./javascriptTypescriptProviderRequestBoundary";
+import {
+  preparedJavaScriptTypeScriptNavigationTargetsToMonacoLocations as preparedNavigationTargetsToMonacoLocations,
+  toJavaScriptTypeScriptMonacoLocations as toMonacoLocations,
+  toJavaScriptTypeScriptShowReferencesArguments as toShowReferencesArguments,
+} from "./javascriptTypescriptMonacoNavigationLocations";
+import {
+  flattenJavaScriptTypeScriptSelectionRange as flattenSelectionRange,
+  toJavaScriptTypeScriptMonacoLinkedEditingRanges as toMonacoLinkedEditingRanges,
+} from "./javascriptTypescriptMonacoSelectionMappings";
 import { mergeAliasedWorkspaceEditDocumentChanges } from "../domain/workspaceEditDocuments";
 import type {
   WorkspaceEditApplicationContext,
@@ -126,6 +153,7 @@ import {
   javaScriptTypeScriptFileOperationIsInWorkspaceRoot as isFileOperationInWorkspaceRoot,
   javaScriptTypeScriptPathIsInWorkspaceRoot as isPathInWorkspaceRoot,
   javaScriptTypeScriptWorkspaceEditForRoot as workspaceEditForRoot,
+  javaScriptTypeScriptWorkspaceEditIsFullyInRoot as workspaceEditIsFullyInRoot,
   javaScriptTypeScriptWorkspaceEditIsExactDocumentContinuation as workspaceEditIsExactDocumentContinuation,
   javaScriptTypeScriptWorkspaceEditVersionId as workspaceEditVersionId,
 } from "./javascriptTypescriptWorkspaceEditScope";
@@ -209,9 +237,9 @@ function attachStoredProviderPayloadAuthority<T extends object>(
 
 export interface JavaScriptTypeScriptLanguageServerProviderContext {
   applyWorkspaceEdit?: JavaScriptTypeScriptWorkspaceEditApplier;
-  cancelRequest?(rootPath: string, requestId: number): Promise<void>;
+  cancelRequest?(rootPath: string, sessionId: number, requestId: number): Promise<void>;
   completeFunctionCalls?: boolean;
-  featuresGateway: LanguageServerFeaturesGateway;
+  featuresGateway: JavaScriptTypeScriptLanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveJavaScriptTypeScriptOwnerEpoch(): number;
   getActiveJavaScriptTypeScriptOwnerIdentity(): object | null;
@@ -229,7 +257,12 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
   getWorkspaceIdentityDescriptor?(): WorkspaceIdentityDescriptor | null;
-  limitNavigationResultsToOpenModels?: boolean;
+  prepareNavigationModels?(
+    locations: readonly LanguageServerLocation[],
+    isCurrent: () => boolean,
+    feature: JavaScriptTypeScriptNavigationFeature,
+  ): Promise<readonly JavaScriptTypeScriptPreparedNavigationTarget[]>;
+  recordLatency?(feature: "completion" | "definition", durationMs: number, rootPath: string): void;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -261,6 +294,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   }
   const documentHighlightTracker =
     createDocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>();
+  let workspaceSymbolRequestGeneration = 0;
   const codeLensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
   const inlayHintRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
   const semanticTokensRefreshEmitter = createJavaScriptTypeScriptMonacoEventEmitter<void>();
@@ -461,7 +495,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   disposables.push(
     ...registerJavaScriptTypeScriptMonacoProviderBindings(monaco, {
       codeAction: {
-        provideCodeActions: (model, range, actionContext) =>
+        provideCodeActions: (model, range, actionContext, token) =>
           provideCodeActions(
             monaco,
             registeredContext,
@@ -469,8 +503,10 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
             model,
             range,
             actionContext,
+            token,
           ),
-        resolveCodeAction: (action) => resolveCodeAction(monaco, registeredContext, action),
+        resolveCodeAction: (action, token) =>
+          resolveCodeAction(monaco, registeredContext, action, token),
       },
       codeLens: {
         onDidChange:
@@ -559,8 +595,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         resolveInlayHint: (hint) => resolveInlayHint(monaco, registeredContext, hint),
       },
       linkedEditingRange: {
-        provideLinkedEditingRanges: (model, position) =>
-          provideLinkedEditingRanges(monaco, registeredContext, model, position),
+        provideLinkedEditingRanges: (model, position, token) =>
+          provideLinkedEditingRanges(monaco, registeredContext, model, position, token),
       },
       links: {
         provideLinks: (model) => provideDocumentLinks(monaco, registeredContext, model),
@@ -599,8 +635,16 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           provideTypeDefinition(monaco, registeredContext, model, position, token),
       },
       workspaceSymbols: {
-        provideWorkspaceSymbols: (query) =>
-          provideWorkspaceSymbols(monaco, registeredContext, query),
+        provideWorkspaceSymbols: (query, token) => {
+          const generation = ++workspaceSymbolRequestGeneration;
+          return provideWorkspaceSymbols(
+            monaco,
+            registeredContext,
+            query,
+            token,
+            () => generation === workspaceSymbolRequestGeneration,
+          );
+        },
       },
     }),
   );
@@ -631,17 +675,16 @@ async function provideHover(
       return null;
     }
 
-    const hover = await raceInteractiveFeatureRequest(
-      observeLanguageServerRequestCancellation(
-        context.featuresGateway.hover(request.rootPath, request.position),
-        token,
-        request.rootPath,
-        context.cancelRequest,
-      ),
+    const hover = await runBoundedProviderRequest(
+      context.featuresGateway.hover(request.rootPath, request.position, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
       HOVER_FEATURE_REQUEST_TIMEOUT_MS,
+      context.cancelRequest,
     );
 
-    if (hover === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(hover)) {
       return null;
     }
 
@@ -683,22 +726,29 @@ async function provideCompletionItems(
     }
 
     const languageServerContext = toLanguageServerCompletionContext(completionContext);
-    const completion = await raceInteractiveFeatureRequest(
-      observeLanguageServerRequestCancellation(
-        languageServerContext
-          ? context.featuresGateway.completion(
-              request.rootPath,
-              request.position,
-              languageServerContext,
-            )
-          : context.featuresGateway.completion(request.rootPath, request.position),
-        token,
-        request.rootPath,
-        context.cancelRequest,
-      ),
+    const startedAt = performance.now();
+    const completion = await runBoundedProviderRequest(
+      languageServerContext
+        ? context.featuresGateway.completion(
+            request.rootPath,
+            request.position,
+            languageServerContext,
+            request.sessionId,
+          )
+        : context.featuresGateway.completion(
+            request.rootPath,
+            request.position,
+            undefined,
+            request.sessionId,
+          ),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest,
     );
 
-    if (completion === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(completion)) {
       return { suggestions: [] };
     }
 
@@ -709,6 +759,7 @@ async function provideCompletionItems(
     if (!isFeatureRequestActive(context, request)) {
       return { suggestions: [] };
     }
+    context.recordLatency?.("completion", performance.now() - startedAt, request.rootPath);
 
     const word = model.getWordUntilPosition(position);
     const range = {
@@ -945,29 +996,45 @@ async function provideDefinition(
       return null;
     }
 
-    const locations = await raceInteractiveFeatureRequest(
-      context.featuresGateway.definition(request.rootPath, request.position),
+    const startedAt = performance.now();
+    const locations = await runBoundedProviderRequest(
+      context.featuresGateway.definition(request.rootPath, request.position, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest,
     );
 
-    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(locations)) {
+      return null;
+    }
+    if (token?.isCancellationRequested || !isFeatureRequestActive(context, request)) {
+      return null;
+    }
+    context.recordLatency?.("definition", performance.now() - startedAt, request.rootPath);
+
+    const preparedLocations = await prepareNavigationModelsForFeature(
+      context,
+      request,
+      locations,
+      "definition",
+      token,
+    );
+    if (!preparedLocations) {
       return null;
     }
 
+    return preparedNavigationTargetsToMonacoLocations(
+      monaco,
+      preparedLocations,
+      request.rootPath,
+      true,
+    );
+  } catch (error) {
     if (token?.isCancellationRequested) {
       return null;
     }
-
-    if (!isFeatureRequestActive(context, request)) {
-      return null;
-    }
-
-    return toMonacoLocations(
-      monaco,
-      locations,
-      undefined,
-      context.limitNavigationResultsToOpenModels === true,
-    );
-  } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -991,29 +1058,40 @@ async function provideDeclaration(
       return null;
     }
 
-    const locations = await raceInteractiveFeatureRequest(
-      context.featuresGateway.declaration(request.rootPath, request.position),
+    const locations = await runBoundedProviderRequest(
+      context.featuresGateway.declaration(request.rootPath, request.position, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest,
     );
 
-    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(locations)) {
       return null;
     }
 
+    const preparedLocations = await prepareNavigationModelsForFeature(
+      context,
+      request,
+      locations,
+      "declaration",
+      token,
+    );
+    if (!preparedLocations) {
+      return null;
+    }
+
+    return preparedNavigationTargetsToMonacoLocations(
+      monaco,
+      preparedLocations,
+      request.rootPath,
+      true,
+    );
+  } catch (error) {
     if (token?.isCancellationRequested) {
       return null;
     }
-
-    if (!isFeatureRequestActive(context, request)) {
-      return null;
-    }
-
-    return toMonacoLocations(
-      monaco,
-      locations,
-      undefined,
-      context.limitNavigationResultsToOpenModels === true,
-    );
-  } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -1037,29 +1115,40 @@ async function provideImplementation(
       return null;
     }
 
-    const locations = await raceInteractiveFeatureRequest(
-      context.featuresGateway.implementation(request.rootPath, request.position),
+    const locations = await runBoundedProviderRequest(
+      context.featuresGateway.implementation(request.rootPath, request.position, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest,
     );
 
-    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(locations)) {
       return null;
     }
 
+    const preparedLocations = await prepareNavigationModelsForFeature(
+      context,
+      request,
+      locations,
+      "implementation",
+      token,
+    );
+    if (!preparedLocations) {
+      return null;
+    }
+
+    return preparedNavigationTargetsToMonacoLocations(
+      monaco,
+      preparedLocations,
+      request.rootPath,
+      true,
+    );
+  } catch (error) {
     if (token?.isCancellationRequested) {
       return null;
     }
-
-    if (!isFeatureRequestActive(context, request)) {
-      return null;
-    }
-
-    return toMonacoLocations(
-      monaco,
-      locations,
-      undefined,
-      context.limitNavigationResultsToOpenModels === true,
-    );
-  } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -1083,32 +1172,59 @@ async function provideTypeDefinition(
       return null;
     }
 
-    const locations = await raceInteractiveFeatureRequest(
-      context.featuresGateway.typeDefinition(request.rootPath, request.position),
+    const locations = await runBoundedProviderRequest(
+      context.featuresGateway.typeDefinition(request.rootPath, request.position, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest,
     );
 
-    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(locations)) {
       return null;
     }
 
+    const preparedLocations = await prepareNavigationModelsForFeature(
+      context,
+      request,
+      locations,
+      "typeDefinition",
+      token,
+    );
+    if (!preparedLocations) {
+      return null;
+    }
+
+    return preparedNavigationTargetsToMonacoLocations(
+      monaco,
+      preparedLocations,
+      request.rootPath,
+      true,
+    );
+  } catch (error) {
     if (token?.isCancellationRequested) {
       return null;
     }
-
-    if (!isFeatureRequestActive(context, request)) {
-      return null;
-    }
-
-    return toMonacoLocations(
-      monaco,
-      locations,
-      undefined,
-      context.limitNavigationResultsToOpenModels === true,
-    );
-  } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
+}
+
+async function prepareNavigationModelsForFeature(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  request: Parameters<typeof isFeatureRequestActive>[1],
+  locations: readonly LanguageServerLocation[],
+  feature: JavaScriptTypeScriptNavigationFeature,
+  token?: Monaco.CancellationToken,
+): Promise<readonly JavaScriptTypeScriptPreparedNavigationTarget[] | null> {
+  return prepareJavaScriptTypeScriptProviderNavigationModels({
+    feature,
+    isActive: () => isFeatureRequestActive(context, request),
+    locations,
+    prepare: context.prepareNavigationModels,
+    token,
+  });
 }
 
 async function provideSignatureHelp(
@@ -1131,22 +1247,28 @@ async function provideSignatureHelp(
     }
 
     const languageServerSignatureContext = toLanguageServerSignatureHelpContext(signatureContext);
-    const signatureHelp = await raceInteractiveFeatureRequest(
-      observeLanguageServerRequestCancellation(
-        languageServerSignatureContext
-          ? context.featuresGateway.signatureHelp(
-              request.rootPath,
-              request.position,
-              languageServerSignatureContext,
-            )
-          : context.featuresGateway.signatureHelp(request.rootPath, request.position),
-        token,
-        request.rootPath,
-        context.cancelRequest,
-      ),
+    const signatureHelp = await runBoundedProviderRequest(
+      languageServerSignatureContext
+        ? context.featuresGateway.signatureHelp(
+            request.rootPath,
+            request.position,
+            languageServerSignatureContext,
+            request.sessionId,
+          )
+        : context.featuresGateway.signatureHelp(
+            request.rootPath,
+            request.position,
+            undefined,
+            request.sessionId,
+          ),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest,
     );
 
-    if (signatureHelp === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(signatureHelp)) {
       return null;
     }
 
@@ -1254,24 +1376,35 @@ async function provideReferences(
       return null;
     }
 
-    const locations = await raceInteractiveFeatureRequest(
-      context.featuresGateway.references(request.rootPath, request.position),
+    const locations = await runBoundedProviderRequest(
+      context.featuresGateway.references(request.rootPath, request.position, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest,
     );
 
-    if (locations === FEATURE_REQUEST_TIMED_OUT) {
+    if (featureRequestDidNotComplete(locations)) {
       return null;
     }
 
+    const preparedLocations = await prepareNavigationModelsForFeature(
+      context,
+      request,
+      locations,
+      "references",
+      token,
+    );
+    if (!preparedLocations) {
+      return null;
+    }
+
+    return preparedNavigationTargetsToMonacoLocations(monaco, preparedLocations, request.rootPath);
+  } catch (error) {
     if (token?.isCancellationRequested) {
       return null;
     }
-
-    if (!isFeatureRequestActive(context, request)) {
-      return null;
-    }
-
-    return toMonacoLocations(monaco, locations, request.rootPath);
-  } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -1290,47 +1423,19 @@ async function provideDocumentHighlights(
   if (!request) {
     return null;
   }
-
-  const word = model.getWordAtPosition(position)?.word ?? null;
-  const version = model.getVersionId();
-
-  if (word !== null) {
-    const cached = tracker.cached(request.path, word, version);
-
-    if (cached) {
-      return cached;
-    }
-  }
-
-  try {
-    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
-      return null;
-    }
-
-    const highlights = await context.featuresGateway.documentHighlights(
-      request.rootPath,
-      request.position,
-    );
-
-    if (token?.isCancellationRequested) {
-      return null;
-    }
-
-    if (!isFeatureRequestActive(context, request)) {
-      return null;
-    }
-
-    const mapped = highlights.map((highlight) => toMonacoDocumentHighlight(monaco, highlight));
-
-    if (word !== null) {
-      tracker.remember(request.path, word, version, mapped);
-    }
-
-    return mapped;
-  } catch (error) {
-    reportErrorForActiveRequest(context, request, error);
-    return null;
-  }
+  return provideJavaScriptTypeScriptDocumentHighlights({
+    cancelRequest: context.cancelRequest,
+    featuresGateway: context.featuresGateway,
+    flushPendingDocumentChange: () => flushPendingDocumentChangeForActiveRoot(context, request),
+    isRequestActive: () => isFeatureRequestActive(context, request),
+    model,
+    monaco,
+    position,
+    reportError: (error) => reportErrorForActiveRequest(context, request, error),
+    request,
+    token,
+    tracker,
+  });
 }
 
 async function provideDocumentLinks(
@@ -1403,17 +1508,32 @@ async function provideWorkspaceSymbols(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   query: string,
+  token: Monaco.CancellationToken | undefined,
+  isLatestQuery: () => boolean,
 ): Promise<MonacoWorkspaceSymbol[]> {
   const request = workspaceSymbolRequestContext(context);
 
-  if (!request) {
+  if (!request || !workspaceSymbolQueryFitsProjection(query)) {
     return [];
   }
 
   try {
-    const symbols = await context.featuresGateway.workspaceSymbols(request.rootPath, query);
+    const symbols = await runBoundedProviderRequest(
+      context.featuresGateway.workspaceSymbols(request.rootPath, query, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
+      WORKSPACE_SYMBOL_REQUEST_TIMEOUT_MS,
+      context.cancelRequest,
+    );
 
-    if (!isFeatureRequestActive(context, request)) {
+    if (
+      featureRequestDidNotComplete(symbols) ||
+      token?.isCancellationRequested ||
+      !isLatestQuery() ||
+      !isFeatureRequestActive(context, request) ||
+      !workspaceSymbolsFitProjection(symbols)
+    ) {
       return [];
     }
 
@@ -1534,10 +1654,19 @@ async function provideRenameEdits(
       return null;
     }
 
-    if (context.applyWorkspaceEdit) {
-      await applyWorkspaceEditWithOpenModels(monaco, context, edit, request.rootPath);
+    if (!workspaceEditIsFullyInRoot(edit, request.rootPath)) {
+      return null;
+    }
 
-      if (!isFeatureRequestActive(context, request)) {
+    if (context.applyWorkspaceEdit) {
+      const applied = await applyWorkspaceEditWithOpenModels(
+        monaco,
+        context,
+        edit,
+        request.rootPath,
+      );
+
+      if (!applied || !isFeatureRequestActive(context, request)) {
         return null;
       }
 
@@ -1604,12 +1733,25 @@ async function provideDocumentSemanticTokens(
       return null;
     }
 
-    const tokens = await observeLanguageServerRequestCancellation(
-      context.featuresGateway.semanticTokens(request.rootPath, request.path),
+    const languageServerRequest = context.featuresGateway.semanticTokens(
+      request.rootPath,
+      request.path,
+      request.sessionId,
+    );
+    if (languageServerRequest.sessionId !== request.sessionId) {
+      return null;
+    }
+    const tokens = await runBoundedProviderRequest(
+      languageServerRequest,
+      request.sessionId,
       token,
       request.rootPath,
+      undefined,
       context.cancelRequest,
     );
+    if (featureRequestDidNotComplete(tokens)) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1642,16 +1784,26 @@ async function provideDocumentRangeSemanticTokens(
       return null;
     }
 
-    const tokens = await observeLanguageServerRequestCancellation(
-      context.featuresGateway.rangeSemanticTokens(
-        request.rootPath,
-        request.path,
-        toLanguageServerRange(range),
-      ),
+    const languageServerRequest = context.featuresGateway.rangeSemanticTokens(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+      request.sessionId,
+    );
+    if (languageServerRequest.sessionId !== request.sessionId) {
+      return null;
+    }
+    const tokens = await runBoundedProviderRequest(
+      languageServerRequest,
+      request.sessionId,
       token,
       request.rootPath,
+      undefined,
       context.cancelRequest,
     );
+    if (featureRequestDidNotComplete(tokens)) {
+      return null;
+    }
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1672,6 +1824,7 @@ async function provideLinkedEditingRanges(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.LinkedEditingRanges | null> {
   const request = featureRequestContext(context, model, position, "linkedEditingRange");
 
@@ -1684,12 +1837,25 @@ async function provideLinkedEditingRanges(
       return null;
     }
 
-    const ranges = await context.featuresGateway.linkedEditingRanges(
+    const ranges = await runBoundedProviderRequest(
+      context.featuresGateway.linkedEditingRanges(
+        request.rootPath,
+        request.position,
+        request.sessionId,
+      ),
+      request.sessionId,
+      token,
       request.rootPath,
-      request.position,
+      LINKED_EDITING_RANGE_REQUEST_TIMEOUT_MS,
+      context.cancelRequest,
     );
 
-    if (!isFeatureRequestActive(context, request)) {
+    if (
+      featureRequestDidNotComplete(ranges) ||
+      !linkedEditingRangesFitProjection(ranges) ||
+      token?.isCancellationRequested === true ||
+      !isFeatureRequestActive(context, request)
+    ) {
       return null;
     }
 
@@ -1754,6 +1920,7 @@ async function provideCodeActions(
   model: MonacoModel,
   range: Monaco.Range,
   actionContext: Monaco.languages.CodeActionContext,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CodeActionList> {
   const request = documentRequestContext(context, model, "codeAction");
 
@@ -1778,14 +1945,32 @@ async function provideCodeActions(
       return emptyCodeActionList();
     }
 
-    const actions = await context.featuresGateway.codeActions(
+    const requestContext = toLanguageServerCodeActionContext(monaco, actionContext);
+    if (!requestContext || !codeActionRequestContextFitsProjection(requestContext)) {
+      return emptyCodeActionList();
+    }
+    const actions = await runBoundedProviderRequest(
+      context.featuresGateway.codeActions(
+        request.rootPath,
+        request.path,
+        toLanguageServerRange(range),
+        requestContext,
+        request.sessionId,
+      ),
+      request.sessionId,
+      token,
       request.rootPath,
-      request.path,
-      toLanguageServerRange(range),
-      toLanguageServerCodeActionContext(monaco, actionContext),
+      CODE_ACTION_REQUEST_TIMEOUT_MS,
+      context.cancelRequest,
     );
 
-    if (!isCodeActionAuthorityActive(context, authority)) {
+    if (
+      featureRequestDidNotComplete(actions) ||
+      !codeActionsFitProjection(actions) ||
+      token?.isCancellationRequested === true ||
+      !isFeatureRequestActive(context, request) ||
+      !isCodeActionAuthorityActive(context, authority)
+    ) {
       return emptyCodeActionList();
     }
 
@@ -1812,6 +1997,7 @@ async function resolveCodeAction(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   action: Monaco.languages.CodeAction,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CodeAction> {
   const backedAction = action as LanguageServerBackedCodeAction;
   const authority = backedAction.__codeActionAuthority;
@@ -1819,6 +2005,7 @@ async function resolveCodeAction(
   if (
     !authority ||
     !backedAction.__languageServerAction ||
+    !codeActionFitsProjection(backedAction.__languageServerAction) ||
     !isCodeActionAuthorityActive(context, authority)
   ) {
     return action;
@@ -1829,12 +2016,23 @@ async function resolveCodeAction(
       return action;
     }
 
-    const resolved = await context.featuresGateway.resolveCodeAction(
+    const resolved = await runBoundedProviderRequest(
+      context.featuresGateway.resolveCodeAction(
+        authority.rootPath,
+        backedAction.__languageServerAction,
+        authority.sessionId,
+      ),
+      authority.sessionId,
+      token,
       authority.rootPath,
-      backedAction.__languageServerAction,
+      CODE_ACTION_RESOLVE_REQUEST_TIMEOUT_MS,
+      context.cancelRequest,
     );
 
     if (
+      featureRequestDidNotComplete(resolved) ||
+      !codeActionFitsProjection(resolved) ||
+      token?.isCancellationRequested === true ||
       !isCodeActionAuthorityActive(context, authority) ||
       !isStoredDocumentPayloadActive(context, backedAction)
     ) {
@@ -2809,31 +3007,6 @@ function monacoSymbolKindFromLspKind(monaco: MonacoApi, kind: number): Monaco.la
   }
 }
 
-function toMonacoDocumentHighlight(
-  monaco: MonacoApi,
-  highlight: LanguageServerDocumentHighlight,
-): Monaco.languages.DocumentHighlight {
-  return {
-    kind: toMonacoDocumentHighlightKind(monaco, highlight.kind),
-    range: toMonacoRange(monaco, highlight.range),
-  };
-}
-
-function toMonacoDocumentHighlightKind(
-  monaco: MonacoApi,
-  kind: number | null,
-): Monaco.languages.DocumentHighlightKind {
-  if (kind === 2) {
-    return monaco.languages.DocumentHighlightKind.Read;
-  }
-
-  if (kind === 3) {
-    return monaco.languages.DocumentHighlightKind.Write;
-  }
-
-  return monaco.languages.DocumentHighlightKind.Text;
-}
-
 function toMonacoCodeLens(
   monaco: MonacoApi,
   rootPath: string,
@@ -2882,134 +3055,6 @@ function toMonacoCodeLensCommand(
     id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
     title: command.title || command.command,
   };
-}
-
-function toShowReferencesArguments(
-  monaco: MonacoApi,
-  args: unknown[],
-  rootPath?: string,
-): unknown[] {
-  if (args.length < 3) {
-    return args;
-  }
-
-  const [uri, position, locations, ...rest] = args;
-
-  return [
-    typeof uri === "string" ? languageServerUriToMonacoUri(monaco, rootPath, uri) : uri,
-    toMonacoPositionLike(position),
-    Array.isArray(locations)
-      ? toMonacoLocations(monaco, locations as LanguageServerLocation[], rootPath)
-      : locations,
-    ...rest,
-  ];
-}
-
-function languageServerUriToMonacoUri(
-  monaco: MonacoApi,
-  rootPath: string | undefined,
-  uri: string,
-): unknown {
-  const path = pathFromLanguageServerUri(uri);
-
-  if (!path) {
-    return uri;
-  }
-
-  return rootPath ? (toWorkspaceMonacoUri(monaco, rootPath, path) ?? uri) : monaco.Uri.file(path);
-}
-
-function toMonacoPositionLike(position: unknown): unknown {
-  if (position && typeof position === "object" && "line" in position && "character" in position) {
-    const value = position as { character: unknown; line: unknown };
-
-    if (typeof value.line === "number" && typeof value.character === "number") {
-      return {
-        column: value.character + 1,
-        lineNumber: value.line + 1,
-      };
-    }
-  }
-
-  return position;
-}
-
-function flattenSelectionRange(
-  monaco: MonacoApi,
-  selectionRange: LanguageServerSelectionRange,
-): Monaco.languages.SelectionRange[] {
-  const ranges: Monaco.languages.SelectionRange[] = [];
-  let current: LanguageServerSelectionRange | null = selectionRange;
-
-  while (current) {
-    ranges.push({ range: toMonacoRange(monaco, current.range) });
-    current = current.parent;
-  }
-
-  return ranges;
-}
-
-function toMonacoLinkedEditingRanges(
-  monaco: MonacoApi,
-  ranges: LanguageServerLinkedEditingRanges | null,
-): Monaco.languages.LinkedEditingRanges | null {
-  if (!ranges || ranges.ranges.length === 0) {
-    return null;
-  }
-
-  return {
-    ranges: ranges.ranges.map((range) => toMonacoRange(monaco, range)),
-    ...(ranges.wordPattern ? { wordPattern: safeRegExp(ranges.wordPattern) } : {}),
-  };
-}
-
-function safeRegExp(pattern: string): RegExp | undefined {
-  try {
-    return new RegExp(pattern);
-  } catch {
-    return undefined;
-  }
-}
-
-function toMonacoLocations(
-  monaco: MonacoApi,
-  locations: LanguageServerLocation[],
-  rootPath?: string,
-  limitToOpenModels = false,
-): Monaco.languages.Location[] {
-  return locations.flatMap((location) => {
-    const path = pathFromLanguageServerUri(location.uri);
-
-    if (!path) {
-      return [];
-    }
-
-    if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
-      return [];
-    }
-
-    const uri = rootPath ? toWorkspaceMonacoUri(monaco, rootPath, path) : monaco.Uri.file(path);
-
-    if (!uri) {
-      return [];
-    }
-
-    if (limitToOpenModels && !monaco.editor.getModel(uri)) {
-      return [];
-    }
-
-    return [
-      {
-        range: new monaco.Range(
-          location.range.start.line + 1,
-          location.range.start.character + 1,
-          location.range.end.line + 1,
-          location.range.end.character + 1,
-        ),
-        uri,
-      },
-    ];
-  });
 }
 
 function toMonacoWorkspaceEdit(
@@ -3172,84 +3217,6 @@ function toLanguageServerRange(range: Monaco.Range): LanguageServerRange {
       line: Math.max(0, range.startLineNumber - 1),
     },
   };
-}
-
-function toLanguageServerCodeActionContext(
-  monaco: MonacoApi,
-  context: Monaco.languages.CodeActionContext,
-): LanguageServerCodeActionContext {
-  return {
-    diagnostics: context.markers.map((marker) => ({
-      code: markerCode(marker),
-      data: markerData(marker),
-      message: marker.message,
-      range: {
-        end: {
-          character: Math.max(0, marker.endColumn - 1),
-          line: Math.max(0, marker.endLineNumber - 1),
-        },
-        start: {
-          character: Math.max(0, marker.startColumn - 1),
-          line: Math.max(0, marker.startLineNumber - 1),
-        },
-      },
-      severity: lspDiagnosticSeverity(monaco, marker.severity),
-      source: marker.source ?? null,
-    })),
-    only: context.only ? [context.only] : null,
-    triggerKind: codeActionTriggerKind(monaco, context.trigger),
-  };
-}
-
-function markerCode(marker: Monaco.editor.IMarkerData): string | number | null {
-  if (!marker.code) {
-    return null;
-  }
-
-  if (typeof marker.code === "string" || typeof marker.code === "number") {
-    return marker.code;
-  }
-
-  return marker.code.value;
-}
-
-function markerData(marker: Monaco.editor.IMarkerData): unknown | null {
-  return (marker as Monaco.editor.IMarkerData & { data?: unknown }).data ?? null;
-}
-
-function codeActionTriggerKind(
-  monaco: MonacoApi,
-  trigger: Monaco.languages.CodeActionTriggerType | undefined,
-): number | null {
-  if (trigger === monaco.languages.CodeActionTriggerType.Invoke) {
-    return 1;
-  }
-
-  if (trigger === 2) {
-    return 2;
-  }
-
-  return null;
-}
-
-function lspDiagnosticSeverity(monaco: MonacoApi, severity: Monaco.MarkerSeverity): number | null {
-  if (severity === monaco.MarkerSeverity.Error) {
-    return 1;
-  }
-
-  if (severity === monaco.MarkerSeverity.Warning) {
-    return 2;
-  }
-
-  if (severity === monaco.MarkerSeverity.Info) {
-    return 3;
-  }
-
-  if (severity === monaco.MarkerSeverity.Hint) {
-    return 4;
-  }
-
-  return null;
 }
 
 function toMonacoCodeAction(

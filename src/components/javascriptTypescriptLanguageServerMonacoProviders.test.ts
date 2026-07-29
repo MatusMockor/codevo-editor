@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import type {
-  LanguageServerFeaturesGateway,
+  JavaScriptTypeScriptLanguageServerFeaturesGateway as LanguageServerFeaturesGateway,
+  LanguageServerLocation,
   LanguageServerRange,
   LanguageServerRefreshEvent,
   LanguageServerRefreshGateway,
@@ -14,12 +15,32 @@ import type {
 } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
 import { defaultLargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
+import { MAX_DOCUMENT_HIGHLIGHT_RESULTS } from "../domain/documentHighlightRequestTracker";
+import {
+  MAX_LINKED_EDITING_RANGES,
+  MAX_LINKED_EDITING_WORD_PATTERN_UTF8_BYTES,
+} from "../domain/linkedEditingRangesPolicy";
+import {
+  MAX_CODE_ACTION_DIAGNOSTICS,
+  MAX_CODE_ACTION_ITEM_UTF8_BYTES,
+  MAX_CODE_ACTION_RESULTS,
+} from "../domain/codeActionProjection";
+import {
+  MAX_WORKSPACE_SYMBOL_RESULTS,
+  WORKSPACE_SYMBOL_REQUEST_TIMEOUT_MS,
+} from "../domain/workspaceSymbolProjection";
 import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
   type JavaScriptTypeScriptLanguageServerProviderContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import { attachStoredJavaScriptTypeScriptDocumentAuthority } from "./javascriptTypescriptProviderDocumentAuthority";
+import {
+  CODE_ACTION_REQUEST_TIMEOUT_MS,
+  CODE_ACTION_RESOLVE_REQUEST_TIMEOUT_MS,
+  DOCUMENT_HIGHLIGHT_REQUEST_TIMEOUT_MS,
+  LINKED_EDITING_RANGE_REQUEST_TIMEOUT_MS,
+} from "./languageServerRequestCancellation";
 import { workspaceModelUri } from "./phpMonacoDocumentContext";
 
 const JAVASCRIPT_TYPESCRIPT_PROVIDER_LANGUAGES = [
@@ -189,6 +210,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         triggerCharacter: ".",
         triggerKind: 2,
       },
+      1,
     );
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
@@ -232,9 +254,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       ],
     });
-    vi.mocked(gateway.hover).mockResolvedValueOnce({
-      contents: "const message: string",
-    });
+    vi.mocked(gateway.hover).mockImplementationOnce((_rootPath, _position, sessionId) =>
+      identifiedResponse(
+        {
+          contents: "const message: string",
+        },
+        sessionId,
+      ),
+    );
     const vueDocument = {
       ...document(),
       content: '<script setup lang="ts">\nconst message = "hello";\nmessage\n</script>\n',
@@ -285,12 +312,17 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       line: 2,
       path: "/project/src/App.vue",
     };
-    expect(gateway.completion).toHaveBeenCalledWith("/project", expectedDocument, {
-      triggerCharacter: ".",
-      triggerKind: 2,
-    });
-    expect(gateway.hover).toHaveBeenCalledWith("/project", expectedDocument);
-    expect(gateway.definition).toHaveBeenCalledWith("/project", expectedDocument);
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      expectedDocument,
+      {
+        triggerCharacter: ".",
+        triggerKind: 2,
+      },
+      1,
+    );
+    expect(gateway.hover).toHaveBeenCalledWith("/project", expectedDocument, 1);
+    expect(gateway.definition).toHaveBeenCalledWith("/project", expectedDocument, 1);
     expect(gateway.codeActions).toHaveBeenCalledWith(
       "/project",
       "/project/src/App.vue",
@@ -300,6 +332,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         only: ["quickfix"],
         triggerKind: null,
       },
+      1,
     );
   });
 
@@ -395,6 +428,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         only: ["refactor"],
         triggerKind: 1,
       },
+      1,
     );
     expect(
       result.actions.map(({ kind, title }: { kind: string; title: string }) => [kind, title]),
@@ -413,7 +447,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const pending =
         createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.codeActions).mockImplementation(async () => pending.promise);
+      vi.mocked(gateway.codeActions).mockImplementation(() => pending.promise);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
         providerContext({
@@ -448,7 +482,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const pending =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.codeActions).mockImplementation(async () => pending.promise);
+    vi.mocked(gateway.codeActions).mockImplementation(() => pending.promise);
     const owner = (workspaceId: string) =>
       ({
         canonicalRoot: "/project",
@@ -481,6 +515,39 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       monaco as any,
       providerContext({ getWorkspaceIdentityDescriptor: () => owner("workspace-a") }),
     );
+    pending.resolve([refactorAction("Extract function")]);
+
+    await expect(request).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+  });
+
+  it("drops refactors after an unobserved same-root owner epoch A-B-A transition", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    let ownerEpoch = 1;
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.codeActions).mockImplementation(() => pending.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getActiveJavaScriptTypeScriptOwnerEpoch: () => ownerEpoch,
+        getActiveModel: () => model as any,
+      }),
+    );
+    const provider = (monaco.languages.registerCodeActionProvider as any).mock.calls[0][1];
+    const request = provider.provideCodeActions(model, new monaco.Range(1, 1, 1, 5), {
+      markers: [],
+      only: "refactor",
+    });
+    await vi.waitFor(() => expect(gateway.codeActions).toHaveBeenCalledOnce());
+
+    ownerEpoch = 2;
+    ownerEpoch = 3;
     pending.resolve([refactorAction("Extract function")]);
 
     await expect(request).resolves.toEqual({
@@ -570,7 +637,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const completion =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
+    vi.mocked(gateway.completion).mockImplementationOnce(() => completion.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -602,11 +669,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
 
     await expect(completionPromise).resolves.toEqual({ suggestions: [] });
-    expect(gateway.completion).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      undefined,
+      1,
+    );
   });
 
   it("drops in-flight TypeScript completions when no project tab is active", async () => {
@@ -615,7 +687,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const completion =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
+    vi.mocked(gateway.completion).mockImplementationOnce(() => completion.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -646,11 +718,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
 
     await expect(completionPromise).resolves.toEqual({ suggestions: [] });
-    expect(gateway.completion).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      undefined,
+      1,
+    );
   });
 
   it("drops stale TypeScript provider errors after switching project tabs", async () => {
@@ -660,7 +737,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
     const reportError = vi.fn();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
+    vi.mocked(gateway.completion).mockImplementationOnce(() => completion.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -691,7 +768,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
     const reportError = vi.fn();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
+    vi.mocked(gateway.completion).mockImplementationOnce(() => completion.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -718,6 +795,28 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(reportError).not.toHaveBeenCalled();
   });
 
+  it("consumes a late rejection from mismatched provider request authority", async () => {
+    const monaco = createMonaco();
+    const hover = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+    Object.assign(hover.promise, { sessionId: 2 });
+    const reportError = vi.fn();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(() => hover.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, reportError }),
+    );
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock.calls[0][1];
+
+    await expect(
+      hoverProvider.provideHover(textModel(), { column: 4, lineNumber: 2 }),
+    ).resolves.toBeNull();
+    hover.reject(new Error("late foreign rejection"));
+    await Promise.resolve();
+
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
   it("drops successful TypeScript provider responses after same-root session restart", async () => {
     const position = { column: 4, lineNumber: 2 };
 
@@ -726,7 +825,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       let activeSessionId = 1;
       const hover = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      vi.mocked(gateway.hover).mockImplementationOnce(() => hover.promise);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
         providerContext({
@@ -747,11 +846,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       });
 
       await expect(hoverPromise).resolves.toBeNull();
-      expect(gateway.hover).toHaveBeenCalledWith("/project", {
-        character: 3,
-        line: 1,
-        path: "/project/src/user.ts",
-      });
+      expect(gateway.hover).toHaveBeenCalledWith(
+        "/project",
+        {
+          character: 3,
+          line: 1,
+          path: "/project/src/user.ts",
+        },
+        1,
+      );
     }
 
     {
@@ -760,7 +863,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const references =
         createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.references).mockImplementationOnce(async () => references.promise);
+      vi.mocked(gateway.references).mockImplementationOnce(() => references.promise);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
         providerContext({
@@ -785,11 +888,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       ]);
 
       await expect(referencesPromise).resolves.toBeNull();
-      expect(gateway.references).toHaveBeenCalledWith("/project", {
-        character: 3,
-        line: 1,
-        path: "/project/src/user.ts",
-      });
+      expect(gateway.references).toHaveBeenCalledWith(
+        "/project",
+        {
+          character: 3,
+          line: 1,
+          path: "/project/src/user.ts",
+        },
+        1,
+      );
     }
 
     {
@@ -797,7 +904,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       let activeSessionId = 1;
       const rename = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.rename).mockImplementationOnce(async () => rename.promise);
+      vi.mocked(gateway.rename).mockImplementationOnce(() => rename.promise);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
         providerContext({
@@ -861,7 +968,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const completion =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
+    vi.mocked(gateway.completion).mockImplementationOnce(() => completion.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({ featuresGateway: gateway }),
@@ -923,7 +1030,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     await Promise.resolve();
     pendingToken.fire();
     pendingToken.fire();
-    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 41);
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, 41);
     pending.resolve({ isIncomplete: false, items: [] });
     await expect(pendingResult).resolves.toEqual({ suggestions: [] });
 
@@ -951,10 +1058,13 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const completion =
         createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.completion).mockImplementationOnce(async () => completion.promise);
+      vi.mocked(gateway.completion).mockImplementationOnce(() =>
+        Object.assign(completion.promise, { requestId: 51 }),
+      );
+      const cancelRequest = vi.fn(async () => undefined);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
-        providerContext({ featuresGateway: gateway }),
+        providerContext({ cancelRequest, featuresGateway: gateway }),
       );
       const completionProvider = (monaco.languages.registerCompletionItemProvider as any).mock
         .calls[0][1];
@@ -966,6 +1076,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       await vi.advanceTimersByTimeAsync(5000);
 
       await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, 51);
+      completion.resolve({ isIncomplete: false, items: [] });
+      await flushMicrotasks();
+      expect(cancelRequest).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -1001,7 +1115,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     let activeRoot = "/project";
     const hover = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    vi.mocked(gateway.hover).mockImplementationOnce(() => hover.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1022,11 +1136,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
 
     await expect(hoverPromise).resolves.toBeNull();
-    expect(gateway.hover).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.hover).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
   });
 
   it("drops in-flight TypeScript definitions after switching project tabs", async () => {
@@ -1035,7 +1153,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const definition =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.definition).mockImplementationOnce(async () => definition.promise);
+    vi.mocked(gateway.definition).mockImplementationOnce(() => definition.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1060,18 +1178,22 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
 
     await expect(definitionPromise).resolves.toBeNull();
-    expect(gateway.definition).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.definition).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
   });
 
   it("drops TypeScript hover when the Monaco cancellation token is cancelled after the response", async () => {
     const monaco = createMonaco();
     const hover = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    vi.mocked(gateway.hover).mockImplementationOnce(() => hover.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({ featuresGateway: gateway }),
@@ -1098,7 +1220,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const monaco = createMonaco();
       const hover = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      vi.mocked(gateway.hover).mockImplementationOnce(() => hover.promise);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
         providerContext({ featuresGateway: gateway }),
@@ -1126,10 +1248,13 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const monaco = createMonaco();
       const hover = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      vi.mocked(gateway.hover).mockImplementationOnce(() =>
+        Object.assign(hover.promise, { requestId: 52 }),
+      );
+      const cancelRequest = vi.fn(async () => undefined);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
-        providerContext({ featuresGateway: gateway }),
+        providerContext({ cancelRequest, featuresGateway: gateway }),
       );
       const hoverProvider = (monaco.languages.registerHoverProvider as any).mock.calls[0][1];
       const token = { isCancellationRequested: false };
@@ -1142,6 +1267,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       await vi.advanceTimersByTimeAsync(700);
 
       await expect(hoverPromise).resolves.toBeNull();
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, 52);
     } finally {
       vi.useRealTimers();
     }
@@ -1155,7 +1281,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const definition =
         createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.definition).mockImplementationOnce(async () => definition.promise);
+      vi.mocked(gateway.definition).mockImplementationOnce(() => definition.promise);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
         providerContext({ featuresGateway: gateway }),
@@ -1187,9 +1313,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
   it("returns TypeScript hover when the server responds before the timeout and the token stays active", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway();
-    vi.mocked(gateway.hover).mockResolvedValueOnce({
-      contents: "type User = { id: string }",
-    });
+    vi.mocked(gateway.hover).mockImplementationOnce((_rootPath, _position, sessionId) =>
+      identifiedResponse(
+        {
+          contents: "type User = { id: string }",
+        },
+        sessionId,
+      ),
+    );
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({ featuresGateway: gateway }),
@@ -1204,6 +1335,71 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("records completed TypeScript completion and definition latency for the captured root", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      definition: [
+        {
+          range: range(0, 0, 0, 4),
+          uri: "file:///project/src/target.ts",
+        },
+      ],
+    });
+    const recordLatency = vi.fn();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, recordLatency }),
+    );
+    const completionProvider = (monaco.languages.registerCompletionItemProvider as any).mock
+      .calls[0][1];
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
+      .calls[0][1];
+
+    await completionProvider.provideCompletionItems(textModel(), {
+      column: 4,
+      lineNumber: 2,
+    });
+    await definitionProvider.provideDefinition(textModel(), {
+      column: 4,
+      lineNumber: 2,
+    });
+
+    expect(recordLatency).toHaveBeenNthCalledWith(1, "completion", expect.any(Number), "/project");
+    expect(recordLatency).toHaveBeenNthCalledWith(2, "definition", expect.any(Number), "/project");
+    expect(recordLatency.mock.calls.every(([, duration]) => duration >= 0)).toBe(true);
+  });
+
+  it("does not record a late TypeScript definition after an A-B-A owner replacement", async () => {
+    const monaco = createMonaco();
+    const definition =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.definition).mockImplementationOnce(() => definition.promise);
+    let ownerEpoch = 1;
+    const recordLatency = vi.fn();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getActiveJavaScriptTypeScriptOwnerEpoch: () => ownerEpoch,
+        recordLatency,
+      }),
+    );
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
+      .calls[0][1];
+    const pending = definitionProvider.provideDefinition(textModel(), {
+      column: 4,
+      lineNumber: 2,
+    });
+
+    ownerEpoch = 2;
+    ownerEpoch = 3;
+    definition.resolve([]);
+
+    await expect(pending).resolves.toBeNull();
+    expect(recordLatency).not.toHaveBeenCalled();
+  });
+
   it("resolves TypeScript definition to null when the server does not respond before the timeout", async () => {
     vi.useFakeTimers();
 
@@ -1212,10 +1408,13 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const definition =
         createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.definition).mockImplementationOnce(async () => definition.promise);
+      vi.mocked(gateway.definition).mockImplementationOnce(() =>
+        Object.assign(definition.promise, { requestId: 53 }),
+      );
+      const cancelRequest = vi.fn(async () => undefined);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
-        providerContext({ featuresGateway: gateway }),
+        providerContext({ cancelRequest, featuresGateway: gateway }),
       );
       const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
         .calls[0][1];
@@ -1229,6 +1428,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       await vi.advanceTimersByTimeAsync(5000);
 
       await expect(definitionPromise).resolves.toBeNull();
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, 53);
     } finally {
       vi.useRealTimers();
     }
@@ -1240,7 +1440,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const codeActions =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.codeActions).mockImplementationOnce(async () => codeActions.promise);
+    vi.mocked(gateway.codeActions).mockImplementationOnce(() => codeActions.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1285,7 +1485,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const codeActions =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.codeActions).mockImplementationOnce(async () => codeActions.promise);
+    vi.mocked(gateway.codeActions).mockImplementationOnce(() => codeActions.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1318,6 +1518,256 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
 
     await expect(actionsPromise).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+    expect(gateway.codeActions).not.toHaveBeenCalled();
+  });
+
+  it("cancels pending TypeScript code-action provide and resolve requests exactly once", async () => {
+    const monaco = createMonaco();
+    const pendingActions =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
+    const pendingResolve =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>>>();
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: { resolve: true },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: "Resolve me",
+        },
+      ],
+    });
+    vi.mocked(gateway.codeActions)
+      .mockImplementationOnce(() => pendingActions.promise)
+      .mockImplementationOnce((_root, _path, _range, _context, sessionId) =>
+        identifiedResponse(
+          [
+            {
+              command: null,
+              data: { resolve: true },
+              edit: null,
+              isPreferred: false,
+              kind: "quickfix",
+              title: "Resolve me",
+            },
+          ],
+          sessionId,
+        ),
+      );
+    vi.mocked(gateway.resolveCodeAction).mockImplementationOnce(() => pendingResolve.promise);
+    const cancelRequest = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerCodeActionProvider as any).mock.calls[0][1];
+    const provideToken = cancellableToken();
+    const provide = provider.provideCodeActions(
+      textModel(),
+      new monaco.Range(1, 1, 1, 5),
+      { markers: [], only: "quickfix" },
+      provideToken,
+    );
+
+    await vi.waitFor(() => expect(gateway.codeActions).toHaveBeenCalledOnce());
+    provideToken.fire();
+    provideToken.fire();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+      "/project",
+      1,
+      pendingActions.promise.requestId,
+    );
+    pendingActions.resolve([]);
+    await expect(provide).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+
+    const actions = await provider.provideCodeActions(textModel(), new monaco.Range(1, 1, 1, 5), {
+      markers: [],
+      only: "quickfix",
+    });
+    const resolveToken = cancellableToken();
+    const originalAction = actions.actions[0];
+    const resolve = provider.resolveCodeAction(originalAction, resolveToken);
+
+    await vi.waitFor(() => expect(gateway.resolveCodeAction).toHaveBeenCalledOnce());
+    resolveToken.fire();
+    resolveToken.fire();
+    expect(cancelRequest).toHaveBeenNthCalledWith(
+      2,
+      "/project",
+      1,
+      pendingResolve.promise.requestId,
+    );
+    pendingResolve.resolve({
+      command: null,
+      data: { resolve: true },
+      edit: null,
+      isPreferred: false,
+      kind: "quickfix",
+      title: "Resolved too late",
+    });
+    await expect(resolve).resolves.toBe(originalAction);
+    expect(cancelRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("times out pending TypeScript code-action provide and resolve requests", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const pendingActions =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>>();
+      const pendingResolve =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.codeActions)
+        .mockImplementationOnce(() => pendingActions.promise)
+        .mockImplementationOnce((_root, _path, _range, _context, sessionId) =>
+          identifiedResponse(
+            [
+              {
+                command: null,
+                data: { resolve: true },
+                edit: null,
+                isPreferred: false,
+                kind: "quickfix",
+                title: "Resolve me",
+              },
+            ],
+            sessionId,
+          ),
+        );
+      vi.mocked(gateway.resolveCodeAction).mockImplementationOnce(() => pendingResolve.promise);
+      const cancelRequest = vi.fn(async () => undefined);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ cancelRequest, featuresGateway: gateway }),
+      );
+      const provider = (monaco.languages.registerCodeActionProvider as any).mock.calls[0][1];
+      const provide = provider.provideCodeActions(textModel(), new monaco.Range(1, 1, 1, 5), {
+        markers: [],
+        only: "quickfix",
+      });
+
+      await vi.advanceTimersByTimeAsync(CODE_ACTION_REQUEST_TIMEOUT_MS);
+      await expect(provide).resolves.toEqual({
+        actions: [],
+        dispose: expect.any(Function),
+      });
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+        "/project",
+        1,
+        pendingActions.promise.requestId,
+      );
+
+      const actions = await provider.provideCodeActions(textModel(), new monaco.Range(1, 1, 1, 5), {
+        markers: [],
+        only: "quickfix",
+      });
+      const originalAction = actions.actions[0];
+      const resolve = provider.resolveCodeAction(originalAction);
+
+      await vi.advanceTimersByTimeAsync(CODE_ACTION_RESOLVE_REQUEST_TIMEOUT_MS);
+      await expect(resolve).resolves.toBe(originalAction);
+      expect(cancelRequest).toHaveBeenNthCalledWith(
+        2,
+        "/project",
+        1,
+        pendingResolve.promise.requestId,
+      );
+      expect(cancelRequest).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed when TypeScript code-action provide or resolve exceeds projection bounds", async () => {
+    const monaco = createMonaco();
+    const rawAction = {
+      command: null,
+      data: { resolve: true },
+      edit: null,
+      isPreferred: false,
+      kind: "quickfix",
+      title: "Resolve me",
+    };
+    const gateway = featuresGateway();
+    vi.mocked(gateway.codeActions)
+      .mockImplementationOnce((_root, _path, _range, _context, sessionId) =>
+        identifiedResponse(
+          Array.from({ length: MAX_CODE_ACTION_RESULTS + 1 }, (_, index) => ({
+            ...rawAction,
+            title: `Fix ${index}`,
+          })),
+          sessionId,
+        ),
+      )
+      .mockImplementationOnce((_root, _path, _range, _context, sessionId) =>
+        identifiedResponse([rawAction], sessionId),
+      );
+    vi.mocked(gateway.resolveCodeAction).mockImplementationOnce((_root, action, sessionId) =>
+      identifiedResponse(
+        {
+          ...action,
+          data: { payload: "x".repeat(MAX_CODE_ACTION_ITEM_UTF8_BYTES) },
+        },
+        sessionId,
+      ),
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerCodeActionProvider as any).mock.calls[0][1];
+
+    await expect(
+      provider.provideCodeActions(textModel(), new monaco.Range(1, 1, 1, 5), {
+        markers: [],
+        only: "quickfix",
+      }),
+    ).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+
+    const actions = await provider.provideCodeActions(textModel(), new monaco.Range(1, 1, 1, 5), {
+      markers: [],
+      only: "quickfix",
+    });
+    const originalAction = actions.actions[0];
+    await expect(provider.resolveCodeAction(originalAction)).resolves.toBe(originalAction);
+  });
+
+  it("rejects too many code-action markers before mapping or invoking the gateway", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerCodeActionProvider as any).mock.calls[0][1];
+    const marker = {
+      endColumn: 2,
+      endLineNumber: 1,
+      message: "bounded",
+      severity: monaco.MarkerSeverity.Error,
+      startColumn: 1,
+      startLineNumber: 1,
+    };
+
+    await expect(
+      provider.provideCodeActions(textModel(), new monaco.Range(1, 1, 1, 5), {
+        markers: Array.from({ length: MAX_CODE_ACTION_DIAGNOSTICS + 1 }, () => marker),
+        only: "quickfix",
+      }),
+    ).resolves.toEqual({
       actions: [],
       dispose: expect.any(Function),
     });
@@ -1386,7 +1836,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const documentLinks =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["documentLinks"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.documentLinks).mockImplementationOnce(async () => documentLinks.promise);
+    vi.mocked(gateway.documentLinks).mockImplementationOnce(() => documentLinks.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1421,7 +1871,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const documentLinks =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["documentLinks"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.documentLinks).mockImplementationOnce(async () => documentLinks.promise);
+    vi.mocked(gateway.documentLinks).mockImplementationOnce(() => documentLinks.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1607,7 +2057,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       .calls[0][0];
     const symbols = await symbolProvider.provideWorkspaceSymbols("User");
 
-    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
+    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User", 1);
     expect(symbols).toEqual([
       {
         containerName: "src/user.ts",
@@ -1632,9 +2082,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const workspaceSymbols =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(
-      async () => workspaceSymbols.promise,
-    );
+    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(() => workspaceSymbols.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1661,7 +2109,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
 
     await expect(symbolsPromise).resolves.toEqual([]);
-    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
+    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User", 1);
   });
 
   it("drops workspace symbols after an unobserved A-B-A owner transition", async () => {
@@ -1670,7 +2118,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const pending =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(async () => pending.promise);
+    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(() => pending.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1705,7 +2153,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const pending =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(async () => pending.promise);
+    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(() => pending.promise);
     const registration = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({ featuresGateway: gateway }),
@@ -1737,9 +2185,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const workspaceSymbols =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(
-      async () => workspaceSymbols.promise,
-    );
+    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(() => workspaceSymbols.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -1766,7 +2212,117 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
 
     await expect(symbolsPromise).resolves.toEqual([]);
-    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
+    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User", 1);
+  });
+
+  it("publishes only the latest overlapping TypeScript workspace-symbol query", async () => {
+    const monaco = createMonaco();
+    const first =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const second =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.workspaceSymbols)
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerWorkspaceSymbolProvider as any).mock.calls[0][0];
+    const stale = provider.provideWorkspaceSymbols("Us");
+    const latest = provider.provideWorkspaceSymbols("User");
+    second.resolve([
+      {
+        containerName: "App",
+        kind: 5,
+        location: {
+          range: range(0, 0, 0, 4),
+          uri: "file:///project/src/user.ts",
+        },
+        name: "User",
+      },
+    ]);
+    await expect(latest).resolves.toHaveLength(1);
+    first.resolve([
+      {
+        containerName: "App",
+        kind: 5,
+        location: {
+          range: range(0, 0, 0, 2),
+          uri: "file:///project/src/us.ts",
+        },
+        name: "Us",
+      },
+    ]);
+    await expect(stale).resolves.toEqual([]);
+  });
+
+  it("cancels pending TypeScript workspace symbols exactly once", async () => {
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(() => pending.promise);
+    const cancelRequest = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerWorkspaceSymbolProvider as any).mock.calls[0][0];
+    const token = cancellableToken();
+    const result = provider.provideWorkspaceSymbols("User", token);
+
+    await vi.waitFor(() => expect(gateway.workspaceSymbols).toHaveBeenCalledOnce());
+    token.fire();
+    token.fire();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, pending.promise.requestId);
+    pending.resolve([]);
+    await expect(result).resolves.toEqual([]);
+  });
+
+  it("times out and bounds TypeScript workspace-symbol results", async () => {
+    vi.useFakeTimers();
+    try {
+      const monaco = createMonaco();
+      const pending =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.workspaceSymbols)
+        .mockImplementationOnce(() => pending.promise)
+        .mockImplementationOnce((_root, _query, sessionId) =>
+          identifiedResponse(
+            Array.from({ length: MAX_WORKSPACE_SYMBOL_RESULTS + 1 }, (_, index) => ({
+              containerName: "App",
+              kind: 5,
+              location: {
+                range: range(index, 0, index, 1),
+                uri: `file:///project/src/symbol-${index}.ts`,
+              },
+              name: `Symbol${index}`,
+            })),
+            sessionId,
+          ),
+        );
+      const cancelRequest = vi.fn(async () => undefined);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ cancelRequest, featuresGateway: gateway }),
+      );
+      const provider = (monaco.languages.registerWorkspaceSymbolProvider as any).mock.calls[0][0];
+      const timedOut = provider.provideWorkspaceSymbols("User");
+
+      await vi.advanceTimersByTimeAsync(WORKSPACE_SYMBOL_REQUEST_TIMEOUT_MS);
+      await expect(timedOut).resolves.toEqual([]);
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+        "/project",
+        1,
+        pending.promise.requestId,
+      );
+      await expect(provider.provideWorkspaceSymbols("User")).resolves.toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("maps TypeScript type definitions through the language server including external targets", async () => {
@@ -1791,11 +2347,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const provider = (monaco.languages.registerTypeDefinitionProvider as any).mock.calls[0][1];
     const locations = await provider.provideTypeDefinition(model, position);
 
-    expect(gateway.typeDefinition).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.typeDefinition).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(locations).toEqual([
       {
         range: expect.objectContaining({
@@ -1861,11 +2421,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       .calls[0][1];
     const definitions = await definitionProvider.provideDefinition(model, position);
 
-    expect(gateway.definition).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.definition).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(definitions).toEqual([
       {
         range: expect.objectContaining({
@@ -1897,11 +2461,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       .calls[0][1];
     const declarations = await declarationProvider.provideDeclaration(model, position);
 
-    expect(gateway.declaration).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.declaration).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(declarations).toEqual([
       {
         range: expect.objectContaining({
@@ -1933,11 +2501,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       .calls[0][1];
     const implementations = await implementationProvider.provideImplementation(model, position);
 
-    expect(gateway.implementation).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.implementation).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(implementations).toEqual([
       {
         range: expect.objectContaining({
@@ -1966,36 +2538,96 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
   });
 
-  it("limits JavaScript and TypeScript navigation locations to open Monaco models when requested", async () => {
+  it("returns and prepares a definition location in a closed file from another package", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
-      implementation: [
+      definition: [
         {
           range: range(2, 0, 8, 1),
-          uri: "file:///project/src/serviceImplementation.ts",
+          uri: "file:///project/packages/service/src/definition.ts",
         },
       ],
     });
+    const prepareNavigationModels = vi.fn(async (locations: readonly LanguageServerLocation[]) =>
+      locations.map((location) => ({ location })),
+    );
     const context = providerContext({
       featuresGateway: gateway,
-      limitNavigationResultsToOpenModels: true,
+      prepareNavigationModels,
     });
     monaco.editor.getModel.mockReturnValue(null);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
 
-    const implementationProvider = (monaco.languages.registerImplementationProvider as any).mock
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
       .calls[0][1];
 
     await expect(
-      implementationProvider.provideImplementation(textModel(), {
+      definitionProvider.provideDefinition(textModel(), {
         column: 4,
         lineNumber: 2,
       }),
-    ).resolves.toEqual([]);
-    expect(monaco.editor.getModel).toHaveBeenCalledWith({
-      fsPath: "/project/src/serviceImplementation.ts",
-      path: "/project/src/serviceImplementation.ts",
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 2,
+          endLineNumber: 9,
+          startColumn: 1,
+          startLineNumber: 3,
+        }),
+        uri: {
+          fsPath: "/project/packages/service/src/definition.ts",
+          path: "/project/packages/service/src/definition.ts",
+        },
+      },
+    ]);
+    expect(prepareNavigationModels).toHaveBeenCalledWith(
+      [
+        {
+          range: range(2, 0, 8, 1),
+          uri: "file:///project/packages/service/src/definition.ts",
+        },
+      ],
+      expect.any(Function),
+      "definition",
+    );
+  });
+
+  it("publishes the actual URI of an already-open legacy target model", async () => {
+    const monaco = createMonaco();
+    const path = "/project/packages/service/src/legacy.ts";
+    const legacyUri = {
+      fsPath: path,
+      path,
+      scheme: "file",
+      toString: () => `file://${path}`,
+    };
+    const legacyModel = { ...textModel(), uri: legacyUri };
+    monaco.editor.getModels.mockReturnValue([legacyModel]);
+    const gateway = featuresGateway({
+      definition: [
+        {
+          range: range(0, 0, 0, 6),
+          uri: `file://${path}`,
+        },
+      ],
     });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
+      .calls[0][1];
+
+    const definitions = await definitionProvider.provideDefinition(textModel(), {
+      column: 4,
+      lineNumber: 2,
+    });
+
+    expect(definitions).toEqual([
+      expect.objectContaining({
+        uri: legacyUri,
+      }),
+    ]);
   });
 
   it("maps TypeScript linked editing ranges for paired JSX tags", async () => {
@@ -2014,11 +2646,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
     const linkedRanges = await provider.provideLinkedEditingRanges(model, position);
 
-    expect(gateway.linkedEditingRanges).toHaveBeenCalledWith("/project", {
-      character: 2,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.linkedEditingRanges).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 2,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(linkedRanges).toEqual({
       ranges: [
         expect.objectContaining({
@@ -2036,6 +2672,195 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       ],
       wordPattern: /[A-Za-z][A-Za-z0-9]*/,
     });
+  });
+
+  it("cancels the exact TypeScript linked-editing request through the Monaco token", async () => {
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>>>();
+    const gateway = featuresGateway();
+    const cancelRequest = vi.fn(async () => undefined);
+    vi.mocked(gateway.linkedEditingRanges).mockImplementationOnce(() => pending.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+    const token = cancellableToken();
+    const result = provider.provideLinkedEditingRanges(
+      textModel(),
+      { column: 3, lineNumber: 2 },
+      token,
+    );
+
+    await vi.waitFor(() => expect(gateway.linkedEditingRanges).toHaveBeenCalledOnce());
+    token.fire();
+
+    await expect(result).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, pending.promise.requestId);
+  });
+
+  it("times out and cancels a never-settling TypeScript linked-editing request", async () => {
+    vi.useFakeTimers();
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>>>();
+    const gateway = featuresGateway();
+    const cancelRequest = vi.fn(async () => undefined);
+    vi.mocked(gateway.linkedEditingRanges).mockImplementationOnce(() => pending.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+
+    try {
+      const result = provider.provideLinkedEditingRanges(
+        textModel(),
+        { column: 3, lineNumber: 2 },
+        cancellableToken(),
+      );
+      await vi.advanceTimersByTimeAsync(LINKED_EDITING_RANGE_REQUEST_TIMEOUT_MS);
+
+      await expect(result).resolves.toBeNull();
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+        "/project",
+        1,
+        pending.promise.requestId,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed when TypeScript linked-editing ranges exceed the bounded projection", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: Array.from({ length: MAX_LINKED_EDITING_RANGES + 1 }, (_, index) =>
+          range(index, 0, index, 1),
+        ),
+        wordPattern: null,
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+
+    await expect(
+      provider.provideLinkedEditingRanges(textModel(), { column: 3, lineNumber: 2 }),
+    ).resolves.toBeNull();
+  });
+
+  it("fails closed when the linked-editing word pattern exceeds its bounded projection", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [range(1, 1, 1, 4)],
+        wordPattern: "a".repeat(MAX_LINKED_EDITING_WORD_PATTERN_UTF8_BYTES + 1),
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+
+    await expect(
+      provider.provideLinkedEditingRanges(textModel(), { column: 3, lineNumber: 2 }),
+    ).resolves.toBeNull();
+  });
+
+  it("omits a potentially catastrophic linked-editing word pattern", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [range(1, 1, 1, 4)],
+        wordPattern: "(a+)+$",
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+
+    await expect(
+      provider.provideLinkedEditingRanges(textModel(), { column: 3, lineNumber: 2 }),
+    ).resolves.toEqual({
+      ranges: [
+        expect.objectContaining({
+          endColumn: 5,
+          endLineNumber: 2,
+          startColumn: 2,
+          startLineNumber: 2,
+        }),
+      ],
+    });
+  });
+
+  it("drops late TypeScript linked-editing ranges after an A-B-A owner replacement", async () => {
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.linkedEditingRanges).mockImplementationOnce(() => pending.promise);
+    let ownerEpoch = 1;
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getActiveJavaScriptTypeScriptOwnerEpoch: () => ownerEpoch,
+      }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+    const result = provider.provideLinkedEditingRanges(textModel(), {
+      column: 3,
+      lineNumber: 2,
+    });
+
+    ownerEpoch = 2;
+    ownerEpoch = 3;
+    pending.resolve({
+      ranges: [range(1, 1, 1, 4), range(1, 8, 1, 11)],
+      wordPattern: null,
+    });
+
+    await expect(result).resolves.toBeNull();
+  });
+
+  it("drops late TypeScript linked-editing ranges after the document snapshot becomes stale", async () => {
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.linkedEditingRanges).mockImplementationOnce(() => pending.promise);
+    let syncVersion = 1;
+    const model = stagedTextModel("/project/src/user.ts", "const user = account;", syncVersion);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getActiveModel: () => model as any,
+        getDocumentSyncVersion: () => syncVersion,
+      }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+    const result = provider.provideLinkedEditingRanges(model, {
+      column: 3,
+      lineNumber: 2,
+    });
+
+    syncVersion = 2;
+    model.setSnapshot("const user = replacement;", syncVersion);
+    pending.resolve({
+      ranges: [range(1, 1, 1, 4), range(1, 8, 1, 11)],
+      wordPattern: null,
+    });
+
+    await expect(result).resolves.toBeNull();
   });
 
   it("maps TypeScript CodeLens references through Monaco commands", async () => {
@@ -2187,11 +3012,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       { isCancellationRequested: false },
     );
 
-    expect(gateway.documentHighlights).toHaveBeenCalledWith("/project", {
-      character: 8,
-      line: 3,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.documentHighlights).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 8,
+        line: 3,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(highlights).toEqual([
       {
         kind: monaco.languages.DocumentHighlightKind.Read,
@@ -2249,31 +3078,53 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const highlights =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.documentHighlights).mockImplementationOnce(async () => highlights.promise);
+    const cancelRequest = vi.fn(async () => undefined);
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(() => highlights.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
-      providerContext({ featuresGateway: gateway }),
+      providerContext({ cancelRequest, featuresGateway: gateway }),
     );
     const highlightProvider = (monaco.languages.registerDocumentHighlightProvider as any).mock
       .calls[0][1];
 
-    const token = { isCancellationRequested: false };
+    const token = cancellableToken();
+    const requestId = highlights.promise.requestId;
     const promise = highlightProvider.provideDocumentHighlights(
       textModel(),
       { column: 9, lineNumber: 4 },
       token,
     );
 
-    await Promise.resolve();
-    token.isCancellationRequested = true;
-    highlights.resolve([
-      {
-        kind: 2,
-        range: range(0, 6, 0, 10),
-      },
-    ]);
+    await vi.waitFor(() => expect(gateway.documentHighlights).toHaveBeenCalledOnce());
+    token.fire();
 
     await expect(promise).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, requestId);
+  });
+
+  it("drops a resolved TypeScript document highlight when cancellation wins before publication", async () => {
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(() => pending.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerDocumentHighlightProvider as any).mock.calls[0][1];
+    const token = cancellableToken();
+    const result = provider.provideDocumentHighlights(
+      textModel(),
+      { column: 9, lineNumber: 4 },
+      token,
+    );
+
+    await vi.waitFor(() => expect(gateway.documentHighlights).toHaveBeenCalledOnce());
+    pending.resolve([{ kind: 2, range: range(0, 6, 0, 10) }]);
+    token.fire();
+
+    await expect(result).resolves.toBeNull();
   });
 
   it("applies TypeScript document highlights when the Monaco cancellation token stays active", async () => {
@@ -2365,13 +3216,91 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.documentHighlights).toHaveBeenCalledTimes(2);
   });
 
+  it("does not share TypeScript highlight cache entries between same-word occurrences", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentHighlights: [{ kind: 2, range: range(0, 0, 0, 4) }],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerDocumentHighlightProvider as any).mock.calls[0][1];
+    const model = {
+      ...textModel(),
+      getWordAtPosition: vi.fn(() => ({
+        endColumn: 5,
+        startColumn: 1,
+        word: "value",
+      })),
+    };
+
+    await provider.provideDocumentHighlights(model, { column: 3, lineNumber: 1 });
+    await provider.provideDocumentHighlights(model, { column: 3, lineNumber: 4 });
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reuse TypeScript highlight cache entries after a server-session replacement", async () => {
+    const monaco = createMonaco();
+    let sessionId = 1;
+    const gateway = featuresGateway({
+      documentHighlights: [{ kind: 2, range: range(0, 0, 0, 4) }],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({ ...runningStatus(), sessionId }),
+      }),
+    );
+    const provider = (monaco.languages.registerDocumentHighlightProvider as any).mock.calls[0][1];
+    const model = textModel();
+    const position = { column: 3, lineNumber: 1 };
+
+    await provider.provideDocumentHighlights(model, position);
+    sessionId = 2;
+    await provider.provideDocumentHighlights(model, position);
+
+    expect(gateway.documentHighlights).toHaveBeenCalledTimes(2);
+    expect(gateway.documentHighlights).toHaveBeenLastCalledWith("/project", expect.any(Object), 2);
+  });
+
+  it("drops resolved TypeScript linked-editing ranges when cancellation wins before publication", async () => {
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.linkedEditingRanges).mockImplementationOnce(() => pending.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock.calls[0][1];
+    const token = cancellableToken();
+    const result = provider.provideLinkedEditingRanges(
+      textModel(),
+      { column: 3, lineNumber: 2 },
+      token,
+    );
+
+    await vi.waitFor(() => expect(gateway.linkedEditingRanges).toHaveBeenCalledOnce());
+    pending.resolve({
+      ranges: [range(1, 1, 1, 4), range(1, 8, 1, 11)],
+      wordPattern: null,
+    });
+    token.fire();
+
+    await expect(result).resolves.toBeNull();
+  });
+
   it("drops in-flight TypeScript selection ranges after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";
     const selectionRanges =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.selectionRanges).mockImplementationOnce(async () => selectionRanges.promise);
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(() => selectionRanges.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -2400,13 +3329,74 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("fails closed when TypeScript document highlights exceed the bounded projection", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentHighlights: Array.from(
+        { length: MAX_DOCUMENT_HIGHLIGHT_RESULTS + 1 },
+        (_, index) => ({
+          kind: 2,
+          range: range(index, 0, index, 1),
+        }),
+      ),
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const highlightProvider = (monaco.languages.registerDocumentHighlightProvider as any).mock
+      .calls[0][1];
+
+    await expect(
+      highlightProvider.provideDocumentHighlights(
+        textModel(),
+        { column: 9, lineNumber: 4 },
+        cancellableToken(),
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("bounds a never-settling TypeScript document-highlight request and cancels its exact session", async () => {
+    vi.useFakeTimers();
+    const monaco = createMonaco();
+    const highlights =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>>>();
+    const gateway = featuresGateway();
+    const cancelRequest = vi.fn(async () => undefined);
+    vi.mocked(gateway.documentHighlights).mockImplementationOnce(() => highlights.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const highlightProvider = (monaco.languages.registerDocumentHighlightProvider as any).mock
+      .calls[0][1];
+
+    try {
+      const request = highlightProvider.provideDocumentHighlights(
+        textModel(),
+        { column: 9, lineNumber: 4 },
+        cancellableToken(),
+      );
+      await vi.advanceTimersByTimeAsync(DOCUMENT_HIGHLIGHT_REQUEST_TIMEOUT_MS);
+
+      await expect(request).resolves.toBeNull();
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+        "/project",
+        1,
+        highlights.promise.requestId,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("drops in-flight TypeScript selection ranges when no project tab is active", async () => {
     const monaco = createMonaco();
     let activeRoot: string | null = "/project";
     const selectionRanges =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.selectionRanges).mockImplementationOnce(async () => selectionRanges.promise);
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(() => selectionRanges.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -2459,12 +3449,44 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const tokens = await semanticTokensProvider.provideDocumentSemanticTokens(model, null);
 
     expect(semanticTokensProvider.getLegend()).toEqual(customLegend);
-    expect(gateway.semanticTokens).toHaveBeenCalledWith("/project", "/project/src/user.ts");
+    expect(gateway.semanticTokens).toHaveBeenCalledWith("/project", "/project/src/user.ts", 1);
     expect(tokens).toEqual({
       data: Uint32Array.from([0, 6, 4, 8, 0, 1, 2, 3, 9, 1]),
       resultId: "semantic-1",
     });
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/user.ts");
+  });
+
+  it("bounds a never-settling semantic token request and cancels its exact session", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const semanticTokens =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["semanticTokens"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.semanticTokens).mockImplementationOnce(() => semanticTokens.promise);
+      const cancelRequest = vi.fn(async () => undefined);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ cancelRequest, featuresGateway: gateway }),
+      );
+      const semanticTokensProvider = (
+        monaco.languages.registerDocumentSemanticTokensProvider as any
+      ).mock.calls[0][1];
+
+      const result = semanticTokensProvider.provideDocumentSemanticTokens(textModel(), null);
+      await vi.advanceTimersByTimeAsync(2_500);
+
+      await expect(result).resolves.toBeNull();
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+        "/project",
+        1,
+        semanticTokens.promise.requestId,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("maps range semantic tokens through the language server", async () => {
@@ -2496,10 +3518,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
 
     expect(rangeSemanticTokensProvider.getLegend()).toEqual(customLegend);
-    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith("/project", "/project/src/user.ts", {
-      end: { character: 11, line: 3 },
-      start: { character: 2, line: 1 },
-    });
+    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      {
+        end: { character: 11, line: 3 },
+        start: { character: 2, line: 1 },
+      },
+      1,
+    );
     expect(tokens).toEqual({
       data: Uint32Array.from([0, 2, 4, 8, 0, 1, 4, 3, 9, 1]),
       resultId: "range-semantic-1",
@@ -2514,7 +3541,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rangeSemanticTokens"]>>>();
     let activeRoot = "/project";
     vi.mocked(gateway.rangeSemanticTokens).mockImplementationOnce(
-      async () => rangeSemanticTokens.promise,
+      () => rangeSemanticTokens.promise,
     );
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
@@ -2540,10 +3567,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
 
     await expect(tokensPromise).resolves.toBeNull();
-    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith("/project", "/project/src/user.ts", {
-      end: { character: 11, line: 3 },
-      start: { character: 2, line: 1 },
-    });
+    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      {
+        end: { character: 11, line: 3 },
+        start: { character: 2, line: 1 },
+      },
+      1,
+    );
   });
 
   it("falls back to the default semantic token legend without a runtime legend", () => {
@@ -2767,11 +3799,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
     const references = await referencesProvider.provideReferences(model, position);
 
-    expect(gateway.references).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 0,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.references).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(references).toEqual([
       {
         range: expect.objectContaining({
@@ -2871,6 +3907,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         only: ["quickfix"],
         triggerKind: 1,
       },
+      1,
     );
     expect(actionList.actions).toEqual([
       expect.objectContaining({
@@ -2893,7 +3930,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(JSON.stringify(unresolvedAction.command.arguments[0])).toBe("{}");
     const resolvedAction = await codeActionProvider.resolveCodeAction(unresolvedAction);
 
-    expect(gateway.resolveCodeAction).toHaveBeenCalledWith("/project", commandOnlyAction);
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith("/project", commandOnlyAction, 1);
     expect(resolvedAction.edit.edits[0].textEdit.text).toBe("Resolved");
 
     const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
@@ -3122,11 +4159,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       .calls[0][1];
     const signatureHelp = await signatureProvider.provideSignatureHelp(model, position);
 
-    expect(gateway.signatureHelp).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 0,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.signatureHelp).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      undefined,
+      1,
+    );
     expect(signatureHelp).toEqual({
       dispose: expect.any(Function),
       value: {
@@ -3151,6 +4193,40 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       },
     });
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/user.ts");
+  });
+
+  it("prepares closed reference targets and publishes only the hydrated receipt", async () => {
+    const monaco = createMonaco();
+    const locations = [
+      {
+        range: range(0, 1, 0, 5),
+        uri: "file:///project/packages/a/src/user.ts",
+      },
+      {
+        range: range(1, 1, 1, 5),
+        uri: "file:///project/packages/b/src/user.ts",
+      },
+    ];
+    const gateway = featuresGateway({ references: locations });
+    const prepareNavigationModels = vi.fn(async () => [{ location: locations[0]! }]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, prepareNavigationModels }),
+    );
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+
+    const references = await referencesProvider.provideReferences(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      { isCancellationRequested: false },
+    );
+
+    expect(prepareNavigationModels).toHaveBeenCalledWith(
+      locations,
+      expect.any(Function),
+      "references",
+    );
+    expect(references).toHaveLength(1);
   });
 
   it("passes TypeScript signature help trigger context to the language server", async () => {
@@ -3213,6 +4289,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         triggerCharacter: ",",
         triggerKind: 2,
       },
+      1,
     );
 
     expect(gateway.signatureHelp).toHaveBeenCalledWith(
@@ -3247,6 +4324,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         triggerCharacter: ",",
         triggerKind: 2,
       },
+      1,
     );
   });
 
@@ -3255,7 +4333,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const signatureHelp =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.signatureHelp).mockImplementationOnce(async () => signatureHelp.promise);
+    vi.mocked(gateway.signatureHelp).mockImplementationOnce(() => signatureHelp.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({ featuresGateway: gateway }),
@@ -3299,7 +4377,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const signatureHelp =
         createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>>();
       const gateway = featuresGateway();
-      vi.mocked(gateway.signatureHelp).mockImplementationOnce(async () => signatureHelp.promise);
+      vi.mocked(gateway.signatureHelp).mockImplementationOnce(() => signatureHelp.promise);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
         providerContext({ featuresGateway: gateway }),
@@ -3366,11 +4444,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     const result = await completionProvider.provideCompletionItems(model, position);
 
-    expect(gateway.completion).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      undefined,
+      1,
+    );
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
         additionalTextEdits: [
@@ -3518,11 +4601,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     const result = await completionProvider.provideCompletionItems(model, position);
 
-    expect(gateway.completion).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      },
+      undefined,
+      1,
+    );
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
         detail: "function loadUser(id: string): Promise<User>",
@@ -4073,7 +5161,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       lineNumber: 1,
     });
 
-    expect(gateway.completion).toHaveBeenCalledWith("/project", expect.any(Object));
+    expect(gateway.completion).toHaveBeenCalledWith("/project", expect.any(Object), undefined, 1);
     expect(result.suggestions).toHaveLength(1);
   });
 
@@ -4412,7 +5500,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const commandEdit =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["executeCommand"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.executeCommand).mockImplementationOnce(async () => commandEdit.promise);
+    vi.mocked(gateway.executeCommand).mockImplementationOnce(() => commandEdit.promise);
     monaco.editor.getModels.mockReturnValue([model]);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
@@ -5172,7 +6260,6 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       changes: {
         ...workspaceEdit("file:///project/src/user.ts", "OpenRename").changes,
         ...workspaceEdit("file:///project/src/helper.ts", "ClosedRename").changes,
-        ...workspaceEdit("file:///project-neighbor/src/user.ts", "Ignored sibling root").changes,
       },
     };
     const applyWorkspaceEdit = vi.fn(async () => undefined);
@@ -5234,6 +6321,71 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       },
     );
     expect(rename).toEqual({ edits: [] });
+  });
+
+  it("returns no rename edit when the workspace applier rejects the operation", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "rejected" as const,
+      path: "/project/src/user.ts",
+      reason: "staleDocumentVersion" as const,
+    }));
+    const gateway = featuresGateway({
+      rename: workspaceEdit("file:///project/src/user.ts", "Account"),
+    });
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ applyWorkspaceEdit, featuresGateway: gateway }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+
+    const rename = await renameProvider.provideRenameEdits(
+      model,
+      { column: 4, lineNumber: 1 },
+      "Account",
+    );
+
+    expect(rename).toBeNull();
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
+  });
+
+  it("rejects a rename atomically when it includes foreign edits or file operations", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const gateway = featuresGateway({
+      rename: {
+        changes: {
+          ...workspaceEdit("file:///project/src/user.ts", "Account").changes,
+          ...workspaceEdit("file:///project-neighbor/src/user.ts", "Foreign").changes,
+        },
+        fileOperations: [
+          {
+            kind: "rename",
+            newUri: "file:///project-neighbor/src/renamed.ts",
+            oldUri: "file:///project/src/user.ts",
+          },
+        ],
+      },
+    });
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ applyWorkspaceEdit, featuresGateway: gateway }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+
+    const rename = await renameProvider.provideRenameEdits(
+      model,
+      { column: 4, lineNumber: 1 },
+      "Account",
+    );
+
+    expect(rename).toBeNull();
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
   });
 
   it("applies a rename only to the originating scoped model for overlapping roots", async () => {
@@ -5518,7 +6670,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const prepareRename =
       createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["prepareRename"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.prepareRename).mockImplementationOnce(async () => prepareRename.promise);
+    vi.mocked(gateway.prepareRename).mockImplementationOnce(() => prepareRename.promise);
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
@@ -6164,7 +7316,9 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     let activeDocument = document();
     let syncVersion: number | null = null;
     const gateway = featuresGateway();
-    vi.mocked(gateway.hover).mockResolvedValue({ contents: "type User" });
+    vi.mocked(gateway.hover).mockImplementation((_rootPath, _position, sessionId) =>
+      identifiedResponse({ contents: "type User" }, sessionId),
+    );
     const flush = vi.fn(async () => {
       if (activeDocument.content.length <= 16 * 1024) {
         syncVersion = (syncVersion ?? 0) + 1;
@@ -6207,7 +7361,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const monaco = createMonaco();
     const pending = createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
     const gateway = featuresGateway();
-    vi.mocked(gateway.hover).mockImplementation(async () => pending.promise);
+    vi.mocked(gateway.hover).mockImplementation(() => pending.promise);
     let syncVersion = 7;
     const model = textModel();
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
@@ -6336,7 +7490,8 @@ function providerContext(
     getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     getWorkspaceIdentityDescriptor: overrides.getWorkspaceIdentityDescriptor,
-    limitNavigationResultsToOpenModels: overrides.limitNavigationResultsToOpenModels,
+    prepareNavigationModels: overrides.prepareNavigationModels,
+    recordLatency: overrides.recordLatency,
     refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,
@@ -6400,58 +7555,86 @@ function featuresGateway(
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
-    codeActions: vi.fn(async () => responses.codeActions ?? []),
+    codeActions: vi.fn((_rootPath, _path, _range, _context, sessionId) =>
+      identifiedResponse(responses.codeActions ?? [], sessionId),
+    ),
     codeLenses: vi.fn(async () => responses.codeLenses ?? []),
-    completion: vi.fn(
-      async () =>
+    completion: vi.fn((_rootPath, _position, _context, sessionId) =>
+      identifiedResponse(
         responses.completion ?? {
           isIncomplete: false,
           items: [],
         },
+        sessionId,
+      ),
     ),
-    declaration: vi.fn(async () => responses.declaration ?? []),
-    definition: vi.fn(async () => responses.definition ?? []),
+    declaration: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedResponse(responses.declaration ?? [], sessionId),
+    ),
+    definition: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedResponse(responses.definition ?? [], sessionId),
+    ),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
     didCreateFiles: vi.fn(async () => undefined),
     didDeleteFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
-    documentHighlights: vi.fn(async () => responses.documentHighlights ?? []),
+    documentHighlights: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedResponse(responses.documentHighlights ?? [], sessionId),
+    ),
     documentLinks: vi.fn(async () => responses.documentLinks ?? []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
     executeCommandLocations: vi.fn(async () => []),
     foldingRanges: vi.fn(async () => responses.foldingRanges ?? []),
     formatting: vi.fn(async () => responses.formatting ?? []),
-    hover: vi.fn(async () => null),
+    hover: vi.fn((_rootPath, _position, sessionId) => identifiedResponse(null, sessionId)),
     incomingCalls: vi.fn(async () => []),
-    implementation: vi.fn(async () => responses.implementation ?? []),
+    implementation: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedResponse(responses.implementation ?? [], sessionId),
+    ),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
-    linkedEditingRanges: vi.fn(async () => responses.linkedEditingRanges ?? null),
+    linkedEditingRanges: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedResponse(responses.linkedEditingRanges ?? null, sessionId),
+    ),
     onTypeFormatting: vi.fn(async () => responses.onTypeFormatting ?? []),
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
-    rangeSemanticTokens: vi.fn(async () => responses.rangeSemanticTokens ?? null),
-    references: vi.fn(async () => responses.references ?? []),
+    rangeSemanticTokens: vi.fn((_rootPath, _path, _range, sessionId) =>
+      identifiedResponse(responses.rangeSemanticTokens ?? null, sessionId),
+    ),
+    references: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedResponse(responses.references ?? [], sessionId),
+    ),
     rename: vi.fn(async () => responses.rename ?? null),
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
-    semanticTokens: vi.fn(async () => responses.semanticTokens ?? null),
-    signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
-    sourceDefinition: vi.fn(async () => []),
-    typeDefinition: vi.fn(async () => responses.typeDefinition ?? []),
+    semanticTokens: vi.fn((_rootPath, _path, sessionId) =>
+      identifiedResponse(responses.semanticTokens ?? null, sessionId),
+    ),
+    signatureHelp: vi.fn((_rootPath, _position, _context, sessionId) =>
+      identifiedResponse(responses.signatureHelp ?? null, sessionId),
+    ),
+    sourceDefinition: vi.fn((_rootPath, _position, sessionId) => identifiedResponse([], sessionId)),
+    typeDefinition: vi.fn((_rootPath, _position, sessionId) =>
+      identifiedResponse(responses.typeDefinition ?? [], sessionId),
+    ),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),
     willCreateFiles: vi.fn(async () => null),
     willDeleteFiles: vi.fn(async () => null),
     willRenameFiles: vi.fn(async () => null),
-    workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
+    workspaceSymbols: vi.fn((_rootPath, _query, sessionId) =>
+      identifiedResponse(responses.workspaceSymbols ?? [], sessionId),
+    ),
     resolveCompletionItem: vi.fn(
       async (_rootPath, item) => responses.resolvedCompletionItem ?? item,
     ),
-    resolveCodeAction: vi.fn(async (_rootPath, action) => responses.resolvedCodeAction ?? action),
+    resolveCodeAction: vi.fn((_rootPath, action, sessionId) =>
+      identifiedResponse(responses.resolvedCodeAction ?? action, sessionId),
+    ),
     resolveCodeLens: vi.fn(async (_rootPath, lens) => responses.resolvedCodeLens ?? lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => responses.resolvedDocumentLink ?? link),
     resolveInlayHint: vi.fn(async (_rootPath, hint) => responses.resolvedInlayHint ?? hint),
@@ -6502,8 +7685,15 @@ function runningStatus(
   };
 }
 
+function identifiedResponse<T>(value: T, sessionId = 1) {
+  return Object.assign(Promise.resolve(value), {
+    requestId: nextTestRequestId++,
+    sessionId,
+  });
+}
+
 function createDeferred<T>(): {
-  promise: Promise<T>;
+  promise: Promise<T> & { readonly requestId: number; readonly sessionId: number };
   reject(reason?: unknown): void;
   resolve(value: T): void;
 } {
@@ -6513,9 +7703,13 @@ function createDeferred<T>(): {
     rejectValue = reject;
     resolveValue = resolve;
   });
+  const identifiedPromise = Object.assign(promise, {
+    requestId: nextTestRequestId++,
+    sessionId: 1,
+  });
 
   return {
-    promise,
+    promise: identifiedPromise,
     reject(reason?: unknown): void {
       rejectValue?.(reason);
     },
@@ -6524,6 +7718,8 @@ function createDeferred<T>(): {
     },
   };
 }
+
+let nextTestRequestId = 10_000;
 
 function providerLanguages(registerProvider: unknown): string[] {
   return (registerProvider as { mock: { calls: Array<[string]> } }).mock.calls.map(

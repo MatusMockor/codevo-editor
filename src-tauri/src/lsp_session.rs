@@ -1,20 +1,18 @@
 use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
-use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
 use crate::lsp_features::{
     parse_workspace_edit_result, LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
 };
-use crate::lsp_transport::{read_message, write_message};
+use crate::lsp_transport::read_message;
 #[cfg(unix)]
 use crate::managed_javascript_typescript;
 #[cfg(unix)]
 use crate::managed_phpactor;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufReader, Read};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -23,15 +21,43 @@ use std::time::{Duration, Instant};
 
 mod capabilities;
 mod diagnostic_authority;
+mod document_sync_capability;
+mod event_sinks;
 mod request_dispatch;
+mod restart_policy;
 mod runtime_telemetry;
 mod server_configuration;
+mod server_process;
+mod session_transitions;
+mod session_writer;
 mod start_cleanup;
 mod transport_failure;
 
 use capabilities::parse_capabilities;
+pub use capabilities::LanguageServerCapabilities;
+#[cfg(test)]
+use capabilities::SemanticTokensLegend;
 use diagnostic_authority::{consume_diagnostic_bytes, is_file_uri_in_workspace};
-use request_dispatch::{cancel_pending_request, send_request_with_timeout};
+pub use document_sync_capability::DocumentSyncCapability;
+pub(crate) use event_sinks::language_server_status_payload;
+pub(crate) use event_sinks::LanguageServerEventSinks;
+#[cfg(test)]
+use event_sinks::{
+    diagnostics_event_payload, refresh_event_payload, status_event_payload,
+    workspace_edit_event_payload, NoopRefreshSink, NoopWorkspaceEditSink,
+};
+pub use event_sinks::{
+    AppHandleEventSink, DiagnosticsSink, LanguageServerRefreshEvent, LanguageServerRefreshFeature,
+    LanguageServerWorkspaceEditEvent, RefreshSink, StatusSink, WorkspaceEditSink,
+};
+use request_dispatch::{
+    prepare_cancel_pending_request, send_request_with_timeout, CancellationTransport,
+    ExactSessionNotificationTransport,
+};
+pub use restart_policy::RestartController;
+use restart_policy::RestartOutcome;
+#[cfg(test)]
+use restart_policy::{RestartDecision, RestartPolicy};
 pub use runtime_telemetry::RecentLspRequest;
 #[cfg(test)]
 use runtime_telemetry::STDERR_TAIL_CAPACITY;
@@ -40,13 +66,21 @@ use runtime_telemetry::{
     snapshot_recent_requests, snapshot_stderr_tail, spawn_stderr_reader, RecentRequests,
     RuntimeLog, StderrTail, StderrTailBuffer,
 };
+#[cfg(test)]
+use server_process::{ChildKiller, SpawnedServer};
+pub use server_process::{ChildServerProcessSpawner, ProcessKiller, ServerProcessSpawner};
+#[cfg(test)]
+use session_transitions::cancellable_backoff;
+use session_transitions::{
+    clone_command, clone_initialize_request, publish, publish_crash, set_status, RestartContext,
+    StartKind,
+};
+use session_writer::SessionMessageWriter;
 use transport_failure::transport_failure_message;
-
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_PENDING_REQUESTS_PER_SESSION: usize = 64;
 pub const PHP_STATUS_EVENT: &str = "language-server://status";
 pub const PHP_DIAGNOSTICS_EVENT: &str = "language-server://diagnostics";
 pub const PHP_REFRESH_EVENT: &str = "language-server://refresh";
@@ -61,9 +95,277 @@ pub const JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT: &str =
     "javascript-typescript-language-server://workspace-edit";
 type PendingRequestResult = Result<Value, LanguageServerRequestError>;
 type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
-type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
+type PendingRequests = Arc<PendingRequestRegistry>;
 type SharedProcessKiller = Arc<Mutex<Option<Box<dyn ProcessKiller>>>>;
-type SessionRequestParts = (Arc<Mutex<Box<dyn Write + Send>>>, PendingRequests);
+type SessionRequestParts = (
+    u64,
+    Arc<SessionMessageWriter>,
+    PendingRequests,
+    Arc<CancellationTransport>,
+);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectResyncRequestOutcome {
+    Admitted,
+    SupersededByFreshSession,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExactSessionNotificationOutcome {
+    Admitted,
+    Stale,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PendingRequestAdmissionError {
+    CapacityExceeded { capacity: usize },
+    DuplicateId,
+    InvalidRequestId,
+    RequestIdNotMonotonic { previous: u64, received: u64 },
+    RegistryUnavailable,
+    SessionClosed { message: String },
+}
+
+impl std::fmt::Display for PendingRequestAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CapacityExceeded { capacity } => write!(
+                formatter,
+                "Language server pending request capacity ({capacity}) was reached."
+            ),
+            Self::DuplicateId => {
+                formatter.write_str("Language server request id is already pending.")
+            }
+            Self::InvalidRequestId => {
+                formatter.write_str("Language server request id must be greater than zero.")
+            }
+            Self::RequestIdNotMonotonic { previous, received } => write!(
+                formatter,
+                "Language server request id {received} is not newer than {previous}."
+            ),
+            Self::RegistryUnavailable => {
+                formatter.write_str("Language server pending request registry is unavailable.")
+            }
+            Self::SessionClosed { message } => formatter.write_str(message),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingRequestCancellationReceipt {
+    Cancelled { wire_request_id: u64 },
+    NotPending,
+    RegistryUnavailable,
+    SessionClosed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingResponseReceipt {
+    Routed,
+    Unmatched,
+    RegistryUnavailable,
+    SessionClosed,
+}
+
+struct PendingRequestEntry {
+    client_request_id: Option<u64>,
+    sender: PendingRequestSender,
+}
+
+enum PendingRequestRegistryState {
+    Open {
+        entries: HashMap<u64, PendingRequestEntry>,
+        highest_client_request_id: Option<u64>,
+        wire_id_by_client_id: HashMap<u64, u64>,
+    },
+    Closed {
+        message: String,
+    },
+}
+
+struct PendingRequestRegistry {
+    state: Mutex<PendingRequestRegistryState>,
+}
+
+impl PendingRequestRegistry {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(PendingRequestRegistryState::Open {
+                entries: HashMap::new(),
+                highest_client_request_id: None,
+                wire_id_by_client_id: HashMap::new(),
+            }),
+        }
+    }
+
+    fn admit(
+        &self,
+        wire_request_id: u64,
+        client_request_id: Option<u64>,
+        sender: PendingRequestSender,
+    ) -> Result<(), PendingRequestAdmissionError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PendingRequestAdmissionError::RegistryUnavailable)?;
+        let PendingRequestRegistryState::Open {
+            entries,
+            highest_client_request_id,
+            wire_id_by_client_id,
+        } = &mut *state
+        else {
+            let PendingRequestRegistryState::Closed { message } = &*state else {
+                unreachable!("pending request registry state is exhaustive");
+            };
+            return Err(PendingRequestAdmissionError::SessionClosed {
+                message: message.clone(),
+            });
+        };
+        if entries.contains_key(&wire_request_id) {
+            return Err(PendingRequestAdmissionError::DuplicateId);
+        }
+        if entries.len() >= MAX_PENDING_REQUESTS_PER_SESSION {
+            return Err(PendingRequestAdmissionError::CapacityExceeded {
+                capacity: MAX_PENDING_REQUESTS_PER_SESSION,
+            });
+        }
+        if let Some(client_request_id) = client_request_id {
+            if client_request_id == 0 {
+                return Err(PendingRequestAdmissionError::InvalidRequestId);
+            }
+            if let Some(previous) = *highest_client_request_id {
+                if client_request_id <= previous {
+                    return Err(PendingRequestAdmissionError::RequestIdNotMonotonic {
+                        previous,
+                        received: client_request_id,
+                    });
+                }
+            }
+            if wire_id_by_client_id.contains_key(&client_request_id) {
+                return Err(PendingRequestAdmissionError::DuplicateId);
+            }
+            *highest_client_request_id = Some(client_request_id);
+            wire_id_by_client_id.insert(client_request_id, wire_request_id);
+        }
+
+        entries.insert(
+            wire_request_id,
+            PendingRequestEntry {
+                client_request_id,
+                sender,
+            },
+        );
+        Ok(())
+    }
+
+    fn cancel(&self, client_request_id: u64) -> PendingRequestCancellationReceipt {
+        let Ok(mut state) = self.state.lock() else {
+            return PendingRequestCancellationReceipt::RegistryUnavailable;
+        };
+        let PendingRequestRegistryState::Open {
+            entries,
+            wire_id_by_client_id,
+            ..
+        } = &mut *state
+        else {
+            return PendingRequestCancellationReceipt::SessionClosed;
+        };
+        let Some(wire_request_id) = wire_id_by_client_id.remove(&client_request_id) else {
+            return PendingRequestCancellationReceipt::NotPending;
+        };
+        let Some(entry) = entries.remove(&wire_request_id) else {
+            return PendingRequestCancellationReceipt::NotPending;
+        };
+        drop(entry);
+
+        PendingRequestCancellationReceipt::Cancelled { wire_request_id }
+    }
+
+    fn remove(&self, wire_request_id: u64) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let PendingRequestRegistryState::Open {
+            entries,
+            wire_id_by_client_id,
+            ..
+        } = &mut *state
+        else {
+            return;
+        };
+        if let Some(entry) = entries.remove(&wire_request_id) {
+            if let Some(client_request_id) = entry.client_request_id {
+                wire_id_by_client_id.remove(&client_request_id);
+            }
+        }
+    }
+
+    fn close_and_reject(&self, message: &str) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let senders = match std::mem::replace(
+            &mut *state,
+            PendingRequestRegistryState::Closed {
+                message: message.to_string(),
+            },
+        ) {
+            PendingRequestRegistryState::Open { entries, .. } => entries
+                .into_values()
+                .map(|entry| entry.sender)
+                .collect::<Vec<_>>(),
+            PendingRequestRegistryState::Closed { .. } => return,
+        };
+        drop(state);
+
+        for sender in senders {
+            let _ = sender.send(Err(LanguageServerRequestError::from(message)));
+        }
+    }
+
+    fn route_response(&self, value: &Value) -> PendingResponseReceipt {
+        let Some(id) = value.get("id").and_then(Value::as_u64) else {
+            return PendingResponseReceipt::Unmatched;
+        };
+        let Ok(mut state) = self.state.lock() else {
+            return PendingResponseReceipt::RegistryUnavailable;
+        };
+        let PendingRequestRegistryState::Open {
+            entries,
+            wire_id_by_client_id,
+            ..
+        } = &mut *state
+        else {
+            return PendingResponseReceipt::SessionClosed;
+        };
+        let Some(entry) = entries.remove(&id) else {
+            return PendingResponseReceipt::Unmatched;
+        };
+        if let Some(client_request_id) = entry.client_request_id {
+            wire_id_by_client_id.remove(&client_request_id);
+        }
+
+        let _ = entry.sender.send(parse_response_result(value));
+        PendingResponseReceipt::Routed
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.state
+            .lock()
+            .map(|state| match &*state {
+                PendingRequestRegistryState::Open { entries, .. } => entries.len(),
+                PendingRequestRegistryState::Closed { .. } => 0,
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    fn lock_is_available(&self) -> bool {
+        self.state.try_lock().is_ok()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -115,431 +417,6 @@ pub enum LanguageServerRuntimeStatus {
     Crashed {
         message: String,
     },
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LanguageServerCapabilities {
-    pub call_hierarchy: bool,
-    pub code_action: bool,
-    pub code_action_resolve: bool,
-    pub code_lens: bool,
-    pub declaration: bool,
-    pub hover: bool,
-    pub completion: bool,
-    pub definition: bool,
-    pub document_highlight: bool,
-    pub document_link: bool,
-    pub document_symbol: bool,
-    pub did_create_files: bool,
-    pub did_delete_files: bool,
-    pub did_rename_files: bool,
-    pub folding_range: bool,
-    pub formatting: bool,
-    pub implementation: bool,
-    pub inlay_hint: bool,
-    pub inlay_hint_resolve: bool,
-    pub linked_editing_range: bool,
-    pub on_type_formatting: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub on_type_formatting_trigger_characters: Option<Vec<String>>,
-    pub prepare_rename: bool,
-    pub range_formatting: bool,
-    pub references: bool,
-    pub rename: bool,
-    pub selection_range: bool,
-    pub semantic_tokens: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub semantic_tokens_legend: Option<SemanticTokensLegend>,
-    pub signature_help: bool,
-    pub source_definition: bool,
-    pub type_definition: bool,
-    pub type_hierarchy: bool,
-    pub will_create_files: bool,
-    pub will_delete_files: bool,
-    pub will_rename_files: bool,
-    pub workspace_symbol: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticTokensLegend {
-    pub token_types: Vec<String>,
-    pub token_modifiers: Vec<String>,
-}
-
-pub trait StatusSink: Send + Sync {
-    fn emit_status(&self, status: LanguageServerRuntimeStatus);
-}
-
-pub trait DiagnosticsSink: Send + Sync {
-    fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent);
-}
-
-pub trait RefreshSink: Send + Sync {
-    fn emit_refresh(&self, event: LanguageServerRefreshEvent) -> bool;
-}
-
-pub struct AppHandleEventSink {
-    app: tauri::AppHandle,
-    diagnostics_event: &'static str,
-    refresh_event: &'static str,
-    root_path: String,
-    status_event: &'static str,
-    workspace_edit_event: &'static str,
-}
-
-impl AppHandleEventSink {
-    pub fn for_workspace(app: tauri::AppHandle, root_path: String) -> Self {
-        Self::new_with_events_and_root(
-            app,
-            PHP_STATUS_EVENT,
-            PHP_DIAGNOSTICS_EVENT,
-            PHP_REFRESH_EVENT,
-            PHP_WORKSPACE_EDIT_EVENT,
-            root_path,
-        )
-    }
-
-    pub fn javascript_typescript_for_workspace(app: tauri::AppHandle, root_path: String) -> Self {
-        Self::new_with_events_and_root(
-            app,
-            JAVASCRIPT_TYPESCRIPT_STATUS_EVENT,
-            JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
-            JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT,
-            JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
-            root_path,
-        )
-    }
-
-    fn new_with_events_and_root(
-        app: tauri::AppHandle,
-        status_event: &'static str,
-        diagnostics_event: &'static str,
-        refresh_event: &'static str,
-        workspace_edit_event: &'static str,
-        root_path: String,
-    ) -> Self {
-        Self {
-            app,
-            diagnostics_event,
-            refresh_event,
-            root_path,
-            status_event,
-            workspace_edit_event,
-        }
-    }
-}
-
-impl StatusSink for AppHandleEventSink {
-    fn emit_status(&self, status: LanguageServerRuntimeStatus) {
-        use tauri::Emitter;
-
-        let _ = self.app.emit(
-            self.status_event,
-            status_event_payload(&self.root_path, status),
-        );
-    }
-}
-
-impl DiagnosticsSink for AppHandleEventSink {
-    fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent) {
-        use tauri::Emitter;
-
-        let _ = self.app.emit(
-            self.diagnostics_event,
-            diagnostics_event_payload(&self.root_path, &event),
-        );
-    }
-}
-
-impl RefreshSink for AppHandleEventSink {
-    fn emit_refresh(&self, event: LanguageServerRefreshEvent) -> bool {
-        use tauri::Emitter;
-
-        self.app
-            .emit(
-                self.refresh_event,
-                refresh_event_payload(&self.root_path, event),
-            )
-            .is_ok()
-    }
-}
-
-impl WorkspaceEditSink for AppHandleEventSink {
-    fn emit_workspace_edit(&self, event: LanguageServerWorkspaceEditEvent) -> bool {
-        use tauri::Emitter;
-
-        self.app
-            .emit(
-                self.workspace_edit_event,
-                workspace_edit_event_payload(&self.root_path, event),
-            )
-            .is_ok()
-    }
-}
-
-pub(crate) fn language_server_status_payload(
-    root_path: &str,
-    status: LanguageServerRuntimeStatus,
-) -> Value {
-    let mut value = serde_json::to_value(status).unwrap_or(Value::Null);
-
-    if let Value::Object(object) = &mut value {
-        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
-    }
-
-    value
-}
-
-fn status_event_payload(root_path: &str, status: LanguageServerRuntimeStatus) -> Value {
-    language_server_status_payload(root_path, status)
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LanguageServerDiagnosticsEventPayload<'a> {
-    root_path: &'a str,
-    #[serde(flatten)]
-    event: &'a LanguageServerDiagnosticEvent,
-}
-
-fn diagnostics_event_payload<'a>(
-    root_path: &'a str,
-    event: &'a LanguageServerDiagnosticEvent,
-) -> LanguageServerDiagnosticsEventPayload<'a> {
-    LanguageServerDiagnosticsEventPayload { root_path, event }
-}
-
-fn refresh_event_payload(root_path: &str, event: LanguageServerRefreshEvent) -> Value {
-    let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
-
-    if let Value::Object(object) = &mut value {
-        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
-    }
-
-    value
-}
-
-fn workspace_edit_event_payload(root_path: &str, event: LanguageServerWorkspaceEditEvent) -> Value {
-    let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
-
-    if let Value::Object(object) = &mut value {
-        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
-    }
-
-    value
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum LanguageServerRefreshFeature {
-    CodeLens,
-    InlayHint,
-    SemanticTokens,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LanguageServerRefreshEvent {
-    pub session_id: u64,
-    pub feature: LanguageServerRefreshFeature,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LanguageServerWorkspaceEditEvent {
-    pub session_id: u64,
-    pub label: Option<String>,
-    pub edit: LanguageServerWorkspaceEdit,
-}
-
-pub trait WorkspaceEditSink: Send + Sync {
-    fn emit_workspace_edit(&self, event: LanguageServerWorkspaceEditEvent) -> bool;
-}
-
-#[derive(Clone)]
-pub(crate) struct LanguageServerEventSinks {
-    status: Arc<dyn StatusSink>,
-    diagnostics: Arc<dyn DiagnosticsSink>,
-    workspace_edit: Arc<dyn WorkspaceEditSink>,
-    refresh: Arc<dyn RefreshSink>,
-}
-
-impl LanguageServerEventSinks {
-    pub(crate) fn new(
-        status: Arc<dyn StatusSink>,
-        diagnostics: Arc<dyn DiagnosticsSink>,
-        workspace_edit: Arc<dyn WorkspaceEditSink>,
-        refresh: Arc<dyn RefreshSink>,
-    ) -> Self {
-        Self {
-            status,
-            diagnostics,
-            workspace_edit,
-            refresh,
-        }
-    }
-}
-
-#[cfg(test)]
-struct NoopWorkspaceEditSink;
-
-#[cfg(test)]
-impl WorkspaceEditSink for NoopWorkspaceEditSink {
-    fn emit_workspace_edit(&self, _event: LanguageServerWorkspaceEditEvent) -> bool {
-        false
-    }
-}
-
-#[cfg(test)]
-struct NoopRefreshSink;
-
-#[cfg(test)]
-impl RefreshSink for NoopRefreshSink {
-    fn emit_refresh(&self, _event: LanguageServerRefreshEvent) -> bool {
-        false
-    }
-}
-
-pub trait ServerProcessSpawner {
-    fn spawn(&self, command: &LanguageServerCommand) -> io::Result<SpawnedServer>;
-}
-
-pub struct SpawnedServer {
-    pub stderr: Option<Box<dyn Read + Send>>,
-    pub stdin: Box<dyn Write + Send>,
-    pub stdout: Box<dyn Read + Send>,
-    pub killer: Box<dyn ProcessKiller>,
-}
-
-pub trait ProcessKiller: Send {
-    fn terminate(&mut self) -> io::Result<()>;
-
-    /// Operating-system process id of the spawned language server, when known.
-    /// Used by the runtime observability panel to sample per-process RAM/CPU and
-    /// to surface the live PID. Test/fake killers without a real OS process
-    /// return `None`.
-    fn pid(&self) -> Option<u32> {
-        None
-    }
-}
-
-pub struct ChildServerProcessSpawner;
-
-impl ServerProcessSpawner for ChildServerProcessSpawner {
-    fn spawn(&self, command: &LanguageServerCommand) -> io::Result<SpawnedServer> {
-        let mut command_builder = Command::new(&command.executable);
-        command_builder
-            .args(&command.args)
-            .current_dir(&command.working_directory)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        // Apply per-command environment (e.g. `PHPRC=<managed.ini>` for managed
-        // PHPactor). Env vars are inherited by child processes the server spawns,
-        // so this isolates the whole PHPactor process tree from a noisy user
-        // `php.ini` — unlike the `-c <ini>` CLI argument, which children do not
-        // inherit.
-        for (key, value) in &command.env {
-            command_builder.env(key, value);
-        }
-
-        #[cfg(unix)]
-        {
-            command_builder.process_group(0);
-        }
-
-        let mut child = command_builder.spawn()?;
-        #[cfg(unix)]
-        let process_group_id = child.id() as i32;
-
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| io::Error::other("missing child stdin"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("missing child stdout"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .map(|stderr| Box::new(stderr) as Box<dyn Read + Send>);
-
-        Ok(SpawnedServer {
-            stderr,
-            stdin: Box::new(stdin),
-            stdout: Box::new(stdout),
-            killer: Box::new(ChildKiller {
-                child,
-                #[cfg(unix)]
-                process_group_id,
-            }),
-        })
-    }
-}
-
-struct ChildKiller {
-    child: Child,
-    #[cfg(unix)]
-    process_group_id: i32,
-}
-
-impl ProcessKiller for ChildKiller {
-    fn pid(&self) -> Option<u32> {
-        Some(self.child.id())
-    }
-
-    fn terminate(&mut self) -> io::Result<()> {
-        if self.child.try_wait()?.is_some() {
-            #[cfg(unix)]
-            let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
-            return Ok(());
-        }
-
-        #[cfg(unix)]
-        {
-            let _ = signal_process_group(self.process_group_id, libc::SIGTERM);
-            std::thread::sleep(Duration::from_millis(150));
-
-            if self.child.try_wait()?.is_none() {
-                let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
-            }
-        }
-
-        let kill_error = self.child.kill().err();
-        let wait_result = self.child.wait().map(|_| ());
-
-        #[cfg(unix)]
-        let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
-
-        if let Some(error) = kill_error {
-            if error.kind() != io::ErrorKind::InvalidInput {
-                return Err(error);
-            }
-        }
-
-        wait_result
-    }
-}
-
-#[cfg(unix)]
-fn signal_process_group(process_group_id: i32, signal: i32) -> io::Result<()> {
-    let result = unsafe { libc::kill(-process_group_id, signal) };
-
-    if result == 0 {
-        return Ok(());
-    }
-
-    let error = io::Error::last_os_error();
-
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(());
-    }
-
-    Err(error)
 }
 
 fn workspace_runtime_id(root_path: &str) -> String {
@@ -635,9 +512,11 @@ enum HandshakeOutcome {
 }
 
 struct RunningSession {
+    cancellation_transport: Arc<CancellationTransport>,
+    exact_notification_transport: Arc<ExactSessionNotificationTransport>,
     pid: Option<u32>,
     stderr_reader: Option<JoinHandle<()>>,
-    stdin: Arc<Mutex<Box<dyn Write + Send>>>,
+    stdin: Arc<SessionMessageWriter>,
     killer: SharedProcessKiller,
     pending_requests: PendingRequests,
     reader: Option<JoinHandle<()>>,
@@ -652,13 +531,14 @@ pub struct LanguageServerSupervisor {
     recent_requests: RecentRequests,
     stderr_tail: StderrTail,
     next_request_id: AtomicU64,
-    next_session_id: AtomicU64,
+    next_session_id: Arc<AtomicU64>,
     server_label: &'static str,
     session: Mutex<Option<RunningSession>>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
 }
 
 pub struct LanguageServerRegistry {
+    next_session_id: Arc<AtomicU64>,
     server_label: &'static str,
     supervisors: Mutex<HashMap<String, Arc<LanguageServerSupervisor>>>,
 }
@@ -918,6 +798,7 @@ pub struct JavaScriptTypeScriptLanguageServerRegistry {
     registry: LanguageServerRegistry,
     launch_contexts: Mutex<HashMap<String, JavaScriptTypeScriptLaunchContext>>,
     cleanup_gate: Mutex<()>,
+    start_replacements: Mutex<HashSet<String>>,
 }
 
 impl JavaScriptTypeScriptLanguageServerRegistry {
@@ -926,6 +807,7 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
             registry: LanguageServerRegistry::new_with_label("TypeScript language server"),
             launch_contexts: Mutex::new(HashMap::new()),
             cleanup_gate: Mutex::new(()),
+            start_replacements: Mutex::new(HashSet::new()),
         }
     }
 
@@ -964,7 +846,7 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
         refresh_sink: Arc<dyn RefreshSink>,
         restart_controller: Arc<RestartController>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        self.reserve_start_cleanup(root_path)?
+        self.reserve_start_cleanup(root_path, status_sink.as_ref())?
             .start_with_auto_restart(
                 command,
                 initialize_request,
@@ -1142,6 +1024,7 @@ impl std::ops::Deref for JavaScriptTypeScriptLanguageServerRegistry {
 impl LanguageServerRegistry {
     pub fn new_with_label(server_label: &'static str) -> Self {
         Self {
+            next_session_id: Arc::new(AtomicU64::new(1)),
             server_label,
             supervisors: Mutex::new(HashMap::new()),
         }
@@ -1290,11 +1173,21 @@ impl LanguageServerRegistry {
         expected_session_id: u64,
         notification: &JsonRpcNotification,
     ) -> Result<(), String> {
+        self.send_notification_for_session_outcome(root_path, expected_session_id, notification)
+            .map(|_| ())
+    }
+
+    pub fn send_notification_for_session_outcome(
+        &self,
+        root_path: &str,
+        expected_session_id: u64,
+        notification: &JsonRpcNotification,
+    ) -> Result<ExactSessionNotificationOutcome, String> {
         let Some(supervisor) = self.existing_supervisor(root_path) else {
-            return Ok(());
+            return Ok(ExactSessionNotificationOutcome::Stale);
         };
 
-        supervisor.send_notification_for_session(expected_session_id, notification)
+        supervisor.send_notification_for_session_outcome(expected_session_id, notification)
     }
 
     pub fn update_server_configuration(
@@ -1354,6 +1247,7 @@ impl LanguageServerRegistry {
     pub fn send_request_async_with_id(
         &self,
         root_path: &str,
+        session_id: u64,
         request_id: u64,
         method: &str,
         params: Value,
@@ -1366,7 +1260,7 @@ impl LanguageServerRegistry {
                 return Ok(None);
             };
             tauri::async_runtime::spawn_blocking(move || {
-                supervisor.send_request_with_id(request_id, &method, params)
+                supervisor.send_request_with_id(session_id, request_id, &method, params)
             })
             .await
             .map_err(|error| format!("Language server request task failed: {error}"))?
@@ -1374,11 +1268,44 @@ impl LanguageServerRegistry {
         }
     }
 
-    pub fn cancel_request(&self, root_path: &str, request_id: u64) {
+    pub fn cancel_request(
+        &self,
+        root_path: &str,
+        session_id: u64,
+        request_id: u64,
+    ) -> Result<(), String> {
         let Some(supervisor) = self.existing_supervisor(root_path) else {
-            return;
+            return Ok(());
         };
-        supervisor.cancel_request(request_id);
+        let Some(cancel) = supervisor
+            .prepare_cancel_request(session_id, request_id)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(());
+        };
+        cancel
+            .transport
+            .enqueue(cancel.wire_request_id)
+            .map_err(|error| {
+                format!(
+                    "Language server session {} cancellation transport failed: {error}",
+                    cancel.session_id
+                )
+            })
+    }
+
+    /// Forces an authoritative JavaScript/TypeScript project-graph rebuild for
+    /// the exact running session that observed a watcher overflow. A missing or
+    /// replaced session is stale success: it must never restart the replacement.
+    pub fn request_project_resync(
+        &self,
+        root_path: &str,
+        expected_session_id: u64,
+    ) -> Result<ProjectResyncRequestOutcome, String> {
+        let Some(supervisor) = self.existing_supervisor(root_path) else {
+            return Ok(ProjectResyncRequestOutcome::Unavailable);
+        };
+        supervisor.request_project_resync(expected_session_id)
     }
 
     pub fn send_request_async_preserving_response_error(
@@ -1433,7 +1360,10 @@ impl LanguageServerRegistry {
         Ok(supervisors
             .entry(runtime_id)
             .or_insert_with(|| {
-                Arc::new(LanguageServerSupervisor::new_with_label(self.server_label))
+                Arc::new(LanguageServerSupervisor::new_with_session_id_source(
+                    self.server_label,
+                    Arc::clone(&self.next_session_id),
+                ))
             })
             .clone())
     }
@@ -1493,12 +1423,19 @@ impl LanguageServerSupervisor {
     }
 
     pub fn new_with_label(server_label: &'static str) -> Self {
+        Self::new_with_session_id_source(server_label, Arc::new(AtomicU64::new(1)))
+    }
+
+    fn new_with_session_id_source(
+        server_label: &'static str,
+        next_session_id: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             log: Arc::new(Mutex::new(String::new())),
             recent_requests: Arc::new(Mutex::new(Default::default())),
             stderr_tail: Arc::new(Mutex::new(StderrTailBuffer::default())),
             next_request_id: AtomicU64::new(2),
-            next_session_id: AtomicU64::new(1),
+            next_session_id,
             server_label,
             session: Mutex::new(None),
             status: Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)),
@@ -1644,7 +1581,12 @@ impl LanguageServerSupervisor {
         restart_context: Option<Arc<RestartContext>>,
         start_kind: StartKind,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
+        let session_id = self
+            .next_session_id
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| "Language server session id capacity was exhausted.".to_string())?;
         self.terminate_stale_session();
         reset_runtime_log(&self.log, self.server_label, session_id, command);
         reset_request_telemetry(&self.recent_requests, &self.stderr_tail);
@@ -1659,8 +1601,8 @@ impl LanguageServerSupervisor {
             }
         };
 
-        let stdin = Arc::new(Mutex::new(spawned.stdin));
-        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let stdin = Arc::clone(&spawned.stdin);
+        let pending_requests = Arc::new(PendingRequestRegistry::new());
         let stop_requested = Arc::new(AtomicBool::new(false));
         let stderr_reader = spawned.stderr.map(|stderr| {
             spawn_stderr_reader(stderr, Arc::clone(&self.log), Arc::clone(&self.stderr_tail))
@@ -1670,7 +1612,42 @@ impl LanguageServerSupervisor {
         ));
         let pid = spawned.killer.pid();
         let killer = Arc::new(Mutex::new(Some(spawned.killer)));
+        let writer_failure_killer = Arc::clone(&killer);
+        let writer_failure_log = Arc::clone(&self.log);
+        let writer_failure_label = self.server_label;
+        stdin.set_failure_handler(Arc::new(move |error| {
+            append_runtime_log(
+                &writer_failure_log,
+                &format!(
+                    "{writer_failure_label} session {session_id} stdin transport failed: {error}\n"
+                ),
+            );
+            terminate_process(&writer_failure_killer);
+        }));
+        let cancellation_transport = CancellationTransport::start(
+            session_id,
+            Arc::clone(&stdin),
+            Arc::clone(&killer),
+            Arc::clone(&self.log),
+            self.server_label,
+        )
+        .map_err(|error| {
+            terminate_process(&killer);
+            format!("Failed to start cancellation transport: {error}")
+        })?;
+        let exact_notification_transport = ExactSessionNotificationTransport::start(
+            session_id,
+            Arc::clone(&stdin),
+            &cancellation_transport,
+        )
+        .map_err(|error| {
+            cancellation_transport.revoke();
+            terminate_process(&killer);
+            format!("Failed to start exact notification transport: {error}")
+        })?;
         let mut session = Some(RunningSession {
+            cancellation_transport,
+            exact_notification_transport,
             pid,
             stderr_reader,
             stdin: Arc::clone(&stdin),
@@ -1831,19 +1808,31 @@ impl LanguageServerSupervisor {
             .map_err(|error| format!("Failed to send LSP notification: {error}"))
     }
 
-    pub fn send_notification_for_session(
+    fn send_notification_for_session_outcome(
+        &self,
+        expected_session_id: u64,
+        notification: &JsonRpcNotification,
+    ) -> Result<ExactSessionNotificationOutcome, String> {
+        let bytes = serde_json::to_vec(notification)
+            .map_err(|error| format!("Failed to serialize LSP notification: {error}"))?;
+        let Some(transport) = self.exact_notification_transport_for(expected_session_id) else {
+            return Ok(ExactSessionNotificationOutcome::Stale);
+        };
+
+        transport
+            .send(bytes)
+            .map(|()| ExactSessionNotificationOutcome::Admitted)
+            .map_err(|error| format!("Failed to send LSP notification: {error}"))
+    }
+
+    #[cfg(test)]
+    fn send_notification_for_session(
         &self,
         expected_session_id: u64,
         notification: &JsonRpcNotification,
     ) -> Result<(), String> {
-        let Some(stdin) = self.session_stdin_for(expected_session_id) else {
-            return Ok(());
-        };
-        let bytes = serde_json::to_vec(notification)
-            .map_err(|error| format!("Failed to serialize LSP notification: {error}"))?;
-
-        write_with_session_stdin(&stdin, &bytes)
-            .map_err(|error| format!("Failed to send LSP notification: {error}"))
+        self.send_notification_for_session_outcome(expected_session_id, notification)
+            .map(|_| ())
     }
 
     pub fn update_server_configuration(&self, server_configuration: Value) -> Result<(), String> {
@@ -1863,16 +1852,24 @@ impl LanguageServerSupervisor {
         method: &str,
         params: Value,
     ) -> Result<Option<Value>, LanguageServerRequestError> {
-        send_request_with_timeout(self, method, params, None, REQUEST_TIMEOUT)
+        send_request_with_timeout(self, method, params, None, None, REQUEST_TIMEOUT)
     }
 
     fn send_request_with_id(
         &self,
+        session_id: u64,
         request_id: u64,
         method: &str,
         params: Value,
     ) -> Result<Option<Value>, LanguageServerRequestError> {
-        send_request_with_timeout(self, method, params, Some(request_id), REQUEST_TIMEOUT)
+        send_request_with_timeout(
+            self,
+            method,
+            params,
+            Some(session_id),
+            Some(request_id),
+            REQUEST_TIMEOUT,
+        )
     }
 
     #[cfg(test)]
@@ -1882,15 +1879,106 @@ impl LanguageServerSupervisor {
         params: Value,
         timeout: Duration,
     ) -> Result<Option<Value>, LanguageServerRequestError> {
-        send_request_with_timeout(self, method, params, None, timeout)
+        send_request_with_timeout(self, method, params, None, None, timeout)
     }
 
-    fn cancel_request(&self, request_id: u64) {
-        cancel_pending_request(self, request_id);
+    fn prepare_cancel_request(
+        &self,
+        session_id: u64,
+        request_id: u64,
+    ) -> Result<Option<request_dispatch::PendingCancelWrite>, LanguageServerRequestError> {
+        prepare_cancel_pending_request(self, session_id, request_id)
+    }
+
+    fn request_project_resync(
+        &self,
+        expected_session_id: u64,
+    ) -> Result<ProjectResyncRequestOutcome, String> {
+        let status = self.status();
+        let killer = {
+            let session = self.session.lock().map_err(|error| error.to_string())?;
+            let Some(session) = session.as_ref() else {
+                return Ok(ProjectResyncRequestOutcome::Unavailable);
+            };
+            if session.session_id != expected_session_id {
+                return Ok(match status {
+                    LanguageServerRuntimeStatus::Running { session_id, .. }
+                        if session_id == session.session_id && session_id > expected_session_id =>
+                    {
+                        ProjectResyncRequestOutcome::SupersededByFreshSession
+                    }
+                    _ => ProjectResyncRequestOutcome::Unavailable,
+                });
+            }
+            if session.stop_requested.load(Ordering::SeqCst)
+                || !matches!(
+                    status,
+                    LanguageServerRuntimeStatus::Running { session_id, .. }
+                        if session_id == expected_session_id
+                )
+            {
+                return Ok(ProjectResyncRequestOutcome::Unavailable);
+            }
+            append_runtime_log(
+                &self.log,
+                &format!(
+                    "{} session {expected_session_id} project resync requested after watcher overflow\n",
+                    self.server_label
+                ),
+            );
+            Arc::clone(&session.killer)
+        };
+        terminate_process(&killer);
+        Ok(ProjectResyncRequestOutcome::Admitted)
     }
 
     /// Record one completed request into the bounded recent-requests ring buffer.
-    fn record_request_outcome(&self, method: &str, started_at: Instant, success: bool) {
+    fn allocate_wire_request_id(&self) -> Result<u64, LanguageServerRequestError> {
+        self.next_request_id
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| {
+                LanguageServerRequestError::from(
+                    "Language server wire request id capacity was exhausted.",
+                )
+            })
+    }
+
+    fn record_request_outcome_for_session(
+        &self,
+        session_id: u64,
+        method: &str,
+        started_at: Instant,
+        success: bool,
+    ) {
+        self.record_request_outcome_for_session_after_check(
+            session_id,
+            method,
+            started_at,
+            success,
+            || {},
+        );
+    }
+
+    fn record_request_outcome_for_session_after_check(
+        &self,
+        session_id: u64,
+        method: &str,
+        started_at: Instant,
+        success: bool,
+        after_check: impl FnOnce(),
+    ) {
+        let Ok(session) = self.session.lock() else {
+            return;
+        };
+        let Some(current) = session.as_ref() else {
+            return;
+        };
+        if current.session_id != session_id || current.stop_requested.load(Ordering::SeqCst) {
+            return;
+        }
+        after_check();
         record_recent_request(
             &self.recent_requests,
             RecentLspRequest {
@@ -1907,33 +1995,85 @@ impl LanguageServerSupervisor {
         session_id: u64,
         start_kind: StartKind,
     ) -> Result<(), String> {
-        let mut status = self.status.lock().map_err(|error| error.to_string())?;
+        let previous = {
+            let mut status = self.status.lock().map_err(|error| error.to_string())?;
 
-        if is_active_status(&status)
-            && !matches!(
-                (&*status, start_kind),
-                (
-                    LanguageServerRuntimeStatus::Starting { session_id: 0 },
-                    StartKind::ReservedFresh
+            if is_active_status(&status)
+                && !matches!(
+                    (&*status, start_kind),
+                    (
+                        LanguageServerRuntimeStatus::Starting { session_id: 0 },
+                        StartKind::ReservedFresh
+                    )
                 )
-            )
-        {
-            return Err("Language server already running.".to_string());
-        }
+            {
+                return Err("Language server already running.".to_string());
+            }
 
-        // An auto-restart may only resume a session that is *still* crashed. If a
-        // concurrent stop (workspace close / session switch) already moved the
-        // status to Stopped, abort so we never resurrect a closed workspace. The
-        // status check and the transition to Starting happen under the same lock,
-        // closing the crash->stop race window.
-        if matches!(start_kind, StartKind::Restart)
-            && !matches!(*status, LanguageServerRuntimeStatus::Crashed { .. })
-        {
-            return Err("Auto-restart aborted: session is no longer crashed.".to_string());
-        }
+            // An auto-restart may only resume a session that is *still* crashed.
+            if matches!(start_kind, StartKind::Restart)
+                && !matches!(*status, LanguageServerRuntimeStatus::Crashed { .. })
+            {
+                return Err("Auto-restart aborted: session is no longer crashed.".to_string());
+            }
 
-        *status = LanguageServerRuntimeStatus::Starting { session_id };
+            let previous = status.clone();
+            *status = LanguageServerRuntimeStatus::Starting { session_id };
+            previous
+        };
+
+        if let Err(error) = sink.begin_exact_session_transition(session_id) {
+            self.restore_failed_start_transition(session_id, previous)?;
+            return Err(format!(
+                "Failed to advance {} document-session admission: {error}",
+                self.server_label
+            ));
+        }
+        self.require_start_transition(session_id)?;
         sink.emit_status(LanguageServerRuntimeStatus::Starting { session_id });
+        if let Err(error) = self.require_start_transition(session_id) {
+            let corrective = self.status();
+            if !matches!(
+                corrective,
+                LanguageServerRuntimeStatus::Starting {
+                    session_id: current
+                } if current == session_id
+            ) {
+                sink.emit_status(corrective);
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn require_start_transition(&self, session_id: u64) -> Result<(), String> {
+        let status = self.status.lock().map_err(|error| error.to_string())?;
+        if matches!(
+            *status,
+            LanguageServerRuntimeStatus::Starting {
+                session_id: current
+            } if current == session_id
+        ) {
+            Ok(())
+        } else {
+            Err("Language server start transition was superseded.".to_string())
+        }
+    }
+
+    fn restore_failed_start_transition(
+        &self,
+        session_id: u64,
+        previous: LanguageServerRuntimeStatus,
+    ) -> Result<(), String> {
+        let mut status = self.status.lock().map_err(|error| error.to_string())?;
+        if matches!(
+            *status,
+            LanguageServerRuntimeStatus::Starting {
+                session_id: current
+            } if current == session_id
+        ) {
+            *status = previous;
+        }
         Ok(())
     }
 
@@ -1977,34 +2117,39 @@ impl LanguageServerSupervisor {
         session_id: u64,
         capabilities: LanguageServerCapabilities,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        let mut status = self.status.lock().map_err(|error| error.to_string())?;
-
-        if stop_requested.load(Ordering::SeqCst) {
-            *status = LanguageServerRuntimeStatus::Stopped;
-            return Ok(LanguageServerRuntimeStatus::Stopped);
-        }
-
-        if let LanguageServerRuntimeStatus::Crashed { message } = &*status {
-            self.terminate_matching_session(stop_requested);
-            return Err(message.clone());
-        }
-
-        if *status != (LanguageServerRuntimeStatus::Starting { session_id }) {
-            return Ok(status.clone());
-        }
-
-        *status = LanguageServerRuntimeStatus::Running {
+        let running = LanguageServerRuntimeStatus::Running {
             session_id,
             capabilities: capabilities.clone(),
         };
-        sink.emit_status(LanguageServerRuntimeStatus::Running {
-            session_id,
-            capabilities: capabilities.clone(),
-        });
-        Ok(LanguageServerRuntimeStatus::Running {
-            session_id,
-            capabilities,
-        })
+        {
+            let mut status = self.status.lock().map_err(|error| error.to_string())?;
+
+            if stop_requested.load(Ordering::SeqCst) {
+                *status = LanguageServerRuntimeStatus::Stopped;
+                return Ok(LanguageServerRuntimeStatus::Stopped);
+            }
+
+            if let LanguageServerRuntimeStatus::Crashed { message } = &*status {
+                let message = message.clone();
+                drop(status);
+                self.terminate_matching_session(stop_requested);
+                return Err(message);
+            }
+
+            if *status != (LanguageServerRuntimeStatus::Starting { session_id }) {
+                return Ok(status.clone());
+            }
+
+            *status = running.clone();
+        }
+        sink.emit_status(running.clone());
+        let current = self.status();
+        if current == running {
+            Ok(running)
+        } else {
+            sink.emit_status(current.clone());
+            Ok(current)
+        }
     }
 
     fn terminate_stale_session(&self) {
@@ -2042,7 +2187,7 @@ impl LanguageServerSupervisor {
         self.session.lock().ok()?.take()
     }
 
-    fn session_stdin(&self) -> Option<Arc<Mutex<Box<dyn Write + Send>>>> {
+    fn session_stdin(&self) -> Option<Arc<SessionMessageWriter>> {
         self.session
             .lock()
             .ok()?
@@ -2050,10 +2195,10 @@ impl LanguageServerSupervisor {
             .map(|session| Arc::clone(&session.stdin))
     }
 
-    fn session_stdin_for(
+    fn exact_notification_transport_for(
         &self,
         expected_session_id: u64,
-    ) -> Option<Arc<Mutex<Box<dyn Write + Send>>>> {
+    ) -> Option<Arc<ExactSessionNotificationTransport>> {
         if !matches!(
             self.status(),
             LanguageServerRuntimeStatus::Running { session_id, .. }
@@ -2061,22 +2206,23 @@ impl LanguageServerSupervisor {
         ) {
             return None;
         }
-
         let session = self.session.lock().ok()?;
         let session = session.as_ref()?;
-
-        if session.session_id != expected_session_id {
+        if session.session_id != expected_session_id
+            || session.stop_requested.load(Ordering::SeqCst)
+        {
             return None;
         }
-
-        Some(Arc::clone(&session.stdin))
+        Some(Arc::clone(&session.exact_notification_transport))
     }
 
     fn session_request_parts(&self) -> Option<SessionRequestParts> {
         self.session.lock().ok()?.as_ref().map(|session| {
             (
+                session.session_id,
                 Arc::clone(&session.stdin),
                 Arc::clone(&session.pending_requests),
+                Arc::clone(&session.cancellation_transport),
             )
         })
     }
@@ -2102,11 +2248,7 @@ impl LanguageServerSupervisor {
         let Some(session) = session.as_ref() else {
             return 0;
         };
-        let Ok(pending) = session.pending_requests.lock() else {
-            return 0;
-        };
-
-        pending.len()
+        session.pending_requests.len()
     }
 }
 
@@ -2128,7 +2270,7 @@ impl Drop for LanguageServerSupervisor {
     }
 }
 
-fn send_initialized(stdin: &Arc<Mutex<Box<dyn Write + Send>>>) -> Result<(), String> {
+fn send_initialized(stdin: &Arc<SessionMessageWriter>) -> Result<(), String> {
     let initialized = json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} });
     let initialized_bytes = serde_json::to_vec(&initialized)
         .map_err(|error| format!("Failed to serialize initialized notification: {error}"))?;
@@ -2136,18 +2278,14 @@ fn send_initialized(stdin: &Arc<Mutex<Box<dyn Write + Send>>>) -> Result<(), Str
         .map_err(|error| format!("Failed to send initialized: {error}"))
 }
 
-fn write_with_session_stdin(
-    stdin: &Arc<Mutex<Box<dyn Write + Send>>>,
-    payload: &[u8],
-) -> io::Result<()> {
-    let mut stdin = stdin
-        .lock()
-        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "stdin lock poisoned"))?;
-    write_message(&mut *stdin, payload)
+fn write_with_session_stdin(stdin: &Arc<SessionMessageWriter>, payload: &[u8]) -> io::Result<()> {
+    stdin.write_message(payload, REQUEST_TIMEOUT)
 }
 
 fn terminate_session(mut session: RunningSession) {
     session.stop_requested.store(true, Ordering::SeqCst);
+    session.cancellation_transport.revoke();
+    session.exact_notification_transport.revoke();
     reject_pending_requests(
         &session.pending_requests,
         "Language server request was stopped.",
@@ -2173,28 +2311,14 @@ fn terminate_process(killer: &SharedProcessKiller) {
 }
 
 fn reject_pending_requests(pending_requests: &PendingRequests, message: &str) {
-    let Ok(mut pending) = pending_requests.lock() else {
-        return;
-    };
-
-    for sender in pending.drain().map(|(_, sender)| sender) {
-        let _ = sender.send(Err(LanguageServerRequestError::from(message)));
-    }
+    pending_requests.close_and_reject(message);
 }
 
-fn route_pending_response(pending_requests: &PendingRequests, value: &Value) -> bool {
-    let Some(id) = value.get("id").and_then(Value::as_u64) else {
-        return false;
-    };
-    let Ok(mut pending) = pending_requests.lock() else {
-        return true;
-    };
-    let Some(sender) = pending.remove(&id) else {
-        return false;
-    };
-
-    let _ = sender.send(parse_response_result(value));
-    true
+fn route_pending_response(
+    pending_requests: &PendingRequests,
+    value: &Value,
+) -> PendingResponseReceipt {
+    pending_requests.route_response(value)
 }
 
 fn parse_response_result(value: &Value) -> PendingRequestResult {
@@ -2229,319 +2353,10 @@ fn is_active_status(status: &LanguageServerRuntimeStatus) -> bool {
     )
 }
 
-/// Default number of restart attempts allowed inside [`RESTART_WINDOW`] before a
-/// crashed session is left in the `Crashed` state (so it can never loop forever).
-const RESTART_MAX_ATTEMPTS: usize = 3;
-/// Sliding window over which restart attempts are counted. A session that stays
-/// up long enough for older failures to fall outside this window regains its
-/// full restart budget.
-const RESTART_WINDOW: Duration = Duration::from_secs(60);
-/// Base delay used for the exponential backoff (1s, 2s, 4s, …).
-const RESTART_BASE_DELAY: Duration = Duration::from_secs(1);
-/// Upper bound on a single backoff delay so attempts stay responsive.
-const RESTART_MAX_DELAY: Duration = Duration::from_secs(30);
-
-/// Pure restart-decision logic for a single workspace session.
-///
-/// The policy tracks recent restart attempts inside a sliding time window and
-/// decides whether another restart is allowed. It is intentionally clock-driven
-/// through explicit `now` arguments so the decision/backoff logic is testable
-/// without sleeping or wall-clock dependence.
-#[derive(Debug)]
-pub struct RestartPolicy {
-    max_attempts: usize,
-    window: Duration,
-    base_delay: Duration,
-    attempts: Vec<Instant>,
-}
-
-impl RestartPolicy {
-    pub fn new(max_attempts: usize, window: Duration, base_delay: Duration) -> Self {
-        Self {
-            max_attempts,
-            window,
-            base_delay,
-            attempts: Vec::new(),
-        }
-    }
-
-    fn prune(&mut self, now: Instant) {
-        let window = self.window;
-        self.attempts
-            .retain(|attempt| now.saturating_duration_since(*attempt) < window);
-    }
-
-    fn next_attempt_index(&mut self, now: Instant) -> usize {
-        self.prune(now);
-        self.attempts.len()
-    }
-
-    fn should_restart(&mut self, now: Instant) -> bool {
-        self.next_attempt_index(now) < self.max_attempts
-    }
-
-    fn record_attempt(&mut self, now: Instant) {
-        self.prune(now);
-        self.attempts.push(now);
-    }
-
-    fn backoff_delay(&self, attempt_index: usize) -> Duration {
-        // A large index must clamp to the cap, never wrap to a tiny delay, so
-        // compute the multiplier in u64 (no u32 truncation) and saturate.
-        let Some(shift) = u32::try_from(attempt_index)
-            .ok()
-            .filter(|shift| *shift < u64::BITS)
-        else {
-            return RESTART_MAX_DELAY;
-        };
-        let factor = 1_u64 << shift;
-        let base_millis = self.base_delay.as_millis() as u64;
-        let delay = base_millis
-            .checked_mul(factor)
-            .map(Duration::from_millis)
-            .unwrap_or(RESTART_MAX_DELAY);
-
-        delay.min(RESTART_MAX_DELAY)
-    }
-
-    #[cfg(test)]
-    fn reset(&mut self) {
-        self.attempts.clear();
-    }
-}
-
-impl Default for RestartPolicy {
-    fn default() -> Self {
-        Self::new(RESTART_MAX_ATTEMPTS, RESTART_WINDOW, RESTART_BASE_DELAY)
-    }
-}
-
-/// Outcome of evaluating a crash against the restart budget.
-#[derive(Debug, PartialEq, Eq)]
-enum RestartOutcome {
-    /// Re-spawn the session after waiting `delay`.
-    Restart { delay: Duration },
-    /// Leave the session crashed (shutdown requested, or budget exhausted).
-    GiveUp,
-}
-
-/// Convenience helper documenting the shutdown rule: a requested shutdown must
-/// never restart, regardless of remaining budget. Exercised by the unit tests.
-#[allow(dead_code)]
-struct RestartDecision;
-
-impl RestartDecision {
-    /// A requested shutdown (quit, workspace close, session switch) must never
-    /// trigger a restart, independent of the remaining restart budget.
-    #[allow(dead_code)]
-    fn for_shutdown(_policy: &RestartPolicy) -> bool {
-        false
-    }
-}
-
-/// Thread-safe wrapper around [`RestartPolicy`] shared with the reader thread
-/// that detects crashes. The decision is taken under a lock so concurrent crash
-/// callbacks for the same workspace cannot race the attempt budget.
-pub struct RestartController {
-    policy: Mutex<RestartPolicy>,
-}
-
-impl RestartController {
-    pub fn new(policy: RestartPolicy) -> Self {
-        Self {
-            policy: Mutex::new(policy),
-        }
-    }
-
-    /// Decide what to do after a crash. `stop_requested` distinguishes a
-    /// legitimate shutdown (no restart) from an unexpected crash (maybe restart).
-    fn evaluate_crash(&self, stop_requested: bool) -> RestartOutcome {
-        if stop_requested {
-            return RestartOutcome::GiveUp;
-        }
-
-        let Ok(mut policy) = self.policy.lock() else {
-            return RestartOutcome::GiveUp;
-        };
-
-        let now = Instant::now();
-
-        if !policy.should_restart(now) {
-            return RestartOutcome::GiveUp;
-        }
-
-        // `should_restart` already pruned expired attempts; the surviving count is
-        // the index of the attempt we are about to make and drives the backoff.
-        let attempt_index = policy.attempts.len();
-        let delay = policy.backoff_delay(attempt_index);
-        policy.record_attempt(now);
-        RestartOutcome::Restart { delay }
-    }
-}
-
-impl Default for RestartController {
-    fn default() -> Self {
-        Self::new(RestartPolicy::default())
-    }
-}
-
-/// Distinguishes a fresh start (user request) from an auto-restart after a
-/// crash. A restart is only allowed to resume a session that is still crashed,
-/// which keeps the crash->stop transition race-free.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StartKind {
-    Fresh,
-    ReservedFresh,
-    Restart,
-}
-
-/// Everything needed to re-spawn a crashed session for the *same* workspace.
-///
-/// Captured per session and handed to the reader thread. On an unexpected crash
-/// the reader consults [`RestartController`] and, if a restart is allowed,
-/// re-enters the owning supervisor to start a fresh session. The supervisor is
-/// held weakly so a dropped/closed workspace cannot be resurrected.
-#[allow(dead_code)]
-struct RestartContext {
-    supervisor: std::sync::Weak<LanguageServerSupervisor>,
-    command: LanguageServerCommand,
-    initialize_request: JsonRpcRequest,
-    spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
-    status_sink: Arc<dyn StatusSink>,
-    diagnostics_sink: Arc<dyn DiagnosticsSink>,
-    workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
-    refresh_sink: Arc<dyn RefreshSink>,
-    controller: Arc<RestartController>,
-}
-
-/// Step size for the cancellable backoff. The backoff total can be as long as
-/// [`RESTART_MAX_DELAY`] (30s); waking this often keeps a closing workspace's
-/// restart thread responsive without busy-spinning.
-const RESTART_BACKOFF_STEP: Duration = Duration::from_millis(100);
-
-/// Sleep out `delay` in short steps, re-checking after each step whether the
-/// owning workspace is still open. The only strong reference to a supervisor
-/// lives in the registry map, so a failed [`Weak::upgrade`] is the canonical
-/// "workspace closed" signal (registry `stop`/`stop_all` dropped it). When that
-/// happens we bail immediately instead of lingering for the full backoff,
-/// dropping the captured restart context (and its sinks) promptly.
-///
-/// Returns the live supervisor only if the workspace stayed open for the whole
-/// backoff; `None` means the restart must be abandoned.
-fn cancellable_backoff(
-    supervisor: &std::sync::Weak<LanguageServerSupervisor>,
-    delay: Duration,
-    step: Duration,
-) -> Option<Arc<LanguageServerSupervisor>> {
-    let deadline = Instant::now() + delay;
-
-    loop {
-        // Re-check liveness before every sleep (and once before the first one) so
-        // a workspace that closes during backoff cancels within a single step.
-        let alive = supervisor.upgrade()?;
-
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Some(alive);
-        }
-
-        // Drop the strong reference while sleeping so the backoff itself never
-        // keeps a closing workspace's supervisor alive.
-        drop(alive);
-        std::thread::sleep(remaining.min(step));
-    }
-}
-
-impl RestartContext {
-    /// Re-spawn the session after `delay`. Returns silently if the workspace was
-    /// closed in the meantime (the supervisor was dropped or a stop/start raced
-    /// in), preserving per-workspace isolation. The backoff is cancellable: if
-    /// the workspace closes (registry `stop`/`stop_all`, app quit) while we are
-    /// waiting, the thread bails promptly without re-spawning.
-    fn restart_after(self: Arc<Self>, delay: Duration) {
-        std::thread::spawn(move || {
-            // The workspace may close while we back off (supervisor dropped from
-            // the registry). Sleep in cancellable steps and skip the work entirely
-            // the moment that happens.
-            let Some(supervisor) =
-                cancellable_backoff(&self.supervisor, delay, RESTART_BACKOFF_STEP)
-            else {
-                return;
-            };
-
-            // `StartKind::Restart` makes `begin_start` re-verify, under the status
-            // lock, that the session is *still* crashed before transitioning to
-            // Starting. A concurrent stop (Stopped) or manual start
-            // (Starting/Running) aborts the restart atomically, so a closed
-            // workspace can never be resurrected.
-            let _ = supervisor.start_core(
-                &self.command,
-                &self.initialize_request,
-                self.spawner.as_ref(),
-                Arc::clone(&self.status_sink),
-                Arc::clone(&self.diagnostics_sink),
-                Arc::clone(&self.workspace_edit_sink),
-                Arc::clone(&self.refresh_sink),
-                Some(Arc::clone(&self)),
-                StartKind::Restart,
-            );
-        });
-    }
-}
-
-#[allow(dead_code)]
-fn clone_command(command: &LanguageServerCommand) -> LanguageServerCommand {
-    LanguageServerCommand {
-        executable: command.executable.clone(),
-        args: command.args.clone(),
-        working_directory: command.working_directory.clone(),
-        env: command.env.clone(),
-    }
-}
-
-#[allow(dead_code)]
-fn clone_initialize_request(request: &JsonRpcRequest) -> JsonRpcRequest {
-    JsonRpcRequest {
-        jsonrpc: request.jsonrpc.clone(),
-        id: request.id,
-        method: request.method.clone(),
-        params: request.params.clone(),
-    }
-}
-
-fn publish_crash(
-    status: &Arc<Mutex<LanguageServerRuntimeStatus>>,
-    sink: &dyn StatusSink,
-    message: &str,
-) {
-    publish(
-        status,
-        sink,
-        LanguageServerRuntimeStatus::Crashed {
-            message: message.to_string(),
-        },
-    );
-}
-
-fn publish(
-    status: &Arc<Mutex<LanguageServerRuntimeStatus>>,
-    sink: &dyn StatusSink,
-    next: LanguageServerRuntimeStatus,
-) {
-    set_status(status, next.clone());
-    sink.emit_status(next);
-}
-
-fn set_status(status: &Arc<Mutex<LanguageServerRuntimeStatus>>, next: LanguageServerRuntimeStatus) {
-    if let Ok(mut current) = status.lock() {
-        *current = next;
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_reader(
     stdout: Box<dyn Read + Send>,
-    stdin: Arc<Mutex<Box<dyn Write + Send>>>,
+    stdin: Arc<SessionMessageWriter>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
     runtime_log: RuntimeLog,
     diagnostics_sink: Arc<dyn DiagnosticsSink>,
@@ -2598,8 +2413,11 @@ fn spawn_reader(
                             return;
                         }
 
-                        if route_pending_response(&pending_requests, &value) {
-                            continue;
+                        match route_pending_response(&pending_requests, &value) {
+                            PendingResponseReceipt::Routed
+                            | PendingResponseReceipt::RegistryUnavailable
+                            | PendingResponseReceipt::SessionClosed => continue,
+                            PendingResponseReceipt::Unmatched => {}
                         }
 
                         if respond_to_server_request(
@@ -2750,7 +2568,7 @@ fn language_server_message_type_label(message_type: Option<u64>) -> &'static str
 }
 
 fn respond_to_server_request(
-    stdin: &Arc<Mutex<Box<dyn Write + Send>>>,
+    stdin: &Arc<SessionMessageWriter>,
     value: &Value,
     workspace_edit_sink: &dyn WorkspaceEditSink,
     refresh_sink: &dyn RefreshSink,
@@ -2958,8 +2776,8 @@ mod tests {
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
         NoopRefreshSink, NoopWorkspaceEditSink, PhpLanguageServerRegistry, ProcessKiller,
         RefreshSink, RestartController, RestartDecision, RestartOutcome, RestartPolicy,
-        SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StartKind, StatusSink,
-        WorkspaceEditSink,
+        SemanticTokensLegend, ServerProcessSpawner, SessionMessageWriter, SpawnedServer, StartKind,
+        StatusSink, WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::{
@@ -4171,14 +3989,20 @@ mod tests {
             )
             .expect("start workspace b");
         wait_for(&rx_a, &running_status());
-        wait_for(&rx_b, &running_status());
+        wait_for(
+            &rx_b,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 2,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
 
         // Crash only workspace A's server. Its supervisor must auto-restart it.
         *held_a.lock().expect("held writer a lock") = None;
         wait_for(
             &rx_a,
             &LanguageServerRuntimeStatus::Running {
-                session_id: 2,
+                session_id: 3,
                 capabilities: LanguageServerCapabilities::default(),
             },
         );
@@ -4189,7 +4013,7 @@ mod tests {
         assert_eq!(
             registry.status("/tmp/auto-restart-b"),
             LanguageServerRuntimeStatus::Running {
-                session_id: 1,
+                session_id: 2,
                 capabilities: LanguageServerCapabilities::default(),
             }
         );
@@ -4695,6 +4519,7 @@ mod tests {
                     document_highlight: false,
                     document_link: false,
                     document_symbol: false,
+                    document_sync: Default::default(),
                     did_create_files: false,
                     did_delete_files: false,
                     did_rename_files: false,
@@ -4730,6 +4555,11 @@ mod tests {
 
     #[test]
     fn runtime_status_serializes_session_id_for_frontend_events() {
+        let document_sync = json!({
+            "changeKind": "none",
+            "openClose": false,
+            "save": { "kind": "unsupported" }
+        });
         let status = LanguageServerRuntimeStatus::Running {
             session_id: 1,
             capabilities: LanguageServerCapabilities {
@@ -4744,6 +4574,7 @@ mod tests {
                 document_highlight: true,
                 document_link: true,
                 document_symbol: true,
+                document_sync: Default::default(),
                 did_create_files: true,
                 did_delete_files: true,
                 did_rename_files: true,
@@ -4780,53 +4611,20 @@ mod tests {
             },
         };
 
+        let serialized = serde_json::to_value(status).expect("serialize status");
+        assert_eq!(serialized["kind"], "running");
+        assert_eq!(serialized["sessionId"], 1);
+        assert_eq!(serialized["capabilities"]["documentSync"], document_sync);
+        assert_eq!(serialized["capabilities"]["completion"], false);
         assert_eq!(
-            serde_json::to_value(status).expect("serialize status"),
+            serialized["capabilities"]["onTypeFormattingTriggerCharacters"],
+            json!(["}", ";", "\n"])
+        );
+        assert_eq!(
+            serialized["capabilities"]["semanticTokensLegend"],
             json!({
-                "kind": "running",
-                "sessionId": 1,
-                "capabilities": {
-                    "callHierarchy": true,
-                    "declaration": true,
-                    "hover": true,
-                    "completion": false,
-                    "definition": true,
-                    "documentHighlight": true,
-                    "documentLink": true,
-                    "documentSymbol": true,
-                    "didCreateFiles": true,
-                    "didDeleteFiles": true,
-                    "didRenameFiles": true,
-                    "foldingRange": true,
-                    "formatting": true,
-                    "implementation": false,
-                    "inlayHint": true,
-                    "inlayHintResolve": true,
-                    "linkedEditingRange": true,
-                    "onTypeFormatting": true,
-                    "onTypeFormattingTriggerCharacters": ["}", ";", "\n"],
-                    "prepareRename": true,
-                    "rangeFormatting": true,
-                    "references": true,
-                    "rename": true,
-                    "selectionRange": true,
-                    "semanticTokens": true,
-                    "semanticTokensLegend": {
-                        "tokenTypes": ["decorator", "enumMember"],
-                        "tokenModifiers": ["static", "async"],
-                    },
-                    "signatureHelp": true,
-                    "sourceDefinition": true,
-                    "typeDefinition": true,
-                    "typeHierarchy": true,
-                    "willCreateFiles": true,
-                    "willDeleteFiles": true,
-                    "willRenameFiles": true,
-                    "workspaceSymbol": true,
-                    "codeAction": true,
-                    "codeActionResolve": false,
-                    "codeLens": true,
-                },
+                "tokenTypes": ["decorator", "enumMember"],
+                "tokenModifiers": ["static", "async"],
             })
         );
         assert_eq!(
@@ -6737,7 +6535,7 @@ mod tests {
         auto_close_after: Option<Duration>,
         stderr_script: Vec<u8>,
         stdin_capture: Arc<Mutex<Vec<u8>>>,
-        stdin: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+        stdin: Arc<Mutex<Option<Arc<SessionMessageWriter>>>>,
         script: Vec<u8>,
         terminate_script: Vec<u8>,
         terminate_count: Arc<AtomicUsize>,
@@ -6761,6 +6559,14 @@ mod tests {
         }
 
         fn with_stdin(script: Vec<u8>, keep_open: bool, stdin: Box<dyn Write + Send>) -> Self {
+            Self::with_session_stdin(script, keep_open, SessionMessageWriter::from_direct(stdin))
+        }
+
+        fn with_session_stdin(
+            script: Vec<u8>,
+            keep_open: bool,
+            stdin: Arc<SessionMessageWriter>,
+        ) -> Self {
             Self {
                 auto_close_after: None,
                 stderr_script: Vec::new(),
@@ -6814,14 +6620,19 @@ mod tests {
                 });
             }
 
+            let stdin = self
+                .stdin
+                .lock()
+                .expect("stdin lock")
+                .take()
+                .unwrap_or_else(|| {
+                    SessionMessageWriter::from_direct(Box::new(SharedWriter(Arc::clone(
+                        &self.stdin_capture,
+                    ))))
+                });
             Ok(SpawnedServer {
                 stderr,
-                stdin: self
-                    .stdin
-                    .lock()
-                    .expect("stdin lock")
-                    .take()
-                    .unwrap_or_else(|| Box::new(SharedWriter(Arc::clone(&self.stdin_capture)))),
+                stdin,
                 stdout: Box::new(reader),
                 killer: Box::new(FakeKiller {
                     held: Arc::clone(&self.held_writer),
@@ -7151,7 +6962,9 @@ mod tests {
 
             Ok(SpawnedServer {
                 stderr: None,
-                stdin: Box::new(SharedWriter(Arc::clone(&self.stdin_capture))),
+                stdin: SessionMessageWriter::from_direct(Box::new(SharedWriter(Arc::clone(
+                    &self.stdin_capture,
+                )))),
                 stdout: Box::new(reader),
                 killer: Box::new(RealProcessKiller {
                     inner: ChildKiller {
@@ -7281,7 +7094,7 @@ mod tests {
 
             Ok(SpawnedServer {
                 stderr: None,
-                stdin: Box::new(stdin),
+                stdin: SessionMessageWriter::from_child_stdin(stdin)?,
                 stdout: Box::new(stdout),
                 killer: Box::new(ChildKiller {
                     child,

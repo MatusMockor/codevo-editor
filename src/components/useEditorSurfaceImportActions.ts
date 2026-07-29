@@ -6,20 +6,20 @@ import type {
   EditorSurfaceCommandInvocationScope,
 } from "../domain/editorSurfaceCommand";
 import { editorSurfaceCommandInvocationScopesEqual } from "../domain/editorSurfaceCommand";
-import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkspacePathPolicy } from "../domain/workspacePath";
 import {
   editorSurfaceImportActionKind,
   executeEditorSurfaceImportAction,
+  type EditorSurfaceImportActionFeaturesGateway,
 } from "./editorSurfaceImportActions";
 
 interface UseEditorSurfaceImportActionsOptions {
   readonly activeDocumentRef: MutableRefObject<EditorDocument | null>;
   readonly captureScope: () => EditorSurfaceCommandInvocationScope | null;
   readonly editor: Monaco.editor.IStandaloneCodeEditor | null;
-  readonly featureGateway: LanguageServerFeaturesGateway;
+  readonly featureGateway: EditorSurfaceImportActionFeaturesGateway;
   readonly flushPendingDocumentRef: MutableRefObject<(path: string) => Promise<void>>;
   readonly getDocumentSyncVersionRef: MutableRefObject<
     (rootPath: string, path: string) => number | null
@@ -174,6 +174,7 @@ export function useEditorSurfaceImportActions({
         kind: captured.kind,
         path: captured.path,
         rootPath: captured.rootPath,
+        sessionId: captured.sessionId,
         version: () => getDocumentSyncVersionRef.current(captured.rootPath, captured.path),
         flush: () => flushPendingDocumentRef.current(captured.path),
         isCurrent,

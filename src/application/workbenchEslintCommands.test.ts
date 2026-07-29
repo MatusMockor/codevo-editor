@@ -93,4 +93,15 @@ describe("workbenchEslintCommands", () => {
     command.run();
     expect(disableRuleAtCursor).toHaveBeenCalledOnce();
   });
+
+  it("evaluates cursor diagnostics at command lookup time without re-registering", () => {
+    let lineHasDiagnostic = false;
+    const command = workbenchEslintCommands(
+      options({ hasDiagnosticAtCursor: () => lineHasDiagnostic }),
+    )[2];
+
+    expect(command.isEnabled(context)).toBe(false);
+    lineHasDiagnostic = true;
+    expect(command.isEnabled(context)).toBe(true);
+  });
 });

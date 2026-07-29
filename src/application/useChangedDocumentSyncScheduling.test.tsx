@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EditorDocument } from "../domain/workspace";
 import { useEditorSessionState, type EditorSessionState } from "./useEditorSessionState";
 import { useChangedDocumentSyncScheduling } from "./useChangedDocumentSyncScheduling";
+import type { JavaScriptTypeScriptIncrementalLegacyClaim } from "./javaScriptTypeScriptIncrementalSyncProduction";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -53,13 +54,11 @@ describe("useChangedDocumentSyncScheduling", () => {
       harness.session().reportChangedDocuments([a.path, b.path]);
     });
 
-    expect(harness.schedulePhp.mock.calls.map(([value]) => value.path)).toEqual([
+    expect(harness.schedulePhp.mock.calls.map(([value]) => value.path)).toEqual([a.path, b.path]);
+    expect(harness.scheduleJavaScriptTypeScript.mock.calls.map(([value]) => value.path)).toEqual([
       a.path,
       b.path,
     ]);
-    expect(
-      harness.scheduleJavaScriptTypeScript.mock.calls.map(([value]) => value.path),
-    ).toEqual([a.path, b.path]);
     harness.unmount();
   });
 
@@ -80,9 +79,63 @@ describe("useChangedDocumentSyncScheduling", () => {
     expect(harness.schedulePhp).toHaveBeenCalledWith(firstA);
     harness.unmount();
   });
+
+  it("suppresses only an exact incrementally admitted revision", async () => {
+    const document = {
+      ...editorDocument("/workspace", "server.ts"),
+      language: "typescript" as const,
+    };
+    const claim = deferredClaim(7);
+    const harness = renderHarness(() => claim.value);
+
+    act(() => {
+      harness.session().setDocuments({ [document.path]: document });
+      harness.session().reportChangedDocuments([document.path]);
+    });
+    expect(harness.schedulePhp).toHaveBeenCalledWith(document);
+    expect(harness.scheduleJavaScriptTypeScript).not.toHaveBeenCalled();
+
+    await act(async () => {
+      claim.resolve(true);
+      await claim.settled;
+    });
+    expect(harness.scheduleJavaScriptTypeScript).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("falls back once with the captured latest document after rejection", async () => {
+    const document = {
+      ...editorDocument("/workspace", "server.ts"),
+      content: "latest snapshot",
+      language: "typescript" as const,
+    };
+    const claim = deferredClaim(8);
+    const harness = renderHarness(() => claim.value);
+
+    act(() => {
+      harness.session().setDocuments({ [document.path]: document });
+      harness.session().reportChangedDocuments([document.path]);
+      harness.session().setDocuments({
+        [document.path]: { ...document, content: "newer snapshot" },
+      });
+    });
+    await act(async () => {
+      claim.resolve(false);
+      await claim.settled;
+    });
+
+    expect(harness.scheduleJavaScriptTypeScript).toHaveBeenCalledOnce();
+    expect(harness.scheduleJavaScriptTypeScript).toHaveBeenCalledWith({
+      ...document,
+      content: "newer snapshot",
+    });
+    harness.unmount();
+  });
 });
 
-function renderHarness() {
+function renderHarness(
+  claim?: (path: string) => JavaScriptTypeScriptIncrementalLegacyClaim | null,
+) {
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: { current: EditorSessionState | null } = { current: null };
@@ -94,6 +147,13 @@ function renderHarness() {
     captured.current = session;
     useChangedDocumentSyncScheduling({
       documentsRef: session.documentsRef,
+      incrementalSyncRef: claim
+        ? {
+            current: {
+              claimLegacyChange: claim,
+            },
+          }
+        : undefined,
       scheduleDocumentChange: schedulePhp,
       scheduleJavaScriptTypeScriptDocumentChange: scheduleJavaScriptTypeScript,
       subscribeChangedDocuments: session.subscribeChangedDocuments,
@@ -113,5 +173,20 @@ function renderHarness() {
       return captured.current;
     },
     unmount: () => act(() => root.unmount()),
+  };
+}
+
+function deferredClaim(revision: number) {
+  let settle!: (value: boolean) => void;
+  const settled = new Promise<boolean>((resolve) => {
+    settle = resolve;
+  });
+  return {
+    resolve: settle,
+    settled,
+    value: Object.freeze({
+      revision,
+      suppressLegacy: () => settled,
+    }),
   };
 }

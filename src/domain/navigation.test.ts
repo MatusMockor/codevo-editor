@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createNavigationHistory,
+  MAX_STACK_DEPTH,
   navigateBack,
   navigateForward,
   recordNavigationLocation,
@@ -66,6 +67,17 @@ describe("navigation history", () => {
     const forward = navigateForward(back.history, first);
 
     expect(forward.history.ownerKey).toBe(ownerKey);
+  });
+
+  it("bounds the back stack to the configured maximum depth", () => {
+    let history = createNavigationHistory();
+
+    for (let index = 0; index < MAX_STACK_DEPTH + 10; index += 1) {
+      history = recordNavigationLocation(history, location(`/project/${index}.ts`, index + 1, 1));
+    }
+
+    expect(history.backStack).toHaveLength(MAX_STACK_DEPTH);
+    expect(history.backStack[0]?.path).toBe("/project/10.ts");
   });
 });
 

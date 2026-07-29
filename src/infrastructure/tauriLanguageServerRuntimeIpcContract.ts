@@ -10,6 +10,7 @@ interface LanguageServerRuntimeIpcContract {
     readonly args: {
       readonly requestId: number;
       readonly rootPath: string;
+      readonly sessionId: number;
     };
     readonly result: void;
   };
@@ -163,6 +164,10 @@ function validateCapabilities(value: unknown): void {
     }
   }
 
+  if (value.documentSync !== undefined) {
+    validateDocumentSyncCapability(value.documentSync);
+  }
+
   if (
     value.onTypeFormattingTriggerCharacters !== undefined &&
     value.onTypeFormattingTriggerCharacters !== null &&
@@ -187,6 +192,29 @@ function validateCapabilities(value: unknown): void {
   }
 }
 
+function validateDocumentSyncCapability(value: unknown): void {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["changeKind", "openClose", "save"]) ||
+    !["none", "full", "incremental"].includes(String(value.changeKind)) ||
+    typeof value.openClose !== "boolean" ||
+    !isRecord(value.save)
+  ) {
+    throw invalidRuntimeStatus("running.capabilities.documentSync is malformed");
+  }
+  if (value.save.kind === "unsupported" && exactKeys(value.save, ["kind"])) {
+    return;
+  }
+  if (
+    value.save.kind === "supported" &&
+    exactKeys(value.save, ["includeText", "kind"]) &&
+    typeof value.save.includeText === "boolean"
+  ) {
+    return;
+  }
+  throw invalidRuntimeStatus("running.capabilities.documentSync.save is malformed");
+}
+
 function validateOptionalRootPath(value: unknown): void {
   if (value !== undefined && typeof value !== "string") {
     throw invalidRuntimeStatus("rootPath must be a string when present");
@@ -205,6 +233,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => keys.includes(key));
 }
 
 function invalidRuntimeStatus(reason: string): TypeError {

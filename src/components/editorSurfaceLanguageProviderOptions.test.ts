@@ -15,14 +15,12 @@ import type {
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
-import type {
-  PhpMethodCompletion,
-  PhpMethodSignature,
-} from "../domain/phpMethodCompletions";
+import type { PhpMethodCompletion, PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument, FileEntry } from "../domain/workspace";
 import {
   createEditorSurfaceLanguageProviderOptions,
+  readBoundedJavaScriptTypeScriptNavigationModel,
   type EditorSurfaceLanguageProviderOptionsDependencies,
   type EditorSurfaceLanguageProviderRegistrationRefs,
 } from "./editorSurfaceLanguageProviderOptions";
@@ -92,83 +90,56 @@ describe("editor surface language provider options", () => {
     expect(options.isPhpInlayHintsEnabled?.()).toBe(true);
     expect(options.limitNavigationResultsToOpenModels).toBe(true);
 
-    await expect(options.applyPhpCodeActionNewFile?.(newFile)).resolves.toBe(
-      true,
-    );
+    await expect(options.applyPhpCodeActionNewFile?.(newFile)).resolves.toBe(true);
     await expect(
       options.applyWorkspaceEdit?.(workspaceEdit, workspaceEditContext),
     ).resolves.toEqual({ kind: "accepted" });
-    options.openPhpChangeSignature?.(
-      changeSignatureRequest,
-      changeSignatureApplier,
-    );
-    options.clearLanguageServerDiagnosticsForPath?.(
-      "/workspace/app/Example.php",
-    );
+    options.openPhpChangeSignature?.(changeSignatureRequest, changeSignatureApplier);
+    options.clearLanguageServerDiagnosticsForPath?.("/workspace/app/Example.php");
     await expect(
       options.flushPendingDocumentChange("/workspace/app/Example.php"),
     ).resolves.toBeUndefined();
     await expect(
-      templateLanguageProviders.blade.provideCodeActions(
-        "blade",
-        codeActionRange,
-      ),
+      templateLanguageProviders.blade.provideCodeActions("blade", codeActionRange),
     ).resolves.toEqual(codeActions);
     await expect(
       templateLanguageProviders.blade.provideCompletions("blade", position),
     ).resolves.toEqual(bladeCompletions);
-    await expect(
-      templateLanguageProviders.blade.provideDefinition("blade", 7),
-    ).resolves.toBe(true);
+    await expect(templateLanguageProviders.blade.provideDefinition("blade", 7)).resolves.toBe(true);
     await expect(
       templateLanguageProviders.latte.provideCompletions("latte", position),
     ).resolves.toEqual(latteCompletions);
     await expect(
-      templateLanguageProviders.latte.provideCodeActions(
-        "latte",
-        codeActionRange,
-      ),
+      templateLanguageProviders.latte.provideCodeActions("latte", codeActionRange),
     ).resolves.toEqual(codeActions);
-    await expect(
-      templateLanguageProviders.latte.provideDefinition("latte", 8),
-    ).resolves.toBe(true);
+    await expect(templateLanguageProviders.latte.provideDefinition("latte", 8)).resolves.toBe(true);
     await expect(
       templateLanguageProviders.neon.provideCompletions("neon", position),
     ).resolves.toEqual(neonCompletions);
-    await expect(
-      templateLanguageProviders.neon.provideDefinition("neon", 9),
-    ).resolves.toBe(true);
-    await expect(
-      options.providePhpPresenterLinkDefinition?.("php", 10),
-    ).resolves.toBe(true);
-    await expect(
-      options.providePhpPresenterLinkCompletions?.("php", 11),
-    ).resolves.toEqual(latteCompletions);
-    expect(options.isPhpPresenterLinkCompletionContext?.("php", 12)).toBe(true);
-    expect(options.isPhpFrameworkStringCompletionContext?.("php", position)).toBe(
-      true,
+    await expect(templateLanguageProviders.neon.provideDefinition("neon", 9)).resolves.toBe(true);
+    await expect(options.providePhpPresenterLinkDefinition?.("php", 10)).resolves.toBe(true);
+    await expect(options.providePhpPresenterLinkCompletions?.("php", 11)).resolves.toEqual(
+      latteCompletions,
     );
-    await expect(
-      options.providePhpCodeActions?.("php", codeActionRange),
-    ).resolves.toEqual(codeActions);
-    await expect(
-      options.providePhpFrameworkDefinition?.("php", 13),
-    ).resolves.toBe(true);
-    await expect(
-      options.providePhpMethodCompletions?.("php", position),
-    ).resolves.toEqual(methodCompletions);
-    await expect(
-      options.providePhpMethodSignature?.("php", position),
-    ).resolves.toBe(methodSignature);
-    await expect(
-      options.providePhpParameterInlayHints?.("php", inlayHintRange),
-    ).resolves.toEqual(parameterInlayHints);
+    expect(options.isPhpPresenterLinkCompletionContext?.("php", 12)).toBe(true);
+    expect(options.isPhpFrameworkStringCompletionContext?.("php", position)).toBe(true);
+    await expect(options.providePhpCodeActions?.("php", codeActionRange)).resolves.toEqual(
+      codeActions,
+    );
+    await expect(options.providePhpFrameworkDefinition?.("php", 13)).resolves.toBe(true);
+    await expect(options.providePhpMethodCompletions?.("php", position)).resolves.toEqual(
+      methodCompletions,
+    );
+    await expect(options.providePhpMethodSignature?.("php", position)).resolves.toBe(
+      methodSignature,
+    );
+    await expect(options.providePhpParameterInlayHints?.("php", inlayHintRange)).resolves.toEqual(
+      parameterInlayHints,
+    );
     options.recordCompletionLatency?.(24, "/workspace");
     options.reportError(error);
 
-    expect(refs.applyPhpCodeActionNewFileRef.current).toHaveBeenCalledWith(
-      newFile,
-    );
+    expect(refs.applyPhpCodeActionNewFileRef.current).toHaveBeenCalledWith(newFile);
     expect(refs.applyPhpWorkspaceEditRef.current).toHaveBeenCalledWith(
       workspaceEdit,
       workspaceEditContext,
@@ -177,71 +148,51 @@ describe("editor surface language provider options", () => {
       changeSignatureRequest,
       changeSignatureApplier,
     );
-    expect(
-      refs.clearLanguageServerDiagnosticsForPathRef.current,
-    ).toHaveBeenCalledWith("/workspace/app/Example.php");
-    expect(refs.flushPendingRef.current).toHaveBeenCalledWith(
+    expect(refs.clearLanguageServerDiagnosticsForPathRef.current).toHaveBeenCalledWith(
       "/workspace/app/Example.php",
     );
-    expect(
-      refs.templateLanguageProvidersRef.current.blade.provideCodeActions,
-    ).toHaveBeenCalledWith("blade", codeActionRange);
-    expect(
-      refs.templateLanguageProvidersRef.current.blade.provideCompletions,
-    ).toHaveBeenCalledWith("blade", position);
-    expect(
-      refs.templateLanguageProvidersRef.current.blade.provideDefinition,
-    ).toHaveBeenCalledWith("blade", 7);
-    expect(
-      refs.templateLanguageProvidersRef.current.latte.provideCompletions,
-    ).toHaveBeenCalledWith("latte", position);
-    expect(
-      refs.templateLanguageProvidersRef.current.latte.provideDefinition,
-    ).toHaveBeenCalledWith("latte", 8);
-    expect(
-      refs.templateLanguageProvidersRef.current.neon.provideCompletions,
-    ).toHaveBeenCalledWith("neon", position);
-    expect(
-      refs.templateLanguageProvidersRef.current.neon.provideDefinition,
-    ).toHaveBeenCalledWith("neon", 9);
-    expect(refs.phpPresenterLinkDefinitionRef.current).toHaveBeenCalledWith(
-      "php",
-      10,
-    );
-    expect(refs.phpPresenterLinkCompletionsRef.current).toHaveBeenCalledWith(
-      "php",
-      11,
-    );
-    expect(
-      refs.phpPresenterLinkCompletionContextRef.current,
-    ).toHaveBeenCalledWith("php", 12);
-    expect(
-      refs.phpFrameworkStringCompletionContextRef.current,
-    ).toHaveBeenCalledWith("php", position);
-    expect(refs.phpCodeActionsRef.current).toHaveBeenCalledWith(
-      "php",
+    expect(refs.flushPendingRef.current).toHaveBeenCalledWith("/workspace/app/Example.php");
+    expect(refs.templateLanguageProvidersRef.current.blade.provideCodeActions).toHaveBeenCalledWith(
+      "blade",
       codeActionRange,
     );
-    expect(refs.phpFrameworkDefinitionRef.current).toHaveBeenCalledWith(
-      "php",
-      13,
+    expect(refs.templateLanguageProvidersRef.current.blade.provideCompletions).toHaveBeenCalledWith(
+      "blade",
+      position,
     );
-    expect(refs.phpMethodCompletionsRef.current).toHaveBeenCalledWith(
+    expect(refs.templateLanguageProvidersRef.current.blade.provideDefinition).toHaveBeenCalledWith(
+      "blade",
+      7,
+    );
+    expect(refs.templateLanguageProvidersRef.current.latte.provideCompletions).toHaveBeenCalledWith(
+      "latte",
+      position,
+    );
+    expect(refs.templateLanguageProvidersRef.current.latte.provideDefinition).toHaveBeenCalledWith(
+      "latte",
+      8,
+    );
+    expect(refs.templateLanguageProvidersRef.current.neon.provideCompletions).toHaveBeenCalledWith(
+      "neon",
+      position,
+    );
+    expect(refs.templateLanguageProvidersRef.current.neon.provideDefinition).toHaveBeenCalledWith(
+      "neon",
+      9,
+    );
+    expect(refs.phpPresenterLinkDefinitionRef.current).toHaveBeenCalledWith("php", 10);
+    expect(refs.phpPresenterLinkCompletionsRef.current).toHaveBeenCalledWith("php", 11);
+    expect(refs.phpPresenterLinkCompletionContextRef.current).toHaveBeenCalledWith("php", 12);
+    expect(refs.phpFrameworkStringCompletionContextRef.current).toHaveBeenCalledWith(
       "php",
       position,
     );
-    expect(refs.phpMethodSignatureRef.current).toHaveBeenCalledWith(
-      "php",
-      position,
-    );
-    expect(refs.phpParameterInlayHintsRef.current).toHaveBeenCalledWith(
-      "php",
-      inlayHintRange,
-    );
-    expect(refs.recordCompletionLatencyRef.current).toHaveBeenCalledWith(
-      24,
-      "/workspace",
-    );
+    expect(refs.phpCodeActionsRef.current).toHaveBeenCalledWith("php", codeActionRange);
+    expect(refs.phpFrameworkDefinitionRef.current).toHaveBeenCalledWith("php", 13);
+    expect(refs.phpMethodCompletionsRef.current).toHaveBeenCalledWith("php", position);
+    expect(refs.phpMethodSignatureRef.current).toHaveBeenCalledWith("php", position);
+    expect(refs.phpParameterInlayHintsRef.current).toHaveBeenCalledWith("php", inlayHintRange);
+    expect(refs.recordCompletionLatencyRef.current).toHaveBeenCalledWith(24, "/workspace");
     expect(refs.errorReporterRef.current).toHaveBeenCalledWith(error);
   });
 
@@ -254,21 +205,14 @@ describe("editor surface language provider options", () => {
       refs,
     });
 
-    expect(
-      options.isDocumentSynced?.("/workspace", "/workspace/app/Example.php"),
-    ).toBe(true);
-    expect(isDocumentSynced).toHaveBeenCalledWith(
-      "/workspace/app/Example.php",
-    );
+    expect(options.isDocumentSynced?.("/workspace", "/workspace/app/Example.php")).toBe(true);
+    expect(isDocumentSynced).toHaveBeenCalledWith("/workspace/app/Example.php");
 
     isDocumentSynced.mockClear();
 
-    expect(
-      options.isDocumentSynced?.(
-        "/other-workspace",
-        "/workspace/app/Example.php",
-      ),
-    ).toBe(false);
+    expect(options.isDocumentSynced?.("/other-workspace", "/workspace/app/Example.php")).toBe(
+      false,
+    );
     expect(isDocumentSynced).not.toHaveBeenCalled();
   });
 
@@ -298,9 +242,7 @@ describe("editor surface language provider options", () => {
       });
 
       await expect(
-        options.readTemplateFileContent(
-          "/workspace/app/templates/@layout.latte",
-        ),
+        options.readTemplateFileContent("/workspace/app/templates/@layout.latte"),
       ).resolves.toBe("{block content}Hi{/block}");
       expect(invoke).toHaveBeenCalledWith("read_text_file", {
         path: "/workspace/app/templates/@layout.latte",
@@ -317,9 +259,7 @@ describe("editor surface language provider options", () => {
       });
 
       await expect(
-        options.readTemplateFileContent(
-          "/workspace/app/templates/@layout.latte",
-        ),
+        options.readTemplateFileContent("/workspace/app/templates/@layout.latte"),
       ).resolves.toBe("{block sidebar}{/block}");
       expect(invoke).toHaveBeenCalledWith("workspace_read_text_file", {
         workspaceId: "ws-1",
@@ -333,9 +273,7 @@ describe("editor surface language provider options", () => {
         refs: registrationRefs(),
       });
 
-      await expect(
-        options.readTemplateFileContent("/elsewhere/@layout.latte"),
-      ).resolves.toBeNull();
+      await expect(options.readTemplateFileContent("/elsewhere/@layout.latte")).resolves.toBeNull();
       await expect(
         options.readTemplateFileContent("/workspace/../secrets/@layout.latte"),
       ).resolves.toBeNull();
@@ -350,9 +288,7 @@ describe("editor surface language provider options", () => {
         refs: registrationRefs(),
       });
 
-      await expect(
-        options.readTemplateFileContent("/elsewhere/@layout.latte"),
-      ).resolves.toBeNull();
+      await expect(options.readTemplateFileContent("/elsewhere/@layout.latte")).resolves.toBeNull();
       expect(invoke).not.toHaveBeenCalled();
     });
 
@@ -363,9 +299,7 @@ describe("editor surface language provider options", () => {
       });
 
       await expect(
-        options.readTemplateFileContent(
-          "/workspace/app/templates/@layout.latte",
-        ),
+        options.readTemplateFileContent("/workspace/app/templates/@layout.latte"),
       ).resolves.toBeNull();
       expect(invoke).not.toHaveBeenCalled();
     });
@@ -378,10 +312,60 @@ describe("editor surface language provider options", () => {
       });
 
       await expect(
-        options.readTemplateFileContent(
-          "/workspace/app/templates/@layout.latte",
+        options.readTemplateFileContent("/workspace/app/templates/@layout.latte"),
+      ).resolves.toBeNull();
+    });
+  });
+
+  describe("readBoundedJavaScriptTypeScriptNavigationModel", () => {
+    beforeEach(() => {
+      invoke.mockReset();
+    });
+
+    it("uses the large-document byte cap for a workspace-confined closed file", async () => {
+      invoke.mockResolvedValue({
+        content: "export const service = true;\n",
+        status: "ok",
+      });
+      const policy = { characterLimit: 262_144, lineLimit: 5_000 };
+
+      await expect(
+        readBoundedJavaScriptTypeScriptNavigationModel(
+          "/workspace/packages/service/src/index.ts",
+          "/workspace",
+          identityDescriptor(),
+          policy,
+        ),
+      ).resolves.toBe("export const service = true;\n");
+      expect(invoke).toHaveBeenCalledWith("workspace_read_text_file_bounded", {
+        maxBytes: 262_144,
+        relativePath: "packages/service/src/index.ts",
+        workspaceId: "ws-1",
+      });
+    });
+
+    it("rejects oversized and outside-workspace navigation models", async () => {
+      invoke.mockResolvedValue({ status: "tooLarge" });
+      const policy = { characterLimit: 262_144, lineLimit: 5_000 };
+
+      await expect(
+        readBoundedJavaScriptTypeScriptNavigationModel(
+          "/workspace/packages/large/src/index.ts",
+          "/workspace",
+          identityDescriptor(),
+          policy,
         ),
       ).resolves.toBeNull();
+      invoke.mockClear();
+      await expect(
+        readBoundedJavaScriptTypeScriptNavigationModel(
+          "/outside/index.ts",
+          "/workspace",
+          identityDescriptor(),
+          policy,
+        ),
+      ).resolves.toBeNull();
+      expect(invoke).not.toHaveBeenCalled();
     });
   });
 
@@ -392,10 +376,7 @@ describe("editor surface language provider options", () => {
 
     it("collects latte templates across nested workspace directories", async () => {
       mockDirectoryTree({
-        "/workspace": [
-          directoryEntry("/workspace/app"),
-          fileEntry("/workspace/readme.md"),
-        ],
+        "/workspace": [directoryEntry("/workspace/app"), fileEntry("/workspace/readme.md")],
         "/workspace/app": [
           directoryEntry("/workspace/app/templates"),
           fileEntry("/workspace/app/Bootstrap.php"),
@@ -429,22 +410,17 @@ describe("editor surface language provider options", () => {
           directoryEntry("/workspace/.git"),
           directoryEntry("/workspace/templates"),
         ],
-        "/workspace/templates": [
-          fileEntry("/workspace/templates/home.latte"),
-        ],
+        "/workspace/templates": [fileEntry("/workspace/templates/home.latte")],
       });
       const options = createEditorSurfaceLanguageProviderOptions({
         dependencies: dependencies(),
         refs: registrationRefs(),
       });
 
-      await expect(
-        options.listWorkspaceTemplateFiles("/workspace"),
-      ).resolves.toEqual(["/workspace/templates/home.latte"]);
-      expect(readDirectoryCallPaths()).toEqual([
-        "/workspace",
-        "/workspace/templates",
+      await expect(options.listWorkspaceTemplateFiles("/workspace")).resolves.toEqual([
+        "/workspace/templates/home.latte",
       ]);
+      expect(readDirectoryCallPaths()).toEqual(["/workspace", "/workspace/templates"]);
     });
 
     it("stops collecting once the 2001 template limit is reached", async () => {
@@ -473,9 +449,7 @@ describe("editor surface language provider options", () => {
         refs: registrationRefs(),
       });
 
-      await expect(
-        options.listWorkspaceTemplateFiles("/workspace"),
-      ).resolves.toBeNull();
+      await expect(options.listWorkspaceTemplateFiles("/workspace")).resolves.toBeNull();
     });
 
     it("refuses roots outside the active workspace root", async () => {
@@ -484,12 +458,8 @@ describe("editor surface language provider options", () => {
         refs: registrationRefs(),
       });
 
-      await expect(
-        options.listWorkspaceTemplateFiles("/elsewhere"),
-      ).resolves.toBeNull();
-      await expect(
-        options.listWorkspaceTemplateFiles("/workspace/../secrets"),
-      ).resolves.toBeNull();
+      await expect(options.listWorkspaceTemplateFiles("/elsewhere")).resolves.toBeNull();
+      await expect(options.listWorkspaceTemplateFiles("/workspace/../secrets")).resolves.toBeNull();
       expect(invoke).not.toHaveBeenCalled();
     });
   });
@@ -503,9 +473,7 @@ describe("editor surface language provider options", () => {
       refs,
     });
 
-    expect(
-      options.isDocumentSynced?.("/workspace", "/workspace/app/Example.php"),
-    ).toBe(false);
+    expect(options.isDocumentSynced?.("/workspace", "/workspace/app/Example.php")).toBe(false);
     expect(isDocumentSynced).not.toHaveBeenCalled();
   });
 });
@@ -638,9 +606,7 @@ function mockDirectoryTree(tree: Record<string, FileEntry[]>): void {
 }
 
 function readDirectoryCallPaths(): string[] {
-  return invoke.mock.calls.map(
-    ([, args]) => (args as { path: string }).path,
-  );
+  return invoke.mock.calls.map(([, args]) => (args as { path: string }).path);
 }
 
 function directoryEntry(path: string): FileEntry {

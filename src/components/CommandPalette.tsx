@@ -5,11 +5,13 @@ import {
   type Command,
   type CommandContext,
 } from "../application/commandRegistry";
+import { matchesQuery } from "../domain/matchHighlight";
 import { PaletteFooter } from "./PaletteFooter";
 
 interface CommandPaletteProps {
   commands: Command[];
   context: CommandContext;
+  initialQuery: string;
   isOpen: boolean;
   onClose(): void;
   onCommandError(error: unknown): void;
@@ -18,6 +20,7 @@ interface CommandPaletteProps {
 export function CommandPalette({
   commands,
   context,
+  initialQuery,
   isOpen,
   onCommandError,
   onClose,
@@ -26,19 +29,29 @@ export function CommandPalette({
   const [activeIndex, setActiveIndex] = useState(0);
   const surfaceActivationRef = useRef<object>({});
   const pendingCommandRef = useRef<object | null>(null);
+  const wasOpenRef = useRef(false);
+  const initialQueryRef = useRef(initialQuery);
+  initialQueryRef.current = initialQuery;
 
   useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = isOpen;
     surfaceActivationRef.current = {};
     pendingCommandRef.current = null;
 
     if (!isOpen) {
       setQuery("");
       setActiveIndex(0);
+      return;
+    }
+    if (!wasOpen) {
+      setQuery(initialQueryRef.current);
+      setActiveIndex(0);
     }
   }, [isOpen]);
 
   const filteredCommands = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedQuery = query.trim();
     const visibleCommands = commands.filter((command) => command.visibleInCommandPalette !== false);
 
     if (!normalizedQuery) {
@@ -47,7 +60,7 @@ export function CommandPalette({
 
     return visibleCommands.filter((command) => {
       const haystack = `${command.category} ${command.title} ${command.id}`;
-      return haystack.toLowerCase().includes(normalizedQuery);
+      return matchesQuery(haystack, normalizedQuery);
     });
   }, [commands, query]);
 

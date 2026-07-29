@@ -3,10 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  PhpFileOutline,
-  PhpFileOutlineNode,
-} from "../domain/phpFileOutline";
+import type { PhpFileOutline, PhpFileOutlineNode } from "../domain/phpFileOutline";
 import { FileStructure } from "./FileStructure";
 
 describe("FileStructure", () => {
@@ -91,16 +88,8 @@ describe("FileStructure", () => {
     } finally {
       editor.remove();
       vi.useRealTimers();
-      restoreProperty(
-        window,
-        "requestAnimationFrame",
-        requestAnimationFrameDescriptor,
-      );
-      restoreProperty(
-        window,
-        "cancelAnimationFrame",
-        cancelAnimationFrameDescriptor,
-      );
+      restoreProperty(window, "requestAnimationFrame", requestAnimationFrameDescriptor);
+      restoreProperty(window, "cancelAnimationFrame", cancelAnimationFrameDescriptor);
     }
   });
 
@@ -111,9 +100,7 @@ describe("FileStructure", () => {
     editor.focus();
 
     await act(async () => {
-      editor.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "v" }),
-      );
+      editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "v" }));
     });
 
     expect(searchInput().value).toBe("v");
@@ -169,19 +156,13 @@ describe("FileStructure", () => {
     expect(input.getAttribute("role")).toBe("combobox");
     expect(input.getAttribute("aria-controls")).toBe(listbox?.id);
     expect(input.getAttribute("aria-expanded")).toBe("true");
-    expect(input.getAttribute("aria-activedescendant")).toBe(
-      symbolOptions()[0].id,
-    );
+    expect(input.getAttribute("aria-activedescendant")).toBe(symbolOptions()[0].id);
 
     await act(async () => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
-      );
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
 
-    expect(input.getAttribute("aria-activedescendant")).toBe(
-      symbolOptions()[1].id,
-    );
+    expect(input.getAttribute("aria-activedescendant")).toBe(symbolOptions()[1].id);
     expect(symbolOptions()[1].getAttribute("aria-selected")).toBe("true");
   });
 
@@ -213,14 +194,10 @@ describe("FileStructure", () => {
     });
 
     await act(async () => {
-      searchInput().dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
-      );
+      searchInput().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     });
 
-    expect(onOpenNode).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "method-empty" }),
-    );
+    expect(onOpenNode).toHaveBeenCalledWith(expect.objectContaining({ id: "method-empty" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
@@ -289,21 +266,16 @@ describe("FileStructure", () => {
     const optionFor = (label: string) =>
       symbolOptions().find((option) => option.textContent?.includes(label)) ?? null;
 
-    const publicBadge = optionFor("handle")?.querySelector<HTMLElement>(
-      ".symbol-visibility",
-    );
+    const publicBadge = optionFor("handle")?.querySelector<HTMLElement>(".symbol-visibility");
     expect(publicBadge?.dataset.visibility).toBe("public");
     expect(publicBadge?.textContent).toBe("+");
 
-    const privateBadge = optionFor("userRepository")?.querySelector<HTMLElement>(
-      ".symbol-visibility",
-    );
+    const privateBadge =
+      optionFor("userRepository")?.querySelector<HTMLElement>(".symbol-visibility");
     expect(privateBadge?.dataset.visibility).toBe("private");
     expect(privateBadge?.textContent).toBe("−");
 
-    const protectedBadge = optionFor("validate")?.querySelector<HTMLElement>(
-      ".symbol-visibility",
-    );
+    const protectedBadge = optionFor("validate")?.querySelector<HTMLElement>(".symbol-visibility");
     expect(protectedBadge?.dataset.visibility).toBe("protected");
     expect(protectedBadge?.textContent).toBe("#");
 
@@ -314,9 +286,7 @@ describe("FileStructure", () => {
   it("renders a method signature with parameters and return type", async () => {
     await renderFileStructure({ outline: symbolOutline() });
 
-    const option = symbolOptions().find((row) =>
-      row.textContent?.includes("handle"),
-    );
+    const option = symbolOptions().find((row) => row.textContent?.includes("handle"));
     const signature = option?.querySelector<HTMLElement>(".signature");
 
     expect(signature?.textContent).toBe("(Request $request): void");
@@ -325,9 +295,7 @@ describe("FileStructure", () => {
   it("renders a property signature as a type annotation", async () => {
     await renderFileStructure({ outline: symbolOutline() });
 
-    const option = symbolOptions().find((row) =>
-      row.textContent?.includes("userRepository"),
-    );
+    const option = symbolOptions().find((row) => row.textContent?.includes("userRepository"));
     const signature = option?.querySelector<HTMLElement>(".signature");
 
     expect(signature?.textContent).toBe(": UserRepository");
@@ -336,17 +304,29 @@ describe("FileStructure", () => {
   it("falls back to the plain name when signature fields are absent", async () => {
     await renderFileStructure({ outline: outline() });
 
-    const option = symbolOptions().find((row) =>
-      row.textContent?.includes("isValid"),
-    );
+    const option = symbolOptions().find((row) => row.textContent?.includes("isValid"));
 
     expect(option?.querySelector(".symbol-icon")).not.toBeNull();
     expect(option?.querySelector(".signature")?.textContent ?? "").toBe("");
     expect(option?.querySelector("strong")?.textContent).toBe("isValid");
   });
 
+  it("consumes a symbol seed only on closed-to-open and clears it for an ordinary reopen", async () => {
+    await renderFileStructure({ initialQuery: "method" });
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Search symbols"]')?.value).toBe(
+      "method",
+    );
+
+    await renderFileStructure({ initialQuery: "stale", isOpen: false });
+    await renderFileStructure({ initialQuery: "", isOpen: true });
+
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Search symbols"]')?.value).toBe("");
+  });
+
   async function renderFileStructure(
     overrides: Partial<{
+      initialQuery: string;
+      isOpen: boolean;
       onChangeScope: (scope: "current" | "inherited") => void;
       onClose: () => void;
       onOpenNode: (node: PhpFileOutlineNode) => void;
@@ -359,8 +339,9 @@ describe("FileStructure", () => {
         <FileStructure
           canIncludeInheritedMembers={true}
           fileName="LocalUser.php"
+          initialQuery={overrides.initialQuery ?? ""}
           isLoading={false}
-          isOpen={true}
+          isOpen={overrides.isOpen ?? true}
           onChangeScope={overrides.onChangeScope ?? vi.fn()}
           onClose={overrides.onClose ?? vi.fn()}
           onOpenNode={overrides.onOpenNode ?? vi.fn()}
@@ -377,9 +358,7 @@ describe("FileStructure", () => {
   }
 
   function searchInput(): HTMLInputElement {
-    const input = host.querySelector<HTMLInputElement>(
-      'input[aria-label="Search symbols"]',
-    );
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search symbols"]');
 
     if (!input) {
       throw new Error("Search input was not rendered.");
@@ -399,9 +378,7 @@ describe("FileStructure", () => {
   }
 
   function symbolOptions(): HTMLButtonElement[] {
-    return Array.from(
-      host.querySelectorAll<HTMLButtonElement>('[role="option"]'),
-    );
+    return Array.from(host.querySelectorAll<HTMLButtonElement>('[role="option"]'));
   }
 });
 

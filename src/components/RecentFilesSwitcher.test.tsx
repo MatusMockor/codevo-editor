@@ -9,9 +9,15 @@ import { RecentFilesSwitcher } from "./RecentFilesSwitcher";
 describe("RecentFilesSwitcher", () => {
   let host: HTMLDivElement;
   let root: Root;
+  let scrollIntoView: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -113,6 +119,7 @@ describe("RecentFilesSwitcher", () => {
     });
 
     expect(onOpen).toHaveBeenCalledWith(entries[1]);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
   });
 
   it("opens a file on click", () => {

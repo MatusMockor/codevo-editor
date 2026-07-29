@@ -257,7 +257,7 @@ export async function restoreWorkspaceSession<Document>(
 export function restoredBottomPanelView(
   view: WorkspaceSessionState["bottomPanelView"],
 ): WorkspaceSessionState["bottomPanelView"] {
-  if (view === "terminal") {
+  if (view === "terminal" || view === "search") {
     return "problems";
   }
 

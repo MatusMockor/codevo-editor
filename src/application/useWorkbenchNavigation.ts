@@ -17,13 +17,12 @@ import {
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type {
-  EditorPosition,
-  EditorRevealTarget,
-} from "../domain/languageServerFeatures";
+import type { EditorPosition, EditorRevealTarget } from "../domain/languageServerFeatures";
+import type { EditorCursorPositionRef } from "./editorCursorBindings";
 import type { NavigationLocation } from "../domain/navigation";
 import { shouldOpenPhpNavigationTargetReadOnly } from "../domain/phpNavigationTargetReadOnly";
 import type { RecentFileEntry } from "../domain/recentFiles";
+import type { QuickOpenLocation } from "../domain/quickOpenQuery";
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 interface OpenNavigationOptions {
@@ -39,7 +38,7 @@ interface OpenFileOptions {
 
 export interface WorkbenchNavigationDependencies {
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
-  activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
+  activeEditorPositionRef: EditorCursorPositionRef;
   commandContextRef: MutableRefObject<CommandContext>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
@@ -48,9 +47,7 @@ export interface WorkbenchNavigationDependencies {
   openFile: (entry: FileEntry, options?: OpenFileOptions) => Promise<boolean>;
   currentNavigationLocation: () => NavigationLocation | null;
   forgetRecentFile: (path: string) => void;
-  recordNavigationLocationSnapshot: (
-    location: NavigationLocation | null,
-  ) => void;
+  recordNavigationLocationSnapshot: (location: NavigationLocation | null) => void;
   reportError: (source: string, error: unknown) => void;
   setClassOpenOpen: (isOpen: boolean) => void;
   setEditorRevealTarget: (target: EditorRevealTarget | null) => void;
@@ -71,16 +68,12 @@ export interface WorkbenchNavigation {
     options?: OpenNavigationOptions,
     request?: NavigationRequest,
   ) => Promise<boolean>;
-  openPathForNavigation: (
-    path: string,
-    options?: OpenNavigationOptions,
-  ) => Promise<boolean>;
+  openPathForNavigation: (path: string, options?: OpenNavigationOptions) => Promise<boolean>;
   openProblemNotice: (notice: WorkbenchNotice) => Promise<boolean>;
   openRecentFile: (entry: RecentFileEntry) => Promise<void>;
-  openSearchResult: (result: FileSearchResult) => Promise<void>;
-  openWorkspaceSymbolResult: (
-    result: ProjectSymbolSearchResult,
-  ) => Promise<void>;
+  openCurrentFileLocation: (location: QuickOpenLocation) => void;
+  openSearchResult: (result: FileSearchResult, location?: QuickOpenLocation) => Promise<void>;
+  openWorkspaceSymbolResult: (result: ProjectSymbolSearchResult) => Promise<void>;
   goToNextProblem: () => Promise<boolean>;
   goToPreviousProblem: () => Promise<boolean>;
   readNavigationFileContent: (
@@ -122,7 +115,7 @@ export function useWorkbenchNavigation(
   const pendingSearchEverywhereCommandIdsRef = useRef(new Set<string>());
 
   const openSearchResult = useCallback(
-    async (result: FileSearchResult) => {
+    async (result: FileSearchResult, location?: QuickOpenLocation) => {
       const requestedRoot = currentWorkspaceRootRef.current;
       const opened = await openFile({
         kind: "file",
@@ -130,9 +123,7 @@ export function useWorkbenchNavigation(
         path: result.path,
       });
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -141,9 +132,45 @@ export function useWorkbenchNavigation(
         return;
       }
 
+      if (location) {
+        setEditorRevealTarget({
+          path: result.path,
+          position: {
+            column: location.column ?? 1,
+            lineNumber: location.line,
+          },
+        });
+      }
+
       setQuickOpenOpen(false);
     },
-    [currentWorkspaceRootRef, forgetRecentFile, openFile, setQuickOpenOpen],
+    [currentWorkspaceRootRef, forgetRecentFile, openFile, setEditorRevealTarget, setQuickOpenOpen],
+  );
+
+  const openCurrentFileLocation = useCallback(
+    (location: QuickOpenLocation) => {
+      const document = activeDocumentRef.current;
+      if (!document) {
+        setMessage("Open a file to go to a line.");
+        return;
+      }
+
+      recordNavigationLocationSnapshot(currentNavigationLocation());
+      setEditorRevealTarget({
+        path: document.path,
+        position: {
+          column: location.column ?? 1,
+          lineNumber: location.line,
+        },
+      });
+    },
+    [
+      activeDocumentRef,
+      currentNavigationLocation,
+      recordNavigationLocationSnapshot,
+      setEditorRevealTarget,
+      setMessage,
+    ],
   );
 
   const openRecentFile = useCallback(
@@ -157,9 +184,7 @@ export function useWorkbenchNavigation(
         path: entry.path,
       });
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -172,12 +197,7 @@ export function useWorkbenchNavigation(
 
       setRecentFilesSwitcherOpen(false);
     },
-    [
-      currentWorkspaceRootRef,
-      forgetRecentFile,
-      openFile,
-      setRecentFilesSwitcherOpen,
-    ],
+    [currentWorkspaceRootRef, forgetRecentFile, openFile, setRecentFilesSwitcherOpen],
   );
 
   const openClassSearchResult = useCallback(
@@ -229,10 +249,7 @@ export function useWorkbenchNavigation(
   );
 
   const openPathForNavigation = useCallback(
-    async (
-      path: string,
-      options: OpenNavigationOptions = {},
-    ): Promise<boolean> => {
+    async (path: string, options: OpenNavigationOptions = {}): Promise<boolean> => {
       const readOnly = navigationTargetReadOnly(
         currentWorkspaceRootRef.current,
         path,
@@ -247,9 +264,7 @@ export function useWorkbenchNavigation(
         {
           readOnly,
           recordNavigation: false,
-          ...(options.shouldCommit
-            ? { shouldCommit: options.shouldCommit }
-            : {}),
+          ...(options.shouldCommit ? { shouldCommit: options.shouldCommit } : {}),
         },
       );
 
@@ -292,9 +307,7 @@ export function useWorkbenchNavigation(
         path,
         position,
       });
-      setMessage(
-        `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
-      );
+      setMessage(`Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`);
       return true;
     },
     [
@@ -343,25 +356,15 @@ export function useWorkbenchNavigation(
         return false;
       }
 
-      const opened = await openNavigationTarget(
-        location.path,
-        location.position,
-        "problem",
-      );
-
-      if (opened) {
-        activeEditorPositionRef.current = location.position;
-      }
+      const opened = await openNavigationTarget(location.path, location.position, "problem");
 
       return opened;
     },
-    [activeEditorPositionRef, openNavigationTarget],
+    [openNavigationTarget],
   );
 
   const goToNextProblem = useCallback(async (): Promise<boolean> => {
-    return goToProblemLocation(
-      nextProblemLocation(noticesRef.current, currentProblemLocation()),
-    );
+    return goToProblemLocation(nextProblemLocation(noticesRef.current, currentProblemLocation()));
   }, [currentProblemLocation, goToProblemLocation, noticesRef]);
 
   const goToPreviousProblem = useCallback(async (): Promise<boolean> => {
@@ -371,10 +374,7 @@ export function useWorkbenchNavigation(
   }, [currentProblemLocation, goToProblemLocation, noticesRef]);
 
   const readNavigationFileContent = useCallback(
-    async (
-      path: string,
-      context?: AbortSignal | NavigationRequest,
-    ): Promise<string> => {
+    async (path: string, context?: AbortSignal | NavigationRequest): Promise<string> => {
       const signal = navigationAbortSignal(context);
       throwIfNavigationAborted(signal);
       const activeOpenDocument = activeDocumentRef.current;
@@ -422,14 +422,11 @@ export function useWorkbenchNavigation(
       // open cannot reveal a symbol position in another tab's editor.
       const requestedRoot = currentWorkspaceRootRef.current;
       const path = item.kind === "file" ? item.file.path : item.symbol.path;
-      const name =
-        item.kind === "file" ? item.file.name : getFileName(item.symbol.path);
+      const name = item.kind === "file" ? item.file.name : getFileName(item.symbol.path);
 
       const opened = await openFile({ kind: "file", name, path });
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -463,6 +460,7 @@ export function useWorkbenchNavigation(
   return {
     activateSearchEverywhereItem,
     openClassSearchResult,
+    openCurrentFileLocation,
     openNavigationTarget,
     openPathForNavigation,
     openProblemNotice,
@@ -496,9 +494,7 @@ function throwIfNavigationAborted(signal?: AbortSignal): void {
   throw error;
 }
 
-function navigationAbortSignal(
-  context?: AbortSignal | NavigationRequest,
-): AbortSignal | undefined {
+function navigationAbortSignal(context?: AbortSignal | NavigationRequest): AbortSignal | undefined {
   return context && "aborted" in context ? context : undefined;
 }
 

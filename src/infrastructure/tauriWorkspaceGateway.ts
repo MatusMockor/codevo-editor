@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   FileEntry,
   FileSearchGateway,
+  FileSearchResponse,
   FileSearchResult,
   ManagedPhpactorInstallCompletionEvent,
   ManagedPhpactorInstallUnsubscribeFn,
@@ -12,11 +13,13 @@ import type {
   ReplaceInPathResult,
   TextSearchGateway,
   TextSearchOptions,
+  TextSearchResponse,
   TextSearchResult,
   WorkspaceDescriptor,
   WorkspaceDetectionGateway,
   WorkspaceFileGateway,
   WorkspaceOwnerFileGateway,
+  WorkspaceOwnerRelativeFileGateway,
   WorkspaceWriteResult,
   WorkspaceFileRevision,
   WorkspaceMutationResult,
@@ -36,6 +39,7 @@ import { invokeWorkspaceDirectoryIpc } from "./tauriWorkspaceDirectoryIpcContrac
 const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT = "php://managed-phpactor-install-completed";
 const MANAGED_TYPESCRIPT_INSTALL_COMPLETED_EVENT =
   "typescript://managed-language-server-install-completed";
+const MAX_WORKSPACE_RELATIVE_WRITE_PATH_BYTES = 4_096;
 import {
   pathFromLanguageServerUri,
   type LanguageServerWorkspaceEdit,
@@ -49,7 +53,8 @@ export class TauriWorkspaceGateway
     TextSearchGateway,
     WorkspaceDetectionGateway,
     WorkspaceFileGateway,
-    WorkspaceOwnerFileGateway
+    WorkspaceOwnerFileGateway,
+    WorkspaceOwnerRelativeFileGateway
 {
   constructor(private readonly workspaceIdentities?: WorkspaceIdentityDescriptorResolver) {}
 
@@ -289,21 +294,40 @@ export class TauriWorkspaceGateway
   }
 
   searchFiles(root: string, query: string, limit: number): Promise<FileSearchResult[]> {
+    return this.searchFilesWithMetadata(root, query, limit, "gateway-file-search").then(
+      (response) => [...response.results],
+    );
+  }
+
+  searchFilesWithMetadata(
+    root: string,
+    query: string,
+    limit: number,
+    requestGeneration = "gateway-file-search",
+  ): Promise<FileSearchResponse> {
+    if (!isValidSearchRequestGeneration(requestGeneration)) {
+      return Promise.reject(new Error("File search request generation is invalid."));
+    }
     const target = this.optionalTrustedTarget(root);
     if (target) {
-      return invoke<DescriptorFileSearchResult[]>("workspace_search_files", {
+      return invoke<unknown>("workspace_search_files", {
         ...target,
         query,
         limit,
-      }).then((results) =>
-        results.map((result) => ({
-          ...result,
-          path: joinWorkspacePath(root, result.relativePath),
-        })),
-      );
+        requestGeneration,
+      })
+        .then((payload) => parseDescriptorFileSearchResponse(payload, root))
+        .then((response) => {
+          if (response.requestGeneration !== requestGeneration) {
+            throw new Error("File search returned a mismatched request generation.");
+          }
+          return response;
+        });
     }
 
-    return invoke<FileSearchResult[]>("search_files", { root, query, limit });
+    return invoke<unknown>("search_files", { root, query, limit }).then((payload) =>
+      parseLegacyFileSearchPayload(payload, requestGeneration),
+    );
   }
 
   searchText(
@@ -312,27 +336,49 @@ export class TauriWorkspaceGateway
     limit: number,
     options?: TextSearchOptions,
   ): Promise<TextSearchResult[]> {
+    return this.searchTextWithMetadata(root, query, limit, options, "gateway-search-text").then(
+      (response) => [...response.results],
+    );
+  }
+
+  searchTextWithMetadata(
+    root: string,
+    query: string,
+    limit: number,
+    options?: TextSearchOptions,
+    requestGeneration = "gateway-search-text",
+  ): Promise<TextSearchResponse> {
+    if (!isValidSearchRequestGeneration(requestGeneration)) {
+      return Promise.reject(new Error("Text search request generation is invalid."));
+    }
     const target = this.optionalTrustedTarget(root);
     if (target) {
-      return invoke<DescriptorTextSearchResult[]>("workspace_search_text", {
+      return invoke<unknown>("workspace_search_text", {
         ...target,
         query,
         limit,
         options: options ?? null,
-      }).then((results) =>
-        results.map((result) => ({
-          ...result,
-          path: joinWorkspacePath(root, result.relativePath),
-        })),
-      );
+        requestGeneration,
+      })
+        .then((payload) => parseDescriptorTextSearchResponse(payload, root))
+        .then((response) => {
+          if (response.requestGeneration !== requestGeneration) {
+            throw new Error("Text search returned a mismatched request generation.");
+          }
+          return response;
+        });
     }
 
-    return invoke<TextSearchResult[]>("search_text", {
+    return invoke<unknown>("search_text", {
       root,
       query,
       limit,
       options: options ?? null,
-    });
+    }).then((payload) => ({
+      requestGeneration,
+      results: parseLegacyTextSearchResults(payload),
+      truncated: false,
+    }));
   }
 
   replaceInPath(
@@ -387,6 +433,21 @@ export class TauriWorkspaceGateway
 
     return invoke<WorkspaceWriteResult>("workspace_save_text_file", {
       ...target,
+      content,
+      expectedRevision,
+    });
+  }
+
+  writeTextFileForWorkspaceRelativePath(
+    workspaceId: string,
+    relativePath: string,
+    content: string,
+    expectedRevision: WorkspaceFileRevision,
+  ): Promise<WorkspaceWriteResult> {
+    assertNormalizedWorkspaceRelativeWritePath(relativePath);
+    return invoke<WorkspaceWriteResult>("workspace_save_text_file", {
+      workspaceId,
+      relativePath,
       content,
       expectedRevision,
     });
@@ -450,13 +511,267 @@ function assertMutationSucceeded(result: WorkspaceMutationResult | undefined): v
   throw new Error(result.message);
 }
 
+function assertNormalizedWorkspaceRelativeWritePath(relativePath: string): void {
+  if (
+    relativePath.length === 0 ||
+    relativePath.startsWith("/") ||
+    relativePath.endsWith("/") ||
+    relativePath.includes("\\") ||
+    /^[A-Za-z]:/.test(relativePath) ||
+    /\p{Cc}/u.test(relativePath) ||
+    relativePath
+      .split("/")
+      .some((segment) => segment === "" || segment === "." || segment === "..") ||
+    new TextEncoder().encode(relativePath).byteLength > MAX_WORKSPACE_RELATIVE_WRITE_PATH_BYTES
+  ) {
+    throw new TypeError(
+      `Workspace-relative write path must be a normalized descendant path of at most ${MAX_WORKSPACE_RELATIVE_WRITE_PATH_BYTES} UTF-8 bytes.`,
+    );
+  }
+}
+
+function parseDescriptorFileSearchResponse(payload: unknown, root: string): FileSearchResponse {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("File search returned an invalid payload.");
+  }
+
+  const record = payload as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== 3 ||
+    keys[0] !== "requestGeneration" ||
+    keys[1] !== "results" ||
+    keys[2] !== "truncated" ||
+    !isValidSearchRequestGeneration(record.requestGeneration) ||
+    !Array.isArray(record.results) ||
+    typeof record.truncated !== "boolean"
+  ) {
+    throw new Error("File search returned an invalid payload.");
+  }
+
+  return {
+    requestGeneration: record.requestGeneration,
+    results: record.results.map((value) => parseDescriptorFileSearchResult(value, root)),
+    truncated: record.truncated,
+  };
+}
+
+function parseDescriptorFileSearchResult(value: unknown, root: string): FileSearchResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("File search returned an invalid result.");
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== 3 ||
+    keys[0] !== "name" ||
+    keys[1] !== "relativePath" ||
+    keys[2] !== "truncated" ||
+    typeof record.name !== "string" ||
+    record.name.length === 0 ||
+    typeof record.relativePath !== "string" ||
+    record.relativePath.length === 0 ||
+    typeof record.truncated !== "boolean"
+  ) {
+    throw new Error("File search returned an invalid result.");
+  }
+  return {
+    name: record.name,
+    path: joinWorkspacePath(root, record.relativePath),
+    relativePath: record.relativePath,
+  };
+}
+
+function parseLegacyFileSearchPayload(
+  payload: unknown,
+  requestGeneration: string,
+): FileSearchResponse {
+  if (!Array.isArray(payload)) {
+    throw new Error("File search returned an invalid payload.");
+  }
+
+  let truncated = false;
+  const results = payload.flatMap((value): FileSearchResult[] => {
+    const result = parseLegacyFileSearchResult(value);
+    truncated ||= result.truncated;
+    return result.result ? [result.result] : [];
+  });
+
+  return { requestGeneration, results, truncated };
+}
+
+function parseLegacyFileSearchResult(value: unknown): {
+  readonly result: FileSearchResult | null;
+  readonly truncated: boolean;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("File search returned an invalid result.");
+  }
+
+  const record = value as Record<string, unknown>;
+  const expectedKeys = ["name", "path", "relativePath", "truncated"];
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error("File search returned an invalid result.");
+  }
+
+  if (
+    typeof record.name !== "string" ||
+    typeof record.relativePath !== "string" ||
+    typeof record.truncated !== "boolean"
+  ) {
+    throw new Error("File search returned an invalid result.");
+  }
+
+  if (typeof record.path !== "string") {
+    throw new Error("File search returned an invalid result.");
+  }
+
+  if (record.relativePath === "") {
+    if (record.name !== "" || !record.truncated) {
+      throw new Error("File search returned an invalid result.");
+    }
+
+    return { result: null, truncated: true };
+  }
+
+  return {
+    result: {
+      name: record.name,
+      path: record.path,
+      relativePath: record.relativePath,
+    },
+    truncated: record.truncated,
+  };
+}
+
+function parseDescriptorTextSearchResponse(payload: unknown, root: string): TextSearchResponse {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Text search returned an invalid payload.");
+  }
+
+  const record = payload as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== 3 ||
+    keys[0] !== "requestGeneration" ||
+    keys[1] !== "results" ||
+    keys[2] !== "truncated" ||
+    !isValidSearchRequestGeneration(record.requestGeneration) ||
+    !Array.isArray(record.results) ||
+    typeof record.truncated !== "boolean"
+  ) {
+    throw new Error("Text search returned an invalid payload.");
+  }
+
+  return {
+    requestGeneration: record.requestGeneration,
+    results: record.results.map((value) => parseTextSearchResult(value, root, false)),
+    truncated: record.truncated,
+  };
+}
+
+function parseLegacyTextSearchResults(payload: unknown): TextSearchResult[] {
+  if (!Array.isArray(payload)) {
+    throw new Error("Text search returned an invalid payload.");
+  }
+
+  return payload.map((value) => parseTextSearchResult(value, "", true));
+}
+
+function parseTextSearchResult(
+  value: unknown,
+  root: string,
+  hasAbsolutePath: boolean,
+): TextSearchResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Text search returned an invalid result.");
+  }
+
+  const record = value as Record<string, unknown>;
+  const expectedKeys = hasAbsolutePath
+    ? ["column", "lineNumber", "lineText", "matchEnd", "matchStart", "path", "relativePath"]
+    : [
+        "column",
+        "lineNumber",
+        "lineText",
+        "matchEnd",
+        "matchStart",
+        "matchTruncated",
+        "previewTruncated",
+        "relativePath",
+      ];
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error("Text search returned an invalid result.");
+  }
+
+  if (
+    typeof record.relativePath !== "string" ||
+    record.relativePath.length === 0 ||
+    typeof record.lineNumber !== "number" ||
+    !Number.isSafeInteger(record.lineNumber) ||
+    record.lineNumber < 1 ||
+    typeof record.column !== "number" ||
+    !Number.isSafeInteger(record.column) ||
+    record.column < 1 ||
+    typeof record.lineText !== "string" ||
+    typeof record.matchStart !== "number" ||
+    !Number.isSafeInteger(record.matchStart) ||
+    record.matchStart < 0 ||
+    typeof record.matchEnd !== "number" ||
+    !Number.isSafeInteger(record.matchEnd) ||
+    record.matchEnd < record.matchStart ||
+    (!hasAbsolutePath &&
+      (typeof record.previewTruncated !== "boolean" ||
+        typeof record.matchTruncated !== "boolean")) ||
+    (hasAbsolutePath && (typeof record.path !== "string" || record.path.length === 0))
+  ) {
+    throw new Error("Text search returned an invalid result.");
+  }
+  const previewLength = Array.from(record.lineText).length;
+  const previewTruncated = hasAbsolutePath ? false : (record.previewTruncated as boolean);
+  const matchTruncated = hasAbsolutePath ? false : (record.matchTruncated as boolean);
+  if (
+    record.matchStart > previewLength ||
+    (record.matchEnd > previewLength && !matchTruncated) ||
+    (matchTruncated && !previewTruncated)
+  ) {
+    throw new Error("Text search returned an invalid result.");
+  }
+
+  return {
+    path: hasAbsolutePath ? (record.path as string) : joinWorkspacePath(root, record.relativePath),
+    relativePath: record.relativePath,
+    lineNumber: record.lineNumber,
+    column: record.column,
+    lineText: record.lineText,
+    matchStart: record.matchStart,
+    matchEnd: record.matchEnd,
+    ...(hasAbsolutePath
+      ? {}
+      : {
+          previewTruncated: record.previewTruncated as boolean,
+          matchTruncated: record.matchTruncated as boolean,
+        }),
+  };
+}
+
+function isValidSearchRequestGeneration(value: unknown): value is string {
+  return typeof value === "string" && /^[\x21-\x7e]{1,128}$/.test(value);
+}
+
 type TrustedWorkspaceTarget = Record<string, unknown> & {
   workspaceId: string;
   relativePath: string;
 };
 type DescriptorFileEntry = Omit<FileEntry, "path"> & { relativePath: string };
-type DescriptorFileSearchResult = Omit<FileSearchResult, "path">;
-type DescriptorTextSearchResult = Omit<TextSearchResult, "path">;
 type DescriptorReplaceFile = Omit<ReplaceInPathResult["files"][number], "path">;
 type DescriptorReplaceFailure = { relativePath: string; message: string };
 type DescriptorReplaceResult =

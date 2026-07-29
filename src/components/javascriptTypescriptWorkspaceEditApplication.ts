@@ -9,7 +9,11 @@ import type {
   WorkspaceEditOpenModelCommitResult,
 } from "../application/workspaceEditApplication";
 import { validateStagedWorkspaceEditModels } from "../domain/workspaceEditModelValidation";
-import { modelMatchesWorkspacePath, modelPath } from "./phpMonacoDocumentContext";
+import {
+  modelMatchesWorkspacePath,
+  modelPath,
+  workspacePathKeyForModel,
+} from "./phpMonacoDocumentContext";
 
 interface StagedOpenModelEdit {
   content: string;
@@ -85,17 +89,27 @@ function stageOpenModelEdits(
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,
 ): StagedOpenModelEdit[] {
-  const models = new Map(
-    monaco.editor.getModels().flatMap((model) => {
-      const path = modelPath(model);
-      return path && modelMatchesWorkspacePath(model, rootPath, path)
-        ? [[canonicalWorkspaceEditPath(path), model] as const]
-        : [];
-    }),
-  );
+  const models = new Map<string, { model: Monaco.editor.ITextModel; workspaceModel: boolean }>();
+  monaco.editor.getModels().forEach((model) => {
+    const path = modelPath(model);
+
+    if (!path || !modelMatchesWorkspacePath(model, rootPath, path)) {
+      return;
+    }
+
+    const key = canonicalWorkspaceEditPath(path);
+    const workspaceModel = workspacePathKeyForModel(model) !== null;
+    const existing = models.get(key);
+
+    if (existing?.workspaceModel || (existing && !workspaceModel)) {
+      return;
+    }
+
+    models.set(key, { model, workspaceModel });
+  });
   return Object.entries(edit.changes).flatMap(([uri, edits]) => {
     const path = canonicalWorkspaceEditDocumentPath(uri);
-    const model = path ? models.get(path) : null;
+    const model = path ? models.get(path)?.model : null;
     return path && model && edits.length
       ? [{ content: model.getValue(), edits, model, path, versionId: model.getVersionId() }]
       : [];

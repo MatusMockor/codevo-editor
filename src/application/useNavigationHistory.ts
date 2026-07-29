@@ -495,21 +495,25 @@ export function useNavigationHistory(
   }, [navigationHistory, currentOwnerKey, setNavigationHistory, workspaceRoot]);
 
   const applyNavigationLocation = useCallback(
-    async (location: NavigationLocation, requestedRoot: string, shouldCommit: () => boolean) => {
+    async (
+      location: NavigationLocation,
+      requestedRoot: string,
+      shouldCommit: () => boolean,
+    ): Promise<"applied" | "missing" | "stale"> => {
       const opened = await openPathForNavigation(location.path, {
         readOnly: shouldOpenNavigationTargetReadOnly(requestedRoot, location.path),
         shouldCommit,
       });
 
       if (!shouldCommit()) {
-        return false;
+        return "stale";
       }
 
       if (!opened) {
-        return false;
+        return "missing";
       }
 
-      return true;
+      return "applied";
     },
     [openPathForNavigation, shouldOpenNavigationTargetReadOnly],
   );
@@ -594,9 +598,19 @@ export function useNavigationHistory(
         requestedRoot,
         requestedOwner,
       );
-    const applied = await applyNavigationLocation(next.target, requestedRoot, shouldCommit);
+    const result = await applyNavigationLocation(next.target, requestedRoot, shouldCommit);
 
-    if (!applied) {
+    if (result === "stale") {
+      return;
+    }
+
+    if (result === "missing") {
+      compareAndSetNavigationHistory(
+        navigationHistoryTransaction,
+        setNavigationHistory,
+        requestedHistory,
+        next.history,
+      );
       return;
     }
 
@@ -654,9 +668,19 @@ export function useNavigationHistory(
         requestedRoot,
         requestedOwner,
       );
-    const applied = await applyNavigationLocation(next.target, requestedRoot, shouldCommit);
+    const result = await applyNavigationLocation(next.target, requestedRoot, shouldCommit);
 
-    if (!applied) {
+    if (result === "stale") {
+      return;
+    }
+
+    if (result === "missing") {
+      compareAndSetNavigationHistory(
+        navigationHistoryTransaction,
+        setNavigationHistory,
+        requestedHistory,
+        next.history,
+      );
       return;
     }
 

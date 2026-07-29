@@ -1,43 +1,15 @@
 import type * as Monaco from "monaco-editor";
-import type { LanguageServerSemanticTokens } from "../domain/languageServerFeatures";
+import type {
+  IdentifiedLanguageServerRequest,
+  LanguageServerSemanticTokens,
+} from "../domain/languageServerFeatures";
 import { cancelJavaScriptTypeScriptLanguageServerRequest } from "../infrastructure/tauriLanguageServerRuntimeGateway";
 
 interface CancellationToken {
   readonly isCancellationRequested: boolean;
   onCancellationRequested?(listener: (event?: unknown) => unknown): Monaco.IDisposable;
 }
-type IdentifiedRequest<T> = Promise<T> & { readonly requestId?: unknown };
-type CancelRequest = (rootPath: string, requestId: number) => Promise<void>;
-
-export function observeLanguageServerRequestCancellation<T>(
-  request: IdentifiedRequest<T>,
-  token: CancellationToken | undefined,
-  rootPath: string,
-  cancelRequest: CancelRequest = cancelJavaScriptTypeScriptLanguageServerRequest,
-): Promise<T> {
-  if (!token?.onCancellationRequested || !isRequestId(request.requestId)) {
-    return request;
-  }
-
-  let pending = true;
-  let cancelled = false;
-  const cancel = () => {
-    if (!pending || cancelled) {
-      return;
-    }
-    cancelled = true;
-    void cancelRequest(rootPath, request.requestId as number).catch(() => undefined);
-  };
-  const subscription = token.onCancellationRequested(cancel);
-  if (token.isCancellationRequested) {
-    cancel();
-  }
-
-  return request.finally(() => {
-    pending = false;
-    subscription.dispose();
-  });
-}
+type CancelRequest = (rootPath: string, sessionId: number, requestId: number) => Promise<void>;
 
 export function toMonacoSemanticTokens(
   tokens: LanguageServerSemanticTokens | null,
@@ -53,8 +25,66 @@ export function toMonacoSemanticTokens(
 }
 
 export const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
+export const DOCUMENT_HIGHLIGHT_REQUEST_TIMEOUT_MS = 700;
+export const LINKED_EDITING_RANGE_REQUEST_TIMEOUT_MS = 700;
+export const CODE_ACTION_REQUEST_TIMEOUT_MS = 1_200;
+export const CODE_ACTION_RESOLVE_REQUEST_TIMEOUT_MS = 1_200;
 export const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
+export const FEATURE_REQUEST_CANCELLED = Symbol("featureRequestCancelled");
 const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
+
+export function runBoundedLanguageServerRequest<T>(
+  request: IdentifiedLanguageServerRequest<T>,
+  token: CancellationToken | undefined,
+  rootPath: string,
+  timeoutMs: number = INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
+  cancelRequest: CancelRequest = cancelJavaScriptTypeScriptLanguageServerRequest,
+): IdentifiedLanguageServerRequest<
+  T | typeof FEATURE_REQUEST_CANCELLED | typeof FEATURE_REQUEST_TIMED_OUT
+> {
+  let pending = true;
+  let cancelIssued = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let subscription: Monaco.IDisposable | undefined;
+  let resolveCancellation: (() => void) | undefined;
+  const cancellation = new Promise<typeof FEATURE_REQUEST_CANCELLED>((resolve) => {
+    resolveCancellation = () => resolve(FEATURE_REQUEST_CANCELLED);
+  });
+  const cancelOnce = (settleRequest = true) => {
+    if (!pending || cancelIssued) {
+      return;
+    }
+    cancelIssued = true;
+    void cancelRequest(rootPath, request.sessionId, request.requestId).catch(() => undefined);
+    if (settleRequest) {
+      resolveCancellation?.();
+    }
+  };
+
+  const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      cancelOnce(false);
+      resolve(FEATURE_REQUEST_TIMED_OUT);
+    }, timeoutMs);
+  });
+
+  if (token?.onCancellationRequested) {
+    subscription = token.onCancellationRequested(() => cancelOnce());
+  }
+  if (token?.isCancellationRequested) {
+    cancelOnce();
+  }
+
+  return identifiedRequest(
+    Promise.race([request, timeout, cancellation]).finally(() => {
+      pending = false;
+      clearTimeout(timeoutHandle);
+      subscription?.dispose();
+    }),
+    request.sessionId,
+    request.requestId,
+  );
+}
 
 export function raceInteractiveFeatureRequest<T>(
   request: Promise<T>,
@@ -70,6 +100,10 @@ export function raceInteractiveFeatureRequest<T>(
   });
 }
 
-function isRequestId(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
+function identifiedRequest<T>(
+  request: Promise<T>,
+  sessionId: number,
+  requestId: number,
+): IdentifiedLanguageServerRequest<T> {
+  return Object.assign(request, { requestId, sessionId });
 }

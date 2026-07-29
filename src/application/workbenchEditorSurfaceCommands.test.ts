@@ -304,6 +304,48 @@ describe("workbenchEditorSurfaceCommands", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["editor.quickDefinition", "definition"],
+    ["editor.rename", "rename"],
+    ["editor.formatDocument", "formatting"],
+    ["editor.formatSelection", "rangeFormatting"],
+    ["editor.quickFix", "codeAction"],
+  ] as const)("gates %s on the exact JS/TS %s capability", (commandId, supportedFeature) => {
+    const runner = vi.fn() as EditorSurfaceCommandRunner;
+    runner.isEnabled = vi.fn(() => true);
+    const unavailable = commandById(
+      commandId,
+      createCommands({
+        editorSurfaceCommandRunner: runner,
+        javaScriptTypeScriptFeatureAvailability: { kind: "unavailable" },
+      }),
+    );
+    const missingCapability = commandById(
+      commandId,
+      createCommands({
+        editorSurfaceCommandRunner: runner,
+        javaScriptTypeScriptFeatureAvailability: {
+          kind: "available",
+          supports: () => false,
+        },
+      }),
+    );
+    const available = commandById(
+      commandId,
+      createCommands({
+        editorSurfaceCommandRunner: runner,
+        javaScriptTypeScriptFeatureAvailability: {
+          kind: "available",
+          supports: (feature) => feature === supportedFeature,
+        },
+      }),
+    );
+
+    expect(unavailable.isEnabled(context({ hasActiveDocument: true }))).toBe(false);
+    expect(missingCapability.isEnabled(context({ hasActiveDocument: true }))).toBe(false);
+    expect(available.isEnabled(context({ hasActiveDocument: true }))).toBe(true);
+  });
+
   it("invokes the exact injected callbacks and returns their values directly", () => {
     const saveResult = Promise.resolve();
     const closeResult = Promise.resolve();
@@ -319,6 +361,7 @@ describe("workbenchEditorSurfaceCommands", () => {
       canReopenClosedDocument: true,
       reopenClosedDocument,
       editorSurfaceCommandRunner,
+      javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" },
     });
 
     expect(commands[0].run()).toBe(saveResult);
@@ -343,6 +386,7 @@ function createCommands(
     canReopenClosedDocument: false,
     canRunJavaScriptTypeScriptImportActions: true,
     canRunJavaScriptTypeScriptRefactors: true,
+    javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" },
     javaScriptTypeScriptImportLanguage: "typescript",
     reopenClosedDocument: vi.fn(),
     ...overrides,

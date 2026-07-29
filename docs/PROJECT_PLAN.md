@@ -1,217 +1,135 @@
-# Fleet-like Editor Project Plan
+# Codevo Editor Project Plan
 
-Date: 2026-06-15
-Status: Active plan
+Date: 2026-07-28
 
-## Vision
+Status: Active product plan
 
-Build a lightweight desktop code editor that starts fast in Basic mode and can opt into IDE-like project intelligence when the user enables Smart mode.
+## Active Vision
 
-The target is not PhpStorm parity in the first release. The target is a Fleet-like workbench with a clean architecture, a pleasant Basic editor loop, and a PHP-focused smart layer that can grow over time.
+Build a native, keyboard-first desktop IDE that feels immediate for everyday
+JavaScript, TypeScript, Node.js, and Express work. The editor should preserve the
+workflows developers expect from VS Code's editor core while using strict workspace
+ownership, bounded resource use, and native Rust services.
 
-## Product Modes
+This is a practical workflow target, not a 1:1 VS Code claim. The extension ecosystem,
+arbitrary DAP adapters, remote development, containers, and unsupported platforms are
+separate product-sized areas.
 
-| Mode | Behavior |
-| --- | --- |
-| Basic | Open folder, browse files, edit, save, search, command palette, terminal later. No LSP or project index. |
-| Light Smart | Starts language server features for opened files: diagnostics, hover, completion, definitions. No full custom index. |
-| Full Smart | Starts language server, file watcher, project indexer, SQLite symbol store, PHP tree, workspace symbols, and index health UI. |
+PHP, Nette, Laravel, and related tools remain supported, but they are secondary to the
+current JS/TS/Node/Express direction.
 
-## Initial Decisions
+## Historical Context
 
-| Area | Decision | Reason |
-| --- | --- | --- |
-| Desktop shell | Tauri v2 | Small footprint, Rust host services, strong IPC boundaries. |
-| Editor core | Monaco | Mature IDE-like editing behavior and LSP ecosystem. |
-| Frontend | React + TypeScript + Vite | Productive, common, works well with Monaco. |
-| Backend | Rust | Strong fit for filesystem, processes, watchers, SQLite, PTY, and indexing. |
-| PHP LSP default | PHPactor | Open-source, Composer-aware, safer to bundle or automate. |
-| PHP LSP optional | Intelephense | Strong UX, but proprietary/freemium; use bring-your-own binary/licence. |
-| Project index | SQLite-backed structural index | Needed for fast PHP tree/search/cache UX. |
-| PHP parser | tree-sitter PHP first | Fast tolerant parser for symbols and outlines. |
-| File watching | Watchman preferred, Rust `notify` fallback | Robust large-repo handling with self-contained fallback. |
-| Ignore handling | Rust `ignore` crate | Consistent `.gitignore` semantics. |
+The repository started as a Fleet-like, PHP-focused editor with Basic, Light Smart, and
+Full Smart modes. That plan explains the existing PHPactor, Composer, SQLite index,
+PHP-tree, Nette, and framework modules, but it is no longer the active prioritization
+model. Do not use the old Fleet/PHP MVP sequence to choose new work.
+
+## Product Priorities
+
+1. Fast editing and navigation for large files, repositories, and monorepos.
+2. Reliable JS/TS language intelligence with exact capability and session ownership.
+3. Keyboard-first file, symbol, command, history, and editor switching.
+4. Node and Express project awareness: packages, tasks, tests, Problems, routes, and
+   launch configuration.
+5. Truthful degradation under hard limits instead of freezes or silent partial data.
+6. Preserve existing PHP/framework capabilities; targeted expansion requires explicit
+   user reprioritization.
+
+Debug Console expansion and broad debugger parity are not the current editor-core
+priority unless a required daily Node workflow depends on them.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    UI["React + Monaco Workbench"] --> IPC["Tauri IPC"]
-    IPC --> Core["Rust App Core"]
-    Core --> FS["Workspace File Repository"]
-    Core --> Process["Process Supervisor"]
-    Core --> Watcher["File Watcher"]
-    Core --> DB["SQLite Index Store"]
-    Core --> Terminal["PTY Service"]
-    Process --> LSP["LSP Gateway"]
-    Process --> PHP["PHPactor / Intelephense"]
-    Watcher --> Indexer["Indexer Service"]
-    Indexer --> DB
-    DB --> UI
-    LSP --> UI
+    UI["React + Monaco workbench"] --> APP["Application use cases"]
+    APP --> PORTS["Typed ports"]
+    PORTS --> TAURI["Tauri adapters"]
+    PORTS --> WORKERS["Browser workers"]
+    TAURI --> RUST["Rust services"]
+    RUST --> FS["Bounded filesystem/search"]
+    RUST --> WATCH["Workspace watchers"]
+    RUST --> PROC["Process and LSP supervision"]
+    RUST --> INDEX["Workspace indexes"]
 ```
 
-## Module Boundaries
+Dependencies point inward. React, Monaco, Tauri, workers, filesystem, processes, and
+language servers remain adapters around application and domain policies.
 
-- Workbench UI: layout, activity bar, sidebar, tabs, panels, status bar.
-- Command Registry: command ids, titles, shortcuts, enabled state, execution.
-- Workspace Gateway: frontend abstraction over host filesystem commands.
-- Workspace Repository: Rust filesystem implementation.
-- Editor Session: open documents, active file, dirty state, save/close flows.
-- Language Module: LSP providers, capability registry, document sync, diagnostics.
-- Index Module: watcher, ignore matcher, parser registry, job queues, SQLite store.
-- Settings Module: app/workspace settings, recent workspaces, future provider config.
-- Terminal Module: xterm.js frontend and Rust PTY backend.
+## Completed Editor And Project Foundation
 
-## PHP Strategy
+- Monaco editing, multi-group tabs, preview tabs, dirty tracking, save/close flows, and
+  workspace-scoped session persistence.
+- MRU switching per project and editor group, with bounded retained scope state.
+- Navigation history that persists sufficient view state while closed transient Monaco
+  models are disposed when they are neither open nor retained by navigation ownership.
+- Quick Open file search with `>`, `@`, and `#` dispatch, exact seed handoff,
+  `path:line[:column]`, backend truncation truth, and accessible syntax guidance.
+- Docked text search with bounded Rust disk scanning and a latest-wins worker overlay
+  for dirty buffers.
+- Bounded workspace package graphs for npm/pnpm/yarn/bun-style monorepos, including
+  package ownership used by scripts, tests, Express routes, and Problems attribution.
+- JavaScript/TypeScript LSP requests with exact session authority, cancellation,
+  latest-value document changes, and watcher-triggered project resynchronization.
+- Background editor change-hunk computation with large-file degradation.
+- Watcher overflow/retry behavior that requests an exact-session project resync or
+  publishes a truthful rescan rather than replaying an unsafe partial event set.
 
-Use LSP for semantic behavior:
+## Current Performance Contract
 
-- completion
-- hover
-- go to definition
-- references
-- rename where supported
-- diagnostics
-- formatting/code actions where supported
+- Typing, cursor movement, scrolling, and tab switching must not wait for filesystem
+  crawls, full-workspace parsing, large diffs, or language-server process work.
+- Expensive main-thread work moves to a browser worker or Rust blocking pool.
+- Search, package graphs, models, decorations, events, and cached owners have explicit
+  caps and deterministic cleanup.
+- Requests are cancellable and latest-owner-wins; A→B→A workspace reuse is a new
+  generation, not permission for old work to publish.
+- Large-file reductions are visible and reversible when the exact document becomes
+  eligible again.
 
-Use the custom index for product/workspace behavior:
+## Search Semantics And Limits
 
-- PHP namespace/class/member tree
-- project symbol search
-- Composer package/root awareness
-- index progress and health
-- cached structural search
-- fallback outline data
+Disk search is authoritative for the on-disk workspace. Dirty-buffer overlay search is
+deliberately narrower:
 
-Do not build custom PHP type inference, reference resolution, or diagnostics in MVP. Those are language-server responsibilities until the editor has enough usage data to justify deeper semantic work.
+- literal case-sensitive or case-insensitive matching is supported;
+- regex and `wholeWord` dirty-buffer matching are unsupported because JavaScript
+  `RegExp` does not share Rust's linear-time regex language or Unicode word-boundary
+  semantics;
+- non-empty file masks are unsupported for dirty overlays until they can share the
+  native ignore/mask policy;
+- unsupported dirty semantics produce an explicit limitation/truncated state rather
+  than approximate rows.
 
-## Composer And Trust
+The worker structured-clone boundary accepts at most 16 dirty documents, 4,096 dirty
+paths, 256 Ki UTF-16 code units per document, 1 Mi aggregate code units, 768 KiB UTF-8
+per document, 3 MiB aggregate UTF-8, 500 results, and a 2 MiB response. Requests time
+out and superseded workers are terminated.
 
-- Parse `composer.json`, `composer.lock`, and `vendor/composer` metadata as data.
-- Do not execute Composer autoloaders or project PHP files in untrusted workspaces.
-- Prefer classmap-only behavior where possible.
-- Watch Composer metadata for soft reindex triggers.
-- Do not full-scan `vendor` by default.
+## Near-Term Plan
 
-## Indexer Design
+1. Finish integration and full-gate validation of the current editing/navigation wave.
+2. Profile representative large files and monorepos, then fix measured latency and
+   retention regressions without weakening ownership.
+3. Close the highest-value JS/TS editor gaps in completion, navigation, refactoring,
+   Problems, workspace/package awareness, and search UX.
+4. Improve task/test/Express project workflows where they affect everyday Node work.
+5. Reassess PHP/Nette work only when the user explicitly reprioritizes it; completing
+   or stabilizing a JS/TS milestone never triggers that transition automatically.
 
-The indexer should be an `IndexService` with adapters:
+## Explicit Non-Goals For The Current Phase
 
-- `FileWatcher`
-- `IgnoreMatcher`
-- `ParserRegistry`
-- `IndexStore`
-- `JobScheduler`
-- `IndexEventPublisher`
+- Claiming 1:1 VS Code parity or assigning an unsupported completion percentage.
+- Recreating VS Code's extension marketplace.
+- Universal DAP, remote/container runtimes, or arbitrary executable launch recipes.
+- Running unbounded regex, parsing, indexing, diffing, or workspace scans on the UI
+  thread.
+- Replacing established PHP capabilities merely to fit the new priority.
 
-Queues:
+## Completion Evidence
 
-- `watch-events`
-- `metadata-scan`
-- `parse`
-- `db-write`
-- `maintenance`
-
-Rules:
-
-- Watcher events are hints, not truth.
-- Store `index_generation` per workspace.
-- Jobs must check cancellation before read, parse, commit, and event publish.
-- Use one SQLite writer queue and multiple read connections.
-- Enable WAL, `synchronous=NORMAL`, `busy_timeout`, and periodic `PRAGMA optimize`.
-
-Reindex modes:
-
-- Soft: rescan metadata and reindex changed/missing files.
-- Language: reparse one language after parser/query upgrade.
-- Hard: drop workspace index rows and rebuild.
-
-## SQLite Schema Direction
-
-Core tables:
-
-- `workspaces`
-- `indexed_files`
-- `symbols`
-- `references`
-- `composer_packages`
-- `index_runs`
-
-Later:
-
-- `inheritance_edges`
-- `diagnostic_snapshots`
-- `file_text_fts`
-- `framework_routes`
-
-## MVP Scope
-
-MVP proves the product loop:
-
-- desktop app starts
-- open folder
-- browse lazy file tree
-- edit/save files in Monaco
-- tabs and dirty state
-- command palette
-- basic file operations
-- Basic/Smart mode state
-- PHPactor Light Smart prototype
-- diagnostics and go-to-definition
-- initial PHP structural index
-- project symbol search
-- PHP tree panel
-
-## V1 Scope
-
-- stable terminal
-- settings UI
-- provider config
-- find references
-- workspace symbols
-- Composer-aware PHP detection
-- index rebuild commands
-- index health/errors panel
-- keyboard shortcut editor
-- basic Git decorations
-- session restore
-- installable macOS build
-
-## Testing Strategy
-
-- Frontend unit tests for commands, path helpers, editor session logic.
-- Component/browser tests for file tree, tabs, command palette, and status UI.
-- Rust unit tests for path handling and filesystem repository behavior.
-- Rust integration tests for index queue and SQLite store with temp workspaces.
-- PHP fixtures for Composer, incomplete PHP, Laravel-like, Symfony-like, WordPress-like projects.
-- Mock only true external boundaries; use real internal collaborators and temp/in-memory infrastructure.
-
-## Architecture Quality Gate
-
-After each implementation slice:
-
-- Review SOLID principles.
-- Confirm Command, Strategy, Adapter, Repository, Observer, and Pipeline patterns are used only where they genuinely reduce complexity.
-- Confirm UI depends on abstractions rather than raw Tauri/process/index implementations.
-- Confirm functions/classes stay focused.
-- Run relevant tests and `coderabbit review --agent --base main`.
-
-## Known Risks
-
-- PHP intelligence quality may disappoint if provider capabilities are uneven.
-- Tauri/Monaco LSP bridge may require a Node sidecar prototype.
-- Large project indexing can hurt responsiveness without careful queueing and cancellation.
-- Sidecar packaging can become complicated.
-- Scope can drift toward a full IDE clone.
-
-## Source Notes
-
-- Tauri v2: https://v2.tauri.app/
-- Monaco Editor: https://microsoft.github.io/monaco-editor/
-- LSP: https://microsoft.github.io/language-server-protocol/
-- PHPactor: https://phpactor.readthedocs.io/
-- Intelephense: https://intelephense.com/docs
-- Tree-sitter PHP: https://github.com/tree-sitter/tree-sitter-php
-- Watchman: https://facebook.github.io/watchman/
-- SQLite WAL: https://sqlite.org/wal.html
+A slice is complete only after focused tests, independent review, applicable full
+frontend and Rust gates, formatting, hotspot ratchets, and `git diff --check` pass.
+Documentation records implemented behavior and unsupported scope; final counts are
+published only from the lead's integrated gate run.

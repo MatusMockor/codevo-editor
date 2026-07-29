@@ -1,5 +1,59 @@
-use super::{LanguageServerCapabilities, SemanticTokensLegend};
+use super::document_sync_capability::parse_document_sync_capability;
+use super::DocumentSyncCapability;
+use serde::Serialize;
 use serde_json::Value;
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCapabilities {
+    pub call_hierarchy: bool,
+    pub code_action: bool,
+    pub code_action_resolve: bool,
+    pub code_lens: bool,
+    pub declaration: bool,
+    pub hover: bool,
+    pub completion: bool,
+    pub definition: bool,
+    pub document_highlight: bool,
+    pub document_link: bool,
+    pub document_symbol: bool,
+    pub document_sync: DocumentSyncCapability,
+    pub did_create_files: bool,
+    pub did_delete_files: bool,
+    pub did_rename_files: bool,
+    pub folding_range: bool,
+    pub formatting: bool,
+    pub implementation: bool,
+    pub inlay_hint: bool,
+    pub inlay_hint_resolve: bool,
+    pub linked_editing_range: bool,
+    pub on_type_formatting: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_type_formatting_trigger_characters: Option<Vec<String>>,
+    pub prepare_rename: bool,
+    pub range_formatting: bool,
+    pub references: bool,
+    pub rename: bool,
+    pub selection_range: bool,
+    pub semantic_tokens: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_tokens_legend: Option<SemanticTokensLegend>,
+    pub signature_help: bool,
+    pub source_definition: bool,
+    pub type_definition: bool,
+    pub type_hierarchy: bool,
+    pub will_create_files: bool,
+    pub will_delete_files: bool,
+    pub will_rename_files: bool,
+    pub workspace_symbol: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticTokensLegend {
+    pub token_types: Vec<String>,
+    pub token_modifiers: Vec<String>,
+}
 
 pub(super) fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, String> {
     let Some(capabilities) = value
@@ -29,6 +83,7 @@ pub(super) fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabili
         document_highlight: is_capability_enabled(capabilities.get("documentHighlightProvider")),
         document_link: is_capability_enabled(capabilities.get("documentLinkProvider")),
         document_symbol: is_capability_enabled(capabilities.get("documentSymbolProvider")),
+        document_sync: parse_document_sync_capability(capabilities.get("textDocumentSync")),
         did_create_files: file_operation(capabilities, "didCreate"),
         did_delete_files: file_operation(capabilities, "didDelete"),
         did_rename_files: file_operation(capabilities, "didRename"),
@@ -174,6 +229,11 @@ mod tests {
                 "documentHighlightProvider": true,
                 "documentLinkProvider": { "resolveProvider": true },
                 "documentSymbolProvider": true,
+                "textDocumentSync": {
+                    "change": 2,
+                    "openClose": true,
+                    "save": { "includeText": true }
+                },
                 "foldingRangeProvider": true,
                 "callHierarchyProvider": true,
                 "implementationProvider": true,
@@ -217,6 +277,14 @@ mod tests {
         assert!(capabilities.source_definition);
         assert!(capabilities.did_create_files);
         assert!(capabilities.will_rename_files);
+        assert_eq!(
+            serde_json::to_value(&capabilities.document_sync).expect("document sync"),
+            json!({
+                "changeKind": "incremental",
+                "openClose": true,
+                "save": { "kind": "supported", "includeText": true }
+            })
+        );
         assert_eq!(
             capabilities.on_type_formatting_trigger_characters,
             Some(vec!["}".to_string(), ";".to_string(), "\n".to_string()])

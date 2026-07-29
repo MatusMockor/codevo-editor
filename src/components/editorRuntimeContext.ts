@@ -35,7 +35,7 @@ export interface EditorRuntimeSurfaceRegistration {
   editor: Monaco.editor.IStandaloneCodeEditor | null;
   groupId: string;
   monacoApi: typeof Monaco | null;
-  onModelContentChange(content: string): void;
+  onModelContentChange(content: string, path?: string): boolean | void;
   onMarkerUrisChanged?(uris: readonly Monaco.Uri[]): void;
   providerDependencies: EditorSurfaceLanguageProviderRegistrationDependencies;
   retainPaths: readonly string[];
@@ -64,6 +64,16 @@ export interface EditorRuntimeContextValue {
     LocalPhpValidationSnapshot<TSyntax, TInspection>
   >;
   focusGroup(groupId: string): void;
+  acknowledgeExactLiveModelContent?(
+    groupId: string,
+    path: string,
+    model: Monaco.editor.ITextModel,
+  ): boolean;
+  ownsExactLiveModelContent?(
+    groupId: string,
+    path: string,
+    model: Monaco.editor.ITextModel,
+  ): boolean;
   writeLocalPhpMarkers(
     consumerId: string,
     monacoApi: typeof Monaco,

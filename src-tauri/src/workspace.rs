@@ -31,6 +31,7 @@ pub struct FileSearchResult {
     pub name: String,
     pub path: String,
     pub relative_path: String,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -233,6 +234,8 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
         let normalized_query = query.trim().to_lowercase();
         let capped_limit = limit.clamp(1, 500);
         let mut results = Vec::new();
+        let mut truncated = false;
+        let mut result_truncated = false;
         let mut visited = 0usize;
 
         let matcher = GitignoreWorkspaceIgnoreMatcher::load(root)?;
@@ -242,12 +245,30 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
             limit: capped_limit,
             visited_limit: WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
             matcher: &matcher,
+            truncated: &mut truncated,
+            result_truncated: &mut result_truncated,
             visited: &mut visited,
             results: &mut results,
         }
         .collect(root)?;
 
-        Ok(results.into_iter().map(|(result, _)| result).collect())
+        let mut results = results
+            .into_iter()
+            .map(|(mut result, _)| {
+                result.truncated = truncated || result_truncated;
+                result
+            })
+            .collect::<Vec<_>>();
+        if (truncated || result_truncated) && results.is_empty() {
+            results.push(FileSearchResult {
+                name: String::new(),
+                path: String::new(),
+                relative_path: String::new(),
+                truncated: true,
+            });
+        }
+
+        Ok(results)
     }
 
     fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()> {
@@ -282,18 +303,17 @@ struct RankedFileSearch<'a> {
     limit: usize,
     visited_limit: usize,
     matcher: &'a dyn WorkspaceIgnoreMatcher,
+    truncated: &'a mut bool,
+    result_truncated: &'a mut bool,
     visited: &'a mut usize,
     results: &'a mut Vec<(FileSearchResult, FileMatchRank)>,
 }
 
 impl RankedFileSearch<'_> {
     fn collect(&mut self, current: &Path) -> io::Result<()> {
-        if *self.visited >= self.visited_limit {
-            return Ok(());
-        }
-
         for entry in fs::read_dir(current)? {
             if *self.visited >= self.visited_limit {
+                *self.truncated = true;
                 return Ok(());
             }
 
@@ -316,6 +336,9 @@ impl RankedFileSearch<'_> {
 
             if file_type.is_dir() {
                 self.collect(&path)?;
+                if *self.truncated {
+                    return Ok(());
+                }
                 continue;
             }
 
@@ -332,6 +355,9 @@ impl RankedFileSearch<'_> {
             let Some(rank) = score_result(&relative_path, self.query) else {
                 continue;
             };
+            if self.results.len() >= self.limit {
+                *self.result_truncated = true;
+            }
 
             insert_ranked_result(
                 self.results,
@@ -339,6 +365,7 @@ impl RankedFileSearch<'_> {
                     name,
                     path: path.to_string_lossy().to_string(),
                     relative_path,
+                    truncated: false,
                 },
                 rank,
                 self.limit,
@@ -458,8 +485,8 @@ fn normalize_path_string(path: &str) -> String {
 mod tests {
     use super::{
         apply_text_edits_to_files, compare_ranked_paths, file_search_matches, score_result,
-        LocalWorkspaceFileRepository, WorkspaceFileRepository, WorkspaceTextEdit,
-        WorkspaceTextPosition, WorkspaceTextRange,
+        GitignoreWorkspaceIgnoreMatcher, LocalWorkspaceFileRepository, RankedFileSearch,
+        WorkspaceFileRepository, WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
     };
     use std::{fs, time::SystemTime};
 
@@ -633,6 +660,35 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].relative_path, "deep/path/needle");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn ranked_file_search_reports_the_walk_limit() {
+        let root = create_temp_dir("workspace-search-truncated");
+        fs::write(root.join("needle.php"), "<?php").expect("write php");
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root).expect("load matcher");
+        let mut results = Vec::new();
+        let mut truncated = false;
+        let mut result_truncated = false;
+        let mut visited = 0usize;
+
+        RankedFileSearch {
+            root: &root,
+            query: "needle",
+            limit: 20,
+            visited_limit: 0,
+            matcher: &matcher,
+            truncated: &mut truncated,
+            result_truncated: &mut result_truncated,
+            visited: &mut visited,
+            results: &mut results,
+        }
+        .collect(&root)
+        .expect("search files");
+
+        assert!(truncated);
+        assert!(results.is_empty());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

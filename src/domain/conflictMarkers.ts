@@ -23,6 +23,11 @@ export interface ConflictMarkerBlock {
   theirs: ConflictMarkerTextRange;
 }
 
+export interface BoundedConflictMarkerParseResult {
+  readonly blocks: readonly ConflictMarkerBlock[];
+  readonly truncated: boolean;
+}
+
 interface SourceLine {
   content: string;
   endOffsetIncludingBreak: number;
@@ -42,11 +47,18 @@ const SEPARATOR_MARKER = "=======";
 const INCOMING_MARKER = ">>>>>>>";
 
 export function parseConflictMarkers(text: string): ConflictMarkerBlock[] {
-  const lines = sourceLines(text);
+  return [...parseConflictMarkersBounded(text, Number.MAX_SAFE_INTEGER).blocks];
+}
+
+export function parseConflictMarkersBounded(
+  text: string,
+  maxBlocks: number,
+): BoundedConflictMarkerParseResult {
+  const blockLimit = Number.isSafeInteger(maxBlocks) && maxBlocks >= 0 ? maxBlocks : 0;
   const blocks: ConflictMarkerBlock[] = [];
   let pending: PendingConflict | null = null;
 
-  for (const line of lines) {
+  for (const line of sourceLines(text)) {
     if (isMarkerLine(line.content, CURRENT_MARKER)) {
       pending = {
         baseMarker: null,
@@ -69,26 +81,23 @@ export function parseConflictMarkers(text: string): ConflictMarkerBlock[] {
       continue;
     }
 
-    if (
-      !pending.separatorMarker &&
-      isMarkerLine(line.content, SEPARATOR_MARKER)
-    ) {
+    if (!pending.separatorMarker && isMarkerLine(line.content, SEPARATOR_MARKER)) {
       pending.separatorMarker = line;
       continue;
     }
 
-    if (
-      !pending.separatorMarker ||
-      !isMarkerLine(line.content, INCOMING_MARKER)
-    ) {
+    if (!pending.separatorMarker || !isMarkerLine(line.content, INCOMING_MARKER)) {
       continue;
     }
 
+    if (blocks.length >= blockLimit) {
+      return { blocks, truncated: true };
+    }
     blocks.push(conflictBlock(text, pending, line));
     pending = null;
   }
 
-  return blocks;
+  return { blocks, truncated: false };
 }
 
 function conflictBlock(
@@ -129,9 +138,7 @@ function conflictBlock(
 
   return {
     base,
-    ...(pending.baseMarker
-      ? { baseMarker: markerRange(pending.baseMarker) }
-      : {}),
+    ...(pending.baseMarker ? { baseMarker: markerRange(pending.baseMarker) } : {}),
     block: textRange(
       pending.currentMarker.startOffset,
       incomingMarker.endOffsetIncludingBreak,
@@ -182,8 +189,7 @@ function isMarkerLine(content: string, marker: string): boolean {
   return content.length === marker.length || content[marker.length] === " ";
 }
 
-function sourceLines(text: string): SourceLine[] {
-  const lines: SourceLine[] = [];
+function* sourceLines(text: string): Generator<SourceLine> {
   let lineNumber = 1;
   let startOffset = 0;
 
@@ -191,27 +197,24 @@ function sourceLines(text: string): SourceLine[] {
     const lineFeedOffset = text.indexOf("\n", startOffset);
 
     if (lineFeedOffset < 0) {
-      lines.push({
+      yield {
         content: text.slice(startOffset),
         endOffsetIncludingBreak: text.length,
         lineNumber,
         startOffset,
-      });
+      };
       break;
     }
 
-    const hasCarriageReturn =
-      lineFeedOffset > startOffset && text[lineFeedOffset - 1] === "\r";
+    const hasCarriageReturn = lineFeedOffset > startOffset && text[lineFeedOffset - 1] === "\r";
     const endOffset = hasCarriageReturn ? lineFeedOffset - 1 : lineFeedOffset;
-    lines.push({
+    yield {
       content: text.slice(startOffset, endOffset),
       endOffsetIncludingBreak: lineFeedOffset + 1,
       lineNumber,
       startOffset,
-    });
+    };
     startOffset = lineFeedOffset + 1;
     lineNumber += 1;
   }
-
-  return lines;
 }

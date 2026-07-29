@@ -10,6 +10,7 @@ import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifec
 
 const ROOT = "/workspace";
 const PATH = `${ROOT}/file.php`;
+const WORKSPACE_ID = "workspace:test";
 
 function editorDocument(content = "local", savedContent = "base"): EditorDocument {
   return { content, savedContent, language: "php", name: "file.php", path: PATH };
@@ -82,6 +83,7 @@ describe("useExternalFileConflictLifecycle", () => {
       }
       return {
         canonicalRoot: "/real/workspace",
+        workspaceId: WORKSPACE_ID,
         workspaceRelativePath: relativePath,
       };
     };

@@ -5,6 +5,8 @@ import {
   detectKeymapPlatform,
   findKeymapSequenceConflicts,
   keymapCommands,
+  rebindableKeymapCommands,
+  shortcutForCommand,
   shortcutSequenceForPlatform,
   shortcutFromKeyboardEvent,
   type KeymapCommandId,
@@ -43,19 +45,22 @@ export function KeymapSettingsPanel({
   const conflictKeymap = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(appSettings.keymap).map(([commandId, shortcut]) => [
-          commandId,
-          shortcutSequenceForPlatform(shortcut, resolvedPlatform),
+        keymapCommands.map((command) => [
+          command.id,
+          shortcutSequenceForPlatform(
+            shortcutForCommand(appSettings.keymap, command.id, resolvedPlatform),
+            resolvedPlatform,
+          ),
         ]),
-      ) as AppSettings["keymap"],
+      ) as Record<KeymapCommandId, string>,
     [appSettings.keymap, resolvedPlatform],
   );
 
   const visibleCommands = useMemo(() => {
     const normalizedFilter = filter.trim().toLowerCase();
-    if (!normalizedFilter) return keymapCommands;
+    if (!normalizedFilter) return rebindableKeymapCommands;
 
-    return keymapCommands.filter((command) => {
+    return rebindableKeymapCommands.filter((command) => {
       const shortcut = appSettings.keymap[command.id] || defaultShortcutForCommand(command.id);
       return `${command.label} ${command.category} ${command.id} ${shortcut}`
         .toLowerCase()

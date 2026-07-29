@@ -49,6 +49,7 @@ export function configureTypescriptJavascriptDefaults(
   const managedLanguageServerActive =
     options.managedLanguageServerActive ?? false;
   const builtInProvidersEnabled = !managedLanguageServerActive;
+  const eagerModelSyncEnabled = builtInProvidersEnabled;
   const builtInOnTypeFormattingEnabled = true;
   const validationEnabled = options.validationEnabled ?? true;
   const builtInDiagnosticsEnabled =
@@ -105,8 +106,11 @@ export function configureTypescriptJavascriptDefaults(
 
   typescript.typescriptDefaults.setModeConfiguration(modeConfiguration);
   typescript.javascriptDefaults.setModeConfiguration(modeConfiguration);
-  typescript.typescriptDefaults.setEagerModelSync(true);
-  typescript.javascriptDefaults.setEagerModelSync(true);
+  // Monaco tokenization is independent of the TypeScript worker. When the
+  // managed language server owns semantic features, keep worker model sync
+  // demand-driven instead of mirroring every retained JS/TS model eagerly.
+  typescript.typescriptDefaults.setEagerModelSync(eagerModelSyncEnabled);
+  typescript.javascriptDefaults.setEagerModelSync(eagerModelSyncEnabled);
 }
 
 function preferredModuleResolutionKind(

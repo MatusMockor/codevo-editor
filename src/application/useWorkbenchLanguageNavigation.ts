@@ -12,6 +12,7 @@ import {
   toLanguageServerTextDocumentPosition,
   type EditorPosition,
   type EditorRevealTarget,
+  type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerFeature,
   type LanguageServerFeaturesGateway,
   type LanguageServerLocation,
@@ -79,7 +80,7 @@ export interface WorkbenchLanguageNavigationDependencies {
     sessionId: number,
     owner: WorkspaceRuntimeOwner,
   ) => boolean;
-  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerFeaturesGateway: JavaScriptTypeScriptLanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
@@ -389,7 +390,7 @@ export function useWorkbenchLanguageNavigation(
         ownerFence.isCurrent() &&
         isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId, ownerFence.owner);
 
-      if (feature === "implementation") {
+      if (feature === "implementation" || feature === "definition") {
         implementationChooserCommitPredicateRef.current = null;
         setImplementationChooser(null);
       }
@@ -434,7 +435,7 @@ export function useWorkbenchLanguageNavigation(
 
         const symbolName = identifierAtEditorPosition(document.content, editorPosition);
 
-        if (feature === "implementation" && locations.length > 1) {
+        if ((feature === "implementation" || feature === "definition") && locations.length > 1) {
           const targets = await implementationTargetsFromLocations(
             locations,
             isDocumentRequestCurrent,
@@ -448,7 +449,10 @@ export function useWorkbenchLanguageNavigation(
             implementationChooserCommitPredicateRef.current = isDocumentRequestCurrent;
             setImplementationChooser({
               targets,
-              title: implementationChooserTitle(symbolName),
+              title:
+                feature === "definition"
+                  ? `Definitions for ${symbolName ?? "symbol"}`
+                  : implementationChooserTitle(symbolName),
             });
             return true;
           }
@@ -599,7 +603,7 @@ export function useWorkbenchLanguageNavigation(
           ownerFence.owner,
         );
 
-      if (feature === "implementation") {
+      if (feature === "implementation" || feature === "definition") {
         implementationChooserCommitPredicateRef.current = null;
         setImplementationChooser(null);
       }
@@ -618,6 +622,7 @@ export function useWorkbenchLanguageNavigation(
         const locations = await javaScriptTypeScriptLanguageServerFeaturesGateway[feature](
           requestedRoot,
           toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+          requestedSessionId,
         );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
@@ -626,7 +631,7 @@ export function useWorkbenchLanguageNavigation(
 
         const symbolName = identifierAtEditorPosition(document.content, editorPosition);
 
-        if (feature === "implementation" && locations.length > 1) {
+        if ((feature === "implementation" || feature === "definition") && locations.length > 1) {
           const targets = await implementationTargetsFromLocations(
             locations,
             isRequestedJavaScriptTypeScriptSessionActive,
@@ -641,7 +646,10 @@ export function useWorkbenchLanguageNavigation(
               isRequestedJavaScriptTypeScriptSessionActive;
             setImplementationChooser({
               targets,
-              title: implementationChooserTitle(symbolName),
+              title:
+                feature === "definition"
+                  ? `Definitions for ${symbolName ?? "symbol"}`
+                  : implementationChooserTitle(symbolName),
             });
             return true;
           }

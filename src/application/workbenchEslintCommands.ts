@@ -8,7 +8,7 @@ interface WorkbenchEslintCommandsOptions {
   isActiveBufferClean: boolean;
   isWorkspaceTrusted: boolean;
   fixAllInActiveFile: Command["run"];
-  hasDiagnosticAtCursor: boolean;
+  hasDiagnosticAtCursor: boolean | (() => boolean);
   disableRuleAtCursor: Command["run"];
 }
 
@@ -28,8 +28,7 @@ export function workbenchEslintCommands({
       id: "eslint.analyseWorkspace",
       title: "ESLint: Analyse Workspace",
       category: "JavaScript",
-      isEnabled: (context) =>
-        context.hasWorkspace && hasPackageJson && !isRunning,
+      isEnabled: (context) => context.hasWorkspace && hasPackageJson && !isRunning,
       run: runEslintAnalysis,
     },
     {
@@ -51,10 +50,14 @@ export function workbenchEslintCommands({
       isEnabled: (context) =>
         context.hasWorkspace &&
         context.hasActiveDocument &&
-        hasDiagnosticAtCursor &&
+        resolveAvailability(hasDiagnosticAtCursor) &&
         isActiveBufferClean &&
         isWorkspaceTrusted,
       run: disableRuleAtCursor,
     },
   ];
+}
+
+function resolveAvailability(availability: boolean | (() => boolean)): boolean {
+  return typeof availability === "function" ? availability() : availability;
 }

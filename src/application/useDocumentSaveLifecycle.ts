@@ -12,7 +12,11 @@ import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { WorkspaceSettings } from "../domain/settings";
-import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
+import type {
+  EditorDocument,
+  WorkspaceFileGateway,
+  WorkspaceOwnerRelativeFileGateway,
+} from "../domain/workspace";
 import { isDirty, readWorkspaceTextFileSnapshot, workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { ActiveDocumentSaveStore, type DocumentSaveTarget } from "./activeDocumentSaveStore";
@@ -23,7 +27,9 @@ import {
   type RunWithDocumentSaveExclusion,
 } from "./documentSaveCoordinator";
 import {
+  isRegisteredDocumentSaveIdentity,
   legacyDocumentSaveIdentity,
+  legacyDocumentSaveOwnership,
   type DocumentSaveOwnership,
   type ResolveDocumentSaveOwnership,
 } from "./documentSaveIdentity";
@@ -31,8 +37,17 @@ import {
   runDocumentSaveParticipants,
   type DocumentSaveParticipant,
 } from "./documentSaveParticipants";
-import { DocumentSaveService, type DocumentSaveResult } from "./documentSaveService";
+import {
+  DocumentSaveService,
+  type DocumentSaveResult,
+  type DocumentSaveServiceDependencies,
+} from "./documentSaveService";
 import type { DocumentSelfWriteLease } from "./documentSelfWriteCoordinator";
+import {
+  EditorActiveLiveDocumentSaveCoordinator,
+  type EditorActiveLiveDocumentSaveAdmissionPort,
+  type EditorActiveLiveDocumentSaveBinding,
+} from "./editorActiveLiveDocumentSaveCoordinator";
 
 export type { DocumentSaveResult } from "./documentSaveService";
 
@@ -52,6 +67,7 @@ export interface DocumentSaveLifecycleDependencies {
 
   localHistoryGateway: LocalHistoryGateway;
   workspaceFiles: WorkspaceFileGateway;
+  workspaceOwnerRelativeFiles?: WorkspaceOwnerRelativeFileGateway | null;
   resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
 
   formattedContentForSave: (document: EditorDocument, requestedRoot: string) => Promise<string>;
@@ -88,6 +104,7 @@ export interface DocumentSaveLifecycleDependencies {
     path: string,
     content: string,
   ) => DocumentSelfWriteLease | null;
+  beginRegisteredDocumentSelfWrite?: DocumentSaveServiceDependencies["beginRegisteredDocumentSelfWrite"];
   detectSaveConflict?: (
     rootPath: string,
     document: EditorDocument,
@@ -97,6 +114,7 @@ export interface DocumentSaveLifecycleDependencies {
   runPhpstanAnalysisOnSave: (rootPath: string) => void;
   onDidSaveDocument?: (rootPath: string, document: EditorDocument) => void;
   saveParticipants?: readonly DocumentSaveParticipant[];
+  activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
 }
 
 export interface DocumentSaveLifecycle {
@@ -114,9 +132,13 @@ export interface DocumentSaveLifecycle {
     operation: (lease: DocumentSaveLease) => Promise<DocumentSaveResult>,
   ) => Promise<DocumentSaveResult>;
   invalidateDocumentSave: (rootPath: string, path: string) => void;
+  onActiveLiveDocumentSaveBindingChange: (
+    binding: EditorActiveLiveDocumentSaveBinding | null,
+  ) => void;
 }
 
 interface DocumentSaveIdentity {
+  ownership: DocumentSaveOwnership;
   path: string;
   requestedRoot: string;
   workspaceRequestToken: number;
@@ -138,6 +160,7 @@ export function useDocumentSaveLifecycle(
     setMessage,
     localHistoryGateway,
     workspaceFiles,
+    workspaceOwnerRelativeFiles,
     resolveDocumentSaveOwnership,
     formattedContentForSave,
     optimizedImportsContentForSave,
@@ -148,11 +171,13 @@ export function useDocumentSaveLifecycle(
     reportErrorForActiveWorkspaceRoot,
     hasExternalFileConflict = () => false,
     beginDocumentSelfWrite,
+    beginRegisteredDocumentSelfWrite,
     detectSaveConflict = () => {},
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
     onDidSaveDocument = () => undefined,
     saveParticipants,
+    activeLiveDocumentSaveCoordinator,
   } = dependencies;
   const documentSaveCoordinatorRef = useRef<DocumentSaveCoordinator<DocumentSaveResult> | null>(
     null,
@@ -161,6 +186,16 @@ export function useDocumentSaveLifecycle(
     documentSaveCoordinatorRef.current = new DocumentSaveCoordinator<DocumentSaveResult>();
   }
   const documentSaveCoordinator = documentSaveCoordinatorRef.current;
+  const activeLiveSaveCoordinatorRef = useRef<EditorActiveLiveDocumentSaveCoordinator | null>(null);
+  if (!activeLiveSaveCoordinatorRef.current) {
+    activeLiveSaveCoordinatorRef.current = new EditorActiveLiveDocumentSaveCoordinator();
+  }
+  const activeLiveSaveCoordinator =
+    activeLiveDocumentSaveCoordinator ?? activeLiveSaveCoordinatorRef.current;
+  const workspaceSaveGeneration = workspaceRequestTokenRef.current;
+  useEffect(() => {
+    activeLiveSaveCoordinator.resetRetiredOwnership?.();
+  }, [activeLiveSaveCoordinator, workspaceRoot, workspaceSaveGeneration]);
   const documentSaveCoordinatorEffectGenerationRef = useRef(0);
   const eslintAnalysisOnSaveTimerRef = useRef<number | null>(null);
   const phpstanAnalysisOnSaveTimerRef = useRef<number | null>(null);
@@ -234,12 +269,20 @@ export function useDocumentSaveLifecycle(
   );
 
   const organizedContentForSaveWithParticipants = useCallback(
-    async (document: EditorDocument, content: string, requestedRoot: string): Promise<string> => {
+    async (
+      document: EditorDocument,
+      content: string,
+      requestedRoot: string,
+      isCurrentDocument: () => boolean,
+    ): Promise<string> => {
       const organizedContent = await organizedImportsContentForSave(
         document,
         content,
         requestedRoot,
       );
+      if (!isCurrentDocument()) {
+        return organizedContent;
+      }
       if (!saveParticipants || saveParticipants.length === 0) {
         return organizedContent;
       }
@@ -248,7 +291,7 @@ export function useDocumentSaveLifecycle(
       const isStale = () =>
         workspaceRequestTokenRef.current !== requestToken ||
         !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
-        documentsRef.current[document.path] !== document;
+        !isCurrentDocument();
       const participantsRun = await runDocumentSaveParticipants({
         participants: saveParticipants,
         content: organizedContent,
@@ -274,7 +317,6 @@ export function useDocumentSaveLifecycle(
     },
     [
       currentWorkspaceRootRef,
-      documentsRef,
       organizedImportsContentForSave,
       reportErrorForActiveWorkspaceRoot,
       saveParticipants,
@@ -328,6 +370,14 @@ export function useDocumentSaveLifecycle(
       if (result.status === "blocked") {
         if (result.reason === "external" && !result.silent) {
           setMessage("Resolve the external file conflict before saving.");
+        } else if (result.reason === "exactLiveDocumentTooLarge") {
+          setMessage(
+            "The live editor content is too large to save safely. Reduce the file size and try again.",
+          );
+        } else if (result.reason === "exactLiveDocumentUnavailable") {
+          setMessage(
+            "The live editor content changed before it could be captured safely. Try saving again.",
+          );
         }
         return;
       }
@@ -360,13 +410,51 @@ export function useDocumentSaveLifecycle(
     ): Promise<DocumentSaveResult> => {
       const target: DocumentSaveTarget = {
         path: identity.path,
+        registeredIdentity: isRegisteredDocumentSaveIdentity(identity.ownership)
+          ? identity.ownership
+          : null,
         rootPath: identity.requestedRoot,
         workspaceRequestToken: identity.workspaceRequestToken,
         lease,
       };
+      const legacyDocument = activeDocumentSaveStore.current(target);
+      const liveAdmission =
+        legacyDocument && isJavaScriptTypeScriptLanguageServerDocument(legacyDocument)
+          ? activeLiveSaveCoordinator.admit({
+              document: legacyDocument,
+              legacySaveStore: activeDocumentSaveStore,
+              lease,
+              requireExactLiveSave: activeDocumentRef.current?.path === identity.path,
+              target,
+            })
+          : { status: "fallback" as const };
+      if (liveAdmission.status === "rejected") {
+        const result: DocumentSaveResult = {
+          status: "blocked",
+          reason:
+            liveAdmission.reason === "document-too-large"
+              ? "exactLiveDocumentTooLarge"
+              : "exactLiveDocumentUnavailable",
+        };
+        if (!lease.isCurrent()) {
+          return result;
+        }
+        if (workspaceRequestTokenRef.current !== identity.workspaceRequestToken) {
+          return result;
+        }
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, identity.requestedRoot)) {
+          return result;
+        }
+        presentSaveResult(identity.requestedRoot, result);
+        return result;
+      }
+      const effectiveTarget = liveAdmission.status === "admitted" ? liveAdmission.target : target;
+      const effectiveSaveStore =
+        liveAdmission.status === "admitted" ? liveAdmission.saveStore : activeDocumentSaveStore;
       const service = new DocumentSaveService({
         workspaceFiles,
-        saveStore: activeDocumentSaveStore,
+        workspaceOwnerRelativeFiles,
+        saveStore: effectiveSaveStore,
         invalidatePrefetch: (path) => filePrefetchCacheRef.current.invalidate(path),
         captureLocalHistorySnapshot,
         formattedContentForSave,
@@ -377,8 +465,16 @@ export function useDocumentSaveLifecycle(
         syncSavedJavaScriptTypeScriptDocument,
         hasExternalFileConflict,
         beginDocumentSelfWrite,
+        beginRegisteredDocumentSelfWrite,
       });
-      const result = await service.saveDocument(target);
+      let result: DocumentSaveResult;
+      try {
+        result = await service.saveDocument(effectiveTarget);
+      } finally {
+        if (liveAdmission.status === "admitted") {
+          liveAdmission.settle();
+        }
+      }
       if (!lease.isCurrent()) {
         return result;
       }
@@ -396,11 +492,13 @@ export function useDocumentSaveLifecycle(
     },
     [
       activeDocumentSaveStore,
+      activeLiveSaveCoordinator,
       captureLocalHistorySnapshot,
       filePrefetchCacheRef,
       formattedContentForSave,
       hasExternalFileConflict,
       beginDocumentSelfWrite,
+      beginRegisteredDocumentSelfWrite,
       optimizedImportsContentForSave,
       onDidSaveDocument,
       organizedContentForSaveWithParticipants,
@@ -410,6 +508,7 @@ export function useDocumentSaveLifecycle(
       syncSavedDocument,
       syncSavedJavaScriptTypeScriptDocument,
       workspaceFiles,
+      workspaceOwnerRelativeFiles,
       workspaceRequestTokenRef,
     ],
   );
@@ -420,17 +519,18 @@ export function useDocumentSaveLifecycle(
         return { status: "stale" };
       }
 
+      const ownership = resolveDocumentSaveOwnership
+        ? resolveDocumentSaveOwnership(workspaceRoot, path)
+        : legacyDocumentSaveOwnership(workspaceRoot, path);
+      if (!ownership) {
+        return { status: "stale" };
+      }
       const identity: DocumentSaveIdentity = {
+        ownership,
         path,
         requestedRoot: workspaceRoot,
         workspaceRequestToken: workspaceRequestTokenRef.current,
       };
-      const ownership = resolveDocumentSaveOwnership
-        ? resolveDocumentSaveOwnership(identity.requestedRoot, identity.path)
-        : legacyDocumentSaveIdentity(identity.requestedRoot, identity.path);
-      if (!ownership) {
-        return { status: "stale" };
-      }
       const outcome = await documentSaveCoordinator.request(ownership, (lease) =>
         performDocumentSave(identity, lease),
       );
@@ -457,6 +557,13 @@ export function useDocumentSaveLifecycle(
 
     await saveDocument(document.path);
   }, [activeDocumentRef, saveDocument]);
+
+  const onActiveLiveDocumentSaveBindingChange = useCallback(
+    (binding: EditorActiveLiveDocumentSaveBinding | null) => {
+      activeLiveSaveCoordinator.publish(binding);
+    },
+    [activeLiveSaveCoordinator],
+  );
 
   const runWithDocumentSaveExclusion = useCallback<RunWithDocumentSaveExclusion>(
     (scope, operation) => {
@@ -541,6 +648,7 @@ export function useDocumentSaveLifecycle(
     runWithIssuedWriteDrain,
     requestOwnerDocumentSave,
     invalidateDocumentSave,
+    onActiveLiveDocumentSaveBindingChange,
   };
 }
 

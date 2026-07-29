@@ -51,7 +51,10 @@ import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigationCommands";
 import { workbenchLanguagePanelCommands } from "./workbenchLanguagePanelCommands";
-import { canUseActiveDocumentLanguageServerFeature } from "./workbenchLanguageServerCommandEnablement";
+import {
+  canUseActiveDocumentLanguageServerFeature,
+  javaScriptTypeScriptFeatureAvailability,
+} from "./workbenchLanguageServerCommandEnablement";
 import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
@@ -262,8 +265,8 @@ interface UseWorkbenchCommandRegistryOptions {
   goToSuperMethod: NavigationRun;
   goToTestForActiveDocument: CommandRun;
   goToTypeDefinition: NavigationRun;
-  hasEslintDiagnosticAtCursor: boolean;
-  hasPhpstanDiagnosticAtCursor: boolean;
+  hasEslintDiagnosticAtCursor: () => boolean;
+  hasPhpstanDiagnosticAtCursor: () => boolean;
   ignorePhpstanIssueAtCursor: CommandRun;
   indexProgress: Parameters<typeof workbenchIndexCommands>[0]["indexProgress"];
   installingManagedPhpactor: boolean;
@@ -543,6 +546,14 @@ export function useWorkbenchCommandRegistry(
           language: activeDocument.language,
         }
       : null;
+    const javaScriptTypeScriptCommandAvailability = javaScriptTypeScriptFeatureAvailability({
+      activeDocument: activeDocumentLanguage,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      workspaceRoot,
+    });
     const appearanceCommands = workbenchAppearanceCommands({
       shortcut,
       zoomEditorFontIn,
@@ -803,6 +814,7 @@ export function useWorkbenchCommandRegistry(
       canReopenClosedDocument,
       reopenClosedDocument,
       editorSurfaceCommandRunner,
+      javaScriptTypeScriptFeatureAvailability: javaScriptTypeScriptCommandAvailability,
       canRunJavaScriptTypeScriptImportActions:
         activeDocumentLanguage?.isJavaScriptTypeScriptLanguageServerDocument === true &&
         canUseActiveDocumentLanguageServerFeature({
@@ -860,7 +872,7 @@ export function useWorkbenchCommandRegistry(
     scopedNavigationCommands(
       workbenchLanguageNavigationCommands({
         shortcut,
-        activeDocument: activeDocumentLanguage,
+        javaScriptTypeScriptFeatureAvailability: javaScriptTypeScriptCommandAvailability,
         goToDefinition,
         goToSourceDefinition,
         goToDeclaration,

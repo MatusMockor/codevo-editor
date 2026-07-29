@@ -9,6 +9,7 @@ describe("bottomPanelLabel", () => {
     ["terminal", "Terminal"],
     ["runtime", "Runtime"],
     ["debug", "Debug"],
+    ["search", "Search"],
     ["expressRoutes", "Express Routes"],
     ["packages", "Packages"],
     ["nette", "Nette"],

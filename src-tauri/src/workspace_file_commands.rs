@@ -1,4 +1,5 @@
-use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatchRank};
+#[cfg(test)]
+use crate::file_fuzzy_matcher::compare_ranked_paths;
 use crate::local_history::LocalHistoryStore;
 use crate::workspace_registry::{validate_relative_path, WorkspaceId, WorkspaceRegistry};
 use crate::{search::TextSearchOptions, workspace::FileEntryKind};
@@ -10,7 +11,7 @@ use std::{
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
     os::{
-        fd::{AsRawFd, FromRawFd, IntoRawFd, RawFd},
+        fd::{AsRawFd, FromRawFd, RawFd},
         unix::ffi::OsStrExt,
     },
     path::{Path, PathBuf},
@@ -18,6 +19,18 @@ use std::{
 };
 
 mod atomic_create;
+mod directory_stream;
+mod workspace_file_search;
+#[cfg(test)]
+#[path = "workspace_file_commands/workspace_search_tests.rs"]
+mod workspace_search_tests;
+
+use directory_stream::{DirectoryEntry, DirectoryStream, DirectoryStreamEntry};
+#[cfg(test)]
+use workspace_file_search::{
+    collect_ranked_files, collect_ranked_files_with_truncation, file_score,
+};
+use workspace_file_search::{PreparedDescriptorFileSearch, PreparedDescriptorTextSearch};
 
 #[cfg(target_os = "macos")]
 const O_RESOLVE_BENEATH: libc::c_int = 0x0000_1000;
@@ -26,6 +39,11 @@ const RENAME_EXCL: libc::c_uint = 0x0000_0004;
 #[cfg(target_os = "macos")]
 const RENAME_SWAP: libc::c_uint = 0x0000_0002;
 const WORKSPACE_FILE_SEARCH_VISITED_LIMIT: usize = 200_000;
+const WORKSPACE_GITIGNORE_BYTE_LIMIT: u64 = 1024 * 1024;
+const WORKSPACE_TEXT_SEARCH_FILE_SIZE_LIMIT: u64 = 4 * 1024 * 1024;
+const WORKSPACE_TEXT_SEARCH_READ_CHUNK_BYTES: usize = 64 * 1024;
+const WORKSPACE_TEXT_SEARCH_PREVIEW_BYTE_LIMIT: usize = 4 * 1024;
+const WORKSPACE_TEXT_SEARCH_RESPONSE_BYTE_LIMIT: usize = 2 * 1024 * 1024;
 pub const WORKSPACE_IMAGE_FILE_SIZE_LIMIT: usize = 20 * 1024 * 1024;
 
 #[cfg(target_os = "macos")]
@@ -39,21 +57,6 @@ fn clear_errno() {
 fn clear_errno() {
     unsafe {
         *libc::__errno_location() = 0;
-    }
-}
-
-struct DirectoryEntry {
-    name: String,
-    is_directory: bool,
-}
-
-struct DirectoryStream(*mut libc::DIR);
-
-impl Drop for DirectoryStream {
-    fn drop(&mut self) {
-        unsafe {
-            libc::closedir(self.0);
-        }
     }
 }
 
@@ -79,43 +82,16 @@ fn unsafe_dup(fd: RawFd) -> io::Result<File> {
 }
 
 fn directory_entries(directory: &File) -> io::Result<Vec<DirectoryEntry>> {
-    let cloned = unsafe_dup(directory.as_raw_fd())?;
-    let stream = unsafe { libc::fdopendir(cloned.into_raw_fd()) };
-    if stream.is_null() {
-        return Err(io::Error::last_os_error());
-    }
-    let stream = DirectoryStream(stream);
+    let mut stream = DirectoryStream::open(directory)?;
     let mut entries = Vec::new();
     loop {
-        clear_errno();
-        let raw = unsafe { libc::readdir(stream.0) };
-        if raw.is_null() {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() == Some(0) {
-                return Ok(entries);
-            }
-            return Err(error);
+        match stream.next_entry(directory)? {
+            DirectoryStreamEntry::Entry(entry) => entries.push(entry),
+            DirectoryStreamEntry::Skipped => {}
+            DirectoryStreamEntry::End => break,
         }
-        let name = unsafe { CStr::from_ptr((*raw).d_name.as_ptr()) };
-        if name.to_bytes() == b"." || name.to_bytes() == b".." {
-            continue;
-        }
-        run_test_hook(
-            "directory-entries-before-stat",
-            directory.as_raw_fd(),
-            name,
-            name,
-        );
-        let stat = stat_at(directory.as_raw_fd(), name)?;
-        let kind = stat.st_mode & libc::S_IFMT;
-        if kind != libc::S_IFDIR && kind != libc::S_IFREG {
-            continue;
-        }
-        entries.push(DirectoryEntry {
-            name: String::from_utf8_lossy(name.to_bytes()).into_owned(),
-            is_directory: kind == libc::S_IFDIR,
-        });
     }
+    Ok(entries)
 }
 
 fn collect_files(
@@ -165,84 +141,26 @@ fn collect_files(
     Ok(files)
 }
 
-fn collect_ranked_files(
-    root: &File,
-    scope: &Path,
-    query: &str,
-    limit: usize,
-    visited_limit: usize,
-    display_root: &Path,
-) -> io::Result<Vec<(PathBuf, FileMatchRank)>> {
-    let start = open_directory_path(root.as_raw_fd(), scope)?;
-    let mut stack = vec![(
-        scope.to_path_buf(),
-        start,
-        Vec::<Arc<ignore::gitignore::Gitignore>>::new(),
-    )];
-    let mut ranked = Vec::with_capacity(limit);
-    let mut visited = 0usize;
-    while let Some((relative, directory, inherited_ignores)) = stack.pop() {
-        let mut ignores = inherited_ignores;
-        if let Some(local) = load_directory_gitignore(&directory, &display_root.join(&relative))? {
-            ignores.push(Arc::new(local));
-        }
-        for entry in directory_entries(&directory)? {
-            let path = relative.join(&entry.name);
-            if crate::ignore_matcher::is_default_ignored_name(&entry.name)
-                || gitignore_stack_ignores(&ignores, &display_root.join(&path), entry.is_directory)
-            {
-                continue;
-            }
-            if visited >= visited_limit {
-                return Ok(ranked);
-            }
-            visited += 1;
-            if entry.is_directory {
-                let name = CString::new(entry.name).unwrap();
-                let child = open_directory_at(directory.as_raw_fd(), &name)?;
-                stack.push((path, child, ignores.clone()));
-                continue;
-            }
-            let Some(rank) = file_score(&path.to_string_lossy(), query) else {
-                continue;
-            };
-            insert_ranked_path(&mut ranked, path, rank, limit);
-        }
-    }
-    Ok(ranked)
-}
-
-fn insert_ranked_path(
-    ranked: &mut Vec<(PathBuf, FileMatchRank)>,
-    path: PathBuf,
-    rank: FileMatchRank,
-    limit: usize,
-) {
-    let index = ranked
-        .binary_search_by(|(existing_path, existing_rank)| {
-            compare_ranked_paths(
-                &existing_path.to_string_lossy(),
-                *existing_rank,
-                &path.to_string_lossy(),
-                rank,
-            )
-        })
-        .unwrap_or_else(|index| index);
-    ranked.insert(index, (path, rank));
-    ranked.truncate(limit);
-}
-
 fn load_directory_gitignore(
     directory: &File,
     display_directory: &Path,
 ) -> io::Result<Option<ignore::gitignore::Gitignore>> {
-    let mut file = match open_regular_at(directory.as_raw_fd(), c".gitignore", libc::O_RDONLY) {
+    let file = match open_regular_at(directory.as_raw_fd(), c".gitignore", libc::O_RDONLY) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
+    let mut bytes = Vec::new();
+    file.take(WORKSPACE_GITIGNORE_BYTE_LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > WORKSPACE_GITIGNORE_BYTE_LIMIT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ".gitignore exceeds the 1 MiB workspace-search limit",
+        ));
+    }
+    let content = String::from_utf8(bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let mut builder = GitignoreBuilder::new(display_directory);
     for line in content.lines() {
         builder.add_line(None, line).map_err(io::Error::other)?;
@@ -272,9 +190,6 @@ fn entry_rank(kind: &FileEntryKind) -> u8 {
     } else {
         1
     }
-}
-fn file_score(path: &str, query: &str) -> Option<FileMatchRank> {
-    file_match_rank(path, query)
 }
 fn text_matcher(query: &str, options: &TextSearchOptions) -> io::Result<Regex> {
     let pattern = if options.is_regex {
@@ -521,6 +436,14 @@ pub struct DescriptorFileEntry {
 pub struct DescriptorFileSearchResult {
     pub name: String,
     pub relative_path: String,
+    pub truncated: bool,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescriptorFileSearchResponse {
+    pub results: Vec<DescriptorFileSearchResult>,
+    pub truncated: bool,
+    pub request_generation: String,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -531,6 +454,16 @@ pub struct DescriptorTextSearchResult {
     pub line_text: String,
     pub match_start: u64,
     pub match_end: u64,
+    pub preview_truncated: bool,
+    pub match_truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DescriptorTextSearchResponse {
+    pub results: Vec<DescriptorTextSearchResult>,
+    pub truncated: bool,
+    pub request_generation: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -735,6 +668,7 @@ impl<'a> WorkspaceFileRepository<'a> {
         Ok(entries)
     }
 
+    #[cfg(test)]
     pub fn search_files(
         &self,
         id: &WorkspaceId,
@@ -742,38 +676,32 @@ impl<'a> WorkspaceFileRepository<'a> {
         query: &str,
         limit: usize,
     ) -> io::Result<Vec<DescriptorFileSearchResult>> {
-        let root = self.registry.clone_root(id)?;
-        let display_root = self.registry.descriptor(id)?.canonical_root_path;
-        let query = query.trim().to_lowercase();
-        let limit = limit.clamp(1, 500);
+        self.prepare_file_search(id, scope, query, limit)?
+            .execute(&|| true)
+    }
+
+    pub(crate) fn prepare_file_search(
+        &self,
+        id: &WorkspaceId,
+        scope: &Path,
+        query: &str,
+        limit: usize,
+    ) -> io::Result<PreparedDescriptorFileSearch> {
         if !scope.as_os_str().is_empty() {
             validate_relative_path(scope)?;
         }
-        let files = collect_ranked_files(
-            &root,
-            scope,
-            &query,
-            limit,
-            WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
-            &display_root,
-        )?;
-        Ok(files
-            .into_iter()
-            .map(|(relative, _)| DescriptorFileSearchResult {
-                name: relative
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
-                relative_path: relative
-                    .strip_prefix(scope)
-                    .unwrap_or(&relative)
-                    .to_string_lossy()
-                    .into_owned(),
-            })
-            .collect())
+        let descriptor = self.registry.descriptor(id)?;
+        let root = self.registry.clone_root(id)?;
+        Ok(PreparedDescriptorFileSearch {
+            root,
+            descriptor,
+            scope: scope.to_path_buf(),
+            query: query.trim().to_lowercase(),
+            limit: limit.clamp(1, 500),
+        })
     }
 
+    #[cfg(test)]
     pub fn search_text(
         &self,
         id: &WorkspaceId,
@@ -782,74 +710,52 @@ impl<'a> WorkspaceFileRepository<'a> {
         limit: usize,
         options: &TextSearchOptions,
     ) -> io::Result<Vec<DescriptorTextSearchResult>> {
-        let query = query.trim();
-        if query.is_empty() {
+        if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let matcher = text_matcher(query, options)?;
-        let root = self.registry.clone_root(id)?;
-        let display_root = self.registry.descriptor(id)?.canonical_root_path;
+        Ok(self
+            .prepare_text_search(id, scope, query, limit, options)?
+            .execute(&|| true)?
+            .results)
+    }
+
+    pub(crate) fn prepare_text_search(
+        &self,
+        id: &WorkspaceId,
+        scope: &Path,
+        query: &str,
+        limit: usize,
+        options: &TextSearchOptions,
+    ) -> io::Result<PreparedDescriptorTextSearch> {
+        let query = query.trim();
         if !scope.as_os_str().is_empty() {
             validate_relative_path(scope)?;
         }
-        let limit = limit.clamp(1, 500);
-        let masks = file_mask(options.file_mask.as_deref().unwrap_or(""), &display_root)?;
-        let mut results = Vec::new();
-        for relative in collect_files(&root, scope, 100_000, &display_root)? {
-            if results.len() >= limit {
-                break;
-            }
-            if let Some(mask) = &masks {
-                let matched = mask.matcher.matched(&relative, false);
-                if matched.is_ignore() || (mask.has_positive && !matched.is_whitelist()) {
-                    continue;
-                }
-            }
-            let file = match open_regular(root.as_raw_fd(), &relative, libc::O_RDONLY) {
-                Ok(file) => file,
-                Err(error) => {
-                    if is_skippable_text_search_candidate_error(&error) {
-                        continue;
-                    }
-                    return Err(error);
-                }
-            };
-            let mut bytes = Vec::new();
-            let read_result = file.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes);
-            if let Err(error) = read_result {
-                if is_skippable_text_search_candidate_error(&error) {
-                    continue;
-                }
-                return Err(error);
-            }
-            if bytes.len() > 4 * 1024 * 1024 || bytes.contains(&0) {
-                continue;
-            }
-            let content = match String::from_utf8(bytes) {
-                Ok(content) => content,
-                Err(_) => continue,
-            };
-            for (index, line) in content.lines().enumerate() {
-                if let Some(found) = matcher.find(line) {
-                    results.push(DescriptorTextSearchResult {
-                        relative_path: relative
-                            .strip_prefix(scope)
-                            .unwrap_or(&relative)
-                            .to_string_lossy()
-                            .into_owned(),
-                        line_number: index as u64 + 1,
-                        column: line[..found.start()].chars().count() as u64 + 1,
-                        line_text: line.to_string(),
-                        match_start: line[..found.start()].chars().count() as u64,
-                        match_end: line[..found.end()].chars().count() as u64,
-                    });
-                    if results.len() >= limit {
-                        return Ok(results);
-                    }
-                }
-            }
+        let descriptor = self.registry.descriptor(id)?;
+        let root = self.registry.clone_root(id)?;
+        let matcher = text_matcher(query, options)?;
+        let masks = file_mask(
+            options.file_mask.as_deref().unwrap_or(""),
+            &descriptor.canonical_root_path,
+        )?;
+        Ok(PreparedDescriptorTextSearch {
+            root,
+            descriptor,
+            scope: scope.to_path_buf(),
+            matcher,
+            masks,
+            limit: limit.clamp(1, 500),
+        })
+    }
+
+    pub(crate) fn empty_text_search_response(
+        request_generation: String,
+    ) -> DescriptorTextSearchResponse {
+        DescriptorTextSearchResponse {
+            results: Vec::new(),
+            truncated: false,
+            request_generation,
         }
-        Ok(results)
     }
 
     pub fn replace_in_path(
@@ -1080,6 +986,7 @@ impl<'a> WorkspaceFileRepository<'a> {
                 "file changed since it was read".into(),
             ));
         }
+        drop(original_bytes);
 
         let (mut staged, staged_name) =
             create_unique_file(parent.as_raw_fd(), &name, original.st_mode as libc::mode_t)?;
@@ -1135,6 +1042,7 @@ impl<'a> WorkspaceFileRepository<'a> {
                 None,
             )
         })?;
+        let saved_revision = revision(&saved, content.as_bytes());
         run_test_hook("save-after-swap", parent.as_raw_fd(), &name, &staged_name);
         let displaced = stat_at(parent.as_raw_fd(), &staged_name).map_err(|error| {
             cleanup.armed = false;
@@ -1142,7 +1050,7 @@ impl<'a> WorkspaceFileRepository<'a> {
                 format!(
                     "file was swapped, but the displaced version could not be inspected: {error}"
                 ),
-                Some(revision(&saved, content.as_bytes())),
+                Some(saved_revision.clone()),
             )
         })?;
         let displaced_file = open_regular_at(parent.as_raw_fd(), &staged_name, libc::O_RDONLY)
@@ -1152,14 +1060,14 @@ impl<'a> WorkspaceFileRepository<'a> {
                     format!(
                         "file was swapped, but the displaced version could not be opened: {error}"
                     ),
-                    Some(revision(&saved, content.as_bytes())),
+                    Some(saved_revision.clone()),
                 )
             })?;
         let displaced_bytes = read_all(&mut &displaced_file).map_err(|error| {
             cleanup.armed = false;
             CommandFailure::Partial(
                 format!("file was swapped, but the displaced version could not be read: {error}"),
-                Some(revision(&saved, content.as_bytes())),
+                Some(saved_revision.clone()),
             )
         })?;
         if !same_identity(&original, &displaced)
@@ -1172,7 +1080,7 @@ impl<'a> WorkspaceFileRepository<'a> {
                     .and_then(|file| {
                         let stat = regular_unlinked_stat(file.as_raw_fd())?;
                         let bytes = read_all(&mut &file)?;
-                        Ok(revision(&stat, &bytes) == revision(&saved, content.as_bytes()))
+                        Ok(revision(&stat, &bytes) == saved_revision)
                     })
                     .unwrap_or(false);
             let displaced_revision_matches =
@@ -1249,6 +1157,7 @@ impl<'a> WorkspaceFileRepository<'a> {
                 "file changed during the atomic save; replacement was rolled back".into(),
             ));
         }
+        drop(displaced_bytes);
         drop(displaced_file);
         run_test_hook(
             "save-before-target-revalidation",
@@ -1260,7 +1169,7 @@ impl<'a> WorkspaceFileRepository<'a> {
             cleanup.armed = false;
             CommandFailure::Partial(
                 format!("file was replaced, but its live target could not be revalidated: {error}"),
-                Some(revision(&saved, content.as_bytes())),
+                Some(saved_revision.clone()),
             )
         })?;
         if !same_entry_snapshot(&saved, &live_target) {
@@ -1268,7 +1177,7 @@ impl<'a> WorkspaceFileRepository<'a> {
             return Err(CommandFailure::Partial(
                 "save target changed after the atomic swap; reachable versions were retained"
                     .into(),
-                Some(revision(&saved, content.as_bytes())),
+                Some(saved_revision.clone()),
             ));
         }
         cleanup_owned_entry(
@@ -1280,16 +1189,16 @@ impl<'a> WorkspaceFileRepository<'a> {
         )
         .map_err(|message| {
             cleanup.armed = false;
-            CommandFailure::Partial(message, Some(revision(&saved, content.as_bytes())))
+            CommandFailure::Partial(message, Some(saved_revision.clone()))
         })?;
         cleanup.armed = false;
         if unsafe { libc::fsync(parent.as_raw_fd()) } != 0 {
             return Err(CommandFailure::Partial(
                 "file was replaced but its directory could not be synced".into(),
-                Some(revision(&saved, content.as_bytes())),
+                Some(saved_revision.clone()),
             ));
         }
-        Ok(revision(&saved, content.as_bytes()))
+        Ok(saved_revision)
     }
 
     pub fn create_directory(&self, id: &WorkspaceId, path: &Path) -> MutationResult {
@@ -1907,10 +1816,10 @@ fn delete_directory_tree(
         }
         return Err(io::Error::last_os_error().into());
     }
-    let stream = DirectoryStream(stream);
+    let stream = DirectoryStream::from_raw(stream);
     loop {
         clear_errno();
-        let entry = unsafe { libc::readdir(stream.0) };
+        let entry = unsafe { libc::readdir(stream.as_ptr()) };
         if entry.is_null() {
             let error = io::Error::last_os_error();
             if error.raw_os_error().unwrap_or(0) != 0 {
@@ -2555,6 +2464,17 @@ mod tests {
             collect_ranked_files(&root_file, Path::new(""), "needle", 10, 3, &display_root)
                 .unwrap();
         assert!(capped.is_empty());
+        let (_, truncated) = collect_ranked_files_with_truncation(
+            &root_file,
+            Path::new(""),
+            "needle",
+            10,
+            3,
+            &display_root,
+            &|| true,
+        )
+        .unwrap();
+        assert!(truncated);
 
         let uncapped = collect_ranked_files(
             &root_file,
@@ -3238,7 +3158,7 @@ mod tests {
     }
 
     #[test]
-    fn scoped_search_honors_gitignore_globs_and_one_result_per_line() {
+    fn scoped_search_honors_gitignore_globs_and_emits_each_submatch() {
         let (registry, id, root) = fixture("scoped-search-options");
         fs::create_dir_all(root.join("src/nested")).unwrap();
         fs::create_dir(root.join("ignored")).unwrap();
@@ -3266,9 +3186,16 @@ mod tests {
         let results = repository
             .search_text(&id, Path::new("src"), "needle", 5_000, &options)
             .unwrap();
-        assert_eq!(results.len(), 1);
+        assert_eq!(results.len(), 3);
         assert_eq!(results[0].relative_path, "nested/match-a.php");
         assert_eq!(results[0].line_text, "needle needle needle");
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| (result.match_start, result.match_end))
+                .collect::<Vec<_>>(),
+            vec![(0, 6), (7, 13), (14, 20)]
+        );
         assert!(repository
             .search_text(
                 &id,

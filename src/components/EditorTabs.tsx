@@ -1,14 +1,10 @@
 import { Circle, X } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useRef, useState } from "react";
 import type { DragEvent, KeyboardEvent } from "react";
 import type { MouseEvent } from "react";
 import type { EditorDocument, ImageTab } from "../domain/workspace";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
-import {
-  gitStatusLabel,
-  gitStatusTitle,
-  type GitChangeStatus,
-} from "../domain/git";
+import { gitStatusLabel, gitStatusTitle, type GitChangeStatus } from "../domain/git";
 import { isDirty } from "../domain/workspace";
 import type { TabDropPosition } from "../domain/tabOrdering";
 import { getTabId, getTabPanelId } from "./tabIds";
@@ -17,6 +13,9 @@ import {
   readEditorTabDragPayload,
   writeEditorTabDragPayload,
 } from "./editorTabDrag";
+import { useOpenEditorsMru } from "../application/useOpenEditorsMru";
+import { OpenEditorsSwitcher } from "./OpenEditorsSwitcher";
+import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 
 export interface EditorTabsProps {
   documents: Array<EditorDocument | ImageTab | MarkdownPreviewTab>;
@@ -28,11 +27,7 @@ export interface EditorTabsProps {
   onActivate(path: string): void;
   onClose(path: string): void;
   onPin(path: string): void;
-  onReorder?(
-    fromPath: string,
-    toPath: string,
-    position: TabDropPosition,
-  ): void;
+  onReorder?(fromPath: string, toPath: string, position: TabDropPosition): void;
   onMove?(fromGroupId: string, toGroupId: string, path: string): void;
 }
 
@@ -49,10 +44,19 @@ function EditorTabsComponent({
   onReorder,
   onMove,
 }: EditorTabsProps) {
+  const stripRef = useRef<HTMLDivElement | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     path: string;
     position: TabDropPosition;
   } | null>(null);
+  const openEditorsMru = useOpenEditorsMru({
+    activePath,
+    entries: documents.map(({ name, path }) => ({ name, path })),
+    groupId: groupId ?? "editor-main",
+    onActivate,
+    projectId: normalizedWorkspaceRootKey(projectId),
+    stripRef,
+  });
 
   function handleKeyDown(index: number, event: KeyboardEvent<HTMLButtonElement>) {
     const nextIndex = getNextTabIndex(index, documents.length, event.key);
@@ -69,10 +73,7 @@ function EditorTabsComponent({
     });
   }
 
-  function handleAuxClick(
-    path: string,
-    event: MouseEvent<HTMLDivElement>,
-  ) {
+  function handleAuxClick(path: string, event: MouseEvent<HTMLDivElement>) {
     if (event.button !== 1) {
       return;
     }
@@ -142,79 +143,83 @@ function EditorTabsComponent({
   }
 
   return (
-    <div
-      aria-label="Open files"
-      className={`editor-tabs${documents.length === 0 ? " empty" : ""}`}
-      onDragOver={handleStripDragOver}
-      onDrop={handleStripDrop}
-      role="tablist"
-    >
-      {documents.map((document, index) => {
-        const dirty = isEditorDocument(document) && isDirty(document);
-        const active = document.path === activePath;
-        const preview = document.path === previewPath && !dirty;
-        const status = fileStatusesByPath?.[document.path];
+    <>
+      <div
+        aria-label="Open files"
+        className={`editor-tabs${documents.length === 0 ? " empty" : ""}`}
+        onDragOver={handleStripDragOver}
+        onDrop={handleStripDrop}
+        ref={stripRef}
+        role="tablist"
+      >
+        {documents.map((document, index) => {
+          const dirty = isEditorDocument(document) && isDirty(document);
+          const active = document.path === activePath;
+          const preview = document.path === previewPath && !dirty;
+          const status = fileStatusesByPath?.[document.path];
 
-        return (
-          <div
-            className={getEditorTabClassName(
-              active,
-              preview,
-              dirty,
-              dropTarget?.path === document.path
-                ? dropTarget.position
-                : null,
-            )}
-            draggable
-            key={document.path}
-            onAuxClick={(event) => handleAuxClick(document.path, event)}
-            onDragEnd={() => setDropTarget(null)}
-            onDragLeave={() => setDropTarget(null)}
-            onDragOver={(event) => handleDragOver(document.path, event)}
-            onDragStart={(event) => handleDragStart(document.path, event)}
-            onDrop={(event) => handleDrop(document.path, event)}
-          >
-            <button
-              aria-controls={getTabPanelId(document.path, groupId)}
-              aria-selected={active}
-              className="tab-main"
-              id={getTabId(document.path, groupId)}
-              onDoubleClick={() => onPin(document.path)}
-              onKeyDown={(event) => handleKeyDown(index, event)}
-              onClick={() => onActivate(document.path)}
-              role="tab"
-              tabIndex={active ? 0 : -1}
-              title={document.path}
-              type="button"
+          return (
+            <div
+              className={getEditorTabClassName(
+                active,
+                preview,
+                dirty,
+                dropTarget?.path === document.path ? dropTarget.position : null,
+              )}
+              draggable
+              key={document.path}
+              onAuxClick={(event) => handleAuxClick(document.path, event)}
+              onDragEnd={() => setDropTarget(null)}
+              onDragLeave={() => setDropTarget(null)}
+              onDragOver={(event) => handleDragOver(document.path, event)}
+              onDragStart={(event) => handleDragStart(document.path, event)}
+              onDrop={(event) => handleDrop(document.path, event)}
             >
-              {dirty ? (
-                <Circle aria-hidden="true" className="dirty-dot" size={8} />
-              ) : null}
-              <span className="tab-name">{document.name}</span>
-              {status ? (
-                <span
-                  aria-label={gitStatusTitle(status)}
-                  className={getEditorTabStatusClassName(
-                    status,
-                  )}
-                >
-                  {gitStatusLabel(status)}
-                </span>
-              ) : null}
-            </button>
-            <button
-              aria-label={`Close ${document.name}`}
-              className="tab-close"
-              onClick={() => onClose(document.path)}
-              title="Close"
-              type="button"
-            >
-              <X aria-hidden="true" size={14} />
-            </button>
-          </div>
-        );
-      })}
-    </div>
+              <button
+                aria-controls={getTabPanelId(document.path, groupId)}
+                aria-selected={active}
+                className="tab-main"
+                id={getTabId(document.path, groupId)}
+                onDoubleClick={() => onPin(document.path)}
+                onKeyDown={(event) => handleKeyDown(index, event)}
+                onClick={() => onActivate(document.path)}
+                role="tab"
+                tabIndex={active ? 0 : -1}
+                title={document.path}
+                type="button"
+              >
+                {dirty ? <Circle aria-hidden="true" className="dirty-dot" size={8} /> : null}
+                <span className="tab-name">{document.name}</span>
+                {status ? (
+                  <span
+                    aria-label={gitStatusTitle(status)}
+                    className={getEditorTabStatusClassName(status)}
+                  >
+                    {gitStatusLabel(status)}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                aria-label={`Close ${document.name}`}
+                className="tab-close"
+                onClick={() => onClose(document.path)}
+                title="Close"
+                type="button"
+              >
+                <X aria-hidden="true" size={14} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <OpenEditorsSwitcher
+        activeIndex={openEditorsMru.activeIndex}
+        entries={openEditorsMru.entries}
+        isOpen={openEditorsMru.isOpen}
+        onCancel={openEditorsMru.cancel}
+        onSelect={openEditorsMru.select}
+      />
+    </>
   );
 }
 
@@ -226,11 +231,7 @@ function isEditorDocument(
 
 export const EditorTabs = memo(EditorTabsComponent);
 
-function getNextTabIndex(
-  currentIndex: number,
-  tabCount: number,
-  key: string,
-): number | null {
+function getNextTabIndex(currentIndex: number, tabCount: number, key: string): number | null {
   if (key === "ArrowLeft") {
     return currentIndex === 0 ? tabCount - 1 : currentIndex - 1;
   }

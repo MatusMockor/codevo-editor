@@ -62,6 +62,7 @@ describe("CommandPalette app-owned quick input integration", () => {
               },
             ]}
             context={CONTEXT}
+            initialQuery=""
             isOpen={isOpen}
             onClose={() => setIsOpen(false)}
             onCommandError={vi.fn()}

@@ -3,6 +3,7 @@ import {
   countSourceLines,
   countStructuralTokens,
   evaluateHotspotSizes,
+  formatHotspotBaseline,
   isProductionSource,
   reducedBaselineUpdate,
 } from "./check-hotspot-size-budget.mjs";
@@ -152,6 +153,24 @@ describe("hotspot size ratchet", () => {
     expect(result.baseline.files).toEqual({
       "src/reduced.ts": { rawLines: 9, structuralTokens: 9 },
     });
+  });
+
+  it("serializes an updated baseline in the repository's Prettier format", async () => {
+    const baseline = {
+      files: {
+        "src/reduced.ts": { rawLines: 9, structuralTokens: 9 },
+      },
+      productionLineLimit: 20,
+      productionStructuralTokenLimit: 100,
+      trackedTests: ["src/application/useWorkbenchController.preview.test.tsx"],
+    };
+
+    const serialized = await formatHotspotBaseline(baseline);
+
+    expect(serialized).toContain(
+      '"trackedTests": ["src/application/useWorkbenchController.preview.test.tsx"]',
+    );
+    expect(serialized.endsWith("\n")).toBe(true);
   });
 
   it("never raises a stored raw or structural limit during update", () => {

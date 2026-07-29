@@ -9,22 +9,260 @@ use crate::lsp_features::{
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory, WorkspaceFileChange,
     WorkspaceFileChangeType,
 };
-use crate::lsp_session::JavaScriptTypeScriptLanguageServerRegistry;
+use crate::lsp_session::{
+    ExactSessionNotificationOutcome, JavaScriptTypeScriptLanguageServerRegistry,
+    ProjectResyncRequestOutcome,
+};
 use std::ffi::OsString;
 use std::{
     collections::HashMap,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
+        Arc, Mutex, Weak,
+    },
+    thread,
+    time::Duration,
 };
 use tauri::{AppHandle, Manager};
 
 pub struct JavaScriptTypeScriptWorkspaceWatchRegistry {
-    sessions: Mutex<HashMap<String, Box<dyn WorkspaceWatchSession>>>,
+    next_generation: AtomicU64,
+    sessions: Mutex<HashMap<String, JavaScriptTypeScriptWorkspaceWatchSession>>,
+}
+
+struct JavaScriptTypeScriptWorkspaceWatchSession {
+    authority: Arc<JavaScriptTypeScriptWatchSinkAuthority>,
+    session: Box<dyn WorkspaceWatchSession>,
+}
+
+impl JavaScriptTypeScriptWorkspaceWatchSession {
+    fn stop(&mut self) {
+        self.authority.revoke();
+        self.session.stop();
+    }
+}
+
+const MAX_JS_TS_WATCH_BATCH_EVENTS: usize = 4_096;
+const JS_TS_WATCH_DELIVERY_QUEUE_CAPACITY: usize = 64;
+const JS_TS_WATCH_RETRY_DELAY: Duration = Duration::from_millis(50);
+
+struct JavaScriptTypeScriptWatchSinkAuthority {
+    active: AtomicBool,
+    generation: u64,
+}
+
+impl JavaScriptTypeScriptWatchSinkAuthority {
+    fn new(generation: u64) -> Self {
+        Self {
+            active: AtomicBool::new(true),
+            generation,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
+
+    fn revoke(&self) {
+        self.active.store(false, Ordering::Release);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct JavaScriptTypeScriptWatchDelivery {
+    generation: u64,
+    expected_session_id: Option<u64>,
+    changes: Vec<WorkspaceFileChange>,
+    rescan_required: bool,
+}
+
+trait JavaScriptTypeScriptWatchDeliveryTarget: Send + Sync + 'static {
+    /// Returns `true` only after the delivery has reached the exact current
+    /// language-server session or an exact-session resync has been admitted.
+    /// Returning `false` keeps the delivery queued for a bounded retry.
+    fn deliver(&self, root_path: &str, delivery: &mut JavaScriptTypeScriptWatchDelivery) -> bool;
+}
+
+struct AppHandleJavaScriptTypeScriptWatchDeliveryTarget {
+    app: AppHandle,
+}
+
+impl JavaScriptTypeScriptWatchDeliveryTarget for AppHandleJavaScriptTypeScriptWatchDeliveryTarget {
+    fn deliver(&self, root_path: &str, delivery: &mut JavaScriptTypeScriptWatchDelivery) -> bool {
+        let Some(registry) = self
+            .app
+            .try_state::<JavaScriptTypeScriptLanguageServerRegistry>()
+        else {
+            return false;
+        };
+        let session_id = match delivery.expected_session_id {
+            Some(session_id) => session_id,
+            None => {
+                let crate::lsp_session::LanguageServerRuntimeStatus::Running { session_id, .. } =
+                    registry.status(root_path)
+                else {
+                    return false;
+                };
+                delivery.expected_session_id = Some(session_id);
+                session_id
+            }
+        };
+
+        if !delivery.changes.is_empty() {
+            let factory = LspTextDocumentFeatureRequestFactory;
+            let request = factory.did_change_watched_files(&delivery.changes);
+            match registry.send_notification_for_session_outcome(
+                root_path,
+                session_id,
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: request.method,
+                    params: request.params,
+                },
+            ) {
+                Ok(ExactSessionNotificationOutcome::Admitted) => {}
+                Ok(ExactSessionNotificationOutcome::Stale) => {
+                    delivery.expected_session_id = None;
+                    delivery.changes.clear();
+                    delivery.rescan_required = true;
+                    return false;
+                }
+                Err(_) => {
+                    return settle_project_resync(
+                        registry.request_project_resync(root_path, session_id),
+                        delivery,
+                    );
+                }
+            }
+        }
+
+        !delivery.rescan_required
+            || settle_project_resync(
+                registry.request_project_resync(root_path, session_id),
+                delivery,
+            )
+    }
+}
+
+fn settle_project_resync(
+    outcome: Result<ProjectResyncRequestOutcome, String>,
+    delivery: &mut JavaScriptTypeScriptWatchDelivery,
+) -> bool {
+    match outcome {
+        Ok(
+            ProjectResyncRequestOutcome::Admitted
+            | ProjectResyncRequestOutcome::SupersededByFreshSession,
+        ) => true,
+        Ok(ProjectResyncRequestOutcome::Unavailable) => {
+            delivery.expected_session_id = None;
+            delivery.changes.clear();
+            delivery.rescan_required = true;
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+#[derive(Clone)]
+struct JavaScriptTypeScriptWatchDispatcher {
+    sender: SyncSender<JavaScriptTypeScriptWatchDelivery>,
+    overflowed: Arc<AtomicBool>,
+}
+
+impl JavaScriptTypeScriptWatchDispatcher {
+    fn spawn(
+        root_path: String,
+        authority: &Arc<JavaScriptTypeScriptWatchSinkAuthority>,
+        target: Arc<dyn JavaScriptTypeScriptWatchDeliveryTarget>,
+    ) -> Self {
+        let (sender, receiver) = sync_channel(JS_TS_WATCH_DELIVERY_QUEUE_CAPACITY);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let worker_overflowed = Arc::clone(&overflowed);
+        let worker_authority = Arc::downgrade(authority);
+        thread::Builder::new()
+            .name(format!("js-ts-watch-{}", authority.generation))
+            .spawn(move || {
+                run_delivery_worker(
+                    &root_path,
+                    worker_authority,
+                    receiver,
+                    worker_overflowed,
+                    target,
+                );
+            })
+            .expect("failed to start JavaScript/TypeScript watch delivery worker");
+        Self { sender, overflowed }
+    }
+
+    fn enqueue(&self, mut delivery: JavaScriptTypeScriptWatchDelivery) {
+        if delivery.rescan_required {
+            self.overflowed.store(true, Ordering::Release);
+            delivery.rescan_required = false;
+        }
+        match self.sender.try_send(delivery) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                self.overflowed.store(true, Ordering::Release);
+            }
+            Err(TrySendError::Disconnected(_)) => {}
+        }
+    }
+}
+
+fn run_delivery_worker(
+    root_path: &str,
+    authority: Weak<JavaScriptTypeScriptWatchSinkAuthority>,
+    receiver: Receiver<JavaScriptTypeScriptWatchDelivery>,
+    overflowed: Arc<AtomicBool>,
+    target: Arc<dyn JavaScriptTypeScriptWatchDeliveryTarget>,
+) {
+    while let Some(authority) = authority.upgrade() {
+        if !authority.is_active() {
+            break;
+        }
+        let mut delivery = match receiver.recv_timeout(JS_TS_WATCH_RETRY_DELAY) {
+            Ok(delivery) => delivery,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if !overflowed.swap(false, Ordering::AcqRel) {
+                    continue;
+                }
+                JavaScriptTypeScriptWatchDelivery {
+                    generation: authority.generation,
+                    expected_session_id: None,
+                    changes: Vec::new(),
+                    rescan_required: true,
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        if delivery.generation != authority.generation {
+            continue;
+        }
+        if overflowed.swap(false, Ordering::AcqRel) {
+            delivery.rescan_required = true;
+        }
+        while authority.is_active() {
+            if target.deliver(root_path, &mut delivery) {
+                if delivery.rescan_required {
+                    // One admitted exact-session rebuild covers every event
+                    // already queued before admission. Drain those wakeups so
+                    // they cannot repeatedly exhaust the auto-restart budget.
+                    overflowed.store(false, Ordering::Release);
+                    while receiver.try_recv().is_ok() {}
+                }
+                break;
+            }
+            thread::sleep(JS_TS_WATCH_RETRY_DELAY);
+        }
+    }
 }
 
 impl JavaScriptTypeScriptWorkspaceWatchRegistry {
     pub fn new() -> Self {
         Self {
+            next_generation: AtomicU64::new(0),
             sessions: Mutex::new(HashMap::new()),
         }
     }
@@ -36,9 +274,15 @@ impl JavaScriptTypeScriptWorkspaceWatchRegistry {
             CommandWatchmanAvailability,
         );
 
-        self.start_with_watcher(root_path, &watcher, |root_key| {
+        self.start_with_watcher(root_path, &watcher, |root_key, authority| {
+            let dispatcher = JavaScriptTypeScriptWatchDispatcher::spawn(
+                root_key.to_string(),
+                &authority,
+                Arc::new(AppHandleJavaScriptTypeScriptWatchDeliveryTarget { app }),
+            );
             Arc::new(JavaScriptTypeScriptWorkspaceWatchSink {
-                app,
+                authority,
+                dispatcher,
                 root_path: root_key.to_string(),
             })
         })
@@ -48,7 +292,10 @@ impl JavaScriptTypeScriptWorkspaceWatchRegistry {
         &self,
         root_path: &str,
         watcher: &dyn WorkspaceFileWatcher,
-        sink_factory: impl FnOnce(&str) -> Arc<dyn WorkspaceWatchEventSink>,
+        sink_factory: impl FnOnce(
+            &str,
+            Arc<JavaScriptTypeScriptWatchSinkAuthority>,
+        ) -> Arc<dyn WorkspaceWatchEventSink>,
     ) -> Result<(), String> {
         let root = PathBuf::from(root_path)
             .canonicalize()
@@ -60,19 +307,34 @@ impl JavaScriptTypeScriptWorkspaceWatchRegistry {
             return Ok(());
         }
 
-        let sink = sink_factory(&root_key);
-        let session = watcher
-            .watch(WorkspaceWatchRequest::new(root), sink)
-            .map_err(|error| {
-                format!("Failed to start JavaScript/TypeScript workspace watcher: {error}")
-            })?;
+        let generation = self
+            .next_generation
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |generation| {
+                generation.checked_add(1)
+            })
+            .map_err(|_| "JavaScript/TypeScript watch generation overflowed".to_string())?
+            + 1;
+        let authority = Arc::new(JavaScriptTypeScriptWatchSinkAuthority::new(generation));
+        let sink = sink_factory(&root_key, Arc::clone(&authority));
+        let session = match watcher.watch(WorkspaceWatchRequest::new(root), sink) {
+            Ok(session) => session,
+            Err(error) => {
+                authority.revoke();
+                return Err(format!(
+                    "Failed to start JavaScript/TypeScript workspace watcher: {error}"
+                ));
+            }
+        };
 
-        sessions.insert(root_key, session);
+        sessions.insert(
+            root_key,
+            JavaScriptTypeScriptWorkspaceWatchSession { authority, session },
+        );
         Ok(())
     }
 
     pub fn stop(&self, root_path: &str) {
-        let Some(mut session) = self
+        let Some(mut watch_session) = self
             .sessions
             .lock()
             .ok()
@@ -81,7 +343,7 @@ impl JavaScriptTypeScriptWorkspaceWatchRegistry {
             return;
         };
 
-        session.stop();
+        watch_session.stop();
     }
 
     pub fn stop_all(&self) {
@@ -96,8 +358,8 @@ impl JavaScriptTypeScriptWorkspaceWatchRegistry {
             })
             .unwrap_or_default();
 
-        for mut session in sessions {
-            session.stop();
+        for mut watch_session in sessions {
+            watch_session.stop();
         }
     }
 }
@@ -115,7 +377,8 @@ impl Drop for JavaScriptTypeScriptWorkspaceWatchRegistry {
 }
 
 struct JavaScriptTypeScriptWorkspaceWatchSink {
-    app: AppHandle,
+    authority: Arc<JavaScriptTypeScriptWatchSinkAuthority>,
+    dispatcher: JavaScriptTypeScriptWatchDispatcher,
     root_path: String,
 }
 
@@ -123,40 +386,45 @@ impl crate::file_watcher::WorkspaceWatchEventSink for JavaScriptTypeScriptWorksp
     fn error(&self, _error: WorkspaceWatchError) {}
 
     fn publish(&self, batch: WorkspaceWatchEventBatch) {
-        let changes = watched_file_changes_for_events(&self.root_path, &batch.events);
-
-        if changes.is_empty() {
+        if !self.authority.is_active() {
             return;
         }
-
-        let Some(registry) = self
-            .app
-            .try_state::<JavaScriptTypeScriptLanguageServerRegistry>()
-        else {
-            return;
+        let force_rescan = batch.events.len() > MAX_JS_TS_WATCH_BATCH_EVENTS;
+        let events = if force_rescan {
+            &[][..]
+        } else {
+            batch.events.as_slice()
         };
-
-        let factory = LspTextDocumentFeatureRequestFactory;
-        let request = factory.did_change_watched_files(&changes);
-        let _ = registry.send_notification(
-            &self.root_path,
-            &JsonRpcNotification {
-                jsonrpc: "2.0".to_string(),
-                method: request.method,
-                params: request.params,
-            },
-        );
+        let (changes, rescan_required) =
+            watched_file_changes_for_events(&self.root_path, events, force_rescan);
+        if changes.is_empty() && !rescan_required {
+            return;
+        }
+        self.dispatcher.enqueue(JavaScriptTypeScriptWatchDelivery {
+            generation: self.authority.generation,
+            expected_session_id: None,
+            changes,
+            rescan_required,
+        });
     }
 }
 
 fn watched_file_changes_for_events(
     root_path: &str,
     events: &[WorkspaceWatchEvent],
-) -> Vec<WorkspaceFileChange> {
-    events
+    force_rescan: bool,
+) -> (Vec<WorkspaceFileChange>, bool) {
+    let changes = events
         .iter()
+        .filter(|event| !matches!(event.kind, WorkspaceWatchEventKind::RescanRequired))
         .flat_map(|event| watched_file_changes_for_event(root_path, event))
-        .collect()
+        .collect();
+    let rescan_required = force_rescan
+        || events.iter().any(|event| {
+            matches!(event.kind, WorkspaceWatchEventKind::RescanRequired)
+                && rescan_event_matches_root(root_path, event)
+        });
+    (changes, rescan_required)
 }
 
 fn watched_file_changes_for_event(
@@ -210,6 +478,15 @@ fn watched_file_changes_for_event(
         }
         WorkspaceWatchEventKind::RescanRequired => Vec::new(),
     }
+}
+
+fn rescan_event_matches_root(root_path: &str, event: &WorkspaceWatchEvent) -> bool {
+    normalize_path(Path::new(&event.root_path)) == normalize_path(Path::new(root_path))
+        && normalize_path(Path::new(&event.path)) == normalize_path(Path::new(root_path))
+        && event.relative_path.is_empty()
+        && event.previous_path.is_none()
+        && event.previous_relative_path.is_none()
+        && event.file_kind == Some(WorkspaceWatchFileKind::Directory)
 }
 
 fn watched_change(
@@ -279,9 +556,9 @@ fn workspace_watch_id(root_path: &Path) -> String {
 }
 
 fn remove_workspace_watch_session(
-    sessions: &mut HashMap<String, Box<dyn WorkspaceWatchSession>>,
+    sessions: &mut HashMap<String, JavaScriptTypeScriptWorkspaceWatchSession>,
     root_path: &str,
-) -> Option<Box<dyn WorkspaceWatchSession>> {
+) -> Option<JavaScriptTypeScriptWorkspaceWatchSession> {
     for root_key in workspace_watch_id_candidates(&PathBuf::from(root_path)) {
         if let Some(session) = sessions.remove(&root_key) {
             return Some(session);
@@ -366,25 +643,59 @@ fn path_key(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{watched_file_changes_for_events, JavaScriptTypeScriptWorkspaceWatchRegistry};
+    use super::{
+        settle_project_resync, watched_file_changes_for_events, JavaScriptTypeScriptWatchDelivery,
+        JavaScriptTypeScriptWatchDeliveryTarget, JavaScriptTypeScriptWatchDispatcher,
+        JavaScriptTypeScriptWatchSinkAuthority, JavaScriptTypeScriptWorkspaceWatchRegistry,
+        JavaScriptTypeScriptWorkspaceWatchSink,
+    };
     use crate::file_watcher::{
         WorkspaceFileWatcher, WorkspaceWatchBackend, WorkspaceWatchError, WorkspaceWatchEvent,
         WorkspaceWatchEventBatch, WorkspaceWatchEventKind, WorkspaceWatchEventSink,
         WorkspaceWatchFileKind, WorkspaceWatchRequest, WorkspaceWatchSession,
     };
     use crate::lsp_features::WorkspaceFileChangeType;
+    use crate::lsp_session::ProjectResyncRequestOutcome;
     use std::{
         fs, io,
         path::{Path, PathBuf},
-        sync::{Arc, Mutex},
-        time::{SystemTime, UNIX_EPOCH},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     const WORKSPACE_ROOT: &str = "/workspace";
 
     #[test]
+    fn unavailable_resync_rebinds_as_rescan_without_replaying_concrete_changes() {
+        let mut delivery = JavaScriptTypeScriptWatchDelivery {
+            generation: 1,
+            expected_session_id: Some(9),
+            changes: vec![crate::lsp_features::WorkspaceFileChange {
+                path: "/workspace/src/index.ts".to_string(),
+                change_type: WorkspaceFileChangeType::Changed,
+            }],
+            rescan_required: false,
+        };
+
+        assert!(!settle_project_resync(
+            Ok(ProjectResyncRequestOutcome::Unavailable),
+            &mut delivery,
+        ));
+        assert_eq!(delivery.expected_session_id, None);
+        assert!(delivery.changes.is_empty());
+        assert!(delivery.rescan_required);
+        assert!(settle_project_resync(
+            Ok(ProjectResyncRequestOutcome::SupersededByFreshSession),
+            &mut delivery,
+        ));
+    }
+
+    #[test]
     fn maps_javascript_typescript_file_events_to_lsp_changes() {
-        let changes = watched_file_changes_for_events(
+        let (changes, rescan_required) = watched_file_changes_for_events(
             WORKSPACE_ROOT,
             &[
                 event(WorkspaceWatchEventKind::Created, "/workspace/src/User.ts"),
@@ -392,8 +703,10 @@ mod tests {
                 event(WorkspaceWatchEventKind::Deleted, "/workspace/src/old.js"),
                 event(WorkspaceWatchEventKind::Modified, "/workspace/package.json"),
             ],
+            false,
         );
 
+        assert!(!rescan_required);
         assert_eq!(changes.len(), 4);
         assert_eq!(changes[0].path, "/workspace/src/User.ts");
         assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Created);
@@ -407,7 +720,7 @@ mod tests {
 
     #[test]
     fn maps_package_lockfile_events_to_lsp_changes() {
-        let changes = watched_file_changes_for_events(
+        let (changes, rescan_required) = watched_file_changes_for_events(
             WORKSPACE_ROOT,
             &[
                 event(
@@ -421,8 +734,10 @@ mod tests {
                 event(WorkspaceWatchEventKind::Modified, "/workspace/yarn.lock"),
                 event(WorkspaceWatchEventKind::Modified, "/workspace/bun.lockb"),
             ],
+            false,
         );
 
+        assert!(!rescan_required);
         assert_eq!(changes.len(), 4);
         assert_eq!(changes[0].path, "/workspace/package-lock.json");
         assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Changed);
@@ -442,8 +757,10 @@ mod tests {
         );
         rename.previous_path = Some("/workspace/src/User.ts".to_string());
 
-        let changes = watched_file_changes_for_events(WORKSPACE_ROOT, &[rename]);
+        let (changes, rescan_required) =
+            watched_file_changes_for_events(WORKSPACE_ROOT, &[rename], false);
 
+        assert!(!rescan_required);
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0].path, "/workspace/src/User.ts");
         assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Deleted);
@@ -452,25 +769,43 @@ mod tests {
     }
 
     #[test]
-    fn maps_directory_events_and_ignores_php_files_and_rescan_events() {
+    fn preserves_concrete_changes_and_marks_an_exact_root_rescan() {
         let mut directory = event(WorkspaceWatchEventKind::Created, "/workspace/src");
         directory.file_kind = Some(WorkspaceWatchFileKind::Directory);
 
-        let changes = watched_file_changes_for_events(
+        let (changes, rescan_required) = watched_file_changes_for_events(
             WORKSPACE_ROOT,
             &[
                 directory,
                 event(WorkspaceWatchEventKind::Modified, "/workspace/src/User.php"),
-                event(
-                    WorkspaceWatchEventKind::RescanRequired,
-                    "/workspace/src/User.ts",
-                ),
+                root_rescan_event(WORKSPACE_ROOT),
             ],
+            false,
         );
 
+        assert!(rescan_required);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].path, "/workspace/src");
         assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Created);
+    }
+
+    #[test]
+    fn rejects_foreign_rescan_without_losing_valid_concrete_changes() {
+        let (changes, rescan_required) = watched_file_changes_for_events(
+            WORKSPACE_ROOT,
+            &[
+                event(
+                    WorkspaceWatchEventKind::Created,
+                    "/workspace/packages/web/src/new.ts",
+                ),
+                root_rescan_event("/other-workspace"),
+            ],
+            false,
+        );
+
+        assert!(!rescan_required);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "/workspace/packages/web/src/new.ts");
     }
 
     #[test]
@@ -479,8 +814,10 @@ mod tests {
         rename.file_kind = Some(WorkspaceWatchFileKind::Directory);
         rename.previous_path = Some("/workspace/src/components".to_string());
 
-        let changes = watched_file_changes_for_events(WORKSPACE_ROOT, &[rename]);
+        let (changes, rescan_required) =
+            watched_file_changes_for_events(WORKSPACE_ROOT, &[rename], false);
 
+        assert!(!rescan_required);
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0].path, "/workspace/src/components");
         assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Deleted);
@@ -490,7 +827,7 @@ mod tests {
 
     #[test]
     fn ignores_javascript_typescript_events_outside_workspace_root() {
-        let changes = watched_file_changes_for_events(
+        let (changes, rescan_required) = watched_file_changes_for_events(
             "/workspace/root",
             &[
                 event(
@@ -506,8 +843,10 @@ mod tests {
                     "/workspace/root/../root2/src/old.js",
                 ),
             ],
+            false,
         );
 
+        assert!(!rescan_required);
         assert!(changes.is_empty());
     }
 
@@ -531,16 +870,175 @@ mod tests {
         );
         outside_to_outside.previous_path = Some("/workspace/other/src/OldOutside.ts".to_string());
 
-        let changes = watched_file_changes_for_events(
+        let (changes, rescan_required) = watched_file_changes_for_events(
             "/workspace/root",
             &[outside_to_inside, inside_to_outside, outside_to_outside],
+            false,
         );
 
+        assert!(!rescan_required);
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0].path, "/workspace/root/src/NewUser.ts");
         assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Created);
         assert_eq!(changes[1].path, "/workspace/root/src/User.ts");
         assert_eq!(changes[1].change_type, WorkspaceFileChangeType::Deleted);
+    }
+
+    #[test]
+    fn oversized_batch_fails_closed_to_an_authoritative_rescan() {
+        let target = RecordingDeliveryTarget::default();
+        let authority = Arc::new(JavaScriptTypeScriptWatchSinkAuthority::new(4));
+        let sink = watch_sink(WORKSPACE_ROOT, &authority, target.clone());
+        let events = (0..=super::MAX_JS_TS_WATCH_BATCH_EVENTS)
+            .map(|index| {
+                event(
+                    WorkspaceWatchEventKind::Modified,
+                    &format!("/workspace/packages/app-{index}/src/index.ts"),
+                )
+            })
+            .collect();
+
+        sink.publish(WorkspaceWatchEventBatch { events });
+
+        let deliveries = target.wait_for(1);
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].0, WORKSPACE_ROOT);
+        assert_eq!(deliveries[0].1.generation, 4);
+        assert!(deliveries[0].1.changes.is_empty());
+        assert!(deliveries[0].1.rescan_required);
+    }
+
+    #[test]
+    fn delivery_worker_retries_until_admission_succeeds() {
+        let target = RetryDeliveryTarget::new(2);
+        let authority = Arc::new(JavaScriptTypeScriptWatchSinkAuthority::new(5));
+        let sink = JavaScriptTypeScriptWorkspaceWatchSink {
+            authority: Arc::clone(&authority),
+            dispatcher: JavaScriptTypeScriptWatchDispatcher::spawn(
+                WORKSPACE_ROOT.to_string(),
+                &authority,
+                Arc::new(target.clone()),
+            ),
+            root_path: WORKSPACE_ROOT.to_string(),
+        };
+
+        sink.publish(WorkspaceWatchEventBatch {
+            events: vec![event(
+                WorkspaceWatchEventKind::Modified,
+                "/workspace/packages/web/src/index.ts",
+            )],
+        });
+
+        target.wait_for_success();
+        assert_eq!(target.attempts.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn stopping_a_watch_does_not_wait_for_a_blocking_delivery_target() {
+        let registry = JavaScriptTypeScriptWorkspaceWatchRegistry::new();
+        let watcher = RecordingWatcher::default();
+        let target = BlockingDeliveryTarget::default();
+        let root = temp_workspace("watch-blocking-target");
+        registry
+            .start_with_watcher(&path_string(&root), &watcher, |root_key, authority| {
+                Arc::new(JavaScriptTypeScriptWorkspaceWatchSink {
+                    dispatcher: JavaScriptTypeScriptWatchDispatcher::spawn(
+                        root_key.to_string(),
+                        &authority,
+                        Arc::new(target.clone()),
+                    ),
+                    authority,
+                    root_path: root_key.to_string(),
+                })
+            })
+            .expect("start watch");
+        watcher.sink(0).publish(WorkspaceWatchEventBatch {
+            events: vec![root_rescan_event(&path_string(&root))],
+        });
+        target.wait_until_entered();
+
+        let started = Instant::now();
+        registry.stop(&path_string(&root));
+
+        assert!(started.elapsed() < Duration::from_millis(100));
+    }
+
+    #[test]
+    fn admitted_rescan_drains_queued_rescan_storm_without_restart_loop() {
+        let target = BlockingDeliveryTarget::default();
+        let authority = Arc::new(JavaScriptTypeScriptWatchSinkAuthority::new(6));
+        let dispatcher = JavaScriptTypeScriptWatchDispatcher::spawn(
+            WORKSPACE_ROOT.to_string(),
+            &authority,
+            Arc::new(target.clone()),
+        );
+        let rescan = || JavaScriptTypeScriptWatchDelivery {
+            generation: 6,
+            expected_session_id: None,
+            changes: Vec::new(),
+            rescan_required: true,
+        };
+
+        dispatcher.enqueue(rescan());
+        target.wait_until_entered();
+        for _ in 0..64 {
+            dispatcher.enqueue(rescan());
+        }
+        std::thread::sleep(Duration::from_millis(350));
+
+        assert_eq!(target.attempts(), 1);
+        authority.revoke();
+    }
+
+    #[test]
+    fn watch_registry_rejects_stale_a_b_a_sink_and_preserves_exact_root() {
+        let registry = JavaScriptTypeScriptWorkspaceWatchRegistry::new();
+        let watcher = RecordingWatcher::default();
+        let target = RecordingDeliveryTarget::default();
+        let root_a = temp_workspace("watch-a-b-a");
+        let root_b = temp_workspace("watch-a-b-a-sibling");
+
+        registry
+            .start_with_watcher(&path_string(&root_a), &watcher, |root_key, authority| {
+                Arc::new(watch_sink(root_key, &authority, target.clone()))
+            })
+            .expect("start A watch");
+        registry
+            .start_with_watcher(&path_string(&root_b), &watcher, |root_key, authority| {
+                Arc::new(watch_sink(root_key, &authority, target.clone()))
+            })
+            .expect("start B watch");
+        registry.stop(&path_string(&root_a));
+        registry
+            .start_with_watcher(&path_string(&root_a), &watcher, |root_key, authority| {
+                Arc::new(watch_sink(root_key, &authority, target.clone()))
+            })
+            .expect("restart A watch");
+
+        let stale_a = watcher.sink(0);
+        let current_b = watcher.sink(1);
+        let current_a = watcher.sink(2);
+        stale_a.publish(WorkspaceWatchEventBatch {
+            events: vec![root_rescan_event(&path_string(&root_a))],
+        });
+        current_b.publish(WorkspaceWatchEventBatch {
+            events: vec![root_rescan_event(&path_string(&root_b))],
+        });
+        current_a.publish(WorkspaceWatchEventBatch {
+            events: vec![root_rescan_event(&path_string(&root_a))],
+        });
+
+        let deliveries = target.wait_for(2);
+        assert_eq!(deliveries.len(), 2);
+        assert!(deliveries
+            .iter()
+            .any(|(root, delivery)| root == &path_string(&root_b) && delivery.generation == 2));
+        assert!(deliveries
+            .iter()
+            .any(|(root, delivery)| root == &path_string(&root_a) && delivery.generation == 3));
+        assert!(deliveries
+            .iter()
+            .all(|(_, delivery)| delivery.rescan_required));
     }
 
     #[test]
@@ -690,16 +1188,31 @@ mod tests {
     }
 
     fn event(kind: WorkspaceWatchEventKind, path: &str) -> WorkspaceWatchEvent {
+        let rescan = matches!(kind, WorkspaceWatchEventKind::RescanRequired);
         WorkspaceWatchEvent {
             backend: WorkspaceWatchBackend::Native,
-            file_kind: Some(WorkspaceWatchFileKind::File),
+            file_kind: Some(if rescan {
+                WorkspaceWatchFileKind::Directory
+            } else {
+                WorkspaceWatchFileKind::File
+            }),
             kind,
             path: path.to_string(),
             previous_path: None,
             previous_relative_path: None,
-            relative_path: path.trim_start_matches("/workspace/").to_string(),
+            relative_path: if rescan {
+                String::new()
+            } else {
+                path.trim_start_matches("/workspace/").to_string()
+            },
             root_path: WORKSPACE_ROOT.to_string(),
         }
+    }
+
+    fn root_rescan_event(root_path: &str) -> WorkspaceWatchEvent {
+        let mut event = event(WorkspaceWatchEventKind::RescanRequired, root_path);
+        event.root_path = root_path.to_string();
+        event
     }
 
     fn start_with_watcher(
@@ -708,14 +1221,148 @@ mod tests {
         watcher: &RecordingWatcher,
     ) {
         registry
-            .start_with_watcher(&path_string(root), watcher, |_| {
+            .start_with_watcher(&path_string(root), watcher, |_, _| {
                 Arc::new(NoopWatchSink) as Arc<dyn WorkspaceWatchEventSink>
             })
             .expect("start workspace watch");
     }
 
+    fn watch_sink(
+        root_path: &str,
+        authority: &Arc<JavaScriptTypeScriptWatchSinkAuthority>,
+        target: RecordingDeliveryTarget,
+    ) -> JavaScriptTypeScriptWorkspaceWatchSink {
+        JavaScriptTypeScriptWorkspaceWatchSink {
+            authority: Arc::clone(authority),
+            dispatcher: JavaScriptTypeScriptWatchDispatcher::spawn(
+                root_path.to_string(),
+                authority,
+                Arc::new(target),
+            ),
+            root_path: root_path.to_string(),
+        }
+    }
+
+    type RecordedDelivery = (String, JavaScriptTypeScriptWatchDelivery);
+
+    #[derive(Clone, Default)]
+    struct RecordingDeliveryTarget {
+        deliveries: Arc<Mutex<Vec<RecordedDelivery>>>,
+    }
+
+    impl RecordingDeliveryTarget {
+        fn wait_for(&self, count: usize) -> Vec<RecordedDelivery> {
+            for _ in 0..100 {
+                let deliveries = self.deliveries.lock().expect("deliveries").clone();
+                if deliveries.len() >= count {
+                    return deliveries;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            self.deliveries.lock().expect("deliveries").clone()
+        }
+    }
+
+    impl JavaScriptTypeScriptWatchDeliveryTarget for RecordingDeliveryTarget {
+        fn deliver(
+            &self,
+            root_path: &str,
+            delivery: &mut JavaScriptTypeScriptWatchDelivery,
+        ) -> bool {
+            self.deliveries
+                .lock()
+                .expect("deliveries")
+                .push((root_path.to_string(), delivery.clone()));
+            true
+        }
+    }
+
+    #[derive(Clone)]
+    struct RetryDeliveryTarget {
+        failures_remaining: Arc<AtomicUsize>,
+        attempts: Arc<AtomicUsize>,
+        succeeded: Arc<AtomicBool>,
+    }
+
+    impl RetryDeliveryTarget {
+        fn new(failures: usize) -> Self {
+            Self {
+                failures_remaining: Arc::new(AtomicUsize::new(failures)),
+                attempts: Arc::new(AtomicUsize::new(0)),
+                succeeded: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn wait_for_success(&self) {
+            for _ in 0..100 {
+                if self.succeeded.load(Ordering::Acquire) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("delivery was not admitted");
+        }
+    }
+
+    impl JavaScriptTypeScriptWatchDeliveryTarget for RetryDeliveryTarget {
+        fn deliver(
+            &self,
+            _root_path: &str,
+            _delivery: &mut JavaScriptTypeScriptWatchDelivery,
+        ) -> bool {
+            self.attempts.fetch_add(1, Ordering::AcqRel);
+            if self
+                .failures_remaining
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return false;
+            }
+            self.succeeded.store(true, Ordering::Release);
+            true
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct BlockingDeliveryTarget {
+        entered: Arc<AtomicBool>,
+        attempts: Arc<AtomicUsize>,
+    }
+
+    impl BlockingDeliveryTarget {
+        fn wait_until_entered(&self) {
+            for _ in 0..100 {
+                if self.entered.load(Ordering::Acquire) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("blocking target was not entered");
+        }
+
+        fn attempts(&self) -> usize {
+            self.attempts.load(Ordering::Acquire)
+        }
+    }
+
+    impl JavaScriptTypeScriptWatchDeliveryTarget for BlockingDeliveryTarget {
+        fn deliver(
+            &self,
+            _root_path: &str,
+            _delivery: &mut JavaScriptTypeScriptWatchDelivery,
+        ) -> bool {
+            self.attempts.fetch_add(1, Ordering::AcqRel);
+            self.entered.store(true, Ordering::Release);
+            std::thread::sleep(Duration::from_millis(250));
+            true
+        }
+    }
+
     #[derive(Clone, Default)]
     struct RecordingWatcher {
+        sinks: Arc<Mutex<Vec<Arc<dyn WorkspaceWatchEventSink>>>>,
         started: Arc<Mutex<Vec<PathBuf>>>,
         stopped: Arc<Mutex<Vec<PathBuf>>>,
     }
@@ -728,18 +1375,23 @@ mod tests {
         fn stopped_roots(&self) -> Vec<PathBuf> {
             self.stopped.lock().expect("stopped roots").clone()
         }
+
+        fn sink(&self, index: usize) -> Arc<dyn WorkspaceWatchEventSink> {
+            Arc::clone(&self.sinks.lock().expect("watch sinks")[index])
+        }
     }
 
     impl WorkspaceFileWatcher for RecordingWatcher {
         fn watch(
             &self,
             request: WorkspaceWatchRequest,
-            _sink: Arc<dyn WorkspaceWatchEventSink>,
+            sink: Arc<dyn WorkspaceWatchEventSink>,
         ) -> io::Result<Box<dyn WorkspaceWatchSession>> {
             self.started
                 .lock()
                 .expect("started roots")
                 .push(request.root_path.clone());
+            self.sinks.lock().expect("watch sinks").push(sink);
 
             Ok(Box::new(RecordingWatchSession {
                 root_path: request.root_path,

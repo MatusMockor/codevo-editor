@@ -18,7 +18,7 @@ import type {
   WorkspaceFileRevision,
 } from "../domain/workspace";
 import { createLegacyWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
-import { legacyDocumentSaveIdentity } from "./documentSaveIdentity";
+import { legacyDocumentSaveOwnership } from "./documentSaveIdentity";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import type { DocumentSaveResult } from "./documentSaveService";
 import {
@@ -28,6 +28,7 @@ import {
 } from "./useWorkbenchEditorGroupCloseLifecycle";
 
 const ROOT = "/workspace";
+const WORKSPACE_ID = "workspace:test";
 
 function revision(contentHash: string): WorkspaceFileRevision {
   return {
@@ -214,7 +215,7 @@ function renderLifecycle(
     saveDocument,
     runWithIssuedWriteDrain,
     resolveDocumentSaveOwnership: (rootPath, path) =>
-      legacyDocumentSaveIdentity(rootPath, path),
+      legacyDocumentSaveOwnership(rootPath, path),
     resolveWorkspaceRuntimeOwner: (rootPath) =>
       createLegacyWorkspaceRuntimeOwner(rootPath),
     dirtyCloseDecisionPort: { decideDirtyClose },
@@ -604,6 +605,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         onDidCloseEditorPaths,
         resolveDocumentSaveOwnership: () => ({
           canonicalRoot: ROOT,
+          workspaceId: WORKSPACE_ID,
           workspaceRelativePath: "same.php",
         }),
       },
@@ -654,6 +656,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         },
         resolveDocumentSaveOwnership: () => ({
           canonicalRoot: ROOT,
+          workspaceId: WORKSPACE_ID,
           workspaceRelativePath: "same.php",
         }),
         saveDocument,
@@ -686,6 +689,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       {
         resolveDocumentSaveOwnership: () => ({
           canonicalRoot: ROOT,
+          workspaceId: WORKSPACE_ID,
           workspaceRelativePath: "same.php",
         }),
       },
@@ -717,6 +721,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       {
         resolveDocumentSaveOwnership: () => ({
           canonicalRoot: ROOT,
+          workspaceId: WORKSPACE_ID,
           workspaceRelativePath: "same.php",
         }),
       },
@@ -748,6 +753,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         {
           resolveDocumentSaveOwnership: () => ({
             canonicalRoot: ROOT,
+            workspaceId: WORKSPACE_ID,
             workspaceRelativePath: "same.php",
           }),
         },
@@ -783,6 +789,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         },
         resolveDocumentSaveOwnership: () => ({
           canonicalRoot: ROOT,
+          workspaceId: WORKSPACE_ID,
           workspaceRelativePath: "same.php",
         }),
       },
@@ -829,6 +836,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         },
         resolveDocumentSaveOwnership: () => ({
           canonicalRoot: ROOT,
+          workspaceId: WORKSPACE_ID,
           workspaceRelativePath: "same.php",
         }),
         saveDocument,

@@ -1,7 +1,4 @@
-import type {
-  WorkspaceFileRevision,
-  WorkspaceTextFileSnapshot,
-} from "../domain/workspace";
+import type { WorkspaceFileRevision, WorkspaceTextFileSnapshot } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { DocumentSaveOwnership } from "./documentSaveIdentity";
 import { documentSaveOwnershipKey } from "./documentSaveIdentity";
@@ -25,11 +22,23 @@ export interface DocumentSelfWriteWaitOptions {
 interface PendingSelfWrite {
   readonly content: string;
   readonly generation: number;
+  readonly owner: PendingSelfWriteOwner;
   readonly settled: Promise<DocumentSelfWriteExpectation | null>;
   readonly settle: (expectation: DocumentSelfWriteExpectation | null) => void;
   readonly token: object;
   completed: boolean;
 }
+
+type PendingSelfWriteOwner =
+  | {
+      readonly canonicalRoot: string;
+      readonly kind: "legacy";
+    }
+  | {
+      readonly canonicalRoot: string;
+      readonly kind: "registered";
+      readonly workspaceId: string;
+    };
 
 const DEFAULT_SETTLEMENT_TIMEOUT_MS = 2_000;
 
@@ -41,23 +50,21 @@ export class DocumentSelfWriteCoordinator {
   private readonly generations = new Map<string, number>();
   private readonly writes = new Map<string, PendingSelfWrite[]>();
 
-  begin(
-    ownership: DocumentSaveOwnership,
-    content: string,
-  ): DocumentSelfWriteLease | null {
+  begin(ownership: DocumentSaveOwnership, content: string): DocumentSelfWriteLease | null {
     const key = documentSaveOwnershipKey(ownership);
     if (!key) {
       return null;
     }
 
-    const root = ownershipRootFromKey(key);
-    const generation = this.generationForRoot(root);
+    const owner = pendingSelfWriteOwner(ownership, key);
+    const generation = this.generationForRoot(owner.canonicalRoot);
     let settle!: (expectation: DocumentSelfWriteExpectation | null) => void;
     const token = {};
     const write: PendingSelfWrite = {
       content,
       completed: false,
       generation,
+      owner,
       settled: new Promise((resolve) => {
         settle = resolve;
       }),
@@ -83,7 +90,7 @@ export class DocumentSelfWriteCoordinator {
       return null;
     }
 
-    const generation = this.generationForRoot(ownershipRootFromKey(key));
+    const generation = this.generationForRoot(pendingSelfWriteOwner(ownership, key).canonicalRoot);
     const candidates = (this.writes.get(key) ?? []).filter(
       (write) => write.generation === generation,
     );
@@ -96,10 +103,12 @@ export class DocumentSelfWriteCoordinator {
       candidates.map((write) => write.settled),
       options.signal,
       timeoutMs,
-    ).then((settled) => settled?.filter(
-      (expectation): expectation is DocumentSelfWriteExpectation =>
-        expectation !== null,
-    ) ?? []);
+    ).then(
+      (settled) =>
+        settled?.filter(
+          (expectation): expectation is DocumentSelfWriteExpectation => expectation !== null,
+        ) ?? [],
+    );
   }
 
   waitForExpectations(
@@ -128,10 +137,7 @@ export class DocumentSelfWriteCoordinator {
       return false;
     }
     const write = queue[index];
-    if (
-      write.generation !==
-      this.generationForRoot(ownershipRootFromKey(key))
-    ) {
+    if (write.generation !== this.generationForRoot(write.owner.canonicalRoot)) {
       return false;
     }
     if (snapshot.content !== expectation.content) {
@@ -160,10 +166,12 @@ export class DocumentSelfWriteCoordinator {
 
   clearRoot(rootPath: string): void {
     const matchingRoots = new Set<string>();
-    for (const key of this.writes.keys()) {
-      const root = ownershipRootFromKey(key);
-      if (workspaceRootKeysEqual(root, rootPath)) {
-        matchingRoots.add(root);
+    for (const [key, queue] of this.writes) {
+      const matchingWrite = queue.find((write) =>
+        workspaceRootKeysEqual(write.owner.canonicalRoot, rootPath),
+      );
+      if (matchingWrite) {
+        matchingRoots.add(matchingWrite.owner.canonicalRoot);
         this.cancelQueue(key);
       }
     }
@@ -213,10 +221,7 @@ export class DocumentSelfWriteCoordinator {
     if (!queue || !queue.includes(write)) {
       return;
     }
-    if (
-      write.generation !==
-      this.generationForRoot(ownershipRootFromKey(key))
-    ) {
+    if (write.generation !== this.generationForRoot(write.owner.canonicalRoot)) {
       this.abortWrite(key, write);
       return;
     }
@@ -245,11 +250,7 @@ export class DocumentSelfWriteCoordinator {
     return this.generations.get(root) ?? 0;
   }
 
-  private removeWrite(
-    key: string,
-    queue: PendingSelfWrite[],
-    write: PendingSelfWrite,
-  ): void {
+  private removeWrite(key: string, queue: PendingSelfWrite[], write: PendingSelfWrite): void {
     const index = queue.indexOf(write);
     if (index >= 0) {
       queue.splice(index, 1);
@@ -307,7 +308,25 @@ async function waitForSettlements(
   }
 }
 
-function ownershipRootFromKey(key: string): string {
+function pendingSelfWriteOwner(
+  ownership: DocumentSaveOwnership,
+  key: string,
+): PendingSelfWriteOwner {
+  if ("canonicalRoot" in ownership) {
+    return {
+      canonicalRoot: ownership.canonicalRoot,
+      kind: "registered",
+      workspaceId: ownership.workspaceId,
+    };
+  }
+
+  return {
+    canonicalRoot: legacyOwnershipRootFromKey(key),
+    kind: "legacy",
+  };
+}
+
+function legacyOwnershipRootFromKey(key: string): string {
   const separator = key.indexOf("\0");
   return separator < 0 ? key : key.slice(0, separator);
 }
@@ -326,10 +345,12 @@ function workspaceFileRevisionsEqual(
   left: WorkspaceFileRevision,
   right: WorkspaceFileRevision,
 ): boolean {
-  return left.device === right.device &&
+  return (
+    left.device === right.device &&
     left.inode === right.inode &&
     left.size === right.size &&
     left.modifiedSeconds === right.modifiedSeconds &&
     left.modifiedNanoseconds === right.modifiedNanoseconds &&
-    left.contentHash === right.contentHash;
+    left.contentHash === right.contentHash
+  );
 }

@@ -25,7 +25,6 @@ function createDependencies(
     searchEverywhereOpen: false,
     setSearchEverywhereOpen: vi.fn(),
     resetSearchEverywhere: vi.fn(),
-    textSearchOpen: false,
     setTextSearchOpen: vi.fn(),
     languageServerSetupOpen: false,
     setLanguageServerSetupOpen: vi.fn(),
@@ -249,6 +248,24 @@ describe("useFloatingSurfaces", () => {
     expect(closed).toBe(true);
     expect(deps.setQuickOpenOpen).toHaveBeenCalledWith(false);
     expect(deps.setPaletteOpen).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("closeFloatingSurface leaves docked search open while closing Quick Open", () => {
+    const deps = createDependencies({
+      quickOpenOpen: true,
+    });
+    const harness = renderFloatingSurfaces(deps);
+
+    let closed = false;
+    act(() => {
+      closed = harness.surfaces().closeFloatingSurface();
+    });
+
+    expect(closed).toBe(true);
+    expect(deps.setQuickOpenOpen).toHaveBeenCalledWith(false);
+    expect(deps.setTextSearchOpen).not.toHaveBeenCalled();
 
     harness.unmount();
   });

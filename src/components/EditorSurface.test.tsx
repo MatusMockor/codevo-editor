@@ -14,6 +14,7 @@ import type {
   EditorPosition,
   EditorRevealTarget,
   LanguageServerDocumentSymbol,
+  LanguageServerLocation,
 } from "../domain/languageServerFeatures";
 import {
   emptyLanguageServerCapabilities,
@@ -29,8 +30,10 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { JsTestExplorerCurrentFileIdentity } from "../domain/jsTestExplorerFilter";
 import type { JsTestProblemsSnapshot } from "../domain/jsTestProblems";
 import type { EditorDocument } from "../domain/workspace";
+import { EditorCursorStore } from "../application/editorCursorStore";
 import { createWorkspaceRoot, parseWorkspacePath } from "../domain/workspacePath";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
+import { TauriWorkspaceGateway } from "../infrastructure/tauriWorkspaceGateway";
 import { EditorRuntimeHost } from "./EditorRuntimeHost";
 import { gitBlameShaAtLine } from "../domain/git";
 import { EditorSurface } from "./EditorSurface";
@@ -42,6 +45,7 @@ import {
 } from "./editorQaBridge";
 
 interface FakeModel {
+  getAlternativeVersionId?: ReturnType<typeof vi.fn>;
   deltaDecorations?: ReturnType<typeof vi.fn>;
   dispose?: ReturnType<typeof vi.fn>;
   getEOL?: ReturnType<typeof vi.fn>;
@@ -301,6 +305,7 @@ describe("EditorSurface", () => {
     editorSurfaceMocks.renderCount = 0;
     editorSurfaceMocks.props = null;
     editorSurfaceMocks.registeredContext = null;
+    vi.useRealTimers();
     delete window.__codevoQa;
     window.localStorage?.clear?.();
     vi.restoreAllMocks();
@@ -1276,6 +1281,7 @@ describe("EditorSurface", () => {
   });
 
   it("registers language-agnostic conflict actions and refreshes conflict decorations on edits", async () => {
+    vi.useFakeTimers();
     const activeDocument: EditorDocument = {
       content: "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
       language: "plaintext",
@@ -1284,10 +1290,12 @@ describe("EditorSurface", () => {
       savedContent: "",
     };
     let modelValue = activeDocument.content;
+    let modelVersion = 1;
     const model: FakeModel = {
       getLineCount: vi.fn(() => modelValue.split("\n").length),
       getValue: vi.fn(() => modelValue),
       getValueLength: vi.fn(() => modelValue.length),
+      getVersionId: vi.fn(() => modelVersion),
       uri: {
         fsPath: activeDocument.path,
         path: activeDocument.path,
@@ -1303,6 +1311,10 @@ describe("EditorSurface", () => {
       root.render(memoGuardSurface(activeDocument));
       await Promise.resolve();
     });
+    await act(async () => {
+      vi.advanceTimersByTime(120);
+      await Promise.resolve();
+    });
 
     expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledWith(
       "*",
@@ -1311,7 +1323,7 @@ describe("EditorSurface", () => {
     expect(monaco.editor.addCommand).toHaveBeenCalledWith(
       expect.objectContaining({ id: "mockor.acceptConflictMarker" }),
     );
-    const decorationCall = editor.deltaDecorations.mock.calls.find(([, decorations]) =>
+    const decorationCall = model.deltaDecorations?.mock.calls.find(([, decorations]) =>
       decorations.some((decoration: any) =>
         decoration.options?.className?.includes("conflict-marker-line"),
       ),
@@ -1334,26 +1346,76 @@ describe("EditorSurface", () => {
       ]),
     );
 
-    editor.deltaDecorations.mockClear();
+    const foreignModel: FakeModel = {
+      deltaDecorations: vi.fn(() => []),
+      getLineCount: vi.fn(() => 1),
+      getValue: vi.fn(() => "foreign\n"),
+      getValueLength: vi.fn(() => 8),
+      getVersionId: vi.fn(() => 1),
+      isDisposed: vi.fn(() => false),
+      uri: {
+        fsPath: "/workspace/foreign.txt",
+        path: "/workspace/foreign.txt",
+        toString: () => "file:///workspace/foreign.txt",
+      },
+    };
+    model.deltaDecorations?.mockClear();
+    editor.getModel.mockReturnValue(foreignModel);
+    act(() => editor.modelChangeHandler?.());
+    expect(model.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+    expect(foreignModel.deltaDecorations).not.toHaveBeenCalled();
+
+    model.deltaDecorations?.mockClear();
+    editor.getModel.mockReturnValue(model);
+    act(() => {
+      editor.modelChangeHandler?.();
+      vi.advanceTimersByTime(120);
+    });
+    expect(
+      model.deltaDecorations?.mock.calls.some(([, decorations]) => decorations.length > 0),
+    ).toBe(true);
+
+    model.deltaDecorations?.mockClear();
     modelValue = "resolved\n";
+    modelVersion += 1;
 
     act(() => {
       editor.modelContentChangeHandler?.({ changes: [{ text: "resolved" }] });
+      vi.advanceTimersByTime(120);
     });
 
-    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+    expect(model.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
 
-    modelValue = "x".repeat(257 * 1024);
-    model.getValue?.mockClear();
-    editor.deltaDecorations.mockClear();
+    modelValue = "<<<<<<<\n=======\n>>>>>>>\n".repeat(286);
+    modelVersion += 1;
+    model.deltaDecorations?.mockClear();
     act(() => {
       editor.modelContentChangeHandler?.({ changes: [{ text: modelValue }] });
+      vi.advanceTimersByTime(120);
+    });
+    expect(model.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), [
+      expect.objectContaining({
+        options: expect.objectContaining({
+          after: expect.objectContaining({
+            content: expect.stringContaining("highlighting is limited"),
+          }),
+        }),
+      }),
+    ]);
+
+    modelValue = "x".repeat(513 * 1024);
+    modelVersion += 1;
+    model.getValue?.mockClear();
+    model.deltaDecorations?.mockClear();
+    act(() => {
+      editor.modelContentChangeHandler?.({ changes: [{ text: modelValue }] });
+      vi.advanceTimersByTime(0);
     });
 
-    // Host-owned document sync reads the shared model once; the conflict
-    // decoration path still avoids its own full-buffer read for a large edit.
-    expect(model.getValue).toHaveBeenCalledOnce();
-    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+    // Live ingress owns document sync; the conflict-decoration path performs
+    // no full-buffer read for a large edit.
+    expect(model.getValue).not.toHaveBeenCalled();
+    expect(model.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
 
   it("opens Latte member suggestions while typing a member prefix", async () => {
@@ -3294,7 +3356,11 @@ describe("EditorSurface", () => {
     let javaScriptTypeScriptSyncVersion = 7;
     const actions = deferred<ReturnType<typeof importSortAction>[]>();
     const featuresGateway = languageServerFeaturesGateway();
-    featuresGateway.codeActions.mockReturnValueOnce(actions.promise as Promise<never[]>);
+    featuresGateway.codeActions.mockReturnValueOnce(
+      Object.assign(actions.promise, { requestId: 99, sessionId: 1 }) as ReturnType<
+        typeof featuresGateway.codeActions
+      >,
+    );
     const flushPendingDocument = vi.fn(async () => undefined);
     const editor = createEditor(originalModel);
     const runnerChange = vi.fn();
@@ -3344,6 +3410,7 @@ describe("EditorSurface", () => {
       activeDocument.path,
       expect.any(Object),
       { diagnostics: [], only: ["source.sortImports.ts"] },
+      41,
     );
 
     editor.getModel.mockReturnValue(replacementModel);
@@ -3374,6 +3441,163 @@ describe("EditorSurface", () => {
       "editor.importActions",
       expect.arrayContaining([expect.objectContaining({ text: "a, b" })]),
     );
+  });
+
+  it("provisions closed definition targets and reuses dirty open workspace models", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export const active = target;\n",
+      language: "typescript",
+      name: "active.ts",
+      path: "/workspace/src/active.ts",
+      savedContent: "export const active = target;\n",
+    };
+    const activeModel: FakeModel = {
+      getLanguageId: vi.fn(() => "typescript"),
+      getValue: vi.fn(() => activeDocument.content),
+      getVersionId: vi.fn(() => 1),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const closedPath = "/workspace/src/closed.ts";
+    const dirtyPath = "/workspace/src/dirty.ts";
+    const dirtyWorkspaceUri = workspaceModelUri("/workspace", dirtyPath);
+    const dirtyContent = "\n\nexport const target = 2;\n";
+    const dirtyModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => dirtyContent),
+      uri: {
+        fsPath: dirtyPath,
+        path: dirtyPath,
+        toString: () => dirtyWorkspaceUri!,
+      },
+    };
+    const transientModels = new Map<string, FakeModel>();
+    const createdModels: FakeModel[] = [];
+    const createdContents: string[] = [];
+    const monaco = createMonaco(activeModel);
+    const registerDefinitionProvider = vi.fn(
+      (
+        _language: string,
+        _provider: {
+          provideDefinition(model: FakeModel, position: EditorPosition): Promise<unknown>;
+        },
+      ) => ({ dispose: vi.fn() }),
+    );
+    Object.assign(monaco.languages, { registerDefinitionProvider });
+    Object.assign(monaco.Uri, {
+      file: (path: string) => ({
+        fsPath: path,
+        path,
+        toString: () => `file://${path}`,
+      }),
+      parse: (uri: string) => {
+        const path = uri.replace(/^workspace-file:\/\/[^/]*\/?/u, "/");
+        return {
+          fsPath: path,
+          path,
+          toString: () => uri,
+        };
+      },
+    });
+    Object.assign(monaco.editor, {
+      createModel: vi.fn(
+        (
+          content: string,
+          _language: string | undefined,
+          uri: { fsPath: string; path: string; toString(): string },
+        ) => {
+          const transientModel: FakeModel = {
+            dispose: vi.fn(() => transientModels.delete(uri.toString())),
+            getValue: vi.fn(() => content),
+            uri,
+          };
+          transientModels.set(uri.toString(), transientModel);
+          createdModels.push(transientModel);
+          createdContents.push(content);
+          return transientModel;
+        },
+      ),
+      getModel: vi.fn((uri: { toString(): string }) => {
+        if (uri.toString() === dirtyWorkspaceUri) {
+          return dirtyModel;
+        }
+        return transientModels.get(uri.toString()) ?? null;
+      }),
+      getModels: vi.fn(() => [activeModel, dirtyModel, ...transientModels.values()]),
+      registerEditorOpener: vi.fn(() => ({ dispose: vi.fn() })),
+    });
+    const diskRead = vi
+      .spyOn(TauriWorkspaceGateway.prototype, "readTextFileBounded")
+      .mockResolvedValue({ content: "export const target = 1;\n", status: "ok" });
+    const gateway = languageServerFeaturesGateway();
+    gateway.definition
+      .mockImplementationOnce((_rootPath, _position, sessionId) =>
+        Object.assign(Promise.resolve([navigationLocationForSurface(closedPath)]), {
+          requestId: 101,
+          sessionId: sessionId ?? 41,
+        }),
+      )
+      .mockImplementationOnce((_rootPath, _position, sessionId) =>
+        Object.assign(Promise.resolve([navigationLocationForSurface(dirtyPath)]), {
+          requestId: 102,
+          sessionId: sessionId ?? 41,
+        }),
+      );
+    const recordLatency = vi.fn();
+    editorSurfaceMocks.editor = createEditor(activeModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          flushPendingJavaScriptTypeScriptLanguageServerDocument: vi.fn(async () => undefined),
+          getJavaScriptTypeScriptDocumentSyncVersion: () => 1,
+          javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+          javaScriptTypeScriptLanguageServerRuntimeStatus: {
+            capabilities: {
+              ...emptyLanguageServerCapabilities(),
+              definition: true,
+            },
+            kind: "running",
+            rootPath: "/workspace",
+            sessionId: 41,
+          },
+          onRecordCompletionLatency: recordLatency,
+          openDocumentPaths: [activeDocument.path, dirtyPath],
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const definitionProvider = registerDefinitionProvider.mock.calls.find(
+      ([language]) => language === "typescript",
+    )?.[1] as
+      | {
+          provideDefinition(model: FakeModel, position: EditorPosition): Promise<unknown>;
+        }
+      | undefined;
+    expect(definitionProvider).toBeDefined();
+
+    await act(async () => {
+      await definitionProvider?.provideDefinition(activeModel, { column: 1, lineNumber: 1 });
+    });
+    expect(createdContents[0]).toBe("export const target = 1;\n");
+    expect(diskRead).toHaveBeenCalledTimes(1);
+    expect(recordLatency).toHaveBeenCalledWith(expect.any(Number), "/workspace", "definition");
+
+    await act(async () => {
+      await definitionProvider?.provideDefinition(activeModel, { column: 1, lineNumber: 1 });
+    });
+    expect(createdContents).toEqual(["export const target = 1;\n"]);
+    expect(diskRead).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(<></>);
+      await Promise.resolve();
+    });
+    expect(createdModels).toHaveLength(1);
+    expect(createdModels.every((model) => model.dispose?.mock.calls.length === 1)).toBe(true);
   });
 
   it("denies import actions in untrusted workspaces and read-only documents", async () => {
@@ -8185,7 +8409,9 @@ class Foo
         handler({ changes: [{ text: "x" }] }),
       );
     });
-    expect(model.getValue).not.toHaveBeenCalled();
+    // The legacy document projection reads once; large-file PHP diagnostics
+    // add no second full-buffer read.
+    expect(model.getValue).toHaveBeenCalledOnce();
   });
 
   it("retries open-time local PHP diagnostics when the first parser run fails", async () => {
@@ -8665,9 +8891,8 @@ class Foo
     // Stable change-hunk identity across renders so the only thing changing is
     // the activeDocument object identity (a keystroke). The change-hunk effect
     // must gate on the document path + hunk identity, not the document object.
-    const changeHunks = editorChangeHunks(
-      activeDocument.savedContent ?? "",
-      activeDocument.content,
+    const changeHunks: readonly EditorChangeHunk[] = Object.freeze(
+      editorChangeHunks(activeDocument.savedContent ?? "", activeDocument.content),
     );
 
     const renderWith = async (document: EditorDocument) => {
@@ -11533,7 +11758,7 @@ class Foo
     );
   });
 
-  it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
+  it("keeps Cmd+B and F12 routed through the custom workbench definition opener", async () => {
     stubNavigatorPlatform("Linux x86_64");
 
     const activeDocument: EditorDocument = {
@@ -15758,7 +15983,7 @@ class Foo
     });
 
     expect(firstOnChange).not.toHaveBeenCalled();
-    expect(secondOnChange).toHaveBeenCalledWith("next");
+    expect(secondOnChange).toHaveBeenCalledWith("next", activeDocument.path);
   });
 
   it("does not update tracked cursor state when the cursor fires with an unchanged position", async () => {
@@ -15840,6 +16065,55 @@ class Foo
       (segment) => segment.textContent,
     );
     expect(labelsAfter).toEqual(["App.tsx", "MyComponent"]);
+  });
+
+  it("keeps the real editor surface body out of one hundred cursor commits", async () => {
+    let documentNameReads = 0;
+    const activeDocument = {
+      content: "export const value = 1;\n",
+      language: "typescript",
+      path: "/workspace/src/value.ts",
+      savedContent: "",
+      get name() {
+        documentNameReads += 1;
+        return "value.ts";
+      },
+    } satisfies EditorDocument;
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({ column: 1, lineNumber: 1 });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const cursorStore = new EditorCursorStore();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          cursorStore,
+          runtimeMembership: { groupId: "main", retainPaths: [activeDocument.path] },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    const readsBeforeMoves = documentNameReads;
+
+    for (let lineNumber = 1; lineNumber <= 100; lineNumber += 1) {
+      act(() => {
+        editor.cursorPositionHandler?.({
+          position: { column: lineNumber, lineNumber },
+        });
+      });
+    }
+
+    expect(documentNameReads).toBe(readsBeforeMoves);
+    expect(cursorStore.getActiveSnapshot()).toMatchObject({
+      position: { column: 100, lineNumber: 100 },
+    });
   });
 
   it("warms the active model's tokens progressively on idle after open", async () => {
@@ -16930,6 +17204,12 @@ function createEditor(model: FakeModel): FakeEditor {
   model.getLineLength ??= vi.fn(
     (lineNumber: number) => readModelValue().split("\n")[lineNumber - 1]?.length ?? 0,
   );
+  model.getValueLength ??= vi.fn(() => readModelValue().length);
+  model.getAlternativeVersionId ??= vi.fn(() => 1);
+  model.getVersionId ??= vi.fn(() => 1);
+  model.deltaDecorations ??= vi.fn((_oldDecorations: string[], decorations: unknown[]) =>
+    decorations.map((_, index) => `model-decoration-${index}`),
+  );
   model.isDisposed ??= vi.fn(() => false);
   model.onWillDispose ??= vi.fn(() => ({ dispose: vi.fn() }));
   const modelContentHandlers: Array<() => void> = [];
@@ -17281,6 +17561,16 @@ function memoryLocalStorage(): Storage {
   };
 }
 
+function navigationLocationForSurface(path: string) {
+  return {
+    range: {
+      end: { character: 6, line: 0 },
+      start: { character: 0, line: 0 },
+    },
+    uri: `file://${path}`,
+  };
+}
+
 function deferred<T>(): {
   promise: Promise<T>;
   reject(error: unknown): void;
@@ -17334,53 +17624,87 @@ function latestTypeScriptDiagnosticsOptions(monaco: ReturnType<typeof createMona
 }
 
 function languageServerFeaturesGateway() {
+  let requestId = 0;
+  const identified = <T,>(value: T, sessionId = 1) =>
+    Object.assign(Promise.resolve(value), {
+      requestId: (requestId += 1),
+      sessionId,
+    });
   return {
-    codeActions: vi.fn(async () => []),
+    codeActions: vi.fn((_rootPath, _path, _range, _context, sessionId?: number) =>
+      identified([], sessionId),
+    ),
     codeLenses: vi.fn(async () => []),
-    completion: vi.fn(),
-    declaration: vi.fn(async () => []),
-    definition: vi.fn(),
+    completion: vi.fn((_rootPath, _position, _context?: unknown, sessionId?: number) =>
+      identified({ isIncomplete: false, items: [] }, sessionId),
+    ),
+    declaration: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified<LanguageServerLocation[]>([], sessionId),
+    ),
+    definition: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified<LanguageServerLocation[]>([], sessionId),
+    ),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
     didCreateFiles: vi.fn(async () => undefined),
     didDeleteFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
-    documentHighlights: vi.fn(async () => []),
+    documentHighlights: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified([], sessionId),
+    ),
     documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
     executeCommandLocations: vi.fn(async () => []),
     foldingRanges: vi.fn(async () => []),
     formatting: vi.fn(async () => []),
-    hover: vi.fn(),
+    hover: vi.fn((_rootPath, _position, sessionId?: number) => identified(null, sessionId)),
     incomingCalls: vi.fn(async () => []),
-    implementation: vi.fn(),
+    implementation: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified<LanguageServerLocation[]>([], sessionId),
+    ),
     inlayHints: vi.fn(async () => []),
     resolveInlayHint: vi.fn(async (_rootPath, hint) => hint),
-    linkedEditingRanges: vi.fn(async () => null),
+    linkedEditingRanges: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified(null, sessionId),
+    ),
     onTypeFormatting: vi.fn(async () => []),
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
     prepareRename: vi.fn(async () => null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => []),
-    rangeSemanticTokens: vi.fn(async () => null),
-    references: vi.fn(async () => []),
+    rangeSemanticTokens: vi.fn((_rootPath, _path, _range, sessionId?: number) =>
+      identified(null, sessionId),
+    ),
+    references: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified<LanguageServerLocation[]>([], sessionId),
+    ),
     rename: vi.fn(async () => null),
     selectionRanges: vi.fn(async () => []),
-    semanticTokens: vi.fn(async () => null),
+    semanticTokens: vi.fn((_rootPath, _path, sessionId?: number) => identified(null, sessionId)),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
-    resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveCodeAction: vi.fn((_rootPath, action, sessionId?: number) =>
+      identified(action, sessionId),
+    ),
     resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
-    signatureHelp: vi.fn(),
-    sourceDefinition: vi.fn(async () => []),
-    typeDefinition: vi.fn(async () => []),
+    signatureHelp: vi.fn((_rootPath, _position, _context?: unknown, sessionId?: number) =>
+      identified(null, sessionId),
+    ),
+    sourceDefinition: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified<LanguageServerLocation[]>([], sessionId),
+    ),
+    typeDefinition: vi.fn((_rootPath, _position, sessionId?: number) =>
+      identified<LanguageServerLocation[]>([], sessionId),
+    ),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),
     willCreateFiles: vi.fn(async () => null),
     willDeleteFiles: vi.fn(async () => null),
     willRenameFiles: vi.fn(async () => null),
-    workspaceSymbols: vi.fn(async () => []),
+    workspaceSymbols: vi.fn((_rootPath, _query, sessionId = 1) =>
+      Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+    ),
   };
 }

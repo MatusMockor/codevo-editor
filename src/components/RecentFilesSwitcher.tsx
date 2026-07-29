@@ -1,6 +1,6 @@
 import { FileCode2, History } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode, Ref } from "react";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import { PaletteFooter } from "./PaletteFooter";
 
@@ -11,8 +11,27 @@ interface RecentFilesSwitcherProps {
   onOpen(entry: RecentFileEntry): void;
 }
 
-function optionId(entry: RecentFileEntry): string {
-  return `recent-file-${entry.path}`;
+interface MruEntry {
+  readonly name: string;
+  readonly path: string;
+}
+
+interface MruEntriesOverlayProps<Entry extends MruEntry> {
+  readonly activeIndex: number;
+  readonly ariaLabel: string;
+  readonly emptyLabel: string;
+  readonly entries: readonly Entry[];
+  readonly heading: string;
+  readonly footer?: ReactNode;
+  readonly listRef?: Ref<HTMLDivElement>;
+  readonly onBackdrop: () => void;
+  readonly onEntry: (entry: Entry) => void;
+  readonly onHover?: (index: number) => void;
+  readonly onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+}
+
+function optionId(label: string, entry: MruEntry): string {
+  return `${label.toLowerCase().replace(/ /gu, "-")}-${entry.path}`;
 }
 
 // PhpStorm-style recent files switcher (Cmd+E). The list is already ordered by
@@ -40,9 +59,7 @@ export function RecentFilesSwitcher({
   }, [isOpen]);
 
   useEffect(() => {
-    setActiveIndex((current) =>
-      Math.min(current, Math.max(entries.length - 1, 0)),
-    );
+    setActiveIndex((current) => Math.min(current, Math.max(entries.length - 1, 0)));
   }, [entries.length]);
 
   if (!isOpen) {
@@ -59,9 +76,7 @@ export function RecentFilesSwitcher({
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((current) =>
-        Math.min(current + 1, Math.max(entries.length - 1, 0)),
-      );
+      setActiveIndex((current) => Math.min(current + 1, Math.max(entries.length - 1, 0)));
       return;
     }
 
@@ -78,43 +93,76 @@ export function RecentFilesSwitcher({
   };
 
   return (
-    <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
+    <MruEntriesOverlay
+      activeIndex={activeIndex}
+      ariaLabel="Recent files"
+      emptyLabel="No recent files"
+      entries={entries}
+      heading="Recent Files"
+      listRef={listRef}
+      onBackdrop={onClose}
+      onEntry={onOpen}
+      onHover={setActiveIndex}
+      onKeyDown={handleKeyDown}
+      footer={<PaletteFooter />}
+    />
+  );
+}
+
+export function MruEntriesOverlay<Entry extends MruEntry>({
+  activeIndex,
+  ariaLabel,
+  emptyLabel,
+  entries,
+  footer,
+  heading,
+  listRef,
+  onBackdrop,
+  onEntry,
+  onHover,
+  onKeyDown,
+}: MruEntriesOverlayProps<Entry>) {
+  const activeEntry = entries[activeIndex];
+  const activeOptionRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    activeOptionRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activeEntry?.path, activeIndex]);
+
+  return (
+    <div className="palette-backdrop" role="presentation" onMouseDown={onBackdrop}>
       <section
-        aria-label="Recent files"
+        aria-label={ariaLabel}
         className="quick-open"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="palette-search">
           <History aria-hidden="true" size={17} />
-          <div className="recent-files-heading">Recent Files</div>
+          <div className="recent-files-heading">{heading}</div>
         </div>
 
+        <div aria-live="polite" className="mru-switcher-status" role="status">
+          {activeEntry?.name ?? emptyLabel}
+        </div>
         <div
-          aria-activedescendant={
-            activeEntry ? optionId(activeEntry) : undefined
-          }
-          aria-label="Recent files"
+          aria-activedescendant={activeEntry ? optionId(ariaLabel, activeEntry) : undefined}
+          aria-label={ariaLabel}
           className="quick-open-results"
-          onKeyDown={handleKeyDown}
+          onKeyDown={onKeyDown}
           ref={listRef}
           role="listbox"
           tabIndex={0}
         >
-          {entries.length === 0 ? (
-            <div className="quick-open-state">No recent files</div>
-          ) : null}
+          {entries.length === 0 ? <div className="quick-open-state">{emptyLabel}</div> : null}
           {entries.map((entry, index) => (
             <button
               aria-selected={index === activeIndex}
-              className={
-                index === activeIndex
-                  ? "quick-open-result active"
-                  : "quick-open-result"
-              }
-              id={optionId(entry)}
+              className={index === activeIndex ? "quick-open-result active" : "quick-open-result"}
+              id={optionId(ariaLabel, entry)}
               key={entry.path}
-              onClick={() => onOpen(entry)}
-              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => onEntry(entry)}
+              onMouseEnter={() => onHover?.(index)}
+              ref={index === activeIndex ? activeOptionRef : undefined}
               role="option"
               title={entry.path}
               type="button"
@@ -128,7 +176,7 @@ export function RecentFilesSwitcher({
           ))}
         </div>
 
-        <PaletteFooter />
+        {footer}
       </section>
     </div>
   );

@@ -54,6 +54,7 @@ mod lsp_capability_support;
 mod lsp_diagnostics;
 mod lsp_document;
 mod lsp_features;
+mod lsp_incremental_document;
 mod lsp_request_commands;
 mod lsp_session;
 mod lsp_transport;
@@ -192,8 +193,10 @@ use lsp_features::{
     parse_formatting_result, parse_hover_result, parse_incoming_calls_result,
     parse_inlay_hint_result, parse_inlay_hints_result, parse_linked_editing_ranges_result,
     parse_optional_workspace_edit_result, parse_outgoing_calls_result, parse_prepare_rename_result,
-    parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
-    parse_type_hierarchy_items_result, parse_workspace_edit_result, parse_workspace_symbols_result,
+    parse_resolved_code_action_result, parse_selection_ranges_result, parse_semantic_tokens_result,
+    parse_signature_help_result, parse_type_hierarchy_items_result, parse_workspace_edit_result,
+    parse_workspace_symbols_result, validate_code_action_context,
+    validate_code_action_request_range, validate_code_action_resolve_request,
     LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
     LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionContext,
     LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
@@ -210,6 +213,12 @@ use lsp_features::{
     TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
     TextDocumentSignatureHelp, WorkspaceFileChange, WorkspaceFileCreate, WorkspaceFileDelete,
     WorkspaceFileRename,
+};
+use lsp_incremental_document::{
+    canonical_document_identity as canonical_lsp_document_identity,
+    javascript_typescript_document_did_change_bounded,
+    javascript_typescript_document_did_close_bounded,
+    javascript_typescript_document_did_open_bounded, DocumentChangeAdmissionRegistry,
 };
 use lsp_session::{
     language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -439,6 +448,7 @@ fn unregister_workspace(
     state: WorkspaceLifecycleState<'_>,
     workspace_id: WorkspaceId,
 ) -> Result<(), String> {
+    state.file_search_lifecycle.cancel_workspace(&workspace_id);
     state
         .node_attach_candidates
         .invalidate_listings()
@@ -453,6 +463,10 @@ fn unregister_workspace(
                     .begin_root_deactivation(&descriptor.canonical_root_path.to_string_lossy()),
             );
             app.request_stop_workspace_tasks(&workspace_id, &state.js_test_batches);
+            state
+                .document_change_admission
+                .purge_root(&descriptor.canonical_root_path.to_string_lossy())
+                .map_err(io::Error::other)?;
             state
                 .terminal_sessions
                 .stop_root(&descriptor.canonical_root_path)
@@ -470,6 +484,7 @@ struct WorkspaceLifecycleState<'a> {
     index_lifecycle: State<'a, WorkspaceIndexLifecycle>,
     javascript_typescript_language_servers: State<'a, JavaScriptTypeScriptLanguageServerRegistry>,
     javascript_typescript_watch_registry: State<'a, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    document_change_admission: State<'a, DocumentChangeAdmissionRegistry>,
     workspace_file_change_watch_registry: State<'a, WorkspaceFileChangeWatchRegistry>,
     php_language_servers: State<'a, PhpLanguageServerRegistry>,
     debug_sessions: State<'a, Arc<DebugSessionRegistry>>,
@@ -478,6 +493,7 @@ struct WorkspaceLifecycleState<'a> {
     terminal_sessions: State<'a, TerminalSupervisor>,
     eslint_processes: State<'a, Arc<eslint::EslintProcessRegistry>>,
     workspace_registry: State<'a, WorkspaceRegistry>,
+    file_search_lifecycle: State<'a, workspace_commands::WorkspaceFileSearchLifecycle>,
     js_test_batches: State<'a, Arc<JsTestBatchRegistry>>,
     local_history_authorizer: State<'a, LegacyLocalHistoryWorkspaceAuthorizer>,
 }
@@ -508,6 +524,7 @@ impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R>
             index_lifecycle: state_from_command(&command)?,
             javascript_typescript_language_servers: state_from_command(&command)?,
             javascript_typescript_watch_registry: state_from_command(&command)?,
+            document_change_admission: state_from_command(&command)?,
             workspace_file_change_watch_registry: state_from_command(&command)?,
             php_language_servers: state_from_command(&command)?,
             debug_sessions: state_from_command(&command)?,
@@ -516,6 +533,7 @@ impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R>
             terminal_sessions: state_from_command(&command)?,
             eslint_processes: state_from_command(&command)?,
             workspace_registry: state_from_command(&command)?,
+            file_search_lifecycle: state_from_command(&command)?,
             js_test_batches: state_from_command(&command)?,
             local_history_authorizer: state_from_command(&command)?,
         })
@@ -537,9 +555,13 @@ fn dispose_workspace_root(
         .workspace_registry
         .descriptor_for_registered_path(&root)
     {
+        state
+            .file_search_lifecycle
+            .cancel_workspace(&descriptor.workspace_id);
         app.request_stop_workspace_tasks(&descriptor.workspace_id, &state.js_test_batches);
     }
     let root_key = root.to_string_lossy().into_owned();
+    state.document_change_admission.purge_root(&root_key)?;
     state.debug_sessions.deactivate_root(&root_key);
     let disposal_result = dispose_workspace_runtime_root(
         &root,
@@ -610,7 +632,7 @@ fn start_workspace_file_watch(
     root_path: String,
     app: AppHandle,
     workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
-) -> Result<(), String> {
+) -> Result<workspace_file_watcher::WorkspaceFileWatchStartReceipt, String> {
     let root = canonicalize_workspace_root(&root_path)?;
     workspace_file_change_watch_registry.start(&root.to_string_lossy(), app)
 }
@@ -807,9 +829,7 @@ fn reveal_path_in_workspace(root_path: &str, path: &str) -> Result<PathBuf, Stri
 }
 
 fn ensure_lsp_path_in_workspace(root_path: &str, path: &str) -> Result<(), String> {
-    let root = canonicalize_workspace_root(root_path)?;
-
-    ensure_path_in_workspace(&root, path)
+    canonical_lsp_document_identity(root_path, path).map(|_| ())
 }
 
 fn ensure_lsp_text_document_content_in_workspace(
@@ -2432,7 +2452,7 @@ async fn restart_typescript_runtime_off_thread(
         let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
             app.clone(),
             root_path.clone(),
-        ));
+        )?);
         let status_sink: Arc<dyn StatusSink> = event_sink.clone();
         let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
         let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
@@ -2539,6 +2559,7 @@ async fn start_javascript_typescript_language_server(
     trust: State<'_, Mutex<WorkspaceTrustService>>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    admission: State<'_, DocumentChangeAdmissionRegistry>,
 ) -> Result<Value, String> {
     let options = request.0;
     let root_path = options.root_path.clone();
@@ -2553,6 +2574,7 @@ async fn start_javascript_typescript_language_server(
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
         return Err(plan.message);
     }
+    admission.purge_root(&canonicalize_workspace_root(&root_path)?.to_string_lossy())?;
 
     let command: LanguageServerCommand = plan
         .command
@@ -2567,7 +2589,16 @@ async fn start_javascript_typescript_language_server(
         let trust = app.state::<Mutex<WorkspaceTrustService>>();
         revalidate_javascript_typescript_workspace_trust(&trust, &blocking_trust_authority)?;
         let registry = app.state::<JavaScriptTypeScriptLanguageServerRegistry>();
-        let start_cleanup_lease = registry.reserve_start_cleanup(&blocking_root_path)?;
+        let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
+            app.clone(),
+            blocking_root_path.clone(),
+        )?);
+        let status_sink: Arc<dyn StatusSink> = event_sink.clone();
+        let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
+        let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
+        let refresh_sink: Arc<dyn RefreshSink> = event_sink;
+        let start_cleanup_lease =
+            registry.reserve_start_cleanup(&blocking_root_path, status_sink.as_ref())?;
         #[cfg(unix)]
         {
             let running_roots = start_cleanup_lease.running_roots()?;
@@ -2579,14 +2610,6 @@ async fn start_javascript_typescript_language_server(
                 &running_roots,
             );
         }
-        let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
-            app.clone(),
-            blocking_root_path.clone(),
-        ));
-        let status_sink: Arc<dyn StatusSink> = event_sink.clone();
-        let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
-        let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
-        let refresh_sink: Arc<dyn RefreshSink> = event_sink;
         revalidate_javascript_typescript_workspace_trust(&trust, &blocking_trust_authority)?;
         start_cleanup_lease.start_with_auto_restart(
             &command,
@@ -2630,8 +2653,10 @@ fn stop_javascript_typescript_language_server(
     root_path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    admission: State<'_, DocumentChangeAdmissionRegistry>,
 ) -> Result<Value, String> {
     watch_registry.stop(&root_path);
+    admission.purge_root(&workspace_root_for_disposal(&root_path).to_string_lossy())?;
     Ok(language_server_status_payload(
         &root_path,
         registry.stop(&root_path),
@@ -2649,8 +2674,10 @@ fn stop_all_php_language_servers(
 fn stop_all_javascript_typescript_language_servers(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    admission: State<'_, DocumentChangeAdmissionRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     watch_registry.stop_all();
+    admission.purge_all()?;
     Ok(registry.stop_all())
 }
 
@@ -2813,6 +2840,7 @@ async fn text_document_hover(
 #[tauri::command]
 async fn javascript_typescript_text_document_hover(
     root_path: String,
+    session_id: u64,
     request_id: u64,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2822,7 +2850,13 @@ async fn javascript_typescript_text_document_hover(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
     let Some(result) = registry
-        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(None);
@@ -2858,6 +2892,7 @@ async fn text_document_completion(
 #[tauri::command]
 async fn javascript_typescript_text_document_completion(
     root_path: String,
+    session_id: u64,
     request_id: u64,
     position: TextDocumentPosition,
     context: Option<LanguageServerCompletionContext>,
@@ -2868,7 +2903,13 @@ async fn javascript_typescript_text_document_completion(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&TextDocumentCompletion { position, context });
     let Some(result) = registry
-        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(LanguageServerCompletionList {
@@ -2965,66 +3006,6 @@ async fn text_document_declaration(
 }
 
 #[tauri::command]
-async fn javascript_typescript_text_document_definition(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.definition(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    parse_javascript_typescript_navigation_locations_result(&result)
-}
-
-#[tauri::command]
-async fn javascript_typescript_text_document_declaration(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.declaration(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    parse_javascript_typescript_navigation_locations_result(&result)
-}
-
-#[tauri::command]
-async fn javascript_typescript_text_document_source_definition(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.typescript_source_definition(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    parse_javascript_typescript_navigation_locations_result(&result)
-}
-
-#[tauri::command]
 async fn text_document_implementation(
     root_path: String,
     position: TextDocumentPosition,
@@ -3043,27 +3024,6 @@ async fn text_document_implementation(
     };
 
     filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
-}
-
-#[tauri::command]
-async fn javascript_typescript_text_document_implementation(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.implementation(&position);
-    let result = match registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    {
-        Some(result) => result,
-        None => return Ok(Vec::new()),
-    };
-
-    parse_javascript_typescript_navigation_locations_result(&result)
 }
 
 #[tauri::command]
@@ -3087,50 +3047,10 @@ async fn text_document_type_definition(
 }
 
 #[tauri::command]
-async fn javascript_typescript_text_document_type_definition(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.type_definition(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    parse_javascript_typescript_navigation_locations_result(&result)
-}
-
-#[tauri::command]
 async fn text_document_references(
     root_path: String,
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.references(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
-}
-
-#[tauri::command]
-async fn javascript_typescript_text_document_references(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
@@ -3271,63 +3191,10 @@ async fn text_document_code_actions(
 }
 
 #[tauri::command]
-async fn javascript_typescript_text_document_code_actions(
-    root_path: String,
-    path: String,
-    range: LanguageServerRange,
-    context: LanguageServerCodeActionContext,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerCodeAction>, LanguageServerRequestError> {
-    ensure_lsp_path_in_workspace(&root_path, &path)?;
-    ensure_lsp_code_action_context_payloads_in_workspace(&root_path, &context)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
-    let Some(result) = registry
-        .send_request_async_preserving_response_error(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    Ok(filter_lsp_code_actions_to_workspace(
-        &root_path,
-        parse_code_action_result(&result)?,
-    )?)
-}
-
-#[tauri::command]
 async fn text_document_code_action_resolve(
     root_path: String,
     action: LanguageServerCodeAction,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<LanguageServerCodeAction, String> {
-    ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
-
-    if !lsp_status_supports_code_action_resolve(&registry.status(&root_path)) {
-        return Ok(action);
-    }
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.resolve_code_action(&action);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(action);
-    };
-
-    let resolved = serde_json::from_value::<LanguageServerCodeAction>(result)
-        .map_err(|error| format!("Language server returned a malformed code action: {error}"))?;
-
-    Ok(filter_lsp_code_action_to_workspace(&root_path, resolved)?.unwrap_or(action))
-}
-
-#[tauri::command]
-async fn javascript_typescript_text_document_code_action_resolve(
-    root_path: String,
-    action: LanguageServerCodeAction,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeAction, String> {
     ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
 
@@ -4490,26 +4357,6 @@ async fn text_document_document_highlights(
 }
 
 #[tauri::command]
-async fn javascript_typescript_text_document_document_highlights(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerDocumentHighlight>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.document_highlights(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    parse_document_highlights_result(&result)
-}
-
-#[tauri::command]
 async fn text_document_document_links(
     root_path: String,
     path: String,
@@ -4654,24 +4501,6 @@ async fn workspace_symbols(
 }
 
 #[tauri::command]
-async fn javascript_typescript_workspace_symbols(
-    root_path: String,
-    query: String,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerWorkspaceSymbol>, String> {
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.workspace_symbols(&query);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    filter_lsp_workspace_symbols_to_workspace(&root_path, parse_workspace_symbols_result(&result)?)
-}
-
-#[tauri::command]
 async fn text_document_selection_ranges(
     root_path: String,
     path: String,
@@ -4734,26 +4563,6 @@ async fn text_document_linked_editing_ranges(
 }
 
 #[tauri::command]
-async fn javascript_typescript_text_document_linked_editing_ranges(
-    root_path: String,
-    position: TextDocumentPosition,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Option<LanguageServerLinkedEditingRanges>, String> {
-    ensure_lsp_position_in_workspace(&root_path, &position)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.linked_editing_ranges(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(None);
-    };
-
-    parse_linked_editing_ranges_result(&result)
-}
-
-#[tauri::command]
 async fn text_document_semantic_tokens(
     root_path: String,
     path: String,
@@ -4797,6 +4606,7 @@ async fn text_document_range_semantic_tokens(
 #[tauri::command]
 async fn javascript_typescript_text_document_range_semantic_tokens(
     root_path: String,
+    session_id: u64,
     request_id: u64,
     path: String,
     range: LanguageServerRange,
@@ -4807,7 +4617,13 @@ async fn javascript_typescript_text_document_range_semantic_tokens(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.range_semantic_tokens(&TextDocumentRange { path, range });
     let Some(result) = registry
-        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(None);
@@ -4842,6 +4658,7 @@ async fn text_document_signature_help(
 #[tauri::command]
 async fn javascript_typescript_text_document_signature_help(
     root_path: String,
+    session_id: u64,
     request_id: u64,
     position: TextDocumentPosition,
     context: Option<LanguageServerSignatureHelpContext>,
@@ -4852,7 +4669,13 @@ async fn javascript_typescript_text_document_signature_help(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.signature_help(&TextDocumentSignatureHelp { position, context });
     let Some(result) = registry
-        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(None);
@@ -4940,6 +4763,7 @@ pub fn run() {
         .manage(NativeCloseListenerState::default())
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
+        .manage(DocumentChangeAdmissionRegistry::default())
         .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
         .manage(WorkspaceFileChangeWatchRegistry::new())
         .manage(WorkspaceIndexLifecycle::new())
@@ -4960,6 +4784,7 @@ pub fn run() {
         .manage(Arc::new(js_test_watch::JsTestWatchRegistry::new()))
         .manage(terminal_task_admission)
         .manage(WorkspaceRegistry::new())
+        .manage(workspace_commands::WorkspaceFileSearchLifecycle::default())
         .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -5160,8 +4985,11 @@ pub fn run() {
             terminal_commands::stop_terminal_sessions_for_root,
             unstage_git_files,
             javascript_typescript_document_did_change,
+            javascript_typescript_document_did_change_bounded,
             javascript_typescript_document_did_close,
+            javascript_typescript_document_did_close_bounded,
             javascript_typescript_document_did_open,
+            javascript_typescript_document_did_open_bounded,
             javascript_typescript_document_did_save,
             javascript_typescript_language_server_execute_command,
             javascript_typescript_language_server_execute_command_locations,
@@ -5174,15 +5002,15 @@ pub fn run() {
             javascript_typescript_workspace_will_delete_files,
             javascript_typescript_workspace_will_rename_files,
             lsp_request_commands::cancel_lsp_request,
-            javascript_typescript_text_document_code_action_resolve,
-            javascript_typescript_text_document_code_actions,
+            lsp_request_commands::javascript_typescript_text_document_code_action_resolve,
+            lsp_request_commands::javascript_typescript_text_document_code_actions,
             javascript_typescript_text_document_code_lens_resolve,
             javascript_typescript_text_document_code_lenses,
             javascript_typescript_text_document_completion,
             javascript_typescript_text_document_completion_resolve,
-            javascript_typescript_text_document_declaration,
-            javascript_typescript_text_document_definition,
-            javascript_typescript_text_document_document_highlights,
+            lsp_request_commands::javascript_typescript_text_document_declaration,
+            lsp_request_commands::javascript_typescript_text_document_definition,
+            lsp_request_commands::javascript_typescript_text_document_document_highlights,
             javascript_typescript_text_document_document_link_resolve,
             javascript_typescript_text_document_document_links,
             javascript_typescript_text_document_document_symbols,
@@ -5190,10 +5018,10 @@ pub fn run() {
             javascript_typescript_text_document_formatting,
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_incoming_calls,
-            javascript_typescript_text_document_implementation,
+            lsp_request_commands::javascript_typescript_text_document_implementation,
             javascript_typescript_text_document_inlay_hint_resolve,
             javascript_typescript_text_document_inlay_hints,
-            javascript_typescript_text_document_linked_editing_ranges,
+            lsp_request_commands::javascript_typescript_text_document_linked_editing_ranges,
             javascript_typescript_text_document_on_type_formatting,
             javascript_typescript_text_document_outgoing_calls,
             javascript_typescript_text_document_prepare_call_hierarchy,
@@ -5201,16 +5029,16 @@ pub fn run() {
             javascript_typescript_text_document_prepare_type_hierarchy,
             javascript_typescript_text_document_range_formatting,
             javascript_typescript_text_document_range_semantic_tokens,
-            javascript_typescript_text_document_references,
+            lsp_request_commands::javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
             javascript_typescript_text_document_selection_ranges,
             lsp_request_commands::javascript_typescript_text_document_semantic_tokens,
             javascript_typescript_text_document_signature_help,
-            javascript_typescript_text_document_source_definition,
+            lsp_request_commands::javascript_typescript_text_document_source_definition,
             javascript_typescript_text_document_type_hierarchy_subtypes,
             javascript_typescript_text_document_type_hierarchy_supertypes,
-            javascript_typescript_text_document_type_definition,
-            javascript_typescript_workspace_symbols,
+            lsp_request_commands::javascript_typescript_text_document_type_definition,
+            lsp_request_commands::javascript_typescript_workspace_symbols,
             language_server_execute_command,
             language_server_execute_command_locations,
             text_document_code_action_resolve,
@@ -5281,9 +5109,9 @@ mod tests {
         apply_trusted_transactional_descriptor_workspace_edit,
         apply_trusted_transactional_descriptor_workspace_edit_with_hooks, apply_workspace_edit,
         build_javascript_typescript_language_server_plan, cached_monospace_font_families,
-        create_git_branch, delete_git_branch, descriptor_file_identity,
-        descriptor_transaction_file_snapshot, ensure_local_history_relative_path,
-        ensure_lsp_call_hierarchy_item_in_workspace,
+        canonical_lsp_document_identity, create_git_branch, delete_git_branch,
+        descriptor_file_identity, descriptor_transaction_file_snapshot,
+        ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
@@ -5544,6 +5372,32 @@ mod tests {
             &path_string(&sibling.join("App.ts"))
         )
         .is_err());
+    }
+
+    #[test]
+    fn lsp_document_identity_collapses_dot_segments_and_symlink_aliases() {
+        use std::os::unix::fs::symlink;
+        let root = temp_workspace("lsp-canonical-identity");
+        fs::create_dir_all(root.join("real")).expect("real directory");
+        fs::write(root.join("real/App.ts"), "export {};").expect("document");
+        symlink(root.join("real"), root.join("alias")).expect("inside symlink");
+        let root_path = path_string(&root);
+        let canonical =
+            canonical_lsp_document_identity(&root_path, &path_string(&root.join("real/App.ts")))
+                .expect("canonical identity");
+        assert_eq!(
+            canonical_lsp_document_identity(
+                &root_path,
+                &path_string(&root.join("real/../real/App.ts"))
+            )
+            .expect("dot-segment identity"),
+            canonical
+        );
+        assert_eq!(
+            canonical_lsp_document_identity(&root_path, &path_string(&root.join("alias/App.ts")))
+                .expect("symlink identity"),
+            canonical
+        );
     }
 
     #[test]

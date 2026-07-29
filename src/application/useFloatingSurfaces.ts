@@ -40,7 +40,6 @@ export interface FloatingSurfacesDependencies {
   searchEverywhereOpen: boolean;
   setSearchEverywhereOpen: (open: boolean) => void;
   resetSearchEverywhere: () => void;
-  textSearchOpen: boolean;
   setTextSearchOpen: (open: boolean) => void;
   languageServerSetupOpen: boolean;
   setLanguageServerSetupOpen: (open: boolean) => void;
@@ -81,9 +80,7 @@ export interface FloatingSurfaces {
  * shortcut entry point that closes whichever surface currently has priority,
  * falling all the way through to the git diff preview as the last resort.
  */
-export function useFloatingSurfaces(
-  dependencies: FloatingSurfacesDependencies,
-): FloatingSurfaces {
+export function useFloatingSurfaces(dependencies: FloatingSurfacesDependencies): FloatingSurfaces {
   const {
     paletteOpen,
     setPaletteOpen,
@@ -96,7 +93,6 @@ export function useFloatingSurfaces(
     searchEverywhereOpen,
     setSearchEverywhereOpen,
     resetSearchEverywhere,
-    textSearchOpen,
     setTextSearchOpen,
     languageServerSetupOpen,
     setLanguageServerSetupOpen,
@@ -226,11 +222,6 @@ export function useFloatingSurfaces(
       return true;
     }
 
-    if (textSearchOpen) {
-      setTextSearchOpen(false);
-      return true;
-    }
-
     if (workspaceSymbolsOpen) {
       setWorkspaceSymbolsOpen(false);
       return true;
@@ -294,11 +285,9 @@ export function useFloatingSurfaces(
     setRecentLocationsPanelOpen,
     setSearchEverywhereOpen,
     setSettingsOpen,
-    setTextSearchOpen,
     setTypeHierarchyView,
     setWorkspaceSymbolsOpen,
     settingsOpen,
-    textSearchOpen,
     typeHierarchyView,
     workspaceSymbolsOpen,
   ]);

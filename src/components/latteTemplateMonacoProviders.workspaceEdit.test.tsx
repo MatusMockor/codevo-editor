@@ -332,6 +332,10 @@ function renderWorkspaceEditFileOperations(
     languageServerRuntimeStatusRoot: null,
     openPathsRef: { current: [HOME_PATH] },
     previewPathRef: { current: null },
+    reconcileDocumentSessionTopology: (updater) => {
+      documents = typeof updater === "function" ? updater(documents) : updater;
+      return true;
+    },
     refreshDirectory: vi.fn(async () => undefined),
     reportChangedDocuments: vi.fn(),
     reportError: vi.fn(),

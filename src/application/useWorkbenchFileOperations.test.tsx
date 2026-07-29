@@ -19,6 +19,7 @@ import {
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
+const WORKSPACE_ID = "workspace:test";
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -367,6 +368,7 @@ describe("useWorkbenchFileOperations save exclusion", () => {
     path = `${ROOT}/src/Owned.txt`,
   ) => ({
     canonicalRoot: "/real/workspace",
+    workspaceId: WORKSPACE_ID,
     workspaceRelativePath: path.slice(rootPath.length + 1),
   });
 

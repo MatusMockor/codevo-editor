@@ -8,12 +8,9 @@ import {
   RECENT_LOCATION_NEAR_LINES,
   type RecentLocation,
 } from "./recentLocations";
+import { WORKSPACE_SESSION_SNIPPET_MAX_BYTES } from "./settings";
 
-function loc(
-  path: string,
-  line: number,
-  overrides: Partial<RecentLocation> = {},
-): RecentLocation {
+function loc(path: string, line: number, overrides: Partial<RecentLocation> = {}): RecentLocation {
   const name = path.split("/").pop() ?? path;
   return {
     column: 1,
@@ -66,10 +63,7 @@ describe("pushRecentLocation", () => {
   it("does NOT collapse when the line gap exceeds the near threshold", () => {
     let list: RecentLocation[] = [];
     list = pushRecentLocation(list, loc("/workspace/a.ts", 10));
-    list = pushRecentLocation(
-      list,
-      loc("/workspace/a.ts", 10 + RECENT_LOCATION_NEAR_LINES + 1),
-    );
+    list = pushRecentLocation(list, loc("/workspace/a.ts", 10 + RECENT_LOCATION_NEAR_LINES + 1));
 
     expect(list).toHaveLength(2);
   });
@@ -96,9 +90,7 @@ describe("pushRecentLocation", () => {
     }
 
     expect(list).toHaveLength(RECENT_LOCATIONS_LIMIT);
-    expect(list[0]?.path).toBe(
-      `/workspace/file-${RECENT_LOCATIONS_LIMIT + 9}.ts`,
-    );
+    expect(list[0]?.path).toBe(`/workspace/file-${RECENT_LOCATIONS_LIMIT + 9}.ts`);
   });
 
   it("respects a custom limit", () => {
@@ -107,10 +99,7 @@ describe("pushRecentLocation", () => {
     list = pushRecentLocation(list, loc("/workspace/b.ts", 1), 2);
     list = pushRecentLocation(list, loc("/workspace/c.ts", 1), 2);
 
-    expect(list.map((item) => item.path)).toEqual([
-      "/workspace/c.ts",
-      "/workspace/b.ts",
-    ]);
+    expect(list.map((item) => item.path)).toEqual(["/workspace/c.ts", "/workspace/b.ts"]);
   });
 
   it("ignores a null location", () => {
@@ -128,9 +117,7 @@ describe("pushRecentLocation", () => {
 });
 
 describe("buildRecentLocation", () => {
-  const content = ["class Order", "{", "    public function total(): int", "}"].join(
-    "\n",
-  );
+  const content = ["class Order", "{", "    public function total(): int", "}"].join("\n");
 
   it("captures path, relative path, name, line, column and the trimmed line snippet", () => {
     const built = buildRecentLocation({
@@ -165,6 +152,23 @@ describe("buildRecentLocation", () => {
     });
 
     expect(built?.snippet).toBe("");
+  });
+
+  it("bounds a long single-line snippet at its UTF-8 byte limit", () => {
+    const built = buildRecentLocation({
+      content: `  ${"€".repeat(1_000)}  `,
+      name: "bundle.js",
+      navigation: {
+        path: "/workspace/dist/bundle.js",
+        position: { column: 1, lineNumber: 1 },
+      },
+      relativePath: "dist/bundle.js",
+    });
+
+    expect(new TextEncoder().encode(built?.snippet).byteLength).toBeLessThanOrEqual(
+      WORKSPACE_SESSION_SNIPPET_MAX_BYTES,
+    );
+    expect(built?.snippet.length).toBeGreaterThan(0);
   });
 
   it("returns null without a relative path (target outside the workspace)", () => {
@@ -215,11 +219,9 @@ describe("removeRecentLocationsForPath", () => {
       loc("/workspace/a.ts", 99),
     ];
 
-    expect(
-      removeRecentLocationsForPath(list, "/workspace/a.ts").map(
-        (item) => item.path,
-      ),
-    ).toEqual(["/workspace/b.ts"]);
+    expect(removeRecentLocationsForPath(list, "/workspace/a.ts").map((item) => item.path)).toEqual([
+      "/workspace/b.ts",
+    ]);
   });
 
   it("does not mutate the input list", () => {
@@ -248,9 +250,7 @@ describe("renameRecentLocationsPath", () => {
     expect(moved).toHaveLength(2);
     expect(moved.every((item) => item.name === "new.ts")).toBe(true);
     expect(moved.every((item) => item.relativePath === "sub/new.ts")).toBe(true);
-    expect(moved.map((item) => item.line).sort((a, b) => a - b)).toEqual([
-      10, 20,
-    ]);
+    expect(moved.map((item) => item.line).sort((a, b) => a - b)).toEqual([10, 20]);
   });
 
   it("leaves the list unchanged when the old path is absent", () => {

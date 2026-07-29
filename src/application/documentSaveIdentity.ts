@@ -1,11 +1,12 @@
-import {
-  DEFAULT_WORKSPACE_PATH_POLICY,
-  type WorkspacePathPolicy,
-} from "../domain/workspacePath";
+import { DEFAULT_WORKSPACE_PATH_POLICY, type WorkspacePathPolicy } from "../domain/workspacePath";
 
 export interface DocumentSaveIdentity {
   readonly canonicalRoot: string;
   readonly workspaceRelativePath: string;
+}
+
+export interface RegisteredDocumentSaveIdentity extends DocumentSaveIdentity {
+  readonly workspaceId: string;
 }
 
 export interface LegacyDocumentSaveOwnership {
@@ -13,9 +14,7 @@ export interface LegacyDocumentSaveOwnership {
   readonly path: string;
 }
 
-export type DocumentSaveOwnership =
-  | DocumentSaveIdentity
-  | LegacyDocumentSaveOwnership;
+export type DocumentSaveOwnership = RegisteredDocumentSaveIdentity | LegacyDocumentSaveOwnership;
 
 export type ResolveDocumentSaveOwnership = (
   rootPath: string,
@@ -24,16 +23,19 @@ export type ResolveDocumentSaveOwnership = (
 
 /** Stable key shared by save and close coordination for one canonical file. */
 export function documentSaveOwnershipKey(
-  ownership: DocumentSaveOwnership,
+  ownership: DocumentSaveIdentity | DocumentSaveOwnership,
 ): string | null {
-  const identity = "canonicalRoot" in ownership
-    ? ownership
-    : legacyDocumentSaveIdentity(ownership.rootPath, ownership.path);
+  const identity =
+    "canonicalRoot" in ownership
+      ? ownership
+      : legacyDocumentSaveIdentity(ownership.rootPath, ownership.path);
   if (!identity) {
     return null;
   }
 
-  return `${identity.canonicalRoot}\0${identity.workspaceRelativePath}`;
+  return "workspaceId" in identity
+    ? `${identity.workspaceId}\0${identity.canonicalRoot}\0${identity.workspaceRelativePath}`
+    : `${identity.canonicalRoot}\0${identity.workspaceRelativePath}`;
 }
 
 export interface DocumentSaveIdentityStrategy {
@@ -45,9 +47,7 @@ export interface DocumentSaveIdentityStrategy {
 }
 
 /** Builds immutable save ownership values from workspace-authoritative policy. */
-export class PolicyNormalizedDocumentSaveIdentityStrategy
-  implements DocumentSaveIdentityStrategy
-{
+export class PolicyNormalizedDocumentSaveIdentityStrategy implements DocumentSaveIdentityStrategy {
   create(
     canonicalRoot: string,
     workspaceRelativePath: string,
@@ -87,10 +87,135 @@ export function createDocumentSaveIdentity(
   canonicalRoot: string,
   workspaceRelativePath: string,
   policy: WorkspacePathPolicy = DEFAULT_WORKSPACE_PATH_POLICY,
-  strategy: DocumentSaveIdentityStrategy =
-    policyNormalizedDocumentSaveIdentityStrategy,
+  strategy: DocumentSaveIdentityStrategy = policyNormalizedDocumentSaveIdentityStrategy,
 ): DocumentSaveIdentity | null {
   return strategy.create(canonicalRoot, workspaceRelativePath, policy);
+}
+
+export function createRegisteredDocumentSaveIdentity(
+  workspaceId: string,
+  canonicalRoot: string,
+  workspaceRelativePath: string,
+  policy: WorkspacePathPolicy = DEFAULT_WORKSPACE_PATH_POLICY,
+  strategy: DocumentSaveIdentityStrategy = policyNormalizedDocumentSaveIdentityStrategy,
+): RegisteredDocumentSaveIdentity | null {
+  if (!isRegisteredDocumentSaveWorkspaceId(workspaceId)) {
+    return null;
+  }
+  const identity = createDocumentSaveIdentity(
+    canonicalRoot,
+    workspaceRelativePath,
+    policy,
+    strategy,
+  );
+  return identity
+    ? Object.freeze({
+        ...identity,
+        workspaceId,
+      })
+    : null;
+}
+
+export function isRegisteredDocumentSaveWorkspaceId(value: unknown): value is string {
+  return isSafeString(value) && value.trim() === value;
+}
+
+export function registeredDocumentSaveIdentityFromSelectedPath(
+  workspaceId: string,
+  canonicalRoot: string,
+  selectedRoot: string,
+  selectedPath: string,
+  policy: WorkspacePathPolicy = DEFAULT_WORKSPACE_PATH_POLICY,
+): RegisteredDocumentSaveIdentity | null {
+  const identity = documentSaveIdentityFromSelectedPath(
+    canonicalRoot,
+    selectedRoot,
+    selectedPath,
+    policy,
+  );
+  return identity
+    ? createRegisteredDocumentSaveIdentity(
+        workspaceId,
+        identity.canonicalRoot,
+        identity.workspaceRelativePath,
+        policy,
+      )
+    : null;
+}
+
+export function registeredDocumentSaveIdentityKey(
+  workspaceId: string,
+  canonicalRoot: string,
+  identity: DocumentSaveIdentity,
+): string | null {
+  if (identity.canonicalRoot !== canonicalRoot) {
+    return null;
+  }
+  const registered = createRegisteredDocumentSaveIdentity(
+    workspaceId,
+    identity.canonicalRoot,
+    identity.workspaceRelativePath,
+  );
+  return registered ? documentSaveOwnershipKey(registered) : null;
+}
+
+export function registeredDocumentSaveIdentityMatches(
+  workspaceId: string,
+  canonicalRoot: string,
+  identity: DocumentSaveIdentity,
+  ownership: DocumentSaveOwnership | null,
+): boolean {
+  return (
+    isRegisteredDocumentSaveIdentity(ownership) &&
+    ownership.workspaceId === workspaceId &&
+    ownership.canonicalRoot === canonicalRoot &&
+    documentSaveOwnershipKey(ownership) ===
+      registeredDocumentSaveIdentityKey(workspaceId, canonicalRoot, identity)
+  );
+}
+
+export function isRegisteredDocumentSaveIdentity(
+  value: unknown,
+): value is RegisteredDocumentSaveIdentity {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length !== 3 ||
+      !keys.every(
+        (key) =>
+          typeof key === "string" &&
+          ["canonicalRoot", "workspaceId", "workspaceRelativePath"].includes(key),
+      )
+    ) {
+      return false;
+    }
+    const canonicalRoot = dataProperty(descriptors.canonicalRoot);
+    const workspaceId = dataProperty(descriptors.workspaceId);
+    const workspaceRelativePath = dataProperty(descriptors.workspaceRelativePath);
+    if (
+      typeof canonicalRoot !== "string" ||
+      typeof workspaceId !== "string" ||
+      typeof workspaceRelativePath !== "string"
+    ) {
+      return false;
+    }
+    const normalized = createRegisteredDocumentSaveIdentity(
+      workspaceId,
+      canonicalRoot,
+      workspaceRelativePath,
+    );
+    return (
+      normalized !== null &&
+      normalized.canonicalRoot === canonicalRoot &&
+      normalized.workspaceRelativePath === workspaceRelativePath
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Resolves selected I/O paths at the boundary and returns canonical ownership. */
@@ -105,22 +230,13 @@ export function documentSaveIdentityFromSelectedPath(
   if (!root || !candidate || root.flavor !== candidate.flavor) {
     return null;
   }
-  if (
-    root.flavor === "windows" &&
-    !segmentsEqual([root.anchor], [candidate.anchor], policy)
-  ) {
+  if (root.flavor === "windows" && !segmentsEqual([root.anchor], [candidate.anchor], policy)) {
     return null;
   }
   if (candidate.segments.length <= root.segments.length) {
     return null;
   }
-  if (
-    !segmentsEqual(
-      root.segments,
-      candidate.segments.slice(0, root.segments.length),
-      policy,
-    )
-  ) {
+  if (!segmentsEqual(root.segments, candidate.segments.slice(0, root.segments.length), policy)) {
     return null;
   }
 
@@ -143,9 +259,14 @@ export function legacyDocumentSaveIdentity(
   return documentSaveIdentityFromSelectedPath(rootPath, rootPath, path);
 }
 
-export function documentSaveIdentitySegments(
-  identity: DocumentSaveIdentity,
-): readonly string[] {
+export function legacyDocumentSaveOwnership(
+  rootPath: string,
+  path: string,
+): LegacyDocumentSaveOwnership | null {
+  return legacyDocumentSaveIdentity(rootPath, path) ? Object.freeze({ path, rootPath }) : null;
+}
+
+export function documentSaveIdentitySegments(identity: DocumentSaveIdentity): readonly string[] {
   return identity.workspaceRelativePath.split("/");
 }
 
@@ -166,10 +287,7 @@ function normalizeCanonicalRoot(root: string): string | null {
   const windows = /^[A-Za-z]:[\\/]/.test(root);
   let end = root.length;
   const minimumLength = windows ? 3 : 1;
-  while (
-    end > minimumLength &&
-    (windows ? isSeparator(root[end - 1]) : root[end - 1] === "/")
-  ) {
+  while (end > minimumLength && (windows ? isSeparator(root[end - 1]) : root[end - 1] === "/")) {
     end -= 1;
   }
 
@@ -192,10 +310,7 @@ function relativePathSegments(path: string): string[] | null {
   return segments;
 }
 
-function normalizeSegment(
-  segment: string,
-  policy: WorkspacePathPolicy,
-): string | null {
+function normalizeSegment(segment: string, policy: WorkspacePathPolicy): string | null {
   let normalized: string;
   try {
     normalized =
@@ -235,11 +350,7 @@ function segmentsEqual(
   for (let index = 0; index < left.length; index += 1) {
     const normalizedLeft = normalizeSegment(left[index] ?? "", policy);
     const normalizedRight = normalizeSegment(right[index] ?? "", policy);
-    if (
-      normalizedLeft === null ||
-      normalizedRight === null ||
-      normalizedLeft !== normalizedRight
-    ) {
+    if (normalizedLeft === null || normalizedRight === null || normalizedLeft !== normalizedRight) {
       return false;
     }
   }
@@ -261,8 +372,7 @@ function lexicalAbsolutePath(path: string): LexicalAbsolutePath | null {
   const anchor = windows ? windows[1] : "/";
   const remainder = windows ? path.slice(windows[0].length) : path.slice(1);
   const segments: string[] = [];
-  const segmentsFromPath =
-    flavor === "windows" ? remainder.split(/[\\/]/) : remainder.split("/");
+  const segmentsFromPath = flavor === "windows" ? remainder.split(/[\\/]/) : remainder.split("/");
   for (const segment of segmentsFromPath) {
     if (!segment || segment === ".") {
       continue;
@@ -290,7 +400,7 @@ function isSafeString(value: unknown): value is string {
     const code = value.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
       const next = value.charCodeAt(index + 1);
-      if (next < 0xdc00 || next > 0xdfff) {
+      if (!Number.isInteger(next) || next < 0xdc00 || next > 0xdfff) {
         return false;
       }
       index += 1;
@@ -306,4 +416,8 @@ function isSafeString(value: unknown): value is string {
 
 function isSeparator(character: string | undefined): boolean {
   return character === "/" || character === "\\";
+}
+
+function dataProperty(descriptor: PropertyDescriptor | undefined): unknown {
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }

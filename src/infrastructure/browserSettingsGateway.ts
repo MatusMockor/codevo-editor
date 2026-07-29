@@ -16,8 +16,7 @@ export interface KeyValueStorage {
 }
 
 const APP_SETTINGS_KEY = "editor.settings.app";
-const CANONICAL_WORKSPACE_SETTINGS_PREFIX =
-  "editor.settings.workspace:canonical:";
+const CANONICAL_WORKSPACE_SETTINGS_PREFIX = "editor.settings.workspace:canonical:";
 const LEGACY_WORKSPACE_SETTINGS_PREFIX = "editor.settings.workspace:";
 
 export class BrowserSettingsGateway implements SettingsGateway {
@@ -40,9 +39,7 @@ export class BrowserSettingsGateway implements SettingsGateway {
     const keys = workspaceSettingsKeys(identity);
     const canonicalValue = this.storage.getItem(keys.canonical);
     if (canonicalValue !== null) {
-      return normalizeWorkspaceSettings(
-        readJson(canonicalValue, defaultWorkspaceSettings()),
-      );
+      return normalizeWorkspaceSettings(readJson(canonicalValue, defaultWorkspaceSettings()));
     }
 
     for (const legacyKey of keys.legacy) {
@@ -70,11 +67,63 @@ export class BrowserSettingsGateway implements SettingsGateway {
     settings: WorkspaceSettings,
   ): Promise<void> {
     const keys = workspaceSettingsKeys(identity);
-    this.storage.setItem(keys.canonical, JSON.stringify(settings));
+    let quotaError: unknown = null;
+
+    for (const serialized of serializedWorkspaceSettingsCandidates(settings)) {
+      const saved = trySetItem(this.storage, keys.canonical, serialized);
+      if (saved.ok) {
+        quotaError = null;
+        break;
+      }
+      if (!isQuotaExceededError(saved.error)) {
+        throw saved.error;
+      }
+      quotaError = saved.error;
+    }
+
+    if (quotaError) {
+      throw quotaError;
+    }
+
     for (const legacyKey of keys.legacy) {
       this.storage.removeItem(legacyKey);
     }
   }
+}
+
+function trySetItem(
+  storage: KeyValueStorage,
+  key: string,
+  value: string,
+): { ok: true } | { error: unknown; ok: false } {
+  try {
+    storage.setItem(key, value);
+    return { ok: true };
+  } catch (error) {
+    return { error, ok: false };
+  }
+}
+
+function isQuotaExceededError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const candidate = error as { code?: unknown; name?: unknown };
+  return candidate.name === "QuotaExceededError" || candidate.code === 22;
+}
+
+function serializedWorkspaceSettingsCandidates(settings: WorkspaceSettings): string[] {
+  const sessionWithoutNavigation = { ...settings.session };
+  delete sessionWithoutNavigation.navigation;
+
+  return [
+    ...new Set([
+      JSON.stringify(settings),
+      JSON.stringify({ ...settings, session: sessionWithoutNavigation }),
+      JSON.stringify({ ...settings, session: defaultWorkspaceSettings().session }),
+    ]),
+  ];
 }
 
 function readJson(value: string | null, fallback: unknown): unknown {
@@ -89,9 +138,7 @@ function readJson(value: string | null, fallback: unknown): unknown {
   }
 }
 
-function parseJson(value: string):
-  | { ok: true; value: unknown }
-  | { ok: false } {
+function parseJson(value: string): { ok: true; value: unknown } | { ok: false } {
   try {
     return { ok: true, value: JSON.parse(value) };
   } catch {
@@ -107,9 +154,10 @@ function canonicalWorkspaceSettingsKey(canonicalKey: string): string {
   return `${CANONICAL_WORKSPACE_SETTINGS_PREFIX}${encodeURIComponent(canonicalKey)}`;
 }
 
-function workspaceSettingsKeys(
-  identity: string | WorkspaceSettingsIdentity,
-): { canonical: string; legacy: string[] } {
+function workspaceSettingsKeys(identity: string | WorkspaceSettingsIdentity): {
+  canonical: string;
+  legacy: string[];
+} {
   if (typeof identity === "string") {
     return { canonical: legacyWorkspaceSettingsKey(identity), legacy: [] };
   }

@@ -10,8 +10,10 @@ import type {
   WorkspaceDetectionGateway,
   WorkspaceFileGateway,
   WorkspaceOwnerFileGateway,
+  WorkspaceOwnerRelativeFileGateway,
 } from "../domain/workspace";
 import type { WorkspaceFileChangeGateway } from "../domain/workspaceFileChange";
+import type { WorkspaceSourceDiscoveryGateway } from "../domain/workspaceSourceDiscovery";
 import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import type { DirtyCloseDecisionPort } from "./dirtyCloseDecisionPort";
@@ -25,13 +27,18 @@ import type {
   EditorSurfacePhpstanIgnoreRunner,
 } from "./useWorkbenchCodeQualityDiagnostics";
 import type { WorkspaceIdentityGateway } from "./workspaceIdentityGatewayPort";
+import type { DirtyTextSearchComputationGateway } from "./dirtyTextSearchComputation";
+import type { EditorCursorStorePort } from "./editorCursorStore";
+import type { IncrementalLanguageServerDocumentSyncGateway } from "../domain/incrementalLanguageServerDocumentSync";
+import type { EditorActiveLiveDocumentSaveAdmissionPort } from "./editorActiveLiveDocumentSaveCoordinator";
 
 export interface WorkbenchWorkspaceGateways {
   detection: WorkspaceDetectionGateway;
+  dirtyTextSearch: DirtyTextSearchComputationGateway;
   fileChanges: WorkspaceFileChangeGateway;
   fileSearch: FileSearchGateway;
   files: WorkspaceFileGateway;
-  ownerFiles?: WorkspaceOwnerFileGateway;
+  ownerFiles?: WorkspaceOwnerFileGateway & WorkspaceOwnerRelativeFileGateway;
   identity: WorkspaceIdentityGateway;
   phpTools: PhpToolGateway;
   projectSymbols: ProjectSymbolSearchGateway;
@@ -39,6 +46,14 @@ export interface WorkbenchWorkspaceGateways {
 }
 
 export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {
+  activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
+  javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway?: IncrementalLanguageServerDocumentSyncGateway;
+  editorCursorStore?: EditorCursorStorePort;
+  cancelJavaScriptTypeScriptLanguageServerRequest?(
+    rootPath: string,
+    sessionId: number,
+    requestId: number,
+  ): Promise<void>;
   /**
    * Strategy that defers the coalesced diagnostics flush. Production omits this
    * to use one flush per animation frame (with a `setTimeout(0)` fallback);
@@ -58,5 +73,6 @@ export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOpti
   nodePackageScriptsGateway?: NodePackageScriptsWorkbenchGateway;
   nodeRunTaskGateway?: NodeRunTaskGateway;
   vscodeProcessTasksGateway?: VscodeProcessTasksGateway;
-  workspaceSourceDiscoveryGateway?: NpmOpenScriptNavigationGatewayBinder;
+  workspaceSourceDiscoveryGateway?: WorkspaceSourceDiscoveryGateway &
+    NpmOpenScriptNavigationGatewayBinder;
 }

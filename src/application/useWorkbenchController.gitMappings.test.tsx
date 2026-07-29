@@ -5,29 +5,22 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import {
-  emptyGitStatus,
-  type GitGateway,
-  type GitStatus,
-} from "../domain/git";
+import { emptyGitStatus, type GitGateway, type GitStatus } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
-import {
-  useWorkbenchController,
-  type WorkbenchWorkspaceGateways,
-} from "./useWorkbenchController";
+import { useWorkbenchController, type WorkbenchWorkspaceGateways } from "./useWorkbenchController";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import type { SmartModeGateway } from "../domain/intelligence";
-import type {
-  LanguageServerGateway,
-  LanguageServerPlan,
-} from "../domain/languageServer";
+import type { LanguageServerGateway, LanguageServerPlan } from "../domain/languageServer";
 import type { LanguageServerDiagnosticsGateway } from "../domain/languageServerDiagnostics";
 import {
   sessionBoundLanguageServerDocumentSyncGateway,
   type LanguageServerDocumentSyncGateway,
   type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
-import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
+import type {
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
+  LanguageServerFeaturesGateway,
+} from "../domain/languageServerFeatures";
 import {
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
@@ -225,6 +218,51 @@ function stubFeaturesGateway(): LanguageServerFeaturesGateway {
   };
 }
 
+function stubJavaScriptTypeScriptFeaturesGateway(): JavaScriptTypeScriptLanguageServerFeaturesGateway {
+  const gateway = stubFeaturesGateway();
+  const identifiedRequest = <T,>(
+    promise: Promise<T>,
+    sessionId: number,
+  ): Promise<T> & { readonly requestId: number; readonly sessionId: number } =>
+    Object.assign(promise, { requestId: 1, sessionId });
+
+  return {
+    ...gateway,
+    codeActions: (rootPath, path, range, context, sessionId) =>
+      identifiedRequest(gateway.codeActions(rootPath, path, range, context), sessionId),
+    completion: (rootPath, position, context, sessionId) =>
+      identifiedRequest(gateway.completion(rootPath, position, context), sessionId),
+    declaration: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.declaration(rootPath, position), sessionId),
+    definition: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.definition(rootPath, position), sessionId),
+    documentHighlights: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.documentHighlights(rootPath, position), sessionId),
+    hover: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.hover(rootPath, position), sessionId),
+    implementation: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.implementation(rootPath, position), sessionId),
+    linkedEditingRanges: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.linkedEditingRanges(rootPath, position), sessionId),
+    rangeSemanticTokens: (rootPath, path, range, sessionId) =>
+      identifiedRequest(gateway.rangeSemanticTokens(rootPath, path, range), sessionId),
+    references: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.references(rootPath, position), sessionId),
+    resolveCodeAction: (rootPath, action, sessionId) =>
+      identifiedRequest(gateway.resolveCodeAction(rootPath, action), sessionId),
+    semanticTokens: (rootPath, path, sessionId) =>
+      identifiedRequest(gateway.semanticTokens(rootPath, path), sessionId),
+    signatureHelp: (rootPath, position, context, sessionId) =>
+      identifiedRequest(gateway.signatureHelp(rootPath, position, context), sessionId),
+    sourceDefinition: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.sourceDefinition(rootPath, position), sessionId),
+    typeDefinition: (rootPath, position, sessionId) =>
+      identifiedRequest(gateway.typeDefinition(rootPath, position), sessionId),
+    workspaceSymbols: (rootPath, query, sessionId) =>
+      identifiedRequest(gateway.workspaceSymbols(rootPath, query), sessionId),
+  };
+}
+
 interface RenderOptions {
   appSettings?: AppSettings;
   workspaceSettings?: WorkspaceSettings;
@@ -253,6 +291,15 @@ function buildDependencies({
   };
   const stoppedStatus: LanguageServerRuntimeStatus = { kind: "stopped" };
   const workspaceGateways: WorkbenchWorkspaceGateways = {
+    dirtyTextSearch: {
+      compute: vi.fn(async (request) => ({
+        authority: request.authority,
+        dirtyPaths: request.dirtyPaths,
+        limitations: request.preflightLimitations,
+        results: [],
+        truncated: request.preflightLimitations.length > 0,
+      })),
+    },
     identity: {
       getDescriptor: vi.fn(),
       openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
@@ -418,7 +465,7 @@ function buildDependencies({
       runtimeGateway(),
       javaScriptTypeScriptDocumentSyncGateway,
       diagnosticsGateway(),
-      stubFeaturesGateway(),
+      stubJavaScriptTypeScriptFeaturesGateway(),
       workspaceRuntimeLifecycleGateway,
       terminalGateway,
       resolvedSettingsGateway,
@@ -557,11 +604,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     await flushAsyncTurns();
 
     expect(detectRepositories).toHaveBeenCalledWith("/workspace");
-    expect(mappingPaths(getWorkbench())).toEqual([
-      "",
-      "libs/manual",
-      "packages/api",
-    ]);
+    expect(mappingPaths(getWorkbench())).toEqual(["", "libs/manual", "packages/api"]);
   });
 
   it("drops auto-detected repositories when auto-detect is turned off, keeping manual only", async () => {
@@ -578,11 +621,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     });
     await flushAsyncTurns();
 
-    expect(mappingPaths(getWorkbench())).toEqual([
-      "",
-      "libs/manual",
-      "packages/api",
-    ]);
+    expect(mappingPaths(getWorkbench())).toEqual(["", "libs/manual", "packages/api"]);
 
     await act(async () => {
       await getWorkbench().saveWorkbenchSettings(
@@ -664,16 +703,11 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     });
     await flushAsyncTurns();
 
-    expect(mappingPaths(getWorkbench())).toEqual([
-      "",
-      "libs/second",
-      "packages/second",
-    ]);
+    expect(mappingPaths(getWorkbench())).toEqual(["", "libs/second", "packages/second"]);
   });
 
   it("drops an in-flight discovery result when the workspace switches mid-flight", async () => {
-    const detectDeferreds: Array<{ rootPath: string; deferred: Deferred<string[]> }> =
-      [];
+    const detectDeferreds: Array<{ rootPath: string; deferred: Deferred<string[]> }> = [];
     const detectRepositories = vi.fn(async (rootPath: string) => {
       const deferred = createDeferred<string[]>();
       detectDeferreds.push({ rootPath, deferred });
@@ -699,8 +733,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       })),
       loadWorkspaceSettings: vi.fn(
-        async (rootPath: string) =>
-          settingsByRoot[rootPath] ?? defaultWorkspaceSettings(),
+        async (rootPath: string) => settingsByRoot[rootPath] ?? defaultWorkspaceSettings(),
       ),
       saveAppSettings: vi.fn(async () => undefined),
       saveWorkspaceSettings: vi.fn(async () => undefined),
@@ -709,9 +742,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
 
     // Let workspace A open; resolve its open-time discovery so it settles.
     await flushAsyncTurns();
-    const openA = detectDeferreds.find(
-      (entry) => entry.rootPath === "/workspace-a",
-    );
+    const openA = detectDeferreds.find((entry) => entry.rootPath === "/workspace-a");
     expect(openA).toBeDefined();
     await act(async () => {
       openA?.deferred.resolve([]);
@@ -738,9 +769,7 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
       );
     });
     await flushAsyncTurns();
-    const saveDetect = detectDeferreds.filter(
-      (entry) => entry.rootPath === "/workspace-a",
-    );
+    const saveDetect = detectDeferreds.filter((entry) => entry.rootPath === "/workspace-a");
     expect(saveDetect.length).toBeGreaterThanOrEqual(2);
 
     // Switch to workspace B while A's discovery is still pending.
@@ -865,10 +894,6 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     await flushAsyncTurns();
 
     expect(detectRepositories).toHaveBeenCalledWith("/workspace");
-    expect(mappingPaths(getWorkbench())).toEqual([
-      "",
-      "libs/manual",
-      "packages/api",
-    ]);
+    expect(mappingPaths(getWorkbench())).toEqual(["", "libs/manual", "packages/api"]);
   });
 });

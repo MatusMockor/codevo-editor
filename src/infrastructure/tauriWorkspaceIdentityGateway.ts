@@ -8,7 +8,9 @@ import type {
   NativeWorkspaceDescriptor,
   NativeWorkspaceOpenResult,
   WorkspaceIdentityDescriptor,
+  WorkspaceIdentityDescriptorResolver,
   WorkspaceIdentityGateway,
+  WorkspaceIdentityPathMatch,
   WorkspaceOpenResult,
 } from "../application/workspaceIdentityGatewayPort";
 
@@ -17,23 +19,12 @@ export type {
   NativeWorkspaceDescriptor,
   NativeWorkspaceOpenResult,
   WorkspaceIdentityDescriptor,
+  WorkspaceIdentityDescriptorResolver,
   WorkspaceIdentityGateway,
+  WorkspaceIdentityPathMatch,
   WorkspaceOpenResult,
 } from "../application/workspaceIdentityGatewayPort";
-
-export interface WorkspaceIdentityDescriptorResolver {
-  descriptorForPath(path: string): WorkspaceIdentityDescriptor | null;
-  matchForPath?(
-    path: string,
-    workspaceId?: string,
-  ): WorkspaceIdentityPathMatch | null;
-}
-
-export interface WorkspaceIdentityPathMatch {
-  descriptor: WorkspaceIdentityDescriptor;
-  matchedRoot: string;
-  relativePath: string;
-}
+export { workspaceRelativePathForDescriptor } from "../application/workspaceIdentityPath";
 
 export class TauriWorkspaceIdentityGateway
   implements WorkspaceIdentityGateway, WorkspaceIdentityDescriptorResolver
@@ -248,20 +239,6 @@ function isMoreSpecific(
   }
 
   return candidate.pathLength > current.pathLength;
-}
-
-export function workspaceRelativePathForDescriptor(
-  descriptor: WorkspaceIdentityDescriptor,
-  path: string,
-): string | null {
-  for (const root of [descriptor.selectedPath, descriptor.canonicalRoot]) {
-    const relativePath = workspaceRelativePathForRoot(descriptor, root, path);
-    if (relativePath !== null) {
-      return relativePath;
-    }
-  }
-
-  return null;
 }
 
 function workspaceRelativePathForRoot(

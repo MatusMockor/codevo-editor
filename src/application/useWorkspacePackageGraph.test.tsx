@@ -8,6 +8,8 @@ import type {
   WorkspaceSourceDiscoveryGateway,
 } from "../domain/workspaceSourceDiscovery";
 import { waitForReact } from "../test/reactTestLifecycle";
+import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import { useWorkbenchWorkspacePackageGraph } from "./useWorkbenchWorkspacePackageGraph";
 import {
   useWorkspacePackageGraph,
   PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS,
@@ -50,6 +52,96 @@ describe("useWorkspacePackageGraph", () => {
         status: "unresolved",
       },
     ]);
+    expect(harness.current().packageForPath("/workspace/packages/api/src/index.ts")).toEqual({
+      kind: "package",
+      name: "@repo/api",
+      relativeDirPath: "packages/api",
+    });
+  });
+
+  it("mounts package discovery once for shared workbench consumers", async () => {
+    const gateway = packageGateway();
+    let expressConsumer: WorkspacePackageDiscovery | undefined;
+    let handleWorkspaceFileChange:
+      | ReturnType<typeof useWorkbenchWorkspacePackageGraph>["handleWorkspaceDiscoveryFileChange"]
+      | undefined;
+    let packageForPath: WorkspacePackageDiscovery["packageForPath"] | undefined;
+    let problemsConsumer: WorkspacePackageDiscovery | undefined;
+
+    function Harness() {
+      const controller = useWorkbenchWorkspacePackageGraph(
+        {
+          javaScriptTypeScript: {
+            frameworks: [],
+            hasJsconfig: false,
+            hasPackageJson: true,
+            hasTsconfig: true,
+            packageManager: "npm",
+            packageName: "root",
+            packages: [],
+            typeScriptDependencyVersion: null,
+            usesTypeScript: true,
+            workspaceTypeScriptVersion: null,
+          },
+          php: null,
+          rootPath: "/workspace",
+        },
+        false,
+        gateway,
+        createWorkspaceRuntimeOwner("workspace", "/workspace"),
+      );
+      expressConsumer = controller.workspacePackageDiscovery;
+      handleWorkspaceFileChange = controller.handleWorkspaceDiscoveryFileChange;
+      packageForPath = controller.packageForPath;
+      problemsConsumer = controller.workspacePackageDiscovery;
+      return null;
+    }
+
+    act(() => root.render(<Harness />));
+    await waitForReact(() => expect(expressConsumer?.authority).toBe("complete"));
+
+    expect(expressConsumer).toBe(problemsConsumer);
+    expect(packageForPath?.("/workspace/packages/api/src/index.ts")).toEqual({
+      kind: "package",
+      name: "@repo/api",
+      relativeDirPath: "packages/api",
+    });
+    expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      handleWorkspaceFileChange?.({
+        fileKind: "file",
+        kind: "modified",
+        path: "/workspace/packages/api/src/index.ts",
+        previousPath: null,
+        previousRelativePath: null,
+        relativePath: "packages/api/src/index.ts",
+        rootPath: "/workspace",
+      }),
+    );
+    await act(async () => {
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS + 10),
+      );
+    });
+    expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      handleWorkspaceFileChange?.({
+        fileKind: "file",
+        kind: "modified",
+        path: "/workspace/packages/api/package.json",
+        previousPath: null,
+        previousRelativePath: null,
+        relativePath: "packages/api/package.json",
+        rootPath: "/workspace",
+      }),
+    );
+    expect(expressConsumer?.authority).toBe("loading");
+    expect(packageForPath?.("/workspace/packages/api/src/index.ts")).toEqual({
+      kind: "loading",
+    });
+    await waitForReact(() => expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(2));
   });
 
   it("publishes loading authority before the first owned discovery settles", () => {
@@ -86,7 +178,7 @@ describe("useWorkspacePackageGraph", () => {
     expect(gateway.readSourceTextBounded).not.toHaveBeenCalled();
   });
 
-  it("rejects a stale package result across an A to B to A owner switch", async () => {
+  it("fails closed and rejects a stale package result across an A to B to A owner switch", async () => {
     let releaseFirstA: (value: {
       files: readonly string[];
       truncated: boolean;
@@ -130,9 +222,38 @@ describe("useWorkspacePackageGraph", () => {
     });
     const harness = renderDiscovery(root, gateway, "/a", "a");
 
+    expect(harness.current()).toEqual(
+      expect.objectContaining({
+        authority: "loading",
+        ownerKey: "a\u0000/a",
+      }),
+    );
+    expect(harness.current().packageForPath("/a/packages/a/src/index.ts")).toEqual({
+      kind: "loading",
+    });
+
     harness.set("/b", "b");
+    expect(harness.current()).toEqual(
+      expect.objectContaining({
+        authority: "loading",
+        ownerKey: "b\u0000/b",
+      }),
+    );
+    expect(harness.current().packageForPath("/b/packages/b/src/index.ts")).toEqual({
+      kind: "loading",
+    });
     await waitForReact(() => expect(harness.current().packages[0]?.name).toBe("@repo/b"));
+
     harness.set("/a", "a");
+    expect(harness.current()).toEqual(
+      expect.objectContaining({
+        authority: "loading",
+        ownerKey: "a\u0000/a",
+      }),
+    );
+    expect(harness.current().packageForPath("/a/packages/a/src/index.ts")).toEqual({
+      kind: "loading",
+    });
     await waitForReact(() => expect(harness.current().packages[0]?.name).toBe("@repo/a"));
 
     await act(async () => {
@@ -144,7 +265,23 @@ describe("useWorkspacePackageGraph", () => {
       await firstA;
     });
 
-    expect(harness.current().packages[0]?.name).toBe("@repo/a");
+    expect(harness.current().packages).toEqual([
+      {
+        name: "@repo/a",
+        relativeDirPath: "packages/a",
+        status: "unresolved",
+      },
+    ]);
+    expect(harness.current().packageForPath("/a/packages/a/src/index.ts")).toEqual({
+      kind: "package",
+      name: "@repo/a",
+      relativeDirPath: "packages/a",
+    });
+    expect(harness.current().packageForPath("/a/packages/stale/src/index.ts")).toEqual({
+      kind: "package",
+      name: "root",
+      relativeDirPath: "",
+    });
   });
 
   it("does not let a discarded concurrent owner render invalidate committed discovery", async () => {
@@ -213,7 +350,7 @@ describe("useWorkspacePackageGraph", () => {
     expect(committed.packages[0]?.name).toBe("@repo/api");
   });
 
-  it("holds the settled same-owner snapshot while an invalidated discovery is pending", async () => {
+  it("fails closed while an invalidated same-owner discovery is pending", async () => {
     let releaseRescan: () => void = () => undefined;
     const rescan = new Promise<void>((resolve) => {
       releaseRescan = resolve;
@@ -241,17 +378,14 @@ describe("useWorkspacePackageGraph", () => {
 
     expect(harness.current()).toEqual(
       expect.objectContaining({
-        authority: "complete",
-        loaded: true,
-        packages: [
-          {
-            name: "@repo/api",
-            relativeDirPath: "packages/api",
-            status: "unresolved",
-          },
-        ],
+        authority: "loading",
+        loaded: false,
+        packages: [],
       }),
     );
+    expect(harness.current().packageForPath("/workspace/packages/api/src/index.ts")).toEqual({
+      kind: "loading",
+    });
 
     await act(async () => {
       releaseRescan();
@@ -277,9 +411,7 @@ describe("useWorkspacePackageGraph", () => {
       );
     });
     harness.invalidate();
-    await waitForReact(() =>
-      expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(2),
-    );
+    await waitForReact(() => expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(2));
 
     expect(PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS).toBe(75);
   });
@@ -311,11 +443,7 @@ describe("useWorkspacePackageGraph", () => {
     const enumeratePackageJsonFiles = gateway.enumeratePackageJsonFiles;
     expect(enumeratePackageJsonFiles).toBeDefined();
     vi.mocked(enumeratePackageJsonFiles!).mockResolvedValue({
-      files: [
-        "package.json",
-        "packages/api/package.json",
-        "packages/bad/package.json",
-      ],
+      files: ["package.json", "packages/api/package.json", "packages/bad/package.json"],
       truncated: false,
       visited: 6,
     });

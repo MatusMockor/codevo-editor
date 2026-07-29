@@ -3,10 +3,7 @@ import type { ExpressRouteNavigationGeneration } from "../application/expressRou
 import { useDirtyExpressRoutesDocumentSnapshots } from "../application/useDirtyExpressRoutesDocumentSnapshots";
 import { useWorkspaceExpressRoutes } from "../application/useWorkspaceExpressRoutes";
 import { useWorkspaceExpressRouteOpener } from "../application/useWorkspaceExpressRouteOpener";
-import {
-  useWorkspacePackageGraph,
-  type WorkspacePackageDiscovery,
-} from "../application/useWorkspacePackageGraph";
+import type { WorkspacePackageDiscovery } from "../application/useWorkspacePackageGraph";
 import { hasExpressWorkspaceSignal } from "../domain/expressWorkspaceSignal";
 import type { WorkspaceSourceDiscoveryGateway } from "../domain/workspaceSourceDiscovery";
 import type { WorkspaceExpressRouteSourceSnapshot } from "../domain/workspaceExpressRoutes";
@@ -36,14 +33,14 @@ export interface WorkspaceExpressRoutesWorkbenchPanel extends ExpressRoutesPanel
 
 type DirtySnapshotsArguments = Parameters<typeof useDirtyExpressRoutesDocumentSnapshots>;
 
-interface OwnedWorkspaceExpressRoutesWorkbenchPanelOptions
-  extends Omit<
-    WorkspaceExpressRoutesWorkbenchPanelOptions,
-    "dirtySnapshots" | "isOpen" | "packageDiscovery"
-  > {
+interface OwnedWorkspaceExpressRoutesWorkbenchPanelOptions extends Omit<
+  WorkspaceExpressRoutesWorkbenchPanelOptions,
+  "dirtySnapshots" | "isOpen" | "packageDiscovery"
+> {
   readonly activeDocument: DirtySnapshotsArguments[1];
   readonly isPanelOpen: boolean;
   readonly openDocuments: DirtySnapshotsArguments[0];
+  readonly packageDiscovery: WorkspacePackageDiscovery;
 }
 
 export function useOwnedWorkspaceExpressRoutesWorkbenchPanel({
@@ -54,6 +51,7 @@ export function useOwnedWorkspaceExpressRoutesWorkbenchPanel({
   isPanelOpen,
   onOpenLocation,
   openDocuments,
+  packageDiscovery,
   rootPath,
   workspaceId,
 }: OwnedWorkspaceExpressRoutesWorkbenchPanelOptions): WorkspaceExpressRoutesWorkbenchPanel {
@@ -62,13 +60,6 @@ export function useOwnedWorkspaceExpressRoutesWorkbenchPanel({
     activeDocument,
     rootPath,
   );
-  const packageDiscovery = useWorkspacePackageGraph({
-    discoveryVersion,
-    enabled: hasJavaScriptTypeScriptWorkspace === true,
-    gateway: discoveryGateway,
-    rootPath,
-    workspaceId,
-  });
   const manifestSignal =
     packageDiscovery.loaded &&
     hasExpressWorkspaceSignal({

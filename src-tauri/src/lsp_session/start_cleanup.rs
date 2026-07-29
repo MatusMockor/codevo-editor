@@ -14,20 +14,82 @@ struct LanguageServerStartCleanupLease<'a> {
     armed: bool,
 }
 
+struct StartReplacementMarker<'a> {
+    registry: &'a JavaScriptTypeScriptLanguageServerRegistry,
+    runtime_id: String,
+    armed: bool,
+}
+
 impl JavaScriptTypeScriptLanguageServerRegistry {
     pub(crate) fn reserve_start_cleanup(
         &self,
         root_path: &str,
+        status_sink: &dyn StatusSink,
     ) -> Result<JavaScriptTypeScriptStartCleanupLease<'_>, String> {
+        let runtime_id = workspace_runtime_id(root_path);
+        let mut marker = {
+            let initial_gate = self
+                .cleanup_gate
+                .lock()
+                .map_err(|error| error.to_string())?;
+            if is_active_status(&self.registry.status(root_path)) {
+                return Err("Language server already running.".to_string());
+            }
+            let mut replacements = self
+                .start_replacements
+                .lock()
+                .map_err(|error| error.to_string())?;
+            if !replacements.insert(runtime_id.clone()) {
+                return Err("Language server start replacement is already reserved.".to_string());
+            }
+            drop(replacements);
+            drop(initial_gate);
+            StartReplacementMarker {
+                registry: self,
+                runtime_id,
+                armed: true,
+            }
+        };
+        status_sink.begin_document_session_replacement()?;
         let cleanup_gate = self
             .cleanup_gate
             .lock()
             .map_err(|error| error.to_string())?;
+        if is_active_status(&self.registry.status(root_path)) {
+            return Err("Language server start reservation was superseded.".to_string());
+        }
+        marker.complete()?;
         Ok(JavaScriptTypeScriptStartCleanupLease {
             registry: self,
             lease: self.registry.reserve_start_cleanup(root_path)?,
             _cleanup_gate: cleanup_gate,
         })
+    }
+}
+
+impl StartReplacementMarker<'_> {
+    fn complete(&mut self) -> Result<(), String> {
+        let mut replacements = self
+            .registry
+            .start_replacements
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if !replacements.remove(&self.runtime_id) {
+            return Err("Language server start replacement marker was lost.".to_string());
+        }
+        self.armed = false;
+        Ok(())
+    }
+}
+
+impl Drop for StartReplacementMarker<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(mut replacements) = self.registry.start_replacements.lock() {
+            replacements.remove(&self.runtime_id);
+        }
     }
 }
 
@@ -77,7 +139,10 @@ impl LanguageServerRegistry {
         root_path: &str,
     ) -> Result<LanguageServerStartCleanupLease<'_>, String> {
         let runtime_id = workspace_runtime_id(root_path);
-        let supervisor = Arc::new(LanguageServerSupervisor::new_with_label(self.server_label));
+        let supervisor = Arc::new(LanguageServerSupervisor::new_with_session_id_source(
+            self.server_label,
+            Arc::clone(&self.next_session_id),
+        ));
         supervisor.reserve_start_cleanup()?;
         let replaced = {
             let mut supervisors = self.supervisors.lock().map_err(|error| error.to_string())?;

@@ -10,6 +10,8 @@ import {
 import type { NavigationHistory } from "../domain/navigation";
 import type { EditorRevealTarget } from "../domain/languageServerFeatures";
 import type { EditorDocument } from "../domain/workspace";
+import { EditorCursorStore } from "./editorCursorStore";
+import { createLegacyEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 
 function editorDocument(path: string): EditorDocument {
   return {
@@ -27,22 +29,28 @@ interface Harness {
   unmount: () => void;
 }
 
-function renderWorkbenchNavigationState(
-  initialActiveDocument: EditorDocument | null,
-): Harness {
+function renderWorkbenchNavigationState(initialActiveDocument: EditorDocument | null): Harness {
   const container = window.document.createElement("div");
   const root = createRoot(container);
   const captured: { navigationState: WorkbenchNavigationState | null } = {
     navigationState: null,
   };
-  let setActiveDocumentState: (document: EditorDocument | null) => void =
-    () => {};
+  let setActiveDocumentState: (document: EditorDocument | null) => void = () => {};
 
   function HarnessComponent() {
-    const [activeDocument, setActiveDocument] = useState(
-      initialActiveDocument,
-    );
-    const navigationState = useWorkbenchNavigationState({ activeDocument });
+    const [activeDocument, setActiveDocument] = useState(initialActiveDocument);
+    const [cursorStore] = useState(() => new EditorCursorStore());
+    if (activeDocument) {
+      cursorStore.ensureActive({
+        documentPath: activeDocument.path,
+        groupId: "main",
+        ownerKey: createLegacyEditorSessionOwnerKey("/workspace"),
+      });
+    } else {
+      const snapshot = cursorStore.getActiveSnapshot();
+      if (snapshot.status === "available") cursorStore.deactivate(snapshot.authority);
+    }
+    const navigationState = useWorkbenchNavigationState({ cursorStore });
 
     setActiveDocumentState = setActiveDocument;
     captured.navigationState = navigationState;
@@ -77,9 +85,7 @@ function renderWorkbenchNavigationState(
 
 describe("useWorkbenchNavigationState", () => {
   it("does not let a stale reveal acknowledgement clear a newer request", () => {
-    const harness = renderWorkbenchNavigationState(
-      editorDocument("/workspace/a.ts"),
-    );
+    const harness = renderWorkbenchNavigationState(editorDocument("/workspace/a.ts"));
     const first: EditorRevealTarget = {
       path: "/workspace/a.ts",
       position: { column: 1, lineNumber: 2 },
@@ -106,14 +112,10 @@ describe("useWorkbenchNavigationState", () => {
   });
 
   it("clears the active editor position when the active document becomes null", () => {
-    const harness = renderWorkbenchNavigationState(
-      editorDocument("/workspace/a.ts"),
-    );
+    const harness = renderWorkbenchNavigationState(editorDocument("/workspace/a.ts"));
 
     act(() => {
-      harness
-        .navigationState()
-        .updateActiveEditorPosition({ column: 5, lineNumber: 12 });
+      harness.navigationState().updateActiveEditorPosition({ column: 5, lineNumber: 12 });
     });
 
     expect(harness.navigationState().activeEditorPosition).toEqual({
@@ -134,9 +136,7 @@ describe("useWorkbenchNavigationState", () => {
   });
 
   it("resets and restores navigation history", () => {
-    const harness = renderWorkbenchNavigationState(
-      editorDocument("/workspace/a.ts"),
-    );
+    const harness = renderWorkbenchNavigationState(editorDocument("/workspace/a.ts"));
     const restoredHistory: NavigationHistory = {
       backStack: [
         {

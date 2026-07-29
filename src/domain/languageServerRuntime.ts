@@ -5,6 +5,7 @@ import type {
   JavaScriptTypeScriptVersionPreference,
   PhpBackendPreference,
 } from "./settings";
+import type { NegotiatedDocumentSyncCapability } from "./incrementalDocumentSync";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 export interface LanguageServerCapabilities {
@@ -19,6 +20,7 @@ export interface LanguageServerCapabilities {
   documentHighlight: boolean;
   documentLink: boolean;
   documentSymbol: boolean;
+  documentSync?: NegotiatedDocumentSyncCapability;
   didCreateFiles?: boolean;
   didDeleteFiles?: boolean;
   didRenameFiles: boolean;
@@ -56,8 +58,7 @@ export interface LanguageServerSemanticTokensLegend {
   tokenTypes: string[];
 }
 
-export interface LanguageServerRuntimeCapabilities
-  extends LanguageServerCapabilities {
+export interface LanguageServerRuntimeCapabilities extends LanguageServerCapabilities {
   onTypeFormattingTriggerCharacters?: string[] | null;
   semanticTokensLegend?: LanguageServerSemanticTokensLegend | null;
 }
@@ -100,9 +101,7 @@ export interface LanguageServerRuntimeGateway {
   ): Promise<LanguageServerRuntimeStatus>;
   stop(rootPath: string): Promise<LanguageServerRuntimeStatus>;
   openLog(rootPath: string): Promise<string | null>;
-  subscribeStatus(
-    listener: (status: LanguageServerRuntimeStatus) => void,
-  ): Promise<UnsubscribeFn>;
+  subscribeStatus(listener: (status: LanguageServerRuntimeStatus) => void): Promise<UnsubscribeFn>;
 }
 
 export interface LanguageServerStatusLabelOptions {
@@ -151,10 +150,7 @@ export function languageServerStatusBelongsToWorkspace(
     return false;
   }
 
-  return (
-    normalizedWorkspaceRootKey(status.rootPath) ===
-    normalizedWorkspaceRootKey(workspaceRoot)
-  );
+  return normalizedWorkspaceRootKey(status.rootPath) === normalizedWorkspaceRootKey(workspaceRoot);
 }
 
 function languageServerProjectStatusSuffix(
@@ -168,9 +164,7 @@ function languageServerProjectStatusSuffix(
   return " for this project";
 }
 
-export function languageServerCrashMessage(
-  status: LanguageServerRuntimeStatus,
-): string | null {
+export function languageServerCrashMessage(status: LanguageServerRuntimeStatus): string | null {
   if (status.kind !== "crashed") {
     return null;
   }
@@ -178,9 +172,7 @@ export function languageServerCrashMessage(
   return status.message;
 }
 
-export function isLanguageServerActive(
-  status: LanguageServerRuntimeStatus | null,
-): boolean {
+export function isLanguageServerActive(status: LanguageServerRuntimeStatus | null): boolean {
   if (!status) {
     return false;
   }
@@ -351,6 +343,11 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     documentHighlight: false,
     documentLink: false,
     documentSymbol: false,
+    documentSync: {
+      changeKind: "none",
+      openClose: false,
+      save: { kind: "unsupported" },
+    },
     didCreateFiles: false,
     didDeleteFiles: false,
     didRenameFiles: false,

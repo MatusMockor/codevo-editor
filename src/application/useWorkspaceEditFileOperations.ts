@@ -1,9 +1,4 @@
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import {
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
@@ -13,6 +8,7 @@ import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntim
 import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
+  type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerFeaturesGateway,
   type LanguageServerTextEdit,
   type LanguageServerWorkspaceEdit,
@@ -52,37 +48,42 @@ export interface WorkspaceEditFileOperationsDependencies {
   openPathsRef: MutableRefObject<string[]>;
   previewPathRef: MutableRefObject<string | null>;
   documentVersionsByUriRef: MutableRefObject<Record<string, number>>;
-  javaScriptTypeScriptDocumentVersionsByUriRef: MutableRefObject<
-    Record<string, number>
-  >;
+  javaScriptTypeScriptDocumentVersionsByUriRef: MutableRefObject<Record<string, number>>;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   languageServerRuntimeStatusRoot: string | null;
   javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
-  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerFeaturesGateway: Pick<
+    JavaScriptTypeScriptLanguageServerFeaturesGateway,
+    | "didChangeWatchedFiles"
+    | "didCreateFiles"
+    | "didDeleteFiles"
+    | "didRenameFiles"
+    | "willCreateFiles"
+    | "willDeleteFiles"
+    | "willRenameFiles"
+  >;
   workspaceFiles: WorkspaceFileGateway;
   reportChangedDocuments: (paths: readonly string[]) => void;
   setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
+  reconcileDocumentSessionTopology: (
+    update: SetStateAction<Record<string, EditorDocument>>,
+  ) => boolean;
   setOpenPaths: Dispatch<SetStateAction<string[]>>;
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
   setActivePath: Dispatch<SetStateAction<string | null>>;
   setMessage: Dispatch<SetStateAction<string | null>>;
   refreshDirectory: (path: string) => Promise<void>;
   syncClosedDocument: (document: EditorDocument) => Promise<void>;
-  syncClosedJavaScriptTypeScriptDocument: (
-    document: EditorDocument,
-  ) => Promise<void>;
+  syncClosedJavaScriptTypeScriptDocument: (document: EditorDocument) => Promise<void>;
   isSessionPathInWorkspace: (rootPath: string, path: string) => boolean;
   isRunningLanguageServerForWorkspace: (
     status: LanguageServerRuntimeStatus | null,
     statusRoot: string | null,
     workspaceRoot: string | null | undefined,
   ) => status is Extract<LanguageServerRuntimeStatus, { kind: "running" }>;
-  isLanguageServerSessionActiveForRoot: (
-    rootPath: string,
-    sessionId: number,
-  ) => boolean;
+  isLanguageServerSessionActiveForRoot: (rootPath: string, sessionId: number) => boolean;
   isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: (
     rootPath: string,
     sessionId: number,
@@ -99,19 +100,13 @@ export interface WorkspaceEditFileOperations {
     edit: LanguageServerWorkspaceEdit,
     context: WorkspaceEditApplicationContext,
   ) => Promise<WorkspaceEditApplicationDecision>;
-  applyJavaScriptTypeScriptRenameEdits: (
-    oldPath: string,
-    newPath: string,
-  ) => Promise<boolean>;
+  applyJavaScriptTypeScriptRenameEdits: (oldPath: string, newPath: string) => Promise<boolean>;
   applyJavaScriptTypeScriptCreateEdits: (path: string) => Promise<boolean>;
   notifyJavaScriptTypeScriptFileCreated: (path: string) => Promise<void>;
   applyJavaScriptTypeScriptDeleteEdits: (path: string) => Promise<boolean>;
   notifyJavaScriptTypeScriptFileDeleted: (path: string) => Promise<void>;
   applyPhpRenameEdits: (oldPath: string, newPath: string) => Promise<void>;
-  notifyJavaScriptTypeScriptFileRenamed: (
-    oldPath: string,
-    newPath: string,
-  ) => Promise<void>;
+  notifyJavaScriptTypeScriptFileRenamed: (oldPath: string, newPath: string) => Promise<void>;
   notifyPhpFileRenamed: (oldPath: string, newPath: string) => Promise<void>;
   notifyJavaScriptTypeScriptWatchedFilesChanged: (
     changes: LanguageServerWorkspaceFileChange[],
@@ -147,6 +142,7 @@ export function useWorkspaceEditFileOperations(
     workspaceFiles,
     reportChangedDocuments,
     setDocuments,
+    reconcileDocumentSessionTopology,
     setOpenPaths,
     setPreviewPath,
     setActivePath,
@@ -191,14 +187,7 @@ export function useWorkspaceEditFileOperations(
             continue;
           }
 
-          if (
-            !isWorkspaceEditDocumentVersionCurrent(
-              edit,
-              rootPath,
-              uri,
-              documentVersionsByUri,
-            )
-          ) {
+          if (!isWorkspaceEditDocumentVersionCurrent(edit, rootPath, uri, documentVersionsByUri)) {
             continue;
           }
 
@@ -208,10 +197,7 @@ export function useWorkspaceEditFileOperations(
             continue;
           }
 
-          const nextContent = applyLanguageServerTextEdits(
-            document.content,
-            textEdits,
-          );
+          const nextContent = applyLanguageServerTextEdits(document.content, textEdits);
 
           if (nextContent === document.content) {
             continue;
@@ -234,9 +220,7 @@ export function useWorkspaceEditFileOperations(
       return {
         editedPaths,
         rollback: () => {
-          const restoreTouchedDocuments = (
-            current: Record<string, EditorDocument>,
-          ) =>
+          const restoreTouchedDocuments = (current: Record<string, EditorDocument>) =>
             restoreUnchangedWorkspaceEditDocuments(
               current,
               originalDocuments,
@@ -249,12 +233,7 @@ export function useWorkspaceEditFileOperations(
         },
       };
     },
-    [
-      documentsRef,
-      isSessionPathInWorkspace,
-      reportChangedDocuments,
-      setDocuments,
-    ],
+    [documentsRef, isSessionPathInWorkspace, reportChangedDocuments, setDocuments],
   );
 
   const reconcileJavaScriptTypeScriptWorkspaceEditFileOperations = useCallback(
@@ -265,12 +244,10 @@ export function useWorkspaceEditFileOperations(
         return;
       }
 
-      const documentsToClose = Object.values(documentsRef.current).filter(
+      const requestedDocuments = documentsRef.current;
+      const documentsToClose = Object.values(requestedDocuments).filter(
         (document) =>
-          reconciledPathForWorkspaceFileOperations(
-            document.path,
-            fileOperations,
-          ) !== document.path,
+          reconciledPathForWorkspaceFileOperations(document.path, fileOperations) !== document.path,
       );
 
       await Promise.all(
@@ -281,23 +258,21 @@ export function useWorkspaceEditFileOperations(
         ),
       );
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+        documentsRef.current !== requestedDocuments
+      ) {
         return;
       }
 
-      setDocuments((current) =>
+      reconcileDocumentSessionTopology((current) =>
         reconciledDocumentsForWorkspaceEditFileOperations(current, edit),
       );
       setOpenPaths((current) =>
-        reconciledEditorPathsForWorkspaceFileOperations(
-          current,
-          fileOperations,
-        ),
+        reconciledEditorPathsForWorkspaceFileOperations(current, fileOperations),
       );
       setPreviewPath((current) =>
-        current
-          ? reconciledPathForWorkspaceFileOperations(current, fileOperations)
-          : current,
+        current ? reconciledPathForWorkspaceFileOperations(current, fileOperations) : current,
       );
       setActivePath((current) =>
         current
@@ -316,32 +291,29 @@ export function useWorkspaceEditFileOperations(
       openPathsRef,
       previewPathRef,
       setActivePath,
-      setDocuments,
+      reconcileDocumentSessionTopology,
       setOpenPaths,
       setPreviewPath,
       syncClosedJavaScriptTypeScriptDocument,
     ],
   );
 
-  const refreshJavaScriptTypeScriptWorkspaceEditFileOperationDirectories =
-    useCallback(
-      async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
-        const directories = directoryPathsForWorkspaceEditFileOperations(
-          edit,
-        ).filter((directory) => isSessionPathInWorkspace(rootPath, directory));
+  const refreshJavaScriptTypeScriptWorkspaceEditFileOperationDirectories = useCallback(
+    async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
+      const directories = directoryPathsForWorkspaceEditFileOperations(edit).filter((directory) =>
+        isSessionPathInWorkspace(rootPath, directory),
+      );
 
-        for (const directory of directories) {
-          if (
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)
-          ) {
-            return;
-          }
-
-          await refreshDirectory(directory);
+      for (const directory of directories) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
         }
-      },
-      [currentWorkspaceRootRef, isSessionPathInWorkspace, refreshDirectory],
-    );
+
+        await refreshDirectory(directory);
+      }
+    },
+    [currentWorkspaceRootRef, isSessionPathInWorkspace, refreshDirectory],
+  );
 
   const reconcilePhpWorkspaceEditFileOperations = useCallback(
     async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
@@ -351,36 +323,30 @@ export function useWorkspaceEditFileOperations(
         return;
       }
 
-      const documentsToClose = Object.values(documentsRef.current).filter(
+      const requestedDocuments = documentsRef.current;
+      const documentsToClose = Object.values(requestedDocuments).filter(
         (document) =>
           isLanguageServerDocument(document) &&
-          reconciledPathForWorkspaceFileOperations(
-            document.path,
-            fileOperations,
-          ) !== document.path,
+          reconciledPathForWorkspaceFileOperations(document.path, fileOperations) !== document.path,
       );
 
-      await Promise.all(
-        documentsToClose.map((document) => syncClosedDocument(document)),
-      );
+      await Promise.all(documentsToClose.map((document) => syncClosedDocument(document)));
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+        documentsRef.current !== requestedDocuments
+      ) {
         return;
       }
 
-      setDocuments((current) =>
+      reconcileDocumentSessionTopology((current) =>
         reconciledDocumentsForWorkspaceEditFileOperations(current, edit),
       );
       setOpenPaths((current) =>
-        reconciledEditorPathsForWorkspaceFileOperations(
-          current,
-          fileOperations,
-        ),
+        reconciledEditorPathsForWorkspaceFileOperations(current, fileOperations),
       );
       setPreviewPath((current) =>
-        current
-          ? reconciledPathForWorkspaceFileOperations(current, fileOperations)
-          : current,
+        current ? reconciledPathForWorkspaceFileOperations(current, fileOperations) : current,
       );
       setActivePath((current) =>
         current
@@ -399,7 +365,7 @@ export function useWorkspaceEditFileOperations(
       openPathsRef,
       previewPathRef,
       setActivePath,
-      setDocuments,
+      reconcileDocumentSessionTopology,
       setOpenPaths,
       setPreviewPath,
       syncClosedDocument,
@@ -408,14 +374,12 @@ export function useWorkspaceEditFileOperations(
 
   const refreshPhpWorkspaceEditFileOperationDirectories = useCallback(
     async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
-      const directories = directoryPathsForWorkspaceEditFileOperations(
-        edit,
-      ).filter((directory) => isSessionPathInWorkspace(rootPath, directory));
+      const directories = directoryPathsForWorkspaceEditFileOperations(edit).filter((directory) =>
+        isSessionPathInWorkspace(rootPath, directory),
+      );
 
       for (const directory of directories) {
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
           return;
         }
 
@@ -426,10 +390,7 @@ export function useWorkspaceEditFileOperations(
   );
 
   const synchronizeAppliedOpenDocuments = useCallback(
-    (
-      appliedOpenDocuments: AppliedWorkspaceEditOpenDocument[],
-      rootPath: string,
-    ) => {
+    (appliedOpenDocuments: AppliedWorkspaceEditOpenDocument[], rootPath: string) => {
       const appliedDocuments = appliedOpenDocuments.filter(({ path }) =>
         isSessionPathInWorkspace(rootPath, path),
       );
@@ -460,21 +421,13 @@ export function useWorkspaceEditFileOperations(
       };
 
       const changedPaths = appliedDocuments
-        .filter(
-          ({ path, content }) =>
-            documentsRef.current[path]?.content !== content,
-        )
+        .filter(({ path, content }) => documentsRef.current[path]?.content !== content)
         .map(({ path }) => path);
       documentsRef.current = synchronize(documentsRef.current);
       setDocuments(synchronize);
       reportChangedDocuments(changedPaths);
     },
-    [
-      documentsRef,
-      isSessionPathInWorkspace,
-      reportChangedDocuments,
-      setDocuments,
-    ],
+    [documentsRef, isSessionPathInWorkspace, reportChangedDocuments, setDocuments],
   );
 
   const commitWorkspaceEdit = useCallback(
@@ -484,9 +437,7 @@ export function useWorkspaceEditFileOperations(
       documentVersionsByUri: Record<string, number>,
     ): Promise<WorkspaceEditApplicationDecision> => {
       const requestedRoot = context.rootPath;
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return { kind: "rejected", reason: "inactiveWorkspace" };
       }
       const openDocumentPaths = Object.keys(documentsRef.current);
@@ -510,22 +461,13 @@ export function useWorkspaceEditFileOperations(
           )
         : null;
       let openModelCommit: Extract<
-        ReturnType<
-          NonNullable<WorkspaceEditApplicationContext["applyOpenModels"]>
-        >,
+        ReturnType<NonNullable<WorkspaceEditApplicationContext["applyOpenModels"]>>,
         { kind: "applied" }
       > | null = null;
-      let controllerCommit: ReturnType<
-        typeof applyWorkspaceEditToOpenDocuments
-      > | null = null;
+      let controllerCommit: ReturnType<typeof applyWorkspaceEditToOpenDocuments> | null = null;
 
       try {
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           await transaction?.rollback();
           return { kind: "rejected", reason: "inactiveWorkspace" };
         }
@@ -542,24 +484,16 @@ export function useWorkspaceEditFileOperations(
         openModelCommit = candidateOpenModelCommit;
 
         if (!transactionalApply) {
-          await workspaceFiles.applyWorkspaceEdit(
-            requestedRoot,
-            rootEdit,
-            openDocumentPaths,
-          );
+          await workspaceFiles.applyWorkspaceEdit(requestedRoot, rootEdit, openDocumentPaths);
         }
 
-        const controllerEdit = workspaceEditWithoutPaths(
-          rootEdit,
-          context.openPaths,
-        );
+        const controllerEdit = workspaceEditWithoutPaths(rootEdit, context.openPaths);
         controllerCommit = applyWorkspaceEditToOpenDocuments(
           controllerEdit,
           requestedRoot,
           documentVersionsByUri,
         );
-        const finalizedOpenModelCommit =
-          openModelCommit.finalize?.() ?? openModelCommit;
+        const finalizedOpenModelCommit = openModelCommit.finalize?.() ?? openModelCommit;
 
         if (finalizedOpenModelCommit.kind === "rejected") {
           controllerCommit.rollback();
@@ -569,10 +503,7 @@ export function useWorkspaceEditFileOperations(
         }
 
         openModelCommit = finalizedOpenModelCommit;
-        synchronizeAppliedOpenDocuments(
-          finalizedOpenModelCommit.documents,
-          requestedRoot,
-        );
+        synchronizeAppliedOpenDocuments(finalizedOpenModelCommit.documents, requestedRoot);
         return { kind: "accepted" };
       } catch (error) {
         controllerCommit?.rollback();
@@ -580,12 +511,9 @@ export function useWorkspaceEditFileOperations(
         try {
           await transaction?.rollback();
         } catch (rollbackError) {
-          const applyMessage =
-            error instanceof Error ? error.message : String(error);
+          const applyMessage = error instanceof Error ? error.message : String(error);
           const rollbackMessage =
-            rollbackError instanceof Error
-              ? rollbackError.message
-              : String(rollbackError);
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
           throw new Error(
             `Workspace edit failed (${applyMessage}) and its closed-file rollback also failed (${rollbackMessage}).`,
           );
@@ -609,9 +537,7 @@ export function useWorkspaceEditFileOperations(
     ): Promise<WorkspaceEditApplicationDecision> => {
       const requestedRoot = context.rootPath;
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return { kind: "rejected", reason: "inactiveWorkspace" };
       }
 
@@ -631,11 +557,7 @@ export function useWorkspaceEditFileOperations(
         };
       }
 
-      const rootEdit = workspaceEditForRoot(
-        edit,
-        requestedRoot,
-        isSessionPathInWorkspace,
-      );
+      const rootEdit = workspaceEditForRoot(edit, requestedRoot, isSessionPathInWorkspace);
       const invalidOpenDocumentPath = invalidControllerOnlyOpenDocumentPath(
         rootEdit,
         documentsRef.current,
@@ -660,20 +582,13 @@ export function useWorkspaceEditFileOperations(
         return decision;
       }
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return { kind: "accepted" };
       }
 
-      await reconcileJavaScriptTypeScriptWorkspaceEditFileOperations(
-        rootEdit,
-        requestedRoot,
-      );
+      await reconcileJavaScriptTypeScriptWorkspaceEditFileOperations(rootEdit, requestedRoot);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return { kind: "accepted" };
       }
 
@@ -701,9 +616,7 @@ export function useWorkspaceEditFileOperations(
     ): Promise<WorkspaceEditApplicationDecision> => {
       const requestedRoot = context.rootPath;
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return { kind: "rejected", reason: "inactiveWorkspace" };
       }
 
@@ -723,11 +636,7 @@ export function useWorkspaceEditFileOperations(
         };
       }
 
-      const rootEdit = workspaceEditForRoot(
-        edit,
-        requestedRoot,
-        isSessionPathInWorkspace,
-      );
+      const rootEdit = workspaceEditForRoot(edit, requestedRoot, isSessionPathInWorkspace);
       const invalidOpenDocumentPath = invalidControllerOnlyOpenDocumentPath(
         rootEdit,
         documentsRef.current,
@@ -752,24 +661,17 @@ export function useWorkspaceEditFileOperations(
         return decision;
       }
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return { kind: "accepted" };
       }
 
       await reconcilePhpWorkspaceEditFileOperations(rootEdit, requestedRoot);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return { kind: "accepted" };
       }
 
-      await refreshPhpWorkspaceEditFileOperationDirectories(
-        rootEdit,
-        requestedRoot,
-      );
+      await refreshPhpWorkspaceEditFileOperationDirectories(rootEdit, requestedRoot);
       return { kind: "accepted" };
     },
     [
@@ -818,9 +720,7 @@ export function useWorkspaceEditFileOperations(
         return null;
       }
 
-      let openDocumentCommit: ReturnType<
-        typeof applyWorkspaceEditToOpenDocuments
-      > | null = null;
+      let openDocumentCommit: ReturnType<typeof applyWorkspaceEditToOpenDocuments> | null = null;
 
       try {
         openDocumentCommit = applyWorkspaceEditToOpenDocuments(
@@ -830,11 +730,7 @@ export function useWorkspaceEditFileOperations(
         );
         const changedClosedFiles = transaction
           ? transaction.appliedCount
-          : await workspaceFiles.applyWorkspaceEdit(
-              requestedRoot,
-              rootEdit,
-              openDocumentPaths,
-            );
+          : await workspaceFiles.applyWorkspaceEdit(requestedRoot, rootEdit, openDocumentPaths);
 
         if (!isRequestedSessionActive()) {
           openDocumentCommit.rollback();
@@ -876,21 +772,16 @@ export function useWorkspaceEditFileOperations(
       }
 
       const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
       try {
-        const edit =
-          await javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles(
-            requestedRoot,
-            oldPath,
-            newPath,
-          );
+        const edit = await javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles(
+          requestedRoot,
+          oldPath,
+          newPath,
+        );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return true;
@@ -900,11 +791,7 @@ export function useWorkspaceEditFileOperations(
           return true;
         }
 
-        const rootEdit = workspaceEditForRoot(
-          edit,
-          requestedRoot,
-          isSessionPathInWorkspace,
-        );
+        const rootEdit = workspaceEditForRoot(edit, requestedRoot, isSessionPathInWorkspace);
         const stalePath = staleOpenDocumentPath(
           rootEdit,
           documentsRef.current,
@@ -929,9 +816,7 @@ export function useWorkspaceEditFileOperations(
         }
 
         if (changedFiles > 0) {
-          setMessage(
-            `Updated ${changedFiles} import path${changedFiles === 1 ? "" : "s"}.`,
-          );
+          setMessage(`Updated ${changedFiles} import path${changedFiles === 1 ? "" : "s"}.`);
         }
 
         return true;
@@ -979,20 +864,15 @@ export function useWorkspaceEditFileOperations(
       }
 
       const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
       try {
-        const edit =
-          await javaScriptTypeScriptLanguageServerFeaturesGateway.willCreateFiles(
-            requestedRoot,
-            path,
-          );
+        const edit = await javaScriptTypeScriptLanguageServerFeaturesGateway.willCreateFiles(
+          requestedRoot,
+          path,
+        );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return true;
@@ -1042,17 +922,11 @@ export function useWorkspaceEditFileOperations(
       }
 
       const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -1117,20 +991,15 @@ export function useWorkspaceEditFileOperations(
       }
 
       const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
       try {
-        const edit =
-          await javaScriptTypeScriptLanguageServerFeaturesGateway.willDeleteFiles(
-            requestedRoot,
-            path,
-          );
+        const edit = await javaScriptTypeScriptLanguageServerFeaturesGateway.willDeleteFiles(
+          requestedRoot,
+          path,
+        );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return true;
@@ -1180,17 +1049,11 @@ export function useWorkspaceEditFileOperations(
       }
 
       const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -1246,10 +1109,7 @@ export function useWorkspaceEditFileOperations(
           languageServerRuntimeStatusRoot,
           workspaceRoot,
         ) ||
-        !canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "willRenameFiles",
-        )
+        !canUseLanguageServerFeature(languageServerRuntimeStatus.capabilities, "willRenameFiles")
       ) {
         return;
       }
@@ -1274,11 +1134,7 @@ export function useWorkspaceEditFileOperations(
           return;
         }
 
-        const rootEdit = workspaceEditForRoot(
-          edit,
-          requestedRoot,
-          isSessionPathInWorkspace,
-        );
+        const rootEdit = workspaceEditForRoot(edit, requestedRoot, isSessionPathInWorkspace);
         const stalePath = staleOpenDocumentPath(
           rootEdit,
           documentsRef.current,
@@ -1350,17 +1206,11 @@ export function useWorkspaceEditFileOperations(
       }
 
       const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -1371,12 +1221,7 @@ export function useWorkspaceEditFileOperations(
           newPath,
         );
 
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
       } catch (error) {
@@ -1409,10 +1254,7 @@ export function useWorkspaceEditFileOperations(
           languageServerRuntimeStatusRoot,
           workspaceRoot,
         ) ||
-        !canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "didRenameFiles",
-        )
+        !canUseLanguageServerFeature(languageServerRuntimeStatus.capabilities, "didRenameFiles")
       ) {
         return;
       }
@@ -1422,25 +1264,14 @@ export function useWorkspaceEditFileOperations(
       const isRequestedPhpSessionActive = () =>
         isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
       try {
-        await languageServerFeaturesGateway.didRenameFiles(
-          requestedRoot,
-          oldPath,
-          newPath,
-        );
+        await languageServerFeaturesGateway.didRenameFiles(requestedRoot, oldPath, newPath);
 
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
       } catch (error) {
@@ -1486,17 +1317,11 @@ export function useWorkspaceEditFileOperations(
       }
 
       const requestedRoot = workspaceRoot;
-      const requestedSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
-        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-          requestedRoot,
-          requestedSessionId,
-        );
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -1558,14 +1383,7 @@ function changedOpenDocumentPathsForWorkspaceEdit(
       return [];
     }
 
-    if (
-      !isWorkspaceEditDocumentVersionCurrent(
-        edit,
-        rootPath,
-        uri,
-        documentVersionsByUri,
-      )
-    ) {
+    if (!isWorkspaceEditDocumentVersionCurrent(edit, rootPath, uri, documentVersionsByUri)) {
       return [];
     }
 
@@ -1575,8 +1393,7 @@ function changedOpenDocumentPathsForWorkspaceEdit(
       return [];
     }
 
-    return applyLanguageServerTextEdits(document.content, textEdits) ===
-      document.content
+    return applyLanguageServerTextEdits(document.content, textEdits) === document.content
       ? []
       : [path];
   });
@@ -1598,10 +1415,7 @@ function isWorkspaceEditDocumentVersionCurrent(
     return false;
   }
 
-  return (
-    documentVersionsByUri[languageServerUriSyncKey(rootPath, uri)] ===
-    editVersion.version
-  );
+  return documentVersionsByUri[languageServerUriSyncKey(rootPath, uri)] === editVersion.version;
 }
 
 function invalidControllerOnlyOpenDocumentPath(
@@ -1630,9 +1444,7 @@ function invalidControllerOnlyOpenDocumentPath(
       continue;
     }
 
-    if (
-      validateWorkspaceEditTextEditRanges(document.content, edits) !== "valid"
-    ) {
+    if (validateWorkspaceEditTextEditRanges(document.content, edits) !== "valid") {
       return document.path;
     }
   }
@@ -1650,22 +1462,11 @@ function staleOpenDocumentPath(
   for (const uri of Object.keys(edit.changes)) {
     const path = pathFromLanguageServerUri(uri);
 
-    if (
-      !path ||
-      !documents[path] ||
-      !isSessionPathInWorkspace(rootPath, path)
-    ) {
+    if (!path || !documents[path] || !isSessionPathInWorkspace(rootPath, path)) {
       continue;
     }
 
-    if (
-      !isWorkspaceEditDocumentVersionCurrent(
-        edit,
-        rootPath,
-        uri,
-        documentVersionsByUri,
-      )
-    ) {
+    if (!isWorkspaceEditDocumentVersionCurrent(edit, rootPath, uri, documentVersionsByUri)) {
       return path;
     }
   }
@@ -1694,9 +1495,7 @@ function workspaceEditForRoot(
   );
   const fileOperations = (edit.fileOperations ?? []).filter((operation) => {
     const uris =
-      operation.kind === "rename"
-        ? [operation.oldUri, operation.newUri]
-        : [operation.uri];
+      operation.kind === "rename" ? [operation.oldUri, operation.newUri] : [operation.uri];
 
     return uris.every((uri) => {
       const path = pathFromLanguageServerUri(uri);
@@ -1744,9 +1543,7 @@ function workspaceEditWithoutPaths(
   };
 }
 
-function directoryPathsForWorkspaceEditFileOperations(
-  edit: LanguageServerWorkspaceEdit,
-): string[] {
+function directoryPathsForWorkspaceEditFileOperations(edit: LanguageServerWorkspaceEdit): string[] {
   const directories = new Set<string>();
 
   for (const operation of edit.fileOperations ?? []) {
@@ -1851,10 +1648,7 @@ function reconciledActivePathForWorkspaceFileOperations(
   previewPath: string | null,
   operations: LanguageServerWorkspaceFileOperation[],
 ): string | null {
-  const nextActivePath = reconciledPathForWorkspaceFileOperations(
-    activePath,
-    operations,
-  );
+  const nextActivePath = reconciledPathForWorkspaceFileOperations(activePath, operations);
 
   if (nextActivePath) {
     return nextActivePath;
@@ -1904,9 +1698,7 @@ function reconciledPathForWorkspaceFileOperations(
   return nextPath;
 }
 
-function pathsForWorkspaceFileOperation(
-  operation: LanguageServerWorkspaceFileOperation,
-): string[] {
+function pathsForWorkspaceFileOperation(operation: LanguageServerWorkspaceFileOperation): string[] {
   if (operation.kind === "rename") {
     const oldPath = pathFromLanguageServerUri(operation.oldUri);
     const newPath = pathFromLanguageServerUri(operation.newUri);
@@ -1919,11 +1711,7 @@ function pathsForWorkspaceFileOperation(
   return path ? [path] : [];
 }
 
-function replacedWorkspacePathPrefix(
-  path: string,
-  oldPath: string,
-  newPath: string,
-): string {
+function replacedWorkspacePathPrefix(path: string, oldPath: string, newPath: string): string {
   if (!isSameOrChildWorkspacePath(path, oldPath)) {
     return path;
   }
@@ -1944,8 +1732,7 @@ function isSameOrChildWorkspacePath(path: string, parentPath: string): boolean {
   const normalizedParentPath = normalizedWorkspaceEditPath(parentPath);
 
   return (
-    normalizedPath === normalizedParentPath ||
-    normalizedPath.startsWith(`${normalizedParentPath}/`)
+    normalizedPath === normalizedParentPath || normalizedPath.startsWith(`${normalizedParentPath}/`)
   );
 }
 

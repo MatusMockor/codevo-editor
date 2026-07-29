@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ExpressRoutePackageJsonDir } from "../domain/expressRouteScanRoots";
 import type { WorkspaceSourceDiscoveryGateway } from "../domain/workspaceSourceDiscovery";
 import {
@@ -7,6 +7,10 @@ import {
   type WorkspacePackage,
   type WorkspacePackageManifestInput,
 } from "../domain/workspacePackageGraph";
+import {
+  createWorkspacePackagePathLookup,
+  type WorkspacePackagePathAnswer,
+} from "../domain/workspacePackageForPath";
 
 export const WORKSPACE_PACKAGE_DISCOVERY_LIMITS = {
   maxFiles: 256,
@@ -21,7 +25,7 @@ const READ_CONCURRENCY = 8;
 
 export type WorkspacePackageAuthority = "loading" | "bounded" | "complete";
 
-export interface WorkspacePackageDiscovery {
+interface WorkspacePackageDiscoveryState {
   readonly authority: WorkspacePackageAuthority;
   readonly authorityDirectories: readonly string[];
   readonly incompleteDirectories: readonly string[];
@@ -35,6 +39,10 @@ export interface WorkspacePackageDiscovery {
   readonly unscopedAuthorityUncertain: boolean;
 }
 
+export interface WorkspacePackageDiscovery extends WorkspacePackageDiscoveryState {
+  packageForPath(path: string): WorkspacePackagePathAnswer;
+}
+
 interface UseWorkspacePackageGraphOptions {
   readonly discoveryVersion: number;
   readonly enabled: boolean;
@@ -43,7 +51,12 @@ interface UseWorkspacePackageGraphOptions {
   readonly workspaceId: string | null;
 }
 
-const EMPTY_DISCOVERY: WorkspacePackageDiscovery = {
+interface StoredWorkspacePackageDiscovery {
+  readonly discoveryVersion: number | null;
+  readonly value: WorkspacePackageDiscoveryState;
+}
+
+const EMPTY_DISCOVERY: WorkspacePackageDiscoveryState = {
   authority: "loading",
   authorityDirectories: [],
   incompleteDirectories: [],
@@ -57,11 +70,11 @@ const EMPTY_DISCOVERY: WorkspacePackageDiscovery = {
   unscopedAuthorityUncertain: false,
 };
 
-function initialDiscovery(ownerKey: string | null): WorkspacePackageDiscovery {
+function initialDiscovery(ownerKey: string | null): WorkspacePackageDiscoveryState {
   return ownerKey ? { ...EMPTY_DISCOVERY, ownerKey } : EMPTY_DISCOVERY;
 }
 
-function boundedDiscovery(ownerKey: string): WorkspacePackageDiscovery {
+function boundedDiscovery(ownerKey: string): WorkspacePackageDiscoveryState {
   return {
     ...EMPTY_DISCOVERY,
     authority: "bounded",
@@ -81,7 +94,10 @@ export function useWorkspacePackageGraph({
   const ownerKey = enabled && rootPath && workspaceId ? `${workspaceId}\u0000${rootPath}` : null;
   const ownerRef = useRef<string | null>(null);
   const sequenceRef = useRef(0);
-  const [discovery, setDiscovery] = useState<WorkspacePackageDiscovery>(EMPTY_DISCOVERY);
+  const [storedDiscovery, setStoredDiscovery] = useState<StoredWorkspacePackageDiscovery>({
+    discoveryVersion: null,
+    value: EMPTY_DISCOVERY,
+  });
 
   useEffect(() => {
     const previousOwnerKey = ownerRef.current;
@@ -89,26 +105,28 @@ export function useWorkspacePackageGraph({
     sequenceRef.current += 1;
     const sequence = sequenceRef.current;
     if (!ownerKey || !rootPath) {
-      setDiscovery(EMPTY_DISCOVERY);
+      setStoredDiscovery({ discoveryVersion: null, value: EMPTY_DISCOVERY });
       return;
     }
 
     const isCurrent = () => ownerRef.current === ownerKey && sequenceRef.current === sequence;
-    setDiscovery((current) =>
-      current.ownerKey === ownerKey ? current : initialDiscovery(ownerKey),
+    setStoredDiscovery((current) =>
+      current.discoveryVersion === discoveryVersion && current.value.ownerKey === ownerKey
+        ? current
+        : { discoveryVersion, value: initialDiscovery(ownerKey) },
     );
 
     const discover = async () => {
       const enumeration = await enumeratePackageJsonFiles(gateway, rootPath);
       if (!isCurrent()) return;
       if (enumeration.truncated || enumeration.files.length > MAX_WORKSPACE_PACKAGES) {
-        setDiscovery(boundedDiscovery(ownerKey));
+        setStoredDiscovery({ discoveryVersion, value: boundedDiscovery(ownerKey) });
         return;
       }
 
       const candidates = packageManifestCandidates(enumeration.files);
       if (!candidates) {
-        setDiscovery(boundedDiscovery(ownerKey));
+        setStoredDiscovery({ discoveryVersion, value: boundedDiscovery(ownerKey) });
         return;
       }
 
@@ -130,29 +148,31 @@ export function useWorkspacePackageGraph({
       });
       if (!isCurrent()) return;
       const authority = graph.truncated || !authorityComplete ? "bounded" : "complete";
-      setDiscovery({
-        authority,
-        authorityDirectories: manifestRead.authorityDirectories,
-        incompleteDirectories: manifestRead.incompleteDirectories,
-        loaded: true,
-        ownerKey,
-        packageJsonDirs: manifestRead.packageJsonDirs,
-        packageManifests: manifestRead.manifests,
-        packages: graph.packages,
-        pnpmWorkspaceYaml: pnpmWorkspace.source,
-        rootPackageJson:
-          manifestRead.manifests.find(({ relativeDirPath }) => relativeDirPath === "")
-            ?.packageJson ?? {},
-        unscopedAuthorityUncertain: manifestRead.unscopedAuthorityUncertain,
+      setStoredDiscovery({
+        discoveryVersion,
+        value: {
+          authority,
+          authorityDirectories: manifestRead.authorityDirectories,
+          incompleteDirectories: manifestRead.incompleteDirectories,
+          loaded: true,
+          ownerKey,
+          packageJsonDirs: manifestRead.packageJsonDirs,
+          packageManifests: manifestRead.manifests,
+          packages: graph.packages,
+          pnpmWorkspaceYaml: pnpmWorkspace.source,
+          rootPackageJson:
+            manifestRead.manifests.find(({ relativeDirPath }) => relativeDirPath === "")
+              ?.packageJson ?? {},
+          unscopedAuthorityUncertain: manifestRead.unscopedAuthorityUncertain,
+        },
       });
     };
 
-    const delay =
-      previousOwnerKey === ownerKey ? PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS : 0;
+    const delay = previousOwnerKey === ownerKey ? PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS : 0;
     const startDiscovery = () => {
       void discover().catch(() => {
         if (!isCurrent()) return;
-        setDiscovery(boundedDiscovery(ownerKey));
+        setStoredDiscovery({ discoveryVersion, value: boundedDiscovery(ownerKey) });
       });
     };
     const timer = delay > 0 ? window.setTimeout(startDiscovery, delay) : null;
@@ -168,10 +188,32 @@ export function useWorkspacePackageGraph({
     };
   }, [discoveryVersion, gateway, ownerKey, rootPath]);
 
-  if (discovery.ownerKey !== ownerKey) {
-    return initialDiscovery(ownerKey);
-  }
-  return discovery;
+  const ownedDiscovery =
+    storedDiscovery.discoveryVersion === discoveryVersion &&
+    storedDiscovery.value.ownerKey === ownerKey
+      ? storedDiscovery.value
+      : initialDiscovery(ownerKey);
+  const pathLookup = useMemo(
+    () =>
+      createWorkspacePackagePathLookup({
+        authority: ownedDiscovery.authority,
+        incompleteDirectories: ownedDiscovery.incompleteDirectories,
+        packageManifests: ownedDiscovery.packageManifests,
+        unscopedAuthorityUncertain: ownedDiscovery.unscopedAuthorityUncertain,
+        workspaceRoot: rootPath,
+      }),
+    [
+      ownedDiscovery.authority,
+      ownedDiscovery.incompleteDirectories,
+      ownedDiscovery.packageManifests,
+      ownedDiscovery.unscopedAuthorityUncertain,
+      rootPath,
+    ],
+  );
+  return useMemo(
+    () => ({ ...ownedDiscovery, packageForPath: pathLookup.packageForPath }),
+    [ownedDiscovery, pathLookup.packageForPath],
+  );
 }
 
 async function enumeratePackageJsonFiles(

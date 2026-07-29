@@ -52,6 +52,7 @@ describe("CommandPalette", () => {
             command("editor.format", "Format Document"),
           ]}
           context={context}
+          initialQuery=""
           isOpen
           onClose={onClose}
           onCommandError={onCommandError}
@@ -62,6 +63,20 @@ describe("CommandPalette", () => {
 
     return { onClose, onCommandError };
   }
+
+  it("consumes an initial query only on closed-to-open and does not retain it", () => {
+    render({ initialQuery: "Toggle Terminal" });
+    expect(host.querySelector<HTMLInputElement>('input[placeholder="Run command"]')?.value).toBe(
+      "Toggle Terminal",
+    );
+
+    render({ initialQuery: "stale", isOpen: false });
+    render({ initialQuery: "", isOpen: true });
+
+    expect(host.querySelector<HTMLInputElement>('input[placeholder="Run command"]')?.value).toBe(
+      "",
+    );
+  });
 
   it("renders one row per command", () => {
     render();
@@ -302,6 +317,23 @@ describe("CommandPalette", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain("Format Document");
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("fuzzy filters commands with the existing query matcher", () => {
+    render();
+    const field = host.querySelector<HTMLInputElement>(".palette-search input");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+
+    if (field && setter) {
+      act(() => {
+        setter.call(field, "fmtdc");
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+
+    const rows = host.querySelectorAll(".palette-command");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("Format Document");
   });
 
   function setQuery(value: string) {

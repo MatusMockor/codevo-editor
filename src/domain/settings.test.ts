@@ -5,6 +5,7 @@ import {
   defaultEditorFontSize,
   defaultWorkspaceSessionState,
   defaultWorkspaceSettings,
+  MAX_RECENT_WORKSPACE_PATHS,
   maxEditorFontSize,
   minEditorFontSize,
   monacoThemeForAppTheme,
@@ -32,8 +33,7 @@ import {
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
-      editorFontFamily:
-        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
       minimapEnabled: false,
@@ -137,12 +137,8 @@ describe("settings defaults", () => {
 
 describe("normalizeAppSettings", () => {
   it("round-trips a persisted word wrap setting", () => {
-    expect(normalizeAppSettings({ wordWrapEnabled: true }).wordWrapEnabled).toBe(
-      true,
-    );
-    expect(
-      normalizeAppSettings({ wordWrapEnabled: false }).wordWrapEnabled,
-    ).toBe(false);
+    expect(normalizeAppSettings({ wordWrapEnabled: true }).wordWrapEnabled).toBe(true);
+    expect(normalizeAppSettings({ wordWrapEnabled: false }).wordWrapEnabled).toBe(false);
   });
 
   it("defaults a legacy app setting without word wrap state to false", () => {
@@ -150,12 +146,8 @@ describe("normalizeAppSettings", () => {
   });
 
   it("round-trips a persisted minimap setting", () => {
-    expect(normalizeAppSettings({ minimapEnabled: true }).minimapEnabled).toBe(
-      true,
-    );
-    expect(normalizeAppSettings({ minimapEnabled: false }).minimapEnabled).toBe(
-      false,
-    );
+    expect(normalizeAppSettings({ minimapEnabled: true }).minimapEnabled).toBe(true);
+    expect(normalizeAppSettings({ minimapEnabled: false }).minimapEnabled).toBe(false);
   });
 
   it("defaults a legacy app setting without minimap state to false", () => {
@@ -164,8 +156,7 @@ describe("normalizeAppSettings", () => {
 
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
-      editorFontFamily:
-        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -216,8 +207,7 @@ describe("normalizeAppSettings", () => {
         theme: "ayuMirage",
       }),
     ).toEqual({
-      editorFontFamily:
-        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -234,21 +224,15 @@ describe("normalizeAppSettings", () => {
   });
 
   it("clamps and falls back persisted editor font size", () => {
-    expect(normalizeAppSettings({ editorFontSize: 100 }).editorFontSize).toBe(
-      maxEditorFontSize,
+    expect(normalizeAppSettings({ editorFontSize: 100 }).editorFontSize).toBe(maxEditorFontSize);
+    expect(normalizeAppSettings({ editorFontSize: 2 }).editorFontSize).toBe(minEditorFontSize);
+    expect(normalizeAppSettings({ editorFontSize: 16.7 }).editorFontSize).toBe(16);
+    expect(normalizeAppSettings({ editorFontSize: "20" }).editorFontSize).toBe(
+      defaultEditorFontSize,
     );
-    expect(normalizeAppSettings({ editorFontSize: 2 }).editorFontSize).toBe(
-      minEditorFontSize,
+    expect(normalizeAppSettings({ editorFontSize: Number.NaN }).editorFontSize).toBe(
+      defaultEditorFontSize,
     );
-    expect(normalizeAppSettings({ editorFontSize: 16.7 }).editorFontSize).toBe(
-      16,
-    );
-    expect(
-      normalizeAppSettings({ editorFontSize: "20" }).editorFontSize,
-    ).toBe(defaultEditorFontSize);
-    expect(
-      normalizeAppSettings({ editorFontSize: Number.NaN }).editorFontSize,
-    ).toBe(defaultEditorFontSize);
   });
 
   it("falls back persisted editor font family and ligatures when invalid", () => {
@@ -258,8 +242,7 @@ describe("normalizeAppSettings", () => {
         editorFontLigatures: "true",
       }),
     ).toEqual({
-      editorFontFamily:
-        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -278,24 +261,22 @@ describe("normalizeAppSettings", () => {
         editorFontFamily: 42,
         editorFontLigatures: true,
       }).editorFontFamily,
-    ).toBe(
-      "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    );
+    ).toBe("JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
   });
 
   it("normalizes editor font family case for known aliases", () => {
-    expect(
-      normalizeAppSettings({ editorFontFamily: "fira code" }).editorFontFamily,
-    ).toBe("Fira Code, monospace");
+    expect(normalizeAppSettings({ editorFontFamily: "fira code" }).editorFontFamily).toBe(
+      "Fira Code, monospace",
+    );
   });
 
   it("adds a monospace fallback for a single editor font family", () => {
-    expect(
-      normalizeAppSettings({ editorFontFamily: "Iosevka" }).editorFontFamily,
-    ).toBe("Iosevka, monospace");
-    expect(
-      normalizeAppSettings({ editorFontFamily: "monospace" }).editorFontFamily,
-    ).toBe("monospace");
+    expect(normalizeAppSettings({ editorFontFamily: "Iosevka" }).editorFontFamily).toBe(
+      "Iosevka, monospace",
+    );
+    expect(normalizeAppSettings({ editorFontFamily: "monospace" }).editorFontFamily).toBe(
+      "monospace",
+    );
     expect(
       normalizeAppSettings({
         editorFontFamily: "Iosevka, Fira Code",
@@ -310,8 +291,7 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project/api/", "/project/web", "/project/api"],
       }),
     ).toEqual({
-      editorFontFamily:
-        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -329,8 +309,7 @@ describe("normalizeAppSettings", () => {
 
   it("seeds recent workspace paths from the legacy single path", () => {
     expect(
-      normalizeAppSettings({ recentWorkspacePath: "/legacy/project" })
-        .recentWorkspacePaths,
+      normalizeAppSettings({ recentWorkspacePath: "/legacy/project" }).recentWorkspacePaths,
     ).toEqual(["/legacy/project"]);
   });
 
@@ -344,18 +323,7 @@ describe("normalizeAppSettings", () => {
         "/two",
         ...Array.from({ length: 12 }, (_, index) => `/extra-${index}`),
       ]),
-    ).toEqual([
-      "/one",
-      "/two/",
-      "/extra-0",
-      "/extra-1",
-      "/extra-2",
-      "/extra-3",
-      "/extra-4",
-      "/extra-5",
-      "/extra-6",
-      "/extra-7",
-    ]);
+    ).toEqual(["/one", "/two/", ...Array.from({ length: 12 }, (_, index) => `/extra-${index}`)]);
     expect(normalizeRecentWorkspacePaths(null)).toEqual([]);
   });
 
@@ -378,9 +346,7 @@ describe("normalizeAppSettings", () => {
   });
 
   it("falls back for invalid app settings", () => {
-    expect(normalizeAppSettings({ recentWorkspacePath: 1 })).toEqual(
-      defaultAppSettings(),
-    );
+    expect(normalizeAppSettings({ recentWorkspacePath: 1 })).toEqual(defaultAppSettings());
     expect(normalizeAppSettings(null)).toEqual(defaultAppSettings());
   });
 
@@ -409,20 +375,14 @@ describe("normalizeAppSettings", () => {
 
   it("defaults user snippets to an empty array when absent or invalid", () => {
     expect(normalizeAppSettings({}).userSnippets).toEqual([]);
-    expect(normalizeAppSettings({ userSnippets: "nope" }).userSnippets).toEqual(
-      [],
-    );
+    expect(normalizeAppSettings({ userSnippets: "nope" }).userSnippets).toEqual([]);
   });
 });
 
 describe("monacoFontLigaturesForEditorSetting", () => {
   it("maps the boolean app setting to explicit Monaco font feature settings", () => {
-    expect(monacoFontLigaturesForEditorSetting(true)).toBe(
-      '"liga" on, "calt" on',
-    );
-    expect(monacoFontLigaturesForEditorSetting(false)).toBe(
-      '"liga" off, "calt" off',
-    );
+    expect(monacoFontLigaturesForEditorSetting(true)).toBe('"liga" on, "calt" on');
+    expect(monacoFontLigaturesForEditorSetting(false)).toBe('"liga" off, "calt" off');
   });
 });
 
@@ -483,11 +443,7 @@ describe("normalizeWorkspaceSettings", () => {
         session: {
           activePath: "/project/src/User.php",
           bottomPanelView: "history",
-          openPaths: [
-            "/project/src/User.php",
-            "/project/src/User.php",
-            " /project/README.md ",
-          ],
+          openPaths: ["/project/src/User.php", "/project/src/User.php", " /project/README.md "],
           sidebarView: "git",
         },
         statusBar: {
@@ -514,11 +470,7 @@ describe("normalizeWorkspaceSettings", () => {
       formatOnPaste: true,
       formatOnSave: true,
       gitCommitMessageHistory: [],
-      gitDirectoryMappings: [
-        "",
-        "workbench/lcsk/attendance",
-        "workbench/lcsk/x",
-      ],
+      gitDirectoryMappings: ["", "workbench/lcsk/attendance", "workbench/lcsk/x"],
       gitDirectoryMappingsAuto: false,
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
@@ -586,9 +538,7 @@ describe("normalizeWorkspaceSettings", () => {
   });
 
   it("keeps old workspace settings compatible", () => {
-    expect(
-      normalizeWorkspaceSettings({ intelligenceMode: "lightSmart" }),
-    ).toEqual({
+    expect(normalizeWorkspaceSettings({ intelligenceMode: "lightSmart" })).toEqual({
       ...defaultWorkspaceSettings(),
       intelligenceMode: "lightSmart",
     });
@@ -637,108 +587,75 @@ describe("normalizeWorkspaceSettings", () => {
       }).gitDirectoryMappings,
     ).toEqual(["", "workbench/lcsk/attendance", "workbench/lcsk/x"]);
     expect(
-      normalizeWorkspaceSettings({ gitDirectoryMappingsAuto: false })
-        .gitDirectoryMappingsAuto,
+      normalizeWorkspaceSettings({ gitDirectoryMappingsAuto: false }).gitDirectoryMappingsAuto,
     ).toBe(false);
     expect(
-      normalizeWorkspaceSettings({ gitDirectoryMappings: "nope" })
-        .gitDirectoryMappings,
+      normalizeWorkspaceSettings({ gitDirectoryMappings: "nope" }).gitDirectoryMappings,
     ).toEqual([]);
   });
 
   it("defaults formatOnSave to false and respects explicit boolean values", () => {
     expect(normalizeWorkspaceSettings({}).formatOnSave).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ formatOnSave: "yes" }).formatOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ formatOnSave: false }).formatOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave,
-    ).toBe(true);
+    expect(normalizeWorkspaceSettings({ formatOnSave: "yes" }).formatOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({ formatOnSave: false }).formatOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave).toBe(true);
   });
 
   it("defaults analyse-on-save settings to false and respects explicit boolean values", () => {
     expect(normalizeWorkspaceSettings({}).eslintAnalyseOnSave).toBe(false);
     expect(normalizeWorkspaceSettings({}).phpstanAnalyseOnSave).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ eslintAnalyseOnSave: "yes" })
-        .eslintAnalyseOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ phpstanAnalyseOnSave: "yes" })
-        .phpstanAnalyseOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ eslintAnalyseOnSave: true })
-        .eslintAnalyseOnSave,
-    ).toBe(true);
-    expect(
-      normalizeWorkspaceSettings({ phpstanAnalyseOnSave: true })
-        .phpstanAnalyseOnSave,
-    ).toBe(true);
+    expect(normalizeWorkspaceSettings({ eslintAnalyseOnSave: "yes" }).eslintAnalyseOnSave).toBe(
+      false,
+    );
+    expect(normalizeWorkspaceSettings({ phpstanAnalyseOnSave: "yes" }).phpstanAnalyseOnSave).toBe(
+      false,
+    );
+    expect(normalizeWorkspaceSettings({ eslintAnalyseOnSave: true }).eslintAnalyseOnSave).toBe(
+      true,
+    );
+    expect(normalizeWorkspaceSettings({ phpstanAnalyseOnSave: true }).phpstanAnalyseOnSave).toBe(
+      true,
+    );
   });
 
   it("defaults eslintFixOnSave to false and respects explicit boolean values", () => {
     expect(normalizeWorkspaceSettings({}).eslintFixOnSave).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ eslintFixOnSave: "yes" }).eslintFixOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ eslintFixOnSave: false }).eslintFixOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ eslintFixOnSave: true }).eslintFixOnSave,
-    ).toBe(true);
+    expect(normalizeWorkspaceSettings({ eslintFixOnSave: "yes" }).eslintFixOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({ eslintFixOnSave: false }).eslintFixOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({ eslintFixOnSave: true }).eslintFixOnSave).toBe(true);
   });
 
   it("defaults prettierFormatOnSave to false and respects explicit boolean values", () => {
     expect(normalizeWorkspaceSettings({}).prettierFormatOnSave).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ prettierFormatOnSave: "yes" })
-        .prettierFormatOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ prettierFormatOnSave: false })
-        .prettierFormatOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ prettierFormatOnSave: true })
-        .prettierFormatOnSave,
-    ).toBe(true);
+    expect(normalizeWorkspaceSettings({ prettierFormatOnSave: "yes" }).prettierFormatOnSave).toBe(
+      false,
+    );
+    expect(normalizeWorkspaceSettings({ prettierFormatOnSave: false }).prettierFormatOnSave).toBe(
+      false,
+    );
+    expect(normalizeWorkspaceSettings({ prettierFormatOnSave: true }).prettierFormatOnSave).toBe(
+      true,
+    );
   });
 
   it("defaults optimizeImportsOnSave to false and respects explicit boolean values", () => {
     expect(normalizeWorkspaceSettings({}).optimizeImportsOnSave).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ optimizeImportsOnSave: "yes" })
-        .optimizeImportsOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ optimizeImportsOnSave: true })
-        .optimizeImportsOnSave,
-    ).toBe(true);
-    expect(
-      normalizeWorkspaceSettings({ optimizeImportsOnSave: false })
-        .optimizeImportsOnSave,
-    ).toBe(false);
+    expect(normalizeWorkspaceSettings({ optimizeImportsOnSave: "yes" }).optimizeImportsOnSave).toBe(
+      false,
+    );
+    expect(normalizeWorkspaceSettings({ optimizeImportsOnSave: true }).optimizeImportsOnSave).toBe(
+      true,
+    );
+    expect(normalizeWorkspaceSettings({ optimizeImportsOnSave: false }).optimizeImportsOnSave).toBe(
+      false,
+    );
   });
 
   it("defaults JS/TS on-save source actions to false and respects explicit boolean values", () => {
-    expect(
-      normalizeWorkspaceSettings({}).javaScriptTypeScriptOrganizeImportsOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({}).javaScriptTypeScriptRemoveUnusedOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({})
-        .javaScriptTypeScriptAddMissingImportsOnSave,
-    ).toBe(false);
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptFixAllOnSave).toBe(
-      false,
-    );
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptOrganizeImportsOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptRemoveUnusedOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptAddMissingImportsOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptFixAllOnSave).toBe(false);
     expect(
       normalizeWorkspaceSettings({
         javaScriptTypeScriptAddMissingImportsOnSave: "yes",
@@ -776,20 +693,16 @@ describe("normalizeWorkspaceSettings", () => {
   });
 
   it("normalizes JS/TS import preferences", () => {
-    expect(
-      normalizeWorkspaceSettings({})
-        .javaScriptTypeScriptImportModuleSpecifierEnding,
-    ).toBe("auto");
-    expect(
-      normalizeWorkspaceSettings({})
-        .javaScriptTypeScriptImportModuleSpecifierPreference,
-    ).toBe("shortest");
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptQuotePreference).toBe(
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptImportModuleSpecifierEnding).toBe(
       "auto",
     );
-    expect(
-      normalizeWorkspaceSettings({}).javaScriptTypeScriptPreferTypeOnlyAutoImports,
-    ).toBe(false);
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptImportModuleSpecifierPreference).toBe(
+      "shortest",
+    );
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptQuotePreference).toBe("auto");
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptPreferTypeOnlyAutoImports).toBe(
+      false,
+    );
     expect(
       normalizeWorkspaceSettings({
         javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
@@ -815,10 +728,7 @@ describe("normalizeWorkspaceSettings", () => {
   });
 
   it("defaults JS/TS automatic type acquisition to false and respects explicit booleans", () => {
-    expect(
-      normalizeWorkspaceSettings({})
-        .javaScriptTypeScriptAutomaticTypeAcquisition,
-    ).toBe(false);
+    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptAutomaticTypeAcquisition).toBe(false);
     expect(
       normalizeWorkspaceSettings({
         javaScriptTypeScriptAutomaticTypeAcquisition: "yes",
@@ -833,28 +743,16 @@ describe("normalizeWorkspaceSettings", () => {
 
   it("defaults phpInlayHints to true and respects explicit boolean values", () => {
     expect(normalizeWorkspaceSettings({}).phpInlayHints).toBe(true);
-    expect(
-      normalizeWorkspaceSettings({ phpInlayHints: "yes" }).phpInlayHints,
-    ).toBe(true);
-    expect(
-      normalizeWorkspaceSettings({ phpInlayHints: false }).phpInlayHints,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ phpInlayHints: true }).phpInlayHints,
-    ).toBe(true);
+    expect(normalizeWorkspaceSettings({ phpInlayHints: "yes" }).phpInlayHints).toBe(true);
+    expect(normalizeWorkspaceSettings({ phpInlayHints: false }).phpInlayHints).toBe(false);
+    expect(normalizeWorkspaceSettings({ phpInlayHints: true }).phpInlayHints).toBe(true);
   });
 
   it("defaults formatOnPaste to false and respects explicit boolean values", () => {
     expect(normalizeWorkspaceSettings({}).formatOnPaste).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ formatOnPaste: "yes" }).formatOnPaste,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ formatOnPaste: false }).formatOnPaste,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({ formatOnPaste: true }).formatOnPaste,
-    ).toBe(true);
+    expect(normalizeWorkspaceSettings({ formatOnPaste: "yes" }).formatOnPaste).toBe(false);
+    expect(normalizeWorkspaceSettings({ formatOnPaste: false }).formatOnPaste).toBe(false);
+    expect(normalizeWorkspaceSettings({ formatOnPaste: true }).formatOnPaste).toBe(true);
   });
 
   it("falls back for invalid workspace settings", () => {
@@ -911,6 +809,202 @@ describe("normalizeLargeSmartDocumentPolicy", () => {
 });
 
 describe("normalizeWorkspaceSession", () => {
+  it("restores bounded recent files, locations, and navigation stacks", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      navigation: {
+        backStack: [
+          {
+            path: "/project/a.ts",
+            position: { column: 2, lineNumber: 3 },
+          },
+        ],
+        forwardStack: [
+          {
+            path: "/project/b.ts",
+            position: { column: 4, lineNumber: 5 },
+          },
+        ],
+        recentFiles: [{ name: "a.ts", path: "/project/a.ts" }],
+        recentLocations: [
+          {
+            column: 2,
+            line: 3,
+            name: "a.ts",
+            path: "/project/a.ts",
+            relativePath: "a.ts",
+            snippet: "const a = 1;",
+          },
+        ],
+      },
+    });
+
+    expect(normalized.navigation).toEqual({
+      backStack: [
+        {
+          path: "/project/a.ts",
+          position: { column: 2, lineNumber: 3 },
+        },
+      ],
+      forwardStack: [
+        {
+          path: "/project/b.ts",
+          position: { column: 4, lineNumber: 5 },
+        },
+      ],
+      recentFiles: [{ name: "a.ts", path: "/project/a.ts" }],
+      recentLocations: [
+        {
+          column: 2,
+          line: 3,
+          name: "a.ts",
+          path: "/project/a.ts",
+          relativePath: "a.ts",
+          snippet: "const a = 1;",
+        },
+      ],
+    });
+  });
+
+  it("drops malformed elements without discarding valid entries or sibling lists", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      navigation: {
+        additiveField: true,
+        backStack: [
+          { path: "src/valid.ts", position: { column: 1, lineNumber: 2 } },
+          { path: 42, position: { column: 1, lineNumber: 2 } },
+        ],
+        forwardStack: [{ path: "src/forward.ts", position: { column: 2, lineNumber: 3 } }],
+        recentFiles: [
+          { name: "valid.ts", path: "src/valid.ts" },
+          { name: "bad.ts", path: 42 },
+          { extra: true, name: "extra.ts", path: "src/extra.ts" },
+        ],
+        recentLocations: [
+          {
+            column: 1,
+            line: 2,
+            name: "valid.ts",
+            path: "src/valid.ts",
+            relativePath: "src/valid.ts",
+            snippet: "valid",
+          },
+          {
+            column: Number.NaN,
+            line: 2,
+            name: "bad.ts",
+            path: "src/bad.ts",
+            relativePath: "src/bad.ts",
+            snippet: "bad",
+          },
+        ],
+      },
+    });
+
+    expect(normalized.navigation).toEqual({
+      backStack: [{ path: "src/valid.ts", position: { column: 1, lineNumber: 2 } }],
+      forwardStack: [{ path: "src/forward.ts", position: { column: 2, lineNumber: 3 } }],
+      recentFiles: [{ name: "valid.ts", path: "src/valid.ts" }],
+      recentLocations: [
+        {
+          column: 1,
+          line: 2,
+          name: "valid.ts",
+          path: "src/valid.ts",
+          relativePath: "src/valid.ts",
+          snippet: "valid",
+        },
+      ],
+    });
+  });
+
+  it("caps each list after filtering instead of rejecting oversized arrays", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      navigation: {
+        backStack: Array.from({ length: 125 }, (_, index) => ({
+          path: `src/back-${index}.ts`,
+          position: { column: 1, lineNumber: index + 1 },
+        })),
+        forwardStack: [],
+        recentFiles: Array.from({ length: 75 }, (_, index) => ({
+          name: `file-${index}.ts`,
+          path: `src/file-${index}.ts`,
+        })),
+        recentLocations: [],
+      },
+    });
+
+    expect(normalized.navigation?.backStack).toHaveLength(100);
+    expect(normalized.navigation?.recentFiles).toHaveLength(50);
+  });
+
+  it("preserves bounded siblings when one list is not an array", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      navigation: {
+        backStack: [],
+        forwardStack: [],
+        recentFiles: {},
+        recentLocations: [
+          {
+            column: 1,
+            line: 1,
+            name: "a.ts",
+            path: "a.ts",
+            relativePath: "a.ts",
+            snippet: "a",
+          },
+        ],
+      },
+    });
+
+    expect(normalized.navigation?.recentFiles).toEqual([]);
+    expect(normalized.navigation?.recentLocations).toHaveLength(1);
+  });
+
+  it("rejects a navigation record with a polluted prototype", () => {
+    const navigation = Object.create({ polluted: true }) as Record<string, unknown>;
+    navigation.backStack = [];
+    navigation.forwardStack = [];
+    navigation.recentFiles = [];
+    navigation.recentLocations = [];
+
+    expect(
+      normalizeWorkspaceSession({
+        ...defaultWorkspaceSessionState(),
+        navigation,
+      }).navigation,
+    ).toBeUndefined();
+  });
+
+  it("truncates an oversized snippet without discarding its location", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...defaultWorkspaceSessionState(),
+      navigation: {
+        backStack: [],
+        forwardStack: [],
+        recentFiles: [],
+        recentLocations: [
+          {
+            column: 1,
+            line: 1,
+            name: "a.ts",
+            path: "/project/a.ts",
+            relativePath: "a.ts",
+            snippet: "x".repeat(200_000),
+          },
+        ],
+      },
+    });
+
+    expect(normalized.navigation?.recentLocations).toHaveLength(1);
+    expect(
+      new TextEncoder().encode(normalized.navigation?.recentLocations[0]?.snippet).byteLength,
+    ).toBeLessThanOrEqual(256);
+  });
+
   it("restores the Scripts sidebar view", () => {
     expect(
       normalizeWorkspaceSession({
@@ -982,8 +1076,25 @@ describe("normalizeWorkspaceSession", () => {
   });
 
   it("returns the safe default for unsupported explicit versions", () => {
-    expect(normalizeWorkspaceSession({ version: 2, sidebarView: "git" }))
-      .toEqual(defaultWorkspaceSessionState());
+    expect(normalizeWorkspaceSession({ version: 2, sidebarView: "git" })).toEqual(
+      defaultWorkspaceSessionState(),
+    );
+  });
+});
+
+describe("recent workspace paths", () => {
+  it("keeps the newest configured number of recent workspaces", () => {
+    const paths = Array.from(
+      { length: MAX_RECENT_WORKSPACE_PATHS + 5 },
+      (_, index) => `/workspace-${index}`,
+    );
+
+    expect(normalizeRecentWorkspacePaths(paths)).toEqual(
+      paths.slice(0, MAX_RECENT_WORKSPACE_PATHS),
+    );
+    expect(pushRecentWorkspacePath(paths, "/new-workspace")).toHaveLength(
+      MAX_RECENT_WORKSPACE_PATHS,
+    );
   });
 });
 
@@ -1027,22 +1138,17 @@ describe("workspace commit message history", () => {
       }).gitCommitMessageHistory,
     ).toEqual(["first", "second"]);
     expect(
-      normalizeWorkspaceSettings({ gitCommitMessageHistory: "broken" })
-        .gitCommitMessageHistory,
+      normalizeWorkspaceSettings({ gitCommitMessageHistory: "broken" }).gitCommitMessageHistory,
     ).toEqual([]);
   });
 });
 
 describe("settings ignore pattern text", () => {
   it("round trips trimmed unique patterns", () => {
-    const patterns = settingsIgnorePatternsFromText(
-      "vendor/generated\n\n var/cache \nvar/cache",
-    );
+    const patterns = settingsIgnorePatternsFromText("vendor/generated\n\n var/cache \nvar/cache");
 
     expect(patterns).toEqual(["vendor/generated", "var/cache"]);
-    expect(settingsIgnorePatternsText(patterns)).toBe(
-      "vendor/generated\nvar/cache",
-    );
+    expect(settingsIgnorePatternsText(patterns)).toBe("vendor/generated\nvar/cache");
   });
 });
 
@@ -1062,9 +1168,7 @@ describe("normalizeEditorFontSize", () => {
     expect(normalizeEditorFontSize(undefined)).toBe(defaultEditorFontSize);
     expect(normalizeEditorFontSize(null)).toBe(defaultEditorFontSize);
     expect(normalizeEditorFontSize(Number.NaN)).toBe(defaultEditorFontSize);
-    expect(normalizeEditorFontSize(Number.POSITIVE_INFINITY)).toBe(
-      defaultEditorFontSize,
-    );
+    expect(normalizeEditorFontSize(Number.POSITIVE_INFINITY)).toBe(defaultEditorFontSize);
   });
 });
 
@@ -1075,9 +1179,7 @@ describe("monacoThemeForAppTheme", () => {
     expect(monacoThemeForAppTheme("system")).toBe("calm-dark");
     expect(monacoThemeForAppTheme("system", true)).toBe("calm-light");
     expect(monacoThemeForAppTheme("ayuMirage")).toBe("ayu-mirage");
-    expect(monacoThemeForAppTheme("materialDeepOcean")).toBe(
-      "material-deep-ocean",
-    );
+    expect(monacoThemeForAppTheme("materialDeepOcean")).toBe("material-deep-ocean");
     expect(monacoThemeForAppTheme("oneDarkPro")).toBe("one-dark-pro");
     expect(monacoThemeForAppTheme("dracula")).toBe("dracula");
     expect(monacoThemeForAppTheme("catppuccinMocha")).toBe("catppuccin-mocha");
@@ -1117,9 +1219,7 @@ describe("terminalThemeForAppTheme", () => {
     expect(terminalThemeForAppTheme("dark").background).toBe("#111418");
     expect(terminalThemeForAppTheme("light").background).toBe("#f4f6f8");
     expect(terminalThemeForAppTheme("ayuMirage").background).toBe("#1f2430");
-    expect(terminalThemeForAppTheme("materialDeepOcean").background).toBe(
-      "#0f111a",
-    );
+    expect(terminalThemeForAppTheme("materialDeepOcean").background).toBe("#0f111a");
     expect(terminalThemeForAppTheme("system", true).foreground).toBe("#263240");
     expect(terminalThemeForAppTheme("system", false).foreground).toBe("#d8dee9");
     expect(terminalThemeForAppTheme("darkPlus").background).toBe("#1e1e1e");

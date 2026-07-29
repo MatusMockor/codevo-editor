@@ -14,6 +14,12 @@ export interface FileSearchResult {
   relativePath: string;
 }
 
+export interface FileSearchResponse {
+  readonly requestGeneration: string;
+  readonly results: readonly FileSearchResult[];
+  readonly truncated: boolean;
+}
+
 export interface TextSearchResult {
   path: string;
   relativePath: string;
@@ -28,6 +34,16 @@ export interface TextSearchResult {
   matchStart?: number;
   /** 0-based char offset of the match end (exclusive) within `lineText`. */
   matchEnd?: number;
+  /** The bounded line preview omits source text outside the returned projection. */
+  previewTruncated?: boolean;
+  /** The matched text itself exceeded the bounded preview and was clipped. */
+  matchTruncated?: boolean;
+}
+
+export interface TextSearchResponse {
+  readonly requestGeneration: string;
+  readonly results: readonly TextSearchResult[];
+  readonly truncated: boolean;
 }
 
 /** One file changed by a Replace-in-Path run. */
@@ -317,6 +333,19 @@ export interface WorkspaceOwnerFileGateway {
   ): Promise<WorkspaceWriteResult>;
 }
 
+/**
+ * Writes through an already captured workspace owner without consulting
+ * current path-to-workspace routing.
+ */
+export interface WorkspaceOwnerRelativeFileGateway {
+  writeTextFileForWorkspaceRelativePath(
+    workspaceId: string,
+    relativePath: string,
+    content: string,
+    expectedRevision: WorkspaceFileRevision,
+  ): Promise<WorkspaceWriteResult>;
+}
+
 export interface WorkspaceTextFileSnapshot {
   content: string;
   revision: WorkspaceFileRevision | null;
@@ -425,6 +454,12 @@ export interface PhpToolGateway {
 
 export interface FileSearchGateway {
   searchFiles(root: string, query: string, limit: number): Promise<FileSearchResult[]>;
+  searchFilesWithMetadata?(
+    root: string,
+    query: string,
+    limit: number,
+    requestGeneration?: string,
+  ): Promise<FileSearchResponse>;
 }
 
 export interface TextSearchGateway {
@@ -434,6 +469,13 @@ export interface TextSearchGateway {
     limit: number,
     options?: TextSearchOptions,
   ): Promise<TextSearchResult[]>;
+  searchTextWithMetadata?(
+    root: string,
+    query: string,
+    limit: number,
+    options?: TextSearchOptions,
+    requestGeneration?: string,
+  ): Promise<TextSearchResponse>;
   replaceInPath(
     root: string,
     query: string,

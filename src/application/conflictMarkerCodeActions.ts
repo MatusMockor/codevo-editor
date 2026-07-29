@@ -1,9 +1,24 @@
 import type * as Monaco from "monaco-editor";
 import {
   parseConflictMarkers,
+  parseConflictMarkersBounded,
   type ConflictMarkerBlock,
   type ConflictMarkerTextRange,
 } from "../domain/conflictMarkers";
+
+export const MAX_CONFLICT_MARKER_DECORATIONS = 2_000;
+const MAX_BOUNDED_CONFLICT_MARKER_BLOCKS = Math.floor(MAX_CONFLICT_MARKER_DECORATIONS / 7);
+
+export type BoundedConflictMarkerDecorationProjection =
+  | {
+      readonly decorations: readonly Monaco.editor.IModelDeltaDecoration[];
+      readonly kind: "ready";
+    }
+  | {
+      readonly blockLimit: number;
+      readonly kind: "degraded";
+      readonly reason: "too-many-conflicts";
+    };
 
 export const CONFLICT_MARKER_COMMAND_ID = "mockor.acceptConflictMarker";
 
@@ -105,30 +120,48 @@ export function provideConflictMarkerCodeActions(
 export function conflictMarkerDecorations(
   model: Monaco.editor.ITextModel,
 ): Monaco.editor.IModelDeltaDecoration[] {
-  return parseConflictMarkers(model.getValue()).flatMap((block) => {
+  return conflictMarkerDecorationsFromSource(model.getValue());
+}
+
+export function conflictMarkerDecorationsFromSource(
+  source: string,
+): Monaco.editor.IModelDeltaDecoration[] {
+  return conflictMarkerDecorationsFromBlocks(parseConflictMarkers(source));
+}
+
+export function boundedConflictMarkerDecorationsFromSource(
+  source: string,
+): BoundedConflictMarkerDecorationProjection {
+  const parsed = parseConflictMarkersBounded(source, MAX_BOUNDED_CONFLICT_MARKER_BLOCKS);
+  if (parsed.truncated) {
+    return {
+      blockLimit: MAX_BOUNDED_CONFLICT_MARKER_BLOCKS,
+      kind: "degraded",
+      reason: "too-many-conflicts",
+    };
+  }
+  return {
+    decorations: conflictMarkerDecorationsFromBlocks(parsed.blocks),
+    kind: "ready",
+  };
+}
+
+function conflictMarkerDecorationsFromBlocks(
+  blocks: readonly ConflictMarkerBlock[],
+): Monaco.editor.IModelDeltaDecoration[] {
+  return blocks.flatMap((block) => {
     const markers = [
-      lineDecoration(
-        block.currentMarker,
-        "conflict-marker-line conflict-marker-current",
-      ),
-      ...(block.baseMarker
-        ? [lineDecoration(block.baseMarker, "conflict-marker-line")]
-        : []),
+      lineDecoration(block.currentMarker, "conflict-marker-line conflict-marker-current"),
+      ...(block.baseMarker ? [lineDecoration(block.baseMarker, "conflict-marker-line")] : []),
       lineDecoration(block.separatorMarker, "conflict-marker-line"),
-      lineDecoration(
-        block.incomingMarker,
-        "conflict-marker-line conflict-marker-incoming",
-      ),
+      lineDecoration(block.incomingMarker, "conflict-marker-line conflict-marker-incoming"),
     ];
     const sections = [
       sectionDecoration(block.ours, "conflict-marker-current"),
-      ...(block.base
-        ? [sectionDecoration(block.base, "conflict-marker-base")]
-        : []),
+      ...(block.base ? [sectionDecoration(block.base, "conflict-marker-base")] : []),
       sectionDecoration(block.theirs, "conflict-marker-incoming"),
     ].filter(
-      (decoration): decoration is Monaco.editor.IModelDeltaDecoration =>
-        decoration !== null,
+      (decoration): decoration is Monaco.editor.IModelDeltaDecoration => decoration !== null,
     );
 
     return [...markers, ...sections];
@@ -147,10 +180,7 @@ export function applyConflictMarkerCodeAction(
   }
 
   const text = model.getValue();
-  const currentBlockText = text.slice(
-    request.blockStartOffset,
-    request.blockEndOffset,
-  );
+  const currentBlockText = text.slice(request.blockStartOffset, request.blockEndOffset);
 
   if (currentBlockText !== request.expectedBlock) {
     return false;
@@ -171,12 +201,7 @@ export function applyConflictMarkerCodeAction(
   editor.executeEdits(CONFLICT_MARKER_COMMAND_ID, [
     {
       forceMoveMarkers: true,
-      range: new monaco.Range(
-        start.lineNumber,
-        start.column,
-        end.lineNumber,
-        end.column,
-      ),
+      range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
       text: block.replacements[request.variant],
     },
   ]);
@@ -206,15 +231,10 @@ function offsetsIntersect(
   blockEndOffset: number,
 ): boolean {
   if (requestStartOffset === requestEndOffset) {
-    return (
-      requestStartOffset >= blockStartOffset &&
-      requestStartOffset < blockEndOffset
-    );
+    return requestStartOffset >= blockStartOffset && requestStartOffset < blockEndOffset;
   }
 
-  return (
-    requestStartOffset < blockEndOffset && requestEndOffset > blockStartOffset
-  );
+  return requestStartOffset < blockEndOffset && requestEndOffset > blockStartOffset;
 }
 
 function lineDecoration(
@@ -241,10 +261,7 @@ function sectionDecoration(
   return lineDecoration(range, className);
 }
 
-function lineRange(
-  startLineNumber: number,
-  endLineNumber: number,
-): Monaco.IRange {
+function lineRange(startLineNumber: number, endLineNumber: number): Monaco.IRange {
   return {
     endColumn: 1,
     endLineNumber,
@@ -267,8 +284,6 @@ function isConflictMarkerCodeActionRequest(
     typeof request.blockStartOffset === "number" &&
     typeof request.expectedBlock === "string" &&
     typeof request.modelUri === "string" &&
-    (request.variant === "both" ||
-      request.variant === "current" ||
-      request.variant === "incoming")
+    (request.variant === "both" || request.variant === "current" || request.variant === "incoming")
   );
 }

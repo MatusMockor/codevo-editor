@@ -1,34 +1,29 @@
 import { useCallback, useState, type MutableRefObject } from "react";
 import {
   canUseLanguageServerFeature,
+  type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerDocumentSymbol,
-  type LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
-import {
-  isJavaScriptTypeScriptLanguageServerDocument,
-} from "../domain/languageServerDocumentSync";
+import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import {
   emptyPhpFileOutline,
   type PhpFileOutline,
   type PhpFileOutlineNode,
 } from "../domain/phpFileOutline";
-import {
-  getFileName,
-  type EditorDocument,
-} from "../domain/workspace";
+import { getFileName, type EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 export interface JavaScriptTypeScriptFileStructureDependencies {
   workspaceRoot: string | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  languageServerFeaturesGateway: LanguageServerFeaturesGateway;
+  languageServerFeaturesGateway: Pick<
+    JavaScriptTypeScriptLanguageServerFeaturesGateway,
+    "documentSymbols"
+  >;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   languageServerRuntimeStatusRoot: string | null;
-  isLanguageServerSessionActiveForRoot: (
-    rootPath: string,
-    sessionId: number,
-  ) => boolean;
+  isLanguageServerSessionActiveForRoot: (rootPath: string, sessionId: number) => boolean;
   reportError: (source: string, error: unknown) => void;
   setMessage: (message: string | null) => void;
   setFileStructureOpen: (open: boolean) => void;
@@ -39,15 +34,11 @@ export interface JavaScriptTypeScriptFileStructure {
   javaScriptTypeScriptFileOutlinesByPath: Record<string, PhpFileOutline>;
   loadingJavaScriptTypeScriptFileOutlinePaths: Set<string>;
   loadJavaScriptTypeScriptFileOutline: (path: string) => Promise<void>;
-  openJavaScriptTypeScriptFileStructure: (
-    document: EditorDocument,
-  ) => boolean;
+  openJavaScriptTypeScriptFileStructure: (document: EditorDocument) => boolean;
   javaScriptTypeScriptFileStructureOutlineForDocument: (
     document: EditorDocument | null,
   ) => PhpFileOutline | null;
-  javaScriptTypeScriptFileStructureLoadingForDocument: (
-    document: EditorDocument | null,
-  ) => boolean;
+  javaScriptTypeScriptFileStructureLoadingForDocument: (document: EditorDocument | null) => boolean;
   resetJavaScriptTypeScriptFileStructure: () => void;
 }
 
@@ -66,10 +57,8 @@ export function useJavaScriptTypeScriptFileStructure(
     setFileStructureOpen,
     setFileStructureScopeCurrent,
   } = dependencies;
-  const [
-    javaScriptTypeScriptFileOutlinesByPath,
-    setJavaScriptTypeScriptFileOutlinesByPath,
-  ] = useState<Record<string, PhpFileOutline>>({});
+  const [javaScriptTypeScriptFileOutlinesByPath, setJavaScriptTypeScriptFileOutlinesByPath] =
+    useState<Record<string, PhpFileOutline>>({});
   const [
     loadingJavaScriptTypeScriptFileOutlinePaths,
     setLoadingJavaScriptTypeScriptFileOutlinePaths,
@@ -99,15 +88,10 @@ export function useJavaScriptTypeScriptFileStructure(
       const requestedSessionId = languageServerRuntimeStatus.sessionId;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
         isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
-      setLoadingJavaScriptTypeScriptFileOutlinePaths((current) =>
-        new Set(current).add(path),
-      );
+      setLoadingJavaScriptTypeScriptFileOutlinePaths((current) => new Set(current).add(path));
 
       try {
-        const symbols = await languageServerFeaturesGateway.documentSymbols(
-          requestedRoot,
-          path,
-        );
+        const symbols = await languageServerFeaturesGateway.documentSymbols(requestedRoot, path);
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return;
@@ -115,11 +99,7 @@ export function useJavaScriptTypeScriptFileStructure(
 
         setJavaScriptTypeScriptFileOutlinesByPath((current) => ({
           ...current,
-          [path]: fileOutlineFromLanguageServerDocumentSymbols(
-            requestedRoot,
-            path,
-            symbols,
-          ),
+          [path]: fileOutlineFromLanguageServerDocumentSymbols(requestedRoot, path, symbols),
         }));
         setMessage(null);
       } catch (error) {
@@ -173,10 +153,7 @@ export function useJavaScriptTypeScriptFileStructure(
       }
 
       if (
-        !canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "documentSymbol",
-        )
+        !canUseLanguageServerFeature(languageServerRuntimeStatus.capabilities, "documentSymbol")
       ) {
         setMessage("JavaScript/TypeScript service does not provide file structure.");
         return true;
@@ -222,8 +199,8 @@ export function useJavaScriptTypeScriptFileStructure(
     (document: EditorDocument | null): boolean =>
       Boolean(
         document &&
-          isJavaScriptTypeScriptLanguageServerDocument(document) &&
-          loadingJavaScriptTypeScriptFileOutlinePaths.has(document.path),
+        isJavaScriptTypeScriptLanguageServerDocument(document) &&
+        loadingJavaScriptTypeScriptFileOutlinePaths.has(document.path),
       ),
     [loadingJavaScriptTypeScriptFileOutlinePaths],
   );
@@ -251,12 +228,7 @@ function fileOutlineFromLanguageServerDocumentSymbols(
 ): PhpFileOutline {
   return {
     nodes: symbols.map((symbol) =>
-      fileOutlineNodeFromLanguageServerDocumentSymbol(
-        workspaceRoot,
-        path,
-        symbol,
-        null,
-      ),
+      fileOutlineNodeFromLanguageServerDocumentSymbol(workspaceRoot, path, symbol, null),
     ),
   };
 }
@@ -267,9 +239,7 @@ function fileOutlineNodeFromLanguageServerDocumentSymbol(
   symbol: LanguageServerDocumentSymbol,
   parentName: string | null,
 ): PhpFileOutlineNode {
-  const fullyQualifiedName = parentName
-    ? `${parentName}.${symbol.name}`
-    : symbol.name;
+  const fullyQualifiedName = parentName ? `${parentName}.${symbol.name}` : symbol.name;
 
   return {
     children: symbol.children.map((child) =>
@@ -291,9 +261,7 @@ function fileOutlineNodeFromLanguageServerDocumentSymbol(
   };
 }
 
-function fileOutlineKindFromLanguageServerSymbolKind(
-  kind: number,
-): PhpFileOutlineNode["kind"] {
+function fileOutlineKindFromLanguageServerSymbolKind(kind: number): PhpFileOutlineNode["kind"] {
   if (kind === 5) {
     return "class";
   }
@@ -365,10 +333,7 @@ function isLanguageServerStatusForWorkspace(
     return false;
   }
 
-  const rootedStatus =
-    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
+  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
 
-  return (
-    Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
-  );
+  return Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }

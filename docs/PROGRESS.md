@@ -1,5 +1,54 @@
 # Progress
 
+## 2026-07-28 — JavaScript/TypeScript editing and responsiveness wave
+
+Implemented in the current worktree:
+
+- Quick Open now uses one parsed query model for files, `>` Commands, `@` current-file
+  symbols, `#` workspace symbols, `path:line[:column]`, and confirmable
+  `:line[:column]`. Pasted and IME-completed queries preserve the exact destination
+  seed, typed prefixes continue in the destination, ordinary reopen clears one-shot
+  state, backend truncation stays explicit, and the syntax hint is accessible.
+- Workspace text search is docked in the bottom panel and restores the previous
+  per-workspace panel when closed. Native Rust search covers saved disk content while a
+  cancellable latest-wins worker overlays exact unsaved buffers.
+- Dirty-buffer search is explicitly limited to literal case-sensitive or
+  case-insensitive matching. Regex, `wholeWord`, and non-empty file masks are not
+  approximated; they return an unsupported limitation for dirty content because the
+  JavaScript worker does not share the native regex, Unicode word-boundary, ignore, or
+  mask semantics.
+- Dirty-search structured cloning is bounded to 16 documents, 4,096 dirty paths,
+  256 Ki UTF-16 code units and 768 KiB UTF-8 per document, 1 Mi aggregate code units,
+  3 MiB aggregate UTF-8, 500 results, and a 2 MiB response. Superseded, aborted, timed
+  out, malformed, and wrong-owner work is terminated or rejected.
+- Open-editor MRU is scoped by workspace/project and editor group, supports forward and
+  reverse traversal with focus restoration, reconciles live tab changes, and bounds
+  retained inactive scopes.
+- Navigation and editor-group session persistence moved into a focused owner. It saves
+  only after restore authority exists, flushes scheduled state on workspace departure,
+  and keeps stale workspace errors from crossing roots.
+- Monaco model retention now follows open-document and navigation ownership. Closed
+  transient models are disposed when no owner needs them; active and navigation-owned
+  models remain available, and reveals wait for the live replacement model.
+- A bounded workspace package graph now supplies monorepo package ownership for scripts,
+  tests, Express routes, and Problems. Overflow and incomplete graph authority remain
+  explicit instead of guessing.
+- JavaScript/TypeScript language-server requests and document notifications use exact
+  session authority, cancellation, and latest-owner settlement. Watcher overflow or
+  queue loss requests an exact-session project resync or emits a truthful rescan rather
+  than replaying an unsafe partial event set.
+- Rust file and text search now use bounded traversal, reads, results, previews,
+  cancellation, and explicit truncation while blocking filesystem work stays off the
+  UI runtime.
+- Active-editor change hunks moved to a cancellable worker with exact
+  owner/path/generation settlement, a timeout, and visible large-file degradation.
+- Composition-root integration preserves the JS/TS provider, controller, and background
+  worker seams while continuing the hotspot reductions rather than raising baselines.
+
+Validation note: focused suites and independent reviews remain iteration evidence.
+The settled integrated frontend/Rust receipt for this wave is recorded in the current
+checkpoint near the end of this file.
+
 ## 2026-06-15
 
 Completed:
@@ -28,7 +77,7 @@ Completed:
 - Added prompt adapter and Tauri workspace gateway abstractions.
 - Added recent workspace restore through local storage.
 - Added CSP configuration instead of disabled CSP.
-- Added CodeRabbit review loop and fixed valid findings.
+- Added an independent review loop and fixed valid findings.
 - Added accessibility improvements for command palette, file tree, and tabs.
 - Added path helper and dirty-state unit tests.
 - Added backend file search command and Quick Open UI command.
@@ -337,7 +386,9 @@ Completed JavaScript/TypeScript integration batch:
 - Hardened Express parsing and navigation for typed Router aliases, multiline imports, lexical shadowing, cross-package mount composition and exact mounted-route leaf anchors. Domain projection keeps a bounded 20,000-route prefix; interactive discovery degrades truthfully above a 256 KiB per-file/aggregate budget and publishes at most 2,000 rows.
 - Completed Debug Console retained-row copy receipts, exact live-owner fencing, unique virtualized keys and panel-local roving tree focus with Right/Left parent-child navigation.
 - Bound native Jest/Vitest watch execution to retained runner/package/manifest/process authority. Vitest uses `--watch`, Jest uses `--watchAll`; full-package continuous watch is supported on macOS/Linux, while scoped continuous requests fail before spawn and remain available as one-shot runs.
-- The integrated checkpoint passes 1,065/1,065 frontend test files and 16,247/16,247 frontend tests. Rust tests, all-target check, Clippy with denied warnings, formatting, TypeScript, ESLint, exhaustive-deps (0/0), production build, hotspot ratchets and changed-file formatting all pass.
+- That historical integration batch passed its then-applicable frontend, Rust, build,
+  lint, formatting, and hotspot gates. It is not the gate receipt for the current
+  worktree.
 - Fresh-build desktop QA confirms automatic top-frame Variables, paused/running Watch states and manual refresh, expandable Debug Console tree navigation, retained `Copy Value` after Continue, exact clipboard output, strict VS Code launch compatibility and Express route navigation. No debuggee orphan remained after Stop. Continuous Test Explorer watch was not visually exercised because the throwaway fixture has no installed Vitest/Jest runner; focused frontend and Rust process-authority tests remain green.
 
 Post-integration hardening checkpoint:
@@ -352,30 +403,21 @@ Post-integration hardening checkpoint:
 
 Current VS Code JavaScript/TypeScript/Node/Express checkpoint:
 
-- Practical editor-core coverage is approximately 80–85% for daily JavaScript/TypeScript/Node/Express work and approximately 85–90% for common single-process Node debugging. This excludes VS Code's extension ecosystem and does not claim parity for child/multi-process, remote/container, universal DAP or Windows native-watch workflows.
-- `npm run check`: passing with 0 TypeScript errors
-- `npm test`: passing, 1,021/1,021 test files and 15,317/15,317 frontend tests
-- Latest full coverage checkpoint: 88.17% statements / 82.22% branches / 93.27% functions / 88.73% lines
-- `npm run lint`: passing with zero warnings
-- `npm run build`: passing
-- `npm audit --json`: zero vulnerabilities
-- Focused `set_expression` verification: passing, 26/26 tests, including 7/7 real Node inspector tests
-- Focused native-watch verification: 199/199 tests passing, including real generation-one to generation-two replacement, stale-publication rejection, stop/reap, two-phase ABA-safe workspace unregister, fallible supervisor/output pumps and fail-closed root/leaf/intermediate replacement coverage
-- Focused semantic workspace edit CAS verification: 19/19 frontend tests, 25/25 Rust atomic tests and 40/40 retained-adapter tests; the final independent audit found no P0/P1 in the private, unreachable foundation
-- Focused Nette component-factory planner verification: 256/256 tests; the final independent audit found no P0/P1 and confirmed that no production consumer or apply path exists
-- Descriptor-relative transactional writer verification: 32/32 transaction tests, 5/5 recovery tests, repeated root/parent/name/hardlink race stress and a clean independent P0/P1 audit
-- Focused B2 components: control proxy 17/17, command worker 11/11, CDP command runtime 3/3 and desired policy 13/13
-- Attach-to-process is complete end to end: descriptor-bound terminal authority, kernel-bound HTTP/WebSocket proof, transactional one-shot listing, strict list/start IPC, private capability controller, accessible searchable picker and the shared debug-session acceptance lifecycle. Manual-port attach remains a separate explicit fallback.
-- CDP event-sink dependency inversion: complete; typed mapping, irreversible capacity fail-close and source-boundary tests passing
-- Rust library tests: passing, 1,782/1,782
-- ESLint: 0 warnings; `react-hooks/exhaustive-deps`: 0 findings; Clippy: 0 warnings
-- Frontend formatting, changed-file formatting and Rustfmt: passing
-- Hotspot review: `useDebugSession.ts` and `debug_commands.rs` remain below the 2,000-line and 10,000-token new-production limits after cohesive Strategy/factory extraction. The baseline was not raised for the reported tracked `lib.rs`, `App.tsx` and `useWorkbenchController.ts` integration growth; `debug_cdp.rs` is materially smaller than its locked baseline.
-- `npm run tauri build -- --debug --bundles app`: passing
-- `npm run tauri build -- --debug`: passing, producing `.app` and `.dmg` bundles
-- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, timestamped session-load smoke, light/dark/system theme switching, terminal lazy-load rendering after theme changes, product title/favicon metadata, and non-Tauri development fallback
-- `actionlint .github/workflows/macos-release.yml`: passing, 0 findings.
-- The PR workflow now gates configuration formatting, a changed-file TypeScript/TSX format ratchet, zero-warning ESLint, type checking, Vitest coverage, the web build, Rust formatting, zero-warning Clippy, and Rust tests in parallel frontend/Rust jobs. `react-hooks/exhaustive-deps` is clean and checked by `npm run lint:exhaustive-deps` with a zero-finding, empty per-file baseline, so any regression fails the gate. Source hotspots have a separate structural-size ratchet (`npm run size:hotspots`): 24 current production/test hotspots are pinned to raw-line and syntax-aware structural-token scores. Template interpolations and Rust lifetimes are counted rather than hidden by string heuristics. New production files may not exceed 2,000 raw lines or 10,000 structural tokens without manual baseline review. `npm run size:hotspots:update` is deliberately monotonic: it can only lower tracked limits or remove deleted files, and refuses tracked growth or new oversized files. Modified legacy TypeScript files that were already unformatted at the PR base remain grandfathered until they are formatted once; new files and previously clean files cannot introduce format drift. The Rust job installs Node dependencies so real TypeScript language-server integration tests run instead of silently skipping. The release workflow keeps its separate packaging-oriented checks.
+- Codevo targets practical editor-core workflows, not VS Code's extension ecosystem or
+  a percentage-based 1:1 parity claim.
+- The current editing/navigation wave adds Quick Open routing and exact seed handoff,
+  docked bounded search with dirty overlays, MRU switching, navigation persistence,
+  bounded package ownership, transient-model cleanup, cancellable exact-session LSP
+  work, watcher resync, bounded Rust search, and worker-owned change hunks.
+- Child/multi-process ownership, arbitrary DAP/extension launch types,
+  remote/container runtimes, and Windows native-watch parity remain unsupported.
+- The integrated checkpoint is green: frontend Vitest passed 16,909/16,909 tests in
+  1,107 files, and the coverage gate passed at 88.20% statements, 82.32% branches,
+  93.72% functions, and 88.98% lines. Rust passed 2,334 library tests with one
+  intentional timing test ignored, plus 331/331 tests across 13 integration binaries.
+- TypeScript check, zero-warning ESLint, production build, hotspot ratchets, both
+  formatting gates, Cargo check, zero-warning Clippy, Rustfmt, and `git diff --check`
+  are green on the same settled worktree.
 
 Known issues:
 
@@ -401,7 +443,11 @@ Next parity implementation slice:
 
 1. Prioritize the remaining practical VS Code JavaScript/TypeScript/Node/Express gaps: child/multi-process debug ownership and the next audit-ranked daily-workflow gaps.
 2. Extend watch/debug parity only with separately proven ownership models: Windows native watch, `tsx --watch`, nodemon, npm watch and generic `restart: true` remain unsupported.
-3. Resume the deferred Nette quick-fix only after the JS/TS/Node phase; its first safe version must use a synchronous renderer-owned template/owner Monaco mutation lease rather than claiming cross-process disk atomicity.
+3. Keep the deferred Nette quick-fix out of the active plan unless the user explicitly
+   reprioritizes it. Completing the JS/TS/Node phase never resumes it automatically;
+   if explicitly requested later, its first safe version must use a synchronous
+   renderer-owned template/owner Monaco mutation lease rather than claiming
+   cross-process disk atomicity.
 
 Release follow-up:
 

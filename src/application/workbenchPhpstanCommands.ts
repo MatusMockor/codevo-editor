@@ -4,7 +4,7 @@ interface WorkbenchPhpstanCommandsOptions {
   hasPhpWorkspace: boolean;
   isRunning: boolean;
   runPhpstanAnalysis: Command["run"];
-  hasDiagnosticAtCursor: boolean;
+  hasDiagnosticAtCursor: boolean | (() => boolean);
   isActiveBufferClean: boolean;
   isWorkspaceTrusted: boolean;
   ignoreIssueAtCursor: Command["run"];
@@ -24,8 +24,7 @@ export function workbenchPhpstanCommands({
       id: "phpstan.analyseWorkspace",
       title: "PHPStan: Analyse Workspace",
       category: "PHP",
-      isEnabled: (context) =>
-        context.hasWorkspace && hasPhpWorkspace && !isRunning,
+      isEnabled: (context) => context.hasWorkspace && hasPhpWorkspace && !isRunning,
       run: runPhpstanAnalysis,
     },
     {
@@ -35,10 +34,14 @@ export function workbenchPhpstanCommands({
       isEnabled: (context) =>
         context.hasWorkspace &&
         context.hasActiveDocument &&
-        hasDiagnosticAtCursor &&
+        resolveAvailability(hasDiagnosticAtCursor) &&
         isActiveBufferClean &&
         isWorkspaceTrusted,
       run: ignoreIssueAtCursor,
     },
   ];
+}
+
+function resolveAvailability(availability: boolean | (() => boolean)): boolean {
+  return typeof availability === "function" ? availability() : availability;
 }

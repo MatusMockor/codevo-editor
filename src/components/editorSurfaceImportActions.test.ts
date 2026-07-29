@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import type {
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerCodeAction,
   LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
@@ -576,6 +577,7 @@ function request(
     kind: "source.sortImports.ts",
     path,
     rootPath,
+    sessionId: 41,
     version: () => 7,
     apply: () => true,
     flush: async () => undefined,
@@ -587,10 +589,17 @@ function request(
 
 function gateway(
   overrides: Partial<Pick<LanguageServerFeaturesGateway, "codeActions" | "resolveCodeAction">>,
-): LanguageServerFeaturesGateway {
+): JavaScriptTypeScriptLanguageServerFeaturesGateway {
+  const codeActions = overrides.codeActions ?? (async () => []);
+  const resolveCodeAction = overrides.resolveCodeAction ?? (async (_rootPath, action) => action);
   return {
-    codeActions: async () => [],
-    resolveCodeAction: async (_rootPath, action) => action,
-    ...overrides,
-  } as LanguageServerFeaturesGateway;
+    codeActions: (requestRoot, requestPath, range, context, sessionId) =>
+      identified(codeActions(requestRoot, requestPath, range, context), sessionId),
+    resolveCodeAction: (requestRoot, action, sessionId) =>
+      identified(resolveCodeAction(requestRoot, action), sessionId),
+  } as JavaScriptTypeScriptLanguageServerFeaturesGateway;
+}
+
+function identified<T>(promise: Promise<T>, sessionId: number) {
+  return Object.assign(promise, { requestId: 1, sessionId });
 }

@@ -26,11 +26,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function document(
-  path = PATH,
-  content = "edited",
-  savedContent = "saved",
-): EditorDocument {
+function document(path = PATH, content = "edited", savedContent = "saved"): EditorDocument {
   const segments = path.split("/");
   return {
     content,
@@ -41,9 +37,7 @@ function document(
   };
 }
 
-function workspaceFiles(
-  overrides: Partial<WorkspaceFileGateway> = {},
-): WorkspaceFileGateway {
+function workspaceFiles(overrides: Partial<WorkspaceFileGateway> = {}): WorkspaceFileGateway {
   return {
     applyWorkspaceEdit: vi.fn(async () => 0),
     createDirectory: vi.fn(async () => undefined),
@@ -68,16 +62,17 @@ function revision(contentHash: number): WorkspaceFileRevision {
   };
 }
 
-function createHarness(options: {
-  documents?: Record<string, EditorDocument>;
-  events?: string[];
-  targetPath?: string;
-  workspaceFiles?: WorkspaceFileGateway;
-  overrides?: Partial<DocumentSaveServiceDependencies>;
-} = {}) {
+function createHarness(
+  options: {
+    documents?: Record<string, EditorDocument>;
+    events?: string[];
+    targetPath?: string;
+    workspaceFiles?: WorkspaceFileGateway;
+    overrides?: Partial<DocumentSaveServiceDependencies>;
+  } = {},
+) {
   const events = options.events ?? [];
-  const documents =
-    options.documents ?? ({ [PATH]: document() } as Record<string, EditorDocument>);
+  const documents = options.documents ?? ({ [PATH]: document() } as Record<string, EditorDocument>);
   let current = true;
   let writeAllowed = true;
   const settleWrite = vi.fn();
@@ -91,10 +86,7 @@ function createHarness(options: {
     lease: { isCurrent: () => current, tryBeginWrite },
   };
   const acknowledgeSavedDocument = vi.fn(
-    (
-      saveTarget: DocumentSaveTarget,
-      acknowledgement: DocumentSaveAcknowledgement,
-    ) => {
+    (saveTarget: DocumentSaveTarget, acknowledgement: DocumentSaveAcknowledgement) => {
       events.push("ack");
       const live = documents[saveTarget.path];
       if (!live) {
@@ -112,19 +104,14 @@ function createHarness(options: {
     },
   );
   const reconcileUnchangedPreparedContent = vi.fn(
-    (
-      saveTarget: DocumentSaveTarget,
-      expectedDocument: EditorDocument,
-      preparedContent: string,
-    ) => {
+    (saveTarget: DocumentSaveTarget, expectedDocument: EditorDocument, preparedContent: string) => {
       const live = documents[saveTarget.path];
       if (live !== expectedDocument || preparedContent !== live.savedContent) {
         return null;
       }
 
-      const reconciled = live.content === preparedContent
-        ? live
-        : { ...live, content: preparedContent };
+      const reconciled =
+        live.content === preparedContent ? live : { ...live, content: preparedContent };
       documents[saveTarget.path] = reconciled;
       return reconciled;
     },
@@ -145,11 +132,7 @@ function createHarness(options: {
     },
     reconcileUnchangedPreparedContent,
     acknowledgeIssuedWrite: acknowledgeSavedDocument,
-    updateRevisionForIssuedWrite: (
-      saveTarget,
-      _expectedDocument,
-      nextRevision,
-    ) => {
+    updateRevisionForIssuedWrite: (saveTarget, _expectedDocument, nextRevision) => {
       const live = documents[saveTarget.path];
       if (live) {
         documents[saveTarget.path] = { ...live, revision: nextRevision };
@@ -214,7 +197,43 @@ function createHarness(options: {
 }
 
 describe("DocumentSaveService", () => {
-  it("returns an unchanged save for already-clean content without persistence side effects", async () => {
+  it("revalidates transformed content through the store after write admission", async () => {
+    const events: string[] = [];
+    const writeTextFile = vi.fn(async () => {
+      events.push("write");
+      return undefined;
+    });
+    const harness = createHarness({
+      events,
+      workspaceFiles: workspaceFiles({ writeTextFile }),
+    });
+    const prepareIssuedWrite = vi.fn(() => {
+      events.push("prepare-issued");
+      return true;
+    });
+    harness.dependencies.saveStore.prepareIssuedWrite = prepareIssuedWrite;
+
+    await expect(harness.save()).resolves.toMatchObject({ status: "saved" });
+    expect(prepareIssuedWrite).toHaveBeenCalledWith(
+      harness.target,
+      expect.objectContaining({ content: "edited" }),
+      expect.objectContaining({
+        content: "edited:formatted:optimized:organized",
+      }),
+    );
+    expect(events.indexOf("prepare-issued")).toBeLessThan(events.indexOf("write"));
+  });
+
+  it("does not cross the disk boundary when exact transformed-content admission fails", async () => {
+    const harness = createHarness();
+    harness.dependencies.saveStore.prepareIssuedWrite = vi.fn(() => false);
+
+    await expect(harness.save()).resolves.toEqual({ status: "stale" });
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(harness.settleWrite).toHaveBeenCalledOnce();
+  });
+
+  it("lets the save authority acknowledge already-clean exact content without persistence", async () => {
     const clean = document(PATH, "baseline", "baseline");
     const beginDocumentSelfWrite = vi.fn(() => null);
     const harness = createHarness({
@@ -235,7 +254,11 @@ describe("DocumentSaveService", () => {
       persistence: "unchanged",
       contentChanged: false,
     });
-    expect(harness.reconcileUnchangedPreparedContent).not.toHaveBeenCalled();
+    expect(harness.reconcileUnchangedPreparedContent).toHaveBeenCalledWith(
+      harness.target,
+      clean,
+      "baseline",
+    );
     expect(harness.tryBeginWrite).not.toHaveBeenCalled();
     expect(beginDocumentSelfWrite).not.toHaveBeenCalled();
     expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
@@ -327,7 +350,8 @@ describe("DocumentSaveService", () => {
     const formatting = deferred<string>();
     const initial = document(PATH, "first edit", "baseline");
     const latest = document(PATH, "baseline", "baseline");
-    const formattedContentForSave = vi.fn()
+    const formattedContentForSave = vi
+      .fn()
       .mockImplementationOnce(() => formatting.promise)
       .mockImplementation(async (item: EditorDocument) => item.content);
     const harness = createHarness({
@@ -424,18 +448,13 @@ describe("DocumentSaveService", () => {
       "php",
       "js",
     ]);
-    expect(writeTextFile).toHaveBeenCalledWith(
-      PATH,
-      "edited:formatted:optimized:organized",
-    );
+    expect(writeTextFile).toHaveBeenCalledWith(PATH, "edited:formatted:optimized:organized");
     expect(harness.syncSavedDocument).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ path: PATH }),
       expect.any(Function),
     );
-    expect(
-      harness.syncSavedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledWith(
+    expect(harness.syncSavedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ path: PATH }),
       expect.any(Function),
@@ -454,9 +473,7 @@ describe("DocumentSaveService", () => {
 
     expect(result.status).toBe("saved");
     expect(harness.documents[PATH].savedContent).toBe("saved");
-    expect(harness.documents[otherPath].savedContent).toBe(
-      "other:formatted:optimized:organized",
-    );
+    expect(harness.documents[otherPath].savedContent).toBe("other:formatted:optimized:organized");
   });
 
   it("returns a write conflict with its authoritative disk snapshot", async () => {
@@ -491,7 +508,8 @@ describe("DocumentSaveService", () => {
       ...document(),
       revision: loadedRevision,
     };
-    const writeTextFile = vi.fn()
+    const writeTextFile = vi
+      .fn()
       .mockResolvedValueOnce({
         status: "conflict" as const,
         message: "metadata changed",
@@ -596,8 +614,7 @@ describe("DocumentSaveService", () => {
     await expect(partial.save()).resolves.toEqual({
       status: "partial",
       error: expect.objectContaining({
-        message:
-          "The file was saved, but durability could not be confirmed: directory sync failed",
+        message: "The file was saved, but durability could not be confirmed: directory sync failed",
       }),
     });
     expect(partial.documents[PATH].revision).toEqual(partialRevision);
@@ -695,6 +712,33 @@ describe("DocumentSaveService", () => {
     expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
   });
 
+  it("supplies save participants with a closed current-document predicate across an await", async () => {
+    const organized = deferred<string>();
+    const observed: { current: (() => boolean) | null } = { current: null };
+    const harness = createHarness({
+      overrides: {
+        organizedImportsContentForSave: vi.fn(
+          async (_document, _content, _rootPath, currentDocument) => {
+            observed.current = currentDocument;
+            return organized.promise;
+          },
+        ),
+      },
+    });
+    const save = harness.save();
+    await vi.waitFor(() => expect(observed.current).not.toBeNull());
+
+    expect(observed.current?.()).toBe(true);
+    harness.setCurrent(false);
+    expect(observed.current?.()).toBe(false);
+    harness.setCurrent(true);
+    expect(observed.current?.()).toBe(false);
+    organized.resolve("must not be written");
+
+    await expect(save).resolves.toEqual({ status: "stale" });
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+  });
+
   it("returns stale when the lease denies the write permit", async () => {
     const harness = createHarness();
     harness.setWriteAllowed(false);
@@ -702,9 +746,7 @@ describe("DocumentSaveService", () => {
     await expect(harness.save()).resolves.toEqual({ status: "stale" });
 
     expect(harness.tryBeginWrite).toHaveBeenCalledOnce();
-    expect(
-      harness.dependencies.workspaceFiles.writeTextFile,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
     expect(harness.settleWrite).not.toHaveBeenCalled();
   });
 
@@ -718,9 +760,7 @@ describe("DocumentSaveService", () => {
     });
     const save = harness.save();
     await vi.waitFor(() =>
-      expect(
-        harness.dependencies.formattedContentForSave,
-      ).toHaveBeenCalledOnce(),
+      expect(harness.dependencies.formattedContentForSave).toHaveBeenCalledOnce(),
     );
     harness.documents[PATH] = {
       ...harness.documents[PATH],
@@ -733,9 +773,7 @@ describe("DocumentSaveService", () => {
       status: "blocked",
       reason: "readOnly",
     });
-    expect(
-      harness.dependencies.workspaceFiles.writeTextFile,
-    ).not.toHaveBeenCalled();
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
   });
 
   it("preserves a concurrent edit while acknowledging the content written", async () => {
@@ -786,9 +824,7 @@ describe("DocumentSaveService", () => {
     release();
 
     await expect(save).resolves.toEqual({ status: "stale" });
-    expect(harness.documents[PATH].savedContent).toBe(
-      "edited:formatted:optimized:organized",
-    );
+    expect(harness.documents[PATH].savedContent).toBe("edited:formatted:optimized:organized");
     expect(harness.settleWrite).toHaveBeenCalledOnce();
     expect(harness.events).not.toContain("prefetch");
     expect(harness.events).not.toContain("history");

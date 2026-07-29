@@ -332,6 +332,90 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
   });
 
+  it("writes an owner-relative path directly without consulting current workspace descriptors", async () => {
+    const descriptorForPath = vi.fn(() => {
+      throw new Error("owner-relative writes must not resolve current descriptors");
+    });
+    const matchForPath = vi.fn(() => {
+      throw new Error("owner-relative writes must not resolve current matches");
+    });
+    const gateway = new TauriWorkspaceGateway({ descriptorForPath, matchForPath });
+    invoke.mockResolvedValue({ status: "success", revision: revision() });
+
+    await expect(
+      gateway.writeTextFileForWorkspaceRelativePath(
+        "opaque-workspace-owner",
+        "packages/app/src/main.ts",
+        "export {};\n",
+        revision(),
+      ),
+    ).resolves.toEqual({ status: "success", revision: revision() });
+
+    expect(descriptorForPath).not.toHaveBeenCalled();
+    expect(matchForPath).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith("workspace_save_text_file", {
+      workspaceId: "opaque-workspace-owner",
+      relativePath: "packages/app/src/main.ts",
+      content: "export {};\n",
+      expectedRevision: revision(),
+    });
+  });
+
+  it.each([
+    "",
+    ".",
+    "..",
+    "/src/App.ts",
+    "C:/src/App.ts",
+    "C:src/App.ts",
+    "\\\\server\\share\\App.ts",
+    "src\\App.ts",
+    "src//App.ts",
+    "src/./App.ts",
+    "src/../App.ts",
+    "src/App.ts/",
+    "src/\nApp.ts",
+    "src/\u007fApp.ts",
+    "src/\u0085App.ts",
+    `src/${"a".repeat(4_093)}`,
+  ])("rejects invalid owner-relative write path %j before invoking IPC", (relativePath) => {
+    const gateway = new TauriWorkspaceGateway({
+      descriptorForPath: () => {
+        throw new Error("must not resolve");
+      },
+    });
+
+    expect(() =>
+      gateway.writeTextFileForWorkspaceRelativePath(
+        "opaque-workspace-owner",
+        relativePath,
+        "content",
+        revision(),
+      ),
+    ).toThrow("normalized descendant path");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("accepts the exact owner-relative UTF-8 byte boundary without path re-resolution", async () => {
+    const relativePath = `a/${"é".repeat(2_047)}`;
+    const descriptorForPath = vi.fn(() => descriptor);
+    invoke.mockResolvedValue({ status: "success", revision: revision() });
+
+    await new TauriWorkspaceGateway({
+      descriptorForPath,
+    }).writeTextFileForWorkspaceRelativePath("ws-captured", relativePath, "content", revision());
+
+    expect(new TextEncoder().encode(relativePath)).toHaveLength(4_096);
+    expect(descriptorForPath).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith(
+      "workspace_save_text_file",
+      expect.objectContaining({
+        workspaceId: "ws-captured",
+        relativePath,
+      }),
+    );
+  });
+
   it("routes owner-scoped directory and atomic content creation with relative paths", async () => {
     invoke
       .mockResolvedValueOnce({ status: "success" })
@@ -510,7 +594,18 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
   });
 
   it("routes trusted listing and searches without raw absolute paths", async () => {
-    invoke.mockResolvedValue([]);
+    invoke
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({
+        requestGeneration: "gateway-file-search",
+        results: [],
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        requestGeneration: "gateway-search-text",
+        results: [],
+        truncated: false,
+      });
     const gateway = trustedGateway();
 
     await gateway.readDirectory("/selected/project/src");
@@ -525,6 +620,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       relativePath: "",
       query: "App",
       limit: 10,
+      requestGeneration: "gateway-file-search",
     });
     expect(invoke).toHaveBeenNthCalledWith(3, "workspace_search_text", {
       workspaceId: "ws-1",
@@ -532,6 +628,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       query: "App",
       limit: 10,
       options: null,
+      requestGeneration: "gateway-search-text",
     });
   });
 
@@ -568,10 +665,27 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
   it("preserves the selected alias identity in returned explorer and search paths", async () => {
     invoke
       .mockResolvedValueOnce([{ name: "App.ts", relativePath: "App.ts", kind: "file" }])
-      .mockResolvedValueOnce([{ name: "App.ts", relativePath: "App.ts" }])
-      .mockResolvedValueOnce([
-        { relativePath: "App.ts", lineNumber: 1, column: 1, lineText: "App" },
-      ]);
+      .mockResolvedValueOnce({
+        requestGeneration: "gateway-file-search",
+        results: [{ name: "App.ts", relativePath: "App.ts", truncated: false }],
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        requestGeneration: "gateway-search-text",
+        results: [
+          {
+            relativePath: "App.ts",
+            lineNumber: 1,
+            column: 1,
+            lineText: "App",
+            matchStart: 0,
+            matchEnd: 3,
+            previewTruncated: false,
+            matchTruncated: false,
+          },
+        ],
+        truncated: false,
+      });
     const gateway = trustedGateway();
     await expect(gateway.readDirectory("/selected/project/src")).resolves.toEqual([
       { name: "App.ts", path: "/selected/project/src/App.ts", kind: "file" },
@@ -582,6 +696,246 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     await expect(gateway.searchText("/selected/project/src", "App", 10)).resolves.toEqual([
       expect.objectContaining({ path: "/selected/project/src/App.ts", relativePath: "App.ts" }),
     ]);
+  });
+
+  it("surfaces trusted text-search truncation from a closed response", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "request-7",
+      results: [
+        {
+          relativePath: "App.ts",
+          lineNumber: 1,
+          column: 1,
+          lineText: "App",
+          matchStart: 0,
+          matchEnd: 3,
+          previewTruncated: true,
+          matchTruncated: false,
+        },
+      ],
+      truncated: true,
+    });
+
+    await expect(
+      trustedGateway().searchTextWithMetadata(
+        "/selected/project",
+        "App",
+        10,
+        undefined,
+        "request-7",
+      ),
+    ).resolves.toEqual({
+      requestGeneration: "request-7",
+      results: [
+        {
+          path: "/selected/project/App.ts",
+          relativePath: "App.ts",
+          lineNumber: 1,
+          column: 1,
+          lineText: "App",
+          matchStart: 0,
+          matchEnd: 3,
+          previewTruncated: true,
+          matchTruncated: false,
+        },
+      ],
+      truncated: true,
+    });
+  });
+
+  it("rejects unknown fields in trusted text-search responses", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "request-8",
+      results: [],
+      truncated: false,
+      unexpected: true,
+    });
+
+    await expect(
+      trustedGateway().searchTextWithMetadata(
+        "/selected/project",
+        "App",
+        10,
+        undefined,
+        "request-8",
+      ),
+    ).rejects.toThrow("invalid payload");
+  });
+
+  it("rejects a trusted text-search response from another request generation", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "request-older",
+      results: [],
+      truncated: false,
+    });
+
+    await expect(
+      trustedGateway().searchTextWithMetadata(
+        "/selected/project",
+        "App",
+        10,
+        undefined,
+        "request-current",
+      ),
+    ).rejects.toThrow("mismatched request generation");
+  });
+
+  it("permits clipped text spans only under closed match-truncation semantics", async () => {
+    const result = {
+      relativePath: "App.ts",
+      lineNumber: 1,
+      column: 1,
+      lineText: "App",
+      matchStart: 0,
+      matchEnd: 99,
+      previewTruncated: true,
+      matchTruncated: false,
+    };
+    invoke
+      .mockResolvedValueOnce({
+        requestGeneration: "text-span-1",
+        results: [result],
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        requestGeneration: "text-span-2",
+        results: [{ ...result, matchTruncated: true, previewTruncated: false }],
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        requestGeneration: "text-span-3",
+        results: [{ ...result, matchTruncated: true }],
+        truncated: false,
+      });
+    const gateway = trustedGateway();
+
+    await expect(
+      gateway.searchTextWithMetadata("/selected/project", "App", 10, undefined, "text-span-1"),
+    ).rejects.toThrow("invalid result");
+    await expect(
+      gateway.searchTextWithMetadata("/selected/project", "App", 10, undefined, "text-span-2"),
+    ).rejects.toThrow("invalid result");
+    await expect(
+      gateway.searchTextWithMetadata("/selected/project", "App", 10, undefined, "text-span-3"),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        results: [expect.objectContaining({ matchEnd: 99, matchTruncated: true })],
+      }),
+    );
+  });
+
+  it("keeps the legacy raw-root text-search array compatible", async () => {
+    invoke.mockResolvedValue([
+      {
+        path: "/legacy/App.ts",
+        relativePath: "App.ts",
+        lineNumber: 1,
+        column: 1,
+        lineText: "App",
+        matchStart: 0,
+        matchEnd: 3,
+      },
+    ]);
+    const gateway = new TauriWorkspaceGateway({ descriptorForPath: () => null });
+
+    await expect(
+      gateway.searchTextWithMetadata("/legacy", "App", 10, undefined, "legacy-9"),
+    ).resolves.toEqual({
+      requestGeneration: "legacy-9",
+      results: [
+        {
+          path: "/legacy/App.ts",
+          relativePath: "App.ts",
+          lineNumber: 1,
+          column: 1,
+          lineText: "App",
+          matchStart: 0,
+          matchEnd: 3,
+        },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("surfaces descriptor walk truncation from a closed file-search payload", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "file-request-1",
+      results: [{ name: "App.ts", relativePath: "App.ts", truncated: true }],
+      truncated: true,
+    });
+
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "App", 10, "file-request-1"),
+    ).resolves.toEqual({
+      requestGeneration: "file-request-1",
+      results: [{ name: "App.ts", path: "/selected/project/App.ts", relativePath: "App.ts" }],
+      truncated: true,
+    });
+  });
+
+  it("rejects unknown fields in the file-search payload", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "file-request-2",
+      results: [
+        {
+          name: "App.ts",
+          relativePath: "App.ts",
+          truncated: false,
+          unexpected: true,
+        },
+      ],
+      truncated: false,
+    });
+
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "App", 10, "file-request-2"),
+    ).rejects.toThrow("invalid result");
+  });
+
+  it("accepts exact-generation saturated file search and rejects a foreign generation", async () => {
+    invoke
+      .mockResolvedValueOnce({
+        requestGeneration: "file-saturated",
+        results: [],
+        truncated: true,
+      })
+      .mockResolvedValueOnce({
+        requestGeneration: "file-old",
+        results: [],
+        truncated: true,
+      });
+    const gateway = trustedGateway();
+
+    await expect(
+      gateway.searchFilesWithMetadata("/selected/project", "App", 10, "file-saturated"),
+    ).resolves.toEqual({
+      requestGeneration: "file-saturated",
+      results: [],
+      truncated: true,
+    });
+    await expect(
+      gateway.searchFilesWithMetadata("/selected/project", "App", 10, "file-current"),
+    ).rejects.toThrow("mismatched request generation");
+  });
+
+  it("keeps the legacy raw-root file-search array isolated", async () => {
+    invoke.mockResolvedValue([
+      {
+        name: "App.ts",
+        path: "/legacy/App.ts",
+        relativePath: "App.ts",
+        truncated: true,
+      },
+    ]);
+    const gateway = new TauriWorkspaceGateway({ descriptorForPath: () => null });
+
+    await expect(
+      gateway.searchFilesWithMetadata("/legacy", "App", 10, "legacy-file-1"),
+    ).resolves.toEqual({
+      requestGeneration: "legacy-file-1",
+      results: [{ name: "App.ts", path: "/legacy/App.ts", relativePath: "App.ts" }],
+      truncated: true,
+    });
   });
 
   it("rejects stale resolver results and cross-workspace renames", async () => {

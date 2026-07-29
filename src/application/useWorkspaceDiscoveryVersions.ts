@@ -6,6 +6,7 @@ import { workspaceFileChangeInvalidatesJsTestDiscovery } from "../domain/jsTestD
 import { workspaceFileChangeInvalidatesNetteServicesDiscovery } from "../domain/netteWorkspaceDiscoveryInvalidation";
 import { workspaceFileChangeInvalidatesNodePackageScriptDiscovery } from "../domain/nodePackageScriptDiscoveryInvalidation";
 import { isNetteApplicationProject } from "../domain/netteOperationalProject";
+import { workspaceFileChangeInvalidatesPackageDiscovery } from "../domain/workspacePackageDiscoveryInvalidation";
 import { workspaceFileChangeInvalidatesSymfonyDiscovery } from "../domain/symfonyWorkspaceDiscoveryInvalidation";
 import type { PhpProjectDescriptor } from "../domain/workspace";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
@@ -35,6 +36,7 @@ export function useWorkspaceDiscoveryVersions({
   const [netteDiscoveryVersion, setNetteDiscoveryVersion] = useState(0);
   const [nodeLaunchConfigurationVersion, setNodeLaunchConfigurationVersion] = useState(0);
   const [nodePackageScriptDiscoveryVersion, setNodePackageScriptDiscoveryVersion] = useState(0);
+  const [workspacePackageDiscoveryVersion, setWorkspacePackageDiscoveryVersion] = useState(0);
   const [phpTestCoverageInvalidationStore] = useState(createPhpTestCoverageInvalidationStore);
   const [symfonyDiscoveryVersion, setSymfonyDiscoveryVersion] = useState(0);
   const [vscodeProcessTasksVersion, setVscodeProcessTasksVersion] = useState(0);
@@ -59,6 +61,9 @@ export function useWorkspaceDiscoveryVersions({
       }
       if (workspaceFileChangeInvalidatesNodePackageScriptDiscovery(event)) {
         setNodePackageScriptDiscoveryVersion((version) => version + 1);
+      }
+      if (workspaceFileChangeInvalidatesPackageDiscovery(event)) {
+        setWorkspacePackageDiscoveryVersion((version) => version + 1);
       }
       if (workspaceFileChangeInvalidatesNodeLaunchConfigurations(event)) {
         setNodeLaunchConfigurationVersion((version) => version + 1);
@@ -90,6 +95,7 @@ export function useWorkspaceDiscoveryVersions({
     phpTestCoverageInvalidationStore,
     symfonyDiscoveryVersion,
     vscodeProcessTasksVersion,
+    workspacePackageDiscoveryVersion,
   };
 }
 

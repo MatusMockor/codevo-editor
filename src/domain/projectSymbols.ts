@@ -1,11 +1,31 @@
 export type ProjectSymbolKind =
+  | "array"
+  | "boolean"
   | "class"
   | "constant"
+  | "constructor"
   | "enum"
+  | "enumMember"
+  | "event"
+  | "field"
+  | "file"
   | "function"
   | "interface"
+  | "key"
   | "method"
-  | "trait";
+  | "module"
+  | "namespace"
+  | "null"
+  | "number"
+  | "object"
+  | "operator"
+  | "package"
+  | "property"
+  | "string"
+  | "struct"
+  | "trait"
+  | "typeParameter"
+  | "variable";
 
 export interface ProjectSymbolSearchResult {
   column: number;
@@ -26,15 +46,8 @@ export interface ProjectSymbolSearchGateway {
   ): Promise<ProjectSymbolSearchResult[]>;
 }
 
-const typeSymbolKinds = new Set<ProjectSymbolKind>([
-  "class",
-  "enum",
-  "interface",
-  "trait",
-]);
+const typeSymbolKinds = new Set<ProjectSymbolKind>(["class", "enum", "interface", "trait"]);
 
-export function isTypeProjectSymbol(
-  symbol: Pick<ProjectSymbolSearchResult, "kind">,
-): boolean {
+export function isTypeProjectSymbol(symbol: Pick<ProjectSymbolSearchResult, "kind">): boolean {
   return typeSymbolKinds.has(symbol.kind);
 }

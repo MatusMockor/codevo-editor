@@ -1,179 +1,110 @@
 # Implementation Backlog
 
-Date: 2026-06-15
-Status: Active backlog
+Date: 2026-07-28
 
-Scale:
+Status: Active JS/TS/Node/Express backlog
 
-- S: 0.5-1 day
-- M: 2-3 days
-- L: 4-7 days
-- XL: 1-2 weeks
+The former Fleet/PHP phase list is historical. PHP and framework features remain in the
+product, but this backlog orders work by the current JavaScript, TypeScript, Node.js,
+and Express direction.
 
-## Critical Path
+## Current Integration Wave
 
-1. Scaffold Tauri + React + TypeScript + Vite.
-2. Build Basic editor loop.
-3. Add command registry and command palette.
-4. Add file operations and recent workspace restore.
-5. Add quick-open and search.
-6. Add Smart mode lifecycle.
-7. Add PHPactor LSP provider.
-8. Add SQLite index service.
-9. Add tree-sitter PHP symbols.
-10. Add PHP tree and project symbol search.
+| Area                             | Status                       | Acceptance                                                                                                                                                                                       |
+| -------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Quick Open syntax and handoff    | Integrated; full gates green | File search supports `>`, `@`, `#`, exact pasted/IME seed handoff, typed-prefix continuation, `path:line[:column]`, ordinary reopen reset, accessible guidance, and truthful backend truncation. |
+| Docked workspace search          | Integrated; full gates green | Search lives in the bottom panel, preserves the prior panel, combines native disk results with exact-owner dirty overlays, and exposes limitations instead of approximate data.                  |
+| Dirty-buffer search worker       | Integrated; full gates green | Latest request cancels the previous worker; request, clone, time, result, preview, and response budgets are validated on both sides of the worker boundary.                                      |
+| Open-editor MRU                  | Integrated; full gates green | `Ctrl+Tab`/reverse traversal is scoped to the exact project and editor group, restores focus, handles tab mutation, and bounds retained scopes.                                                  |
+| Navigation session persistence   | Integrated; full gates green | Editor groups, open resources, view state, and navigation state persist only after restore ownership is established; stale workspace failures cannot publish into another root.                  |
+| Transient Monaco model lifecycle | Integrated; full gates green | Closed models are disposed when they are no longer open or navigation-owned; active and still-retained models survive, and replacement reveal waits for the live model.                          |
+| Workspace package graph          | Integrated; full gates green | Bounded package/workspace globs and package ownership support monorepo scripts, tests, routes, and Problems without guessing through overflow.                                                   |
+| Exact cancellable JS/TS LSP      | Integrated; full gates green | Requests and document notifications carry exact session authority; superseded work cancels or fails stale, and workspace watcher resync targets only the accepted session.                       |
+| Bounded Rust file/text search    | Integrated; full gates green | Directory visits, file bytes, result count, response previews, cancellation, and truncation are explicit; blocking traversal stays off the UI runtime.                                           |
+| Editor change-hunk worker        | Integrated; full gates green | Diff computation is latest-owner-wins, cancellable, timed, and degrades visibly for over-budget files.                                                                                           |
+| Watcher overflow and resync      | Integrated; full gates green | Batches are bounded; queue/batch loss triggers exact-session project resync or a truthful rescan, never partial concrete replay.                                                                 |
 
-## Phase 0: Repository And Tooling
+The lead's integrated frontend and Rust gate run is green; the exact receipt is
+recorded in `docs/PROGRESS.md` and `docs/IDE_PARITY.md`.
 
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P0-01 | Initialize Tauri v2 app | M | Done | Desktop app starts and builds. |
-| P0-02 | Add format/check/test scripts | S | Partial | TypeScript/Rust checks run; formatter coverage can expand. |
-| P0-03 | Add frontend/Rust tests | M | Done | Vitest and Cargo tests pass. |
-| P0-04 | Initialize git repository | S | Done | `main` exists with clean commit history conventions. |
-| P0-05 | Add CI workflow | M | Pending | CI runs checks on push/PR. |
+## P0 — Integration And Truth
 
-## Phase 1: Basic Editor Loop
+- Resolve any integration failures without weakening exact workspace/session ownership.
+- Run the complete frontend and Rust gate matrix from `CLAUDE.md`.
+- Run representative desktop QA for Quick Open handoff, docked search, MRU switching,
+  session restore, stale workspace transitions, and large-file degradation.
+- Record final gate counts only after one clean integrated run.
+- Keep documentation aligned with observable behavior and explicit limits.
 
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P1-01 | Workbench layout shell | M | Done | Activity bar, sidebar, editor, status bar render. |
-| P1-02 | Workspace open flow | M | Done | Native folder picker loads root directory. |
-| P1-03 | Lazy file tree | L | Done | Directories load on expansion and hide heavy defaults. |
-| P1-04 | File open/read command | M | Done | File opens in Monaco. |
-| P1-05 | Tabs | L | Done | Open files render as tabs with close/activate. |
-| P1-06 | Dirty tracking and save | L | Done | Dirty state shows and saves through host command. |
-| P1-07 | File operations | L | Done | Create file/folder, rename active file, delete active file. |
-| P1-08 | Recent workspace restore | M | Done | Last workspace restores from local storage. |
-| P1-09 | Settings persistence | M | Done | App/workspace settings abstraction persists recent workspace and per-workspace Smart mode. |
+## P1 — Editing Responsiveness
 
-## Phase 2: Navigation And Search
+- Measure keystroke-to-render, tab switch, Quick Open, symbol navigation, and search
+  latency on representative small, large, and monorepo fixtures.
+- Reduce composition-root rerenders and repeated cloning on cursor/content changes.
+- Continue extracting coherent ownership from `App.tsx`,
+  `useWorkbenchController.ts`, and Rust composition hotspots without raising baselines.
+- Audit Monaco model retention, token warming, decorations, diagnostics, and provider
+  registration for deterministic eviction.
+- Add regression evidence for cancellation storms, rapid typing, A→B→A workspace
+  switching, and large result sets.
 
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P2-01 | Command registry | M | Done | Commands have id/title/category/enabled state. |
-| P2-02 | Command palette | M | Done | Commands can be searched/executed. |
-| P2-03 | File quick-open | L | Done | User can search files by path and open results. |
-| P2-04 | Text search | L | Partial | Ripgrep-backed modal search exists; streaming results pending. |
-| P2-05 | Navigation stack | M | Done | Back/forward works across files/positions. |
-| P2-06 | Status service | S | Partial | Status bar and Problems notice surface exist; backend event stream pending. |
+## P1 — JavaScript/TypeScript Editing
 
-## Phase 3: Smart Mode Foundation
+- Close capability-gated gaps in completion, auto-imports, hover, definitions,
+  declarations, type definitions, implementations, references, rename, code actions,
+  formatting, selection formatting, symbols, and hierarchies.
+- Preserve fail-closed enablement when the exact JS/TS runtime is not running or does
+  not advertise a feature.
+- Improve TSConfig/project-reference and monorepo package ownership handling.
+- Keep large-file LSP retirement and fresh re-entry exact and reversible.
+- Verify light/dark semantic-token and diagnostic rendering without main-thread stalls.
 
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P3-01 | Smart mode state machine | M | Partial | Backend-visible state service exists; real service lifecycle pending. |
-| P3-02 | Workspace trust model | M | Partial | Persistent backend trust state and command exist; settings UI pending. |
-| P3-03 | Service supervisor | L | Pending | Services start/stop/restart and report health. |
-| P3-04 | Background event bus | M | Pending | UI receives service status/log events. |
-| P3-05 | Smart mode status UI | M | Partial | Status bar shows mode; detailed health pending. |
+## P1 — Navigation And Search
 
-## Phase 4: PHP LSP Integration
+- Improve Quick Open ranking and large-workspace latency while retaining visit/result
+  caps and explicit truncation.
+- Add a shared, safe dirty-buffer matcher before enabling regex, `wholeWord`, or file
+  masks for unsaved documents. Until then those modes remain explicitly unsupported
+  for the dirty overlay.
+- Profile the worker structured-clone cost at the current hard caps: 16 documents,
+  4,096 dirty paths, 256 Ki code units per document, 1 Mi aggregate code units,
+  768 KiB UTF-8 per document, 3 MiB aggregate UTF-8, 500 results, and 2 MiB response.
+- Preserve navigation history and model disposal across preview tabs, split groups,
+  renames, deletes, and workspace restoration.
+- Keep search result rendering paginated/windowed and keyboard accessible.
 
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P4-01 | LSP transport prototype | XL | Done | App can start/stop PHPactor, complete initialize handshake, and report runtime status. |
-| P4-00 | PHP workspace detection | M | Done | Composer package and PSR-4 roots are detected as data. |
-| P4-01A | PHP tool detection | M | Done | PHPactor/Intelephense are detected from workspace vendor bin and PATH. |
-| P4-01B | PHPactor setup guidance | S | Done | Non-ready PHPactor plans can show setup commands from the command palette. |
-| P4-02 | PHPactor provider | L | Partial | PHPactor starts for trusted PHP workspaces when installed; provider features pending capabilities/navigation/completion. |
-| P4-03 | Document sync | L | Done | Open/change/save/close notifications work. |
-| P4-04 | Diagnostics display | L | Done | Diagnostics appear in the Problems panel. |
-| P4-05 | Hover/completion | L | Done | Monaco hover and completion providers route through capability-gated LSP requests. |
-| P4-06 | Go to definition | M | Done | Definition opens the target file and reveals the target location. |
-| P4-07 | Capability registry | M | Done | Runtime status exposes normalized capabilities consumed by hover, completion, and definition routing. |
-| P4-08 | Intelephense skeleton | M | Pending | User-configured binary can be selected. |
+## P1 — Node And Express Project Work
 
-## Phase 5: Index Service
+- Harden package ownership for nested workspaces and incomplete/truncated graphs.
+- Improve package scripts, tasks, Jest/Vitest discovery/results/coverage, and Problems
+  attribution using the same package graph authority.
+- Expand static Express route intelligence only where source ownership and bounded
+  parsing can be proven; dynamic runtime paths remain explicit omissions.
+- Maintain strict no-shell, trusted-workspace, retained-root execution boundaries.
 
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P5-01 | SQLite workspace DB | L | Done | Migrations, WAL, busy timeout. |
-| P5-02 | Ignore matcher | M | Done | `.gitignore` behavior shared by scan/events. |
-| P5-03 | Watcher abstraction | L | Done | Watchman/native fallback expose same events. |
-| P5-04 | Job scheduler | L | Done | Watch, metadata, parse, write, maintenance queues. |
-| P5-05 | Cancellation/generation | M | Done | Stale jobs cannot commit. |
-| P5-06 | Initial metadata scan | L | Done | Eligible files recorded without blocking UI. |
-| P5-07 | Incremental updates | L | Done | Modify/delete/rename updates DB. |
-| P5-08 | Index progress UI | M | Done | User sees file counts, phases, errors. |
+## P2 — Platform Gaps
 
-## Phase 6: PHP Structural Index
+- Child/multi-process Node debugging and universal DAP remain unsupported until exact
+  multi-target ownership is production-wired and accepted.
+- Windows native watch and Windows file/reparse identity need separate hardening.
+- Remote/container runtimes and an extension platform require independent product and
+  security designs.
+- macOS signing/notarization and packaged smoke remain release work.
 
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P6-01 | tree-sitter PHP parser | L | Done | Handles valid and incomplete fixtures. |
-| P6-02 | Symbol extraction | XL | Done | Classes, interfaces, traits, enums, methods, functions, constants. |
-| P6-03 | Composer detector | L | Done | PSR-4 roots/classmaps/packages parsed as data. |
-| P6-04 | Symbol DB writes | M | Done | Per-file symbols replace transactionally. |
-| P6-05 | Project symbol search | M | Done | Search classes/functions/methods from SQLite. |
-| P6-06 | PHP tree panel | L | Done | Namespaces/classes/members render from index. |
-| P6-07 | File tree members mode | L | Done | PHP files expand into indexed members. |
-| P6-08 | Reindex commands | M | Done | Soft/language/hard reindex commands. |
+## Secondary PHP And Framework Track
 
-## Phase 7: Terminal And Polish
-
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P7-01 | xterm.js view | M | Done | Terminal panel renders. |
-| P7-02 | Rust PTY service | L | Done | Shell streams input/output. |
-| P7-03 | Terminal profiles | M | Done | User can select shell/profile. |
-| P7-04 | Settings UI | L | Done | Mode, PHP backend, paths, ignores, theme. |
-| P7-05 | Index health panel | M | Done | Errors/skipped files/logs inspectable. |
-| P7-06 | Session restore | M | Done | Tabs/layout restore after restart. |
-| P7-07 | Theme polish | L | Done | Light/dark themes and contrast checks. |
-
-## Phase 8: Packaging
-
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P8-00 | Service runtime readiness audit | M | Done | LSP, terminal, watcher, and index crash/health semantics are documented for packaged builds. |
-| P8-01 | Product icon/metadata | S | Done | Product-specific icon/name/version. |
-| P8-02A | macOS `.app` debug bundle | S | Done | `.app` debug bundle passes. |
-| P8-02B | macOS DMG packaging | M | Done | Default DMG build is reproduced, fixed, or documented with a release workaround. |
-| P8-02C | Signing and notarization plan | M | Done | Certificate, entitlement, signing, and notarization requirements are documented. |
-| P8-03 | Sidecar/runtime packaging plan | L | Done | PHP, PHPactor, Intelephense, Watchman, and index runtime packaging/discovery/update policy documented. |
-| P8-04 | Update channel research | M | Done | Signing/update mechanism decided. |
-| P8-05 | Windows/Linux feasibility | L | Done | Builds attempted and blockers documented. |
-
-## Phase 9: macOS Release
-
-| ID | Task | Size | Status | Acceptance |
-| --- | --- | --- | --- | --- |
-| P9-00 | macOS release CI | M | Done | Manual macOS smoke and signed-release workflow is available. |
-| P9-01 | Packaged smoke scripts | L | Pending | macOS packaged smoke can be repeated with fixtures. |
-| P9-02 | Signed release dry run | L | Pending | Signing credentials run through CI and produce a verified DMG. |
-
-## Current JavaScript/TypeScript hardening
-
-| Area | Status | Acceptance |
-| --- | --- | --- |
-| LSP latest-value mailbox and session authority | Done | Document notifications carry the captured expected session; stale, dropped, re-entrant and A→B→A work cannot write or publish into a replacement session. |
-| JavaScript coverage viewport projection | Done | One report/path index and binary-search viewport projection cap Monaco output at 256 decorations and 128 inline labels, including bounded visible-range input. |
-| Node variable-page settlement | Done | Malformed settlement is retryable, releases every flight counter and cannot clear newer request ownership. |
-| Bounded stopped-event stack | Done | At most 256 validated unique frames cross the event boundary; truncation stays explicit through the windowed Call Stack UI. |
-| Child-target multiplexer endpoint ABA foundation | Foundation only | Exact target authority prevents endpoint-reuse cross-target sends/disconnects; production wiring and user-visible child debugging remain blocked/off. |
-| Dynamic source-map foundation | Bounded foundation done | Exact `scriptId`/transport/generation receipts fence a 32-job async worker; filesystem work stays outside the shared lock and fail-closed admission caps pending maps (64), committed maps (256), tokens (250,000/map; 1,000,000/session) and retained source-file authorities (256/map; 512/session). `smartStep`, late breakpoint reconciliation and full parity remain pending. |
+Maintain existing PHPactor/Intelephense, Composer/PSR-4, PHPStan, Pint, PHPUnit/Pest,
+Laravel, Nette, Blade, Latte, and NEON capabilities. New PHP/Nette parity work resumes
+only when the user explicitly changes the priority. Completing a JS/TS milestone never
+changes the product priority automatically.
 
 ## Quality Gates
 
-Before finishing an implementation slice:
+Before finishing a slice:
 
-- Run TypeScript checks.
-- Run frontend tests.
-- Run Rust tests.
-- Run relevant build or app bundle smoke test.
-- Run browser smoke for frontend changes.
-- Run `coderabbit review --agent --base main`.
-- Address valid findings.
-- Document SOLID/pattern review in `docs/ARCHITECTURE_REVIEWS.md`.
-
-## Architecture Checklist
-
-- Single Responsibility: one clear reason to change.
-- Open/Closed: extend through commands, providers, adapters, registries.
-- Liskov Substitution: provider/store/service implementations are swappable.
-- Interface Segregation: focused contracts, no god services.
-- Dependency Inversion: UI depends on abstractions.
-- Guard clauses and early returns.
-- Patterns only where useful: Command, Strategy, Adapter, Repository, Observer, Pipeline.
-- Internal behavior tests use real collaborators and temp/in-memory infrastructure.
+- run TypeScript check, ESLint, build, Vitest, hotspot and formatting gates;
+- run Cargo check, library/integration tests, Rustfmt, and zero-warning Clippy;
+- run relevant desktop/browser QA;
+- use a separate read-only subagent for adversarial review;
+- run `git diff --check`;
+- report focused evidence separately from full integrated evidence.

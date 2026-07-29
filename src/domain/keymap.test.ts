@@ -8,6 +8,7 @@ import {
   detectKeymapPlatform,
   eventCanMatchKeymapShortcut,
   findKeymapConflicts,
+  findKeymapSequenceConflicts,
   keymapCommandIdForShortcut,
   keymapCommandIdsForShortcut,
   keymapCommands,
@@ -32,8 +33,8 @@ function defaultShortcutsWithoutIntentionalDebugCollision(
 }
 
 describe("keymap", () => {
-  it("keeps the exact command catalog represented in generated settings", () => {
-    expect(keymapCommands).toHaveLength(133);
+  it("keeps reserved commands out of the generated editable settings catalog", () => {
+    expect(keymapCommands).toHaveLength(135);
     expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(133);
   });
 
@@ -70,6 +71,57 @@ describe("keymap", () => {
       "navigation.forward": "Cmd+]",
       "workbench.openAppearanceSettings": "",
     });
+  });
+
+  it("assigns non-colliding defaults to editor group and closed-tab commands", () => {
+    const expected = {
+      "editor.closeGroup": "Cmd+K W",
+      "editor.focusNextGroup": "Cmd+K Cmd+ArrowRight",
+      "editor.focusPreviousGroup": "Cmd+K Cmd+ArrowLeft",
+      "editor.moveTabToNextGroup": "Cmd+K Cmd+Shift+ArrowRight",
+      "editor.moveTabToPreviousGroup": "Cmd+K Cmd+Shift+ArrowLeft",
+      "editor.reopenClosedTab": "Cmd+Shift+Alt+T",
+      "editor.splitDown": "Cmd+K Cmd+\\",
+    } as const;
+
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      for (const id of Object.keys(expected) as Array<keyof typeof expected>) {
+        expect(defaults[id]).not.toBe("");
+        expect(findKeymapSequenceConflicts(defaults, id, platform)).toEqual([]);
+      }
+    }
+
+    expect(defaultKeymapSettings("mac")).toMatchObject(expected);
+  });
+
+  it("registers recently used editor shortcuts as reserved without advertising them as rebindable", () => {
+    const defaults = defaultKeymapSettings("mac") as Record<string, string>;
+
+    expect(
+      keymapCommands.find(({ id }) => id === "editor.nextRecentlyUsedEditor"),
+    ).toEqual({
+      category: "Editor",
+      defaultShortcut: "Ctrl+Tab",
+      id: "editor.nextRecentlyUsedEditor",
+      label: "Open Next Recently Used Editor",
+      rebindable: false,
+    });
+    expect(
+      keymapCommands.find(({ id }) => id === "editor.previousRecentlyUsedEditor"),
+    ).toEqual({
+      category: "Editor",
+      defaultShortcut: "Ctrl+Shift+Tab",
+      id: "editor.previousRecentlyUsedEditor",
+      label: "Open Previous Recently Used Editor",
+      rebindable: false,
+    });
+    expect(defaults).not.toHaveProperty("editor.nextRecentlyUsedEditor");
+    expect(defaults).not.toHaveProperty("editor.previousRecentlyUsedEditor");
+    expect(defaultShortcutForCommand("editor.nextRecentlyUsedEditor", "mac")).toBe("Ctrl+Tab");
+    expect(defaultShortcutForCommand("editor.previousRecentlyUsedEditor", "mac")).toBe(
+      "Ctrl+Shift+Tab",
+    );
   });
 
   it("registers the official JavaScript and TypeScript import commands", () => {
@@ -669,10 +721,10 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["php.goToTest"]).toBe("");
   });
 
-  it("leaves Reopen Closed Tab unbound for palette-only access", () => {
-    expect(defaultShortcutForCommand("editor.reopenClosedTab", "mac")).toBe("");
-    expect(defaultShortcutForCommand("editor.reopenClosedTab", "linux")).toBe("");
-    expect(defaultKeymapSettings("mac")["editor.reopenClosedTab"]).toBe("");
+  it("binds Reopen Closed Tab without taking the Todo panel shortcut", () => {
+    expect(defaultShortcutForCommand("editor.reopenClosedTab", "mac")).toBe("Cmd+Shift+Alt+T");
+    expect(defaultShortcutForCommand("editor.reopenClosedTab", "linux")).toBe("Ctrl+Shift+Alt+T");
+    expect(defaultKeymapSettings("mac")["panel.toggleTodo"]).toBe("Cmd+Shift+T");
   });
 
   it("leaves Run All Tests in File unbound by default (palette only)", () => {
@@ -1227,6 +1279,20 @@ describe("keymap", () => {
       ]);
       expect(findKeymapConflicts(keymap, "editor.closeTab")).toEqual([
         { id: "editor.save", label: "Save File" },
+      ]);
+    });
+
+    it("reports the reserved recently used editor command for Ctrl+Tab", () => {
+      const keymap = {
+        ...defaultKeymapSettings("mac"),
+        "editor.save": "Ctrl+Tab",
+      };
+
+      expect(findKeymapConflicts(keymap, "editor.save", "mac")).toEqual([
+        {
+          id: "editor.nextRecentlyUsedEditor",
+          label: "Open Next Recently Used Editor",
+        },
       ]);
     });
 

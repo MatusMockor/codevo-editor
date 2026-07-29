@@ -2,6 +2,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { format } from "prettier";
 
 const SOURCE_EXTENSIONS = new Set([".rs", ".ts", ".tsx"]);
 
@@ -150,6 +151,10 @@ export function reducedBaselineUpdate(baseline, currentFiles, productionFiles) {
   return { baseline: { ...baseline, files }, violations };
 }
 
+export async function formatHotspotBaseline(baseline) {
+  return format(JSON.stringify(baseline), { parser: "json" });
+}
+
 export function isProductionSource(filePath) {
   if (filePath.startsWith("src-tauri/src/") && filePath.endsWith(".rs")) return true;
   return (
@@ -209,7 +214,7 @@ async function main() {
       }
       process.exit(1);
     }
-    await writeFile(baselinePath, `${JSON.stringify(update.baseline, null, 2)}\n`);
+    await writeFile(baselinePath, await formatHotspotBaseline(update.baseline));
     console.log(
       `Lowered hotspot baseline for ${Object.keys(update.baseline.files).length} file(s).`,
     );

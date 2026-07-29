@@ -20,6 +20,7 @@ import {
   emptyLanguageServerCapabilities,
   type LanguageServerRuntimeStatus,
 } from "./languageServerRuntime";
+import { MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS } from "./javaScriptTypeScriptSaveParticipantPolicy";
 import type { EditorDocument } from "./workspace";
 
 function document(overrides: Partial<EditorDocument> = {}): EditorDocument {
@@ -34,9 +35,7 @@ function document(overrides: Partial<EditorDocument> = {}): EditorDocument {
 }
 
 function runningStatus(
-  overrides: Partial<
-    Extract<LanguageServerRuntimeStatus, { kind: "running" }>
-  > = {},
+  overrides: Partial<Extract<LanguageServerRuntimeStatus, { kind: "running" }>> = {},
 ): LanguageServerRuntimeStatus {
   return {
     capabilities: { ...emptyLanguageServerCapabilities(), codeAction: true },
@@ -51,6 +50,7 @@ function planInput(
   overrides: Partial<OrganizeImportsOnSavePlanInput> = {},
 ): OrganizeImportsOnSavePlanInput {
   return {
+    content: document().content,
     document: document(),
     javaScriptTypeScript: { status: runningStatus(), statusRoot: "/workspace" },
     sourceActionKinds: [organizeImportsCodeActionKind],
@@ -67,10 +67,50 @@ describe("planOrganizeImportsOnSave", () => {
     });
   });
 
-  it("returns null when no JS/TS source actions are enabled", () => {
+  it("keeps JS/TS source actions eligible at the exact full-snapshot limit", () => {
     expect(
-      planOrganizeImportsOnSave(planInput({ sourceActionKinds: [] })),
+      planOrganizeImportsOnSave(
+        planInput({
+          content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS),
+          document: document({
+            content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS),
+          }),
+        }),
+      ),
+    ).toEqual({
+      sessionId: 5,
+      sourceActionKinds: [organizeImportsCodeActionKind],
+    });
+  });
+
+  it("does not plan JS/TS source actions above the full-snapshot limit", () => {
+    expect(
+      planOrganizeImportsOnSave(
+        planInput({
+          content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS + 1),
+          document: document({
+            content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS + 1),
+          }),
+        }),
+      ),
     ).toBeNull();
+  });
+
+  it("does not plan source actions when a prior participant grows exact-limit content", () => {
+    expect(
+      planOrganizeImportsOnSave(
+        planInput({
+          content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS + 1),
+          document: document({
+            content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS),
+          }),
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when no JS/TS source actions are enabled", () => {
+    expect(planOrganizeImportsOnSave(planInput({ sourceActionKinds: [] }))).toBeNull();
   });
 
   it("returns null for PHP documents (the synchronous PHP path handles those)", () => {
@@ -179,24 +219,18 @@ describe("organizeImportsCodeActionContext", () => {
   });
 
   it("requests one requested source action kind", () => {
-    expect(organizeImportsCodeActionContext(removeUnusedCodeActionKind)).toEqual(
-      {
-        diagnostics: [],
-        only: [removeUnusedCodeActionKind],
-      },
-    );
+    expect(organizeImportsCodeActionContext(removeUnusedCodeActionKind)).toEqual({
+      diagnostics: [],
+      only: [removeUnusedCodeActionKind],
+    });
   });
 
   it("requests TypeScript-specific sort and remove-unused-imports kinds", () => {
-    expect(organizeImportsCodeActionContext(sortImportsCodeActionKind)).toEqual(
-      {
-        diagnostics: [],
-        only: [sortImportsCodeActionKind],
-      },
-    );
-    expect(
-      organizeImportsCodeActionContext(removeUnusedImportsCodeActionKind),
-    ).toEqual({
+    expect(organizeImportsCodeActionContext(sortImportsCodeActionKind)).toEqual({
+      diagnostics: [],
+      only: [sortImportsCodeActionKind],
+    });
+    expect(organizeImportsCodeActionContext(removeUnusedImportsCodeActionKind)).toEqual({
       diagnostics: [],
       only: [removeUnusedImportsCodeActionKind],
     });
@@ -215,9 +249,7 @@ describe("fullDocumentRange", () => {
 describe("organizeImportsTextEditsForPath", () => {
   const path = "/workspace/src/App.ts";
 
-  const action = (
-    overrides: Partial<LanguageServerCodeAction> = {},
-  ): LanguageServerCodeAction => ({
+  const action = (overrides: Partial<LanguageServerCodeAction> = {}): LanguageServerCodeAction => ({
     command: null,
     data: null,
     edit: {
@@ -253,10 +285,7 @@ describe("organizeImportsTextEditsForPath", () => {
 
   it("matches organize-imports sub-kinds such as source.organizeImports.ts", () => {
     expect(
-      organizeImportsTextEditsForPath(
-        [action({ kind: "source.organizeImports.ts" })],
-        path,
-      ),
+      organizeImportsTextEditsForPath([action({ kind: "source.organizeImports.ts" })], path),
     ).not.toBeNull();
   });
 
@@ -311,18 +340,11 @@ describe("organizeImportsTextEditsForPath", () => {
   });
 
   it("ignores actions whose kind is not an organize-imports kind", () => {
-    expect(
-      organizeImportsTextEditsForPath(
-        [action({ kind: "source.fixAll" })],
-        path,
-      ),
-    ).toBeNull();
+    expect(organizeImportsTextEditsForPath([action({ kind: "source.fixAll" })], path)).toBeNull();
   });
 
   it("ignores command-only actions that carry no inline edit", () => {
-    expect(
-      organizeImportsTextEditsForPath([action({ edit: null })], path),
-    ).toBeNull();
+    expect(organizeImportsTextEditsForPath([action({ edit: null })], path)).toBeNull();
   });
 
   it("ignores edits that target a different document", () => {
@@ -358,9 +380,7 @@ describe("organizeImportsTextEditsForPath", () => {
 });
 
 describe("organizeImportsCodeActionToResolve", () => {
-  const action = (
-    overrides: Partial<LanguageServerCodeAction> = {},
-  ): LanguageServerCodeAction => ({
+  const action = (overrides: Partial<LanguageServerCodeAction> = {}): LanguageServerCodeAction => ({
     command: null,
     data: { uri: fileUriFromPath("/workspace/src/App.ts") },
     edit: null,
@@ -374,10 +394,7 @@ describe("organizeImportsCodeActionToResolve", () => {
     const organizeAction = action();
 
     expect(
-      organizeImportsCodeActionToResolve([
-        action({ kind: "source.fixAll" }),
-        organizeAction,
-      ]),
+      organizeImportsCodeActionToResolve([action({ kind: "source.fixAll" }), organizeAction]),
     ).toBe(organizeAction);
   });
 
@@ -409,10 +426,7 @@ describe("organizeImportsCodeActionToResolve", () => {
     const sortImportsAction = action({ kind: sortImportsCodeActionKind });
 
     expect(
-      organizeImportsCodeActionToResolve(
-        [action(), sortImportsAction],
-        sortImportsCodeActionKind,
-      ),
+      organizeImportsCodeActionToResolve([action(), sortImportsAction], sortImportsCodeActionKind),
     ).toBe(sortImportsAction);
   });
 
@@ -432,12 +446,9 @@ describe("organizeImportsCodeActionToResolve", () => {
   it("returns the first data-only fix-all action for that requested kind", () => {
     const fixAllAction = action({ kind: fixAllCodeActionKind });
 
-    expect(
-      organizeImportsCodeActionToResolve(
-        [action(), fixAllAction],
-        fixAllCodeActionKind,
-      ),
-    ).toBe(fixAllAction);
+    expect(organizeImportsCodeActionToResolve([action(), fixAllAction], fixAllCodeActionKind)).toBe(
+      fixAllAction,
+    );
   });
 
   it("ignores command-only actions", () => {

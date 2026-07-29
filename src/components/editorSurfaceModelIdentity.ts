@@ -2,6 +2,7 @@ import type * as Monaco from "monaco-editor";
 import { modelMatchesWorkspacePath, modelPath } from "./phpMonacoDocumentContext";
 import type { EditorDocument } from "../domain/workspace";
 import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
+import { monacoModelRegistry } from "./monacoModelRegistry";
 
 export type IncompleteWorkspaceIdentityDescriptor =
   | { canonicalRoot?: string; workspaceId?: undefined }
@@ -20,10 +21,7 @@ export function modelForPath(
   workspaceRoot: string | null,
   path: string,
 ): Monaco.editor.ITextModel | null {
-  return (
-    monaco.editor.getModels().find((model) => modelMatchesProject(model, workspaceRoot, path)) ??
-    null
-  );
+  return monacoModelRegistry(monaco).modelForPath(workspaceRoot, path);
 }
 
 export function modelMatchesProject(
@@ -41,11 +39,24 @@ export function synchronizeActiveDocumentModel(
   workspaceRoot: string | null,
   document: EditorDocument,
 ): Monaco.editor.ITextModel | null {
-  const model = editor.getModel();
+  const model = activeDocumentModel(editor, workspaceRoot, document.path);
 
-  if (!model || model.isDisposed?.() || !modelMatchesProject(model, workspaceRoot, document.path)) {
+  if (!model) {
     return null;
   }
   if (model.getValue() !== document.content) model.setValue(document.content);
   return model.isDisposed?.() || editor.getModel() !== model ? null : model;
+}
+
+export function activeDocumentModel(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  workspaceRoot: string | null,
+  path: string,
+): Monaco.editor.ITextModel | null {
+  const model = editor.getModel();
+
+  if (!model || model.isDisposed?.() || !modelMatchesProject(model, workspaceRoot, path)) {
+    return null;
+  }
+  return model;
 }

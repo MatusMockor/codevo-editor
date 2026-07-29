@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createMonotonicLanguageServerRequestIdAllocator,
   JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
   TauriLanguageServerFeaturesGateway,
 } from "./tauriLanguageServerFeaturesGateway";
@@ -12,19 +13,36 @@ type FeaturesGatewayConstructor = ConstructorParameters<typeof TauriLanguageServ
 type InvokeCommand = NonNullable<FeaturesGatewayConstructor[0]>;
 
 describe("TauriLanguageServerFeaturesGateway", () => {
+  it("fails closed instead of reusing an exhausted request identifier", () => {
+    const allocate = createMonotonicLanguageServerRequestIdAllocator(Number.MAX_SAFE_INTEGER - 1);
+
+    expect(allocate()).toBe(Number.MAX_SAFE_INTEGER);
+    expect(allocate).toThrow("Language-server request identifier space is exhausted.");
+  });
+
   it("preserves a structured JSON-RPC code-action rejection", async () => {
     const responseError = {
       code: -32802,
       message: "Server cancelled obsolete code action",
     };
     const invokeCommand = vi.fn<InvokeCommand>().mockRejectedValue(responseError);
-    const gateway = new TauriLanguageServerFeaturesGateway(invokeCommand, () => true);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
 
     await expect(
-      gateway.codeActions("/project", "/project/src/User.php", range(), {
-        diagnostics: [],
-        only: ["quickfix"],
-      }),
+      gateway.codeActions(
+        "/project",
+        "/project/src/User.ts",
+        range(),
+        {
+          diagnostics: [],
+          only: ["quickfix"],
+        },
+        11,
+      ),
     ).rejects.toBe(responseError);
   });
 
@@ -38,6 +56,23 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         only: ["quickfix"],
       }),
     ).rejects.toBe("PHPactor request failed");
+  });
+
+  it("preserves a structured JSON-RPC code-action resolve rejection", async () => {
+    const responseError = {
+      code: -32801,
+      message: "Resolved action is content-modified",
+    };
+    const invokeCommand = vi.fn<InvokeCommand>().mockRejectedValue(responseError);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+
+    await expect(gateway.resolveCodeAction("/project", codeAction(), 12)).rejects.toBe(
+      responseError,
+    );
   });
 
   it("returns empty feature results outside Tauri", async () => {
@@ -928,7 +963,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     });
   });
 
-  it("delegates JavaScript and TypeScript source definition through the JS/TS command map", async () => {
+  it("identifies cancellable JavaScript and TypeScript navigation and cursor requests", async () => {
     const definition = [
       {
         range: {
@@ -945,17 +980,203 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
     );
     const requestPosition = position();
-
-    await expect(gateway.sourceDefinition("/project", requestPosition)).resolves.toEqual(
-      definition,
-    );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_text_document_source_definition",
+    const sessionId = 11;
+    const requests = [
       {
-        position: requestPosition,
+        command: "javascript_typescript_text_document_definition",
+        request: gateway.definition("/project", requestPosition, sessionId),
+      },
+      {
+        command: "javascript_typescript_text_document_source_definition",
+        request: gateway.sourceDefinition("/project", requestPosition, sessionId),
+      },
+      {
+        command: "javascript_typescript_text_document_declaration",
+        request: gateway.declaration("/project", requestPosition, sessionId),
+      },
+      {
+        command: "javascript_typescript_text_document_implementation",
+        request: gateway.implementation("/project", requestPosition, sessionId),
+      },
+      {
+        command: "javascript_typescript_text_document_type_definition",
+        request: gateway.typeDefinition("/project", requestPosition, sessionId),
+      },
+      {
+        command: "javascript_typescript_text_document_references",
+        request: gateway.references("/project", requestPosition, sessionId),
+      },
+      {
+        command: "javascript_typescript_text_document_document_highlights",
+        request: gateway.documentHighlights("/project", requestPosition, sessionId),
+      },
+      {
+        command: "javascript_typescript_text_document_linked_editing_ranges",
+        request: gateway.linkedEditingRanges("/project", requestPosition, sessionId),
+      },
+    ];
+
+    expect(new Set(requests.map(({ request }) => request.requestId)).size).toBe(requests.length);
+    await Promise.all(
+      requests.map(({ command, request }) => {
+        expect(invokeCommand).toHaveBeenCalledWith(command, {
+          position: requestPosition,
+          requestId: request.requestId,
+          rootPath: "/project",
+          sessionId,
+        });
+        expect(request.sessionId).toBe(sessionId);
+        return expect(request).resolves.toEqual(definition);
+      }),
+    );
+  });
+
+  it("identifies cancellable JavaScript and TypeScript code-action provide and resolve requests", async () => {
+    const response = codeAction();
+    const invokeCommand = vi.fn<InvokeCommand>(async () => response);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+    const sessionId = 17;
+    const provide = gateway.codeActions(
+      "/project",
+      "/project/src/User.ts",
+      range(),
+      { diagnostics: [], only: ["quickfix"] },
+      sessionId,
+    );
+    const resolve = gateway.resolveCodeAction("/project", response, sessionId);
+
+    expect(provide.sessionId).toBe(sessionId);
+    expect(resolve.sessionId).toBe(sessionId);
+    expect(provide.requestId).not.toBe(resolve.requestId);
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_text_document_code_actions", {
+      context: { diagnostics: [], only: ["quickfix"] },
+      path: "/project/src/User.ts",
+      range: range(),
+      requestId: provide.requestId,
+      rootPath: "/project",
+      sessionId,
+    });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_code_action_resolve",
+      {
+        action: response,
+        requestId: resolve.requestId,
         rootPath: "/project",
+        sessionId,
       },
     );
+    await expect(provide).resolves.toBe(response);
+    await expect(resolve).resolves.toBe(response);
+  });
+
+  it("identifies cancellable JavaScript and TypeScript workspace-symbol requests", async () => {
+    const symbols = [
+      {
+        containerName: "App",
+        kind: 5,
+        location: {
+          range: range(),
+          uri: "file:///project/src/User.ts",
+        },
+        name: "User",
+      },
+    ];
+    const invokeCommand = vi.fn<InvokeCommand>(async () => symbols);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+    const request = gateway.workspaceSymbols("/project", "User", 18);
+
+    expect(request.sessionId).toBe(18);
+    expect(request.requestId).toEqual(expect.any(Number));
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_workspace_symbols", {
+      query: "User",
+      requestId: request.requestId,
+      rootPath: "/project",
+      sessionId: 18,
+    });
+    await expect(request).resolves.toEqual(symbols);
+  });
+
+  it.each([undefined, -1, 0, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "fails closed before invoking with invalid session authority %s",
+    (sessionId) => {
+      const invokeCommand = vi.fn<InvokeCommand>();
+      const gateway = new TauriLanguageServerFeaturesGateway(
+        invokeCommand,
+        () => true,
+        JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      );
+
+      expect(() => gateway.definition("/project", position(), sessionId)).toThrow(
+        "JavaScript/TypeScript language-server request requires an active session.",
+      );
+      expect(() => gateway.documentHighlights("/project", position(), sessionId)).toThrow(
+        "JavaScript/TypeScript language-server request requires an active session.",
+      );
+      expect(() => gateway.linkedEditingRanges("/project", position(), sessionId)).toThrow(
+        "JavaScript/TypeScript language-server request requires an active session.",
+      );
+      expect(() =>
+        gateway.codeActions(
+          "/project",
+          "/project/src/User.ts",
+          range(),
+          { diagnostics: [], only: ["quickfix"] },
+          sessionId,
+        ),
+      ).toThrow("JavaScript/TypeScript language-server request requires an active session.");
+      expect(() => gateway.resolveCodeAction("/project", codeAction(), sessionId)).toThrow(
+        "JavaScript/TypeScript language-server request requires an active session.",
+      );
+      expect(() => gateway.workspaceSymbols("/project", "User", sessionId)).toThrow(
+        "JavaScript/TypeScript language-server request requires an active session.",
+      );
+      expect(invokeCommand).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves the identified request after a late gateway settlement", async () => {
+    const definition = [
+      {
+        range: {
+          end: { character: 8, line: 1 },
+          start: { character: 2, line: 1 },
+        },
+        uri: "file:///project/src/User.ts",
+      },
+    ];
+    let resolveRequest: (value: typeof definition) => void = () => undefined;
+    const result = new Promise<typeof definition>((resolve) => {
+      resolveRequest = resolve;
+    });
+    const invokeCommand = vi.fn<InvokeCommand>(() => result);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+    const requestPosition = position();
+    const sessionId = 12;
+    const request = gateway.definition("/project", requestPosition, sessionId);
+    const requestId = request.requestId;
+
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_text_document_definition", {
+      position: requestPosition,
+      requestId,
+      rootPath: "/project",
+      sessionId,
+    });
+    resolveRequest(definition);
+
+    await expect(request).resolves.toEqual(definition);
+    expect(request.requestId).toBe(requestId);
   });
 
   it("delegates JavaScript and TypeScript range semantic tokens through the JS/TS command map", async () => {
@@ -970,12 +1191,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
     );
 
+    const sessionId = 13;
     const request = gateway.rangeSemanticTokens(
       "/project",
       "/project/src/User.ts",
       range(),
-    ) as Promise<typeof semanticTokens> & { requestId: number };
+      sessionId,
+    );
     expect(request.requestId).toEqual(expect.any(Number));
+    expect(request.sessionId).toBe(sessionId);
     await expect(request).resolves.toEqual(semanticTokens);
     expect(invokeCommand).toHaveBeenCalledWith(
       "javascript_typescript_text_document_range_semantic_tokens",
@@ -984,6 +1208,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         range: range(),
         requestId: request.requestId,
         rootPath: "/project",
+        sessionId,
       },
     );
   });

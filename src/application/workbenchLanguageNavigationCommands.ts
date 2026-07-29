@@ -1,12 +1,16 @@
 import type { KeymapCommandId } from "../domain/keymap";
+import type { LanguageServerFeature } from "../domain/languageServerFeatures";
 import type { Command } from "./commandRegistry";
-import type { ActiveDocumentLanguage } from "./workbenchLanguageServerCommandEnablement";
+import {
+  javaScriptTypeScriptCommandSupports,
+  type JavaScriptTypeScriptFeatureAvailability,
+} from "./workbenchLanguageServerCommandEnablement";
 
 type NavigationRun = () => unknown;
 
 interface WorkbenchLanguageNavigationCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;
-  activeDocument: ActiveDocumentLanguage | null;
+  javaScriptTypeScriptFeatureAvailability: JavaScriptTypeScriptFeatureAvailability;
   goToDefinition: NavigationRun;
   goToSourceDefinition: NavigationRun;
   goToDeclaration: NavigationRun;
@@ -17,6 +21,7 @@ interface WorkbenchLanguageNavigationCommandsOptions {
 
 export function workbenchLanguageNavigationCommands({
   shortcut,
+  javaScriptTypeScriptFeatureAvailability,
   goToDefinition,
   goToSourceDefinition,
   goToDeclaration,
@@ -24,8 +29,12 @@ export function workbenchLanguageNavigationCommands({
   goToImplementation,
   goToSuperMethod,
 }: WorkbenchLanguageNavigationCommandsOptions): Command[] {
-  const canAttemptNavigation: Command["isEnabled"] = (context) =>
-    context.hasActiveDocument;
+  const canAttemptNavigation =
+    (feature?: LanguageServerFeature): Command["isEnabled"] =>
+    (context) =>
+      context.hasActiveDocument &&
+      (feature === undefined ||
+        javaScriptTypeScriptCommandSupports(javaScriptTypeScriptFeatureAvailability, feature));
 
   return [
     {
@@ -33,7 +42,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Definition",
       category: "Editor",
       shortcut: shortcut("editor.goToDefinition"),
-      isEnabled: canAttemptNavigation,
+      isEnabled: canAttemptNavigation("definition"),
       run: awaitNavigation(goToDefinition),
     },
     {
@@ -41,7 +50,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Source Definition",
       category: "Editor",
       shortcut: shortcut("editor.goToSourceDefinition"),
-      isEnabled: canAttemptNavigation,
+      isEnabled: canAttemptNavigation("sourceDefinition"),
       run: awaitNavigation(goToSourceDefinition),
     },
     {
@@ -49,7 +58,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Declaration",
       category: "Editor",
       shortcut: shortcut("editor.goToDeclaration"),
-      isEnabled: canAttemptNavigation,
+      isEnabled: canAttemptNavigation("declaration"),
       run: awaitNavigation(goToDeclaration),
     },
     {
@@ -57,7 +66,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Type Definition",
       category: "Editor",
       shortcut: shortcut("editor.goToTypeDefinition"),
-      isEnabled: canAttemptNavigation,
+      isEnabled: canAttemptNavigation("typeDefinition"),
       run: awaitNavigation(goToTypeDefinition),
     },
     {
@@ -65,7 +74,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Implementation",
       category: "Editor",
       shortcut: shortcut("editor.goToImplementation"),
-      isEnabled: canAttemptNavigation,
+      isEnabled: canAttemptNavigation("implementation"),
       run: awaitNavigation(goToImplementation),
     },
     {
@@ -73,7 +82,7 @@ export function workbenchLanguageNavigationCommands({
       title: "Go to Super Method",
       category: "Editor",
       shortcut: shortcut("editor.goToSuperMethod"),
-      isEnabled: canAttemptNavigation,
+      isEnabled: canAttemptNavigation(),
       run: awaitNavigation(goToSuperMethod),
     },
   ];

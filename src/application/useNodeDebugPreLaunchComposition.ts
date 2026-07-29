@@ -508,7 +508,6 @@ export function useNodeDebugPreLaunchComposition(options: {
     [
       clearRetainedPostRestart,
       coordinator,
-      execution,
       openServerReady,
       postCoordinator,
       refreshPostSnapshot,

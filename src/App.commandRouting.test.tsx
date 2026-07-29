@@ -537,6 +537,7 @@ describe("App command routing", () => {
         discoveryVersion: 7,
         hasJavaScriptTypeScriptWorkspace: true,
         isPanelOpen: false,
+        packageDiscovery: mocks.packageDiscoveryState,
         rootPath: "/workspace",
         workspaceId: "workspace-1",
       }),
@@ -973,6 +974,7 @@ function createWorkbench() {
       typeHierarchyView: null,
       referencesView: null,
       workspaceDescriptor: null,
+      workspacePackageDiscovery: mocks.packageDiscoveryState,
       workspaceRoot: "/workspace",
       workspaceSettings: {
         formatOnPaste: false,

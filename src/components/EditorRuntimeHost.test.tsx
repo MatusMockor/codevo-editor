@@ -7,6 +7,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Monaco from "monaco-editor";
 import type { EditorDocument } from "../domain/workspace";
 import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
+import { LiveDocumentRuntime } from "../application/liveDocumentRuntime";
+import { DocumentSessionStore } from "../application/documentSessionStore";
+import { createRegisteredDocumentSaveIdentity } from "../application/documentSaveIdentity";
+import {
+  EditorSessionDocumentAuthoritySidecar,
+  type EditorGroupLiveDocumentSource,
+} from "../application/editorSessionDocumentAuthority";
+import type { EditorGroupDocumentSessionAuthority } from "../application/useEditorSessionState";
+import type { EditorJavaScriptTypeScriptIncrementalSyncPort } from "../application/javaScriptTypeScriptIncrementalSyncProduction";
+import { editorJavaScriptTypeScriptIncrementalSyncFacade } from "../application/editorJavaScriptTypeScriptIncrementalSyncFacade";
+import { AUTHORITATIVE_EDITOR_LIVE_EDIT } from "../application/editorLiveEditArbitration";
+import {
+  captureEditorActiveLiveDocumentForSave,
+  releaseEditorActiveLiveDocumentContent,
+} from "../application/editorActiveLiveDocumentBinding";
+import { createLegacyEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import {
   EditorRuntimeHost,
@@ -14,6 +30,7 @@ import {
   type EditorRuntimeSurfaceRouting,
 } from "./EditorRuntimeHost";
 import { useEditorRuntimeContext } from "./editorRuntimeContext";
+import { EditorLiveDocumentBindingCoordinator } from "./editorLiveDocumentBindingCoordinator";
 import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./editorSurfaceLanguageProviderOptions";
 
 const runtimeMocks = vi.hoisted(() => ({
@@ -77,6 +94,618 @@ vi.mock("./debugHoverMonacoProvider", async (importOriginal) => ({
 describe("EditorRuntimeHost", () => {
   let container: HTMLDivElement;
   let root: Root;
+
+  it("keeps live binding work off child renders and suppresses legacy reads after exact checkpoints", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/shared.php");
+    const authority = liveSessionAuthority("left", fixture.path);
+    const runtime = new LiveDocumentRuntime();
+    const onBindingChange = vi.fn();
+    const deliveryOrder: string[] = [];
+    const onChange = vi.fn(() => {
+      deliveryOrder.push("legacy");
+      return true;
+    });
+    const observe = vi.fn(() => {
+      deliveryOrder.push("checkpoint");
+      return true;
+    });
+    const release = vi.fn(() => true);
+    const capturedContent: string[] = [];
+    const attachEditorGroupLiveDocument = vi.fn((_authority, source) => {
+      const content = source.captureCurrentContent();
+      if (content !== null) capturedContent.push(content);
+      return { observe, release };
+    });
+    const reconcile = vi.spyOn(EditorLiveDocumentBindingCoordinator.prototype, "reconcile");
+    const stableHostProps = {
+      activeGroupId: "left",
+      attachEditorGroupLiveDocument,
+      isEditorGroupDocumentSessionAuthorityCurrent: (
+        candidate: EditorGroupDocumentSessionAuthority,
+      ) => candidate === authority,
+      liveDocumentRuntime: runtime,
+      onActiveLiveDocumentBindingChange: onBindingChange,
+      resolveEditorGroupDocumentSessionAuthority: () => authority,
+    };
+
+    const render = (churn: number) => (
+      <EditorRuntimeHost {...stableHostProps}>
+        <RuntimeSurface
+          {...fixture}
+          groupId="left"
+          name="shared.php"
+          onModelContentChange={onChange}
+        />
+        <span data-churn={churn} />
+      </EditorRuntimeHost>
+    );
+    const readsBeforeMount = vi.mocked(fixture.model.getValue).mock.calls.length;
+    await act(async () => root.render(render(0)));
+
+    expect(onBindingChange).toHaveBeenCalledTimes(1);
+    expect(onBindingChange.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ groupId: "left", path: fixture.path }),
+    );
+    expect(attachEditorGroupLiveDocument).toHaveBeenCalledOnce();
+    expect(capturedContent).toEqual(["<?php"]);
+    expect(fixture.model.getValue).toHaveBeenCalledTimes(readsBeforeMount + 1);
+    const reconcileCount = reconcile.mock.calls.length;
+    const readsBeforeChurn = vi.mocked(fixture.model.getValue).mock.calls.length;
+
+    for (let index = 1; index <= 100; index += 1) {
+      await act(async () => root.render(render(index)));
+    }
+
+    expect(reconcile).toHaveBeenCalledTimes(reconcileCount);
+    expect(onBindingChange).toHaveBeenCalledTimes(1);
+    expect(fixture.model.getValue).toHaveBeenCalledTimes(readsBeforeChurn);
+
+    for (let index = 0; index < 100; index += 1) {
+      fixture.leftEditor.emitModelContentChange();
+    }
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(observe).toHaveBeenCalledTimes(100);
+    expect(deliveryOrder).toEqual(Array.from({ length: 100 }, () => "checkpoint"));
+    expect(fixture.model.getValue).toHaveBeenCalledTimes(readsBeforeChurn);
+    expect(attachEditorGroupLiveDocument).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledTimes(reconcileCount);
+    expect(onBindingChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires the existing runtime into the opaque active-binding content facade", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/shared.ts");
+    const authority = liveSessionAuthority("left", fixture.path);
+    const published = vi.fn();
+
+    await act(async () =>
+      root.render(
+        <EditorRuntimeHost
+          activeGroupId="left"
+          isEditorGroupDocumentSessionAuthorityCurrent={(candidate) => candidate === authority}
+          liveDocumentRuntime={new LiveDocumentRuntime()}
+          onActiveLiveDocumentBindingChange={published}
+          resolveEditorGroupDocumentSessionAuthority={() => authority}
+        >
+          <RuntimeSurface {...fixture} groupId="left" name="shared.ts" />
+        </EditorRuntimeHost>,
+      ),
+    );
+    fixture.leftEditor.emitModelContentChange();
+    const binding = published.mock.calls[published.mock.calls.length - 1]?.[0];
+    const captured = captureEditorActiveLiveDocumentForSave(binding);
+
+    expect(captured.status).toBe("captured");
+    if (captured.status === "captured") {
+      expect(captured.capture).toMatchObject({ content: "<?php", purpose: "save" });
+      expect(releaseEditorActiveLiveDocumentContent(binding, captured.capture)).toBe(true);
+    }
+  });
+
+  it("cuts exact compact revisions over to authoritative incremental ownership", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/shared.ts");
+    const authority = liveSessionAuthority("left", fixture.path);
+    const order: string[] = [];
+    const incrementalAttachment = Object.freeze({
+      kind: "editor-javascript-typescript-incremental-sync-attachment" as const,
+      semanticMode: "incremental" as const,
+    });
+    const incremental: EditorJavaScriptTypeScriptIncrementalSyncPort = {
+      attach: vi.fn((_authority, source, isCurrent) => {
+        expect(isCurrent()).toBe(true);
+        expect(source.captureCurrentContent()).toBe("<?php");
+        return incrementalAttachment;
+      }),
+      observe: vi.fn((_attachment, event) => {
+        order.push(`incremental:${event.versionId}`);
+        return AUTHORITATIVE_EDITOR_LIVE_EDIT;
+      }),
+      reconciliationIdentity: () => incrementalAttachment,
+      release: vi.fn(async () => undefined),
+    };
+
+    await act(async () =>
+      root.render(
+        <EditorRuntimeHost
+          activeGroupId="left"
+          attachEditorGroupLiveDocument={() => ({
+            observe: () => true,
+            release: () => true,
+          })}
+          isEditorGroupDocumentSessionAuthorityCurrent={(candidate) => candidate === authority}
+          javaScriptTypeScriptIncrementalSync={editorJavaScriptTypeScriptIncrementalSyncFacade(
+            incremental,
+          )}
+          liveDocumentRuntime={new LiveDocumentRuntime()}
+          resolveEditorGroupDocumentSessionAuthority={() => authority}
+        >
+          <RuntimeSurface
+            {...fixture}
+            groupId="left"
+            name="shared.ts"
+            onModelContentChange={() => {
+              order.push("legacy");
+              return true;
+            }}
+          />
+        </EditorRuntimeHost>,
+      ),
+    );
+    fixture.leftEditor.emitModelContentChange();
+
+    expect(incremental.attach).toHaveBeenCalledOnce();
+    expect(incremental.observe).toHaveBeenCalledOnce();
+    expect(order).toEqual(["incremental:2"]);
+  });
+
+  it("reattaches the same model when the opaque JS/TS runtime revision changes", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/shared.ts");
+    const authority = liveSessionAuthority("left", fixture.path);
+    const runtime = new LiveDocumentRuntime();
+    let runtimeRevision = Object.freeze({});
+    let languageId = "typescript";
+    Object.assign(fixture.model, { getLanguageId: () => languageId });
+    const incremental: EditorJavaScriptTypeScriptIncrementalSyncPort = {
+      attach: vi.fn(() =>
+        Object.freeze({
+          kind: "editor-javascript-typescript-incremental-sync-attachment" as const,
+          semanticMode: "incremental" as const,
+        }),
+      ),
+      observe: vi.fn(),
+      reconciliationIdentity: () => runtimeRevision,
+      release: vi.fn(async () => undefined),
+    };
+    const render = () => (
+      <EditorRuntimeHost
+        activeGroupId="left"
+        attachEditorGroupLiveDocument={() => ({
+          observe: () => true,
+          release: () => true,
+        })}
+        isEditorGroupDocumentSessionAuthorityCurrent={(candidate) => candidate === authority}
+        javaScriptTypeScriptIncrementalSync={editorJavaScriptTypeScriptIncrementalSyncFacade(
+          incremental,
+        )}
+        liveDocumentRuntime={runtime}
+        resolveEditorGroupDocumentSessionAuthority={() => authority}
+      >
+        <RuntimeSurface {...fixture} groupId="left" name="shared.ts" />
+      </EditorRuntimeHost>
+    );
+
+    await act(async () => root.render(render()));
+    runtimeRevision = Object.freeze({});
+    await act(async () => root.render(render()));
+
+    expect(incremental.release).toHaveBeenCalledOnce();
+    expect(incremental.attach).toHaveBeenCalledTimes(2);
+
+    languageId = "plaintext";
+    await act(async () => root.render(render()));
+    expect(incremental.release).toHaveBeenCalledTimes(2);
+    expect(incremental.attach).toHaveBeenCalledTimes(3);
+  });
+
+  it("joins one, two, or four exact panes without rotating peers and preserves the active observer", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/shared.ts");
+    const firstAuthority = liveSessionAuthority("left", fixture.path);
+    const runtime = new LiveDocumentRuntime();
+    const authorities = new Map<string, EditorGroupDocumentSessionAuthority>();
+    const attachments: {
+      observe: ReturnType<typeof vi.fn>;
+      release: ReturnType<typeof vi.fn>;
+      source: {
+        holderIncarnation: object;
+        modelIncarnation: object;
+      };
+    }[] = [];
+    const attachEditorGroupLiveDocument = vi.fn((_authority, source) => {
+      const attachment = {
+        observe: vi.fn(() => true),
+        release: vi.fn(() => true),
+        source,
+      };
+      attachments.push(attachment);
+      return attachment;
+    });
+    const render = (count: 1 | 2 | 4) => {
+      const groupIds = [
+        "left",
+        ...Array.from({ length: count - 1 }, (_, index) => `peer-${index}`),
+      ];
+      for (const groupId of groupIds) {
+        if (!authorities.has(groupId)) {
+          authorities.set(groupId, peerSessionAuthority(firstAuthority, groupId));
+        }
+      }
+      return (
+        <EditorRuntimeHost
+          activeGroupId="left"
+          attachEditorGroupLiveDocument={attachEditorGroupLiveDocument}
+          isEditorGroupDocumentSessionAuthorityCurrent={(candidate) =>
+            authorities.get(candidate.groupId) === candidate
+          }
+          liveDocumentRuntime={runtime}
+          resolveEditorGroupDocumentSessionAuthority={(groupId) => authorities.get(groupId) ?? null}
+        >
+          {groupIds.map((groupId) => (
+            <RuntimeSurface {...fixture} groupId={groupId} key={groupId} name={`${groupId}.ts`} />
+          ))}
+        </EditorRuntimeHost>
+      );
+    };
+
+    await act(async () => root.render(render(1)));
+    await act(async () => root.render(render(2)));
+    await act(async () => root.render(render(4)));
+
+    expect(attachEditorGroupLiveDocument).toHaveBeenCalledTimes(4);
+    expect(new Set(attachments.map(({ source }) => source.modelIncarnation)).size).toBe(1);
+    expect(new Set(attachments.map(({ source }) => source.holderIncarnation)).size).toBe(4);
+
+    fixture.leftEditor.emitModelContentChange();
+    expect(attachments.reduce((count, { observe }) => count + observe.mock.calls.length, 0)).toBe(
+      1,
+    );
+    expect(attachments[0]?.observe).toHaveBeenCalledOnce();
+
+    await act(async () => root.render(render(1)));
+    expect(attachments[0]?.release).not.toHaveBeenCalled();
+    for (const attachment of attachments.slice(1)) {
+      expect(attachment.release).toHaveBeenCalledOnce();
+    }
+
+    fixture.leftEditor.emitModelContentChange();
+    expect(attachments[0]?.observe).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a lifecycle content probe when the exact Monaco model changes during the read", async () => {
+    const path = "/workspace/shared.ts";
+    const firstModel = runtimeModel("/workspace", path);
+    const secondModel = runtimeModel("/workspace", path);
+    const fixture = runtimeFixture(
+      "/workspace",
+      runtimeMonaco([firstModel, secondModel]),
+      firstModel,
+      path,
+    );
+    const authority = liveSessionAuthority("left", path);
+    const sources: EditorGroupLiveDocumentSource[] = [];
+
+    await act(async () =>
+      root.render(
+        <EditorRuntimeHost
+          activeGroupId="left"
+          attachEditorGroupLiveDocument={(_authority, candidate) => {
+            sources.push(candidate);
+            return {
+              observe: () => true,
+              release: () => true,
+            };
+          }}
+          isEditorGroupDocumentSessionAuthorityCurrent={(candidate) => candidate === authority}
+          liveDocumentRuntime={new LiveDocumentRuntime()}
+          resolveEditorGroupDocumentSessionAuthority={() => authority}
+        >
+          <RuntimeSurface {...fixture} groupId="left" name="shared.ts" />
+        </EditorRuntimeHost>,
+      ),
+    );
+
+    expect(sources[0]?.captureCurrentContent()).toBe("<?php");
+    vi.mocked(firstModel.getValue).mockImplementationOnce(() => {
+      fixture.leftEditor.getModel.mockReturnValue(secondModel);
+      return "<?php";
+    });
+    expect(sources[0]?.captureCurrentContent()).toBeNull();
+  });
+
+  it("publishes programmatic A to B to A selection and makes each prior DTO stale", async () => {
+    const pathA = "/workspace/a.ts";
+    const pathB = "/workspace/b.ts";
+    const modelA = runtimeModel("/workspace", pathA);
+    const modelB = runtimeModel("/workspace", pathB);
+    const monaco = runtimeMonaco([modelA, modelB]);
+    const fixtureA = runtimeFixture("/workspace", monaco, modelA, pathA);
+    const fixtureB = runtimeFixture("/workspace", monaco, modelB, pathB);
+    const authorityA = liveSessionAuthority("left", pathA);
+    const authorityB = liveSessionAuthority("right", pathB);
+    const authorities = new Map([
+      ["left", authorityA],
+      ["right", authorityB],
+    ]);
+    const runtime = new LiveDocumentRuntime();
+    const published: NonNullable<
+      React.ComponentProps<typeof EditorRuntimeHost>["onActiveLiveDocumentBindingChange"]
+    > = vi.fn();
+    const stableProps = {
+      isEditorGroupDocumentSessionAuthorityCurrent: (
+        authority: EditorGroupDocumentSessionAuthority,
+      ) => authorities.get(authority.groupId) === authority,
+      liveDocumentRuntime: runtime,
+      onActiveLiveDocumentBindingChange: published,
+      resolveEditorGroupDocumentSessionAuthority: (groupId: string) =>
+        authorities.get(groupId) ?? null,
+    };
+    const render = (activeGroupId: "left" | "right") => (
+      <EditorRuntimeHost {...stableProps} activeGroupId={activeGroupId}>
+        <RuntimeSurface {...fixtureA} groupId="left" name="a.ts" />
+        <RuntimeSurface {...fixtureB} groupId="right" name="b.ts" />
+      </EditorRuntimeHost>
+    );
+
+    await act(async () => root.render(render("left")));
+    const firstA = vi.mocked(published).mock.calls[vi.mocked(published).mock.calls.length - 1]?.[0];
+    expect(firstA).toEqual(expect.objectContaining({ groupId: "left", path: pathA }));
+
+    await act(async () => root.render(render("right")));
+    const bindingB =
+      vi.mocked(published).mock.calls[vi.mocked(published).mock.calls.length - 1]?.[0];
+    expect(firstA?.isCurrent()).toBe(false);
+    expect(bindingB).toEqual(expect.objectContaining({ groupId: "right", path: pathB }));
+
+    await act(async () => root.render(render("left")));
+    const secondA =
+      vi.mocked(published).mock.calls[vi.mocked(published).mock.calls.length - 1]?.[0];
+    expect(bindingB?.isCurrent()).toBe(false);
+    expect(secondA).toEqual(expect.objectContaining({ groupId: "left", path: pathA }));
+    expect(secondA?.isCurrent()).toBe(true);
+  });
+
+  it("rebinds the same group and path from one exact session incarnation to the next", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/shared.php");
+    let authority = liveSessionAuthority("left", fixture.path);
+    const resolver = vi.fn(() => authority);
+    const published = vi.fn();
+    const attachments = Array.from({ length: 2 }, () => ({
+      observe: vi.fn(() => true),
+      release: vi.fn(() => true),
+    }));
+    const attachEditorGroupLiveDocument = vi
+      .fn()
+      .mockReturnValueOnce(attachments[0])
+      .mockReturnValueOnce(attachments[1]);
+    const stableProps = {
+      activeGroupId: "left",
+      attachEditorGroupLiveDocument,
+      isEditorGroupDocumentSessionAuthorityCurrent: (
+        candidate: EditorGroupDocumentSessionAuthority,
+      ) => candidate === authority,
+      liveDocumentRuntime: new LiveDocumentRuntime(),
+      onActiveLiveDocumentBindingChange: published,
+      resolveEditorGroupDocumentSessionAuthority: resolver,
+    };
+    const render = (documentSessionAuthorityRevision: object) => (
+      <EditorRuntimeHost
+        {...stableProps}
+        documentSessionAuthorityRevision={documentSessionAuthorityRevision}
+      >
+        <RuntimeSurface {...fixture} groupId="left" name="shared.php" />
+      </EditorRuntimeHost>
+    );
+
+    await act(async () => root.render(render({})));
+    const first = published.mock.calls[published.mock.calls.length - 1]?.[0];
+    const callsAfterFirst = resolver.mock.calls.length;
+    authority = liveSessionAuthority("left", fixture.path);
+    await act(async () => root.render(render({})));
+    const second = published.mock.calls[published.mock.calls.length - 1]?.[0];
+
+    expect(resolver).toHaveBeenCalledTimes(callsAfterFirst + 1);
+    expect(attachEditorGroupLiveDocument).toHaveBeenCalledTimes(2);
+    expect(attachments[0]?.release).toHaveBeenCalledOnce();
+    expect(attachments[1]?.release).not.toHaveBeenCalled();
+    expect(first?.isCurrent()).toBe(false);
+    expect(second).not.toBe(first);
+    expect(second?.isCurrent()).toBe(true);
+  });
+
+  it("rebinds after the editor replaces its Monaco model without content churn", async () => {
+    const path = "/workspace/shared.php";
+    const firstModel = runtimeModel("/workspace", path);
+    const secondModel = runtimeModel("/workspace", path);
+    const monaco = runtimeMonaco([firstModel, secondModel]);
+    const fixture = runtimeFixture("/workspace", monaco, firstModel, path);
+    const authority = liveSessionAuthority("left", path);
+    const published = vi.fn();
+    const onChange = vi.fn(() => true);
+    const attachments = [
+      {
+        observe: vi.fn(() => true),
+        release: vi.fn(() => {
+          fixture.leftEditor.emitModelContentChange();
+          return true;
+        }),
+      },
+      {
+        observe: vi.fn(() => true),
+        release: vi.fn(() => true),
+      },
+    ];
+    const sources: {
+      holderIncarnation: object;
+      modelIncarnation: object;
+    }[] = [];
+    const attachEditorGroupLiveDocument = vi.fn((_authority, source) => {
+      sources.push(source);
+      return attachments[sources.length - 1] ?? null;
+    });
+
+    await act(async () =>
+      root.render(
+        <EditorRuntimeHost
+          activeGroupId="left"
+          attachEditorGroupLiveDocument={attachEditorGroupLiveDocument}
+          documentSessionAuthorityRevision={{}}
+          isEditorGroupDocumentSessionAuthorityCurrent={(candidate) => candidate === authority}
+          liveDocumentRuntime={new LiveDocumentRuntime()}
+          onActiveLiveDocumentBindingChange={published}
+          resolveEditorGroupDocumentSessionAuthority={() => authority}
+        >
+          <RuntimeSurface
+            {...fixture}
+            groupId="left"
+            name="shared.php"
+            onModelContentChange={onChange}
+          />
+        </EditorRuntimeHost>,
+      ),
+    );
+    const first = published.mock.calls[published.mock.calls.length - 1]?.[0];
+    await act(async () => {
+      firstModel.dispose();
+      vi.mocked(firstModel.getValue).mockReturnValue("<?php");
+      fixture.leftEditor.getModel.mockReturnValue(secondModel);
+      fixture.leftEditor.emitModelChange();
+    });
+    const second = published.mock.calls[published.mock.calls.length - 1]?.[0];
+
+    expect(attachEditorGroupLiveDocument).toHaveBeenCalledTimes(2);
+    expect(sources[1]?.holderIncarnation).not.toBe(sources[0]?.holderIncarnation);
+    expect(sources[1]?.modelIncarnation).not.toBe(sources[0]?.modelIncarnation);
+    expect(attachments[0]?.release).toHaveBeenCalledOnce();
+    expect(attachments[1]?.release).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(first?.isCurrent()).toBe(false);
+    expect(second).not.toBe(first);
+    expect(second?.isCurrent()).toBe(true);
+  });
+
+  it("rotates past malformed release facades and fences reentrant stale observations", async () => {
+    const fixture = runtimeFixture("/workspace", undefined, undefined, "/workspace/shared.ts");
+    let authority = liveSessionAuthority("left", fixture.path);
+    const onChange = vi.fn(() => true);
+    const attachments = [
+      {
+        observe: vi.fn(() => true),
+        release: vi
+          .fn()
+          .mockImplementationOnce(() => {
+            fixture.leftEditor.emitModelContentChange();
+            return false;
+          })
+          .mockReturnValue(true),
+      },
+      {
+        observe: vi.fn(() => true),
+        release: vi
+          .fn()
+          .mockImplementationOnce(() => {
+            throw new Error("release failed");
+          })
+          .mockImplementationOnce(() => {
+            throw new Error("release failed again");
+          })
+          .mockReturnValue(true),
+      },
+      {
+        observe: vi.fn(() => true),
+        release: vi.fn(() => true),
+      },
+    ];
+    const attachEditorGroupLiveDocument = vi
+      .fn()
+      .mockReturnValueOnce(attachments[0])
+      .mockReturnValueOnce(attachments[1])
+      .mockReturnValueOnce(attachments[2]);
+    const runtime = new LiveDocumentRuntime();
+    const render = (documentSessionAuthorityRevision: object) => (
+      <EditorRuntimeHost
+        activeGroupId="left"
+        attachEditorGroupLiveDocument={attachEditorGroupLiveDocument}
+        documentSessionAuthorityRevision={documentSessionAuthorityRevision}
+        isEditorGroupDocumentSessionAuthorityCurrent={(candidate) => candidate === authority}
+        liveDocumentRuntime={runtime}
+        resolveEditorGroupDocumentSessionAuthority={() => authority}
+      >
+        <RuntimeSurface
+          {...fixture}
+          groupId="left"
+          name="shared.ts"
+          onModelContentChange={onChange}
+        />
+      </EditorRuntimeHost>
+    );
+
+    await act(async () => root.render(render({})));
+    authority = liveSessionAuthority("left", fixture.path);
+    await act(async () => root.render(render({})));
+    authority = liveSessionAuthority("left", fixture.path);
+    await act(async () => root.render(render({})));
+
+    expect(attachEditorGroupLiveDocument).toHaveBeenCalledTimes(3);
+    expect(attachments[0].release).toHaveBeenCalledTimes(2);
+    // Host reconciliation may retry a rejected detached release immediately;
+    // both attempts remain fenced before the replacement can observe edits.
+    expect(attachments[1].release).toHaveBeenCalledTimes(2);
+    expect(attachments[0].observe).not.toHaveBeenCalled();
+    expect(attachments[1].observe).not.toHaveBeenCalled();
+
+    fixture.leftEditor.emitModelContentChange();
+    expect(attachments[2].observe).toHaveBeenCalledOnce();
+    expect(onChange).not.toHaveBeenCalled();
+
+    await act(async () => root.unmount());
+    await Promise.resolve();
+    expect(attachments[1].release).toHaveBeenCalledTimes(3);
+    expect(attachments[2].release).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed for an old model event after the same surface switches path", async () => {
+    const firstPath = "/workspace/first.php";
+    const secondPath = "/workspace/second.php";
+    const firstModel = runtimeModel("/workspace", firstPath);
+    const secondModel = runtimeModel("/workspace", secondPath);
+    const monaco = runtimeMonaco([firstModel, secondModel]);
+    const first = runtimeFixture("/workspace", monaco, firstModel, firstPath);
+    const firstOnChange = vi.fn(() => true);
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface
+            {...first}
+            groupId="left"
+            name="first.php"
+            onModelContentChange={firstOnChange}
+            transitionContentSync={{
+              emitOldContentChange: firstModel.emitContentChange,
+              nextEditor: first.leftEditor as unknown as Monaco.editor.IStandaloneCodeEditor,
+              nextPath: secondPath,
+              prepareTransition: () => first.leftEditor.getModel.mockReturnValue(secondModel),
+            }}
+          />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-content-sync-transition='left']")?.click();
+    });
+
+    expect(firstOnChange).not.toHaveBeenCalled();
+  });
 
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -859,7 +1488,7 @@ describe("EditorRuntimeHost", () => {
       );
     });
 
-    expect(monaco.editor.getModels).not.toHaveBeenCalled();
+    expect(monaco.editor.getModels).toHaveBeenCalledOnce();
     expect(monaco.editor.setModelMarkers).not.toHaveBeenCalled();
     expect(runtimeMocks.registerLanguage).not.toHaveBeenCalled();
     expect(workspaceModel.dispose).not.toHaveBeenCalled();
@@ -921,10 +1550,12 @@ function RuntimeSurface({
   monaco,
   name,
   onMarkerUrisChanged,
+  onModelContentChange = noopModelContentChange,
   path,
   phpCodeActions,
   rightEditor,
   transitionWorkspaceRoot,
+  transitionContentSync,
   validationEnabled = true,
   workspaceRoot,
 }: ReturnType<typeof runtimeFixture> & {
@@ -933,8 +1564,15 @@ function RuntimeSurface({
   name: string;
   localMarkers?: readonly Monaco.editor.IMarkerData[];
   onMarkerUrisChanged?: (uris: readonly Monaco.Uri[]) => void;
+  onModelContentChange?: (content: string, path?: string) => boolean | void;
   phpCodeActions?: EditorSurfaceLanguageProviderRegistrationRefs["phpCodeActionsRef"]["current"];
   transitionWorkspaceRoot?: string;
+  transitionContentSync?: {
+    emitOldContentChange(): void;
+    nextEditor: Monaco.editor.IStandaloneCodeEditor;
+    nextPath: string;
+    prepareTransition(): void;
+  };
   validationEnabled?: boolean;
 }) {
   const runtime = useEditorRuntimeContext();
@@ -961,6 +1599,7 @@ function RuntimeSurface({
       editor: (groupId === "left" ? leftEditor : rightEditor) as never,
       groupId,
       monacoApi: monaco,
+      onModelContentChange,
       onMarkerUrisChanged,
       providerDependencies: {
         featuresGateway,
@@ -1012,6 +1651,7 @@ function RuntimeSurface({
     model,
     monaco,
     onMarkerUrisChanged,
+    onModelContentChange,
     phpCodeActions,
     rightEditor,
     runtime,
@@ -1086,6 +1726,24 @@ function RuntimeSurface({
           }}
         />
       ) : null}
+      {transitionContentSync ? (
+        <button
+          data-content-sync-transition={groupId}
+          onClick={() => {
+            const registration = registrationRef.current;
+            if (!registration) {
+              return;
+            }
+            transitionContentSync.prepareTransition();
+            runtime?.updateSurface(groupId, {
+              ...registration,
+              activePath: transitionContentSync.nextPath,
+              editor: transitionContentSync.nextEditor,
+            });
+            transitionContentSync.emitOldContentChange();
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -1116,15 +1774,67 @@ function runtimeFixture(
           dispose: vi.fn(),
           uri: URI.parse(`file://${path}`),
         } as unknown as Monaco.editor.ITextModel));
+  let leftContentChangeHandler: ((event: Monaco.editor.IModelContentChangedEvent) => void) | null =
+    null;
+  let rightContentChangeHandler: ((event: Monaco.editor.IModelContentChangedEvent) => void) | null =
+    null;
+  const leftModelChangeHandlers = new Set<() => void>();
+  const rightModelChangeHandlers = new Set<() => void>();
+  const emitModelContentChange = (
+    handler: ((event: Monaco.editor.IModelContentChangedEvent) => void) | null,
+  ) => {
+    (
+      model as Monaco.editor.ITextModel & {
+        applyContentChange?(): void;
+      }
+    ).applyContentChange?.();
+    handler?.(modelContentChangeEvent(model.getVersionId?.() ?? 1));
+  };
   const leftEditor = {
+    emitModelContentChange: () => emitModelContentChange(leftContentChangeHandler),
+    emitModelChange: () => [...leftModelChangeHandlers].forEach((handler) => handler()),
     focus: vi.fn(),
     getModel: vi.fn(() => model),
-    onDidChangeModel: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeModelContent: vi.fn(
+      (handler: (event: Monaco.editor.IModelContentChangedEvent) => void) => {
+        leftContentChangeHandler = handler;
+        return {
+          dispose: vi.fn(() => {
+            if (leftContentChangeHandler === handler) leftContentChangeHandler = null;
+          }),
+        };
+      },
+    ),
+    onDidChangeModel: vi.fn((handler: () => void) => {
+      leftModelChangeHandlers.add(handler);
+      return {
+        dispose: vi.fn(() => leftModelChangeHandlers.delete(handler)),
+      };
+    }),
+    trigger: vi.fn(),
   };
   const rightEditor = {
+    emitModelContentChange: () => emitModelContentChange(rightContentChangeHandler),
+    emitModelChange: () => [...rightModelChangeHandlers].forEach((handler) => handler()),
     focus: vi.fn(),
     getModel: vi.fn(() => model),
-    onDidChangeModel: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeModelContent: vi.fn(
+      (handler: (event: Monaco.editor.IModelContentChangedEvent) => void) => {
+        rightContentChangeHandler = handler;
+        return {
+          dispose: vi.fn(() => {
+            if (rightContentChangeHandler === handler) rightContentChangeHandler = null;
+          }),
+        };
+      },
+    ),
+    onDidChangeModel: vi.fn((handler: () => void) => {
+      rightModelChangeHandlers.add(handler);
+      return {
+        dispose: vi.fn(() => rightModelChangeHandlers.delete(handler)),
+      };
+    }),
+    trigger: vi.fn(),
   };
   const markerChanges = runtimeMarkerChanges();
   const monaco = monacoOverride ?? runtimeMonaco([model], markerChanges);
@@ -1163,16 +1873,32 @@ function providerRefsFor(
 function runtimeModel(workspaceRoot: string, path: string) {
   let disposed = false;
   let contentChangeHandler: (() => void) | null = null;
-  return {
+  const willDisposeHandlers = new Set<() => void>();
+  let version = 1;
+  let alternativeVersion = 1;
+  const content = "<?php";
+  const model = {
+    applyContentChange() {
+      version += 1;
+      alternativeVersion += 1;
+      contentChangeHandler?.();
+    },
+    emitContentChange() {
+      contentChangeHandler?.();
+    },
     dispose: vi.fn(() => {
+      for (const handler of [...willDisposeHandlers]) handler();
       disposed = true;
     }),
+    getAlternativeVersionId: vi.fn(() => alternativeVersion),
     getValue: vi.fn(() => {
       if (disposed) {
         throw new Error("Model is disposed!");
       }
-      return "<?php";
+      return content;
     }),
+    getValueLength: vi.fn(() => content.length),
+    getVersionId: vi.fn(() => version),
     isDisposed: vi.fn(() => disposed),
     onDidChangeContent: vi.fn((handler: () => void) => {
       contentChangeHandler = handler;
@@ -1184,9 +1910,125 @@ function runtimeModel(workspaceRoot: string, path: string) {
         }),
       };
     }),
+    onWillDispose: vi.fn((handler: () => void) => {
+      willDisposeHandlers.add(handler);
+      return { dispose: vi.fn(() => willDisposeHandlers.delete(handler)) };
+    }),
     uri: URI.parse(workspaceModelUri(workspaceRoot, path)!),
-  } as unknown as Monaco.editor.ITextModel;
+  };
+  return model as unknown as Monaco.editor.ITextModel & {
+    applyContentChange(): void;
+    emitContentChange(): void;
+    getValue: ReturnType<typeof vi.fn>;
+  };
 }
+
+function modelContentChangeEvent(versionId: number): Monaco.editor.IModelContentChangedEvent {
+  return {
+    changes: [
+      {
+        forceMoveMarkers: false,
+        range: {
+          containsPosition: () => false,
+          containsRange: () => false,
+          delta: () => {
+            throw new Error("unused");
+          },
+          endColumn: 1,
+          endLineNumber: 1,
+          equalsRange: () => false,
+          getEndPosition: () => ({ column: 1, lineNumber: 1 }),
+          getStartPosition: () => ({ column: 1, lineNumber: 1 }),
+          isEmpty: () => true,
+          plusRange: () => {
+            throw new Error("unused");
+          },
+          setEndPosition: () => {
+            throw new Error("unused");
+          },
+          setStartPosition: () => {
+            throw new Error("unused");
+          },
+          startColumn: 1,
+          startLineNumber: 1,
+          strictContainsRange: () => false,
+          toString: () => "[1,1 -> 1,1]",
+        },
+        rangeLength: 0,
+        rangeOffset: 0,
+        text: "",
+      },
+    ],
+    eol: "\n",
+    isEolChange: false,
+    isFlush: false,
+    isRedoing: false,
+    isUndoing: false,
+    versionId,
+  } as unknown as Monaco.editor.IModelContentChangedEvent;
+}
+
+function liveSessionAuthority(groupId: string, path: string): EditorGroupDocumentSessionAuthority {
+  const store = new DocumentSessionStore();
+  const sidecar = new EditorSessionDocumentAuthoritySidecar(store);
+  const relativePath = path.replace(/^\/workspace\/?/, "");
+  const activated = sidecar.activateOwner(
+    {
+      canonicalRoot: "/workspace",
+      ownerKey: createLegacyEditorSessionOwnerKey("/workspace"),
+      rootPath: "/workspace",
+      workspaceId: "/workspace",
+    },
+    (_rootPath, candidate) =>
+      candidate === path
+        ? createRegisteredDocumentSaveIdentity("/workspace", "/workspace", relativePath)
+        : null,
+    {
+      [path]: {
+        content: "<?php",
+        language: "typescript",
+        name: path.split("/").pop() ?? path,
+        path,
+        savedContent: "<?php",
+      },
+    },
+  );
+  const lifecycle = activated ? sidecar.resolveLifecycle(path) : null;
+  const authority = lifecycle
+    ? sidecar.createGroupAuthority(lifecycle, groupId, path, Object.freeze({}))
+    : null;
+  if (!authority || !lifecycle) throw new Error("Expected exact test group authority");
+  liveSessionAuthorityContexts.set(authority, { lifecycle, sidecar });
+  return authority;
+}
+
+const liveSessionAuthorityContexts = new WeakMap<
+  EditorGroupDocumentSessionAuthority,
+  {
+    readonly lifecycle: NonNullable<
+      ReturnType<EditorSessionDocumentAuthoritySidecar["resolveLifecycle"]>
+    >;
+    readonly sidecar: EditorSessionDocumentAuthoritySidecar;
+  }
+>();
+
+function peerSessionAuthority(
+  authority: EditorGroupDocumentSessionAuthority,
+  groupId: string,
+): EditorGroupDocumentSessionAuthority {
+  const context = liveSessionAuthorityContexts.get(authority);
+  const peer = context?.sidecar.createGroupAuthority(
+    context.lifecycle,
+    groupId,
+    authority.path,
+    Object.freeze({}),
+  );
+  if (!peer || !context) throw new Error("Expected peer test group authority");
+  liveSessionAuthorityContexts.set(peer, context);
+  return peer;
+}
+
+const noopModelContentChange = () => undefined;
 
 function runtimeMonaco(
   models: readonly Monaco.editor.ITextModel[],

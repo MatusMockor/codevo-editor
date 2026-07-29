@@ -18,10 +18,7 @@ export type { DocumentCloseOptions } from "./useDocumentCloseLifecycle";
  * passing the complete editor-session state during the controller split.
  */
 export type DocumentLifecycleDependencies = DocumentSaveLifecycleDependencies &
-  Omit<
-    DocumentCloseLifecycleDependencies,
-    "invalidateDocumentSave"
-  > & {
+  Omit<DocumentCloseLifecycleDependencies, "invalidateDocumentSave"> & {
     activePath: string | null;
     documents: Record<string, EditorDocument>;
     openPaths: string[];
@@ -34,9 +31,7 @@ export type DocumentLifecycleDependencies = DocumentSaveLifecycleDependencies &
   };
 
 export interface DocumentLifecycle
-  extends
-    Omit<DocumentSaveLifecycle, "invalidateDocumentSave">,
-    DocumentCloseLifecycle {}
+  extends Omit<DocumentSaveLifecycle, "invalidateDocumentSave">, DocumentCloseLifecycle {}
 
 /**
  * Thin composition facade retained while the workbench controller migrates to
@@ -55,6 +50,7 @@ export function useDocumentLifecycle(
     captureLocalHistorySnapshot: saveLifecycle.captureLocalHistorySnapshot,
     saveDocument: saveLifecycle.saveDocument,
     saveActiveDocument: saveLifecycle.saveActiveDocument,
+    onActiveLiveDocumentSaveBindingChange: saveLifecycle.onActiveLiveDocumentSaveBindingChange,
     runWithDocumentSaveExclusion: saveLifecycle.runWithDocumentSaveExclusion,
     runWithIssuedWriteDrain: saveLifecycle.runWithIssuedWriteDrain,
     requestOwnerDocumentSave: saveLifecycle.requestOwnerDocumentSave,

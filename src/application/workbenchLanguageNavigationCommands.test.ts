@@ -10,9 +10,7 @@ import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigati
 
 describe("workbenchLanguageNavigationCommands", () => {
   it("returns language navigation commands in registry order with metadata and shortcuts", () => {
-    const shortcut = vi.fn(
-      (commandId: KeymapCommandId) => `shortcut:${commandId}`,
-    );
+    const shortcut = vi.fn((commandId: KeymapCommandId) => `shortcut:${commandId}`);
     const commands = workbenchLanguageNavigationCommands({
       ...baseOptions(),
       shortcut,
@@ -82,13 +80,13 @@ describe("workbenchLanguageNavigationCommands", () => {
     expect(
       command(
         "editor.goToDefinition",
-        commandsFor({ activeDocument: phpDocument }),
+        commandsFor({ javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" } }),
       ).isEnabled(context),
     ).toBe(true);
     expect(
       command(
         "editor.goToDefinition",
-        commandsFor({ activeDocument: plainDocument }),
+        commandsFor({ javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" } }),
       ).isEnabled(context),
     ).toBe(true);
   });
@@ -97,9 +95,7 @@ describe("workbenchLanguageNavigationCommands", () => {
     const registry = new CommandRegistry();
     const goToDefinition = vi.fn();
 
-    commandsFor({ activeDocument: null, goToDefinition }).forEach((command) =>
-      registry.register(command),
-    );
+    commandsFor({ goToDefinition }).forEach((command) => registry.register(command));
 
     expect(
       executeCommand(registry, "editor.goToDefinition", {
@@ -111,37 +107,87 @@ describe("workbenchLanguageNavigationCommands", () => {
   });
 
   it("keeps JavaScript and TypeScript navigation enabled so runtime fallbacks can decide", () => {
-    const jsDocumentCommands = commandsFor({ activeDocument: jsTsDocument });
+    const jsDocumentCommands = commandsFor({
+      javaScriptTypeScriptFeatureAvailability: {
+        kind: "available",
+        supports: () => true,
+      },
+    });
 
-    expect(command("editor.goToImplementation", jsDocumentCommands).isEnabled(context))
-      .toBe(true);
+    expect(command("editor.goToImplementation", jsDocumentCommands).isEnabled(context)).toBe(true);
   });
 
+  it.each([
+    ["editor.goToDefinition", "definition"],
+    ["editor.goToSourceDefinition", "sourceDefinition"],
+    ["editor.goToDeclaration", "declaration"],
+    ["editor.goToTypeDefinition", "typeDefinition"],
+    ["editor.goToImplementation", "implementation"],
+  ] as const)(
+    "gates %s on the exact running JS/TS %s capability",
+    (commandId, supportedFeature) => {
+      const unavailable = command(
+        commandId,
+        commandsFor({
+          javaScriptTypeScriptFeatureAvailability: { kind: "unavailable" },
+        }),
+      );
+      const missingCapability = command(
+        commandId,
+        commandsFor({
+          javaScriptTypeScriptFeatureAvailability: {
+            kind: "available",
+            supports: () => false,
+          },
+        }),
+      );
+      const available = command(
+        commandId,
+        commandsFor({
+          javaScriptTypeScriptFeatureAvailability: {
+            kind: "available",
+            supports: (feature) => feature === supportedFeature,
+          },
+        }),
+      );
+
+      expect(unavailable.isEnabled(context)).toBe(false);
+      expect(missingCapability.isEnabled(context)).toBe(false);
+      expect(available.isEnabled(context)).toBe(true);
+    },
+  );
+
   it("keeps PHP navigation enabled so indexed and framework fallbacks can decide", () => {
-    const phpCommands = commandsFor({ activeDocument: phpDocument });
+    const phpCommands = commandsFor({
+      javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" },
+    });
 
-    expect(command("editor.goToDeclaration", phpCommands).isEnabled(context))
-      .toBe(true);
-    expect(command("editor.goToTypeDefinition", phpCommands).isEnabled(context))
-      .toBe(true);
+    expect(command("editor.goToDeclaration", phpCommands).isEnabled(context)).toBe(true);
+    expect(command("editor.goToTypeDefinition", phpCommands).isEnabled(context)).toBe(true);
 
-    const plainCommands = commandsFor({ activeDocument: plainDocument });
+    const plainCommands = commandsFor({
+      javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" },
+    });
 
-    expect(command("editor.goToDeclaration", plainCommands).isEnabled(context))
-      .toBe(true);
+    expect(command("editor.goToDeclaration", plainCommands).isEnabled(context)).toBe(true);
   });
 
   it("keeps source definition enabled for any active document", () => {
     expect(
       command(
         "editor.goToSourceDefinition",
-        commandsFor({ activeDocument: jsTsDocument }),
+        commandsFor({
+          javaScriptTypeScriptFeatureAvailability: {
+            kind: "available",
+            supports: () => true,
+          },
+        }),
       ).isEnabled(context),
     ).toBe(true);
     expect(
       command(
         "editor.goToSourceDefinition",
-        commandsFor({ activeDocument: phpDocument }),
+        commandsFor({ javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" } }),
       ).isEnabled(context),
     ).toBe(true);
   });
@@ -150,13 +196,18 @@ describe("workbenchLanguageNavigationCommands", () => {
     expect(
       command(
         "editor.goToSuperMethod",
-        commandsFor({ activeDocument: phpDocument }),
+        commandsFor({ javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" } }),
       ).isEnabled(context),
     ).toBe(true);
     expect(
       command(
         "editor.goToSuperMethod",
-        commandsFor({ activeDocument: jsTsDocument }),
+        commandsFor({
+          javaScriptTypeScriptFeatureAvailability: {
+            kind: "available",
+            supports: () => true,
+          },
+        }),
       ).isEnabled(context),
     ).toBe(true);
   });
@@ -222,16 +273,16 @@ describe("workbenchLanguageNavigationCommands", () => {
   });
 
   it.each([
-    ["synchronous", () => {
-      throw new Error("navigation failed");
-    }],
+    [
+      "synchronous",
+      () => {
+        throw new Error("navigation failed");
+      },
+    ],
     ["asynchronous", () => Promise.reject(new Error("navigation failed"))],
   ])("propagates %s rejection and invokes navigation exactly once", async (_, fail) => {
     const goToDefinition = vi.fn(fail);
-    const definition = command(
-      "editor.goToDefinition",
-      commandsFor({ goToDefinition }),
-    );
+    const definition = command("editor.goToDefinition", commandsFor({ goToDefinition }));
 
     await expect(definition.run()).rejects.toThrow("navigation failed");
     expect(goToDefinition).toHaveBeenCalledTimes(1);
@@ -250,7 +301,7 @@ function commandsFor(overrides: Partial<Options> = {}): Command[] {
 function baseOptions(): Options {
   return {
     shortcut: (commandId) => commandId,
-    activeDocument: null,
+    javaScriptTypeScriptFeatureAvailability: { kind: "notApplicable" },
     goToDefinition: vi.fn(),
     goToSourceDefinition: vi.fn(),
     goToDeclaration: vi.fn(),
@@ -274,22 +325,4 @@ const context: CommandContext = {
   activeDocumentDirty: false,
   hasActiveDocument: true,
   hasWorkspace: true,
-};
-
-const phpDocument = {
-  isJavaScriptTypeScriptLanguageServerDocument: false,
-  isLanguageServerDocument: true,
-  language: "php",
-};
-
-const jsTsDocument = {
-  isJavaScriptTypeScriptLanguageServerDocument: true,
-  isLanguageServerDocument: true,
-  language: "typescript",
-};
-
-const plainDocument = {
-  isJavaScriptTypeScriptLanguageServerDocument: false,
-  isLanguageServerDocument: false,
-  language: "text",
 };

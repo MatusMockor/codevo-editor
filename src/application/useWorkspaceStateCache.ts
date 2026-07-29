@@ -13,11 +13,20 @@ import type { NavigationHistory } from "../domain/navigation";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
 import type { FileEntry } from "../domain/workspace";
+import type { WorkspaceSessionState } from "../domain/settings";
 import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
-import type { EditorSurfaceSnapshot } from "../domain/workspaceSessionSnapshot";
+import {
+  buildWorkspaceNavigationSnapshot,
+  buildWorkspaceSessionSnapshot,
+  selectWorkspaceNavigationRestore,
+  workspaceSessionSnapshotsEqual,
+  type EditorSurfaceSnapshot,
+  type WorkspaceNavigationSnapshotInputs,
+} from "../domain/workspaceSessionSnapshot";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import type { SidebarView } from "./useWorkbenchController";
+import { workspaceSessionsEqual } from "./documentSessionState";
 
 export interface CachedWorkspaceWorkbenchState {
   bookmarks: Bookmark[];
@@ -88,7 +97,39 @@ export interface WorkspaceStateCache {
     identity?: WorkspaceIdentityDescriptor | null,
   ) => void;
   restoreCachedWorkspaceState: (rootPath: string, cached: CachedWorkspaceWorkbenchState) => void;
+  snapshotPersistedWorkspaceSession: (
+    rootPath: string,
+    session: WorkspaceSessionState,
+    previousSession: WorkspaceSessionState,
+  ) => WorkspaceSessionState | null;
+  restorePersistedWorkspaceNavigation: (
+    rootPath: string,
+    activeRootPath: string | null,
+    session: WorkspaceSessionState,
+  ) => boolean;
+  restorePersistedNavigationSession: (
+    rootPath: string,
+    activeRootPath: () => string | null,
+    session: WorkspaceSessionState,
+    resetNavigation: boolean,
+    restoreSession: (
+      rootPath: string,
+      session: WorkspaceSessionState,
+      isCurrent: () => boolean,
+    ) => Promise<void>,
+    isCurrent: () => boolean,
+  ) => Promise<boolean>;
   clearWorkspaceStateCache: () => void;
+}
+
+function stableCachedBottomPanel(
+  view: BottomPanelView,
+  visible: boolean,
+): {
+  readonly view: BottomPanelView;
+  readonly visible: boolean;
+} {
+  return view === "search" ? { view: "problems", visible: false } : { view, visible };
 }
 
 export function useWorkspaceStateCache(
@@ -127,6 +168,10 @@ export function useWorkspaceStateCache(
   } = dependencies;
 
   const workspaceStateCacheRef = useRef<Record<string, CachedWorkspaceWorkbenchState>>({});
+  const navigationSnapshotRef = useRef<{
+    inputs: WorkspaceNavigationSnapshotInputs;
+    snapshot: NonNullable<WorkspaceSessionState["navigation"]>;
+  } | null>(null);
 
   const coalesceWorkspaceStateCache = useCallback(
     (
@@ -213,10 +258,11 @@ export function useWorkspaceStateCache(
             workspaceIdentityDescriptor.canonicalRoot,
           )
         : normalizedWorkspaceRootKey(rootPath);
+      const cachedBottomPanel = stableCachedBottomPanel(bottomPanelView, bottomPanelVisible);
       workspaceStateCacheRef.current[cacheKey] = {
         bookmarks,
-        bottomPanelView,
-        bottomPanelVisible,
+        bottomPanelView: cachedBottomPanel.view,
+        bottomPanelVisible: cachedBottomPanel.visible,
         breakpoints,
         editorSurface: snapshotEditorSurface(rootPath),
         entriesByDirectory,
@@ -253,6 +299,10 @@ export function useWorkspaceStateCache(
 
   const restoreCachedWorkspaceState = useCallback(
     (rootPath: string, cached: CachedWorkspaceWorkbenchState) => {
+      const cachedBottomPanel = stableCachedBottomPanel(
+        cached.bottomPanelView,
+        cached.bottomPanelVisible,
+      );
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
       restoreCachedIndexState(cached.indexProgress, cached.indexHealthLogs);
@@ -265,8 +315,8 @@ export function useWorkspaceStateCache(
       setWorkspaceIdentityDescriptor(cached.workspaceIdentityDescriptor);
       restoreHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
-      setBottomPanelView(cached.bottomPanelView);
-      setBottomPanelVisible(cached.bottomPanelVisible);
+      setBottomPanelView(cachedBottomPanel.view);
+      setBottomPanelVisible(cachedBottomPanel.visible);
     },
     [
       restoreBreakpoints,
@@ -290,6 +340,89 @@ export function useWorkspaceStateCache(
     workspaceStateCacheRef.current = {};
   }, []);
 
+  const restorePersistedWorkspaceNavigation = useCallback(
+    (rootPath: string, activeRootPath: string | null, session: WorkspaceSessionState): boolean => {
+      if (
+        !activeRootPath ||
+        normalizedWorkspaceRootKey(rootPath) !== normalizedWorkspaceRootKey(activeRootPath)
+      ) {
+        return false;
+      }
+
+      const restored = selectWorkspaceNavigationRestore(session, rootPath);
+      setRecentFiles(restored.recentFiles);
+      setRecentLocations(restored.recentLocations);
+      restoreHistory(restored.navigationHistory);
+      return true;
+    },
+    [restoreHistory, setRecentFiles, setRecentLocations],
+  );
+
+  const snapshotPersistedWorkspaceSession = useCallback(
+    (
+      rootPath: string,
+      session: WorkspaceSessionState,
+      previousSession: WorkspaceSessionState,
+    ): WorkspaceSessionState | null => {
+      const cachedNavigation = navigationSnapshotRef.current;
+      const navigationInputs = {
+        navigationHistory,
+        recentFiles,
+        recentLocations,
+        rootPath,
+      };
+      const navigation =
+        cachedNavigation &&
+        cachedNavigation.inputs.navigationHistory === navigationHistory &&
+        cachedNavigation.inputs.recentFiles === recentFiles &&
+        cachedNavigation.inputs.recentLocations === recentLocations &&
+        cachedNavigation.inputs.rootPath === rootPath
+          ? cachedNavigation.snapshot
+          : buildWorkspaceNavigationSnapshot(navigationInputs);
+      navigationSnapshotRef.current = { inputs: navigationInputs, snapshot: navigation };
+      const snapshot = buildWorkspaceSessionSnapshot(
+        session,
+        previousSession.navigation,
+        navigation,
+      );
+
+      if (workspaceSessionSnapshotsEqual(previousSession, snapshot, workspaceSessionsEqual)) {
+        return null;
+      }
+
+      return snapshot;
+    },
+    [navigationHistory, recentFiles, recentLocations],
+  );
+
+  const restorePersistedNavigationSession = useCallback(
+    async (
+      rootPath: string,
+      activeRootPath: () => string | null,
+      session: WorkspaceSessionState,
+      resetNavigation: boolean,
+      restoreSession: (
+        rootPath: string,
+        session: WorkspaceSessionState,
+        isCurrent: () => boolean,
+      ) => Promise<void>,
+      isCurrent: () => boolean,
+    ): Promise<boolean> => {
+      const persistedSession = resetNavigation
+        ? { ...session, navigation: undefined, viewStates: {} }
+        : session;
+      await restoreSession(rootPath, persistedSession, isCurrent);
+
+      if (!isCurrent()) {
+        return false;
+      }
+
+      restorePersistedWorkspaceNavigation(rootPath, activeRootPath(), persistedSession);
+      return true;
+    },
+    [restorePersistedWorkspaceNavigation],
+  );
+
   return {
     workspaceStateCacheRef,
     cacheCurrentWorkspaceState,
@@ -297,6 +430,9 @@ export function useWorkspaceStateCache(
     coalesceWorkspaceStateCache,
     forgetCachedWorkspaceState,
     restoreCachedWorkspaceState,
+    restorePersistedWorkspaceNavigation,
+    restorePersistedNavigationSession,
+    snapshotPersistedWorkspaceSession,
     clearWorkspaceStateCache,
   };
 }

@@ -8,6 +8,7 @@ import {
   emptyLanguageServerCapabilities,
   type LanguageServerRuntimeStatus,
 } from "./languageServerRuntime";
+import { MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS } from "./javaScriptTypeScriptSaveParticipantPolicy";
 import type { EditorDocument } from "./workspace";
 
 function document(overrides: Partial<EditorDocument> = {}): EditorDocument {
@@ -22,9 +23,7 @@ function document(overrides: Partial<EditorDocument> = {}): EditorDocument {
 }
 
 function runningStatus(
-  overrides: Partial<
-    Extract<LanguageServerRuntimeStatus, { kind: "running" }>
-  > = {},
+  overrides: Partial<Extract<LanguageServerRuntimeStatus, { kind: "running" }>> = {},
 ): LanguageServerRuntimeStatus {
   return {
     capabilities: { ...emptyLanguageServerCapabilities(), formatting: true },
@@ -35,9 +34,7 @@ function runningStatus(
   };
 }
 
-function planInput(
-  overrides: Partial<FormatOnSavePlanInput> = {},
-): FormatOnSavePlanInput {
+function planInput(overrides: Partial<FormatOnSavePlanInput> = {}): FormatOnSavePlanInput {
   return {
     document: document(),
     hasPhpWorkspace: false,
@@ -54,6 +51,33 @@ describe("planFormatOnSave", () => {
       provider: "javaScriptTypeScript",
       sessionId: 1,
     });
+  });
+
+  it("keeps JS/TS formatting eligible at the exact full-snapshot limit", () => {
+    expect(
+      planFormatOnSave(
+        planInput({
+          document: document({
+            content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS),
+          }),
+        }),
+      ),
+    ).toEqual({
+      provider: "javaScriptTypeScript",
+      sessionId: 1,
+    });
+  });
+
+  it("does not plan JS/TS formatting above the full-snapshot limit", () => {
+    expect(
+      planFormatOnSave(
+        planInput({
+          document: document({
+            content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_SAVE_PARTICIPANT_UTF16_UNITS + 1),
+          }),
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("uses the PHP provider for php documents in a php workspace", () => {

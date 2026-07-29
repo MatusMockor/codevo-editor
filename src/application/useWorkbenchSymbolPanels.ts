@@ -20,8 +20,12 @@ import {
   toEditorPosition,
   toLanguageServerTextDocumentPosition,
   type EditorPosition,
+  type IdentifiedLanguageServerRequest,
+  type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerFeature,
   type LanguageServerFeaturesGateway,
+  type LanguageServerLocation,
+  type LanguageServerTextDocumentPosition,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { ReferenceRow, ReferencesView } from "../domain/referencesView";
@@ -40,10 +44,62 @@ interface OpenNavigationOptions {
   shouldCommit?: () => boolean;
 }
 
+type SymbolPanelLanguageServerFeaturesGateway = Pick<
+  LanguageServerFeaturesGateway,
+  | "incomingCalls"
+  | "outgoingCalls"
+  | "prepareCallHierarchy"
+  | "prepareTypeHierarchy"
+  | "typeHierarchySubtypes"
+  | "typeHierarchySupertypes"
+>;
+
+type JavaScriptTypeScriptSymbolPanelFeaturesGateway = Pick<
+  JavaScriptTypeScriptLanguageServerFeaturesGateway,
+  keyof SymbolPanelLanguageServerFeaturesGateway | "executeCommandLocations" | "references"
+>;
+
 interface LanguageServerFeatureContext {
-  featuresGateway: LanguageServerFeaturesGateway;
+  featuresGateway: SymbolPanelLanguageServerFeaturesGateway;
   prepareDocumentRequest(path: string): Promise<(() => boolean) | null>;
+  references(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[] | typeof SYMBOL_PANEL_REQUEST_TIMED_OUT>;
   isSessionActive(): boolean;
+}
+
+const SYMBOL_PANEL_REQUEST_TIMEOUT_MS = 2_500;
+const SYMBOL_PANEL_REQUEST_TIMED_OUT = Symbol("symbolPanelRequestTimedOut");
+
+type CancelJavaScriptTypeScriptLanguageServerRequest = (
+  rootPath: string,
+  sessionId: number,
+  requestId: number,
+) => Promise<void>;
+
+async function runBoundedJavaScriptTypeScriptReferencesRequest(
+  request: IdentifiedLanguageServerRequest<LanguageServerLocation[]>,
+  expectedSessionId: number,
+  rootPath: string,
+  cancelRequest: CancelJavaScriptTypeScriptLanguageServerRequest,
+): Promise<LanguageServerLocation[] | typeof SYMBOL_PANEL_REQUEST_TIMED_OUT> {
+  if (request.sessionId !== expectedSessionId) {
+    void request.catch(() => undefined);
+    return SYMBOL_PANEL_REQUEST_TIMED_OUT;
+  }
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof SYMBOL_PANEL_REQUEST_TIMED_OUT>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      void cancelRequest(rootPath, request.sessionId, request.requestId).catch(() => undefined);
+      resolve(SYMBOL_PANEL_REQUEST_TIMED_OUT);
+    }, SYMBOL_PANEL_REQUEST_TIMEOUT_MS);
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    clearTimeout(timeoutHandle);
+  });
 }
 
 export interface WorkbenchSymbolPanelsDependencies {
@@ -53,16 +109,15 @@ export interface WorkbenchSymbolPanelsDependencies {
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   languageServerRuntimeStatusRoot: string | null;
-  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerFeaturesGateway: JavaScriptTypeScriptSymbolPanelFeaturesGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
+  cancelJavaScriptTypeScriptLanguageServerRequest: CancelJavaScriptTypeScriptLanguageServerRequest;
   requestLanguageServerDocumentLease(
     rootPath: string,
     path: string,
   ): Promise<LanguageServerDocumentRequestLease | null>;
-  isLanguageServerDocumentRequestLeaseCurrent(
-    lease: LanguageServerDocumentRequestLease,
-  ): boolean;
+  isLanguageServerDocumentRequestLeaseCurrent(lease: LanguageServerDocumentRequestLease): boolean;
   flushPendingJavaScriptTypeScriptDocumentChange(path: string): Promise<void>;
   isLanguageServerSessionActiveForRoot(
     rootPath: string,
@@ -80,10 +135,7 @@ export interface WorkbenchSymbolPanelsDependencies {
     label: string,
     options?: OpenNavigationOptions,
   ): Promise<boolean>;
-  shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-    rootPath: string,
-    path: string,
-  ): boolean;
+  shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(rootPath: string, path: string): boolean;
   closeCompetingSurfaces(): void;
   reportError(source: string, error: unknown): void;
   resolveCurrentWorkspaceRuntimeOwner(): WorkspaceRuntimeOwner | null;
@@ -119,6 +171,7 @@ export function useWorkbenchSymbolPanels(
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    cancelJavaScriptTypeScriptLanguageServerRequest,
     requestLanguageServerDocumentLease,
     isLanguageServerDocumentRequestLeaseCurrent,
     flushPendingJavaScriptTypeScriptDocumentChange,
@@ -132,12 +185,9 @@ export function useWorkbenchSymbolPanels(
     setMessage,
   } = dependencies;
 
-  const [callHierarchyView, setCallHierarchyView] =
-    useState<CallHierarchyView | null>(null);
-  const [typeHierarchyView, setTypeHierarchyView] =
-    useState<TypeHierarchyView | null>(null);
-  const [referencesView, setReferencesView] =
-    useState<ReferencesView | null>(null);
+  const [callHierarchyView, setCallHierarchyView] = useState<CallHierarchyView | null>(null);
+  const [typeHierarchyView, setTypeHierarchyView] = useState<TypeHierarchyView | null>(null);
+  const [referencesView, setReferencesView] = useState<ReferencesView | null>(null);
 
   const closeSymbolPanels = useCallback(() => {
     closeCompetingSurfaces();
@@ -172,12 +222,7 @@ export function useWorkbenchSymbolPanels(
           return null;
         }
 
-        if (
-          !canUseLanguageServerFeature(
-            languageServerRuntimeStatus.capabilities,
-            feature,
-          )
-        ) {
+        if (!canUseLanguageServerFeature(languageServerRuntimeStatus.capabilities, feature)) {
           setMessage(unavailableMessage);
           return null;
         }
@@ -193,19 +238,16 @@ export function useWorkbenchSymbolPanels(
         return {
           featuresGateway: languageServerFeaturesGateway,
           isSessionActive,
+          references: (rootPath, position) =>
+            languageServerFeaturesGateway.references(rootPath, position),
           prepareDocumentRequest: async (path) => {
-            const lease = await requestLanguageServerDocumentLease(
-              workspaceRoot,
-              path,
-            );
+            const lease = await requestLanguageServerDocumentLease(workspaceRoot, path);
 
             if (!lease) {
               return null;
             }
 
-            return () =>
-              isSessionActive() &&
-              isLanguageServerDocumentRequestLeaseCurrent(lease);
+            return () => isSessionActive() && isLanguageServerDocumentRequestLeaseCurrent(lease);
           },
         };
       }
@@ -240,6 +282,20 @@ export function useWorkbenchSymbolPanels(
             javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
             ownerFence.owner,
           ),
+        references: (rootPath, position) => {
+          const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+          const request = javaScriptTypeScriptLanguageServerFeaturesGateway.references(
+            rootPath,
+            position,
+            requestedSessionId,
+          );
+          return runBoundedJavaScriptTypeScriptReferencesRequest(
+            request,
+            requestedSessionId,
+            rootPath,
+            cancelJavaScriptTypeScriptLanguageServerRequest,
+          );
+        },
         prepareDocumentRequest: async (path) => {
           await flushPendingJavaScriptTypeScriptDocumentChange(path);
           return () =>
@@ -254,6 +310,7 @@ export function useWorkbenchSymbolPanels(
     },
     [
       flushPendingJavaScriptTypeScriptDocumentChange,
+      cancelJavaScriptTypeScriptLanguageServerRequest,
       isLanguageServerDocumentRequestLeaseCurrent,
       isLanguageServerSessionActiveForRoot,
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
@@ -271,9 +328,7 @@ export function useWorkbenchSymbolPanels(
 
   const openCallHierarchyRow = useCallback(
     async (row: CallHierarchyRow) => {
-      const ownerFence = captureWorkspaceRuntimeOwnerFence(
-        resolveCurrentWorkspaceRuntimeOwner,
-      );
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
       if (!ownerFence) {
         return;
@@ -292,10 +347,7 @@ export function useWorkbenchSymbolPanels(
         row.label,
         {
           readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                path,
-              )
+            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(workspaceRoot, path)
             : false,
           shouldCommit: ownerFence.isCurrent,
         },
@@ -318,9 +370,7 @@ export function useWorkbenchSymbolPanels(
 
   const openTypeHierarchyRow = useCallback(
     async (row: TypeHierarchyRow) => {
-      const ownerFence = captureWorkspaceRuntimeOwnerFence(
-        resolveCurrentWorkspaceRuntimeOwner,
-      );
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
       if (!ownerFence) {
         return;
@@ -339,10 +389,7 @@ export function useWorkbenchSymbolPanels(
         row.label,
         {
           readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                path,
-              )
+            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(workspaceRoot, path)
             : false,
           shouldCommit: ownerFence.isCurrent,
         },
@@ -365,9 +412,7 @@ export function useWorkbenchSymbolPanels(
 
   const openReferenceRow = useCallback(
     async (row: ReferenceRow) => {
-      const ownerFence = captureWorkspaceRuntimeOwnerFence(
-        resolveCurrentWorkspaceRuntimeOwner,
-      );
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
       if (!ownerFence) {
         return;
@@ -379,10 +424,7 @@ export function useWorkbenchSymbolPanels(
         "reference",
         {
           readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                row.path,
-              )
+            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(workspaceRoot, row.path)
             : false,
           shouldCommit: ownerFence.isCurrent,
         },
@@ -403,9 +445,7 @@ export function useWorkbenchSymbolPanels(
   );
 
   const openCallHierarchy = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
@@ -413,16 +453,12 @@ export function useWorkbenchSymbolPanels(
 
     const document = activeDocumentRef.current;
     if (!document) {
-      setMessage(
-        "Open a PHP, JavaScript, or TypeScript file to show call hierarchy.",
-      );
+      setMessage("Open a PHP, JavaScript, or TypeScript file to show call hierarchy.");
       return;
     }
 
     if (!isLanguageServerPanelDocument(document, workspaceRoot)) {
-      setMessage(
-        "Call hierarchy is available for PHP, JavaScript, and TypeScript files.",
-      );
+      setMessage("Call hierarchy is available for PHP, JavaScript, and TypeScript files.");
       return;
     }
 
@@ -453,8 +489,7 @@ export function useWorkbenchSymbolPanels(
     closeSymbolPanels();
 
     try {
-      const documentRequest =
-        await context.prepareDocumentRequest(requestedPath);
+      const documentRequest = await context.prepareDocumentRequest(requestedPath);
 
       if (!documentRequest || !documentRequest()) {
         return;
@@ -510,9 +545,7 @@ export function useWorkbenchSymbolPanels(
   ]);
 
   const openTypeHierarchy = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
@@ -520,16 +553,12 @@ export function useWorkbenchSymbolPanels(
 
     const document = activeDocumentRef.current;
     if (!document) {
-      setMessage(
-        "Open a PHP, JavaScript, or TypeScript file to show type hierarchy.",
-      );
+      setMessage("Open a PHP, JavaScript, or TypeScript file to show type hierarchy.");
       return;
     }
 
     if (!isLanguageServerPanelDocument(document, workspaceRoot)) {
-      setMessage(
-        "Type hierarchy is available for PHP, JavaScript, and TypeScript files.",
-      );
+      setMessage("Type hierarchy is available for PHP, JavaScript, and TypeScript files.");
       return;
     }
 
@@ -560,8 +589,7 @@ export function useWorkbenchSymbolPanels(
     closeSymbolPanels();
 
     try {
-      const documentRequest =
-        await context.prepareDocumentRequest(requestedPath);
+      const documentRequest = await context.prepareDocumentRequest(requestedPath);
 
       if (!documentRequest || !documentRequest()) {
         return;
@@ -617,9 +645,7 @@ export function useWorkbenchSymbolPanels(
   ]);
 
   const openReferencesPanel = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
@@ -627,16 +653,12 @@ export function useWorkbenchSymbolPanels(
 
     const document = activeDocumentRef.current;
     if (!document) {
-      setMessage(
-        "Open a PHP, JavaScript, or TypeScript file to find references.",
-      );
+      setMessage("Open a PHP, JavaScript, or TypeScript file to find references.");
       return;
     }
 
     if (!isLanguageServerPanelDocument(document, workspaceRoot)) {
-      setMessage(
-        "Find references is available for PHP, JavaScript, and TypeScript files.",
-      );
+      setMessage("Find references is available for PHP, JavaScript, and TypeScript files.");
       return;
     }
 
@@ -661,17 +683,14 @@ export function useWorkbenchSymbolPanels(
       return;
     }
 
-    const symbolName =
-      identifierAtEditorPosition(document.content, editorPosition) ??
-      "symbol";
+    const symbolName = identifierAtEditorPosition(document.content, editorPosition) ?? "symbol";
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
     let isRequestedSessionActive = context.isSessionActive;
     closeSymbolPanels();
 
     try {
-      const documentRequest =
-        await context.prepareDocumentRequest(requestedPath);
+      const documentRequest = await context.prepareDocumentRequest(requestedPath);
 
       if (!documentRequest || !documentRequest()) {
         return;
@@ -679,12 +698,12 @@ export function useWorkbenchSymbolPanels(
 
       isRequestedSessionActive = documentRequest;
 
-      const locations = await context.featuresGateway.references(
+      const locations = await context.references(
         requestedRoot,
         toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
       );
 
-      if (!isRequestedSessionActive()) {
+      if (locations === SYMBOL_PANEL_REQUEST_TIMED_OUT || !isRequestedSessionActive()) {
         return;
       }
 
@@ -715,9 +734,7 @@ export function useWorkbenchSymbolPanels(
   ]);
 
   const openFileReferencesPanel = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
@@ -731,9 +748,7 @@ export function useWorkbenchSymbolPanels(
     }
 
     if (!isJavaScriptTypeScriptLanguageServerDocument(document)) {
-      setMessage(
-        "Find File References is available for JavaScript and TypeScript files.",
-      );
+      setMessage("Find File References is available for JavaScript and TypeScript files.");
       return;
     }
 
@@ -752,8 +767,7 @@ export function useWorkbenchSymbolPanels(
 
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
-    const requestedSessionId =
-      javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+    const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
     const isRequestedSessionActive = () =>
       ownerFence.isCurrent() &&
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
@@ -781,10 +795,7 @@ export function useWorkbenchSymbolPanels(
         return;
       }
 
-      const workspaceLocations = filterFileReferenceLocationsToWorkspace(
-        locations,
-        requestedRoot,
-      );
+      const workspaceLocations = filterFileReferenceLocationsToWorkspace(locations, requestedRoot);
       const symbol = document.name;
 
       if (workspaceLocations.length === 0) {
@@ -839,15 +850,11 @@ function isLanguageServerPanelDocument(
 ): boolean {
   return (
     Boolean(workspaceRoot) &&
-    (isLanguageServerDocument(document) ||
-      isJavaScriptTypeScriptLanguageServerDocument(document))
+    (isLanguageServerDocument(document) || isJavaScriptTypeScriptLanguageServerDocument(document))
   );
 }
 
-function identifierAtEditorPosition(
-  source: string,
-  position: EditorPosition,
-): string | null {
+function identifierAtEditorPosition(source: string, position: EditorPosition): string | null {
   const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
   const cursorIndex = Math.max(0, Math.min(line.length, position.column - 1));
   const matches = line.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g);
@@ -885,10 +892,7 @@ function isLanguageServerStatusForWorkspace(
     return false;
   }
 
-  const rootedStatus =
-    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
+  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
 
-  return (
-    Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
-  );
+  return Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }

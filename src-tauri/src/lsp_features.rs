@@ -4,6 +4,14 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+mod code_action_projection;
+mod completion_projection;
+mod document_highlight_projection;
+mod document_symbol_projection;
+mod linked_editing_projection;
+mod rename_projection;
+mod workspace_symbol_projection;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDocumentPosition {
@@ -1144,39 +1152,11 @@ pub fn parse_hover_result(value: &Value) -> Result<Option<LanguageServerHover>, 
 }
 
 pub fn parse_completion_result(value: &Value) -> Result<LanguageServerCompletionList, String> {
-    if value.is_null() {
-        return Ok(empty_completion_list());
-    }
-
-    if let Some(items) = value.as_array() {
-        return Ok(LanguageServerCompletionList {
-            is_incomplete: false,
-            items: parse_completion_items(items, None),
-        });
-    }
-
-    let Some(items) = value.get("items").and_then(Value::as_array) else {
-        return Err("Language server returned a malformed completion response.".to_string());
-    };
-
-    Ok(LanguageServerCompletionList {
-        is_incomplete: value
-            .get("isIncomplete")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        items: parse_completion_items(
-            items,
-            value
-                .get("itemDefaults")
-                .and_then(parse_completion_item_defaults)
-                .as_ref(),
-        ),
-    })
+    completion_projection::project_completion_result(value)
 }
 
 pub fn parse_completion_item_result(value: &Value) -> Result<LanguageServerCompletionItem, String> {
-    parse_completion_item(value, None)
-        .ok_or_else(|| "Language server returned a malformed completion item.".to_string())
+    completion_projection::project_completion_item_result(value)
 }
 
 pub fn parse_definition_result(value: &Value) -> Result<Vec<LanguageServerLocation>, String> {
@@ -1210,39 +1190,13 @@ pub fn parse_inlay_hint_result(value: &Value) -> Result<LanguageServerInlayHint,
 pub fn parse_document_symbols_result(
     value: &Value,
 ) -> Result<Vec<LanguageServerDocumentSymbol>, String> {
-    if value.is_null() {
-        return Ok(Vec::new());
-    }
-
-    let Some(items) = value.as_array() else {
-        return Err("Language server returned malformed document symbols.".to_string());
-    };
-
-    Ok(items
-        .iter()
-        .filter_map(parse_document_symbol_item)
-        .collect())
+    document_symbol_projection::project_document_symbols_result(value)
 }
 
 pub fn parse_document_highlights_result(
     value: &Value,
 ) -> Result<Vec<LanguageServerDocumentHighlight>, String> {
-    if value.is_null() {
-        return Ok(Vec::new());
-    }
-
-    let Some(items) = value.as_array() else {
-        return Err("Language server returned malformed document highlights.".to_string());
-    };
-
-    items
-        .iter()
-        .map(|item| {
-            serde_json::from_value::<LanguageServerDocumentHighlight>(item.clone()).map_err(
-                |error| format!("Language server returned a malformed document highlight: {error}"),
-            )
-        })
-        .collect()
+    document_highlight_projection::project_document_highlights_result(value)
 }
 
 pub fn parse_document_links_result(
@@ -1304,15 +1258,7 @@ pub fn parse_selection_ranges_result(
 pub fn parse_linked_editing_ranges_result(
     value: &Value,
 ) -> Result<Option<LanguageServerLinkedEditingRanges>, String> {
-    if value.is_null() {
-        return Ok(None);
-    }
-
-    serde_json::from_value::<LanguageServerLinkedEditingRanges>(value.clone())
-        .map(Some)
-        .map_err(|error| {
-            format!("Language server returned malformed linked editing ranges: {error}")
-        })
+    linked_editing_projection::project_linked_editing_ranges_result(value)
 }
 
 pub fn parse_semantic_tokens_result(
@@ -1348,15 +1294,7 @@ pub fn parse_semantic_tokens_result(
 pub fn parse_workspace_symbols_result(
     value: &Value,
 ) -> Result<Vec<LanguageServerWorkspaceSymbol>, String> {
-    if value.is_null() {
-        return Ok(Vec::new());
-    }
-
-    let Some(items) = value.as_array() else {
-        return Err("Language server returned malformed workspace symbols.".to_string());
-    };
-
-    Ok(items.iter().filter_map(parse_workspace_symbol).collect())
+    workspace_symbol_projection::project_workspace_symbols_result(value)
 }
 
 pub fn parse_call_hierarchy_items_result(
@@ -1482,51 +1420,13 @@ pub fn parse_signature_help_result(
 pub fn parse_prepare_rename_result(
     value: &Value,
 ) -> Result<Option<LanguageServerPrepareRenameResult>, String> {
-    if value.is_null() {
-        return Ok(None);
-    }
-
-    if value
-        .get("defaultBehavior")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Ok(Some(LanguageServerPrepareRenameResult {
-            default_behavior: true,
-            placeholder: None,
-            range: None,
-        }));
-    }
-
-    if let Ok(range) = serde_json::from_value::<LanguageServerRange>(value.clone()) {
-        return Ok(Some(LanguageServerPrepareRenameResult {
-            default_behavior: false,
-            placeholder: None,
-            range: Some(range),
-        }));
-    }
-
-    let Some(range_value) = value.get("range") else {
-        return Err("Language server returned a malformed prepare rename response.".to_string());
-    };
-    let range = serde_json::from_value::<LanguageServerRange>(range_value.clone())
-        .map_err(|error| format!("Language server returned a malformed rename range: {error}"))?;
-
-    Ok(Some(LanguageServerPrepareRenameResult {
-        default_behavior: false,
-        placeholder: optional_string(value.get("placeholder")),
-        range: Some(range),
-    }))
+    rename_projection::project_prepare_rename_result(value)
 }
 
 pub fn parse_workspace_edit_result(
     value: &Value,
 ) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
-    if value.is_null() {
-        return Ok(None);
-    }
-
-    parse_workspace_edit(value).map(Some)
+    rename_projection::project_workspace_edit_result(value)
 }
 
 pub fn parse_optional_workspace_edit_result(
@@ -1536,19 +1436,33 @@ pub fn parse_optional_workspace_edit_result(
         return Ok(None);
     }
 
-    parse_workspace_edit(value).map(Some)
+    rename_projection::project_workspace_edit_result(value)
 }
 
 pub fn parse_code_action_result(value: &Value) -> Result<Vec<LanguageServerCodeAction>, String> {
-    if value.is_null() {
-        return Ok(Vec::new());
-    }
+    code_action_projection::project_code_action_result(value)
+}
 
-    let Some(items) = value.as_array() else {
-        return Err("Language server returned a malformed code action response.".to_string());
-    };
+pub fn parse_resolved_code_action_result(
+    value: &Value,
+) -> Result<LanguageServerCodeAction, String> {
+    code_action_projection::project_resolved_code_action_result(value)
+}
 
-    Ok(items.iter().filter_map(parse_code_action_item).collect())
+pub fn validate_code_action_context(
+    context: &LanguageServerCodeActionContext,
+) -> Result<(), String> {
+    code_action_projection::validate_code_action_context(context)
+}
+
+pub fn validate_code_action_resolve_request(
+    action: &LanguageServerCodeAction,
+) -> Result<(), String> {
+    code_action_projection::validate_code_action_resolve_request(action)
+}
+
+pub fn validate_code_action_request_range(range: &LanguageServerRange) -> Result<(), String> {
+    code_action_projection::validate_code_action_request_range(range)
 }
 
 pub fn parse_formatting_result(value: &Value) -> Result<Vec<LanguageServerTextEdit>, String> {
@@ -1615,226 +1529,6 @@ fn markup_to_string(value: &Value) -> Option<String> {
         .get("value")
         .and_then(Value::as_str)
         .map(ToString::to_string)
-}
-
-fn parse_completion_items(
-    items: &[Value],
-    defaults: Option<&LanguageServerCompletionItemDefaults>,
-) -> Vec<LanguageServerCompletionItem> {
-    items
-        .iter()
-        .filter_map(|item| parse_completion_item(item, defaults))
-        .collect()
-}
-
-fn parse_completion_item(
-    value: &Value,
-    defaults: Option<&LanguageServerCompletionItemDefaults>,
-) -> Option<LanguageServerCompletionItem> {
-    let label = value.get("label").and_then(Value::as_str)?.to_string();
-    let additional_text_edits = value
-        .get("additionalTextEdits")
-        .and_then(Value::as_array)
-        .map(|items| parse_text_edits(items).unwrap_or_default())
-        .unwrap_or_default();
-    let commit_characters = if value.get("commitCharacters").is_some() {
-        value
-            .get("commitCharacters")
-            .and_then(parse_string_array)
-            .unwrap_or_default()
-    } else {
-        defaults
-            .and_then(|defaults| defaults.commit_characters.clone())
-            .unwrap_or_default()
-    };
-    let tags = value
-        .get("tags")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_u64)
-                .map(|tag| tag as u32)
-                .collect()
-        })
-        .unwrap_or_default();
-    let insert_text = optional_string(value.get("insertText"));
-    let text_edit_text = optional_string(value.get("textEditText"));
-    let text_edit = if value.get("textEdit").is_some() {
-        value.get("textEdit").and_then(parse_completion_text_edit)
-    } else {
-        defaults
-            .and_then(|defaults| defaults.edit_range.as_ref())
-            .and_then(|edit_range| {
-                completion_text_edit_from_default_edit_range(
-                    edit_range,
-                    text_edit_text
-                        .clone()
-                        .or_else(|| insert_text.clone())
-                        .unwrap_or_else(|| label.clone()),
-                )
-            })
-    };
-
-    Some(LanguageServerCompletionItem {
-        additional_text_edits,
-        commit_characters,
-        command: parse_code_action_command(value),
-        data: value
-            .get("data")
-            .cloned()
-            .or_else(|| defaults.and_then(|defaults| defaults.data.clone())),
-        deprecated: value
-            .get("deprecated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        label,
-        detail: optional_string(value.get("detail")),
-        documentation: value.get("documentation").and_then(markup_to_string),
-        documentation_kind: value
-            .get("documentation")
-            .and_then(completion_documentation_kind),
-        filter_text: optional_string(value.get("filterText")),
-        insert_text,
-        insert_text_format: completion_u32_property(value, "insertTextFormat")
-            .or_else(|| defaults.and_then(|defaults| defaults.insert_text_format)),
-        insert_text_mode: completion_u32_property(value, "insertTextMode")
-            .or_else(|| defaults.and_then(|defaults| defaults.insert_text_mode)),
-        kind: value
-            .get("kind")
-            .and_then(Value::as_u64)
-            .map(|kind| kind as u32),
-        label_details: value
-            .get("labelDetails")
-            .and_then(parse_completion_label_details),
-        preselect: value
-            .get("preselect")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        sort_text: optional_string(value.get("sortText")),
-        tags,
-        text_edit,
-        text_edit_text,
-    })
-}
-
-fn parse_completion_item_defaults(value: &Value) -> Option<LanguageServerCompletionItemDefaults> {
-    if !value.is_object() {
-        return None;
-    }
-
-    Some(LanguageServerCompletionItemDefaults {
-        commit_characters: value.get("commitCharacters").and_then(parse_string_array),
-        data: value.get("data").cloned(),
-        edit_range: value.get("editRange").and_then(parse_completion_edit_range),
-        insert_text_format: completion_u32_property(value, "insertTextFormat"),
-        insert_text_mode: completion_u32_property(value, "insertTextMode"),
-    })
-}
-
-fn parse_completion_edit_range(value: &Value) -> Option<LanguageServerCompletionEditRange> {
-    if let Ok(range) = serde_json::from_value::<LanguageServerRange>(value.clone()) {
-        return Some(LanguageServerCompletionEditRange {
-            range: Some(range),
-            insert: None,
-            replace: None,
-        });
-    }
-
-    let insert = value
-        .get("insert")
-        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
-    let replace = value
-        .get("replace")
-        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
-
-    if insert.is_none() || replace.is_none() {
-        return None;
-    }
-
-    Some(LanguageServerCompletionEditRange {
-        range: None,
-        insert,
-        replace,
-    })
-}
-
-fn completion_text_edit_from_default_edit_range(
-    edit_range: &LanguageServerCompletionEditRange,
-    new_text: String,
-) -> Option<LanguageServerCompletionTextEdit> {
-    if edit_range.range.is_none() && (edit_range.insert.is_none() || edit_range.replace.is_none()) {
-        return None;
-    }
-
-    Some(LanguageServerCompletionTextEdit {
-        range: edit_range.range.clone(),
-        insert: edit_range.insert.clone(),
-        replace: edit_range.replace.clone(),
-        new_text,
-    })
-}
-
-fn completion_documentation_kind(value: &Value) -> Option<String> {
-    value
-        .get("kind")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-}
-
-fn parse_string_array(value: &Value) -> Option<Vec<String>> {
-    Some(
-        value
-            .as_array()?
-            .iter()
-            .filter_map(Value::as_str)
-            .map(ToString::to_string)
-            .collect(),
-    )
-}
-
-fn completion_u32_property(value: &Value, property: &str) -> Option<u32> {
-    value
-        .get(property)
-        .and_then(Value::as_u64)
-        .map(|value| value as u32)
-}
-
-fn parse_completion_label_details(
-    value: &Value,
-) -> Option<LanguageServerCompletionItemLabelDetails> {
-    Some(LanguageServerCompletionItemLabelDetails {
-        detail: optional_string(value.get("detail")),
-        description: optional_string(value.get("description")),
-    })
-}
-
-fn parse_completion_text_edit(value: &Value) -> Option<LanguageServerCompletionTextEdit> {
-    let new_text = value.get("newText").and_then(Value::as_str)?.to_string();
-    let range = value
-        .get("range")
-        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
-    let insert = value
-        .get("insert")
-        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
-    let replace = value
-        .get("replace")
-        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
-
-    if range.is_none() && insert.is_none() && replace.is_none() {
-        return None;
-    }
-
-    Some(LanguageServerCompletionTextEdit {
-        range,
-        insert,
-        replace,
-        new_text,
-    })
-}
-
-fn optional_string(value: Option<&Value>) -> Option<String> {
-    value.and_then(Value::as_str).map(ToString::to_string)
 }
 
 fn parse_definition_item(value: &Value) -> Result<LanguageServerLocation, String> {
@@ -1942,103 +1636,6 @@ fn inlay_hint_to_lsp_value(hint: &LanguageServerInlayHint) -> Value {
     value
 }
 
-fn parse_document_symbol_item(value: &Value) -> Option<LanguageServerDocumentSymbol> {
-    if value.get("selectionRange").is_some() {
-        return parse_hierarchical_document_symbol(value);
-    }
-
-    parse_symbol_information(value)
-}
-
-fn parse_hierarchical_document_symbol(value: &Value) -> Option<LanguageServerDocumentSymbol> {
-    let name = value.get("name").and_then(Value::as_str)?.to_string();
-    let kind = value.get("kind").and_then(Value::as_u64)? as u32;
-    let range = serde_json::from_value(value.get("range")?.clone()).ok()?;
-    let selection_range = serde_json::from_value(value.get("selectionRange")?.clone()).ok()?;
-    let tags = parse_document_symbol_tags(value);
-    let children = value
-        .get("children")
-        .and_then(Value::as_array)
-        .map(|children| {
-            children
-                .iter()
-                .filter_map(parse_document_symbol_item)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Some(LanguageServerDocumentSymbol {
-        children,
-        container_name: None,
-        detail: value
-            .get("detail")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        kind,
-        name,
-        range,
-        selection_range,
-        tags,
-    })
-}
-
-fn parse_symbol_information(value: &Value) -> Option<LanguageServerDocumentSymbol> {
-    let name = value.get("name").and_then(Value::as_str)?.to_string();
-    let kind = value.get("kind").and_then(Value::as_u64)? as u32;
-    let range: LanguageServerRange =
-        serde_json::from_value(value.get("location")?.get("range")?.clone()).ok()?;
-    let tags = parse_document_symbol_tags(value);
-
-    Some(LanguageServerDocumentSymbol {
-        children: Vec::new(),
-        container_name: value
-            .get("containerName")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        detail: None,
-        kind,
-        name,
-        range: range.clone(),
-        selection_range: range,
-        tags,
-    })
-}
-
-fn parse_document_symbol_tags(value: &Value) -> Vec<u32> {
-    value
-        .get("tags")
-        .and_then(Value::as_array)
-        .map(|tags| {
-            tags.iter()
-                .filter_map(Value::as_u64)
-                .map(|tag| tag as u32)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_workspace_symbol(value: &Value) -> Option<LanguageServerWorkspaceSymbol> {
-    let name = value.get("name").and_then(Value::as_str)?.to_string();
-    let kind = value.get("kind").and_then(Value::as_u64)? as u32;
-    let location = parse_workspace_symbol_location(value.get("location")?);
-
-    Some(LanguageServerWorkspaceSymbol {
-        container_name: value
-            .get("containerName")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        kind,
-        location,
-        name,
-    })
-}
-
-fn parse_workspace_symbol_location(value: &Value) -> Option<LanguageServerLocation> {
-    value.get("range")?;
-
-    serde_json::from_value(value.clone()).ok()
-}
-
 fn parse_selection_range_item(value: &Value) -> Result<LanguageServerSelectionRange, String> {
     let range = value
         .get("range")
@@ -2125,7 +1722,7 @@ fn slice_by_char_offsets(value: &str, start: usize, end: usize) -> Option<String
     value.get(start_byte..end_byte).map(ToString::to_string)
 }
 
-fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, String> {
+pub(super) fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, String> {
     let mut changes = BTreeMap::new();
     let mut document_versions = BTreeMap::new();
     let mut file_operations = Vec::new();
@@ -2153,10 +1750,16 @@ fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, St
                     let version = if version_value.is_null() {
                         None
                     } else {
-                        Some(version_value.as_i64().ok_or_else(|| {
-                            "Language server returned a malformed workspace document version."
-                                .to_string()
-                        })?)
+                        Some(
+                            version_value
+                                .as_i64()
+                                .and_then(|version| i32::try_from(version).ok())
+                                .map(i64::from)
+                                .ok_or_else(|| {
+                                    "Language server returned a malformed workspace document version."
+                                        .to_string()
+                                })?,
+                        )
                     };
                     document_versions.insert(uri.to_string(), version);
                 }
@@ -2170,16 +1773,7 @@ fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, St
             }
 
             if document_change.get("kind").is_some() {
-                file_operations.push(
-                    serde_json::from_value::<LanguageServerWorkspaceFileOperation>(
-                        document_change.clone(),
-                    )
-                    .map_err(|error| {
-                        format!(
-                            "Language server returned a malformed workspace file operation: {error}"
-                        )
-                    })?,
-                );
+                file_operations.push(parse_workspace_file_operation(document_change)?);
             }
         }
     }
@@ -2195,10 +1789,118 @@ fn parse_text_edits(items: &[Value]) -> Result<Vec<LanguageServerTextEdit>, Stri
     items
         .iter()
         .map(|item| {
-            serde_json::from_value::<LanguageServerTextEdit>(item.clone())
-                .map_err(|error| format!("Language server returned a malformed text edit: {error}"))
+            let object = item.as_object().ok_or_else(|| {
+                "Language server returned a malformed text edit: expected object.".to_string()
+            })?;
+            Ok(LanguageServerTextEdit {
+                range: parse_workspace_range(object.get("range").ok_or_else(|| {
+                    "Language server returned a malformed text edit: missing range.".to_string()
+                })?)?,
+                new_text: object
+                    .get("newText")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        "Language server returned a malformed text edit: missing newText."
+                            .to_string()
+                    })?
+                    .to_string(),
+            })
         })
         .collect()
+}
+
+fn parse_workspace_range(value: &Value) -> Result<LanguageServerRange, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "Language server returned a malformed workspace range.".to_string())?;
+    let parse_position = |field: &str| -> Result<LanguageServerPosition, String> {
+        let position = object
+            .get(field)
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                format!("Language server returned a malformed workspace range {field}.")
+            })?;
+        Ok(LanguageServerPosition {
+            line: workspace_u32(position.get("line"), "line")?,
+            character: workspace_u32(position.get("character"), "character")?,
+        })
+    };
+    let start = parse_position("start")?;
+    let end = parse_position("end")?;
+    if (end.line, end.character) < (start.line, start.character) {
+        return Err("Language server returned an inverted workspace range.".to_string());
+    }
+    Ok(LanguageServerRange { start, end })
+}
+
+fn workspace_u32(value: Option<&Value>, field: &str) -> Result<u32, String> {
+    value
+        .and_then(Value::as_u64)
+        .filter(|value| *value <= i32::MAX as u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| format!("Language server returned a malformed workspace {field}."))
+}
+
+fn parse_workspace_file_operation(
+    value: &Value,
+) -> Result<LanguageServerWorkspaceFileOperation, String> {
+    let object = value.as_object().ok_or_else(|| {
+        "Language server returned a malformed workspace file operation.".to_string()
+    })?;
+    let options = parse_workspace_file_operation_options(object.get("options"))?;
+    let required_uri = |field: &str| -> Result<String, String> {
+        object
+            .get(field)
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .ok_or_else(|| {
+                format!("Language server returned a malformed workspace file operation {field}.")
+            })
+    };
+    match object.get("kind").and_then(Value::as_str) {
+        Some("create") => Ok(LanguageServerWorkspaceFileOperation::Create {
+            uri: required_uri("uri")?,
+            options,
+        }),
+        Some("rename") => Ok(LanguageServerWorkspaceFileOperation::Rename {
+            old_uri: required_uri("oldUri")?,
+            new_uri: required_uri("newUri")?,
+            options,
+        }),
+        Some("delete") => Ok(LanguageServerWorkspaceFileOperation::Delete {
+            uri: required_uri("uri")?,
+            options,
+        }),
+        _ => Err("Language server returned an unsupported workspace file operation.".to_string()),
+    }
+}
+
+fn parse_workspace_file_operation_options(
+    value: Option<&Value>,
+) -> Result<Option<LanguageServerWorkspaceFileOperationOptions>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let object = value.as_object().ok_or_else(|| {
+        "Language server returned malformed workspace file operation options.".to_string()
+    })?;
+    let optional_bool = |field: &str| -> Result<Option<bool>, String> {
+        match object.get(field) {
+            None | Some(Value::Null) => Ok(None),
+            Some(value) => value.as_bool().map(Some).ok_or_else(|| {
+                format!("Language server returned malformed workspace option {field}.")
+            }),
+        }
+    };
+    Ok(Some(LanguageServerWorkspaceFileOperationOptions {
+        ignore_if_exists: optional_bool("ignoreIfExists")?,
+        ignore_if_not_exists: optional_bool("ignoreIfNotExists")?,
+        overwrite: optional_bool("overwrite")?,
+        recursive: optional_bool("recursive")?,
+    }))
 }
 
 fn append_workspace_text_edits(
@@ -2207,29 +1909,6 @@ fn append_workspace_text_edits(
     edits: Vec<LanguageServerTextEdit>,
 ) {
     changes.entry(uri).or_default().extend(edits);
-}
-
-fn parse_code_action_item(value: &Value) -> Option<LanguageServerCodeAction> {
-    let title = value.get("title").and_then(Value::as_str)?.to_string();
-    let edit = value
-        .get("edit")
-        .and_then(|edit| parse_workspace_edit(edit).ok());
-    let command = parse_code_action_command(value);
-
-    Some(LanguageServerCodeAction {
-        title,
-        kind: optional_string(value.get("kind")),
-        is_preferred: value
-            .get("isPreferred")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        disabled: value
-            .get("disabled")
-            .and_then(|disabled| serde_json::from_value(disabled.clone()).ok()),
-        edit,
-        command,
-        data: value.get("data").cloned(),
-    })
 }
 
 fn parse_code_action_command(value: &Value) -> Option<LanguageServerCodeActionCommand> {
@@ -2254,13 +1933,6 @@ fn parse_code_action_command(value: &Value) -> Option<LanguageServerCodeActionCo
     }
 
     serde_json::from_value::<LanguageServerCodeActionCommand>(command_value.clone()).ok()
-}
-
-fn empty_completion_list() -> LanguageServerCompletionList {
-    LanguageServerCompletionList {
-        is_incomplete: false,
-        items: Vec::new(),
-    }
 }
 
 #[derive(Deserialize)]
@@ -3584,18 +3256,6 @@ mod tests {
             },
             "documentChanges": [
                 {
-                    "textDocument": { "uri": "file:///tmp/Other.ts", "version": 7 },
-                    "edits": [
-                        {
-                            "range": {
-                                "start": { "line": 3, "character": 0 },
-                                "end": { "line": 3, "character": 0 }
-                            },
-                            "newText": "import { Account } from './account';\n"
-                        }
-                    ]
-                },
-                {
                     "kind": "create",
                     "uri": "file:///tmp/Created.ts",
                     "options": { "ignoreIfExists": true }
@@ -3613,6 +3273,18 @@ mod tests {
                         "ignoreIfNotExists": true,
                         "recursive": true
                     }
+                },
+                {
+                    "textDocument": { "uri": "file:///tmp/Other.ts", "version": 7 },
+                    "edits": [
+                        {
+                            "range": {
+                                "start": { "line": 3, "character": 0 },
+                                "end": { "line": 3, "character": 0 }
+                            },
+                            "newText": "import { Account } from './account';\n"
+                        }
+                    ]
                 }
             ]
         }))
@@ -3772,8 +3444,7 @@ mod tests {
                         ]
                     }
                 }
-            },
-            { "kind": "quickfix" }
+            }
         ]))
         .expect("code actions");
 

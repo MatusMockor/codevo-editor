@@ -1,36 +1,46 @@
 import { FileCode2, Search } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import type { FileSearchResult } from "../domain/workspace";
+import type { QuickOpenLocation, QuickOpenQuery } from "../domain/quickOpenQuery";
 import { HighlightedText } from "./HighlightedText";
 import { PaletteFooter } from "./PaletteFooter";
 
 interface QuickOpenProps {
   isOpen: boolean;
   isLoading: boolean;
+  isTruncated: boolean;
   query: string;
+  request: QuickOpenQuery;
   results: FileSearchResult[];
   onChangeQuery: Dispatch<SetStateAction<string>>;
   onClose(): void;
-  onOpen(result: FileSearchResult): void;
+  onOpen(result: FileSearchResult, location?: QuickOpenLocation): void;
+  onOpenCurrentFileLocation(location: QuickOpenLocation): void;
 }
 
 export function QuickOpen({
   isOpen,
   isLoading,
+  isTruncated,
   onChangeQuery,
   onClose,
   onOpen,
+  onOpenCurrentFileLocation,
   query,
+  request,
   results,
 }: QuickOpenProps) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const composingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useLayoutEffect(() => {
@@ -51,10 +61,7 @@ export function QuickOpen({
     const timeout = window.setTimeout(focusInput, 0);
 
     return () => {
-      if (
-        animationFrame !== undefined &&
-        typeof window.cancelAnimationFrame === "function"
-      ) {
+      if (animationFrame !== undefined && typeof window.cancelAnimationFrame === "function") {
         window.cancelAnimationFrame(animationFrame);
       }
       window.clearTimeout(timeout);
@@ -72,15 +79,42 @@ export function QuickOpen({
     setActiveIndex(0);
   }, [query]);
 
+  const currentFileLocation = useMemo(
+    () =>
+      request.kind === "currentFileLocation"
+        ? { column: request.column, line: request.line }
+        : null,
+    [request],
+  );
+  const rowCount = currentFileLocation ? 1 : results.length;
   useEffect(() => {
-    setActiveIndex((current) =>
-      results.length === 0 ? 0 : Math.min(current, results.length - 1),
-    );
-  }, [results.length]);
-
-  const safeActiveIndex =
-    results.length === 0 ? -1 : Math.min(activeIndex, results.length - 1);
+    setActiveIndex((current) => (rowCount === 0 ? 0 : Math.min(current, rowCount - 1)));
+  }, [rowCount]);
+  const safeActiveIndex = rowCount === 0 ? -1 : Math.min(activeIndex, rowCount - 1);
   const activeResult = safeActiveIndex >= 0 ? results[safeActiveIndex] : undefined;
+  const openResult = useCallback(
+    (result: FileSearchResult) => {
+      const exactPathMatch = result.relativePath === query || result.path === query;
+      if (request.kind === "fileLocation" && !exactPathMatch) {
+        onOpen(result, {
+          column: request.column,
+          line: request.line,
+        });
+        return;
+      }
+
+      onOpen(result);
+    },
+    [onOpen, query, request],
+  );
+  const openCurrentFileLocation = useCallback(() => {
+    if (!currentFileLocation) {
+      return;
+    }
+
+    onClose();
+    onOpenCurrentFileLocation(currentFileLocation);
+  }, [currentFileLocation, onClose, onOpenCurrentFileLocation]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -112,9 +146,7 @@ export function QuickOpen({
 
       if (event.key === "ArrowDown") {
         consume();
-        setActiveIndex((current) =>
-          Math.min(current + 1, Math.max(results.length - 1, 0)),
-        );
+        setActiveIndex((current) => Math.min(current + 1, Math.max(rowCount - 1, 0)));
         return;
       }
 
@@ -124,9 +156,15 @@ export function QuickOpen({
         return;
       }
 
+      if (event.key === "Enter" && currentFileLocation) {
+        consume();
+        openCurrentFileLocation();
+        return;
+      }
+
       if (event.key === "Enter" && activeResult) {
         consume();
-        onOpen(activeResult);
+        openResult(activeResult);
         return;
       }
 
@@ -149,11 +187,13 @@ export function QuickOpen({
     };
   }, [
     activeResult,
+    currentFileLocation,
     isOpen,
     onChangeQuery,
     onClose,
-    onOpen,
-    results.length,
+    openCurrentFileLocation,
+    openResult,
+    rowCount,
   ]);
 
   if (!isOpen) {
@@ -172,7 +212,18 @@ export function QuickOpen({
           <input
             aria-label="Search files"
             autoFocus
-            onChange={(event) => onChangeQuery(event.currentTarget.value)}
+            onChange={(event) => {
+              if (!composingRef.current) {
+                onChangeQuery(event.currentTarget.value);
+              }
+            }}
+            onCompositionEnd={(event) => {
+              composingRef.current = false;
+              onChangeQuery(event.currentTarget.value);
+            }}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 onClose();
@@ -181,9 +232,7 @@ export function QuickOpen({
 
               if (event.key === "ArrowDown") {
                 event.preventDefault();
-                setActiveIndex((current) =>
-                  Math.min(current + 1, Math.max(results.length - 1, 0)),
-                );
+                setActiveIndex((current) => Math.min(current + 1, Math.max(rowCount - 1, 0)));
                 return;
               }
 
@@ -193,9 +242,15 @@ export function QuickOpen({
                 return;
               }
 
+              if (event.key === "Enter" && currentFileLocation) {
+                event.preventDefault();
+                openCurrentFileLocation();
+                return;
+              }
+
               if (event.key === "Enter" && activeResult) {
                 event.preventDefault();
-                onOpen(activeResult);
+                openResult(activeResult);
               }
             }}
             placeholder="Open file"
@@ -206,18 +261,32 @@ export function QuickOpen({
 
         <div className="quick-open-results">
           {isLoading ? <div className="quick-open-state">Searching...</div> : null}
-          {!isLoading && results.length === 0 ? (
+          {isTruncated ? <div className="quick-open-state">Results truncated</div> : null}
+          {!isLoading && results.length === 0 && !currentFileLocation ? (
             <div className="quick-open-state">No files found</div>
+          ) : null}
+          {currentFileLocation ? (
+            <button
+              className="quick-open-result active"
+              onClick={openCurrentFileLocation}
+              type="button"
+            >
+              <FileCode2 aria-hidden="true" size={16} />
+              <span>
+                <strong>Go to line {currentFileLocation.line}</strong>
+                {currentFileLocation.column ? (
+                  <small>Column {currentFileLocation.column}</small>
+                ) : null}
+              </span>
+            </button>
           ) : null}
           {results.map((result, index) => (
             <button
               className={
-                index === safeActiveIndex
-                  ? "quick-open-result active"
-                  : "quick-open-result"
+                index === safeActiveIndex ? "quick-open-result active" : "quick-open-result"
               }
               key={result.path}
-              onClick={() => onOpen(result)}
+              onClick={() => openResult(result)}
               onMouseEnter={() => setActiveIndex(index)}
               title={result.path}
               type="button"
@@ -235,6 +304,13 @@ export function QuickOpen({
           ))}
         </div>
 
+        <div
+          aria-label="Quick Open syntax: greater-than commands, at-sign file symbols, hash workspace symbols, path colon line and optional column"
+          className="quick-open-hint"
+        >
+          <kbd>&gt;</kbd> commands · <kbd>@</kbd> file symbols · <kbd>#</kbd> workspace symbols ·{" "}
+          <kbd>path:line[:column]</kbd>
+        </div>
         <PaletteFooter />
       </section>
     </div>

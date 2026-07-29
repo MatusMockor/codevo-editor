@@ -10,7 +10,10 @@ import type { NavigationRequest } from "../application/navigationRequest";
 import { loadPhpNetteNeonConfigSourceCollection } from "../application/phpNetteNeonSources";
 import type { PhpCodeActionWorkspaceEditApplier } from "../application/phpCodeActionTypes";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
+import {
+  isLargeSmartDocumentContent,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
 import type { PhpMethodCompletion, PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { UserSnippet } from "../domain/snippets";
@@ -332,6 +335,28 @@ export function createEditorSurfaceLanguageProviderOptions({
     reportError: (error) => errorReporterRef.current(error),
     workspaceEditGateway,
   };
+}
+
+export async function readBoundedJavaScriptTypeScriptNavigationModel(
+  path: string,
+  workspaceRoot: string,
+  descriptor: WorkspaceIdentityDescriptor | null,
+  policy: LargeSmartDocumentPolicy,
+): Promise<string | null> {
+  if (!isWorkspaceContainedPath(path, workspaceRoot, descriptor)) {
+    return null;
+  }
+
+  const result = await workspaceTemplateFileGateway(descriptor).readTextFileBounded(
+    path,
+    policy.characterLimit,
+  );
+
+  if (result.status !== "ok" || isLargeSmartDocumentContent(result.content, policy)) {
+    return null;
+  }
+
+  return result.content;
 }
 
 async function readWorkspaceTemplateFileContent(

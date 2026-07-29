@@ -28,6 +28,9 @@ export interface RecentLocationNavigationTarget {
   position: { column: number; lineNumber: number };
 }
 
+export const RECENT_LOCATION_SNIPPET_MAX_BYTES = 256;
+const textEncoder = new TextEncoder();
+
 export interface BuildRecentLocationInput {
   // Full text of the document the location points into, for the snippet.
   content: string | null;
@@ -52,9 +55,7 @@ export const RECENT_LOCATION_NEAR_LINES = 3;
 // null when there is nothing to record (no navigation target) or the target is
 // outside the workspace (no relative path) - the controller drops those rather
 // than recording a position it cannot display or safely reopen. Pure.
-export function buildRecentLocation(
-  input: BuildRecentLocationInput,
-): RecentLocation | null {
+export function buildRecentLocation(input: BuildRecentLocationInput): RecentLocation | null {
   if (!input.navigation || !input.relativePath) {
     return null;
   }
@@ -135,9 +136,32 @@ function snippetForLine(content: string | null, line: number): string {
     return "";
   }
 
-  // `line` is 1-based; the document is split on newlines so index line-1 is the
-  // caret row. A line out of range (stale content) yields an empty snippet.
-  return (content.split("\n")[line - 1] ?? "").trim();
+  let lineStart = 0;
+  for (let currentLine = 1; currentLine < line; currentLine += 1) {
+    const nextLine = content.indexOf("\n", lineStart);
+    if (nextLine < 0) {
+      return "";
+    }
+    lineStart = nextLine + 1;
+  }
+
+  const lineEnd = content.indexOf("\n", lineStart);
+  const boundedLineEnd =
+    lineEnd < 0
+      ? Math.min(content.length, lineStart + RECENT_LOCATION_SNIPPET_MAX_BYTES)
+      : Math.min(lineEnd, lineStart + RECENT_LOCATION_SNIPPET_MAX_BYTES);
+  const snippet = content.slice(lineStart, boundedLineEnd).trim();
+  if (
+    snippet.length <= RECENT_LOCATION_SNIPPET_MAX_BYTES &&
+    textEncoder.encode(snippet).byteLength <= RECENT_LOCATION_SNIPPET_MAX_BYTES
+  ) {
+    return snippet;
+  }
+
+  const candidate = snippet.slice(0, RECENT_LOCATION_SNIPPET_MAX_BYTES);
+  const bytes = new Uint8Array(RECENT_LOCATION_SNIPPET_MAX_BYTES);
+  const { read } = textEncoder.encodeInto(candidate, bytes);
+  return candidate.slice(0, read);
 }
 
 function lastSegment(path: string): string {

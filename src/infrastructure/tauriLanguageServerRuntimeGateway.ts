@@ -37,6 +37,7 @@ export const JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS = {
 
 export function cancelJavaScriptTypeScriptLanguageServerRequest(
   rootPath: string,
+  sessionId: number,
   requestId: number,
 ): Promise<void> {
   if (!isTauri()) {
@@ -47,7 +48,7 @@ export function cancelJavaScriptTypeScriptLanguageServerRequest(
     invokeRuntimeCommand,
     JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
     "cancelRequest",
-    { requestId, rootPath },
+    { requestId, rootPath, sessionId },
   );
 }
 

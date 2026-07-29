@@ -152,18 +152,7 @@ export function useEditorBreakpointGutterMenu(options: Options) {
   const dismissRef = useRef(0);
   const popoverId = useId();
   requestRef.current = request;
-  const mutationOwnerIdentity = useMemo(
-    () => (actions ? {} : null),
-    [
-      actions,
-      actions?.removeBreakpoint,
-      actions?.setBreakpointCondition,
-      actions?.setBreakpointEnabled,
-      actions?.setBreakpointHitCondition,
-      actions?.setBreakpointLogMessage,
-      actions?.toggleBreakpoint,
-    ],
-  );
+  const mutationOwnerIdentity = useMemo(() => (actions ? {} : null), [actions]);
   const capabilities = useMemo(() => {
     if (!workspaceRoot || !activeDocumentPath) return null;
     const available = debugBreakpointGutterCapabilities(workspaceRoot, activeDocumentPath);

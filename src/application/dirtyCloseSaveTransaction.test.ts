@@ -61,24 +61,17 @@ function deferred(): {
   return { promise, resolve };
 }
 
-function harness(overrides: {
-  saveTarget?: DirtyCloseSaveTransactionPorts<
-    TargetIdentity,
-    string
-  >["saveTarget"];
-  isOwnerCurrent?: DirtyCloseSaveTransactionPorts<
-    TargetIdentity,
-    string
-  >["isOwnerCurrent"];
-  revalidateTarget?: DirtyCloseSaveTransactionPorts<
-    TargetIdentity,
-    string
-  >["revalidateTarget"];
-  commitCloseConditionally?: DirtyCloseSaveTransactionPorts<
-    TargetIdentity,
-    string
-  >["commitCloseConditionally"];
-} = {}) {
+function harness(
+  overrides: {
+    saveTarget?: DirtyCloseSaveTransactionPorts<TargetIdentity, string>["saveTarget"];
+    isOwnerCurrent?: DirtyCloseSaveTransactionPorts<TargetIdentity, string>["isOwnerCurrent"];
+    revalidateTarget?: DirtyCloseSaveTransactionPorts<TargetIdentity, string>["revalidateTarget"];
+    commitCloseConditionally?: DirtyCloseSaveTransactionPorts<
+      TargetIdentity,
+      string
+    >["commitCloseConditionally"];
+  } = {},
+) {
   const calls: string[] = [];
   const targetValidationCounts = new Map<string, number>();
   const saveTarget = vi.fn(
@@ -132,9 +125,10 @@ describe("DirtyCloseSaveTransaction", () => {
   it("saves every captured owner target before committing the close", async () => {
     const subject = harness();
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA, targetB] }),
-    ).resolves.toEqual({ status: "closed", result: "committed" });
+    await expect(subject.transaction.execute({ targets: [targetA, targetB] })).resolves.toEqual({
+      status: "closed",
+      result: "committed",
+    });
 
     expect(subject.saveTarget).toHaveBeenNthCalledWith(1, targetA);
     expect(subject.saveTarget).toHaveBeenNthCalledWith(2, targetB);
@@ -145,10 +139,7 @@ describe("DirtyCloseSaveTransaction", () => {
     expect(subject.calls.indexOf(commitCall)).toBeGreaterThan(
       subject.calls.lastIndexOf(`target:${targetB.targetId}`),
     );
-    expect(subject.commitCloseConditionally).toHaveBeenCalledWith([
-      targetA,
-      targetB,
-    ]);
+    expect(subject.commitCloseConditionally).toHaveBeenCalledWith([targetA, targetB]);
   });
 
   it("uses the captured owner directly without an activation port", async () => {
@@ -169,15 +160,18 @@ describe("DirtyCloseSaveTransaction", () => {
       }),
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA] }),
-    ).resolves.toEqual({ status: "closed", result: "committed" });
+    await expect(subject.transaction.execute({ targets: [targetA] })).resolves.toEqual({
+      status: "closed",
+      result: "committed",
+    });
 
     expect(subject.revalidateTarget).toHaveBeenCalledTimes(2);
   });
 
   it.each<DocumentSaveResult>([
     { status: "blocked", reason: "external" },
+    { status: "blocked", reason: "exactLiveDocumentTooLarge" },
+    { status: "blocked", reason: "exactLiveDocumentUnavailable" },
     { status: "conflict", document: document("a.php"), snapshot: null },
     { status: "partial", error: new Error("partial") },
     { status: "failed", error: new Error("failed") },
@@ -195,9 +189,7 @@ describe("DirtyCloseSaveTransaction", () => {
       saveTarget: async () => ({ status: "stale" }),
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA] })).resolves.toEqual({
       status: "stale",
       target: targetA,
       reason: "save-stale",
@@ -210,9 +202,7 @@ describe("DirtyCloseSaveTransaction", () => {
       saveTarget: async () => saved(targetA.identity.path, false),
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA] })).resolves.toEqual({
       status: "stale",
       target: targetA,
       reason: "newer-edit",
@@ -228,9 +218,7 @@ describe("DirtyCloseSaveTransaction", () => {
       },
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA] })).resolves.toEqual({
       status: "blocked",
       target: targetA,
       saveResult: { status: "failed", error },
@@ -242,14 +230,10 @@ describe("DirtyCloseSaveTransaction", () => {
     const failure = new Error("second write failed");
     const subject = harness({
       saveTarget: async (target) =>
-        target === targetA
-          ? saved(target.identity.path)
-          : { status: "failed", error: failure },
+        target === targetA ? saved(target.identity.path) : { status: "failed", error: failure },
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA, targetB] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA, targetB] })).resolves.toEqual({
       status: "blocked",
       target: targetB,
       savedTargets: [targetA],
@@ -261,9 +245,7 @@ describe("DirtyCloseSaveTransaction", () => {
   it("aborts before saving when the captured owner was replaced", async () => {
     const subject = harness({ isOwnerCurrent: () => false });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA] })).resolves.toEqual({
       status: "stale",
       target: targetA,
       reason: "owner-replaced",
@@ -277,9 +259,7 @@ describe("DirtyCloseSaveTransaction", () => {
       revalidateTarget: () => ({ status: "stale" }),
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA] })).resolves.toEqual({
       status: "stale",
       target: targetA,
       reason: "target-replaced",
@@ -306,9 +286,7 @@ describe("DirtyCloseSaveTransaction", () => {
       },
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA, targetB] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA, targetB] })).resolves.toEqual({
       status: "stale",
       target: targetA,
       reason: "newer-edit",
@@ -327,9 +305,7 @@ describe("DirtyCloseSaveTransaction", () => {
       },
     });
 
-    await expect(
-      subject.transaction.execute({ targets: [targetA] }),
-    ).resolves.toEqual({
+    await expect(subject.transaction.execute({ targets: [targetA] })).resolves.toEqual({
       status: "stale",
       target: targetA,
       reason: "owner-replaced",
@@ -414,9 +390,10 @@ describe("DirtyCloseSaveTransaction", () => {
   it("commits an empty close scope without invoking save ports", async () => {
     const subject = harness();
 
-    await expect(
-      subject.transaction.execute({ targets: [] }),
-    ).resolves.toEqual({ status: "closed", result: "committed" });
+    await expect(subject.transaction.execute({ targets: [] })).resolves.toEqual({
+      status: "closed",
+      result: "committed",
+    });
 
     expect(subject.saveTarget).not.toHaveBeenCalled();
     expect(subject.revalidateTarget).not.toHaveBeenCalled();

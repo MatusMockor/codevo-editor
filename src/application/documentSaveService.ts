@@ -3,7 +3,10 @@ import { applyEditorConfigOnSave } from "../domain/editorConfig";
 import type {
   EditorDocument,
   WorkspaceFileGateway,
+  WorkspaceFileRevision,
+  WorkspaceOwnerRelativeFileGateway,
   WorkspaceTextFileSnapshot,
+  WorkspaceWriteResult,
 } from "../domain/workspace";
 import { readWorkspaceTextFileSnapshot } from "../domain/workspace";
 import type {
@@ -12,11 +15,12 @@ import type {
   DocumentSaveTarget,
 } from "./activeDocumentSaveStore";
 import type { DocumentSelfWriteLease } from "./documentSelfWriteCoordinator";
+import {
+  isRegisteredDocumentSaveIdentity,
+  type RegisteredDocumentSaveIdentity,
+} from "./documentSaveIdentity";
 
-export type {
-  DocumentSaveAcknowledgement,
-  DocumentSaveTarget,
-} from "./activeDocumentSaveStore";
+export type { DocumentSaveAcknowledgement, DocumentSaveTarget } from "./activeDocumentSaveStore";
 
 export type DocumentSaveResult =
   | {
@@ -28,7 +32,8 @@ export type DocumentSaveResult =
     }
   | {
       status: "blocked";
-      reason: "readOnly" | "external";
+      reason:
+        "readOnly" | "external" | "exactLiveDocumentTooLarge" | "exactLiveDocumentUnavailable";
       silent?: boolean;
     }
   | {
@@ -42,30 +47,19 @@ export type DocumentSaveResult =
 
 export interface DocumentSaveServiceDependencies {
   workspaceFiles: WorkspaceFileGateway;
+  workspaceOwnerRelativeFiles?: WorkspaceOwnerRelativeFileGateway | null;
   saveStore: ActiveDocumentSaveStorePort;
   invalidatePrefetch: (path: string) => void;
-  captureLocalHistorySnapshot: (
-    rootPath: string,
-    path: string,
-    content: string,
-  ) => Promise<void>;
-  formattedContentForSave: (
-    document: EditorDocument,
-    rootPath: string,
-  ) => Promise<string>;
-  optimizedImportsContentForSave: (
-    document: EditorDocument,
-    content: string,
-  ) => string;
+  captureLocalHistorySnapshot: (rootPath: string, path: string, content: string) => Promise<void>;
+  formattedContentForSave: (document: EditorDocument, rootPath: string) => Promise<string>;
+  optimizedImportsContentForSave: (document: EditorDocument, content: string) => string;
   organizedImportsContentForSave: (
     document: EditorDocument,
     content: string,
     rootPath: string,
+    isCurrentDocument: () => boolean,
   ) => Promise<string>;
-  resolveEditorConfigForFile: (
-    rootPath: string,
-    path: string,
-  ) => Promise<ResolvedEditorConfig>;
+  resolveEditorConfigForFile: (rootPath: string, path: string) => Promise<ResolvedEditorConfig>;
   syncSavedDocument: (
     rootPath: string,
     document: EditorDocument,
@@ -80,6 +74,10 @@ export interface DocumentSaveServiceDependencies {
   beginDocumentSelfWrite: (
     rootPath: string,
     path: string,
+    content: string,
+  ) => DocumentSelfWriteLease | null;
+  beginRegisteredDocumentSelfWrite?: (
+    identity: RegisteredDocumentSaveIdentity,
     content: string,
   ) => DocumentSelfWriteLease | null;
 }
@@ -119,11 +117,7 @@ export class DocumentSaveService {
             reason: "readOnly",
           };
         }
-        const prepared = await this.prepareDocument(
-          target,
-          documentToTransform,
-          currentDocument,
-        );
+        const prepared = await this.prepareDocument(target, documentToTransform, currentDocument);
         if (prepared.status !== "prepared") {
           return prepared.result;
         }
@@ -132,10 +126,7 @@ export class DocumentSaveService {
           continue;
         }
 
-        const acceptedDocument = this.preparationGuard(
-          target,
-          currentDocument,
-        );
+        const acceptedDocument = this.preparationGuard(target, currentDocument);
         if (acceptedDocument.status !== "continue") {
           return acceptedDocument.result;
         }
@@ -144,28 +135,21 @@ export class DocumentSaveService {
           continue;
         }
 
-        if (
-          prepared.document.content === acceptedDocument.document.savedContent
-        ) {
-          const contentChanged =
-            prepared.document.content !== acceptedDocument.document.content;
+        if (prepared.document.content === acceptedDocument.document.savedContent) {
+          const contentChanged = prepared.document.content !== acceptedDocument.document.content;
           let reconciledDocument = acceptedDocument.document;
-          if (contentChanged) {
-            if (
-              !this.dependencies.saveStore.reconcileUnchangedPreparedContent
-            ) {
-              return { status: "stale" };
-            }
-            const reconciled =
-              this.dependencies.saveStore.reconcileUnchangedPreparedContent(
-                target,
-                acceptedDocument.document,
-                prepared.document.content,
-              );
+          if (this.dependencies.saveStore.reconcileUnchangedPreparedContent) {
+            const reconciled = this.dependencies.saveStore.reconcileUnchangedPreparedContent(
+              target,
+              acceptedDocument.document,
+              prepared.document.content,
+            );
             if (!reconciled) {
               return { status: "stale" };
             }
             reconciledDocument = reconciled;
+          } else if (contentChanged) {
+            return { status: "stale" };
           }
 
           const isReconciledDocumentCurrent = () =>
@@ -210,10 +194,7 @@ export class DocumentSaveService {
         }
 
         baselineReconciliationAttempted = true;
-        this.dependencies.saveStore.updateRevision(
-          target,
-          result.snapshot.revision,
-        );
+        this.dependencies.saveStore.updateRevision(target, result.snapshot.revision);
         documentToTransform = currentDocument();
         if (!documentToTransform) {
           return { status: "stale" };
@@ -256,20 +237,43 @@ export class DocumentSaveService {
       };
     }
 
-    const optimizedContent =
-      this.dependencies.optimizedImportsContentForSave(
-        document,
-        formattedContent,
-      );
-    const organizedContent =
-      await this.dependencies.organizedImportsContentForSave(
-        document,
-        optimizedContent,
-        target.rootPath,
-      );
+    const optimizedContent = this.dependencies.optimizedImportsContentForSave(
+      document,
+      formattedContent,
+    );
+    let closedReason: "document" | "lease" | null = null;
+    const isCurrentDocument = () => {
+      if (closedReason) {
+        return false;
+      }
+      if (!target.lease.isCurrent()) {
+        closedReason = "lease";
+        return false;
+      }
+      if (currentDocument() !== document) {
+        closedReason = "document";
+        return false;
+      }
+      return true;
+    };
+    if (!isCurrentDocument()) {
+      return { status: "stopped", result: { status: "stale" } };
+    }
+    const organizedContent = await this.dependencies.organizedImportsContentForSave(
+      document,
+      optimizedContent,
+      target.rootPath,
+      isCurrentDocument,
+    );
     const afterImports = this.preparationGuard(target, currentDocument);
     if (afterImports.status !== "continue") {
       return { status: "stopped", result: afterImports.result };
+    }
+    if (
+      closedReason === "lease" ||
+      (closedReason === "document" && afterImports.document === document)
+    ) {
+      return { status: "stopped", result: { status: "stale" } };
     }
     if (afterImports.document !== document) {
       return {
@@ -279,11 +283,10 @@ export class DocumentSaveService {
       };
     }
 
-    const editorConfig =
-      await this.dependencies.resolveEditorConfigForFile(
-        target.rootPath,
-        document.path,
-      );
+    const editorConfig = await this.dependencies.resolveEditorConfigForFile(
+      target.rootPath,
+      document.path,
+    );
     const afterEditorConfig = this.preparationGuard(target, currentDocument);
     if (afterEditorConfig.status !== "continue") {
       return { status: "stopped", result: afterEditorConfig.result };
@@ -372,6 +375,12 @@ export class DocumentSaveService {
     };
 
     try {
+      if (
+        this.dependencies.saveStore.prepareIssuedWrite &&
+        !this.dependencies.saveStore.prepareIssuedWrite(target, expectedDocument, savedDocument)
+      ) {
+        return { status: "stale" };
+      }
       return await this.writeIssuedDocument(
         target,
         expectedDocument,
@@ -391,11 +400,31 @@ export class DocumentSaveService {
     currentDocument: () => EditorDocument | null,
     settleWritePermit: () => void,
   ): Promise<DocumentSaveResult> {
-    const selfWrite = this.dependencies.beginDocumentSelfWrite(
-      target.rootPath,
-      savedDocument.path,
-      savedDocument.content,
-    );
+    const registeredIdentity = this.registeredIdentity(target);
+    if (target.registeredIdentity !== undefined && target.registeredIdentity !== null) {
+      if (!registeredIdentity || !expectedDocument.revision) {
+        return {
+          status: "failed",
+          error: new Error("The captured workspace save authority is unavailable."),
+        };
+      }
+      if (!this.dependencies.workspaceOwnerRelativeFiles) {
+        return {
+          status: "failed",
+          error: new Error("The workspace does not support owner-relative saves."),
+        };
+      }
+    }
+    const selfWrite = registeredIdentity
+      ? (this.dependencies.beginRegisteredDocumentSelfWrite?.(
+          registeredIdentity,
+          savedDocument.content,
+        ) ?? null)
+      : this.dependencies.beginDocumentSelfWrite(
+          target.rootPath,
+          savedDocument.path,
+          savedDocument.content,
+        );
     let selfWriteCompleted = false;
     const abortSelfWrite = () => {
       if (selfWriteCompleted) {
@@ -405,9 +434,7 @@ export class DocumentSaveService {
       selfWriteCompleted = true;
       selfWrite?.abort();
     };
-    const completeSelfWrite = (
-      revision: EditorDocument["revision"],
-    ) => {
+    const completeSelfWrite = (revision: EditorDocument["revision"]) => {
       if (selfWriteCompleted) {
         return;
       }
@@ -416,23 +443,38 @@ export class DocumentSaveService {
       selfWrite?.complete(revision ?? null);
     };
 
-    let writeResult: Awaited<
-      ReturnType<WorkspaceFileGateway["writeTextFile"]>
-    >;
+    let writeResult: Awaited<ReturnType<WorkspaceFileGateway["writeTextFile"]>>;
     try {
-      writeResult = expectedDocument.revision
-        ? await this.dependencies.workspaceFiles.writeTextFile(
-            savedDocument.path,
+      writeResult = registeredIdentity
+        ? await this.dependencies.workspaceOwnerRelativeFiles!.writeTextFileForWorkspaceRelativePath(
+            registeredIdentity.workspaceId,
+            registeredIdentity.workspaceRelativePath,
             savedDocument.content,
-            expectedDocument.revision,
+            expectedDocument.revision!,
           )
-        : await this.dependencies.workspaceFiles.writeTextFile(
-            savedDocument.path,
-            savedDocument.content,
-          );
+        : expectedDocument.revision
+          ? await this.dependencies.workspaceFiles.writeTextFile(
+              savedDocument.path,
+              savedDocument.content,
+              expectedDocument.revision,
+            )
+          : await this.dependencies.workspaceFiles.writeTextFile(
+              savedDocument.path,
+              savedDocument.content,
+            );
     } catch (error) {
       abortSelfWrite();
       throw error;
+    }
+    if (registeredIdentity && !isWorkspaceWriteResult(writeResult)) {
+      abortSelfWrite();
+      settleWritePermit();
+      return {
+        status: "partial",
+        error: new Error(
+          "The workspace write may have completed, but its result could not be validated.",
+        ),
+      };
     }
 
     if (writeResult?.status === "conflict") {
@@ -464,9 +506,7 @@ export class DocumentSaveService {
       };
     }
 
-    completeSelfWrite(
-      writeResult?.status === "success" ? writeResult.revision : null,
-    );
+    completeSelfWrite(writeResult?.status === "success" ? writeResult.revision : null);
 
     if (this.hasExternalConflict(target)) {
       settleWritePermit();
@@ -477,15 +517,22 @@ export class DocumentSaveService {
       };
     }
 
-    this.dependencies.saveStore.acknowledgeIssuedWrite(target, {
+    const acknowledged = this.dependencies.saveStore.acknowledgeIssuedWrite(target, {
       expectedDocument,
       revision:
-        writeResult?.status === "success"
-          ? writeResult.revision
-          : expectedDocument.revision,
+        writeResult?.status === "success" ? writeResult.revision : expectedDocument.revision,
       savedDocument,
       startingContent: expectedDocument.content,
     });
+    if (acknowledged === false) {
+      settleWritePermit();
+      return {
+        status: "partial",
+        error: new Error(
+          "The file was saved, but the exact editor baseline could not be acknowledged.",
+        ),
+      };
+    }
     settleWritePermit();
     if (!currentDocument()) {
       return { status: "stale" };
@@ -500,8 +547,7 @@ export class DocumentSaveService {
       savedDocument.content,
     );
 
-    const isWrittenDocumentCurrent = () =>
-      currentDocument()?.content === savedDocument.content;
+    const isWrittenDocumentCurrent = () => currentDocument()?.content === savedDocument.content;
     if (!isWrittenDocumentCurrent()) {
       return {
         status: "saved",
@@ -545,9 +591,7 @@ export class DocumentSaveService {
     };
   }
 
-  private tryBeginWrite(
-    target: DocumentSaveTarget,
-  ): ActiveDocumentSaveWritePermit | null {
+  private tryBeginWrite(target: DocumentSaveTarget): ActiveDocumentSaveWritePermit | null {
     return target.lease.tryBeginWrite();
   }
 
@@ -556,13 +600,15 @@ export class DocumentSaveService {
     currentDocument: () => EditorDocument | null,
   ): Promise<DocumentSaveResult> {
     let snapshot: WorkspaceTextFileSnapshot | null = null;
-    try {
-      snapshot = await readWorkspaceTextFileSnapshot(
-        this.dependencies.workspaceFiles,
-        target.path,
-      );
-    } catch {
-      // A null snapshot keeps the conflict retryable when the disk read fails.
+    if (!isRegisteredDocumentSaveIdentity(target.registeredIdentity)) {
+      try {
+        snapshot = await readWorkspaceTextFileSnapshot(
+          this.dependencies.workspaceFiles,
+          target.path,
+        );
+      } catch {
+        // A null snapshot keeps the conflict retryable when the disk read fails.
+      }
     }
 
     const document = currentDocument();
@@ -574,9 +620,89 @@ export class DocumentSaveService {
   }
 
   private hasExternalConflict(target: DocumentSaveTarget): boolean {
-    return this.dependencies.hasExternalFileConflict(
-      target.rootPath,
-      target.path,
-    );
+    return this.dependencies.hasExternalFileConflict(target.rootPath, target.path);
   }
+
+  private registeredIdentity(target: DocumentSaveTarget): RegisteredDocumentSaveIdentity | null {
+    const identity = target.registeredIdentity;
+    return isRegisteredDocumentSaveIdentity(identity) ? identity : null;
+  }
+}
+
+function isWorkspaceWriteResult(value: unknown): value is WorkspaceWriteResult {
+  if (!value || typeof value !== "object") return false;
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(value);
+    const status = ownDataValue(descriptors.status);
+    if (typeof status !== "string") return false;
+    switch (status) {
+      case "success":
+        return (
+          hasOnlyStringKeys(keys, ["revision", "status"]) &&
+          isWorkspaceFileRevisionOrNull(ownDataValue(descriptors.revision))
+        );
+      case "conflict":
+      case "error":
+        return (
+          hasOnlyStringKeys(keys, ["message", "status"]) &&
+          typeof ownDataValue(descriptors.message) === "string"
+        );
+      case "partial":
+        return (
+          hasOnlyStringKeys(keys, ["message", "revision", "status"]) &&
+          typeof ownDataValue(descriptors.message) === "string" &&
+          isWorkspaceFileRevisionOrNull(ownDataValue(descriptors.revision))
+        );
+      default:
+        return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+function isWorkspaceFileRevisionOrNull(value: unknown): value is WorkspaceFileRevision | null {
+  if (value === null) return true;
+  if (!value || typeof value !== "object") return false;
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (
+      !hasOnlyStringKeys(Reflect.ownKeys(value), [
+        "contentHash",
+        "device",
+        "inode",
+        "modifiedNanoseconds",
+        "modifiedSeconds",
+        "size",
+      ])
+    ) {
+      return false;
+    }
+    return (
+      typeof ownDataValue(descriptors.contentHash) === "string" &&
+      typeof ownDataValue(descriptors.device) === "string" &&
+      typeof ownDataValue(descriptors.inode) === "string" &&
+      isSafeNonNegativeInteger(ownDataValue(descriptors.modifiedNanoseconds)) &&
+      isSafeNonNegativeInteger(ownDataValue(descriptors.modifiedSeconds)) &&
+      isSafeNonNegativeInteger(ownDataValue(descriptors.size))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasOnlyStringKeys(keys: readonly PropertyKey[], expected: readonly string[]): boolean {
+  return (
+    keys.length === expected.length &&
+    keys.every((key) => typeof key === "string" && expected.includes(key))
+  );
+}
+
+function ownDataValue(descriptor: PropertyDescriptor | undefined): unknown {
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function isSafeNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }

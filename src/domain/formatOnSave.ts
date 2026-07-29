@@ -1,7 +1,5 @@
-import {
-  isJavaScriptTypeScriptLanguageServerDocument,
-  isLanguageServerDocument,
-} from "./languageServerDocumentSync";
+import { isLanguageServerDocument } from "./languageServerDocumentSync";
+import { canUseJavaScriptTypeScriptLanguageServerSaveParticipant } from "./javaScriptTypeScriptSaveParticipantPolicy";
 import {
   canUseLanguageServerFeature,
   type LanguageServerFormattingOptions,
@@ -35,10 +33,8 @@ export function defaultFormatOnSaveOptions(): LanguageServerFormattingOptions {
   return defaultFormattingOptions();
 }
 
-export function planFormatOnSave(
-  input: FormatOnSavePlanInput,
-): FormatOnSavePlan | null {
-  if (isJavaScriptTypeScriptLanguageServerDocument(input.document)) {
+export function planFormatOnSave(input: FormatOnSavePlanInput): FormatOnSavePlan | null {
+  if (canUseJavaScriptTypeScriptLanguageServerSaveParticipant(input.document)) {
     return formatPlanForRuntime(
       "javaScriptTypeScript",
       input.javaScriptTypeScript,
@@ -58,11 +54,7 @@ function formatPlanForRuntime(
   runtime: FormatOnSaveRuntime,
   workspaceRoot: string,
 ): FormatOnSavePlan | null {
-  const status = runningStatusForWorkspace(
-    runtime.status,
-    runtime.statusRoot,
-    workspaceRoot,
-  );
+  const status = runningStatusForWorkspace(runtime.status, runtime.statusRoot, workspaceRoot);
 
   if (!status) {
     return null;

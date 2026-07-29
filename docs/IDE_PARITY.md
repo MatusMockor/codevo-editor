@@ -2,13 +2,20 @@
 
 ## Product position
 
-Codevo Editor is a focused desktop IDE with a broad PHP and JavaScript/TypeScript core. It is not yet a 1:1 replacement for VS Code or PhpStorm. In particular, VS Code's extension ecosystem and several bundled PhpStorm tool windows are platform-sized capabilities, not single checklist items.
+Codevo Editor is a focused desktop IDE whose active target is fast everyday
+JavaScript, TypeScript, Node.js, and Express work. PHP and framework tooling remain a
+supported secondary capability.
 
-Parity claims must therefore be made per workflow and backed by automated acceptance tests.
+It is not a 1:1 replacement for VS Code or PhpStorm. VS Code's extension ecosystem,
+arbitrary DAP adapters, remote/container development, and unsupported platforms are
+product-sized capabilities, not hidden checklist items. Parity claims are made per
+workflow and require automated acceptance evidence.
 
 ## Strong today
 
-- Workbench: multi-tab/split editing, workspace persistence, search/navigation, command palette/keymap, Problems, terminal, settings and Git workflows.
+- Workbench: multi-tab/split editing, workspace persistence, MRU switching,
+  search/navigation, command palette/keymap, Problems, terminal, settings, and Git
+  workflows.
 - Language platform: isolated per-workspace PHP and TypeScript language-server sessions, document sync, diagnostics, completion, navigation, symbols, references, rename, code actions, formatting, semantic tokens, inlay hints and hierarchies.
 - TypeScript/Node: managed TypeScript server, workspace TypeScript selection, auto-import preferences, ESLint, Prettier, package scripts, strict project-scoped launch configurations, a workspace JavaScript Test Explorer, workspace-wide static Express route navigation, Jest/Vitest execution and CDP debugging with source maps.
 - PHP: PHPactor/Intelephense, Composer/PSR-4 indexing, PHPStan, Pint, PHPUnit/Pest workflows with Clover coverage and active-editor gutters, Xdebug/DBGP, refactors and Laravel/Nette/Blade/Latte/NEON intelligence.
@@ -16,13 +23,14 @@ Parity claims must therefore be made per workflow and backed by automated accept
 
 ## Material gaps
 
-| Priority  | Workflow gap           | First vertical slice                                              |
-| --------- | ---------------------- | ----------------------------------------------------------------- |
-| P1        | Git collaboration      | Fetch/pull/merge/rebase and conflict-resolution workflow          |
-| P2        | Database/SQL tools     | Connections, schema browser and query console                     |
-| P2        | Docker/remote runtimes | Remote Node/PHP interpreters, deployment and debugging            |
-| P2        | HTTP client            | Project request files, environments and response history          |
-| Strategic | Extension platform     | Decide a stable plugin API/security model before marketplace work |
+| Priority  | Workflow gap                   | First vertical slice                                                                                            |
+| --------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| P1        | Measured editor responsiveness | Profile typing, tab switches, Quick Open, symbols, search, and retention on large files/monorepos.              |
+| P1        | Remaining JS/TS editing gaps   | Audit exact capabilities for completion, navigation, refactors, Problems, and formatting.                       |
+| P1        | Search semantic parity         | Share a safe matcher before dirty-buffer regex, `wholeWord`, or file-mask support.                              |
+| P1        | Monorepo project fidelity      | Extend exact package ownership and TSConfig/project-reference behavior without guessing through bounded graphs. |
+| P2        | Remote and platform runtimes   | Design remote/container and Windows ownership separately.                                                       |
+| Strategic | Extension platform             | Decide a stable plugin API and security model before marketplace work.                                          |
 
 ## Delivery rules
 
@@ -31,6 +39,41 @@ Parity claims must therefore be made per workflow and backed by automated accept
 3. Preserve exact Tauri wire contracts and validate untyped payloads at the boundary.
 4. Do not label a workflow complete until its common happy path, failure path and multi-project isolation are automated.
 5. Track extension-provided VS Code behavior separately from editor-core behavior.
+
+## Implemented editing and navigation wave
+
+The current wave improves the workflows closest to the user's editor loop:
+
+- Quick Open parses files, `>` Commands, `@` current-file symbols, `#` workspace
+  symbols, and line/column locations. It preserves exact paste and IME seeds, hands
+  typed characters to the destination, clears stale one-shot state on ordinary reopen,
+  and reports backend truncation explicitly.
+- Workspace search is docked and combines bounded native disk results with a
+  cancellable exact-owner dirty-buffer worker overlay.
+- Open-editor MRU, editor-group/navigation persistence, and transient Monaco model
+  disposal are workspace scoped and bounded.
+- A bounded package graph supplies monorepo ownership to scripts, tests, Express
+  routes, and Problems attribution.
+- JavaScript/TypeScript language-server requests are cancellable and exact-session
+  owned; watcher loss triggers exact project resynchronization or a truthful rescan.
+- Rust file/text search and editor change-hunk computation stay off the UI thread,
+  enforce explicit budgets, and publish degraded/truncated state rather than freezing
+  or implying completeness.
+
+Dirty-buffer search deliberately does not support regex, `wholeWord`, or non-empty file
+masks. JavaScript regex and word boundaries are not equivalent to the native Rust
+engine, and masks/ignore rules are native-owned. Those modes return an explicit
+limitation instead of approximate dirty rows. The worker clone boundary accepts at
+most 16 documents, 4,096 dirty paths, 256 Ki code units per document, 1 Mi aggregate
+code units, 768 KiB UTF-8 per document, 3 MiB aggregate UTF-8, 500 results, and a
+2 MiB response.
+
+The settled whole-worktree checkpoint passed 16,909/16,909 frontend tests in 1,107
+files; coverage passed at 88.20% statements, 82.32% branches, 93.72% functions, and
+88.98% lines; Rust passed 2,334 library tests with one intentional timing test
+ignored and 331/331 tests across 13 integration binaries. TypeScript, zero-warning
+lint/Clippy, production build, hotspot ratchets, both formatter families, Cargo check,
+and `git diff --check` are green.
 
 ## Recently completed parity slices
 
@@ -322,13 +365,18 @@ The public native-watch registry/launch factory and transactional live-breakpoin
 
 Two low-severity limitations remain explicit. P2: in a trusted writable workspace, an executable pathname can still be replaced in the narrow interval after descriptor-based validation and before the operating system spawn; portable shebang and package-wrapper support prevents using one universal descriptor-execution primitive. P2: strict npm manifest snapshots use no-follow plus inode identity on Unix, while the non-Unix fallback currently has only regular-file, size and modification-time checks; equivalent Windows reparse-point and file-identity hardening remains a portability follow-up before Windows packaging is ready.
 
-The current frontend checkpoint is green: 1,021 of 1,021 test files and 15,317 of 15,317 tests pass. The Rust library checkpoint passes 1,782/1,782 tests. `npm run check`, `npm run lint` and `npm run build` pass; zero-warning Clippy and formatting gates are green.
+Historical checkpoints for the slices above were validated independently. They must not
+be used as the final status or test count for the current dirty worktree.
 
-Measured against editor-core workflows rather than VS Code's extension ecosystem, practical daily JavaScript/TypeScript/Node/Express coverage is approximately 80–85%, and the common single-process Node debugging workflow is approximately 85–90%. These are intentionally not 100% claims: child/multi-process ownership, universal DAP/extension launch types, remote/container runtimes, Windows native-watch parity and several advanced mutation/inspection cases remain incomplete.
+Codevo does not assign a percentage to practical editor-core coverage. Supported
+workflows and explicit gaps are the source of truth: child/multi-process ownership,
+universal DAP/extension launch types, remote/container runtimes, Windows native-watch
+parity, and several advanced mutation/inspection cases remain incomplete.
 
 ## Completed JavaScript/TypeScript integration batch
 
-The current integrated checkpoint is green: 1,065 of 1,065 frontend test files and 16,247 of 16,247 frontend tests pass. The Rust test, check, Clippy and formatting gates pass as well. Every item below completed focused verification and independent P0–P2 review:
+The following earlier integration batch completed focused verification and independent
+review. Its historical counts are not the final gate result for the current worktree:
 
 - LSP transport framing rejects oversized bodies before allocation, bounds headers and header-line work, accepts only exact ASCII `Content-Length`, and tears down the exact server process on malformed protocol input. The session lifecycle also reaps a clean-EOF process before a bounded restart attempt and does not let repeated handshakes reset the restart budget.
 - JavaScript/TypeScript documents that cross into large-file degraded mode retire their exact LSP document authority once. Returning to an eligible size establishes a fresh open/version lifecycle; uncertain close settlement poisons only the affected session rather than leaking stale diagnostics or requests.
@@ -357,6 +405,14 @@ The dynamic source-map registry foundation is independently clean and fail-close
 
 ## Next parity implementation slice
 
-Prioritize exact child/multi-process debug ownership and the next audit-ranked daily-workflow gaps. Keep `tsx --watch`, nodemon, npm watch, Windows native watch and generic `restart: true` unimported until their distinct ownership and platform strategies are proven. Resume the deferred Nette quick-fix only after this JS/TS/Node phase and only through a synchronous renderer-owned template/owner Monaco lease.
+Prioritize measured editing responsiveness and the next audit-ranked
+JavaScript/TypeScript daily-workflow gaps: completion, navigation, refactoring,
+Problems, formatting, Quick Open/search latency, package ownership, and model/provider
+retention. Keep child/multi-process debugging, `tsx --watch`, nodemon, npm watch,
+Windows native watch, and generic `restart: true` outside the active slice until their
+distinct ownership and platform strategies are proven. Keep the deferred Nette
+quick-fix outside the active plan unless the user explicitly reprioritizes it;
+completing the JS/TS/Node phase never resumes it automatically. If explicitly requested
+later, use only a synchronous renderer-owned template/owner Monaco lease.
 
 PHP Clover coverage is complete as an end-to-end PHPUnit/Pest workflow. **Run with Coverage** and **Clear Coverage** live in PHP Test Results, publish bounded workspace and file summaries, and project the strict immutable Clover model into clean active-PHP-editor gutter decorations without coupling it to JavaScript coverage. Exact POSIX/Windows path projection, UTF-8/XML/count limits and malformed or unsupported input fail closed. The typed TS IPC adapter invokes a fixed Rust no-shell Artisan/PHPUnit runner; trust, retained-root FD identity, a shared JUnit/Clover admission permit, process-group timeout and reap, private output outside the workspace, report size/identity checks and cleanup on every result path fence the backend. Clear, PHP edits, saves, watcher changes, explicit test requests, workspace replacement and stale completion invalidate publication, while unavailable backend reasons are accepted only as bounded control-free text.

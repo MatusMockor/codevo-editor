@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { DocumentSelfWriteCoordinator } from "./documentSelfWriteCoordinator";
+import { createRegisteredDocumentSaveIdentity } from "./documentSaveIdentity";
 
-const ownership = {
-  canonicalRoot: "/workspace",
-  workspaceRelativePath: "new.php",
-};
+const ownership = createRegisteredDocumentSaveIdentity("workspace-a", "/workspace", "new.php")!;
 
 const revision = (value: number) => ({
   contentHash: String(value),
@@ -25,12 +23,13 @@ describe("DocumentSelfWriteCoordinator", () => {
     const [expectation] = await pending;
 
     expect(expectation).toBeDefined();
-    expect(coordinator.consumeMatchingSnapshot(ownership, expectation, {
-      content: "saved content",
-      revision: revision(2),
-    })).toBe(true);
-    expect(await coordinator.waitForExpectations(ownership, { timeoutMs: 0 }))
-      .toEqual([]);
+    expect(
+      coordinator.consumeMatchingSnapshot(ownership, expectation, {
+        content: "saved content",
+        revision: revision(2),
+      }),
+    ).toBe(true);
+    expect(await coordinator.waitForExpectations(ownership, { timeoutMs: 0 })).toEqual([]);
   });
 
   it("does not consume content or trusted revisions from another write", async () => {
@@ -39,14 +38,18 @@ describe("DocumentSelfWriteCoordinator", () => {
     lease?.complete(revision(2));
     const [expectation] = await coordinator.waitForExpectations(ownership);
 
-    expect(coordinator.consumeMatchingSnapshot(ownership, expectation, {
-      content: "external content",
-      revision: revision(2),
-    })).toBe(false);
-    expect(coordinator.consumeMatchingSnapshot(ownership, expectation, {
-      content: "saved content",
-      revision: revision(3),
-    })).toBe(false);
+    expect(
+      coordinator.consumeMatchingSnapshot(ownership, expectation, {
+        content: "external content",
+        revision: revision(2),
+      }),
+    ).toBe(false);
+    expect(
+      coordinator.consumeMatchingSnapshot(ownership, expectation, {
+        content: "saved content",
+        revision: revision(3),
+      }),
+    ).toBe(false);
   });
 
   it("releases watcher waits when an issued write fails", async () => {
@@ -79,10 +82,12 @@ describe("DocumentSelfWriteCoordinator", () => {
     lease?.complete(null);
     const [expectation] = await coordinator.waitForExpectations(ownership);
 
-    expect(coordinator.consumeMatchingSnapshot(ownership, expectation, {
-      content: "same content",
-      revision: revision(2),
-    })).toBe(false);
+    expect(
+      coordinator.consumeMatchingSnapshot(ownership, expectation, {
+        content: "same content",
+        revision: revision(2),
+      }),
+    ).toBe(false);
   });
 
   it("matches rapid sequential writes without replacing either expectation", async () => {
@@ -98,17 +103,14 @@ describe("DocumentSelfWriteCoordinator", () => {
     const secondExpectations = await secondWait;
 
     expect(firstExpectations.map(({ content }) => content)).toEqual(["first"]);
-    expect(secondExpectations.map(({ content }) => content)).toEqual([
-      "first",
-      "second",
-    ]);
-    expect(coordinator.consumeMatchingSnapshot(
-      ownership,
-      secondExpectations[1],
-      { content: "second", revision: revision(2) },
-    )).toBe(true);
-    expect(await coordinator.waitForExpectations(ownership, { timeoutMs: 0 }))
-      .toEqual([]);
+    expect(secondExpectations.map(({ content }) => content)).toEqual(["first", "second"]);
+    expect(
+      coordinator.consumeMatchingSnapshot(ownership, secondExpectations[1], {
+        content: "second",
+        revision: revision(2),
+      }),
+    ).toBe(true);
+    expect(await coordinator.waitForExpectations(ownership, { timeoutMs: 0 })).toEqual([]);
   });
 
   it("bounds and cancels watcher waits without consuming the expectation", async () => {

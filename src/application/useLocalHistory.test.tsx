@@ -9,15 +9,16 @@ import {
   type LocalHistoryPanel,
 } from "./useLocalHistory";
 import type { LocalHistoryGateway, LocalHistoryVersion } from "../domain/localHistory";
-import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
+import {
+  workspaceRelativePath,
+  type EditorDocument,
+  type WorkspaceFileGateway,
+} from "../domain/workspace";
 import {
   createWorkspaceRuntimeOwner,
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
-import {
-  createDocumentSaveIdentity,
-  legacyDocumentSaveIdentity,
-} from "./documentSaveIdentity";
+import { createRegisteredDocumentSaveIdentity } from "./documentSaveIdentity";
 import { DocumentSaveCoordinator } from "./documentSaveCoordinator";
 import type { DocumentSaveResult } from "./documentSaveService";
 import { OwnerDocumentSaveRepository } from "./ownerDocumentSaveRepository";
@@ -40,10 +41,7 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function editorDocument(
-  path: string,
-  content = "current content",
-): EditorDocument {
+function editorDocument(path: string, content = "current content"): EditorDocument {
   return {
     content,
     language: "php",
@@ -120,9 +118,7 @@ interface Harness {
   unmount: () => void;
 }
 
-function renderLocalHistory(
-  overrides: Partial<LocalHistoryDependencies> = {},
-): Harness {
+function renderLocalHistory(overrides: Partial<LocalHistoryDependencies> = {}): Harness {
   const container = globalThis.document.createElement("div");
   const root = createRoot(container);
   const captured: { panel: LocalHistoryPanel | null } = { panel: null };
@@ -156,9 +152,7 @@ function renderLocalHistory(
     (
       updater:
         | Record<string, EditorDocument>
-        | ((
-            current: Record<string, EditorDocument>,
-          ) => Record<string, EditorDocument>),
+        | ((current: Record<string, EditorDocument>) => Record<string, EditorDocument>),
     ) => {
       documentsRef.current =
         typeof updater === "function" ? updater(documentsRef.current) : updater;
@@ -180,8 +174,8 @@ function renderLocalHistory(
       const identityParts = identity.split("\0");
       const relativePath = identityParts[identityParts.length - 1];
       const current = relativePath
-        ? Object.values(documentsRef.current).find(
-            (document) => document.path.endsWith(`/${relativePath}`),
+        ? Object.values(documentsRef.current).find((document) =>
+            document.path.endsWith(`/${relativePath}`),
           )
         : null;
       if (!current) {
@@ -224,8 +218,7 @@ function renderLocalHistory(
     active: () => repositoryCandidate,
     cached: () => null,
   });
-  const documentSaveCoordinator =
-    new DocumentSaveCoordinator<DocumentSaveResult>();
+  const documentSaveCoordinator = new DocumentSaveCoordinator<DocumentSaveResult>();
 
   const deps: LocalHistoryDependencies = {
     activeDocumentRef,
@@ -237,22 +230,21 @@ function renderLocalHistory(
     localHistoryGateway: createFakeLocalHistoryGateway(),
     ownerDocumentSaveRepository,
     resolveCurrentWorkspaceRuntimeOwner: () => ownerRef.current,
-    resolveDocumentSaveOwnership: (rootPath, path) =>
-      legacyDocumentSaveIdentity(rootPath, path),
+    resolveDocumentSaveOwnership: (rootPath, path) => {
+      const relativePath = workspaceRelativePath(rootPath, path);
+      const workspaceId = ownerRef.current?.ownerKey;
+      return relativePath && workspaceId
+        ? createRegisteredDocumentSaveIdentity(workspaceId, rootPath, relativePath)
+        : null;
+    },
     reportError,
     reportErrorForActiveWorkspaceRoot,
     requestOwnerDocumentSave: async (ownership, operation) => {
-      const outcome = await documentSaveCoordinator.request(
-        ownership,
-        operation,
-      );
-      return outcome.status === "saved"
-        ? outcome.result
-        : { status: "stale" };
+      const outcome = await documentSaveCoordinator.request(ownership, operation);
+      return outcome.status === "saved" ? outcome.result : { status: "stale" };
     },
     setMessage,
-    syncSavedDocument: (_owner, rootPath, document) =>
-      syncSavedDocument(rootPath, document),
+    syncSavedDocument: (_owner, rootPath, document) => syncSavedDocument(rootPath, document),
     syncSavedJavaScriptTypeScriptDocument: (_owner, rootPath, document) =>
       syncSavedJavaScriptTypeScriptDocument(rootPath, document),
     writeOwnerDocument: (_owner, _rootPath, document, content) =>
@@ -333,12 +325,8 @@ describe("useLocalHistory", () => {
 
     expect(readVersion).toHaveBeenCalledWith(ROOT, "src/User.php", "v1");
     expect(harness.panel().localHistorySelectedId).toBe("v1");
-    expect(harness.panel().localHistoryDiff?.originalContent).toBe(
-      "older content",
-    );
-    expect(harness.panel().localHistoryDiff?.modifiedContent).toBe(
-      "current content",
-    );
+    expect(harness.panel().localHistoryDiff?.originalContent).toBe("older content");
+    expect(harness.panel().localHistoryDiff?.modifiedContent).toBe("current content");
     harness.unmount();
   });
 
@@ -420,9 +408,7 @@ describe("useLocalHistory", () => {
         content: "reverted content",
       }),
     );
-    expect(harness.setMessage).toHaveBeenCalledWith(
-      "Reverted to selected local history version",
-    );
+    expect(harness.setMessage).toHaveBeenCalledWith("Reverted to selected local history version");
     // The refresh re-lists the versions for the panel.
     expect(listVersions).toHaveBeenCalledTimes(2);
     harness.unmount();
@@ -432,24 +418,23 @@ describe("useLocalHistory", () => {
     const write = createDeferred<void>();
     const history = createDeferred<void>();
     const nextRevision = revision(2);
-    const identity = legacyDocumentSaveIdentity(
-      ROOT,
-      `${ROOT}/src/User.php`,
-    );
+    const identity = createRegisteredDocumentSaveIdentity("workspace-a", ROOT, "src/User.php");
     if (!identity) {
       throw new Error("expected a document save identity");
     }
     let diskContent = "current content";
-    const writeOwnerDocument = vi.fn(async (
-      _owner: WorkspaceRuntimeOwner,
-      _rootPath: string,
-      _document: EditorDocument,
-      content: string,
-    ) => {
-      await write.promise;
-      diskContent = content;
-      return { status: "success" as const, revision: nextRevision };
-    });
+    const writeOwnerDocument = vi.fn(
+      async (
+        _owner: WorkspaceRuntimeOwner,
+        _rootPath: string,
+        _document: EditorDocument,
+        content: string,
+      ) => {
+        await write.promise;
+        diskContent = content;
+        return { status: "success" as const, revision: nextRevision };
+      },
+    );
     const harness = renderLocalHistory({
       captureLocalHistorySnapshot: async () => history.promise,
       writeOwnerDocument,
@@ -546,9 +531,7 @@ describe("useLocalHistory", () => {
       }),
     );
     expect(harness.syncSavedDocument).not.toHaveBeenCalled();
-    expect(harness.setMessage).toHaveBeenCalledWith(
-      "Reverted to selected local history version",
-    );
+    expect(harness.setMessage).toHaveBeenCalledWith("Reverted to selected local history version");
     harness.unmount();
   });
 
@@ -710,9 +693,7 @@ describe("useLocalHistory", () => {
       await harness.panel().openLocalHistory();
     });
 
-    harness.activeDocumentRef.current = editorDocument(
-      `${ROOT}/src/Account.php`,
-    );
+    harness.activeDocumentRef.current = editorDocument(`${ROOT}/src/Account.php`);
 
     await act(async () => {
       await harness.panel().revertLocalHistoryVersion("v1");
@@ -733,10 +714,7 @@ describe("useLocalHistory", () => {
       await harness.panel().openLocalHistory();
     });
 
-    harness.ownerRef.current = createWorkspaceRuntimeOwner(
-      "workspace-b",
-      ROOT,
-    );
+    harness.ownerRef.current = createWorkspaceRuntimeOwner("workspace-b", ROOT);
 
     await act(async () => {
       await harness.panel().revertLocalHistoryVersion("v1");
@@ -789,7 +767,7 @@ describe("useLocalHistory", () => {
     const writeOwnerDocument = vi.fn(async () => undefined);
     const harness = renderLocalHistory({
       resolveDocumentSaveOwnership: () =>
-        createDocumentSaveIdentity(nestedRoot, "src/User.php"),
+        createRegisteredDocumentSaveIdentity("workspace-a", nestedRoot, "src/User.php"),
       writeOwnerDocument,
     });
     harness.activeDocumentRef.current = document;
@@ -973,17 +951,15 @@ describe("useLocalHistory", () => {
   it.each(["conflict", "partial", "error"] as const)(
     "does not apply, sync, report success, or record history on a %s write result",
     async (status) => {
-      const writeTextFile = vi.fn(async (
-        _path: string,
-        _content: string,
-        _revision: EditorDocument["revision"],
-      ) => {
-        if (status === "partial") {
-          return { status, message: `${status} result`, revision: null };
-        }
+      const writeTextFile = vi.fn(
+        async (_path: string, _content: string, _revision: EditorDocument["revision"]) => {
+          if (status === "partial") {
+            return { status, message: `${status} result`, revision: null };
+          }
 
-        return { status, message: `${status} result` };
-      });
+          return { status, message: `${status} result` };
+        },
+      );
       const harness = renderLocalHistory({
         writeOwnerDocument: (_owner, _rootPath, document, content) =>
           writeTextFile(document.path, content, document.revision),
@@ -1067,10 +1043,7 @@ describe("useLocalHistory", () => {
     await act(async () => {
       // The active tab switched away before the list resolves.
       harness.rootRef.current = "/other";
-      harness.ownerRef.current = createWorkspaceRuntimeOwner(
-        "workspace-b",
-        "/other",
-      );
+      harness.ownerRef.current = createWorkspaceRuntimeOwner("workspace-b", "/other");
       harness.rerender();
       deferred.resolve([version("stale")]);
       await openPromise;
@@ -1112,9 +1085,7 @@ describe("useLocalHistory", () => {
       await firstSelect;
     });
 
-    expect(harness.panel().localHistoryDiff?.originalContent).toBe(
-      "second content",
-    );
+    expect(harness.panel().localHistoryDiff?.originalContent).toBe("second content");
     expect(harness.panel().localHistorySelectedId).toBe("v-new");
     harness.unmount();
   });

@@ -32,6 +32,19 @@ export function javaScriptTypeScriptWorkspaceEditForRoot(
   });
 }
 
+export function javaScriptTypeScriptWorkspaceEditIsFullyInRoot(
+  edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
+): boolean {
+  return (
+    Object.keys(edit.changes).every((uri) => uriIsInWorkspaceRoot(uri, rootPath)) &&
+    Object.keys(edit.documentVersions ?? {}).every((uri) => uriIsInWorkspaceRoot(uri, rootPath)) &&
+    (edit.fileOperations ?? []).every((operation) =>
+      javaScriptTypeScriptFileOperationIsInWorkspaceRoot(operation, rootPath),
+    )
+  );
+}
+
 export function javaScriptTypeScriptWorkspaceEditIsExactDocumentContinuation(
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,

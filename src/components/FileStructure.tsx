@@ -1,12 +1,5 @@
 import { Search } from "lucide-react";
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   flattenPhpFileOutlineNodes,
@@ -24,6 +17,7 @@ import { symbolKindLetter } from "../domain/symbolKind";
 interface FileStructureProps {
   canIncludeInheritedMembers: boolean;
   fileName: string | null;
+  initialQuery: string;
   isLoading: boolean;
   isOpen: boolean;
   outline: PhpFileOutline | null;
@@ -36,6 +30,7 @@ interface FileStructureProps {
 export function FileStructure({
   canIncludeInheritedMembers,
   fileName,
+  initialQuery,
   isLoading,
   isOpen,
   onChangeScope,
@@ -50,6 +45,9 @@ export function FileStructure({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const popupRef = useRef<HTMLElement | null>(null);
   const listboxId = useId();
+  const wasOpenRef = useRef(false);
+  const initialQueryRef = useRef(initialQuery);
+  initialQueryRef.current = initialQuery;
   const rows = useMemo(
     () => filteredRows(structureRows(outline?.nodes ?? []), query),
     [outline, query],
@@ -89,9 +87,16 @@ export function FileStructure({
   }, [isOpen]);
 
   useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = isOpen;
     if (!isOpen) {
       setActiveIndex(0);
       setQuery("");
+      return;
+    }
+    if (!wasOpen) {
+      setActiveIndex(0);
+      setQuery(initialQueryRef.current);
     }
   }, [isOpen]);
 
@@ -116,10 +121,7 @@ export function FileStructure({
 
     const handleWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       const hasTextModifier = event.altKey || event.ctrlKey || event.metaKey;
-      const targetIsInsidePopup = containsEventTarget(
-        popupRef.current,
-        event.target,
-      );
+      const targetIsInsidePopup = containsEventTarget(popupRef.current, event.target);
 
       if (event.key === "Escape") {
         consumePopupKey(event, inputRef.current);
@@ -133,9 +135,7 @@ export function FileStructure({
 
       if (event.key === "ArrowDown") {
         consumePopupKey(event, inputRef.current);
-        setActiveIndex((current) =>
-          Math.min(current + 1, Math.max(rows.length - 1, 0)),
-        );
+        setActiveIndex((current) => Math.min(current + 1, Math.max(rows.length - 1, 0)));
         return;
       }
 
@@ -160,9 +160,7 @@ export function FileStructure({
           return;
         }
 
-        routeTextKey(event, inputRef.current, () =>
-          setQuery((current) => current.slice(0, -1)),
-        );
+        routeTextKey(event, inputRef.current, () => setQuery((current) => current.slice(0, -1)));
         return;
       }
 
@@ -219,9 +217,7 @@ export function FileStructure({
             <input
               checked={scope === "inherited"}
               onChange={(event) => {
-                const nextScope = event.currentTarget.checked
-                  ? "inherited"
-                  : "current";
+                const nextScope = event.currentTarget.checked ? "inherited" : "current";
                 onChangeScope(nextScope);
               }}
               type="checkbox"
@@ -241,11 +237,7 @@ export function FileStructure({
           {rows.map((row, index) => (
             <button
               aria-selected={index === activeIndex}
-              className={
-                index === activeIndex
-                  ? "quick-open-result active"
-                  : "quick-open-result"
-              }
+              className={index === activeIndex ? "quick-open-result active" : "quick-open-result"}
               disabled={!isNavigablePhpFileOutlineNode(row.node)}
               id={structureOptionId(listboxId, index)}
               key={row.node.id}
@@ -280,9 +272,7 @@ export function FileStructure({
               )}
               <span
                 className="symbol-label"
-                style={
-                  { "--structure-indent": `${row.depth * 14}px` } as CSSProperties
-                }
+                style={{ "--structure-indent": `${row.depth * 14}px` } as CSSProperties}
               >
                 <strong>{row.node.label}</strong>
                 {symbolSignature(row.node) ? (
@@ -299,10 +289,7 @@ export function FileStructure({
   );
 }
 
-function filteredRows(
-  rows: FlatPhpFileOutlineNode[],
-  query: string,
-): FlatPhpFileOutlineNode[] {
+function filteredRows(rows: FlatPhpFileOutlineNode[], query: string): FlatPhpFileOutlineNode[] {
   const normalizedQuery = query.trim().toLowerCase();
 
   if (!normalizedQuery) {
@@ -349,10 +336,7 @@ function shouldOpenActiveElement(target: EventTarget | null): boolean {
   return true;
 }
 
-function containsEventTarget(
-  container: HTMLElement | null,
-  target: EventTarget | null,
-): boolean {
+function containsEventTarget(container: HTMLElement | null, target: EventTarget | null): boolean {
   return container !== null && target instanceof Node && container.contains(target);
 }
 
@@ -360,10 +344,7 @@ function structureOptionId(listboxId: string, index: number): string {
   return `${listboxId}-option-${index}`;
 }
 
-function consumePopupKey(
-  event: globalThis.KeyboardEvent,
-  input: HTMLInputElement | null,
-): void {
+function consumePopupKey(event: globalThis.KeyboardEvent, input: HTMLInputElement | null): void {
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
@@ -389,9 +370,7 @@ function routeTextKey(
 
 function memberRowsForNode(node: PhpFileOutlineNode): FlatPhpFileOutlineNode[] {
   if (isTypeNode(node)) {
-    return node.children
-      .filter(isStructureMemberNode)
-      .map((child) => ({ depth: 0, node: child }));
+    return node.children.filter(isStructureMemberNode).map((child) => ({ depth: 0, node: child }));
   }
 
   if (isStructureMemberNode(node)) {
@@ -401,10 +380,7 @@ function memberRowsForNode(node: PhpFileOutlineNode): FlatPhpFileOutlineNode[] {
   return [];
 }
 
-function compareStructureRows(
-  left: FlatPhpFileOutlineNode,
-  right: FlatPhpFileOutlineNode,
-): number {
+function compareStructureRows(left: FlatPhpFileOutlineNode, right: FlatPhpFileOutlineNode): number {
   const kindOrder = structureKindOrder(left.node) - structureKindOrder(right.node);
 
   if (kindOrder !== 0) {
@@ -419,9 +395,7 @@ function isTypeNode(node: PhpFileOutlineNode): boolean {
 }
 
 function isStructureMemberNode(node: PhpFileOutlineNode): boolean {
-  return ["constant", "function", "method", "property", "variable"].includes(
-    node.kind,
-  );
+  return ["constant", "function", "method", "property", "variable"].includes(node.kind);
 }
 
 function structureKindOrder(node: PhpFileOutlineNode): number {
@@ -468,19 +442,14 @@ function methodSignature(node: PhpFileOutlineNode): string {
   }
 
   const params = node.parameters
-    .map((parameter) =>
-      parameter.type ? `${parameter.type} ${parameter.name}` : parameter.name,
-    )
+    .map((parameter) => (parameter.type ? `${parameter.type} ${parameter.name}` : parameter.name))
     .join(", ");
   const returnSuffix = node.returnType ? `: ${node.returnType}` : "";
 
   return `(${params})${returnSuffix}`;
 }
 
-function structurePlaceholder(
-  fileName: string | null,
-  scope: PhpFileStructureScope,
-): string {
+function structurePlaceholder(fileName: string | null, scope: PhpFileStructureScope): string {
   const prefix = scope === "inherited" ? "Current + inherited" : "Structure";
 
   if (!fileName) {

@@ -23,14 +23,13 @@ import {
 
 const ROOT = "/workspace";
 
-function renderPanels(
-  overrides: Partial<WorkbenchSymbolPanelsDependencies> = {},
-) {
+function renderPanels(overrides: Partial<WorkbenchSymbolPanelsDependencies> = {}) {
   const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
   const openNavigationTarget = vi.fn(async () => true);
   const deps: WorkbenchSymbolPanelsDependencies = {
     activeDocumentRef: { current: null },
     activeEditorPositionRef: { current: null },
+    cancelJavaScriptTypeScriptLanguageServerRequest: vi.fn(async () => undefined),
     closeCompetingSurfaces: vi.fn(),
     requestLanguageServerDocumentLease: vi.fn(async (rootPath, path) => ({
       lifecycleIdentity: 1,
@@ -40,17 +39,15 @@ function renderPanels(
       syncGeneration: 0,
     })),
     isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => true),
-    flushPendingJavaScriptTypeScriptDocumentChange: vi.fn(
-      async () => undefined,
-    ),
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: vi.fn(
-      () => true,
-    ),
+    flushPendingJavaScriptTypeScriptDocumentChange: vi.fn(async () => undefined),
+    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: vi.fn(() => true),
     isLanguageServerSessionActiveForRoot: vi.fn(() => true),
-    javaScriptTypeScriptLanguageServerFeaturesGateway: {} as WorkbenchSymbolPanelsDependencies["javaScriptTypeScriptLanguageServerFeaturesGateway"],
+    javaScriptTypeScriptLanguageServerFeaturesGateway:
+      {} as WorkbenchSymbolPanelsDependencies["javaScriptTypeScriptLanguageServerFeaturesGateway"],
     javaScriptTypeScriptLanguageServerRuntimeStatus: null,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot: null,
-    languageServerFeaturesGateway: {} as WorkbenchSymbolPanelsDependencies["languageServerFeaturesGateway"],
+    languageServerFeaturesGateway:
+      {} as WorkbenchSymbolPanelsDependencies["languageServerFeaturesGateway"],
     languageServerRuntimeStatus: null,
     languageServerRuntimeStatusRoot: null,
     openNavigationTarget,
@@ -139,9 +136,18 @@ function referenceRow(path: string): ReferenceRow {
 
 describe("useWorkbenchSymbolPanels PHP target delegation", () => {
   it.each([
-    ["call hierarchy", (api: WorkbenchSymbolPanels, path: string) => api.openCallHierarchyRow(callRow(path))],
-    ["type hierarchy", (api: WorkbenchSymbolPanels, path: string) => api.openTypeHierarchyRow(typeRow(path))],
-    ["references", (api: WorkbenchSymbolPanels, path: string) => api.openReferenceRow(referenceRow(path))],
+    [
+      "call hierarchy",
+      (api: WorkbenchSymbolPanels, path: string) => api.openCallHierarchyRow(callRow(path)),
+    ],
+    [
+      "type hierarchy",
+      (api: WorkbenchSymbolPanels, path: string) => api.openTypeHierarchyRow(typeRow(path)),
+    ],
+    [
+      "references",
+      (api: WorkbenchSymbolPanels, path: string) => api.openReferenceRow(referenceRow(path)),
+    ],
   ])("delegates PHP vendor %s targets to the open boundary", async (_label, openRow) => {
     const harness = renderPanels();
     const path = `${ROOT}/vendor/acme/package/src/Service.php`;
@@ -209,6 +215,21 @@ function runningStatus(capability: "references" = "references"): LanguageServerR
   };
 }
 
+function javaScriptTypeScriptSymbolPanelGateway(
+  references: WorkbenchSymbolPanelsDependencies["javaScriptTypeScriptLanguageServerFeaturesGateway"]["references"],
+): WorkbenchSymbolPanelsDependencies["javaScriptTypeScriptLanguageServerFeaturesGateway"] {
+  return {
+    executeCommandLocations: vi.fn(async () => []),
+    incomingCalls: vi.fn(async () => []),
+    outgoingCalls: vi.fn(async () => []),
+    prepareCallHierarchy: vi.fn(async () => []),
+    prepareTypeHierarchy: vi.fn(async () => []),
+    references,
+    typeHierarchySubtypes: vi.fn(async () => []),
+    typeHierarchySupertypes: vi.fn(async () => []),
+  };
+}
+
 describe("useWorkbenchSymbolPanels PHP document lease", () => {
   it("requests the lease with the captured root before calling phpactor", async () => {
     const document = panelDocument("php");
@@ -265,6 +286,123 @@ describe("useWorkbenchSymbolPanels PHP document lease", () => {
   });
 });
 
+describe("useWorkbenchSymbolPanels JavaScript/TypeScript reference request ownership", () => {
+  it("passes the captured session id to the identified request", async () => {
+    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) =>
+      Object.assign(Promise.resolve([]), {
+        requestId: 19,
+        sessionId,
+      }),
+    );
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      javaScriptTypeScriptLanguageServerFeaturesGateway:
+        javaScriptTypeScriptSymbolPanelGateway(references),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+
+    await act(async () => {
+      await harness.api().openReferencesPanel();
+    });
+
+    expect(references).toHaveBeenCalledWith(ROOT, expect.any(Object), 7);
+    harness.root.unmount();
+  });
+
+  it("settles at the deadline, cancels the exact request once, and ignores a late result", async () => {
+    vi.useFakeTimers();
+    let resolveReferences: (
+      locations: ReturnType<typeof referenceRow>["location"][],
+    ) => void = () => undefined;
+    const pendingReferences = new Promise<ReturnType<typeof referenceRow>["location"][]>(
+      (resolve) => {
+        resolveReferences = resolve;
+      },
+    );
+    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) =>
+      Object.assign(pendingReferences, {
+        requestId: 23,
+        sessionId,
+      }),
+    );
+    const cancelRequest = vi.fn(async () => undefined);
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
+      javaScriptTypeScriptLanguageServerFeaturesGateway:
+        javaScriptTypeScriptSymbolPanelGateway(references),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+
+    try {
+      await act(async () => {
+        const opening = harness.api().openReferencesPanel();
+        await Promise.resolve();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(2_500);
+        await opening;
+      });
+
+      expect(cancelRequest).toHaveBeenCalledTimes(1);
+      expect(cancelRequest).toHaveBeenCalledWith(ROOT, 7, 23);
+      expect(harness.api().referencesView).toBeNull();
+      expect(harness.deps.setMessage).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolveReferences([referenceRow(`${ROOT}/src/Late.ts`).location]);
+        await Promise.resolve();
+      });
+
+      expect(cancelRequest).toHaveBeenCalledTimes(1);
+      expect(harness.api().referencesView).toBeNull();
+      expect(harness.deps.setMessage).not.toHaveBeenCalled();
+    } finally {
+      harness.root.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("consumes a late rejection from mismatched session authority without cancelling it", async () => {
+    let rejectReferences: (reason: unknown) => void = () => undefined;
+    const pendingReferences = new Promise<ReturnType<typeof referenceRow>["location"][]>(
+      (_resolve, reject) => {
+        rejectReferences = reject;
+      },
+    );
+    const references = vi.fn(() =>
+      Object.assign(pendingReferences, {
+        requestId: 24,
+        sessionId: 8,
+      }),
+    );
+    const cancelRequest = vi.fn(async () => undefined);
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
+      javaScriptTypeScriptLanguageServerFeaturesGateway:
+        javaScriptTypeScriptSymbolPanelGateway(references),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+
+    await act(async () => {
+      await harness.api().openReferencesPanel();
+      rejectReferences(new Error("late foreign rejection"));
+      await Promise.resolve();
+    });
+
+    expect(cancelRequest).not.toHaveBeenCalled();
+    expect(harness.api().referencesView).toBeNull();
+    expect(harness.deps.reportError).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+});
+
 describe.each([
   ["PHP", "php"],
   ["JavaScript/TypeScript", "typescript"],
@@ -283,11 +421,15 @@ describe.each([
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument(language) },
       activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
-      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
-      javaScriptTypeScriptLanguageServerRuntimeStatus:
-        language === "typescript" ? status : null,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot:
-        language === "typescript" ? ROOT : null,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: javaScriptTypeScriptSymbolPanelGateway(
+        (rootPath, position, sessionId) =>
+          Object.assign(gateway.references(rootPath, position), {
+            requestId: 1,
+            sessionId,
+          }),
+      ),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: language === "typescript" ? status : null,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: language === "typescript" ? ROOT : null,
       languageServerFeaturesGateway: gateway,
       languageServerRuntimeStatus: language === "php" ? status : null,
       languageServerRuntimeStatusRoot: language === "php" ? ROOT : null,
@@ -320,7 +462,12 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
     } as unknown as LanguageServerFeaturesGateway;
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
-      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: {
+        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
+          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ),
+        executeCommandLocations: gateway.executeCommandLocations,
+      },
       javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
       resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
@@ -349,9 +496,13 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
     } as unknown as LanguageServerFeaturesGateway;
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot:
-        isSessionActive,
-      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: isSessionActive,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: {
+        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
+          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ),
+        executeCommandLocations: gateway.executeCommandLocations,
+      },
       javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
       resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,

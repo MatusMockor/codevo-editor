@@ -127,9 +127,7 @@ export interface LanguageServerInlayHintLabelPart {
   tooltip?: string | null;
 }
 
-export type LanguageServerInlayHintLabel =
-  | string
-  | LanguageServerInlayHintLabelPart[];
+export type LanguageServerInlayHintLabel = string | LanguageServerInlayHintLabelPart[];
 
 export interface LanguageServerInlayHint {
   data?: unknown;
@@ -227,10 +225,7 @@ export interface LanguageServerWorkspaceEdit {
   fileOperations?: LanguageServerWorkspaceFileOperation[];
 }
 
-export type LanguageServerWorkspaceFileChangeType =
-  | "created"
-  | "changed"
-  | "deleted";
+export type LanguageServerWorkspaceFileChangeType = "created" | "changed" | "deleted";
 
 export interface LanguageServerWorkspaceFileChange {
   path: string;
@@ -260,10 +255,7 @@ export interface LanguageServerWorkspaceEditGateway {
   ): Promise<LanguageServerWorkspaceEditUnsubscribeFn>;
 }
 
-export type LanguageServerRefreshFeature =
-  | "codeLens"
-  | "inlayHint"
-  | "semanticTokens";
+export type LanguageServerRefreshFeature = "codeLens" | "inlayHint" | "semanticTokens";
 
 export interface LanguageServerRefreshEvent {
   feature: LanguageServerRefreshFeature;
@@ -353,6 +345,11 @@ export interface LanguageServerFormattingOptions {
   tabSize: number;
 }
 
+export interface IdentifiedLanguageServerRequest<T> extends Promise<T> {
+  readonly requestId: number;
+  readonly sessionId: number;
+}
+
 export interface LanguageServerFeaturesGateway {
   hover(
     rootPath: string,
@@ -396,30 +393,18 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     hint: LanguageServerInlayHint,
   ): Promise<LanguageServerInlayHint>;
-  documentSymbols(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerDocumentSymbol[]>;
+  documentSymbols(rootPath: string, path: string): Promise<LanguageServerDocumentSymbol[]>;
   documentHighlights(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerDocumentHighlight[]>;
-  documentLinks(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerDocumentLink[]>;
+  documentLinks(rootPath: string, path: string): Promise<LanguageServerDocumentLink[]>;
   resolveDocumentLink(
     rootPath: string,
     link: LanguageServerDocumentLink,
   ): Promise<LanguageServerDocumentLink>;
-  foldingRanges(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerFoldingRange[]>;
-  workspaceSymbols(
-    rootPath: string,
-    query: string,
-  ): Promise<LanguageServerWorkspaceSymbol[]>;
+  foldingRanges(rootPath: string, path: string): Promise<LanguageServerFoldingRange[]>;
+  workspaceSymbols(rootPath: string, query: string): Promise<LanguageServerWorkspaceSymbol[]>;
   references(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -433,10 +418,7 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLinkedEditingRanges | null>;
-  semanticTokens(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerSemanticTokens | null>;
+  semanticTokens(rootPath: string, path: string): Promise<LanguageServerSemanticTokens | null>;
   rangeSemanticTokens(
     rootPath: string,
     path: string,
@@ -467,10 +449,7 @@ export interface LanguageServerFeaturesGateway {
     action: LanguageServerCodeAction,
   ): Promise<LanguageServerCodeAction>;
   codeLenses(rootPath: string, path: string): Promise<LanguageServerCodeLens[]>;
-  resolveCodeLens(
-    rootPath: string,
-    lens: LanguageServerCodeLens,
-  ): Promise<LanguageServerCodeLens>;
+  resolveCodeLens(rootPath: string, lens: LanguageServerCodeLens): Promise<LanguageServerCodeLens>;
   prepareCallHierarchy(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -503,25 +482,15 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     command: LanguageServerCodeActionCommand,
   ): Promise<LanguageServerLocation[]>;
-  willCreateFiles(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerWorkspaceEdit | null>;
+  willCreateFiles(rootPath: string, path: string): Promise<LanguageServerWorkspaceEdit | null>;
   didCreateFiles(rootPath: string, path: string): Promise<void>;
   willRenameFiles(
     rootPath: string,
     oldPath: string,
     newPath: string,
   ): Promise<LanguageServerWorkspaceEdit | null>;
-  didRenameFiles(
-    rootPath: string,
-    oldPath: string,
-    newPath: string,
-  ): Promise<void>;
-  willDeleteFiles(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerWorkspaceEdit | null>;
+  didRenameFiles(rootPath: string, oldPath: string, newPath: string): Promise<void>;
+  willDeleteFiles(rootPath: string, path: string): Promise<LanguageServerWorkspaceEdit | null>;
   didDeleteFiles(rootPath: string, path: string): Promise<void>;
   didChangeWatchedFiles(
     rootPath: string,
@@ -551,6 +520,115 @@ export interface LanguageServerFeaturesGateway {
   ): Promise<LanguageServerTextEdit[]>;
 }
 
+type IdentifiedJavaScriptTypeScriptFeature =
+  | "codeActions"
+  | "completion"
+  | "declaration"
+  | "definition"
+  | "documentHighlights"
+  | "hover"
+  | "implementation"
+  | "linkedEditingRanges"
+  | "rangeSemanticTokens"
+  | "references"
+  | "resolveCodeAction"
+  | "semanticTokens"
+  | "signatureHelp"
+  | "sourceDefinition"
+  | "typeDefinition"
+  | "workspaceSymbols";
+
+export type JavaScriptTypeScriptLanguageServerFeaturesGateway = Omit<
+  LanguageServerFeaturesGateway,
+  IdentifiedJavaScriptTypeScriptFeature
+> & {
+  codeActions(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+    context: LanguageServerCodeActionContext,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCodeAction[]>;
+  resolveCodeAction(
+    rootPath: string,
+    action: LanguageServerCodeAction,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCodeAction>;
+  hover(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerHover | null>;
+  completion(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    context: LanguageServerCompletionContext | undefined,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCompletionList>;
+  documentHighlights(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerDocumentHighlight[]>;
+  linkedEditingRanges(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLinkedEditingRanges | null>;
+  definition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  sourceDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  declaration(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  implementation(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  typeDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  references(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  workspaceSymbols(
+    rootPath: string,
+    query: string,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerWorkspaceSymbol[]>;
+  semanticTokens(
+    rootPath: string,
+    path: string,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerSemanticTokens | null>;
+  rangeSemanticTokens(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerSemanticTokens | null>;
+  signatureHelp(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    context: LanguageServerSignatureHelpContext | undefined,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerSignatureHelp | null>;
+};
+
 export function canUseLanguageServerFeature(
   capabilities: LanguageServerCapabilities,
   feature: LanguageServerFeature,
@@ -569,9 +647,7 @@ export function toLanguageServerTextDocumentPosition(
   };
 }
 
-export function toEditorPosition(
-  position: LanguageServerPosition,
-): EditorPosition {
+export function toEditorPosition(position: LanguageServerPosition): EditorPosition {
   return {
     column: position.character + 1,
     lineNumber: position.line + 1,
