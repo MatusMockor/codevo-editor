@@ -47,10 +47,14 @@ import {
   shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
   workspacePathBelongsToRoot,
 } from "./workbenchController/workspacePathPolicy";
+import { useWorkbenchDiagnosticPresentation } from "./workbenchController/useWorkbenchDiagnosticPresentation";
+import { useWorkbenchEditorPresentation } from "./workbenchController/useWorkbenchEditorPresentation";
+import { useWorkbenchSettingsCommands } from "./workbenchController/useWorkbenchSettingsCommands";
 import {
-  mergeDiagnosticsByPath,
-  mergePhpFileOutlines,
-} from "./workbenchController/diagnosticProjection";
+  useManagedLanguageServerInstallCommands,
+  useManagedLanguageServerInstallSubscriptions,
+} from "./workbenchController/useManagedLanguageServerInstallLifecycle";
+import { useWorkspaceOpenRequestLifecycle } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
 import { useWorkbenchSettingsPersistence } from "./workbenchController/useWorkbenchSettingsPersistence";
 import {
   useWorkbenchLatencyReporting,
@@ -294,13 +298,7 @@ import {
   reclassifyPhpDiagnosticsForOwner,
 } from "./phpDiagnosticsReclassificationCoordinator";
 
-import {
-  activeDotenvLocalDiagnosticNotices as buildActiveDotenvLocalDiagnosticNotices,
-  activePhpLocalDiagnosticNotices as buildActivePhpLocalDiagnosticNotices,
-  composeEffectiveDiagnosticNotices,
-  localPhpDiagnosticsFromSource,
-  phpLocalDiagnosticFileIdentity,
-} from "./diagnosticNotices";
+import { localPhpDiagnosticsFromSource } from "./diagnosticNotices";
 import { useReplaceJavaScriptTestProblemNotices } from "./useWorkbenchNoticeStore";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
@@ -314,7 +312,6 @@ import type { BottomPanelView } from "../domain/bottomPanel";
 import type { ArtisanControllerAction } from "../domain/artisanRoutes";
 import { usePhpTestCaseNavigation } from "./usePhpTestCaseNavigation";
 import { useSymfonyWorkspaceNavigation } from "./useSymfonyWorkspaceNavigation";
-import { isJsTestRelativePath } from "../domain/jsTestFilePatterns";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
   type LanguageServerDiagnostic,
@@ -328,9 +325,7 @@ import {
   type DiagnosticsFlushScheduler,
 } from "../domain/diagnosticsCoalescer";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
-import { dotenvDiagnosticsFromSource } from "../domain/dotenvDiagnostics";
 import {
-  isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
   type LanguageServerDocumentSyncGateway,
   type SessionBoundLanguageServerDocumentSyncGateway,
@@ -367,7 +362,6 @@ import {
   renderMarkdownPreview,
   type MarkdownPreviewTab,
 } from "../domain/markdownPreview";
-import { summarizeDiagnosticsByPath } from "../domain/diagnosticsSummary";
 import { applyEditorChangeRevert, type EditorChangeHunk } from "../domain/editorChangeMarkers";
 import {
   type LanguageServerRuntimeGateway,
@@ -395,7 +389,6 @@ import { emptyPhpTree, type PhpTreeGateway } from "../domain/phpTree";
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import { phpTestClassPlan, renderPhpTestSkeleton } from "../domain/phpTestGen";
 import {
-  isPhpTestRelativePath,
   phpTestPartnerMissingMessage,
   phpTestNavigationTargets,
 } from "../domain/phpTestNavigation";
@@ -445,9 +438,6 @@ import {
   type EditorDocument,
   type FileEntry,
   type IntelligenceMode,
-  type ManagedPhpactorInstallCompletionEvent,
-  type ManagedTypeScriptInstallCompletionEvent,
-  type ManagedPhpactorInstallUnsubscribeFn,
   type PhpToolAvailability,
   type WorkspaceDescriptor,
   type WorkspaceFileGateway,
@@ -1385,80 +1375,23 @@ export function useWorkbenchController(
     setRecentLocationsPanelOpen,
     updateActiveEditorPosition,
   } = useWorkbenchNavigationState({ cursorStore: editorCursorStore });
-  // Whether the active document is a PHP test file (under the tests root or a
-  // `*Test` class). Drives the "run test from gutter" glyph in EditorSurface.
-  // Computed here so the PSR-4 mapping stays in the domain/controller layer and
-  // EditorSurface only consumes a boolean gate.
-  const isActiveDocumentPhpTest = useMemo(() => {
-    if (!activeDocument || activeDocument.language !== "php" || !workspaceRoot) {
-      return false;
-    }
-
-    const psr4Roots = workspaceDescriptor?.php?.psr4Roots;
-
-    if (!psr4Roots) {
-      return false;
-    }
-
-    const relativePath = workspaceRelativePath(workspaceRoot, activeDocument.path);
-
-    if (!relativePath) {
-      return false;
-    }
-
-    return isPhpTestRelativePath(relativePath, psr4Roots);
-  }, [activeDocument, workspaceDescriptor, workspaceRoot]);
-  const isActiveDocumentJsTest = useMemo(() => {
-    if (!activeDocument || !workspaceRoot) {
-      return false;
-    }
-
-    if (!isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-      return false;
-    }
-
-    if (!workspaceDescriptor?.javaScriptTypeScript) {
-      return false;
-    }
-
-    const relativePath = workspaceRelativePath(workspaceRoot, activeDocument.path);
-
-    if (!relativePath) {
-      return false;
-    }
-
-    return isJsTestRelativePath(relativePath);
-  }, [activeDocument, workspaceDescriptor, workspaceRoot]);
-  const openDocumentPaths = useMemo(() => editorGroupsUniquePaths(editorGroups), [editorGroups]);
-  const openDocuments = useMemo(
-    () =>
-      openDocumentPaths
-        .map((path) => documents[path])
-        .filter((document): document is EditorDocument => !!document),
-    [documents, openDocumentPaths],
-  );
-  const openTabs = useMemo(
-    () =>
-      openDocumentPaths.flatMap((path) => {
-        const tab = documents[path] ?? imageTabs[path] ?? markdownPreviewTabs[path];
-        return tab ? [tab] : [];
-      }),
-    [documents, imageTabs, markdownPreviewTabs, openDocumentPaths],
-  );
-  const openMarkdownPreviews = useMemo(
-    () =>
-      openDocumentPaths
-        .map((path) => markdownPreviewTabs[path])
-        .filter((preview): preview is MarkdownPreviewTab => !!preview),
-    [markdownPreviewTabs, openDocumentPaths],
-  );
-  const hasOpenJavaScriptTypeScriptDocument = openDocuments.some(
-    (document) =>
-      isJavaScriptTypeScriptLanguageServerDocument(document) &&
-      Boolean(workspaceRoot && isSessionPathInWorkspace(workspaceRoot, document.path)),
-  );
-  const shouldAutoStartJavaScriptTypeScriptLanguageServer =
-    !!workspaceDescriptor?.javaScriptTypeScript || hasOpenJavaScriptTypeScriptDocument;
+  const {
+    isActiveDocumentJsTest,
+    isActiveDocumentPhpTest,
+    openDocumentPaths,
+    openDocuments,
+    openMarkdownPreviews,
+    openTabs,
+    shouldAutoStartJavaScriptTypeScriptLanguageServer,
+  } = useWorkbenchEditorPresentation({
+    activeDocument,
+    documents,
+    editorGroups,
+    imageTabs,
+    markdownPreviewTabs,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
   const phpIdeReadinessSignature = useMemo(() => {
     if (!workspaceRoot || !workspaceDescriptor?.php) {
       return null;
@@ -3901,219 +3834,31 @@ export function useWorkbenchController(
     ],
   );
 
-  const advanceWorkspaceCloseOwnership = useCallback(
-    (
-      path: string | null,
-      identity: WorkspaceIdentityDescriptor | null,
-    ): { generation: number; keys: string[] } => {
-      const generation = workspaceCloseOwnershipGenerationRef.current + 1;
-      workspaceCloseOwnershipGenerationRef.current = generation;
-      const rootPaths = [path, identity?.selectedPath ?? null, identity?.canonicalRoot ?? null];
-      const keys = rootPaths.flatMap((rootPath) => {
-        const rootKey = normalizedWorkspaceRootKey(rootPath);
-        if (!rootKey) {
-          return [];
-        }
-
-        workspaceCloseGenerationByRootRef.current[rootKey] =
-          (workspaceCloseGenerationByRootRef.current[rootKey] ?? 0) + 1;
-        return [`root:${rootKey}`];
-      });
-      if (identity) {
-        keys.push(`workspace:${identity.workspaceId}`);
-      }
-
-      const uniqueKeys = [...new Set(keys)];
-      for (const key of uniqueKeys) {
-        workspaceCloseOwnershipByKeyRef.current[key] = generation;
-      }
-
-      return { generation, keys: uniqueKeys };
-    },
-    [],
-  );
-
-  const invalidateWorkspaceCloseOwnership = useCallback(
-    (path: string | null, identity: WorkspaceIdentityDescriptor | null) => {
-      advanceWorkspaceCloseOwnership(path, identity);
-    },
-    [advanceWorkspaceCloseOwnership],
-  );
-
-  const beginWorkspaceClose = useCallback(
-    (rootPath: string, identity: WorkspaceIdentityDescriptor | null): WorkspaceCloseOwnership => {
-      const { generation, keys } = advanceWorkspaceCloseOwnership(rootPath, identity);
-      return {
-        isCurrent: () =>
-          keys.every((key) => workspaceCloseOwnershipByKeyRef.current[key] === generation),
-      };
-    },
-    [advanceWorkspaceCloseOwnership],
-  );
-
-  const issueOpenWorkspaceRequest = useCallback(
-    (path: string | null) => {
-      const identity = path ? (workspaceIdentityByRootRef.current[path] ?? null) : null;
-      invalidateWorkspaceCloseOwnership(path, identity);
-      const requestToken = openWorkspaceRequestTokenRef.current + 1;
-      openWorkspaceRequestTokenRef.current = requestToken;
-      openWorkspaceRequestPathRef.current = path;
-      openWorkspaceRequestInFlightTokenRef.current = requestToken;
-      pendingWorkspaceIdentityRequestTokensRef.current.add(requestToken);
-      return requestToken;
-    },
-    [invalidateWorkspaceCloseOwnership],
-  );
-
-  const completeOpenWorkspaceRequest = useCallback(
-    (requestToken: number) => {
-      pendingWorkspaceIdentityRequestTokensRef.current.delete(requestToken);
-      flushDeferredWorkspaceIdentityCleanup();
-      if (openWorkspaceRequestInFlightTokenRef.current !== requestToken) {
-        return;
-      }
-
-      openWorkspaceRequestInFlightTokenRef.current = null;
-    },
-    [flushDeferredWorkspaceIdentityCleanup],
-  );
-
-  const openWorkspacePath = useCallback(
-    (path: string, options: OpenWorkspacePathOptions = {}): Promise<void> => {
-      const requestToken = issueOpenWorkspaceRequest(path);
-      const request = (async () => {
-        const openPath = workspaceGateways.identity.openPath;
-        if (openPath) {
-          let descriptor: WorkspaceIdentityDescriptor;
-          try {
-            descriptor = await openPath.call(workspaceGateways.identity, path);
-          } catch (error) {
-            if (openWorkspaceRequestTokenRef.current === requestToken) {
-              reportError("Workspace", error);
-            }
-            return;
-          }
-
-          invalidateWorkspaceCloseOwnership(path, descriptor);
-
-          await withManagedWorkspaceIdentityLease(descriptor, async (adoptIdentity) => {
-            if (
-              !workbenchMountedRef.current ||
-              openWorkspaceRequestTokenRef.current !== requestToken
-            ) {
-              return;
-            }
-
-            await performOpenWorkspacePath(
-              descriptor.selectedPath,
-              descriptor,
-              adoptIdentity,
-              requestToken,
-              options,
-            );
-          });
-          return;
-        }
-
-        const cachedWorkspaceState = resolveCachedWorkspaceState(path);
-        const identityDescriptor =
-          workspaceIdentityByRootRef.current[path] ??
-          cachedWorkspaceState?.workspaceIdentityDescriptor ??
-          null;
-        invalidateWorkspaceCloseOwnership(path, identityDescriptor);
-        await performOpenWorkspacePath(
-          identityDescriptor?.selectedPath ?? path,
-          identityDescriptor,
-          null,
-          requestToken,
-          options,
-        );
-      })();
-
-      return request.finally(() => {
-        completeOpenWorkspaceRequest(requestToken);
-      });
-    },
-    [
-      completeOpenWorkspaceRequest,
-      issueOpenWorkspaceRequest,
-      invalidateWorkspaceCloseOwnership,
-      performOpenWorkspacePath,
-      reportError,
-      resolveCachedWorkspaceState,
-      withManagedWorkspaceIdentityLease,
-      workspaceGateways.identity,
-    ],
-  );
-
-  const openWorkspace = useCallback(async () => {
-    const requestToken = issueOpenWorkspaceRequest(null);
-    try {
-      const result = await workspaceGateways.identity.openFromPicker();
-      if (result.status === "cancelled") {
-        return;
-      }
-
-      invalidateWorkspaceCloseOwnership(result.descriptor.selectedPath, result.descriptor);
-
-      await withManagedWorkspaceIdentityLease(result.descriptor, async (adoptIdentity) => {
-        if (!workbenchMountedRef.current || openWorkspaceRequestTokenRef.current !== requestToken) {
-          return;
-        }
-
-        await performOpenWorkspacePath(
-          result.descriptor.selectedPath,
-          result.descriptor,
-          adoptIdentity,
-          requestToken,
-        );
-      });
-    } catch (error) {
-      if (openWorkspaceRequestTokenRef.current === requestToken) {
-        reportError("Workspace", error);
-      }
-    } finally {
-      completeOpenWorkspaceRequest(requestToken);
-    }
-  }, [
-    completeOpenWorkspaceRequest,
-    issueOpenWorkspaceRequest,
-    invalidateWorkspaceCloseOwnership,
+  const {
+    activateWorkspaceTab,
+    beginWorkspaceClose,
+    openWorkspace,
+    openWorkspacePath,
+    openWorkspaceRoot,
+  } = useWorkspaceOpenRequestLifecycle({
+    completeDeferredIdentityCleanup: flushDeferredWorkspaceIdentityCleanup,
+    currentWorkspaceRootRef,
+    openWorkspaceRequestInFlightTokenRef,
+    openWorkspaceRequestPathRef,
+    openWorkspaceRequestTokenRef,
+    pendingWorkspaceIdentityRequestTokensRef,
     performOpenWorkspacePath,
     reportError,
+    resolveCachedWorkspaceState,
     withManagedWorkspaceIdentityLease,
-    workspaceGateways.identity,
-  ]);
-
-  const openWorkspaceRoot = useCallback(
-    async (path: string): Promise<boolean> => {
-      await openWorkspacePath(path);
-
-      return workspaceRootKeysEqual(currentWorkspaceRootRef.current, path);
-    },
-    [openWorkspacePath],
-  );
-
-  const activateWorkspaceTab = useCallback(
-    async (path: string) => {
-      invalidateWorkspaceCloseOwnership(path, workspaceIdentityByRootRef.current[path] ?? null);
-      if (workspaceRootKeysEqual(path, workspaceRoot)) {
-        const inFlightToken = openWorkspaceRequestInFlightTokenRef.current;
-        if (
-          inFlightToken === openWorkspaceRequestTokenRef.current &&
-          !workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path)
-        ) {
-          openWorkspaceRequestTokenRef.current += 1;
-          openWorkspaceRequestPathRef.current = path;
-          openWorkspaceRequestInFlightTokenRef.current = null;
-        }
-        return;
-      }
-
-      await openWorkspacePath(path);
-    },
-    [invalidateWorkspaceCloseOwnership, openWorkspacePath, workspaceRoot],
-  );
+    workbenchMountedRef,
+    workspaceCloseGenerationByRootRef,
+    workspaceCloseOwnershipByKeyRef,
+    workspaceCloseOwnershipGenerationRef,
+    workspaceIdentityByRootRef,
+    workspaceIdentityGateway: workspaceGateways.identity,
+    workspaceRoot,
+  });
 
   useEffect(
     () => () => {
@@ -7690,600 +7435,71 @@ export function useWorkbenchController(
     workspacePathBelongsToRoot,
   });
 
-  const toggleSmartMode = useCallback(async () => {
-    const nextMode = shouldStartLanguageServer(intelligenceMode) ? "basic" : "fullSmart";
-    await setSmartMode(nextMode);
-  }, [intelligenceMode, setSmartMode]);
-
-  const toggleWorkspaceTrust = useCallback(async () => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-    const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
-    if (!requestedOwner) {
-      return;
-    }
-
-    const trustIntentCoordinator = workspaceTrustIntentCoordinatorRef.current;
-    const desiredTrust = trustIntentCoordinator.desiredTrust(requestedOwner, requestedRoot);
-    const trusted = !(desiredTrust ?? workspaceTrust?.trusted ?? false);
-    const trustIntent = trustIntentCoordinator.request(requestedOwner, requestedRoot, trusted);
-    const requestedRevision = openWorkspaceRequestTokenRef.current;
-    workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] = trustIntent.revision;
-    if (!trusted) {
-      javaScriptTypeScriptTrustAutostartRef.current = null;
-    }
-    const requestedTrustRevision = trustIntent.revision;
-    const requestIsCurrent = () => {
-      const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
-      if (openWorkspaceRequestTokenRef.current !== requestedRevision) {
-        return false;
-      }
-
-      if (!currentOwner) {
-        return false;
-      }
-
-      if (currentOwner.ownerKey !== requestedOwner.ownerKey) {
-        return false;
-      }
-
-      return (
-        workspaceRootKeysEqual(currentOwner.executionRoot, requestedOwner.executionRoot) &&
-        (workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] ?? 0) ===
-          requestedTrustRevision
-      );
-    };
-
-    try {
-      const result = await trustIntentCoordinator.persist(
-        requestedOwner.ownerKey,
-        workspaceTrustGateway,
-      );
-      if (!requestIsCurrent()) {
-        return;
-      }
-
-      const trust = result.trust;
-      setWorkspaceTrust(trust);
-      setMessage(trust.trusted ? "Workspace trusted." : "Workspace trust revoked.");
-
-      if (!trust.trusted) {
-        await stopProjectLanguageServersAfterTrustRevocation(requestedOwner);
-
-        if (!requestIsCurrent()) {
-          return;
-        }
-      }
-
-      if (trust.trusted && workspaceSettingsRef.current.javaScriptTypeScriptService === "auto") {
-        await refreshJavaScriptTypeScriptPlanAfterTrustGrant(
-          requestedOwner,
-          requestedRevision,
-          requestedTrustRevision,
-          workspaceSettingsRef.current.javaScriptTypeScriptVersion,
-        );
-
-        if (!requestIsCurrent()) {
-          return;
-        }
-      }
-
-      if (!workspaceDescriptor?.php) {
-        return;
-      }
-
-      await refreshLanguageServerPlan(requestedRoot);
-
-      if (!requestIsCurrent()) {
-        return;
-      }
-    } catch (error) {
-      if (!requestIsCurrent()) {
-        return;
-      }
-
-      reportErrorForActiveWorkspaceRoot(requestedRoot, "Workspace Trust", error);
-    }
-  }, [
-    refreshJavaScriptTypeScriptPlanAfterTrustGrant,
-    refreshLanguageServerPlan,
-    reportErrorForActiveWorkspaceRoot,
-    resolveCurrentWorkspaceRuntimeOwner,
-    stopProjectLanguageServersAfterTrustRevocation,
-    workspaceDescriptor,
-    workspaceRoot,
-    workspaceSettingsRef,
-    workspaceTrust,
-    workspaceTrustGateway,
-  ]);
-
-  const saveWorkbenchSettings = useCallback(
-    async (
-      nextAppSettings: AppSettings,
-      nextWorkspaceSettings: WorkspaceSettings,
-      nextTrusted: boolean | null,
-    ) => {
-      const requestedRoot = workspaceRoot;
-      const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
-      const requestedRevision = openWorkspaceRequestTokenRef.current;
-      const trustIntentCoordinator = workspaceTrustIntentCoordinatorRef.current;
-      const desiredTrust =
-        requestedOwner && requestedRoot
-          ? trustIntentCoordinator.desiredTrust(requestedOwner, requestedRoot)
-          : null;
-      const pendingTrustAutostart =
-        requestedOwner !== null &&
-        javaScriptTypeScriptTrustAutostartRef.current?.owner.ownerKey === requestedOwner.ownerKey;
-      const requestsTrustChange =
-        requestedOwner !== null &&
-        requestedRoot !== null &&
-        nextTrusted !== null &&
-        (nextTrusted !== (desiredTrust ?? workspaceTrust?.trusted) ||
-          (nextTrusted && pendingTrustAutostart));
-      const trustIntent =
-        requestedOwner && requestedRoot && requestsTrustChange
-          ? trustIntentCoordinator.request(requestedOwner, requestedRoot, nextTrusted as boolean)
-          : null;
-      if (requestedOwner && trustIntent) {
-        workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] = trustIntent.revision;
-        if (!nextTrusted) {
-          javaScriptTypeScriptTrustAutostartRef.current = null;
-        }
-      }
-      const requestedTrustRevision = trustIntent?.revision ?? 0;
-      const requestedRootGeneration = requestedRoot
-        ? (workspaceCloseGenerationByRootRef.current[normalizedWorkspaceRootKey(requestedRoot)] ??
-          0)
-        : null;
-      const requestIsCurrent = () => {
-        if (!requestedRoot) {
-          return false;
-        }
-
-        if (!requestedOwner) {
-          return false;
-        }
-
-        if (openWorkspaceRequestTokenRef.current !== requestedRevision) {
-          return false;
-        }
-
-        const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
-        if (!currentOwner || currentOwner.ownerKey !== requestedOwner.ownerKey) {
-          return false;
-        }
-
-        if (!workspaceRootKeysEqual(currentOwner.executionRoot, requestedOwner.executionRoot)) {
-          return false;
-        }
-
-        const currentRootGeneration =
-          workspaceCloseGenerationByRootRef.current[normalizedWorkspaceRootKey(requestedRoot)] ?? 0;
-        return (
-          currentRootGeneration === requestedRootGeneration &&
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
-          (!requestsTrustChange ||
-            (workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] ?? 0) ===
-              requestedTrustRevision)
-        );
-      };
-
-      try {
-        const previousAppSettings = appSettingsRef.current;
-        const previousWorkspaceSettings = workspaceSettingsRef.current;
-        await persistAppSettings(nextAppSettings);
-
-        if (!requestedRoot) {
-          if (!currentWorkspaceRootRef.current) {
-            setMessage("Settings saved.");
-          }
-          return;
-        }
-
-        if (!requestedOwner) {
-          return;
-        }
-
-        if (!requestIsCurrent()) {
-          return;
-        }
-
-        if (previousAppSettings.runtimePolicy !== nextAppSettings.runtimePolicy) {
-          await stopBackgroundProjectRuntimes(nextAppSettings.runtimePolicy, requestedRoot, null);
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-        }
-
-        const previousMode = intelligenceModeRef.current;
-        let nextMode = nextWorkspaceSettings.intelligenceMode;
-
-        if (nextWorkspaceSettings.intelligenceMode !== previousMode) {
-          const smartMode = await smartModeGateway.setMode(
-            workspaceIdentityDescriptor?.canonicalRoot ?? requestedRoot,
-            nextWorkspaceSettings.intelligenceMode,
-          );
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-
-          nextMode = smartMode.mode;
-        }
-
-        const resolvedWorkspaceSettings = {
-          ...nextWorkspaceSettings,
-          intelligenceMode: nextMode,
-        };
-        const shouldRefreshPhpLanguageServerPlan =
-          previousWorkspaceSettings.phpBackend !== resolvedWorkspaceSettings.phpBackend ||
-          previousWorkspaceSettings.phpactorPath !== resolvedWorkspaceSettings.phpactorPath ||
-          previousWorkspaceSettings.intelephensePath !== resolvedWorkspaceSettings.intelephensePath;
-        // Changing the git directory mappings (manual add/remove or the
-        // auto-detect toggle) must re-run discovery live, without waiting for a
-        // workspace reopen, so the mappings and the fanned-out status reflect the
-        // new configuration immediately.
-        const previousGitDirectoryMappings = previousWorkspaceSettings.gitDirectoryMappings;
-        const nextGitDirectoryMappings = resolvedWorkspaceSettings.gitDirectoryMappings;
-        const shouldRediscoverGitRepositories =
-          previousWorkspaceSettings.gitDirectoryMappingsAuto !==
-            resolvedWorkspaceSettings.gitDirectoryMappingsAuto ||
-          previousGitDirectoryMappings.length !== nextGitDirectoryMappings.length ||
-          previousGitDirectoryMappings.some(
-            (mapping, index) => mapping !== nextGitDirectoryMappings[index],
-          );
-
-        if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
-          intelligenceModeRef.current = nextMode;
-          setIntelligenceMode(nextMode);
-          autoStartedLanguageServerRootRef.current = requestedRoot;
-          await stopLanguageServerRuntime(requestedRoot);
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-        }
-
-        if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
-          autoStartedLanguageServerRootRef.current = null;
-          delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            normalizedWorkspaceRootKey(requestedRoot)
-          ];
-        }
-
-        intelligenceModeRef.current = nextMode;
-        await persistWorkspaceSettings(requestedRoot, resolvedWorkspaceSettings);
-        if (!requestIsCurrent()) {
-          return;
-        }
-
-        setIntelligenceMode(nextMode);
-
-        await applyJavaScriptTypeScriptSettingsChange({
-          previousSettings: previousWorkspaceSettings,
-          nextSettings: resolvedWorkspaceSettings,
-          rootPath: requestedRoot,
-          requestIsCurrent,
-        });
-
-        if (!requestIsCurrent()) {
-          return;
-        }
-
-        let refreshedPhpLanguageServerPlan = false;
-
-        // Saving settings can also be what flips the project into IDE mode. The
-        // open-time PHP probe is deferred in basic mode, so the first time IDE
-        // mode turns on we must run the full probe (detectPhpTools + plan
-        // refresh + managed engine notice) here too, otherwise phpTools and the
-        // install notice would stay stale. The probe already refreshes the
-        // plan, so the later PHP plan refresh branches are skipped.
-        if (
-          !shouldStartLanguageServer(previousMode) &&
-          shouldStartLanguageServer(nextMode) &&
-          workspaceDescriptor?.php
-        ) {
-          await runPhpWorkspaceProbe(requestedRoot);
-          refreshedPhpLanguageServerPlan = true;
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-        }
-
-        if (trustIntent) {
-          const result = await trustIntentCoordinator.persist(
-            requestedOwner.ownerKey,
-            workspaceTrustGateway,
-          );
-          if (!requestIsCurrent()) {
-            return;
-          }
-
-          const trust = result.trust;
-          setWorkspaceTrust(trust);
-
-          if (!trust.trusted) {
-            await stopProjectLanguageServersAfterTrustRevocation(requestedOwner);
-
-            if (!requestIsCurrent()) {
-              return;
-            }
-          }
-
-          if (trust.trusted && resolvedWorkspaceSettings.javaScriptTypeScriptService === "auto") {
-            await refreshJavaScriptTypeScriptPlanAfterTrustGrant(
-              requestedOwner,
-              requestedRevision,
-              requestedTrustRevision,
-              resolvedWorkspaceSettings.javaScriptTypeScriptVersion,
-            );
-
-            if (!requestIsCurrent()) {
-              return;
-            }
-          }
-
-          if (workspaceDescriptor?.php) {
-            await refreshLanguageServerPlan(requestedRoot);
-            refreshedPhpLanguageServerPlan = true;
-
-            if (!requestIsCurrent()) {
-              return;
-            }
-          }
-        }
-
-        if (
-          shouldRefreshPhpLanguageServerPlan &&
-          workspaceDescriptor?.php &&
-          !refreshedPhpLanguageServerPlan
-        ) {
-          autoStartedLanguageServerRootRef.current = null;
-          delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            normalizedWorkspaceRootKey(requestedRoot)
-          ];
-          await refreshLanguageServerPlan(requestedRoot);
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-        }
-
-        if (!shouldIndexWorkspace(previousMode) && shouldIndexWorkspace(nextMode)) {
-          await startInitialIndexScan(requestedRoot);
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-        }
-
-        if (shouldIndexWorkspace(previousMode) && !shouldIndexWorkspace(nextMode)) {
-          await clearWorkspaceIndex(requestedRoot);
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-        }
-
-        if (shouldRediscoverGitRepositories) {
-          await runGitRepositoryDiscovery(requestedRoot, resolvedWorkspaceSettings);
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-        }
-
-        if (!requestIsCurrent()) {
-          return;
-        }
-
-        setMessage("Settings saved.");
-      } catch (error) {
-        if (requestedRoot && !requestIsCurrent()) {
-          return;
-        }
-
-        reportErrorForActiveWorkspaceRoot(requestedRoot, "Settings", error);
-      }
-    },
-    [
+  const { saveWorkbenchSettings, toggleSmartMode, toggleWorkspaceTrust } =
+    useWorkbenchSettingsCommands({
       applyJavaScriptTypeScriptSettingsChange,
+      appSettingsRef,
+      autoStartedLanguageServerRootRef,
       clearWorkspaceIndex,
+      currentWorkspaceRootRef,
+      intelligenceMode,
+      intelligenceModeRef,
+      javaScriptTypeScriptTrustAutostartRef,
+      openWorkspaceRequestTokenRef,
       persistAppSettings,
       persistWorkspaceSettings,
-      refreshLanguageServerPlan,
+      phpLanguageServerAutostartAttemptsByRootRef,
       refreshJavaScriptTypeScriptPlanAfterTrustGrant,
+      refreshLanguageServerPlan,
       reportErrorForActiveWorkspaceRoot,
       resolveCurrentWorkspaceRuntimeOwner,
       runGitRepositoryDiscovery,
       runPhpWorkspaceProbe,
+      setIntelligenceMode,
+      setMessage,
+      setSmartMode,
+      setWorkspaceTrust,
       smartModeGateway,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
       stopLanguageServerRuntime,
       stopProjectLanguageServersAfterTrustRevocation,
+      workspaceCloseGenerationByRootRef,
       workspaceDescriptor,
       workspaceIdentityDescriptor,
       workspaceRoot,
+      workspaceSettingsRef,
       workspaceTrust,
       workspaceTrustGateway,
-    ],
-  );
+      workspaceTrustIntentCoordinatorRef,
+      workspaceTrustRevisionByOwnerRef,
+    });
 
-  const installManagedPhpactor = useCallback(async () => {
-    if (!workspaceRoot || !workspaceDescriptor?.php) {
-      return;
-    }
-
-    if (
-      installingManagedPhpactor &&
-      workspaceRootKeysEqual(installingManagedPhpactorRootRef.current, workspaceRoot)
-    ) {
-      return;
-    }
-
-    setInstallingManagedPhpactor(true);
-    const targetWorkspaceRoot = workspaceRoot;
-    installingManagedPhpactorRootRef.current = targetWorkspaceRoot;
-
-    try {
-      // Non-blocking: this only schedules the managed install on a background
-      // thread and resolves once the work has been queued. The long-running
-      // composer steps run off the UI thread and completion (success/failure)
-      // is delivered through the install-completion subscription below.
-      await phpToolGateway.installManagedPhpactor(targetWorkspaceRoot);
-    } catch (error) {
-      if (workspaceRootKeysEqual(installingManagedPhpactorRootRef.current, targetWorkspaceRoot)) {
-        installingManagedPhpactorRootRef.current = null;
-        setInstallingManagedPhpactor(false);
-      }
-
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
-        reportLanguageServerError(error);
-      }
-    }
-  }, [
+  const {
+    handleManagedPhpactorInstallCompletion,
+    handleManagedTypeScriptInstallCompletion,
+    installManagedPhpactor,
+    installManagedTypeScriptLanguageServer,
+  } = useManagedLanguageServerInstallCommands({
+    currentWorkspaceRootRef,
     installingManagedPhpactor,
+    installingManagedPhpactorRootRef,
+    installingManagedTypeScriptLanguageServer,
+    installingManagedTypeScriptLanguageServerRootRef,
     phpToolGateway,
+    refreshJavaScriptTypeScriptLanguageServerPlan,
+    refreshLanguageServerPlan,
+    reportJavaScriptTypeScriptLanguageServerError,
     reportLanguageServerError,
+    setInstallingManagedPhpactor,
+    setInstallingManagedTypeScriptLanguageServer,
+    setLanguageServerSetupOpen,
+    setMessage,
+    setNotices,
+    setPhpTools,
     workspaceDescriptor,
     workspaceRoot,
-  ]);
-
-  const handleManagedPhpactorInstallCompletion = useCallback(
-    async (event: ManagedPhpactorInstallCompletionEvent) => {
-      const targetWorkspaceRoot = event.root;
-
-      // Per-root guard: ignore stale completions for a root that is no longer
-      // the one we are installing for (e.g. the user switched workspaces).
-      if (!workspaceRootKeysEqual(installingManagedPhpactorRootRef.current, targetWorkspaceRoot)) {
-        return;
-      }
-
-      installingManagedPhpactorRootRef.current = null;
-      setInstallingManagedPhpactor(false);
-
-      const installFailedForActiveWorkspace =
-        event.error && workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot);
-
-      if (installFailedForActiveWorkspace) {
-        reportLanguageServerError(event.error);
-        return;
-      }
-
-      if (event.error) {
-        return;
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
-        return;
-      }
-
-      try {
-        const tools = await phpToolGateway.detectPhpTools(targetWorkspaceRoot);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
-          return;
-        }
-
-        if (tools.phpactor) {
-          setNotices((current) =>
-            replaceWorkbenchNoticeGroup(current, `phpactor-setup:${targetWorkspaceRoot}`, []),
-          );
-        }
-
-        setPhpTools(tools);
-        await refreshLanguageServerPlan(targetWorkspaceRoot);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
-          return;
-        }
-
-        setLanguageServerSetupOpen(false);
-        setMessage("Installed managed PHP IDE engine.");
-      } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
-          reportLanguageServerError(error);
-        }
-      }
-    },
-    [phpToolGateway, refreshLanguageServerPlan, reportLanguageServerError],
-  );
-
-  const installManagedTypeScriptLanguageServer = useCallback(async () => {
-    if (!workspaceRoot || !phpToolGateway.installManagedTypeScriptLanguageServer) return;
-    if (
-      installingManagedTypeScriptLanguageServer &&
-      workspaceRootKeysEqual(
-        installingManagedTypeScriptLanguageServerRootRef.current,
-        workspaceRoot,
-      )
-    ) {
-      return;
-    }
-
-    const targetWorkspaceRoot = workspaceRoot;
-    installingManagedTypeScriptLanguageServerRootRef.current = targetWorkspaceRoot;
-    setInstallingManagedTypeScriptLanguageServer(true);
-    try {
-      await phpToolGateway.installManagedTypeScriptLanguageServer(targetWorkspaceRoot);
-    } catch (error) {
-      if (
-        workspaceRootKeysEqual(
-          installingManagedTypeScriptLanguageServerRootRef.current,
-          targetWorkspaceRoot,
-        )
-      ) {
-        installingManagedTypeScriptLanguageServerRootRef.current = null;
-        setInstallingManagedTypeScriptLanguageServer(false);
-
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, targetWorkspaceRoot)) {
-          reportJavaScriptTypeScriptLanguageServerError(error);
-        }
-      }
-    }
-  }, [
-    installingManagedTypeScriptLanguageServer,
-    phpToolGateway,
-    reportJavaScriptTypeScriptLanguageServerError,
-    workspaceRoot,
-  ]);
-
-  const handleManagedTypeScriptInstallCompletion = useCallback(
-    async (event: ManagedTypeScriptInstallCompletionEvent) => {
-      if (
-        !workspaceRootKeysEqual(
-          installingManagedTypeScriptLanguageServerRootRef.current,
-          event.root,
-        )
-      )
-        return;
-      installingManagedTypeScriptLanguageServerRootRef.current = null;
-      setInstallingManagedTypeScriptLanguageServer(false);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) return;
-      if (event.error) {
-        reportJavaScriptTypeScriptLanguageServerError(event.error);
-        return;
-      }
-      try {
-        await refreshJavaScriptTypeScriptLanguageServerPlan(event.root);
-      } catch (error) {
-        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) {
-          reportJavaScriptTypeScriptLanguageServerError(error);
-        }
-        return;
-      }
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) {
-        setMessage("Installed managed TypeScript IDE engine.");
-      }
-    },
-    [refreshJavaScriptTypeScriptLanguageServerPlan, reportJavaScriptTypeScriptLanguageServerError],
-  );
+  });
 
   const {
     formatActiveFile: formatActiveFileWithPint,
@@ -8765,65 +7981,12 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  useEffect(() => {
-    let active = true;
-    let unsubscribe: ManagedPhpactorInstallUnsubscribeFn | null = null;
-
-    phpToolGateway
-      .subscribeManagedPhpactorInstall((event) => {
-        if (!active) {
-          return;
-        }
-
-        void handleManagedPhpactorInstallCompletion(event);
-      })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unsubscribe = dispose;
-      })
-      .catch((error) => {
-        if (!active) {
-          return;
-        }
-
-        reportError("Language Server", error);
-      });
-
-    return () => {
-      active = false;
-      unsubscribe?.();
-    };
-  }, [handleManagedPhpactorInstallCompletion, phpToolGateway, reportError]);
-
-  useEffect(() => {
-    if (!phpToolGateway.subscribeManagedTypeScriptLanguageServerInstall) return;
-    let active = true;
-    let unsubscribe: (() => void) | null = null;
-    void phpToolGateway
-      .subscribeManagedTypeScriptLanguageServerInstall((event) => {
-        if (active) {
-          void handleManagedTypeScriptInstallCompletion(event);
-        }
-      })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-        unsubscribe = dispose;
-      })
-      .catch((error) => {
-        if (active) reportError("JavaScript/TypeScript", error);
-      });
-    return () => {
-      active = false;
-      unsubscribe?.();
-    };
-  }, [handleManagedTypeScriptInstallCompletion, phpToolGateway, reportError]);
+  useManagedLanguageServerInstallSubscriptions({
+    handleManagedPhpactorInstallCompletion,
+    handleManagedTypeScriptInstallCompletion,
+    phpToolGateway,
+    reportError,
+  });
 
   useLanguageServerDiagnosticsSubscriptions({
     workspaceRoot,
@@ -8973,146 +8136,29 @@ export function useWorkbenchController(
     [resetJavaScriptTypeScriptLanguageServerDocuments, resetLanguageServerDocuments],
   );
 
-  const fileStructureOutline = useMemo(() => {
-    if (!activeDocument) {
-      return null;
-    }
-
-    if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-      return javaScriptTypeScriptFileStructureOutlineForDocument(activeDocument);
-    }
-
-    const currentOutline = phpFileOutlinesByPath[activeDocument.path] ?? null;
-
-    if (fileStructureScope === "current") {
-      return currentOutline;
-    }
-
-    return mergePhpFileOutlines(
-      currentOutline,
-      phpInheritedFileOutlinesByPath[activeDocument.path] ?? null,
-    );
-  }, [
+  const {
+    diagnosticsSummary,
+    effectiveNotices,
+    fileStructureCanIncludeInheritedMembers,
+    fileStructureLoading,
+    fileStructureOutline,
+    mergedLanguageServerDiagnosticsByPath,
+  } = useWorkbenchDiagnosticPresentation({
     activeDocument,
     fileStructureScope,
+    frameworkDiagnosticsByPath,
+    isExternallyRemovedDocumentPath,
+    javaScriptTypeScriptDiagnosticsByPath,
+    javaScriptTypeScriptFileStructureLoadingForDocument,
     javaScriptTypeScriptFileStructureOutlineForDocument,
+    languageServerDiagnosticsByPath,
+    loadingInheritedPhpFileOutlinePaths,
+    loadingPhpFileOutlinePaths,
+    notices,
     phpFileOutlinesByPath,
     phpInheritedFileOutlinesByPath,
-  ]);
-  const fileStructureLoading = Boolean(
-    activeDocument &&
-    (javaScriptTypeScriptFileStructureLoadingForDocument(activeDocument) ||
-      loadingPhpFileOutlinePaths.has(activeDocument.path) ||
-      (fileStructureScope === "inherited" &&
-        loadingInheritedPhpFileOutlinePaths.has(activeDocument.path))),
-  );
-  const fileStructureCanIncludeInheritedMembers =
-    !!activeDocument && isLanguageServerDocument(activeDocument);
-  const activeDotenvDiagnosticsByPath = useMemo(() => {
-    if (!activeDocument || activeDocument.language !== "dotenv") {
-      return {};
-    }
-
-    if (isExternallyRemovedDocumentPath(activeDocument.path)) {
-      return {};
-    }
-
-    const diagnostics = dotenvDiagnosticsFromSource(activeDocument.content);
-
-    if (diagnostics.length === 0) {
-      return {};
-    }
-
-    return {
-      [activeDocument.path]: diagnostics,
-    };
-  }, [activeDocument, isExternallyRemovedDocumentPath]);
-  const mergedLanguageServerDiagnosticsByPath = useMemo(
-    () =>
-      mergeDiagnosticsByPath(
-        languageServerDiagnosticsByPath,
-        javaScriptTypeScriptDiagnosticsByPath,
-        frameworkDiagnosticsByPath,
-        activeDotenvDiagnosticsByPath,
-      ),
-    [
-      activeDotenvDiagnosticsByPath,
-      javaScriptTypeScriptDiagnosticsByPath,
-      languageServerDiagnosticsByPath,
-      frameworkDiagnosticsByPath,
-    ],
-  );
-  const activePhpLocalDiagnosticsByPath = useMemo(() => {
-    if (!activeDocument || activeDocument.language !== "php") {
-      return {};
-    }
-
-    if (!phpLocalDiagnosticFileIdentity(activeDocument.path)) {
-      return {};
-    }
-
-    if (isExternallyRemovedDocumentPath(activeDocument.path)) {
-      return {};
-    }
-
-    const diagnostics = localPhpDiagnosticsFromSource(activeDocument.content, []);
-
-    if (diagnostics.length === 0) {
-      return {};
-    }
-
-    return {
-      [activeDocument.path]: diagnostics,
-    };
-  }, [activeDocument, isExternallyRemovedDocumentPath]);
-  const effectivePhpLocalDiagnosticsByPath = useMemo(() => {
-    if (!activeDocument || activeDocument.language !== "php") {
-      return phpLocalDiagnosticsByPath;
-    }
-
-    if (activeDocument.path in activePhpLocalDiagnosticsByPath) {
-      return {
-        ...phpLocalDiagnosticsByPath,
-        ...activePhpLocalDiagnosticsByPath,
-      };
-    }
-
-    if (!(activeDocument.path in phpLocalDiagnosticsByPath)) {
-      return phpLocalDiagnosticsByPath;
-    }
-
-    const next = { ...phpLocalDiagnosticsByPath };
-    delete next[activeDocument.path];
-    return next;
-  }, [activeDocument, activePhpLocalDiagnosticsByPath, phpLocalDiagnosticsByPath]);
-  const activePhpLocalDiagnosticNotices = useMemo(
-    () => buildActivePhpLocalDiagnosticNotices(activeDocument, activePhpLocalDiagnosticsByPath),
-    [activeDocument, activePhpLocalDiagnosticsByPath],
-  );
-  const activeDotenvDiagnosticNotices = useMemo(
-    () => buildActiveDotenvLocalDiagnosticNotices(activeDocument, activeDotenvDiagnosticsByPath),
-    [activeDocument, activeDotenvDiagnosticsByPath],
-  );
-  const effectiveNotices = useMemo(
-    () =>
-      composeEffectiveDiagnosticNotices({
-        activeDocument,
-        activeDotenvDiagnosticNotices,
-        activePhpLocalDiagnosticNotices,
-        notices,
-      }),
-    [activeDocument, activeDotenvDiagnosticNotices, activePhpLocalDiagnosticNotices, notices],
-  );
-  const diagnosticsSummary = useMemo(
-    () =>
-      summarizeDiagnosticsByPath(
-        mergeDiagnosticsByPath(
-          mergedLanguageServerDiagnosticsByPath,
-          effectivePhpLocalDiagnosticsByPath,
-        ),
-      ),
-    [effectivePhpLocalDiagnosticsByPath, mergedLanguageServerDiagnosticsByPath],
-  );
+    phpLocalDiagnosticsByPath,
+  });
   const reportCommandError = useCallback(
     (error: unknown) => reportErrorForActiveWorkspaceRoot(workspaceRoot, "Command", error),
     [reportErrorForActiveWorkspaceRoot, workspaceRoot],
