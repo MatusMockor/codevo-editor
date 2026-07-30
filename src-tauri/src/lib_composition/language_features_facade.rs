@@ -417,6 +417,7 @@ pub(crate) fn workspace_did_change_configuration(
     settings: Value,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
+    validate_configuration_command_settings(&settings)?;
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.did_change_configuration(settings);
 
@@ -459,6 +460,7 @@ pub(crate) fn javascript_typescript_workspace_did_change_configuration(
     settings: Value,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
+    validate_configuration_command_settings(&settings)?;
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.did_change_configuration(
         javascript_typescript_did_change_configuration_settings(&settings),
@@ -499,6 +501,56 @@ pub(crate) fn javascript_typescript_did_change_configuration_settings(settings: 
     }
 
     notification_settings
+}
+
+fn validate_configuration_command_settings(settings: &Value) -> Result<(), String> {
+    crate::lsp_session::validate_server_configuration_settings(settings)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod configuration_command_tests {
+    use super::*;
+
+    #[test]
+    fn configuration_command_rejects_oversized_settings_before_notification_amplification() {
+        let settings = json!({
+            "payload": (0..17)
+                .map(|_| "x".repeat(16 * 1024))
+                .collect::<Vec<_>>(),
+        });
+
+        let error = validate_configuration_command_settings(&settings)
+            .expect_err("oversized settings must fail closed");
+
+        assert_eq!(
+            error,
+            "Language server settings exceed 262144 serialized bytes."
+        );
+    }
+
+    #[test]
+    fn configuration_command_rejects_deep_or_wide_settings() {
+        let mut deep = Value::Null;
+        for _ in 0..17 {
+            deep = json!({ "nested": deep });
+        }
+        assert_eq!(
+            validate_configuration_command_settings(&deep),
+            Err("Language server settings exceed depth 16.".to_string())
+        );
+
+        let wide = json!({
+            "values": Value::Array((0..257).map(|_| Value::Null).collect()),
+        });
+        assert_eq!(
+            validate_configuration_command_settings(&wide),
+            Err(
+                "Language server settings contain more than 256 items in one container."
+                    .to_string()
+            )
+        );
+    }
 }
 
 #[tauri::command]
@@ -1093,6 +1145,8 @@ pub(crate) async fn javascript_typescript_text_document_range_semantic_tokens(
 pub(crate) async fn text_document_signature_help(
     root_path: String,
     position: TextDocumentPosition,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerSignatureHelp>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
@@ -1102,9 +1156,15 @@ pub(crate) async fn text_document_signature_help(
         position,
         context: None,
     });
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let Some(result) = super::language_runtime_facade::send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     else {
         return Ok(None);
     };

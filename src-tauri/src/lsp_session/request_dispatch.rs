@@ -164,6 +164,8 @@ pub(super) struct ExactSessionNotificationTransport {
 struct CancellationTransportAuthority {
     active: AtomicBool,
     failure_task_spawner: Arc<dyn CancellationFailureTaskSpawner>,
+    failure_tasks: Mutex<Vec<thread::JoinHandle<()>>>,
+    failure_reporter: Arc<dyn Fn(String) + Send + Sync>,
     #[cfg(test)]
     failure_after_check_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     killer: super::SharedProcessKiller,
@@ -175,9 +177,14 @@ struct CancellationTransportAuthority {
 }
 
 impl CancellationTransportAuthority {
-    fn revoke(&self) {
+    fn revoke_for_cleanup(&self) {
         self.revoked.store(true, Ordering::Release);
         self.active.store(false, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    fn revoke(&self) {
+        self.revoke_for_cleanup();
         let _publication = self
             .publication
             .lock()
@@ -192,10 +199,10 @@ impl CancellationTransportAuthority {
         if self.revoked.load(Ordering::Acquire) || !self.active.swap(false, Ordering::AcqRel) {
             return;
         }
-        self.finish_claimed_failure(error);
+        self.finish_claimed_failure(error, true);
     }
 
-    fn finish_claimed_failure(&self, error: &io::Error) {
+    fn finish_claimed_failure(&self, error: &io::Error, terminate_off_caller: bool) {
         if self.revoked.load(Ordering::Acquire) {
             return;
         }
@@ -216,7 +223,27 @@ impl CancellationTransportAuthority {
                 self.server_label, self.session_id
             ),
         );
-        super::terminate_process(&self.killer);
+        (self.failure_reporter)(format!(
+            "{} cancellation transport failed: {error}",
+            self.server_label
+        ));
+        let retained = if terminate_off_caller {
+            match super::terminate_process(&self.killer) {
+                Ok(()) => Ok(()),
+                Err(_) => super::retain_process_termination(Arc::clone(&self.killer)),
+            }
+        } else {
+            super::retain_process_termination(Arc::clone(&self.killer))
+        };
+        if let Err(retain_error) = retained {
+            super::append_runtime_log(
+                &self.log,
+                &format!(
+                    "{} session {} durable cancellation cleanup failed: {retain_error}\n",
+                    self.server_label, self.session_id
+                ),
+            );
+        }
     }
 
     fn schedule_unhealthy(self: &Arc<Self>, error: io::Error) {
@@ -227,6 +254,10 @@ impl CancellationTransportAuthority {
         let error_kind = error.kind();
         let error_message = error.to_string();
         let task_name = format!("lsp-cancel-failure-{}", self.session_id);
+        let mut failure_tasks = self
+            .failure_tasks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let spawn_result = self.failure_task_spawner.spawn(
             task_name,
             Box::new(move || {
@@ -234,34 +265,50 @@ impl CancellationTransportAuthority {
                     .publication
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                authority.finish_claimed_failure(&io::Error::new(error_kind, error_message));
+                authority.finish_claimed_failure(&io::Error::new(error_kind, error_message), true);
             }),
         );
-        if let Err(spawn_error) = spawn_result {
-            // OS thread creation failure is rare, but cancellation saturation
-            // must still fail closed. The caller already owns the exact
-            // generation authority, so synchronously kill only that transport.
-            let _publication = self
-                .publication
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            self.finish_claimed_failure(&io::Error::new(
-                error.kind(),
-                format!("{error}; failed to dispatch cancellation failure task: {spawn_error}"),
-            ));
+        match spawn_result {
+            Ok(handle) => failure_tasks.push(handle),
+            Err(spawn_error) => {
+                // OS thread creation failure is rare, but cancellation saturation
+                // must still fail closed. The caller already owns the exact
+                // generation authority, so synchronously kill only that transport.
+                let _publication = self
+                    .publication
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                self.finish_claimed_failure(
+                    &io::Error::new(
+                        error.kind(),
+                        format!(
+                            "{error}; failed to dispatch cancellation failure task: {spawn_error}"
+                        ),
+                    ),
+                    false,
+                );
+            }
         }
     }
 }
 
 pub(super) trait CancellationFailureTaskSpawner: Send + Sync {
-    fn spawn(&self, name: String, task: Box<dyn FnOnce() + Send + 'static>) -> io::Result<()>;
+    fn spawn(
+        &self,
+        name: String,
+        task: Box<dyn FnOnce() + Send + 'static>,
+    ) -> io::Result<thread::JoinHandle<()>>;
 }
 
 struct ThreadCancellationFailureTaskSpawner;
 
 impl CancellationFailureTaskSpawner for ThreadCancellationFailureTaskSpawner {
-    fn spawn(&self, name: String, task: Box<dyn FnOnce() + Send + 'static>) -> io::Result<()> {
-        thread::Builder::new().name(name).spawn(task).map(|_| ())
+    fn spawn(
+        &self,
+        name: String,
+        task: Box<dyn FnOnce() + Send + 'static>,
+    ) -> io::Result<thread::JoinHandle<()>> {
+        thread::Builder::new().name(name).spawn(task)
     }
 }
 
@@ -272,17 +319,20 @@ impl CancellationTransport {
         killer: super::SharedProcessKiller,
         log: super::RuntimeLog,
         server_label: &'static str,
+        failure_reporter: Arc<dyn Fn(String) + Send + Sync>,
     ) -> io::Result<Arc<Self>> {
-        Self::start_with_failure_task_spawner(
+        Self::start_with_failure_components(
             session_id,
             stdin,
             killer,
             log,
             server_label,
             Arc::new(ThreadCancellationFailureTaskSpawner),
+            failure_reporter,
         )
     }
 
+    #[cfg(test)]
     pub(super) fn start_with_failure_task_spawner(
         session_id: u64,
         stdin: Arc<SessionMessageWriter>,
@@ -291,10 +341,32 @@ impl CancellationTransport {
         server_label: &'static str,
         failure_task_spawner: Arc<dyn CancellationFailureTaskSpawner>,
     ) -> io::Result<Arc<Self>> {
+        Self::start_with_failure_components(
+            session_id,
+            stdin,
+            killer,
+            log,
+            server_label,
+            failure_task_spawner,
+            Arc::new(|_| {}),
+        )
+    }
+
+    fn start_with_failure_components(
+        session_id: u64,
+        stdin: Arc<SessionMessageWriter>,
+        killer: super::SharedProcessKiller,
+        log: super::RuntimeLog,
+        server_label: &'static str,
+        failure_task_spawner: Arc<dyn CancellationFailureTaskSpawner>,
+        failure_reporter: Arc<dyn Fn(String) + Send + Sync>,
+    ) -> io::Result<Arc<Self>> {
         let (sender, receiver) = mpsc::sync_channel(MAX_QUEUED_CANCELLATIONS_PER_SESSION);
         let authority = Arc::new(CancellationTransportAuthority {
             active: AtomicBool::new(true),
             failure_task_spawner,
+            failure_tasks: Mutex::new(Vec::new()),
+            failure_reporter,
             #[cfg(test)]
             failure_after_check_hook: Mutex::new(None),
             killer,
@@ -402,20 +474,41 @@ impl CancellationTransport {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn revoke(&self) {
         self.authority.revoke();
+        for worker in self.take_workers_for_cleanup() {
+            let _ = worker.join();
+        }
+    }
+
+    pub(super) fn revoke_for_cleanup(&self) -> Vec<thread::JoinHandle<()>> {
+        self.authority.revoke_for_cleanup();
+        self.take_workers_for_cleanup()
+    }
+
+    fn take_workers_for_cleanup(&self) -> Vec<thread::JoinHandle<()>> {
         self.sender
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
+        let mut workers = Vec::new();
         if let Some(worker) = self
             .worker
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
         {
-            let _ = worker.join();
+            workers.push(worker);
         }
+        workers.append(
+            &mut self
+                .authority
+                .failure_tasks
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        workers
     }
 
     #[cfg(test)]
@@ -559,19 +652,15 @@ impl ExactSessionNotificationTransport {
             })?
     }
 
-    pub(super) fn revoke(&self) {
+    pub(super) fn revoke_for_cleanup(&self) -> Option<thread::JoinHandle<()>> {
         self.sender
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
-        if let Some(worker) = self
-            .worker
+        self.worker
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
-        {
-            let _ = worker.join();
-        }
     }
 }
 

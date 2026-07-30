@@ -18,8 +18,13 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs::File,
     path::Component,
-    sync::Mutex,
+    sync::{atomic::AtomicU64, Mutex},
 };
+
+#[path = "workspace_registry/registration.rs"]
+pub(crate) mod registration;
+#[path = "workspace_registry/unregister.rs"]
+mod unregister;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const MAX_REGISTERED_PATHS_PER_WORKSPACE: usize = 128;
@@ -104,9 +109,23 @@ pub struct ManagedWorkspaceDescriptor {
 struct ManagedWorkspace {
     descriptor: ManagedWorkspaceDescriptor,
     registered_paths: BTreeSet<PathBuf>,
+    registration_admissions: HashMap<u64, RegistrationAdmission>,
+    latest_admission_token: u64,
     root: File,
+    unregister_generation: Option<u64>,
     #[cfg(test)]
     drop_hook: Option<Box<dyn FnOnce() + Send>>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct RegistrationAdmission {
+    added_registered_paths: BTreeSet<PathBuf>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct RegisteredPathOwner {
+    workspace_id: WorkspaceId,
+    admission_token: u64,
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -123,173 +142,18 @@ pub struct WorkspaceRegistry {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     workspaces: Mutex<HashMap<WorkspaceId, ManagedWorkspace>>,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    path_owners: Mutex<HashMap<PathBuf, WorkspaceId>>,
+    path_owners: Mutex<HashMap<PathBuf, RegisteredPathOwner>>,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     operations: Mutex<()>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    next_registration_token: AtomicU64,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    next_unregister_generation: AtomicU64,
 }
 
 impl WorkspaceRegistry {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub(crate) fn register(
-        &self,
-        selected_root: impl AsRef<Path>,
-    ) -> io::Result<ManagedWorkspaceDescriptor> {
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            let _ = selected_root;
-            return Err(unsupported_platform());
-        }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        {
-            self.register_with_hook(selected_root.as_ref(), || Ok(()))
-        }
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn register_with_hook<F>(
-        &self,
-        selected_root: &Path,
-        post_open: F,
-    ) -> io::Result<ManagedWorkspaceDescriptor>
-    where
-        F: FnOnce() -> io::Result<()>,
-    {
-        let _operation = self.lock_operations()?;
-        // Following the selected root is allowed only here. Every later access starts at this FD.
-        let root = open_selected_root(selected_root)?;
-        post_open()?;
-        let canonical_root_path = opened_root_path(&root)?;
-        let selected_path = normalize_registered_path(selected_root)?;
-        let canonical_path = normalize_registered_path(&canonical_root_path)?;
-        let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
-        let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
-        let existing_id = workspaces.iter().find_map(|(workspace_id, workspace)| {
-            (workspace.descriptor.canonical_root_path == canonical_root_path)
-                .then(|| workspace_id.clone())
-        });
-        let workspace_id = match existing_id {
-            Some(workspace_id) => workspace_id,
-            None => random_workspace_id()?,
-        };
-        let mut assigned_paths = BTreeSet::from([selected_path, canonical_path]);
-        if let Some(existing) = workspaces.get(&workspace_id) {
-            assigned_paths.extend(existing.registered_paths.iter().cloned());
-        }
-        if assigned_paths.len() > MAX_REGISTERED_PATHS_PER_WORKSPACE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "workspace registered-path limit exceeded",
-            ));
-        }
-        let new_global_paths = assigned_paths
-            .iter()
-            .filter(|path| !path_owners.contains_key(*path))
-            .count();
-        if path_owners.len().saturating_add(new_global_paths) > MAX_REGISTERED_PATHS_GLOBAL {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "global workspace registered-path limit exceeded",
-            ));
-        }
-        for path in &assigned_paths {
-            let Some(previous_id) = path_owners.get(path) else {
-                continue;
-            };
-            if previous_id == &workspace_id {
-                continue;
-            }
-            let previous = workspaces.get(previous_id).ok_or_else(unknown_workspace)?;
-            if normalize_registered_path(&previous.descriptor.canonical_root_path)? == *path {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "canonical workspace path is already owned by another retained identity",
-                ));
-            }
-        }
-        for path in &assigned_paths {
-            if let Some(previous_id) = path_owners.insert(path.clone(), workspace_id.clone()) {
-                if previous_id != workspace_id {
-                    if let Some(previous) = workspaces.get_mut(&previous_id) {
-                        previous.registered_paths.remove(path);
-                    }
-                }
-            }
-        }
-        if let Some(existing) = workspaces.get_mut(&workspace_id) {
-            existing.registered_paths = assigned_paths;
-            return Ok(ManagedWorkspaceDescriptor {
-                workspace_id,
-                selected_root_path: selected_root.to_path_buf(),
-                canonical_root_path,
-                case_sensitive: existing.descriptor.case_sensitive,
-                unicode_normalization_policy: existing
-                    .descriptor
-                    .unicode_normalization_policy
-                    .clone(),
-            });
-        }
-        let descriptor = ManagedWorkspaceDescriptor {
-            workspace_id,
-            selected_root_path: selected_root.to_path_buf(),
-            canonical_root_path,
-            case_sensitive: detect_case_sensitivity(&root),
-            unicode_normalization_policy: detect_unicode_policy(&root),
-        };
-        workspaces.insert(
-            descriptor.workspace_id.clone(),
-            ManagedWorkspace {
-                descriptor: descriptor.clone(),
-                registered_paths: assigned_paths,
-                root,
-                #[cfg(test)]
-                drop_hook: None,
-            },
-        );
-        Ok(descriptor)
-    }
-
-    pub fn unregister(&self, workspace_id: &WorkspaceId) -> io::Result<()> {
-        self.unregister_after(workspace_id, |_| Ok(()))
-    }
-
-    pub(crate) fn unregister_after<F>(
-        &self,
-        workspace_id: &WorkspaceId,
-        before_remove: F,
-    ) -> io::Result<()>
-    where
-        F: FnOnce(&ManagedWorkspaceDescriptor) -> io::Result<()>,
-    {
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            let _ = workspace_id;
-            return Err(unsupported_platform());
-        }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        // Revokes future registry operations. Files already returned or root FDs already cloned
-        // by an in-flight open intentionally retain their normal OS-handle lifetime.
-        {
-            let _operation = self.lock_operations()?;
-            let descriptor = self.descriptor(workspace_id)?;
-            before_remove(&descriptor)?;
-            let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
-            let mut path_owners = self.path_owners.lock().map_err(lock_error)?;
-            let removed = workspaces
-                .remove(workspace_id)
-                .ok_or_else(unknown_workspace)?;
-            for path in &removed.registered_paths {
-                if path_owners.get(path) == Some(workspace_id) {
-                    path_owners.remove(path);
-                }
-            }
-            drop(path_owners);
-            drop(workspaces);
-            drop(removed);
-            Ok(())
-        }
     }
 
     pub(crate) fn descriptor_for_registered_path(
@@ -305,11 +169,12 @@ impl WorkspaceRegistry {
         let registered_path = normalize_registered_path(path)?;
         let workspaces = self.workspaces.lock().map_err(lock_error)?;
         let path_owners = self.path_owners.lock().map_err(lock_error)?;
-        let workspace_id = path_owners
+        let owner = path_owners
             .get(&registered_path)
             .ok_or_else(unknown_workspace)?;
         workspaces
-            .get(workspace_id)
+            .get(&owner.workspace_id)
+            .filter(|workspace| workspace.unregister_generation.is_none())
             .map(|workspace| workspace.descriptor.clone())
             .ok_or_else(unknown_workspace)
     }
@@ -325,6 +190,7 @@ impl WorkspaceRegistry {
             .lock()
             .map_err(lock_error)?
             .get(workspace_id)
+            .filter(|workspace| workspace.unregister_generation.is_none())
             .map(|workspace| workspace.descriptor.clone())
             .ok_or_else(unknown_workspace)
     }
@@ -359,6 +225,7 @@ impl WorkspaceRegistry {
         let workspaces = self.workspaces.lock().map_err(lock_error)?;
         workspaces
             .get(workspace_id)
+            .filter(|workspace| workspace.unregister_generation.is_none())
             .ok_or_else(unknown_workspace)?
             .root
             .try_clone()
@@ -373,8 +240,9 @@ impl WorkspaceRegistry {
         let workspace = workspaces
             .values()
             .find(|workspace| {
-                workspace.descriptor.selected_root_path == root_path
-                    || workspace.descriptor.canonical_root_path == root_path
+                workspace.unregister_generation.is_none()
+                    && (workspace.descriptor.selected_root_path == root_path
+                        || workspace.descriptor.canonical_root_path == root_path)
             })
             .ok_or_else(unknown_workspace)?;
         workspace.root.try_clone()
@@ -397,7 +265,10 @@ impl WorkspaceRegistry {
         validate_relative_path(relative_path)?;
         let root = {
             let workspaces = self.workspaces.lock().map_err(lock_error)?;
-            let workspace = workspaces.get(workspace_id).ok_or_else(unknown_workspace)?;
+            let workspace = workspaces
+                .get(workspace_id)
+                .filter(|workspace| workspace.unregister_generation.is_none())
+                .ok_or_else(unknown_workspace)?;
             workspace.root.try_clone()?
         };
         post_clone()?;

@@ -170,7 +170,11 @@ struct FailingCancellationFailureTaskSpawner;
 impl super::super::request_dispatch::CancellationFailureTaskSpawner
     for FailingCancellationFailureTaskSpawner
 {
-    fn spawn(&self, _name: String, _task: Box<dyn FnOnce() + Send + 'static>) -> io::Result<()> {
+    fn spawn(
+        &self,
+        _name: String,
+        _task: Box<dyn FnOnce() + Send + 'static>,
+    ) -> io::Result<std::thread::JoinHandle<()>> {
         Err(io::Error::other("injected failure task spawn error"))
     }
 }
@@ -371,12 +375,14 @@ fn cancellation_queue_bounds_sixty_four_parked_writes_and_restart_gets_fresh_tra
 }
 
 #[test]
-fn cancellation_failure_task_spawn_error_synchronously_kills_the_exact_transport() {
+fn cancellation_failure_task_spawn_error_hands_exact_cleanup_to_bounded_reaper() {
     let (stdin, _capture, write_parked, stdin_gate) = BlockingCancelWriter::session();
     let terminate_count = Arc::new(AtomicUsize::new(0));
-    let killer: SharedProcessKiller = Arc::new(Mutex::new(Some(Box::new(CountingProcessKiller {
-        terminate_count: Arc::clone(&terminate_count),
-    }))));
+    let killer: SharedProcessKiller = Arc::new(super::super::ProcessKillerSlot::new(Box::new(
+        CountingProcessKiller {
+            terminate_count: Arc::clone(&terminate_count),
+        },
+    )));
     let log = Arc::new(Mutex::new(String::new()));
     let transport =
         super::super::request_dispatch::CancellationTransport::start_with_failure_task_spawner(
@@ -397,15 +403,23 @@ fn cancellation_failure_task_spawn_error_synchronously_kills_the_exact_transport
     write_parked
         .recv_timeout(Duration::from_secs(1))
         .expect("first cancellation write must park");
+    let started_at = Instant::now();
     let error = transport
         .enqueue(10_000)
         .expect_err("queue saturation must schedule exact failure");
     assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
-    assert_eq!(
-        terminate_count.load(Ordering::SeqCst),
-        1,
-        "failure-task spawn error must synchronously kill the exact transport"
+    assert!(
+        started_at.elapsed() < Duration::from_millis(250),
+        "failure-task spawn fallback must not synchronously terminate an arbitrary process"
     );
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while terminate_count.load(Ordering::SeqCst) != 1 {
+        assert!(
+            Instant::now() < deadline,
+            "durable reaper did not terminate the exact transport"
+        );
+        std::thread::yield_now();
+    }
     assert!(
         log.lock()
             .expect("runtime log")
@@ -421,9 +435,11 @@ fn cancellation_failure_task_spawn_error_synchronously_kills_the_exact_transport
 fn cancellation_failure_fallback_publication_finishes_before_replacement_reset() {
     let (stdin, _capture, write_parked, stdin_gate) = BlockingCancelWriter::session();
     let terminate_count = Arc::new(AtomicUsize::new(0));
-    let killer: SharedProcessKiller = Arc::new(Mutex::new(Some(Box::new(CountingProcessKiller {
-        terminate_count: Arc::clone(&terminate_count),
-    }))));
+    let killer: SharedProcessKiller = Arc::new(super::super::ProcessKillerSlot::new(Box::new(
+        CountingProcessKiller {
+            terminate_count: Arc::clone(&terminate_count),
+        },
+    )));
     let log = Arc::new(Mutex::new(String::new()));
     let transport =
         super::super::request_dispatch::CancellationTransport::start_with_failure_task_spawner(
@@ -497,7 +513,14 @@ fn cancellation_failure_fallback_publication_finishes_before_replacement_reset()
         "replacement telemetry",
         "old fallback publication must finish before replacement telemetry resets"
     );
-    assert_eq!(terminate_count.load(Ordering::SeqCst), 1);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while terminate_count.load(Ordering::SeqCst) != 1 {
+        assert!(
+            Instant::now() < deadline,
+            "durable fallback cleanup did not terminate the exact transport"
+        );
+        std::thread::yield_now();
+    }
 }
 
 #[test]

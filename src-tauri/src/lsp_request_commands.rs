@@ -1,6 +1,32 @@
 use super::*;
+use serde::Deserialize;
 
 const MAX_WORKSPACE_SYMBOL_QUERY_UTF8_BYTES: usize = 4 * 1024;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+pub(super) enum LanguageServerRequestServerKind {
+    #[serde(rename = "php")]
+    Php,
+    #[serde(rename = "javascriptTypeScript")]
+    JavaScriptTypeScript,
+}
+
+fn resolved_request_server_kind(
+    server_kind: Option<LanguageServerRequestServerKind>,
+) -> LanguageServerRequestServerKind {
+    server_kind.unwrap_or(LanguageServerRequestServerKind::JavaScriptTypeScript)
+}
+
+fn cancel_request_for_server_kind(
+    server_kind: Option<LanguageServerRequestServerKind>,
+    cancel_php: impl FnOnce() -> Result<(), String>,
+    cancel_javascript_typescript: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    match resolved_request_server_kind(server_kind) {
+        LanguageServerRequestServerKind::Php => cancel_php(),
+        LanguageServerRequestServerKind::JavaScriptTypeScript => cancel_javascript_typescript(),
+    }
+}
 
 #[tauri::command]
 pub(super) async fn javascript_typescript_workspace_symbols(
@@ -213,9 +239,68 @@ pub(super) async fn cancel_lsp_request(
     root_path: String,
     session_id: u64,
     request_id: u64,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+    server_kind: Option<LanguageServerRequestServerKind>,
+    php_registry: State<'_, PhpLanguageServerRegistry>,
+    javascript_typescript_registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
-    registry.cancel_request(&root_path, session_id, request_id)
+    cancel_request_for_server_kind(
+        server_kind,
+        || php_registry.cancel_request(&root_path, session_id, request_id),
+        || javascript_typescript_registry.cancel_request(&root_path, session_id, request_id),
+    )
+}
+
+#[cfg(test)]
+mod cancellation_command_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn cancellation_kind_is_closed_and_legacy_calls_keep_javascript_typescript_routing() {
+        assert_eq!(
+            resolved_request_server_kind(None),
+            LanguageServerRequestServerKind::JavaScriptTypeScript
+        );
+        assert_eq!(
+            serde_json::from_value::<LanguageServerRequestServerKind>(serde_json::json!("php"))
+                .unwrap(),
+            LanguageServerRequestServerKind::Php
+        );
+        assert_eq!(
+            serde_json::from_value::<LanguageServerRequestServerKind>(serde_json::json!(
+                "javascriptTypeScript"
+            ))
+            .unwrap(),
+            LanguageServerRequestServerKind::JavaScriptTypeScript
+        );
+        assert!(
+            serde_json::from_value::<LanguageServerRequestServerKind>(serde_json::json!("unknown"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn explicit_php_cancellation_dispatches_only_to_the_php_registry_branch() {
+        let php_cancellations = Cell::new(0);
+        let javascript_typescript_cancellations = Cell::new(0);
+
+        cancel_request_for_server_kind(
+            Some(LanguageServerRequestServerKind::Php),
+            || {
+                php_cancellations.set(php_cancellations.get() + 1);
+                Ok(())
+            },
+            || {
+                javascript_typescript_cancellations
+                    .set(javascript_typescript_cancellations.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(php_cancellations.get(), 1);
+        assert_eq!(javascript_typescript_cancellations.get(), 0);
+    }
 }
 
 async fn navigation_locations_request(

@@ -8,8 +8,9 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-#[cfg(unix)]
 use std::time::Duration;
+
+const PROCESS_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub trait ServerProcessSpawner {
     fn spawn(&self, command: &LanguageServerCommand) -> io::Result<SpawnedServer>;
@@ -130,7 +131,22 @@ impl ProcessKiller for ChildKiller {
         }
 
         let kill_error = self.child.kill().err();
-        let wait_result = self.child.wait().map(|_| ());
+        let reap_deadline = std::time::Instant::now() + PROCESS_REAP_TIMEOUT;
+        let wait_result = loop {
+            match self.child.try_wait() {
+                Ok(Some(_status)) => break Ok(()),
+                Ok(None) if std::time::Instant::now() < reap_deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(None) => {
+                    break Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "language server process did not exit after SIGKILL",
+                    ));
+                }
+                Err(error) => break Err(error),
+            }
+        };
 
         #[cfg(unix)]
         let _ = signal_process_group(self.process_group_id, libc::SIGKILL);

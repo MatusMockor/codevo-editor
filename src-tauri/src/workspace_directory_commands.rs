@@ -9,9 +9,13 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, IntoRawFd},
     path::Path,
 };
-use tauri::State;
+use tauri::{AppHandle, Manager};
 
 pub const WORKSPACE_DIRECTORY_ENTRY_LIMIT: usize = 50_000;
+pub const WORKSPACE_DIRECTORY_NAME_BYTE_LIMIT: usize = 1_024;
+pub const WORKSPACE_DIRECTORY_RELATIVE_PATH_BYTE_LIMIT: usize = 32_768;
+pub const WORKSPACE_DIRECTORY_TOTAL_BYTE_LIMIT: usize = 4 * 1024 * 1024;
+pub const WORKSPACE_DIRECTORY_WORKSPACE_ID_BYTE_LIMIT: usize = 1_024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +24,7 @@ pub struct BoundedDirectoryEntries {
     pub truncated: bool,
 }
 
+#[cfg(test)]
 pub fn read_directory_bounded(
     registry: &WorkspaceRegistry,
     id: &WorkspaceId,
@@ -40,6 +45,13 @@ pub fn read_directory_bounded(
     } else {
         registry.open_descendant(id, path)?
     };
+    read_open_directory_bounded(directory, max_entries)
+}
+
+fn read_open_directory_bounded(
+    directory: File,
+    max_entries: usize,
+) -> io::Result<BoundedDirectoryEntries> {
     let (mut entries, truncated) = enumerate(&directory, max_entries)?;
     entries.sort_by(|left, right| {
         rank(&left.kind)
@@ -71,6 +83,7 @@ fn enumerate(directory: &File, max_entries: usize) -> io::Result<(Vec<Descriptor
     }
     let stream = DirectoryStream(stream);
     let mut entries = Vec::with_capacity(max_entries.min(256));
+    let mut total_bytes = 0_usize;
     loop {
         clear_errno();
         let raw = unsafe { libc::readdir(stream.0) };
@@ -85,6 +98,12 @@ fn enumerate(directory: &File, max_entries: usize) -> io::Result<(Vec<Descriptor
         let name = unsafe { CStr::from_ptr((*raw).d_name.as_ptr()) };
         if matches!(name.to_bytes(), b"." | b".." | b".git") {
             continue;
+        }
+        if name.to_bytes().len() > WORKSPACE_DIRECTORY_NAME_BYTE_LIMIT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "workspace directory entry name exceeds byte limit",
+            ));
         }
         let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
         if unsafe {
@@ -108,6 +127,19 @@ fn enumerate(directory: &File, max_entries: usize) -> io::Result<(Vec<Descriptor
             return Ok((entries, true));
         }
         let name = String::from_utf8_lossy(name.to_bytes()).into_owned();
+        if name.len() > WORKSPACE_DIRECTORY_NAME_BYTE_LIMIT
+            || name.len() > WORKSPACE_DIRECTORY_RELATIVE_PATH_BYTE_LIMIT
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "workspace directory entry projection exceeds byte limit",
+            ));
+        }
+        let projected_bytes = name.len().saturating_mul(2);
+        if total_bytes.saturating_add(projected_bytes) > WORKSPACE_DIRECTORY_TOTAL_BYTE_LIMIT {
+            return Ok((entries, true));
+        }
+        total_bytes += projected_bytes;
         entries.push(DescriptorFileEntry {
             relative_path: name.clone(),
             name,
@@ -142,19 +174,41 @@ fn rank(kind: &FileEntryKind) -> u8 {
 }
 
 #[tauri::command]
-pub(crate) fn workspace_read_directory_bounded(
-    registry: State<'_, WorkspaceRegistry>,
+pub(crate) async fn workspace_read_directory_bounded(
+    app: AppHandle,
     workspace_id: WorkspaceId,
     relative_path: String,
     max_entries: usize,
 ) -> Result<BoundedDirectoryEntries, String> {
-    read_directory_bounded(
-        &registry,
-        &workspace_id,
-        Path::new(&relative_path),
-        max_entries,
-    )
-    .map_err(|error| error.to_string())
+    if workspace_id.as_str().len() > WORKSPACE_DIRECTORY_WORKSPACE_ID_BYTE_LIMIT
+        || relative_path.len() > WORKSPACE_DIRECTORY_RELATIVE_PATH_BYTE_LIMIT
+    {
+        return Err("Workspace directory request exceeds byte limits.".to_string());
+    }
+    if max_entries == 0 || max_entries > WORKSPACE_DIRECTORY_ENTRY_LIMIT {
+        return Err(format!(
+            "max_entries must be between 1 and {WORKSPACE_DIRECTORY_ENTRY_LIMIT}"
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if !relative_path.is_empty() {
+            validate_relative_path(Path::new(&relative_path)).map_err(|error| error.to_string())?;
+        }
+        let registry = app.state::<WorkspaceRegistry>();
+        let directory = if relative_path.is_empty() {
+            reopen_directory(
+                &registry
+                    .clone_root(&workspace_id)
+                    .map_err(|error| error.to_string())?,
+            )
+        } else {
+            registry.open_descendant(&workspace_id, Path::new(&relative_path))
+        }
+        .map_err(|error| error.to_string())?;
+        read_open_directory_bounded(directory, max_entries).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Workspace directory worker failed: {error}"))?
 }
 
 #[cfg(test)]

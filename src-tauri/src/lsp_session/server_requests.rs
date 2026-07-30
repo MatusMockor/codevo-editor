@@ -10,6 +10,9 @@ use crate::lsp::file_uri;
 use crate::lsp_features::{
     parse_workspace_edit_result, LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
 };
+use crate::lsp_session::configuration_bounds::{
+    serialized_size_with_limit, MAX_CONFIGURATION_RESPONSE_BYTES,
+};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -70,29 +73,125 @@ pub(super) fn respond_to_server_request(
         return Err(());
     };
 
-    let configuration = server_configuration
-        .lock()
-        .map(|configuration| configuration.clone())
-        .unwrap_or_else(|_| json!({}));
-    let result = server_request_result(
-        method,
-        value.get("params"),
-        workspace_edit_sink,
-        refresh_sink,
-        session_id,
-        &configuration,
-        workspace_root,
-    );
-    let response = json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "result": result,
-    });
+    let result = if method == "workspace/configuration" {
+        workspace_configuration_result(value.get("params"), server_configuration)
+    } else {
+        server_request_result(
+            method,
+            value.get("params"),
+            workspace_edit_sink,
+            refresh_sink,
+            session_id,
+            workspace_root,
+        )
+    };
+    let response = server_request_response(id, result);
     let Ok(bytes) = serde_json::to_vec(&response) else {
         return Err(());
     };
 
     write_with_session_stdin(stdin, &bytes).map_err(|_| ())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ServerRequestError {
+    code: i64,
+    message: String,
+}
+
+impl ServerRequestError {
+    fn invalid_params(message: impl Into<String>) -> Self {
+        Self {
+            code: -32602,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: -32603,
+            message: message.into(),
+        }
+    }
+
+    fn method_not_found(method: &str) -> Self {
+        Self {
+            code: -32601,
+            message: format!("Unsupported language server request method: {method}."),
+        }
+    }
+}
+
+impl From<super::server_configuration::WorkspaceConfigurationError> for ServerRequestError {
+    fn from(error: super::server_configuration::WorkspaceConfigurationError) -> Self {
+        match error {
+            super::server_configuration::WorkspaceConfigurationError::InvalidParams(message) => {
+                Self::invalid_params(message)
+            }
+            super::server_configuration::WorkspaceConfigurationError::Internal(message) => {
+                Self::internal(message)
+            }
+        }
+    }
+}
+
+fn workspace_configuration_result(
+    params: Option<&Value>,
+    server_configuration: &Mutex<Value>,
+) -> Result<Value, ServerRequestError> {
+    super::server_configuration::validate_workspace_query(params)
+        .map_err(ServerRequestError::from)?;
+    let configuration = server_configuration.lock().map_err(|_| {
+        ServerRequestError::internal("Language server configuration state is unavailable.")
+    })?;
+    super::server_configuration::workspace_result(params, &configuration)
+        .map_err(ServerRequestError::from)
+}
+
+fn server_request_response(id: Value, result: Result<Value, ServerRequestError>) -> Value {
+    let response = match result {
+        Ok(result) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }),
+        Err(error) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": error.code,
+                "message": error.message,
+            },
+        }),
+    };
+    if serialized_size_with_limit(&response, MAX_CONFIGURATION_RESPONSE_BYTES).is_ok() {
+        return response;
+    }
+
+    let error = json!({
+        "jsonrpc": "2.0",
+        "id": response.get("id").cloned().unwrap_or(Value::Null),
+        "error": {
+            "code": -32603,
+            "message": format!(
+                "Language server response exceeds {MAX_CONFIGURATION_RESPONSE_BYTES} bytes."
+            ),
+        },
+    });
+    if serialized_size_with_limit(&error, MAX_CONFIGURATION_RESPONSE_BYTES).is_ok() {
+        error
+    } else {
+        json!({
+            "jsonrpc": "2.0",
+            "id": Value::Null,
+            "error": {
+                "code": -32603,
+                "message": format!(
+                    "Language server response exceeds {MAX_CONFIGURATION_RESPONSE_BYTES} bytes."
+                ),
+            },
+        })
+    }
 }
 
 fn server_request_result(
@@ -101,36 +200,35 @@ fn server_request_result(
     workspace_edit_sink: &dyn WorkspaceEditSink,
     refresh_sink: &dyn RefreshSink,
     session_id: u64,
-    server_configuration: &Value,
     workspace_root: &str,
-) -> Value {
+) -> Result<Value, ServerRequestError> {
     match method {
-        "workspace/configuration" => {
-            super::server_configuration::workspace_result(params, server_configuration)
-        }
-        "workspace/workspaceFolders" => workspace_folders_result(workspace_root),
-        "workspace/applyEdit" => {
-            workspace_apply_edit_result(params, workspace_edit_sink, session_id, workspace_root)
-        }
-        "workspace/codeLens/refresh" => refresh_result(
+        "workspace/workspaceFolders" => Ok(workspace_folders_result(workspace_root)),
+        "workspace/applyEdit" => Ok(workspace_apply_edit_result(
+            params,
+            workspace_edit_sink,
+            session_id,
+            workspace_root,
+        )),
+        "workspace/codeLens/refresh" => Ok(refresh_result(
             refresh_sink,
             session_id,
             LanguageServerRefreshFeature::CodeLens,
-        ),
-        "workspace/inlayHint/refresh" => refresh_result(
+        )),
+        "workspace/inlayHint/refresh" => Ok(refresh_result(
             refresh_sink,
             session_id,
             LanguageServerRefreshFeature::InlayHint,
-        ),
-        "workspace/semanticTokens/refresh" => refresh_result(
+        )),
+        "workspace/semanticTokens/refresh" => Ok(refresh_result(
             refresh_sink,
             session_id,
             LanguageServerRefreshFeature::SemanticTokens,
-        ),
+        )),
         "client/registerCapability"
         | "client/unregisterCapability"
-        | "window/showMessageRequest" => Value::Null,
-        _ => Value::Null,
+        | "window/showMessageRequest" => Ok(Value::Null),
+        _ => Err(ServerRequestError::method_not_found(method)),
     }
 }
 
@@ -244,4 +342,152 @@ fn ensure_workspace_edit_uri_in_workspace(workspace_root: &str, uri: &str) -> Re
 pub(super) fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
     resolve_existing_or_parent_path(Path::new(workspace_root))
         .ok_or_else(|| "Workspace root could not be resolved.".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp_session::event_sinks::{NoopRefreshSink, NoopWorkspaceEditSink};
+
+    #[test]
+    fn invalid_workspace_configuration_query_becomes_a_truthful_json_rpc_error() {
+        let result = workspace_configuration_result(
+            Some(&json!({
+                "items": [{
+                    "section": "typescript.suggest",
+                    "unknown": true,
+                }],
+            })),
+            &Mutex::new(json!({ "suggest": {} })),
+        );
+
+        let response = server_request_response(Value::from(91), result);
+
+        assert_eq!(response["id"], 91);
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(
+            response["error"]["message"],
+            "Workspace configuration item contains an unknown field."
+        );
+        assert!(response.get("result").is_none());
+    }
+
+    #[test]
+    fn oversized_server_response_is_replaced_before_serialization() {
+        let response = server_request_response(
+            Value::from(92),
+            Ok::<_, ServerRequestError>(json!({
+                "payload": "x".repeat(MAX_CONFIGURATION_RESPONSE_BYTES),
+            })),
+        );
+
+        assert_eq!(response["id"], 92);
+        assert_eq!(response["error"]["code"], -32603);
+        assert_eq!(
+            response["error"]["message"],
+            "Language server response exceeds 2097152 bytes."
+        );
+        assert!(response.get("result").is_none());
+    }
+
+    #[test]
+    fn final_json_rpc_envelope_accepts_exact_two_mibibytes_and_rejects_n_plus_one() {
+        let base = server_request_response(
+            Value::from(95),
+            Ok::<_, ServerRequestError>(json!({ "payload": "" })),
+        );
+        let base_bytes = serde_json::to_vec(&base)
+            .expect("serialize base response")
+            .len();
+        let filler_bytes = MAX_CONFIGURATION_RESPONSE_BYTES - base_bytes;
+
+        let exact = server_request_response(
+            Value::from(95),
+            Ok::<_, ServerRequestError>(json!({
+                "payload": "x".repeat(filler_bytes),
+            })),
+        );
+        assert_eq!(
+            serde_json::to_vec(&exact)
+                .expect("serialize exact response")
+                .len(),
+            MAX_CONFIGURATION_RESPONSE_BYTES
+        );
+        assert!(exact.get("result").is_some());
+
+        let overflow = server_request_response(
+            Value::from(95),
+            Ok::<_, ServerRequestError>(json!({
+                "payload": "x".repeat(filler_bytes + 1),
+            })),
+        );
+        assert_eq!(overflow["id"], 95);
+        assert_eq!(overflow["error"]["code"], -32603);
+        assert!(overflow.get("result").is_none());
+    }
+
+    #[test]
+    fn response_amplification_is_an_internal_error_and_keeps_the_request_id() {
+        let large = "x".repeat(16 * 1024);
+        let result = workspace_configuration_result(
+            Some(&json!({
+                "items": (0..9)
+                    .map(|_| json!({ "section": "typescript" }))
+                    .collect::<Vec<_>>(),
+            })),
+            &Mutex::new(json!({
+                "payload": (0..15).map(|_| large.clone()).collect::<Vec<_>>(),
+            })),
+        );
+
+        let response = server_request_response(Value::from(93), result);
+
+        assert_eq!(response["id"], 93);
+        assert_eq!(response["error"]["code"], -32603);
+        assert_eq!(
+            response["error"]["message"],
+            "Workspace configuration response exceeds 2097152 bytes."
+        );
+    }
+
+    #[test]
+    fn unknown_server_request_method_is_rejected_truthfully() {
+        let result = server_request_result(
+            "workspace/unknown",
+            None,
+            &NoopWorkspaceEditSink,
+            &NoopRefreshSink,
+            7,
+            "/tmp/workspace",
+        );
+
+        let response = server_request_response(Value::from(94), result);
+
+        assert_eq!(response["id"], 94);
+        assert_eq!(response["error"]["code"], -32601);
+        assert_eq!(
+            response["error"]["message"],
+            "Unsupported language server request method: workspace/unknown."
+        );
+    }
+
+    #[test]
+    fn poisoned_configuration_state_is_a_correlated_internal_error() {
+        let configuration = Mutex::new(json!({}));
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = configuration.lock().expect("configuration");
+            panic!("poison configuration");
+        }));
+        assert!(poisoned.is_err());
+
+        let result = workspace_configuration_result(Some(&json!({ "items": [] })), &configuration);
+        let response = server_request_response(Value::from(96), result);
+
+        assert_eq!(response["id"], 96);
+        assert_eq!(response["error"]["code"], -32603);
+        assert_eq!(
+            response["error"]["message"],
+            "Language server configuration state is unavailable."
+        );
+    }
 }

@@ -82,9 +82,10 @@ pub(crate) use workspace_facade::{
     initialize_workspace_index, local_history_store, open_workspace_from_picker,
     parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
     parse_php_syntax, register_workspace_path, remove_workspace_index_file,
-    resolve_existing_or_parent_path, start_initial_metadata_scan, start_workspace_file_watch,
-    start_workspace_reindex, unregister_workspace, upsert_workspace_index_file,
-    workspace_root_for_disposal, LegacyLocalHistoryWorkspaceAuthorizer,
+    resolve_existing_or_parent_path, rollback_workspace_registration, start_initial_metadata_scan,
+    start_workspace_file_watch, start_workspace_reindex, stop_workspace_file_watch,
+    unregister_workspace, upsert_workspace_index_file, workspace_root_for_disposal,
+    LegacyLocalHistoryWorkspaceAuthorizer,
 };
 #[cfg(target_os = "macos")]
 pub(crate) use workspace_facade::{
@@ -120,7 +121,8 @@ pub(crate) use workspace_facade::{
     filter_lsp_document_links_to_workspace, filter_lsp_incoming_calls_to_workspace,
     filter_lsp_inlay_hints_to_workspace, filter_lsp_outgoing_calls_to_workspace,
     filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-    normalize_path, register_workspace_path_in_registry, reveal_path_in_workspace,
+    normalize_path, register_picker_path_in_registry, register_workspace_path_in_registry,
+    reveal_path_in_workspace,
 };
 #[cfg(test)]
 pub(crate) use workspace_services::ensure_local_history_relative_path;

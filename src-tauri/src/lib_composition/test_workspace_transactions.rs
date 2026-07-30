@@ -10,7 +10,8 @@ fn register_workspace_path_preserves_alias_and_returns_canonical_identity() {
 
     let descriptor =
         register_workspace_path_in_registry(&registry, alias.to_str().expect("UTF-8 alias path"))
-            .expect("register aliased workspace");
+            .expect("register aliased workspace")
+            .descriptor;
 
     assert_eq!(descriptor.selected_root_path, alias);
     assert_eq!(descriptor.canonical_root_path, root);
@@ -35,7 +36,8 @@ fn register_workspace_path_preserves_lexical_parent_and_returns_canonical_identi
         &registry,
         selected.to_str().expect("UTF-8 selected path"),
     )
-    .expect("register lexical workspace path");
+    .expect("register lexical workspace path")
+    .descriptor;
 
     assert_eq!(descriptor.selected_root_path, selected);
     assert_eq!(descriptor.canonical_root_path, root);
@@ -49,6 +51,27 @@ fn register_workspace_path_rejects_relative_roots() {
         .expect_err("relative workspace root must be rejected");
 
     assert_eq!(error, "Workspace root path must be absolute");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn picker_registration_rejects_non_utf8_before_registry_mutation() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let registry = WorkspaceRegistry::new();
+    let invalid = PathBuf::from(OsString::from_vec(vec![b'/', 0xff]));
+
+    let error = register_picker_path_in_registry(&registry, invalid)
+        .expect_err("non-UTF-8 picker root must be rejected");
+    assert_eq!(error, "Selected workspace path is not valid UTF-8.");
+
+    let root = temp_workspace("picker-after-non-utf8");
+    let registration =
+        register_workspace_path_in_registry(&registry, root.to_str().expect("UTF-8 root"))
+            .expect("valid registration after rejection");
+    assert!(registration.receipt.created_identity);
+    assert_eq!(registration.receipt.admission_token, 1);
 }
 
 #[test]

@@ -573,19 +573,76 @@ pub(crate) fn javascript_typescript_document_did_close(
     )
 }
 
+pub(super) async fn send_php_request_with_optional_id(
+    registry: &PhpLanguageServerRegistry,
+    root_path: &str,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
+    method: &str,
+    params: Value,
+) -> Result<Option<Value>, String> {
+    match (session_id, request_id) {
+        (Some(session_id), Some(request_id)) => {
+            registry
+                .send_request_async_with_id(root_path, session_id, request_id, method, params)
+                .await
+        }
+        (None, None) => registry.send_request_async(root_path, method, params).await,
+        _ => Err(
+            "Language-server request sessionId and requestId must be provided together."
+                .to_string(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod identified_php_request_tests {
+    use super::*;
+
+    #[test]
+    fn optional_request_identifiers_must_be_supplied_as_an_exact_pair() {
+        let registry = PhpLanguageServerRegistry::new();
+
+        for (session_id, request_id) in [(Some(7), None), (None, Some(9))] {
+            let error = tauri::async_runtime::block_on(send_php_request_with_optional_id(
+                &registry,
+                "/tmp/workspace",
+                session_id,
+                request_id,
+                "textDocument/hover",
+                Value::Null,
+            ))
+            .expect_err("partial request authority must fail before dispatch");
+
+            assert_eq!(
+                error,
+                "Language-server request sessionId and requestId must be provided together."
+            );
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn text_document_hover(
     root_path: String,
     position: TextDocumentPosition,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerHover>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let Some(result) = send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     else {
         return Ok(None);
     };
@@ -626,15 +683,23 @@ pub(crate) async fn text_document_completion(
     root_path: String,
     position: TextDocumentPosition,
     context: Option<LanguageServerCompletionContext>,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionList, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&TextDocumentCompletion { position, context });
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let Some(result) = send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     else {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
@@ -725,15 +790,23 @@ pub(crate) async fn javascript_typescript_text_document_completion_resolve(
 pub(crate) async fn text_document_definition(
     root_path: String,
     position: TextDocumentPosition,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let Some(result) = send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     else {
         return Ok(Vec::new());
     };
@@ -745,15 +818,23 @@ pub(crate) async fn text_document_definition(
 pub(crate) async fn text_document_declaration(
     root_path: String,
     position: TextDocumentPosition,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.declaration(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let Some(result) = send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     else {
         return Ok(Vec::new());
     };
@@ -765,15 +846,23 @@ pub(crate) async fn text_document_declaration(
 pub(crate) async fn text_document_implementation(
     root_path: String,
     position: TextDocumentPosition,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
-    let result = match registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let result = match send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     {
         Some(result) => result,
         None => return Ok(Vec::new()),
@@ -786,15 +875,23 @@ pub(crate) async fn text_document_implementation(
 pub(crate) async fn text_document_type_definition(
     root_path: String,
     position: TextDocumentPosition,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_definition(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let Some(result) = send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     else {
         return Ok(Vec::new());
     };
@@ -806,15 +903,23 @@ pub(crate) async fn text_document_type_definition(
 pub(crate) async fn text_document_references(
     root_path: String,
     position: TextDocumentPosition,
+    session_id: Option<u64>,
+    request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.references(&position);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
+    let Some(result) = send_php_request_with_optional_id(
+        &registry,
+        &root_path,
+        session_id,
+        request_id,
+        &request.method,
+        request.params,
+    )
+    .await?
     else {
         return Ok(Vec::new());
     };

@@ -165,22 +165,24 @@ pub(super) fn spawn_stderr_reader(
     stderr: Box<dyn Read + Send>,
     log: RuntimeLog,
     stderr_tail: StderrTail,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(stderr);
-        let mut buffer = [0_u8; 4096];
+) -> std::io::Result<JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("lsp-stderr-reader".to_string())
+        .spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut buffer = [0_u8; 4096];
 
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) | Err(_) => return,
-                Ok(count) => {
-                    let chunk = String::from_utf8_lossy(&buffer[..count]);
-                    append_runtime_log(&log, &chunk);
-                    append_stderr_tail(&stderr_tail, &chunk);
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) | Err(_) => return,
+                    Ok(count) => {
+                        let chunk = String::from_utf8_lossy(&buffer[..count]);
+                        append_runtime_log(&log, &chunk);
+                        append_stderr_tail(&stderr_tail, &chunk);
+                    }
                 }
             }
-        }
-    })
+        })
 }
 
 pub(super) fn reset_request_telemetry(recent_requests: &RecentRequests, stderr_tail: &StderrTail) {

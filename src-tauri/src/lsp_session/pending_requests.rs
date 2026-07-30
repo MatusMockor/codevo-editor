@@ -195,9 +195,10 @@ impl PendingRequestRegistry {
     }
 
     pub(super) fn close_and_reject(&self, message: &str) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
-        };
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let senders = match std::mem::replace(
             &mut *state,
             PendingRequestRegistryState::Closed {
@@ -294,4 +295,44 @@ pub(super) fn parse_response_result(value: &Value) -> PendingRequestResult {
         code,
         message: message.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn poisoned_registry_cleanup_closes_and_rejects_every_waiter() {
+        let registry = PendingRequestRegistry::new();
+        let (first_tx, first_rx) = mpsc::channel();
+        let (second_tx, second_rx) = mpsc::channel();
+        registry.admit(1, None, first_tx).expect("admit first");
+        registry.admit(2, None, second_tx).expect("admit second");
+
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = registry.state.lock().expect("pending registry");
+            panic!("poison pending request registry mutex");
+        }));
+        assert!(poisoned.is_err());
+
+        registry.close_and_reject("Language server request was stopped.");
+
+        for receiver in [first_rx, second_rx] {
+            let rejection = receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("cleanup should settle waiter")
+                .expect_err("cleanup should reject waiter");
+            assert!(rejection.to_string().contains("stopped"));
+        }
+
+        let state = registry
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(matches!(
+            &*state,
+            PendingRequestRegistryState::Closed { .. }
+        ));
+    }
 }

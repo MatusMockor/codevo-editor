@@ -1,12 +1,18 @@
+use super::registry::MAX_LANGUAGE_SERVER_WORKSPACES;
 use super::*;
 
 pub(crate) struct JavaScriptTypeScriptStartCleanupLease<'a> {
     registry: &'a JavaScriptTypeScriptLanguageServerRegistry,
     lease: LanguageServerStartCleanupLease<'a>,
-    _cleanup_gate: std::sync::MutexGuard<'a, ()>,
+    cleanup_reservation: Option<CleanupReservation<'a>>,
 }
 
-struct LanguageServerStartCleanupLease<'a> {
+pub(super) struct CleanupReservation<'a> {
+    registry: &'a JavaScriptTypeScriptLanguageServerRegistry,
+    armed: bool,
+}
+
+pub(super) struct LanguageServerStartCleanupLease<'a> {
     registry: &'a LanguageServerRegistry,
     root_path: String,
     runtime_id: String,
@@ -28,22 +34,23 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
     ) -> Result<JavaScriptTypeScriptStartCleanupLease<'_>, String> {
         let runtime_id = workspace_runtime_id(root_path);
         let mut marker = {
-            let initial_gate = self
-                .cleanup_gate
-                .lock()
-                .map_err(|error| error.to_string())?;
             if is_active_status(&self.registry.status(root_path)) {
                 return Err("Language server already running.".to_string());
             }
             let mut replacements = self
                 .start_replacements
                 .lock()
-                .map_err(|error| error.to_string())?;
-            if !replacements.insert(runtime_id.clone()) {
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if replacements.contains(&runtime_id) {
                 return Err("Language server start replacement is already reserved.".to_string());
             }
+            if replacements.len() >= MAX_LANGUAGE_SERVER_WORKSPACES {
+                return Err(format!(
+                    "Language server start replacement capacity ({MAX_LANGUAGE_SERVER_WORKSPACES}) was reached."
+                ));
+            }
+            replacements.insert(runtime_id.clone());
             drop(replacements);
-            drop(initial_gate);
             StartReplacementMarker {
                 registry: self,
                 runtime_id,
@@ -51,19 +58,73 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
             }
         };
         status_sink.begin_document_session_replacement()?;
-        let cleanup_gate = self
-            .cleanup_gate
-            .lock()
-            .map_err(|error| error.to_string())?;
+        let cleanup_reservation = self.reserve_cleanup();
         if is_active_status(&self.registry.status(root_path)) {
             return Err("Language server start reservation was superseded.".to_string());
         }
         marker.complete()?;
+        let lease = self.registry.reserve_start_cleanup(root_path)?;
         Ok(JavaScriptTypeScriptStartCleanupLease {
             registry: self,
-            lease: self.registry.reserve_start_cleanup(root_path)?,
-            _cleanup_gate: cleanup_gate,
+            lease,
+            cleanup_reservation: Some(cleanup_reservation),
         })
+    }
+
+    pub(super) fn reserve_cleanup(&self) -> CleanupReservation<'_> {
+        let mut active = self
+            .cleanup_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while *active {
+            active = self
+                .cleanup_ready
+                .wait(active)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        *active = true;
+        CleanupReservation {
+            registry: self,
+            armed: true,
+        }
+    }
+
+    pub(super) fn try_reserve_cleanup(&self) -> Option<CleanupReservation<'_>> {
+        let mut active = self
+            .cleanup_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *active {
+            return None;
+        }
+        *active = true;
+        Some(CleanupReservation {
+            registry: self,
+            armed: true,
+        })
+    }
+}
+
+impl CleanupReservation<'_> {
+    pub(super) fn release(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut active = self
+            .registry
+            .cleanup_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *active = false;
+        self.armed = false;
+        drop(active);
+        self.registry.cleanup_ready.notify_all();
+    }
+}
+
+impl Drop for CleanupReservation<'_> {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -87,9 +148,11 @@ impl Drop for StartReplacementMarker<'_> {
         if !self.armed {
             return;
         }
-        if let Ok(mut replacements) = self.registry.start_replacements.lock() {
-            replacements.remove(&self.runtime_id);
-        }
+        self.registry
+            .start_replacements
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.runtime_id);
     }
 }
 
@@ -100,7 +163,7 @@ impl JavaScriptTypeScriptStartCleanupLease<'_> {
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_with_auto_restart(
-        self,
+        mut self,
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
@@ -111,6 +174,9 @@ impl JavaScriptTypeScriptStartCleanupLease<'_> {
         restart_controller: Arc<RestartController>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
         let root_path = self.lease.root_path.clone();
+        if let Some(mut cleanup_reservation) = self.cleanup_reservation.take() {
+            cleanup_reservation.release();
+        }
         let status = self.lease.start_with_auto_restart(
             command,
             initialize_request,
@@ -123,21 +189,41 @@ impl JavaScriptTypeScriptStartCleanupLease<'_> {
             ),
             restart_controller,
         )?;
-        self.registry.store_launch_context_if_active(
+        if let Err(error) = self.registry.store_launch_context_if_active(
             &root_path,
             command,
             initialize_request,
             &status,
-        );
+        ) {
+            self.registry.registry.stop_if_status(&root_path, &status);
+            return Err(error);
+        }
         Ok(status)
     }
 }
 
 impl LanguageServerRegistry {
-    fn reserve_start_cleanup(
+    pub(super) fn reserve_start_cleanup(
         &self,
         root_path: &str,
     ) -> Result<LanguageServerStartCleanupLease<'_>, String> {
+        let (lease, replaced) = self.reserve_start_cleanup_parts(root_path)?;
+        if let Some(replaced) = replaced {
+            replaced.stop();
+        }
+        Ok(lease)
+    }
+
+    pub(super) fn reserve_start_cleanup_parts(
+        &self,
+        root_path: &str,
+    ) -> Result<
+        (
+            LanguageServerStartCleanupLease<'_>,
+            Option<Arc<LanguageServerSupervisor>>,
+        ),
+        String,
+    > {
         let runtime_id = workspace_runtime_id(root_path);
         let supervisor = Arc::new(LanguageServerSupervisor::new_with_session_id_source(
             self.server_label,
@@ -152,6 +238,11 @@ impl LanguageServerRegistry {
             {
                 return Err("Language server already running.".to_string());
             }
+            if !supervisors.contains_key(&runtime_id)
+                && supervisors.len() >= MAX_LANGUAGE_SERVER_WORKSPACES
+            {
+                return Err("Language server workspace capacity (64) was reached.".to_string());
+            }
             supervisors.insert(runtime_id.clone(), Arc::clone(&supervisor))
         };
         let lease = LanguageServerStartCleanupLease {
@@ -161,10 +252,7 @@ impl LanguageServerRegistry {
             supervisor,
             armed: true,
         };
-        if let Some(replaced) = replaced {
-            replaced.stop();
-        }
-        Ok(lease)
+        Ok((lease, replaced))
     }
 }
 
@@ -201,7 +289,7 @@ impl LanguageServerStartCleanupLease<'_> {
         Ok(roots)
     }
 
-    fn start_with_auto_restart(
+    pub(super) fn start_with_auto_restart(
         mut self,
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,

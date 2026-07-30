@@ -10,6 +10,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 mod capabilities;
+mod configuration_bounds;
 mod diagnostic_authority;
 mod document_sync_capability;
 mod event_sinks;
@@ -20,9 +21,11 @@ mod runtime_telemetry;
 mod server_configuration;
 mod server_process;
 mod server_requests;
+mod session_cleanup;
 mod session_transitions;
 mod session_writer;
 mod start_cleanup;
+mod status_publication;
 mod supervisor_lifecycle;
 mod transport_failure;
 mod workspace_runtime_identity;
@@ -31,6 +34,7 @@ use capabilities::parse_capabilities;
 pub use capabilities::LanguageServerCapabilities;
 #[cfg(test)]
 use capabilities::SemanticTokensLegend;
+pub(crate) use configuration_bounds::validate_settings as validate_server_configuration_settings;
 use diagnostic_authority::consume_diagnostic_bytes;
 pub use document_sync_capability::DocumentSyncCapability;
 pub(crate) use event_sinks::language_server_status_payload;
@@ -73,13 +77,20 @@ use runtime_telemetry::{
 use server_process::{ChildKiller, SpawnedServer};
 pub use server_process::{ChildServerProcessSpawner, ProcessKiller, ServerProcessSpawner};
 use server_requests::{respond_to_server_request, server_window_message, workspace_guard_path};
+use session_cleanup::{
+    cleanup_session, publish_crash_for_active_session, reserve_session_ownership,
+    retain_cleanup_task, retain_process_termination, retain_provisional_process,
+    retain_session_readers, terminate_or_retain_process, terminate_process, terminate_session,
+    LifecycleGate, LifecycleOperation, ProcessKillerSlot, SessionCleanupOutcome,
+    SessionCleanupTask, SessionOwnershipPermit, SharedProcessKiller,
+};
 #[cfg(test)]
 use session_transitions::cancellable_backoff;
 use session_transitions::{
-    clone_command, clone_initialize_request, publish, publish_crash, set_status, RestartContext,
-    StartKind,
+    clone_command, clone_initialize_request, set_status, RestartContext, StartKind,
 };
 use session_writer::SessionMessageWriter;
+use status_publication::StatusPublicationQueue;
 use transport_failure::transport_failure_message;
 use workspace_runtime_identity::{workspace_runtime_id, workspace_runtime_id_candidates};
 
@@ -97,7 +108,6 @@ pub const JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT: &str =
     "javascript-typescript-language-server://refresh";
 pub const JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT: &str =
     "javascript-typescript-language-server://workspace-edit";
-type SharedProcessKiller = Arc<Mutex<Option<Box<dyn ProcessKiller>>>>;
 type SessionRequestParts = (
     u64,
     Arc<SessionMessageWriter>,
@@ -172,6 +182,7 @@ enum HandshakeOutcome {
 }
 
 struct RunningSession {
+    ownership_permit: Option<SessionOwnershipPermit>,
     cancellation_transport: Arc<CancellationTransport>,
     exact_notification_transport: Arc<ExactSessionNotificationTransport>,
     pid: Option<u32>,
@@ -187,6 +198,9 @@ struct RunningSession {
 }
 
 pub struct LanguageServerSupervisor {
+    cleanup_task: Mutex<Option<SessionCleanupTask>>,
+    cleanup_terminal_failure: Mutex<Option<String>>,
+    lifecycle_gate: LifecycleGate,
     log: RuntimeLog,
     recent_requests: RecentRequests,
     stderr_tail: StderrTail,
@@ -195,6 +209,7 @@ pub struct LanguageServerSupervisor {
     server_label: &'static str,
     session: Mutex<Option<RunningSession>>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
+    status_publications: Arc<StatusPublicationQueue>,
 }
 
 mod registry;
@@ -214,34 +229,6 @@ fn write_with_session_stdin(stdin: &Arc<SessionMessageWriter>, payload: &[u8]) -
     stdin.write_message(payload, REQUEST_TIMEOUT)
 }
 
-fn terminate_session(mut session: RunningSession) {
-    session.stop_requested.store(true, Ordering::SeqCst);
-    session.cancellation_transport.revoke();
-    session.exact_notification_transport.revoke();
-    reject_pending_requests(
-        &session.pending_requests,
-        "Language server request was stopped.",
-    );
-    terminate_process(&session.killer);
-
-    if let Some(reader) = session.reader.take() {
-        let _ = reader.join();
-    }
-
-    if let Some(stderr_reader) = session.stderr_reader.take() {
-        let _ = stderr_reader.join();
-    }
-}
-
-fn terminate_process(killer: &SharedProcessKiller) {
-    let Ok(mut killer) = killer.lock() else {
-        return;
-    };
-    if let Some(mut killer) = killer.take() {
-        let _ = killer.terminate();
-    }
-}
-
 fn is_active_status(status: &LanguageServerRuntimeStatus) -> bool {
     matches!(
         status,
@@ -254,6 +241,7 @@ fn spawn_reader(
     stdout: Box<dyn Read + Send>,
     stdin: Arc<SessionMessageWriter>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
+    status_publications: Arc<StatusPublicationQueue>,
     runtime_log: RuntimeLog,
     diagnostics_sink: Arc<dyn DiagnosticsSink>,
     workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
@@ -363,7 +351,7 @@ fn spawn_reader(
                     return;
                 }
                 Ok(None) => {
-                    terminate_process(&killer);
+                    terminate_or_retain_process(&killer);
 
                     if !handshake_done {
                         let _ = handshake_tx.send(HandshakeOutcome::Disconnected);
@@ -378,18 +366,23 @@ fn spawn_reader(
                         &pending_requests,
                         "Language server exited unexpectedly.",
                     );
-                    publish_crash(
+                    let published_crash = publish_crash_for_active_session(
                         &status,
-                        status_sink.as_ref(),
+                        status_publications.as_ref(),
+                        &status_sink,
+                        &stop_requested,
+                        session_id,
                         &format!("{server_label} exited unexpectedly."),
                     );
 
-                    maybe_restart_after_crash(&restart_context, &stop_requested);
+                    if published_crash {
+                        maybe_restart_after_crash(&restart_context, &stop_requested);
+                    }
                     return;
                 }
                 Err(error) => {
                     let message = transport_failure_message(server_label, &error);
-                    terminate_process(&killer);
+                    terminate_or_retain_process(&killer);
 
                     if !handshake_done {
                         let _ = handshake_tx.send(HandshakeOutcome::Failed(message));
@@ -401,7 +394,14 @@ fn spawn_reader(
                     }
 
                     reject_pending_requests(&pending_requests, &message);
-                    publish_crash(&status, status_sink.as_ref(), &message);
+                    publish_crash_for_active_session(
+                        &status,
+                        status_publications.as_ref(),
+                        &status_sink,
+                        &stop_requested,
+                        session_id,
+                        &message,
+                    );
                     return;
                 }
             }
@@ -436,22 +436,24 @@ mod tests {
     mod diagnostics_projection_tests;
     #[cfg(unix)]
     mod real_process_lifecycle_tests;
+    mod registry_capacity_tests;
     mod request_cancellation_tests;
+    mod session_cleanup_tests;
     mod start_cleanup_tests;
     mod transport_failure_tests;
 
     #[cfg(unix)]
     use super::ChildKiller;
     use super::{
-        cancellable_backoff, parse_response_result, workspace_runtime_id,
+        cancellable_backoff, parse_response_result, terminate_process, workspace_runtime_id,
         ChildServerProcessSpawner, DiagnosticsSink, JavaScriptTypeScriptLanguageServerRegistry,
         LanguageServerCapabilities, LanguageServerEventSinks, LanguageServerRefreshEvent,
         LanguageServerRefreshFeature, LanguageServerRegistry, LanguageServerRequestError,
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
         NoopRefreshSink, NoopWorkspaceEditSink, PhpLanguageServerRegistry, ProcessKiller,
-        RefreshSink, RestartController, RestartDecision, RestartOutcome, RestartPolicy,
-        SemanticTokensLegend, ServerProcessSpawner, SessionMessageWriter, SpawnedServer, StartKind,
-        StatusSink, WorkspaceEditSink,
+        ProcessKillerSlot, RefreshSink, RestartController, RestartDecision, RestartOutcome,
+        RestartPolicy, SemanticTokensLegend, ServerProcessSpawner, SessionMessageWriter,
+        SharedProcessKiller, SpawnedServer, StartKind, StatusSink, WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::{
@@ -466,7 +468,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Barrier, Mutex};
     use std::time::{Duration, Instant, SystemTime};
 
     #[test]
@@ -3604,11 +3606,12 @@ mod tests {
     fn restart_start_kind_aborts_when_session_already_stopped() {
         let supervisor = LanguageServerSupervisor::new();
         let (sink, _rx) = ChannelSink::new();
+        let status_sink: Arc<dyn StatusSink> = sink;
 
         // Simulate a workspace that was stopped after it crashed.
         supervisor.force_status(LanguageServerRuntimeStatus::Stopped);
 
-        let result = supervisor.begin_start(sink.as_ref(), 7, StartKind::Restart);
+        let result = supervisor.begin_start(&status_sink, 7, StartKind::Restart);
 
         assert!(result.is_err());
         assert_eq!(supervisor.status(), LanguageServerRuntimeStatus::Stopped);
@@ -3618,13 +3621,14 @@ mod tests {
     fn restart_start_kind_proceeds_when_session_still_crashed() {
         let supervisor = LanguageServerSupervisor::new();
         let (sink, _rx) = ChannelSink::new();
+        let status_sink: Arc<dyn StatusSink> = sink;
 
         supervisor.force_status(LanguageServerRuntimeStatus::Crashed {
             message: "boom".to_string(),
         });
 
         supervisor
-            .begin_start(sink.as_ref(), 7, StartKind::Restart)
+            .begin_start(&status_sink, 7, StartKind::Restart)
             .expect("restart should resume a crashed session");
 
         assert_eq!(
@@ -3637,11 +3641,12 @@ mod tests {
     fn fresh_start_kind_proceeds_from_stopped() {
         let supervisor = LanguageServerSupervisor::new();
         let (sink, _rx) = ChannelSink::new();
+        let status_sink: Arc<dyn StatusSink> = sink;
 
         supervisor.force_status(LanguageServerRuntimeStatus::Stopped);
 
         supervisor
-            .begin_start(sink.as_ref(), 9, StartKind::Fresh)
+            .begin_start(&status_sink, 9, StartKind::Fresh)
             .expect("fresh start should proceed from stopped");
 
         assert_eq!(

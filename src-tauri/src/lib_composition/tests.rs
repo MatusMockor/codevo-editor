@@ -18,11 +18,11 @@ use super::{
     javascript_typescript_did_change_configuration_settings, list_git_branches, normalize_path,
     parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
     parse_php_syntax, pull_git_changes, read_directory, read_text_file,
-    register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
-    revert_git_hunk, reword_git_commit, save_git_stash, search_files, stage_git_files,
-    stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch,
-    unstage_git_hunk, workspace_root_for_disposal, JavaScriptTypeScriptLanguageServerOptions,
-    LegacyLocalHistoryWorkspaceAuthorizer,
+    register_picker_path_in_registry, register_workspace_path_in_registry, rename_git_branch,
+    reveal_path_in_workspace, revert_git_hunk, reword_git_commit, save_git_stash, search_files,
+    stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
+    switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
+    JavaScriptTypeScriptLanguageServerOptions, LegacyLocalHistoryWorkspaceAuthorizer,
 };
 use crate::application_commands::enumerate_monospace_font_families;
 use crate::artisan::ArtisanRoutesResponse;

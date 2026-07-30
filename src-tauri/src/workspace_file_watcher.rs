@@ -239,16 +239,46 @@ impl WorkspaceFileChangeWatchRegistry {
     }
 
     pub fn stop(&self, root_path: &str) {
-        let Some(mut watch_session) = self
-            .sessions
-            .lock()
-            .ok()
-            .and_then(|mut sessions| remove_workspace_watch_session(&mut sessions, root_path))
+        let Ok(mut sessions) = self.sessions.lock() else {
+            return;
+        };
+        let Some(root_key) = workspace_watch_id_candidates(&PathBuf::from(root_path))
+            .into_iter()
+            .find(|candidate| sessions.contains_key(candidate))
         else {
             return;
         };
+        let Some(mut watch_session) = sessions.remove(&root_key) else {
+            return;
+        };
+        if let Ok(mut recovery) = self.recovery_by_root.lock() {
+            recovery.remove(&root_key);
+        }
+        drop(sessions);
 
         watch_session.stop();
+    }
+
+    pub fn stop_generation(&self, root_path: &str, watch_generation: u64) -> bool {
+        let Some(mut watch_session) = self.sessions.lock().ok().and_then(|mut sessions| {
+            let matching_key = workspace_watch_id_candidates(&PathBuf::from(root_path))
+                .into_iter()
+                .find(|candidate| {
+                    sessions
+                        .get(candidate)
+                        .is_some_and(|session| session.authority.generation == watch_generation)
+                })?;
+            let session = sessions.remove(&matching_key)?;
+            if let Ok(mut recovery) = self.recovery_by_root.lock() {
+                recovery.remove(&matching_key);
+            }
+            Some(session)
+        }) else {
+            return false;
+        };
+
+        watch_session.stop();
+        true
     }
 
     pub fn stop_all(&self) {
@@ -495,19 +525,6 @@ fn workspace_watch_id(root_path: &Path) -> String {
         .into_iter()
         .next()
         .unwrap_or_default()
-}
-
-fn remove_workspace_watch_session(
-    sessions: &mut HashMap<String, WorkspaceFileChangeWatchSession>,
-    root_path: &str,
-) -> Option<WorkspaceFileChangeWatchSession> {
-    for root_key in workspace_watch_id_candidates(&PathBuf::from(root_path)) {
-        if let Some(session) = sessions.remove(&root_key) {
-            return Some(session);
-        }
-    }
-
-    None
 }
 
 fn workspace_watch_id_candidates(root_path: &Path) -> Vec<String> {
@@ -1042,6 +1059,19 @@ mod tests {
         assert_eq!(watcher.started_roots(), vec![root]);
         assert!(watcher.stopped_roots().is_empty());
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn watch_registry_stop_generation_rejects_stale_owner() {
+        let registry = WorkspaceFileChangeWatchRegistry::new();
+        let watcher = RecordingWatcher::default();
+        let root = temp_workspace("generic-watch-stop-generation");
+        let receipt = start_with_watcher(&registry, &root, &watcher);
+
+        assert!(!registry.stop_generation(&path_string(&root), receipt.watch_generation + 1));
+        assert!(watcher.stopped_roots().is_empty());
+        assert!(registry.stop_generation(&path_string(&root), receipt.watch_generation));
+        assert_eq!(watcher.stopped_roots(), vec![root]);
     }
 
     #[test]

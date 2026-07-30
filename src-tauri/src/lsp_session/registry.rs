@@ -13,18 +13,107 @@ use crate::{managed_javascript_typescript, managed_phpactor};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+
+pub(super) const MAX_LANGUAGE_SERVER_WORKSPACES: usize = 64;
+const LANGUAGE_SERVER_WORKSPACE_CAPACITY_MESSAGE: &str =
+    "Language server workspace capacity (64) was reached.";
+
+fn runtime_status_session_id(status: &LanguageServerRuntimeStatus) -> Option<u64> {
+    match status {
+        LanguageServerRuntimeStatus::Starting { session_id }
+        | LanguageServerRuntimeStatus::Running { session_id, .. } => Some(*session_id),
+        LanguageServerRuntimeStatus::Stopped | LanguageServerRuntimeStatus::Crashed { .. } => None,
+    }
+}
+
+struct RestartToken<'a> {
+    tokens: &'a Mutex<HashMap<String, u64>>,
+    runtime_id: String,
+    generation: u64,
+    armed: bool,
+}
+
+impl RestartToken<'_> {
+    fn is_current(&self) -> bool {
+        self.tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&self.runtime_id)
+            .is_some_and(|generation| *generation == self.generation)
+    }
+
+    fn finish(&mut self) -> bool {
+        let mut tokens = self
+            .tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let removed = if tokens
+            .get(&self.runtime_id)
+            .is_some_and(|generation| *generation == self.generation)
+        {
+            tokens.remove(&self.runtime_id);
+            true
+        } else {
+            false
+        };
+        self.armed = false;
+        removed
+    }
+
+    fn reserve_start_cleanup<'a>(
+        &self,
+        registry: &'a LanguageServerRegistry,
+        root_path: &str,
+    ) -> Result<super::start_cleanup::LanguageServerStartCleanupLease<'a>, String> {
+        let tokens = self.tokens.lock().map_err(|error| error.to_string())?;
+        if tokens
+            .get(&self.runtime_id)
+            .is_none_or(|generation| *generation != self.generation)
+        {
+            return Err("Language server restart was superseded by workspace stop.".to_string());
+        }
+        let (lease, replaced) = registry.reserve_start_cleanup_parts(root_path)?;
+        drop(tokens);
+        if let Some(replaced) = replaced {
+            replaced.stop();
+        }
+        if !self.is_current() {
+            drop(lease);
+            return Err("Language server restart was superseded by workspace stop.".to_string());
+        }
+        Ok(lease)
+    }
+}
+
+impl Drop for RestartToken<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let mut tokens = self
+                .tokens
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if tokens
+                .get(&self.runtime_id)
+                .is_some_and(|generation| *generation == self.generation)
+            {
+                tokens.remove(&self.runtime_id);
+            }
+        }
+    }
+}
 
 pub struct LanguageServerRegistry {
     pub(super) next_session_id: Arc<AtomicU64>,
     pub(super) server_label: &'static str,
-    pub(super) supervisors: Mutex<HashMap<String, Arc<LanguageServerSupervisor>>>,
+    pub(super) supervisors: Arc<Mutex<HashMap<String, Arc<LanguageServerSupervisor>>>>,
 }
 
 pub(super) struct PhpLaunchContext {
     pub(super) command: LanguageServerCommand,
     pub(super) initialize_request: JsonRpcRequest,
     pub(super) root_path: String,
+    pub(super) session_id: u64,
 }
 
 impl Clone for PhpLaunchContext {
@@ -33,6 +122,7 @@ impl Clone for PhpLaunchContext {
             command: clone_command(&self.command),
             initialize_request: clone_initialize_request(&self.initialize_request),
             root_path: self.root_path.clone(),
+            session_id: self.session_id,
         }
     }
 }
@@ -40,6 +130,8 @@ impl Clone for PhpLaunchContext {
 pub struct PhpLanguageServerRegistry {
     pub(super) registry: LanguageServerRegistry,
     pub(super) launch_contexts: Mutex<HashMap<String, PhpLaunchContext>>,
+    restart_tokens: Mutex<HashMap<String, u64>>,
+    next_restart_token: AtomicU64,
 }
 
 impl PhpLanguageServerRegistry {
@@ -47,6 +139,8 @@ impl PhpLanguageServerRegistry {
         Self {
             registry: LanguageServerRegistry::new_with_label("PHPactor"),
             launch_contexts: Mutex::new(HashMap::new()),
+            restart_tokens: Mutex::new(HashMap::new()),
+            next_restart_token: AtomicU64::new(1),
         }
     }
 
@@ -68,11 +162,17 @@ impl PhpLanguageServerRegistry {
             status_sink,
             diagnostics_sink,
         )?;
-        self.store_launch_context_if_active(root_path, command, initialize_request, &status);
+        if let Err(error) =
+            self.store_launch_context_if_active(root_path, command, initialize_request, &status)
+        {
+            self.registry.stop_if_status(root_path, &status);
+            return Err(error);
+        }
         Ok(status)
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     pub fn start_with_auto_restart(
         &self,
         root_path: &str,
@@ -98,18 +198,25 @@ impl PhpLanguageServerRegistry {
             ),
             restart_controller,
         )?;
-        self.store_launch_context_if_active(root_path, command, initialize_request, &status);
+        if let Err(error) =
+            self.store_launch_context_if_active(root_path, command, initialize_request, &status)
+        {
+            self.registry.stop_if_status(root_path, &status);
+            return Err(error);
+        }
         Ok(status)
     }
 
     pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
-        let context = self.remove_launch_context(root_path);
+        self.cancel_restart(root_path);
         let status = self.registry.stop(root_path);
+        let context = self.remove_launch_context(root_path);
         self.cleanup_stopped_root(root_path, context);
         status
     }
 
     pub fn stop_preserving_launch_context(&self, root_path: &str) -> LanguageServerRuntimeStatus {
+        self.cancel_restart(root_path);
         let context = self.launch_context(root_path);
         let status = self.registry.stop(root_path);
         self.cleanup_stopped_root(root_path, context);
@@ -117,8 +224,12 @@ impl PhpLanguageServerRegistry {
     }
 
     pub fn stop_all(&self) -> LanguageServerRuntimeStatus {
-        let contexts = self.drain_launch_contexts();
+        self.restart_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
         let status = self.registry.stop_all();
+        let contexts = self.drain_launch_contexts();
 
         for (root_path, context) in contexts {
             self.cleanup_stopped_root(&root_path, Some(context));
@@ -127,34 +238,42 @@ impl PhpLanguageServerRegistry {
         status
     }
 
-    fn store_launch_context_if_active(
+    pub(super) fn store_launch_context_if_active(
         &self,
         root_path: &str,
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         status: &LanguageServerRuntimeStatus,
-    ) {
+    ) -> Result<(), String> {
         if !is_active_status(status) {
-            return;
+            return Ok(());
         }
 
         let runtime_id = workspace_runtime_id(root_path);
-        if let Ok(mut contexts) = self.launch_contexts.lock() {
-            contexts.insert(
-                runtime_id,
-                PhpLaunchContext {
-                    command: clone_command(command),
-                    initialize_request: clone_initialize_request(initialize_request),
-                    root_path: root_path.to_string(),
-                },
-            );
-        }
+        let session_id = runtime_status_session_id(status).ok_or_else(|| {
+            "Language server launch context requires an active session.".to_string()
+        })?;
+        self.registry.store_launch_context_if_current(
+            &runtime_id,
+            status,
+            &self.launch_contexts,
+            PhpLaunchContext {
+                command: clone_command(command),
+                initialize_request: clone_initialize_request(initialize_request),
+                root_path: root_path.to_string(),
+                session_id,
+            },
+        )
     }
 
     fn remove_launch_context(&self, root_path: &str) -> Option<PhpLaunchContext> {
-        let mut contexts = self.launch_contexts.lock().ok()?;
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let mut contexts = self
+            .launch_contexts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        for runtime_id in workspace_runtime_id_candidates(root_path) {
+        for runtime_id in runtime_ids {
             if let Some(context) = contexts.remove(&runtime_id) {
                 return Some(context);
             }
@@ -164,9 +283,10 @@ impl PhpLanguageServerRegistry {
     }
 
     fn launch_context(&self, root_path: &str) -> Option<PhpLaunchContext> {
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
         let contexts = self.launch_contexts.lock().ok()?;
 
-        for runtime_id in workspace_runtime_id_candidates(root_path) {
+        for runtime_id in runtime_ids {
             if let Some(context) = contexts.get(&runtime_id) {
                 return Some(context.clone());
             }
@@ -181,13 +301,10 @@ impl PhpLanguageServerRegistry {
     /// workspace's server - never a sibling tab's. Returns an error when no
     /// server has been started for the root yet (nothing to restart).
     ///
-    /// Race with workspace close: stop and start are two separately-locked
-    /// registry operations, identical to a manual `stop` + `start` pair. If a
-    /// tab close (`dispose_workspace_root` -> `stop`) interleaves, the worst case
-    /// is a freshly re-spawned server for a root that is closing; that close (or
-    /// the next one) runs `stop` again over the same per-root key and reaps it,
-    /// so no server outlives its workspace. We accept this bounded window rather
-    /// than holding a registry-wide lock across a multi-second handshake.
+    /// Workspace close invalidates the exact monotonic restart token. The token
+    /// is revalidated while reserving the replacement supervisor and again
+    /// after startup; a late or ABA restart therefore fails closed and reaps
+    /// only the session it started.
     #[allow(clippy::too_many_arguments)]
     pub fn restart_with_auto_restart(
         &self,
@@ -205,26 +322,54 @@ impl PhpLanguageServerRegistry {
             );
         };
 
-        self.stop(root_path);
-
-        self.start_with_auto_restart(
-            root_path,
-            &context.command,
-            &context.initialize_request,
-            spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
-            restart_controller,
-        )
+        let mut restart_token = self.begin_restart(root_path)?;
+        let status = self.registry.stop(root_path);
+        let removed_context = self.remove_launch_context(root_path);
+        self.cleanup_stopped_root(root_path, removed_context);
+        let lease = restart_token.reserve_start_cleanup(&self.registry, root_path)?;
+        let result = lease
+            .start_with_auto_restart(
+                &context.command,
+                &context.initialize_request,
+                spawner,
+                LanguageServerEventSinks::new(
+                    Arc::clone(&status_sink),
+                    diagnostics_sink,
+                    workspace_edit_sink,
+                    refresh_sink,
+                ),
+                restart_controller,
+            )
+            .and_then(|started_status| {
+                if let Err(error) = self.store_launch_context_if_active(
+                    root_path,
+                    &context.command,
+                    &context.initialize_request,
+                    &started_status,
+                ) {
+                    self.registry.stop_if_status(root_path, &started_status);
+                    return Err(error);
+                }
+                Ok(started_status)
+            });
+        let restart_is_current = restart_token.finish();
+        if !restart_is_current {
+            if let Ok(started_status) = &result {
+                self.registry.stop_if_status(root_path, started_status);
+                self.remove_launch_context_if_status(root_path, started_status);
+            }
+            return Err("Language server restart was superseded by workspace stop.".to_string());
+        }
+        let _ = status;
+        result
     }
 
     fn drain_launch_contexts(&self) -> Vec<(String, PhpLaunchContext)> {
         self.launch_contexts
             .lock()
-            .map(|mut contexts| contexts.drain().collect())
-            .unwrap_or_default()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain()
+            .collect()
     }
 
     fn cleanup_stopped_root(&self, _root_path: &str, context: Option<PhpLaunchContext>) {
@@ -238,6 +383,70 @@ impl PhpLanguageServerRegistry {
                 &context.root_path,
                 &self.registry.running_roots(),
             );
+        }
+    }
+
+    fn begin_restart(&self, root_path: &str) -> Result<RestartToken<'_>, String> {
+        let runtime_id = workspace_runtime_id(root_path);
+        let mut tokens = self
+            .restart_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if tokens.contains_key(&runtime_id) {
+            return Err("Language server restart is already in progress.".to_string());
+        }
+        if tokens.len() >= MAX_LANGUAGE_SERVER_WORKSPACES {
+            return Err(LANGUAGE_SERVER_WORKSPACE_CAPACITY_MESSAGE.to_string());
+        }
+        let generation = self
+            .next_restart_token
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |current| current.checked_add(1),
+            )
+            .map_err(|_| "Language server restart token capacity was exhausted.".to_string())?;
+        tokens.insert(runtime_id.clone(), generation);
+        Ok(RestartToken {
+            tokens: &self.restart_tokens,
+            runtime_id,
+            generation,
+            armed: true,
+        })
+    }
+
+    fn cancel_restart(&self, root_path: &str) {
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let mut tokens = self
+            .restart_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for runtime_id in runtime_ids {
+            tokens.remove(&runtime_id);
+        }
+    }
+
+    fn remove_launch_context_if_status(
+        &self,
+        root_path: &str,
+        expected_status: &LanguageServerRuntimeStatus,
+    ) {
+        let Some(expected_session_id) = runtime_status_session_id(expected_status) else {
+            return;
+        };
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let mut contexts = self
+            .launch_contexts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for runtime_id in runtime_ids {
+            let matches = contexts
+                .get(&runtime_id)
+                .is_some_and(|context| context.session_id == expected_session_id);
+            if matches {
+                contexts.remove(&runtime_id);
+                return;
+            }
         }
     }
 }
@@ -260,6 +469,7 @@ pub(super) struct JavaScriptTypeScriptLaunchContext {
     pub(super) command: LanguageServerCommand,
     pub(super) initialize_request: JsonRpcRequest,
     pub(super) root_path: String,
+    pub(super) session_id: u64,
 }
 
 impl Clone for JavaScriptTypeScriptLaunchContext {
@@ -268,6 +478,7 @@ impl Clone for JavaScriptTypeScriptLaunchContext {
             command: clone_command(&self.command),
             initialize_request: clone_initialize_request(&self.initialize_request),
             root_path: self.root_path.clone(),
+            session_id: self.session_id,
         }
     }
 }
@@ -275,8 +486,11 @@ impl Clone for JavaScriptTypeScriptLaunchContext {
 pub struct JavaScriptTypeScriptLanguageServerRegistry {
     pub(super) registry: LanguageServerRegistry,
     pub(super) launch_contexts: Mutex<HashMap<String, JavaScriptTypeScriptLaunchContext>>,
-    pub(super) cleanup_gate: Mutex<()>,
+    pub(super) cleanup_gate: Mutex<bool>,
+    pub(super) cleanup_ready: Condvar,
     pub(super) start_replacements: Mutex<HashSet<String>>,
+    restart_tokens: Mutex<HashMap<String, u64>>,
+    next_restart_token: AtomicU64,
 }
 
 impl JavaScriptTypeScriptLanguageServerRegistry {
@@ -284,8 +498,11 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
         Self {
             registry: LanguageServerRegistry::new_with_label("TypeScript language server"),
             launch_contexts: Mutex::new(HashMap::new()),
-            cleanup_gate: Mutex::new(()),
+            cleanup_gate: Mutex::new(false),
+            cleanup_ready: Condvar::new(),
             start_replacements: Mutex::new(HashSet::new()),
+            restart_tokens: Mutex::new(HashMap::new()),
+            next_restart_token: AtomicU64::new(1),
         }
     }
 
@@ -307,11 +524,17 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
             status_sink,
             diagnostics_sink,
         )?;
-        self.store_launch_context_if_active(root_path, command, initialize_request, &status);
+        if let Err(error) =
+            self.store_launch_context_if_active(root_path, command, initialize_request, &status)
+        {
+            self.registry.stop_if_status(root_path, &status);
+            return Err(error);
+        }
         Ok(status)
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     pub fn start_with_auto_restart(
         &self,
         root_path: &str,
@@ -338,13 +561,15 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
     }
 
     pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
-        let context = self.remove_launch_context(root_path);
+        self.cancel_restart(root_path);
         let status = self.registry.stop(root_path);
+        let context = self.remove_launch_context(root_path);
         self.cleanup_stopped_root(root_path, context);
         status
     }
 
     pub fn stop_preserving_launch_context(&self, root_path: &str) -> LanguageServerRuntimeStatus {
+        self.cancel_restart(root_path);
         let context = self.launch_context(root_path);
         let status = self.registry.stop(root_path);
         self.cleanup_stopped_root(root_path, context);
@@ -352,8 +577,12 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
     }
 
     pub fn stop_all(&self) -> LanguageServerRuntimeStatus {
-        let contexts = self.drain_launch_contexts();
+        self.restart_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
         let status = self.registry.stop_all();
+        let contexts = self.drain_launch_contexts();
 
         for (root_path, context) in contexts {
             self.cleanup_stopped_root(&root_path, Some(context));
@@ -368,28 +597,36 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         status: &LanguageServerRuntimeStatus,
-    ) {
+    ) -> Result<(), String> {
         if !is_active_status(status) {
-            return;
+            return Ok(());
         }
 
         let runtime_id = workspace_runtime_id(root_path);
-        if let Ok(mut contexts) = self.launch_contexts.lock() {
-            contexts.insert(
-                runtime_id,
-                JavaScriptTypeScriptLaunchContext {
-                    command: clone_command(command),
-                    initialize_request: clone_initialize_request(initialize_request),
-                    root_path: root_path.to_string(),
-                },
-            );
-        }
+        let session_id = runtime_status_session_id(status).ok_or_else(|| {
+            "Language server launch context requires an active session.".to_string()
+        })?;
+        self.registry.store_launch_context_if_current(
+            &runtime_id,
+            status,
+            &self.launch_contexts,
+            JavaScriptTypeScriptLaunchContext {
+                command: clone_command(command),
+                initialize_request: clone_initialize_request(initialize_request),
+                root_path: root_path.to_string(),
+                session_id,
+            },
+        )
     }
 
     fn remove_launch_context(&self, root_path: &str) -> Option<JavaScriptTypeScriptLaunchContext> {
-        let mut contexts = self.launch_contexts.lock().ok()?;
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let mut contexts = self
+            .launch_contexts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        for runtime_id in workspace_runtime_id_candidates(root_path) {
+        for runtime_id in runtime_ids {
             if let Some(context) = contexts.remove(&runtime_id) {
                 return Some(context);
             }
@@ -399,9 +636,10 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
     }
 
     fn launch_context(&self, root_path: &str) -> Option<JavaScriptTypeScriptLaunchContext> {
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
         let contexts = self.launch_contexts.lock().ok()?;
 
-        for runtime_id in workspace_runtime_id_candidates(root_path) {
+        for runtime_id in runtime_ids {
             if let Some(context) = contexts.get(&runtime_id) {
                 return Some(context.clone());
             }
@@ -416,11 +654,10 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
     /// re-spawns this workspace's server - never a sibling tab's. Returns an
     /// error when no server has been started for the root yet.
     ///
-    /// Race with workspace close: like the PHP variant, stop and start are
-    /// separately-locked operations. A tab close interleaving the restart can at
-    /// worst re-spawn a server for a closing root; that close (or the next) runs
-    /// `stop` again over the same per-root key and reaps it, so no server
-    /// outlives its workspace.
+    /// Workspace close invalidates the exact monotonic restart token. The token
+    /// is revalidated while reserving the replacement supervisor and again
+    /// after startup; a late or ABA restart therefore fails closed and reaps
+    /// only the session it started.
     #[allow(clippy::too_many_arguments)]
     pub fn restart_with_auto_restart(
         &self,
@@ -439,26 +676,55 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
             );
         };
 
-        self.stop(root_path);
-
-        self.start_with_auto_restart(
-            root_path,
-            &context.command,
-            &context.initialize_request,
-            spawner,
-            status_sink,
-            diagnostics_sink,
-            workspace_edit_sink,
-            refresh_sink,
-            restart_controller,
-        )
+        let mut restart_token = self.begin_restart(root_path)?;
+        let stopped_status = self.registry.stop(root_path);
+        let removed_context = self.remove_launch_context(root_path);
+        self.cleanup_stopped_root(root_path, removed_context);
+        status_sink.begin_document_session_replacement()?;
+        let lease = restart_token.reserve_start_cleanup(&self.registry, root_path)?;
+        let result = lease
+            .start_with_auto_restart(
+                &context.command,
+                &context.initialize_request,
+                spawner,
+                LanguageServerEventSinks::new(
+                    Arc::clone(&status_sink),
+                    diagnostics_sink,
+                    workspace_edit_sink,
+                    refresh_sink,
+                ),
+                restart_controller,
+            )
+            .and_then(|started_status| {
+                if let Err(error) = self.store_launch_context_if_active(
+                    root_path,
+                    &context.command,
+                    &context.initialize_request,
+                    &started_status,
+                ) {
+                    self.registry.stop_if_status(root_path, &started_status);
+                    return Err(error);
+                }
+                Ok(started_status)
+            });
+        let restart_is_current = restart_token.finish();
+        if !restart_is_current {
+            if let Ok(started_status) = &result {
+                self.registry.stop_if_status(root_path, started_status);
+                self.remove_launch_context_if_status(root_path, started_status);
+            }
+            return Err("Language server restart was superseded by workspace stop.".to_string());
+        }
+        let _ = stopped_status;
+        result
     }
 
     fn drain_launch_contexts(&self) -> Vec<(String, JavaScriptTypeScriptLaunchContext)> {
         self.launch_contexts
             .lock()
-            .map(|mut contexts| contexts.drain().collect())
-            .unwrap_or_default()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain()
+            .collect()
     }
 
     fn cleanup_stopped_root(
@@ -471,16 +737,79 @@ impl JavaScriptTypeScriptLanguageServerRegistry {
 
         #[cfg(unix)]
         if let Some(context) = context {
-            let _cleanup_gate = self
-                .cleanup_gate
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(_cleanup_reservation) = self.try_reserve_cleanup() else {
+                return;
+            };
             managed_javascript_typescript::cleanup_orphaned_javascript_typescript_processes(
                 &context.command,
                 &context.initialize_request,
                 &context.root_path,
                 &self.registry.running_roots(),
             );
+        }
+    }
+
+    fn begin_restart(&self, root_path: &str) -> Result<RestartToken<'_>, String> {
+        let runtime_id = workspace_runtime_id(root_path);
+        let mut tokens = self
+            .restart_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if tokens.contains_key(&runtime_id) {
+            return Err("Language server restart is already in progress.".to_string());
+        }
+        if tokens.len() >= MAX_LANGUAGE_SERVER_WORKSPACES {
+            return Err(LANGUAGE_SERVER_WORKSPACE_CAPACITY_MESSAGE.to_string());
+        }
+        let generation = self
+            .next_restart_token
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |current| current.checked_add(1),
+            )
+            .map_err(|_| "Language server restart token capacity was exhausted.".to_string())?;
+        tokens.insert(runtime_id.clone(), generation);
+        Ok(RestartToken {
+            tokens: &self.restart_tokens,
+            runtime_id,
+            generation,
+            armed: true,
+        })
+    }
+
+    fn cancel_restart(&self, root_path: &str) {
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let mut tokens = self
+            .restart_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for runtime_id in runtime_ids {
+            tokens.remove(&runtime_id);
+        }
+    }
+
+    fn remove_launch_context_if_status(
+        &self,
+        root_path: &str,
+        expected_status: &LanguageServerRuntimeStatus,
+    ) {
+        let Some(expected_session_id) = runtime_status_session_id(expected_status) else {
+            return;
+        };
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let mut contexts = self
+            .launch_contexts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for runtime_id in runtime_ids {
+            let matches = contexts
+                .get(&runtime_id)
+                .is_some_and(|context| context.session_id == expected_session_id);
+            if matches {
+                contexts.remove(&runtime_id);
+                return;
+            }
         }
     }
 }
@@ -504,7 +833,7 @@ impl LanguageServerRegistry {
         Self {
             next_session_id: Arc::new(AtomicU64::new(1)),
             server_label,
-            supervisors: Mutex::new(HashMap::new()),
+            supervisors: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -586,12 +915,13 @@ impl LanguageServerRegistry {
         spawner: &dyn ServerProcessSpawner,
         event_sinks: LanguageServerEventSinks,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        self.supervisor_for(root_path)?.start_with_event_sinks(
-            command,
-            initialize_request,
-            spawner,
-            event_sinks,
-        )
+        let supervisor = self.supervisor_for(root_path)?;
+        let result =
+            supervisor.start_with_event_sinks(command, initialize_request, spawner, event_sinks);
+        if result.is_err() {
+            self.remove_exact_inactive_supervisor(root_path, &supervisor);
+        }
+        result
     }
 
     /// Start (or re-create) the per-workspace supervisor with crash auto-restart
@@ -607,13 +937,18 @@ impl LanguageServerRegistry {
         event_sinks: LanguageServerEventSinks,
         restart_controller: Arc<RestartController>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        self.supervisor_for(root_path)?.start_with_auto_restart(
+        let supervisor = self.supervisor_for(root_path)?;
+        let result = supervisor.start_with_auto_restart(
             command,
             initialize_request,
             spawner,
             event_sinks,
             restart_controller,
-        )
+        );
+        if result.is_err() {
+            self.remove_exact_inactive_supervisor(root_path, &supervisor);
+        }
+        result
     }
 
     pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
@@ -812,9 +1147,10 @@ impl LanguageServerRegistry {
     }
 
     pub fn running_roots(&self) -> Vec<String> {
-        let Ok(supervisors) = self.supervisors.lock() else {
-            return Vec::new();
-        };
+        let supervisors = self
+            .supervisors
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let mut roots = supervisors
             .iter()
@@ -831,28 +1167,35 @@ impl LanguageServerRegistry {
         roots
     }
 
-    fn supervisor_for(&self, root_path: &str) -> Result<Arc<LanguageServerSupervisor>, String> {
+    pub(super) fn supervisor_for(
+        &self,
+        root_path: &str,
+    ) -> Result<Arc<LanguageServerSupervisor>, String> {
         let runtime_id = workspace_runtime_id(root_path);
         let mut supervisors = self.supervisors.lock().map_err(|error| error.to_string())?;
 
-        Ok(supervisors
-            .entry(runtime_id)
-            .or_insert_with(|| {
-                Arc::new(LanguageServerSupervisor::new_with_session_id_source(
-                    self.server_label,
-                    Arc::clone(&self.next_session_id),
-                ))
-            })
-            .clone())
+        if let Some(supervisor) = supervisors.get(&runtime_id) {
+            return Ok(Arc::clone(supervisor));
+        }
+        if supervisors.len() >= MAX_LANGUAGE_SERVER_WORKSPACES {
+            return Err(LANGUAGE_SERVER_WORKSPACE_CAPACITY_MESSAGE.to_string());
+        }
+        let supervisor = Arc::new(LanguageServerSupervisor::new_with_session_id_source(
+            self.server_label,
+            Arc::clone(&self.next_session_id),
+        ));
+        supervisors.insert(runtime_id, Arc::clone(&supervisor));
+        Ok(supervisor)
     }
 
     pub(super) fn existing_supervisor(
         &self,
         root_path: &str,
     ) -> Option<Arc<LanguageServerSupervisor>> {
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
         let supervisors = self.supervisors.lock().ok()?;
 
-        for runtime_id in workspace_runtime_id_candidates(root_path) {
+        for runtime_id in runtime_ids {
             if let Some(supervisor) = supervisors.get(&runtime_id) {
                 return Some(Arc::clone(supervisor));
             }
@@ -862,9 +1205,13 @@ impl LanguageServerRegistry {
     }
 
     fn remove_supervisor(&self, root_path: &str) -> Option<Arc<LanguageServerSupervisor>> {
-        let mut supervisors = self.supervisors.lock().ok()?;
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let mut supervisors = self
+            .supervisors
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        for runtime_id in workspace_runtime_id_candidates(root_path) {
+        for runtime_id in runtime_ids {
             if let Some(supervisor) = supervisors.remove(&runtime_id) {
                 return Some(supervisor);
             }
@@ -873,27 +1220,259 @@ impl LanguageServerRegistry {
         None
     }
 
+    fn remove_exact_inactive_supervisor(
+        &self,
+        root_path: &str,
+        expected: &Arc<LanguageServerSupervisor>,
+    ) {
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let removed = {
+            let mut supervisors = self
+                .supervisors
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let runtime_id = runtime_ids.into_iter().find(|runtime_id| {
+                supervisors
+                    .get(runtime_id)
+                    .is_some_and(|current| Arc::ptr_eq(current, expected))
+            });
+            runtime_id.and_then(|runtime_id| {
+                if is_active_status(&expected.status()) {
+                    None
+                } else {
+                    supervisors.remove(&runtime_id)
+                }
+            })
+        };
+        if let Some(supervisor) = removed {
+            supervisor.stop();
+        }
+    }
+
+    pub(super) fn stop_if_status(
+        &self,
+        root_path: &str,
+        expected_status: &LanguageServerRuntimeStatus,
+    ) {
+        let runtime_ids = workspace_runtime_id_candidates(root_path);
+        let removed = {
+            let mut supervisors = self
+                .supervisors
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            runtime_ids.into_iter().find_map(|runtime_id| {
+                let matches = supervisors
+                    .get(&runtime_id)
+                    .is_some_and(|supervisor| supervisor.status() == *expected_status);
+                matches.then(|| supervisors.remove(&runtime_id)).flatten()
+            })
+        };
+        if let Some(supervisor) = removed {
+            supervisor.stop();
+        }
+    }
+
     fn drain_supervisors(&self) -> Vec<Arc<LanguageServerSupervisor>> {
         self.supervisors
             .lock()
-            .map(|mut supervisors| {
-                supervisors
-                    .drain()
-                    .map(|(_, supervisor)| supervisor)
-                    .collect()
-            })
-            .unwrap_or_default()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain()
+            .map(|(_, supervisor)| supervisor)
+            .collect()
+    }
+
+    fn store_launch_context_if_current<T>(
+        &self,
+        runtime_id: &str,
+        expected_status: &LanguageServerRuntimeStatus,
+        contexts: &Mutex<HashMap<String, T>>,
+        context: T,
+    ) -> Result<(), String> {
+        let supervisors = self.supervisors.lock().map_err(|error| error.to_string())?;
+        let Some(supervisor) = supervisors.get(runtime_id) else {
+            return Err(
+                "Language server start was superseded before launch context registration."
+                    .to_string(),
+            );
+        };
+        if supervisor.status() != *expected_status || !is_active_status(expected_status) {
+            return Err(
+                "Language server start was superseded before launch context registration."
+                    .to_string(),
+            );
+        }
+
+        let mut contexts = contexts.lock().map_err(|error| error.to_string())?;
+        if !contexts.contains_key(runtime_id) && contexts.len() >= MAX_LANGUAGE_SERVER_WORKSPACES {
+            return Err(
+                "Language server launch context capacity (64) was reached; stop or dispose a retained workspace before starting another."
+                    .to_string(),
+            );
+        }
+        contexts.insert(runtime_id.to_string(), context);
+        Ok(())
     }
 }
 
 impl Drop for LanguageServerRegistry {
     fn drop(&mut self) {
-        let Ok(mut supervisors) = self.supervisors.lock() else {
-            return;
-        };
+        let supervisors = self.drain_supervisors();
 
-        for supervisor in supervisors.drain().map(|(_, supervisor)| supervisor) {
+        for supervisor in supervisors {
             supervisor.stop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
+    use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct NoopStatusSink;
+
+    impl StatusSink for NoopStatusSink {
+        fn emit_status(&self, _status: LanguageServerRuntimeStatus) {}
+    }
+
+    struct NoopDiagnosticsSink;
+
+    impl DiagnosticsSink for NoopDiagnosticsSink {
+        fn emit_diagnostics(&self, _event: LanguageServerDiagnosticEvent) {}
+    }
+
+    struct CountingFailingSpawner(Arc<AtomicUsize>);
+
+    impl ServerProcessSpawner for CountingFailingSpawner {
+        fn spawn(
+            &self,
+            _command: &LanguageServerCommand,
+        ) -> io::Result<super::super::SpawnedServer> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(io::Error::new(io::ErrorKind::NotFound, "expected failure"))
+        }
+    }
+
+    fn assert_replacement_token_reaches_exactly_one_spawn(
+        mut token: RestartToken<'_>,
+        registry: &LanguageServerRegistry,
+    ) {
+        let lease = token
+            .reserve_start_cleanup(registry, "/workspace/a")
+            .expect("replacement reservation");
+        let spawn_count = Arc::new(AtomicUsize::new(0));
+        let command = LanguageServerCommand {
+            executable: "missing-language-server".to_string(),
+            args: Vec::new(),
+            working_directory: "/workspace/a".to_string(),
+            env: Vec::new(),
+        };
+        let initialize_request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: "initialize".to_string(),
+            params: serde_json::json!({}),
+        };
+        let result = lease.start_with_auto_restart(
+            &command,
+            &initialize_request,
+            Arc::new(CountingFailingSpawner(Arc::clone(&spawn_count))),
+            LanguageServerEventSinks::new(
+                Arc::new(NoopStatusSink),
+                Arc::new(NoopDiagnosticsSink),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+            ),
+            Arc::new(RestartController::default()),
+        );
+        assert!(result.is_err());
+        assert_eq!(spawn_count.load(Ordering::SeqCst), 1);
+        assert!(token.finish());
+    }
+
+    #[test]
+    fn php_restart_token_rejects_close_gap_and_cannot_remove_aba_replacement() {
+        let registry = PhpLanguageServerRegistry::new();
+        let first = registry.begin_restart("/workspace/a").expect("first token");
+        registry.cancel_restart("/workspace/a");
+        let second = registry
+            .begin_restart("/workspace/a")
+            .expect("replacement token");
+
+        assert!(first
+            .reserve_start_cleanup(&registry.registry, "/workspace/a")
+            .is_err());
+        drop(first);
+        assert!(second.is_current());
+        assert_replacement_token_reaches_exactly_one_spawn(second, &registry.registry);
+    }
+
+    #[test]
+    fn typescript_restart_token_rejects_close_gap_and_cannot_remove_aba_replacement() {
+        let registry = JavaScriptTypeScriptLanguageServerRegistry::new();
+        let first = registry.begin_restart("/workspace/a").expect("first token");
+        registry.cancel_restart("/workspace/a");
+        let second = registry
+            .begin_restart("/workspace/a")
+            .expect("replacement token");
+
+        assert!(first
+            .reserve_start_cleanup(&registry.registry, "/workspace/a")
+            .is_err());
+        drop(first);
+        assert!(second.is_current());
+        assert_replacement_token_reaches_exactly_one_spawn(second, &registry.registry);
+    }
+
+    #[test]
+    fn php_close_after_restart_reservation_removes_the_exact_reserved_supervisor() {
+        let registry = PhpLanguageServerRegistry::new();
+        let mut token = registry
+            .begin_restart("/workspace/a")
+            .expect("restart token");
+        let lease = token
+            .reserve_start_cleanup(&registry.registry, "/workspace/a")
+            .expect("reserve exact supervisor");
+
+        registry.cancel_restart("/workspace/a");
+        assert_eq!(
+            registry.registry.stop("/workspace/a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        drop(lease);
+        assert!(!token.finish());
+        assert!(registry
+            .registry
+            .supervisors
+            .lock()
+            .expect("supervisors")
+            .is_empty());
+    }
+
+    #[test]
+    fn typescript_close_after_restart_reservation_removes_the_exact_reserved_supervisor() {
+        let registry = JavaScriptTypeScriptLanguageServerRegistry::new();
+        let mut token = registry
+            .begin_restart("/workspace/a")
+            .expect("restart token");
+        let lease = token
+            .reserve_start_cleanup(&registry.registry, "/workspace/a")
+            .expect("reserve exact supervisor");
+
+        registry.cancel_restart("/workspace/a");
+        assert_eq!(
+            registry.registry.stop("/workspace/a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        drop(lease);
+        assert!(!token.finish());
+        assert!(registry
+            .registry
+            .supervisors
+            .lock()
+            .expect("supervisors")
+            .is_empty());
     }
 }

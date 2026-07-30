@@ -326,17 +326,19 @@ fn unwound_start_cleanup_reservation_releases_root() {
 #[test]
 fn reentrant_start_sink_does_not_deadlock_and_publishes_corrective_status() {
     let supervisor = Arc::new(LanguageServerSupervisor::new_with_label("Test server"));
-    let sink = ReentrantStartSink {
+    let sink = Arc::new(ReentrantStartSink {
         events: Mutex::new(Vec::new()),
         supervisor: Arc::downgrade(&supervisor),
-    };
+    });
+    let status_sink: Arc<dyn StatusSink> = sink.clone();
 
-    assert_eq!(
-        supervisor
-            .begin_start(&sink, 1, StartKind::Fresh)
-            .expect_err("reentrant stop supersedes start"),
-        "Language server start transition was superseded."
-    );
+    supervisor
+        .begin_start(&status_sink, 1, StartKind::Fresh)
+        .expect("start publication is dispatched");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while sink.events.lock().expect("events").len() < 2 && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
     assert_eq!(
         sink.events.lock().expect("events").as_slice(),
         [
@@ -355,19 +357,27 @@ fn reentrant_running_sink_does_not_deadlock_and_publishes_corrective_status() {
     let supervisor = Arc::new(LanguageServerSupervisor::new_with_label("Test server"));
     *supervisor.status.lock().expect("status lock") =
         LanguageServerRuntimeStatus::Starting { session_id: 1 };
-    let sink = ReentrantStartSink {
+    let sink = Arc::new(ReentrantStartSink {
         events: Mutex::new(Vec::new()),
         supervisor: Arc::downgrade(&supervisor),
-    };
+    });
+    let status_sink: Arc<dyn StatusSink> = sink.clone();
     let stop_requested = Arc::new(AtomicBool::new(false));
     let capabilities = LanguageServerCapabilities::default();
 
     assert_eq!(
         supervisor
-            .publish_running_if_starting(&sink, &stop_requested, 1, capabilities.clone())
+            .publish_running_if_starting(&status_sink, &stop_requested, 1, capabilities.clone(),)
             .expect("running publication"),
-        LanguageServerRuntimeStatus::Stopped
+        LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: capabilities.clone(),
+        }
     );
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while sink.events.lock().expect("events").len() < 2 && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
     assert_eq!(
         sink.events.lock().expect("events").as_slice(),
         [

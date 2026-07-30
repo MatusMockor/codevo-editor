@@ -45,6 +45,9 @@ use crate::runtime_task_lifecycle::RuntimeTaskLifecycleExt as _;
 use crate::smart_mode::SmartModeService;
 use crate::terminal_session::TerminalSupervisor;
 use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
+use crate::workspace_registry::registration::{
+    WorkspaceRegistration, WorkspaceRegistrationReceipt,
+};
 use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry};
 use crate::workspace_runtime::{
     dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
@@ -53,11 +56,14 @@ use crate::{workspace_commands, workspace_file_watcher};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
-use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+
+#[path = "workspace_facade/unregister.rs"]
+mod unregister;
+use unregister::{unregister_workspace_with_runtime_cleanup, NoopDebugSessionDisposer};
 
 #[cfg(target_os = "macos")]
 pub(crate) const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
@@ -101,8 +107,16 @@ pub(crate) struct WorkspaceIndexClearResult {
 pub(crate) enum NativeWorkspaceOpenResult {
     Opened {
         descriptor: ManagedWorkspaceDescriptor,
+        registration: WorkspaceRegistrationReceipt,
     },
     Cancelled,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeWorkspaceRegistration {
+    descriptor: ManagedWorkspaceDescriptor,
+    registration: WorkspaceRegistrationReceipt,
 }
 
 /// Temporary authorization bridge for legacy Local History commands that still
@@ -171,52 +185,118 @@ impl LegacyLocalHistoryWorkspaceAuthorizer {
 #[tauri::command]
 pub(crate) async fn open_workspace_from_picker(
     app: AppHandle,
-    registry: State<'_, WorkspaceRegistry>,
     local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
     eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
     debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
 ) -> Result<NativeWorkspaceOpenResult, String> {
-    let Some(selected_root) = app.dialog().file().blocking_pick_folder() else {
+    let blocking_app = app.clone();
+    let registration = tauri::async_runtime::spawn_blocking(move || {
+        let Some(selected_root) = blocking_app.dialog().file().blocking_pick_folder() else {
+            return Ok(None);
+        };
+        let selected_root = selected_root
+            .into_path()
+            .map_err(|error| format!("Selected folder is not a local filesystem path: {error}"))?;
+        let registry = blocking_app.state::<WorkspaceRegistry>();
+        register_picker_path_in_registry(&registry, selected_root).map(Some)
+    })
+    .await
+    .map_err(|error| format!("Workspace picker worker failed: {error}"))??;
+    let Some(WorkspaceRegistration {
+        descriptor,
+        receipt: registration,
+    }) = registration
+    else {
         return Ok(NativeWorkspaceOpenResult::Cancelled);
     };
-    let selected_root = selected_root
-        .into_path()
-        .map_err(|error| format!("Selected folder is not a local filesystem path: {error}"))?;
-    let descriptor = registry
-        .register(selected_root)
-        .map_err(|error| error.to_string())?;
     eslint_processes.activate_root(&descriptor.canonical_root_path);
     debug_sessions.activate_root(&descriptor.canonical_root_path.to_string_lossy());
     local_history_authorizer.admit(&descriptor);
-    Ok(NativeWorkspaceOpenResult::Opened { descriptor })
+    Ok(NativeWorkspaceOpenResult::Opened {
+        descriptor,
+        registration,
+    })
+}
+
+pub(crate) fn register_picker_path_in_registry(
+    registry: &WorkspaceRegistry,
+    selected_root: PathBuf,
+) -> Result<WorkspaceRegistration, String> {
+    selected_root
+        .to_str()
+        .ok_or_else(|| "Selected workspace path is not valid UTF-8.".to_string())?;
+    registry
+        .register_with_receipt(selected_root)
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn register_workspace_path_in_registry(
     registry: &WorkspaceRegistry,
     root_path: &str,
-) -> Result<ManagedWorkspaceDescriptor, String> {
+) -> Result<WorkspaceRegistration, String> {
     if Path::new(root_path).is_relative() {
         return Err("Workspace root path must be absolute".to_string());
     }
 
     registry
-        .register(root_path)
+        .register_with_receipt(root_path)
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub(crate) fn register_workspace_path(
-    registry: State<'_, WorkspaceRegistry>,
+pub(crate) async fn register_workspace_path(
+    app: AppHandle,
     local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
     eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
     debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
     root_path: String,
-) -> Result<ManagedWorkspaceDescriptor, String> {
-    let descriptor = register_workspace_path_in_registry(&registry, &root_path)?;
+) -> Result<NativeWorkspaceRegistration, String> {
+    if Path::new(&root_path).is_relative() {
+        return Err("Workspace root path must be absolute".to_string());
+    }
+    let blocking_app = app.clone();
+    let registration = tauri::async_runtime::spawn_blocking(move || {
+        let registry = blocking_app.state::<WorkspaceRegistry>();
+        register_workspace_path_in_registry(&registry, &root_path)
+    })
+    .await
+    .map_err(|error| format!("Workspace registration worker failed: {error}"))??;
+    let descriptor = &registration.descriptor;
     eslint_processes.activate_root(&descriptor.canonical_root_path);
     debug_sessions.activate_root(&descriptor.canonical_root_path.to_string_lossy());
-    local_history_authorizer.admit(&descriptor);
-    Ok(descriptor)
+    local_history_authorizer.admit(descriptor);
+    Ok(NativeWorkspaceRegistration {
+        descriptor: registration.descriptor,
+        registration: registration.receipt,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn rollback_workspace_registration(
+    registry: State<'_, WorkspaceRegistry>,
+    local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
+    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
+    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
+    workspace_id: WorkspaceId,
+    admission_token: u64,
+) -> Result<bool, String> {
+    let rollback = registry
+        .rollback_registration(&workspace_id, admission_token)
+        .map_err(|error| error.to_string())?;
+    let Some(mut rollback) = rollback else {
+        return Ok(false);
+    };
+    if rollback.removed_identity {
+        rollback.begin_cleanup();
+        eslint_processes.stop_root(&rollback.descriptor.canonical_root_path);
+        debug_sessions.deactivate_root(&rollback.descriptor.canonical_root_path.to_string_lossy());
+    }
+    let removed_identity = rollback.removed_identity;
+    rollback.finalize().map_err(|error| error.to_string())?;
+    if removed_identity {
+        local_history_authorizer.revoke(&workspace_id);
+    }
+    Ok(true)
 }
 
 #[tauri::command]
@@ -225,36 +305,68 @@ pub(crate) fn unregister_workspace(
     state: WorkspaceLifecycleState<'_>,
     workspace_id: WorkspaceId,
 ) -> Result<(), String> {
+    let mut errors = Vec::new();
     state.file_search_lifecycle.cancel_workspace(&workspace_id);
-    state
-        .node_attach_candidates
-        .invalidate_listings()
-        .map_err(|_| "Node attach candidate invalidation failed.".to_string())?;
+    if state.node_attach_candidates.invalidate_listings().is_err() {
+        errors.push("Node attach candidate invalidation failed.".to_string());
+    }
     let mut debug_deactivation = None;
-    let unregister = state
-        .workspace_registry
-        .unregister_after(&workspace_id, |descriptor| {
+    let unregister = unregister_workspace_with_runtime_cleanup(
+        &state.workspace_registry,
+        &workspace_id,
+        WorkspaceRuntimeDisposal {
+            index_lifecycle: &*state.index_lifecycle,
+            javascript_typescript_language_servers: &*state.javascript_typescript_language_servers,
+            javascript_typescript_watch_registry: &*state.javascript_typescript_watch_registry,
+            workspace_file_change_watch_registry: &*state.workspace_file_change_watch_registry,
+            php_language_servers: &*state.php_language_servers,
+            debug_sessions: &NoopDebugSessionDisposer,
+            eslint_processes: &**state.eslint_processes,
+            terminal_sessions: &*state.terminal_sessions,
+        },
+        |descriptor| {
             debug_deactivation = Some(
                 state
                     .debug_sessions
                     .begin_root_deactivation(&descriptor.canonical_root_path.to_string_lossy()),
             );
             app.request_stop_workspace_tasks(&workspace_id, &state.js_test_batches);
-            state
+        },
+        |descriptor, cleanup_errors| {
+            if let Err(error) = state
                 .document_change_admission
                 .purge_root(&descriptor.canonical_root_path.to_string_lossy())
-                .map_err(io::Error::other)?;
-            state
-                .terminal_sessions
-                .stop_root(&descriptor.canonical_root_path)
-                .map_err(io::Error::other)
-        });
+            {
+                cleanup_errors.push(format!("Document change admission cleanup failed: {error}"));
+            }
+            match state.smart_mode_service.lock() {
+                Ok(mut smart_mode) => {
+                    smart_mode.remove_workspace(&descriptor.canonical_root_path.to_string_lossy())
+                }
+                Err(error) => {
+                    cleanup_errors.push(format!("Smart mode cleanup failed: {error}"));
+                }
+            }
+        },
+    );
     if let Some(deactivation) = debug_deactivation {
         DebugSessionRegistry::complete_root_deactivation(deactivation);
     }
-    unregister.map_err(|error| error.to_string())?;
-    state.local_history_authorizer.revoke(&workspace_id);
-    Ok(())
+    let unregister_error = match unregister {
+        Ok(mut cleanup_errors) => {
+            errors.append(&mut cleanup_errors);
+            state.local_history_authorizer.revoke(&workspace_id);
+            None
+        }
+        Err(error) => Some(format!("Workspace unregister failed: {error}")),
+    };
+    if !errors.is_empty() {
+        eprintln!(
+            "Workspace unregister completed with cleanup warnings: {}",
+            errors.join("\n")
+        );
+    }
+    unregister_error.map_or(Ok(()), Err)
 }
 
 pub(crate) struct WorkspaceLifecycleState<'a> {
@@ -418,6 +530,18 @@ pub(crate) fn start_workspace_file_watch(
 ) -> Result<workspace_file_watcher::WorkspaceFileWatchStartReceipt, String> {
     let root = canonicalize_workspace_root(&root_path)?;
     workspace_file_change_watch_registry.start(&root.to_string_lossy(), app)
+}
+
+#[tauri::command]
+pub(crate) fn stop_workspace_file_watch(
+    root_path: String,
+    watch_generation: u64,
+    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
+) -> Result<bool, String> {
+    if root_path.len() > 32_768 || root_path.contains('\0') || Path::new(&root_path).is_relative() {
+        return Err("Workspace watcher stop root is invalid.".to_string());
+    }
+    Ok(workspace_file_change_watch_registry.stop_generation(&root_path, watch_generation))
 }
 
 #[tauri::command]
@@ -1247,4 +1371,250 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     }
 
     normalized
+}
+
+#[cfg(test)]
+mod unregister_workspace_tests {
+    use super::unregister_workspace_with_runtime_cleanup;
+    use crate::workspace_registry::WorkspaceRegistry;
+    use crate::workspace_runtime::{
+        DebugSessionDisposer, LanguageServerDisposer, TerminalSessionDisposer,
+        WorkspaceIndexLifecycleDisposer, WorkspaceProcessDisposer, WorkspaceRuntimeDisposal,
+        WorkspaceWatchDisposer,
+    };
+    use std::{
+        collections::BTreeSet,
+        fs,
+        path::Path,
+        sync::{Arc, Mutex},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct RecordingDisposer {
+        calls: Arc<Mutex<Vec<String>>>,
+        label: &'static str,
+        roots: Mutex<BTreeSet<String>>,
+        terminal_error: Option<&'static str>,
+    }
+
+    impl RecordingDisposer {
+        fn new(
+            label: &'static str,
+            roots: impl IntoIterator<Item = String>,
+            calls: &Arc<Mutex<Vec<String>>>,
+        ) -> Self {
+            Self {
+                calls: Arc::clone(calls),
+                label,
+                roots: Mutex::new(roots.into_iter().collect()),
+                terminal_error: None,
+            }
+        }
+
+        fn failing_terminal(
+            label: &'static str,
+            roots: impl IntoIterator<Item = String>,
+            calls: &Arc<Mutex<Vec<String>>>,
+            error: &'static str,
+        ) -> Self {
+            Self {
+                terminal_error: Some(error),
+                ..Self::new(label, roots, calls)
+            }
+        }
+
+        fn stop(&self, root_path: &str) {
+            self.calls
+                .lock()
+                .expect("calls")
+                .push(format!("{}:{root_path}", self.label));
+            self.roots.lock().expect("roots").remove(root_path);
+        }
+
+        fn contains(&self, root_path: &str) -> bool {
+            self.roots.lock().expect("roots").contains(root_path)
+        }
+    }
+
+    impl WorkspaceWatchDisposer for RecordingDisposer {
+        fn stop_workspace_watch(&self, root_path: &str) {
+            self.stop(root_path);
+        }
+    }
+
+    impl LanguageServerDisposer for RecordingDisposer {
+        fn stop_language_server(&self, root_path: &str) {
+            self.stop(root_path);
+        }
+    }
+
+    impl WorkspaceIndexLifecycleDisposer for RecordingDisposer {
+        fn cancel_workspace_index_lifecycle(&self, root_path: &str) {
+            self.stop(root_path);
+        }
+    }
+
+    impl DebugSessionDisposer for RecordingDisposer {
+        fn stop_debug_session(&self, root_path: &str) {
+            self.stop(root_path);
+        }
+    }
+
+    impl WorkspaceProcessDisposer for RecordingDisposer {
+        fn stop_workspace_processes(&self, root_path: &Path) {
+            self.stop(&root_path.to_string_lossy());
+        }
+    }
+
+    impl TerminalSessionDisposer for RecordingDisposer {
+        fn stop_terminal_sessions(&self, root_path: &Path) -> Result<(), String> {
+            self.stop(&root_path.to_string_lossy());
+            match self.terminal_error {
+                Some(error) => Err(error.to_string()),
+                None => Ok(()),
+            }
+        }
+    }
+
+    #[test]
+    fn unregister_stops_exact_language_services_before_descriptor_removal_and_reports_errors() {
+        let registry = WorkspaceRegistry::new();
+        let root_a = temporary_workspace("unregister-a");
+        let root_b = temporary_workspace("unregister-b");
+        let descriptor_a = registry.register(&root_a).expect("register A");
+        let descriptor_b = registry.register(&root_b).expect("register B");
+        let root_a_key = descriptor_a
+            .canonical_root_path
+            .to_string_lossy()
+            .into_owned();
+        let root_b_key = descriptor_b
+            .canonical_root_path
+            .to_string_lossy()
+            .into_owned();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let index =
+            RecordingDisposer::new("index", [root_a_key.clone(), root_b_key.clone()], &calls);
+        let watcher =
+            RecordingDisposer::new("watch", [root_a_key.clone(), root_b_key.clone()], &calls);
+        let file_watcher = RecordingDisposer::new(
+            "file-watch",
+            [root_a_key.clone(), root_b_key.clone()],
+            &calls,
+        );
+        let javascript_typescript =
+            RecordingDisposer::new("js-lsp", [root_a_key.clone(), root_b_key.clone()], &calls);
+        let php =
+            RecordingDisposer::new("php-lsp", [root_a_key.clone(), root_b_key.clone()], &calls);
+        let debug =
+            RecordingDisposer::new("debug", [root_a_key.clone(), root_b_key.clone()], &calls);
+        let eslint =
+            RecordingDisposer::new("eslint", [root_a_key.clone(), root_b_key.clone()], &calls);
+        let terminal = RecordingDisposer::failing_terminal(
+            "terminal",
+            [root_a_key.clone(), root_b_key.clone()],
+            &calls,
+            "terminal stop failed",
+        );
+
+        let errors = unregister_workspace_with_runtime_cleanup(
+            &registry,
+            &descriptor_a.workspace_id,
+            WorkspaceRuntimeDisposal {
+                index_lifecycle: &index,
+                javascript_typescript_language_servers: &javascript_typescript,
+                javascript_typescript_watch_registry: &watcher,
+                workspace_file_change_watch_registry: &file_watcher,
+                php_language_servers: &php,
+                debug_sessions: &debug,
+                eslint_processes: &eslint,
+                terminal_sessions: &terminal,
+            },
+            |descriptor| {
+                calls.lock().expect("calls").push(format!(
+                    "before:{}",
+                    descriptor.canonical_root_path.to_string_lossy()
+                ));
+            },
+            |descriptor, errors| {
+                calls.lock().expect("calls").push(format!(
+                    "after:{}",
+                    descriptor.canonical_root_path.to_string_lossy()
+                ));
+                errors.push("document cleanup failed".to_string());
+            },
+        )
+        .expect("unregister after best-effort cleanup");
+
+        assert_eq!(
+            errors,
+            vec![
+                "Workspace runtime cleanup failed: terminal stop failed",
+                "document cleanup failed",
+            ]
+        );
+        assert!(registry.descriptor(&descriptor_a.workspace_id).is_err());
+        assert!(registry.descriptor(&descriptor_b.workspace_id).is_ok());
+        assert!(!index.contains(&root_a_key));
+        assert!(index.contains(&root_b_key));
+        assert!(!watcher.contains(&root_a_key));
+        assert!(watcher.contains(&root_b_key));
+        assert!(!file_watcher.contains(&root_a_key));
+        assert!(file_watcher.contains(&root_b_key));
+        assert!(!javascript_typescript.contains(&root_a_key));
+        assert!(javascript_typescript.contains(&root_b_key));
+        assert!(!php.contains(&root_a_key));
+        assert!(php.contains(&root_b_key));
+        assert!(!debug.contains(&root_a_key));
+        assert!(debug.contains(&root_b_key));
+        assert!(!eslint.contains(&root_a_key));
+        assert!(eslint.contains(&root_b_key));
+        assert!(!terminal.contains(&root_a_key));
+        assert!(terminal.contains(&root_b_key));
+        let retry_errors = unregister_workspace_with_runtime_cleanup(
+            &registry,
+            &descriptor_a.workspace_id,
+            WorkspaceRuntimeDisposal {
+                index_lifecycle: &index,
+                javascript_typescript_language_servers: &javascript_typescript,
+                javascript_typescript_watch_registry: &watcher,
+                workspace_file_change_watch_registry: &file_watcher,
+                php_language_servers: &php,
+                debug_sessions: &debug,
+                eslint_processes: &eslint,
+                terminal_sessions: &terminal,
+            },
+            |_| panic!("an idempotent unregister retry must not repeat cleanup"),
+            |_, _| panic!("an idempotent unregister retry must not repeat cleanup"),
+        )
+        .expect("already-unregistered workspace retry");
+        assert!(retry_errors.is_empty());
+        assert_eq!(
+            calls.lock().expect("calls").as_slice(),
+            &[
+                format!("before:{root_a_key}"),
+                format!("index:{root_a_key}"),
+                format!("watch:{root_a_key}"),
+                format!("file-watch:{root_a_key}"),
+                format!("js-lsp:{root_a_key}"),
+                format!("php-lsp:{root_a_key}"),
+                format!("debug:{root_a_key}"),
+                format!("eslint:{root_a_key}"),
+                format!("terminal:{root_a_key}"),
+                format!("after:{root_a_key}"),
+            ]
+        );
+
+        fs::remove_dir_all(root_a).expect("cleanup A");
+        fs::remove_dir_all(root_b).expect("cleanup B");
+    }
+
+    fn temporary_workspace(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("codevo-{label}-{nonce}"));
+        fs::create_dir_all(&root).expect("create workspace");
+        root
+    }
 }

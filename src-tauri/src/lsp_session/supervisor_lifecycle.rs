@@ -1,18 +1,21 @@
 #[cfg(test)]
 use super::event_sinks::{NoopRefreshSink, NoopWorkspaceEditSink};
+use super::session_cleanup::SESSION_CLEANUP_SETTLEMENT_TIMEOUT;
 use super::{
-    append_runtime_log, is_active_status, prepare_cancel_pending_request, publish, publish_crash,
-    record_recent_request, request_dispatch, reset_request_telemetry, reset_runtime_log,
-    send_initialized, send_request_with_timeout, server_configuration, set_status,
-    snapshot_recent_requests, snapshot_stderr_tail, spawn_reader, spawn_stderr_reader,
-    terminate_process, terminate_session, write_with_session_stdin, CancellationTransport,
-    DiagnosticsSink, ExactSessionNotificationOutcome, ExactSessionNotificationTransport,
-    HandshakeOutcome, LanguageServerCapabilities, LanguageServerEventSinks,
-    LanguageServerRequestError, LanguageServerRuntimeStatus, LanguageServerSupervisor,
+    append_runtime_log, cleanup_session, is_active_status, maybe_restart_after_crash,
+    prepare_cancel_pending_request, publish_crash_for_active_session, record_recent_request,
+    request_dispatch, reserve_session_ownership, reset_request_telemetry, reset_runtime_log,
+    retain_cleanup_task, retain_provisional_process, retain_session_readers, send_initialized,
+    send_request_with_timeout, server_configuration, set_status, snapshot_recent_requests,
+    snapshot_stderr_tail, spawn_reader, spawn_stderr_reader, terminate_session,
+    write_with_session_stdin, CancellationTransport, DiagnosticsSink,
+    ExactSessionNotificationOutcome, ExactSessionNotificationTransport, HandshakeOutcome,
+    LanguageServerCapabilities, LanguageServerEventSinks, LanguageServerRequestError,
+    LanguageServerRuntimeStatus, LanguageServerSupervisor, LifecycleGate, LifecycleOperation,
     PendingRequestRegistry, ProjectResyncRequestOutcome, RecentLspRequest, RefreshSink,
-    RestartContext, RestartController, RunningSession, ServerProcessSpawner, SessionMessageWriter,
-    SessionRequestParts, StartKind, StatusSink, StderrTailBuffer, WorkspaceEditSink,
-    HANDSHAKE_TIMEOUT, REQUEST_TIMEOUT,
+    RestartContext, RestartController, RunningSession, ServerProcessSpawner, SessionCleanupOutcome,
+    SessionCleanupTask, SessionMessageWriter, SessionRequestParts, StartKind, StatusSink,
+    StderrTailBuffer, WorkspaceEditSink, HANDSHAKE_TIMEOUT, REQUEST_TIMEOUT,
 };
 use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
 use serde_json::Value;
@@ -20,9 +23,25 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-#[cfg(test)]
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+enum CleanupSettlement {
+    None,
+    Complete {
+        status_sink: Arc<dyn StatusSink>,
+    },
+    Failed {
+        message: String,
+        session: RunningSession,
+        status_sink: Arc<dyn StatusSink>,
+    },
+    Pending {
+        status_sink: Arc<dyn StatusSink>,
+    },
+    Panicked {
+        status_sink: Arc<dyn StatusSink>,
+    },
+}
 
 impl LanguageServerSupervisor {
     pub fn new() -> Self {
@@ -37,7 +56,11 @@ impl LanguageServerSupervisor {
         server_label: &'static str,
         next_session_id: Arc<AtomicU64>,
     ) -> Self {
+        let status = Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped));
         Self {
+            cleanup_task: Mutex::new(None),
+            cleanup_terminal_failure: Mutex::new(None),
+            lifecycle_gate: LifecycleGate::new(),
             log: Arc::new(Mutex::new(String::new())),
             recent_requests: Arc::new(Mutex::new(Default::default())),
             stderr_tail: Arc::new(Mutex::new(StderrTailBuffer::default())),
@@ -45,7 +68,8 @@ impl LanguageServerSupervisor {
             next_session_id,
             server_label,
             session: Mutex::new(None),
-            status: Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)),
+            status: Arc::clone(&status),
+            status_publications: Arc::new(super::StatusPublicationQueue::new(status)),
         }
     }
 
@@ -62,10 +86,199 @@ impl LanguageServerSupervisor {
     }
 
     pub fn status(&self) -> LanguageServerRuntimeStatus {
-        self.status
+        match self.status.lock() {
+            Ok(status) => status.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    fn publish_crash_if_current_session(
+        &self,
+        sink: &Arc<dyn StatusSink>,
+        session_id: u64,
+        message: &str,
+    ) {
+        let crashed = LanguageServerRuntimeStatus::Crashed {
+            message: message.to_string(),
+        };
+        let should_publish = {
+            let mut status = self
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if matches!(
+                &*status,
+                LanguageServerRuntimeStatus::Starting {
+                    session_id: current
+                } | LanguageServerRuntimeStatus::Running {
+                    session_id: current,
+                    ..
+                } if *current == session_id
+            ) {
+                *status = crashed.clone();
+                true
+            } else {
+                false
+            }
+        };
+        if should_publish {
+            if let Err(error) = self.status_publications.publish(Arc::clone(sink), crashed) {
+                append_runtime_log(
+                    &self.log,
+                    &format!("Language server status publication failed: {error}\n"),
+                );
+            }
+        }
+    }
+
+    fn cleanup_task_exists(&self) -> bool {
+        self.cleanup_task
             .lock()
-            .map(|status| status.clone())
-            .unwrap_or(LanguageServerRuntimeStatus::Stopped)
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
+    }
+
+    fn cleanup_terminal_failure(&self) -> Option<String> {
+        self.cleanup_terminal_failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn retain_cleanup_terminal_failure(&self, message: &str) {
+        *self
+            .cleanup_terminal_failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message.to_string());
+    }
+
+    fn start_cleanup_task(
+        &self,
+        session: RunningSession,
+    ) -> Result<(), (Box<RunningSession>, String)> {
+        let status_sink = Arc::clone(&session.status_sink);
+        let ownership = Arc::new(Mutex::new(Some(session)));
+        let worker_ownership = Arc::clone(&ownership);
+        let handle = match std::thread::Builder::new()
+            .name("lsp-session-cleanup".to_string())
+            .spawn(move || {
+                let session = worker_ownership
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                    .expect("cleanup worker owns an exact session");
+                cleanup_session(session)
+            }) {
+            Ok(handle) => handle,
+            Err(error) => {
+                let session = ownership
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                    .expect("failed spawn retains session ownership");
+                return Err((
+                    Box::new(session),
+                    format!("Failed to start language server cleanup worker: {error}"),
+                ));
+            }
+        };
+        let task = SessionCleanupTask {
+            handle,
+            status_sink,
+        };
+        let mut current = self
+            .cleanup_task
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        debug_assert!(current.is_none());
+        *current = Some(task);
+        Ok(())
+    }
+
+    fn await_cleanup_settlement(&self, timeout: Duration) -> CleanupSettlement {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let task = self
+                .cleanup_task
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take();
+            let Some(task) = task else {
+                return CleanupSettlement::None;
+            };
+            if task.handle.is_finished() {
+                let status_sink = task.status_sink;
+                return match task.handle.join() {
+                    Ok(SessionCleanupOutcome::Complete { readers }) => {
+                        retain_session_readers(readers);
+                        CleanupSettlement::Complete { status_sink }
+                    }
+                    Ok(SessionCleanupOutcome::Failed { message, session }) => {
+                        CleanupSettlement::Failed {
+                            message,
+                            session,
+                            status_sink,
+                        }
+                    }
+                    Err(_) => CleanupSettlement::Panicked { status_sink },
+                };
+            }
+
+            let status_sink = Arc::clone(&task.status_sink);
+            *self
+                .cleanup_task
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(task);
+            if Instant::now() >= deadline {
+                return CleanupSettlement::Pending { status_sink };
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn restore_failed_cleanup_session(&self, session: RunningSession) {
+        let mut current = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        debug_assert!(current.is_none());
+        *current = Some(session);
+    }
+
+    fn retain_session_cleanup(&self, session: RunningSession) {
+        if !self.cleanup_task_exists() {
+            if let Err((session, message)) = self.start_cleanup_task(session) {
+                self.restore_failed_cleanup_session(*session);
+                set_status(
+                    &self.status,
+                    LanguageServerRuntimeStatus::Crashed { message },
+                );
+                return;
+            }
+        }
+        match self.await_cleanup_settlement(SESSION_CLEANUP_SETTLEMENT_TIMEOUT) {
+            CleanupSettlement::None | CleanupSettlement::Complete { .. } => {}
+            CleanupSettlement::Failed {
+                message, session, ..
+            } => {
+                self.restore_failed_cleanup_session(session);
+                set_status(
+                    &self.status,
+                    LanguageServerRuntimeStatus::Crashed { message },
+                );
+            }
+            CleanupSettlement::Pending { .. } => set_status(
+                &self.status,
+                LanguageServerRuntimeStatus::Crashed {
+                    message: "Language server cleanup is still pending.".to_string(),
+                },
+            ),
+            CleanupSettlement::Panicked { .. } => set_status(&self.status, {
+                let message = "Language server cleanup worker panicked.".to_string();
+                self.retain_cleanup_terminal_failure(&message);
+                LanguageServerRuntimeStatus::Crashed { message }
+            }),
+        }
     }
 
     /// OS process id of the currently installed session, when one is running.
@@ -197,13 +410,27 @@ impl LanguageServerSupervisor {
         self.terminate_stale_session();
         reset_runtime_log(&self.log, self.server_label, session_id, command);
         reset_request_telemetry(&self.recent_requests, &self.stderr_tail);
-        self.begin_start(status_sink.as_ref(), session_id, start_kind)?;
+        self.begin_start(&status_sink, session_id, start_kind)?;
+        let spawning = self.lifecycle_gate.acquire(LifecycleOperation::Spawning);
+        self.require_start_transition(session_id)?;
+        if self.cleanup_task_exists() || self.cleanup_terminal_failure().is_some() {
+            let message = "Language server cleanup is still pending.".to_string();
+            self.publish_crash_if_current_session(&status_sink, session_id, &message);
+            return Err(message);
+        }
 
+        let ownership_permit = match reserve_session_ownership() {
+            Ok(permit) => permit,
+            Err(message) => {
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
+                return Err(message);
+            }
+        };
         let spawned = match spawner.spawn(command) {
             Ok(spawned) => spawned,
             Err(error) => {
                 let message = format!("Failed to start {}: {error}", self.server_label);
-                publish_crash(&self.status, status_sink.as_ref(), &message);
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
                 return Err(message);
             }
         };
@@ -211,14 +438,12 @@ impl LanguageServerSupervisor {
         let stdin = Arc::clone(&spawned.stdin);
         let pending_requests = Arc::new(PendingRequestRegistry::new());
         let stop_requested = Arc::new(AtomicBool::new(false));
-        let stderr_reader = spawned.stderr.map(|stderr| {
-            spawn_stderr_reader(stderr, Arc::clone(&self.log), Arc::clone(&self.stderr_tail))
-        });
         let server_configuration = Arc::new(Mutex::new(
             server_configuration::from_initialize_request(initialize_request),
         ));
         let pid = spawned.killer.pid();
-        let killer = Arc::new(Mutex::new(Some(spawned.killer)));
+        let killer = Arc::new(super::ProcessKillerSlot::new(spawned.killer));
+        let mut ownership_permit = Some(ownership_permit);
         let writer_failure_killer = Arc::clone(&killer);
         let writer_failure_log = Arc::clone(&self.log);
         let writer_failure_label = self.server_label;
@@ -229,30 +454,101 @@ impl LanguageServerSupervisor {
                     "{writer_failure_label} session {session_id} stdin transport failed: {error}\n"
                 ),
             );
-            terminate_process(&writer_failure_killer);
+            if let Err(retain_error) =
+                super::retain_process_termination(Arc::clone(&writer_failure_killer))
+            {
+                append_runtime_log(
+                    &writer_failure_log,
+                    &format!(
+                        "{writer_failure_label} session {session_id} durable stdin cleanup failed: {retain_error}\n"
+                    ),
+                );
+            }
         }));
-        let cancellation_transport = CancellationTransport::start(
+        let failure_status = Arc::clone(&self.status);
+        let failure_publications = Arc::clone(&self.status_publications);
+        let failure_sink = Arc::clone(&status_sink);
+        let failure_stop_requested = Arc::clone(&stop_requested);
+        let failure_restart_context = restart_context.clone();
+        let cancellation_failure_reporter = Arc::new(move |message: String| {
+            let published = publish_crash_for_active_session(
+                &failure_status,
+                failure_publications.as_ref(),
+                &failure_sink,
+                &failure_stop_requested,
+                session_id,
+                &message,
+            );
+            if published {
+                maybe_restart_after_crash(&failure_restart_context, &failure_stop_requested);
+            }
+        });
+        let cancellation_transport = match CancellationTransport::start(
             session_id,
             Arc::clone(&stdin),
             Arc::clone(&killer),
             Arc::clone(&self.log),
             self.server_label,
-        )
-        .map_err(|error| {
-            terminate_process(&killer);
-            format!("Failed to start cancellation transport: {error}")
-        })?;
-        let exact_notification_transport = ExactSessionNotificationTransport::start(
+            cancellation_failure_reporter,
+        ) {
+            Ok(transport) => transport,
+            Err(error) => {
+                retain_provisional_process(
+                    Arc::clone(&killer),
+                    ownership_permit
+                        .take()
+                        .expect("spawned process owns cleanup admission"),
+                    Vec::new(),
+                );
+                let message = format!("Failed to start cancellation transport: {error}");
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
+                return Err(message);
+            }
+        };
+        let exact_notification_transport = match ExactSessionNotificationTransport::start(
             session_id,
             Arc::clone(&stdin),
             &cancellation_transport,
-        )
-        .map_err(|error| {
-            cancellation_transport.revoke();
-            terminate_process(&killer);
-            format!("Failed to start exact notification transport: {error}")
-        })?;
+        ) {
+            Ok(transport) => transport,
+            Err(error) => {
+                let handles = cancellation_transport.revoke_for_cleanup();
+                retain_provisional_process(
+                    Arc::clone(&killer),
+                    ownership_permit
+                        .take()
+                        .expect("spawned process owns cleanup admission"),
+                    handles,
+                );
+                let message = format!("Failed to start exact notification transport: {error}");
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
+                return Err(message);
+            }
+        };
+        let stderr_reader = if let Some(stderr) = spawned.stderr {
+            match spawn_stderr_reader(stderr, Arc::clone(&self.log), Arc::clone(&self.stderr_tail))
+            {
+                Ok(reader) => Some(reader),
+                Err(error) => {
+                    let mut handles = cancellation_transport.revoke_for_cleanup();
+                    handles.extend(exact_notification_transport.revoke_for_cleanup());
+                    retain_provisional_process(
+                        Arc::clone(&killer),
+                        ownership_permit
+                            .take()
+                            .expect("spawned process owns cleanup admission"),
+                        handles,
+                    );
+                    let message = format!("Failed to start stderr reader: {error}");
+                    self.publish_crash_if_current_session(&status_sink, session_id, &message);
+                    return Err(message);
+                }
+            }
+        } else {
+            None
+        };
         let mut session = Some(RunningSession {
+            ownership_permit,
             cancellation_transport,
             exact_notification_transport,
             pid,
@@ -267,7 +563,9 @@ impl LanguageServerSupervisor {
             stop_requested: Arc::clone(&stop_requested),
         });
 
-        if !self.install_session(&mut session)? {
+        let installed = self.install_session(&mut session);
+        drop(spawning);
+        if !installed {
             if let Some(session) = session {
                 terminate_session(session);
             }
@@ -280,7 +578,7 @@ impl LanguageServerSupervisor {
             Err(error) => {
                 let message = format!("Failed to serialize initialize request: {error}");
                 self.terminate_matching_session(&stop_requested);
-                publish_crash(&self.status, status_sink.as_ref(), &message);
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
                 return Err(message);
             }
         };
@@ -288,7 +586,7 @@ impl LanguageServerSupervisor {
         if let Err(error) = write_with_session_stdin(&stdin, &init_bytes) {
             let message = format!("Failed to send initialize: {error}");
             self.terminate_matching_session(&stop_requested);
-            publish_crash(&self.status, status_sink.as_ref(), &message);
+            self.publish_crash_if_current_session(&status_sink, session_id, &message);
             return Err(message);
         }
 
@@ -298,6 +596,7 @@ impl LanguageServerSupervisor {
             spawned.stdout,
             Arc::clone(&stdin),
             Arc::clone(&self.status),
+            Arc::clone(&self.status_publications),
             Arc::clone(&self.log),
             diagnostics_sink,
             workspace_edit_sink,
@@ -315,7 +614,7 @@ impl LanguageServerSupervisor {
             killer,
         ));
 
-        if !self.attach_reader(&stop_requested, &mut reader)? {
+        if !self.attach_reader(&stop_requested, &mut reader) {
             if let Some(reader) = reader {
                 let _ = reader.join();
             }
@@ -332,18 +631,16 @@ impl LanguageServerSupervisor {
                 if let Err(message) = send_initialized(&stdin) {
                     stop_requested.store(true, Ordering::SeqCst);
                     self.terminate_matching_session(&stop_requested);
-                    publish_crash(&self.status, status_sink.as_ref(), &message);
+                    self.publish_crash_if_current_session(&status_sink, session_id, &message);
                     return Err(message);
                 }
 
-                let running = self.publish_running_if_starting(
-                    status_sink.as_ref(),
+                self.publish_running_if_starting(
+                    &status_sink,
                     &stop_requested,
                     session_id,
                     capabilities,
-                );
-
-                running
+                )
             }
             Ok(HandshakeOutcome::Failed(message)) => {
                 let was_stopped = stop_requested.load(Ordering::SeqCst);
@@ -352,7 +649,7 @@ impl LanguageServerSupervisor {
                     return Ok(LanguageServerRuntimeStatus::Stopped);
                 }
 
-                publish_crash(&self.status, status_sink.as_ref(), &message);
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
                 Err(message)
             }
             Ok(HandshakeOutcome::Disconnected) => {
@@ -363,7 +660,7 @@ impl LanguageServerSupervisor {
                 }
 
                 let message = format!("{} exited during the handshake.", self.server_label);
-                publish_crash(&self.status, status_sink.as_ref(), &message);
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
                 Err(message)
             }
             Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => {
@@ -377,27 +674,88 @@ impl LanguageServerSupervisor {
                     "{} did not respond to initialize in time.",
                     self.server_label
                 );
-                publish_crash(&self.status, status_sink.as_ref(), &message);
+                self.publish_crash_if_current_session(&status_sink, session_id, &message);
                 Err(message)
             }
         }
     }
 
     pub fn stop(&self) -> LanguageServerRuntimeStatus {
-        let Some(session) = self.take_session() else {
-            set_status(&self.status, LanguageServerRuntimeStatus::Stopped);
-            return LanguageServerRuntimeStatus::Stopped;
+        let stopping = self.lifecycle_gate.acquire(LifecycleOperation::Stopping);
+        if let Some(message) = self.cleanup_terminal_failure() {
+            let status = LanguageServerRuntimeStatus::Crashed { message };
+            set_status(&self.status, status.clone());
+            drop(stopping);
+            return status;
+        }
+        if !self.cleanup_task_exists() {
+            if let Some(session) = self.take_session() {
+                if let Err((session, message)) = self.start_cleanup_task(session) {
+                    let status_sink = Arc::clone(&session.status_sink);
+                    self.restore_failed_cleanup_session(*session);
+                    let status = LanguageServerRuntimeStatus::Crashed { message };
+                    set_status(&self.status, status.clone());
+                    drop(stopping);
+                    if let Err(error) = self
+                        .status_publications
+                        .publish(status_sink, status.clone())
+                    {
+                        append_runtime_log(
+                            &self.log,
+                            &format!("Language server status publication failed: {error}\n"),
+                        );
+                    }
+                    return status;
+                }
+            }
+        }
+
+        let settlement = self.await_cleanup_settlement(SESSION_CLEANUP_SETTLEMENT_TIMEOUT);
+        let (status, status_sink) = match settlement {
+            CleanupSettlement::None => (LanguageServerRuntimeStatus::Stopped, None),
+            CleanupSettlement::Complete { status_sink } => {
+                (LanguageServerRuntimeStatus::Stopped, Some(status_sink))
+            }
+            CleanupSettlement::Failed {
+                message,
+                session,
+                status_sink,
+            } => {
+                self.restore_failed_cleanup_session(session);
+                (
+                    LanguageServerRuntimeStatus::Crashed { message },
+                    Some(status_sink),
+                )
+            }
+            CleanupSettlement::Pending { status_sink } => (
+                LanguageServerRuntimeStatus::Crashed {
+                    message: "Language server cleanup is still pending.".to_string(),
+                },
+                Some(status_sink),
+            ),
+            CleanupSettlement::Panicked { status_sink } => (
+                {
+                    let message = "Language server cleanup worker panicked.".to_string();
+                    self.retain_cleanup_terminal_failure(&message);
+                    LanguageServerRuntimeStatus::Crashed { message }
+                },
+                Some(status_sink),
+            ),
         };
-
-        let status_sink = Arc::clone(&session.status_sink);
-        terminate_session(session);
-
-        publish(
-            &self.status,
-            status_sink.as_ref(),
-            LanguageServerRuntimeStatus::Stopped,
-        );
-        LanguageServerRuntimeStatus::Stopped
+        set_status(&self.status, status.clone());
+        drop(stopping);
+        if let Some(status_sink) = status_sink {
+            if let Err(error) = self
+                .status_publications
+                .publish(status_sink, status.clone())
+            {
+                append_runtime_log(
+                    &self.log,
+                    &format!("Language server status publication failed: {error}\n"),
+                );
+            }
+        }
+        status
     }
 
     pub fn send_notification(&self, notification: &JsonRpcNotification) -> Result<(), String> {
@@ -535,7 +893,7 @@ impl LanguageServerSupervisor {
             );
             Arc::clone(&session.killer)
         };
-        terminate_process(&killer);
+        super::terminate_or_retain_process(&killer);
         Ok(ProjectResyncRequestOutcome::Admitted)
     }
 
@@ -598,22 +956,25 @@ impl LanguageServerSupervisor {
 
     pub(super) fn begin_start(
         &self,
-        sink: &dyn StatusSink,
+        sink: &Arc<dyn StatusSink>,
         session_id: u64,
         start_kind: StartKind,
     ) -> Result<(), String> {
-        let previous = {
+        let (previous, status_admission) = {
             let mut status = self.status.lock().map_err(|error| error.to_string())?;
-
-            if is_active_status(&status)
-                && !matches!(
-                    (&*status, start_kind),
-                    (
-                        LanguageServerRuntimeStatus::Starting { session_id: 0 },
-                        StartKind::ReservedFresh
-                    )
+            let reserved_fresh_is_current = matches!(
+                (&*status, start_kind),
+                (
+                    LanguageServerRuntimeStatus::Starting { session_id: 0 },
+                    StartKind::ReservedFresh
                 )
-            {
+            );
+
+            if matches!(start_kind, StartKind::ReservedFresh) && !reserved_fresh_is_current {
+                return Err("Language server start reservation is no longer current.".to_string());
+            }
+
+            if is_active_status(&status) && !reserved_fresh_is_current {
                 return Err("Language server already running.".to_string());
             }
 
@@ -624,20 +985,28 @@ impl LanguageServerSupervisor {
                 return Err("Auto-restart aborted: session is no longer crashed.".to_string());
             }
 
+            let status_admission = self.status_publications.admit_sink(sink)?;
             let previous = status.clone();
             *status = LanguageServerRuntimeStatus::Starting { session_id };
-            previous
+            (previous, status_admission)
         };
 
         if let Err(error) = sink.begin_exact_session_transition(session_id) {
-            self.restore_failed_start_transition(session_id, previous)?;
+            self.restore_failed_start_transition(session_id, previous.clone())?;
             return Err(format!(
                 "Failed to advance {} document-session admission: {error}",
                 self.server_label
             ));
         }
         self.require_start_transition(session_id)?;
-        sink.emit_status(LanguageServerRuntimeStatus::Starting { session_id });
+        if let Err(error) = self.status_publications.publish(
+            Arc::clone(sink),
+            LanguageServerRuntimeStatus::Starting { session_id },
+        ) {
+            self.restore_failed_start_transition(session_id, previous)?;
+            return Err(error);
+        }
+        status_admission.commit();
         if let Err(error) = self.require_start_transition(session_id) {
             let corrective = self.status();
             if !matches!(
@@ -646,7 +1015,14 @@ impl LanguageServerSupervisor {
                     session_id: current
                 } if current == session_id
             ) {
-                sink.emit_status(corrective);
+                if let Err(publication_error) = self
+                    .status_publications
+                    .publish(Arc::clone(sink), corrective)
+                {
+                    return Err(format!(
+                        "{error}; corrective publication failed: {publication_error}"
+                    ));
+                }
             }
             return Err(error);
         }
@@ -684,42 +1060,48 @@ impl LanguageServerSupervisor {
         Ok(())
     }
 
-    fn install_session(&self, session: &mut Option<RunningSession>) -> Result<bool, String> {
-        let mut current = self.session.lock().map_err(|error| error.to_string())?;
+    fn install_session(&self, session: &mut Option<RunningSession>) -> bool {
+        let mut current = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if !matches!(self.status(), LanguageServerRuntimeStatus::Starting { .. }) {
-            return Ok(false);
+            return false;
         }
 
         if current.is_some() {
-            return Ok(false);
+            return false;
         }
 
         *current = session.take();
-        Ok(true)
+        true
     }
 
     fn attach_reader(
         &self,
         stop_requested: &Arc<AtomicBool>,
         reader: &mut Option<JoinHandle<()>>,
-    ) -> Result<bool, String> {
-        let mut current = self.session.lock().map_err(|error| error.to_string())?;
+    ) -> bool {
+        let mut current = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(session) = current.as_mut() else {
-            return Ok(false);
+            return false;
         };
 
         if !Arc::ptr_eq(&session.stop_requested, stop_requested) {
-            return Ok(false);
+            return false;
         }
 
         session.reader = reader.take();
-        Ok(true)
+        true
     }
 
     pub(super) fn publish_running_if_starting(
         &self,
-        sink: &dyn StatusSink,
+        sink: &Arc<dyn StatusSink>,
         stop_requested: &Arc<AtomicBool>,
         session_id: u64,
         capabilities: LanguageServerCapabilities,
@@ -749,12 +1131,26 @@ impl LanguageServerSupervisor {
 
             *status = running.clone();
         }
-        sink.emit_status(running.clone());
+        if let Err(error) = self
+            .status_publications
+            .publish(Arc::clone(sink), running.clone())
+        {
+            let message = format!("Language server running status publication failed: {error}");
+            set_status(
+                &self.status,
+                LanguageServerRuntimeStatus::Crashed {
+                    message: message.clone(),
+                },
+            );
+            self.terminate_matching_session(stop_requested);
+            return Err(message);
+        }
         let current = self.status();
         if current == running {
             Ok(running)
         } else {
-            sink.emit_status(current.clone());
+            self.status_publications
+                .publish(Arc::clone(sink), current.clone())?;
             Ok(current)
         }
     }
@@ -764,22 +1160,52 @@ impl LanguageServerSupervisor {
             return;
         }
 
-        if let Some(session) = self.take_session() {
-            terminate_session(session);
+        let cleanup = self.lifecycle_gate.acquire(LifecycleOperation::Stopping);
+        if is_active_status(&self.status()) {
+            return;
         }
+        match self.await_cleanup_settlement(Duration::ZERO) {
+            CleanupSettlement::None | CleanupSettlement::Complete { .. } => {}
+            CleanupSettlement::Failed {
+                message, session, ..
+            } => {
+                self.restore_failed_cleanup_session(session);
+                set_status(
+                    &self.status,
+                    LanguageServerRuntimeStatus::Crashed { message },
+                );
+            }
+            CleanupSettlement::Pending { .. } => return,
+            CleanupSettlement::Panicked { .. } => {
+                let message = "Language server cleanup worker panicked.".to_string();
+                self.retain_cleanup_terminal_failure(&message);
+                set_status(
+                    &self.status,
+                    LanguageServerRuntimeStatus::Crashed { message },
+                );
+                return;
+            }
+        }
+        if let Some(session) = self.take_session() {
+            self.retain_session_cleanup(session);
+        }
+        drop(cleanup);
     }
 
     fn terminate_matching_session(&self, stop_requested: &Arc<AtomicBool>) {
+        let cleanup = self.lifecycle_gate.acquire(LifecycleOperation::Stopping);
         let Some(session) = self.take_matching_session(stop_requested) else {
             return;
         };
 
-        terminate_session(session);
+        self.retain_session_cleanup(session);
+        drop(cleanup);
     }
 
     fn take_matching_session(&self, stop_requested: &Arc<AtomicBool>) -> Option<RunningSession> {
-        let Ok(mut current) = self.session.lock() else {
-            return None;
+        let mut current = match self.session.lock() {
+            Ok(current) => current,
+            Err(poisoned) => poisoned.into_inner(),
         };
         let session = current.as_ref()?;
 
@@ -791,7 +1217,10 @@ impl LanguageServerSupervisor {
     }
 
     fn take_session(&self) -> Option<RunningSession> {
-        self.session.lock().ok()?.take()
+        match self.session.lock() {
+            Ok(mut current) => current.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        }
     }
 
     fn session_stdin(&self) -> Option<Arc<SessionMessageWriter>> {
@@ -867,11 +1296,20 @@ impl Default for LanguageServerSupervisor {
 
 impl Drop for LanguageServerSupervisor {
     fn drop(&mut self) {
-        let Ok(mut current) = self.session.lock() else {
-            return;
+        let cleanup_task = match self.cleanup_task.get_mut() {
+            Ok(current) => current.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        if let Some(task) = cleanup_task {
+            retain_cleanup_task(task);
+        }
+
+        let session = match self.session.get_mut() {
+            Ok(current) => current.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
         };
 
-        if let Some(session) = current.take() {
+        if let Some(session) = session {
             terminate_session(session);
         }
     }
