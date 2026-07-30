@@ -491,6 +491,7 @@ export function useDocumentSaveLifecycle(
       return result;
     },
     [
+      activeDocumentRef,
       activeDocumentSaveStore,
       activeLiveSaveCoordinator,
       captureLocalHistorySnapshot,

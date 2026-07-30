@@ -60,11 +60,11 @@
     },
     "src/application/useLanguageServerRuntimeLifecycle.ts": {
       "rawLines": 1979,
-      "structuralTokens": 6638
+      "structuralTokens": 6637
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 8221,
-      "structuralTokens": 29635
+      "structuralTokens": 29634
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2508,

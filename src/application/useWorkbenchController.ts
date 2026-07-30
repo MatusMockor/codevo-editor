@@ -3536,7 +3536,12 @@ export function useWorkbenchController(
         void releaseOwnedWorkspaceIdentity(workspaceId).catch(() => undefined);
       }
     },
-    [documentSessionAuthorityLifecycle, releaseOwnedWorkspaceIdentity, workspaceFileChangeGateway],
+    [
+      documentSessionAuthorityLifecycle,
+      externallyRemovedDocumentRootByPathRef,
+      releaseOwnedWorkspaceIdentity,
+      workspaceFileChangeGateway,
+    ],
   );
 
   const refreshDirectory = useCallback(
@@ -4380,11 +4385,17 @@ export function useWorkbenchController(
         rootPath,
       );
     },
-    [documentSelfWrites, invalidateEditorConfigRoot, workspaceFileChangeGateway],
+    [
+      documentSelfWrites,
+      externallyRemovedDocumentRootByPathRef,
+      invalidateEditorConfigRoot,
+      workspaceFileChangeGateway,
+    ],
   );
-  const clearExternalFileConflictsForWorkspaceClose = useCallback((rootPath: string) => {
-    clearExternalFileConflictsForRootRef.current(rootPath);
-  }, []);
+  const clearExternalFileConflictsForWorkspaceClose = useCallback(
+    (rootPath: string) => clearExternalFileConflictsForRootRef.current(rootPath),
+    [],
+  );
 
   const runWithDocumentSaveExclusionRef = useRef<RunWithDocumentSaveExclusion>(
     async (_scope, operation) => operation(),
@@ -5088,7 +5099,7 @@ export function useWorkbenchController(
     ],
   );
 
-  const openMarkdownPreview = useCallback(async (): Promise<void> => {
+  const openMarkdownPreview = useCallback(async () => {
     const source = activeDocumentRef.current;
     const requestedRoot = currentWorkspaceRootRef.current;
 
@@ -7656,6 +7667,7 @@ export function useWorkbenchController(
     markExternallyRemovedDocumentPath,
     refreshEditorConfigRoot,
     reportError,
+    externallyRemovedDocumentRootByPathRef,
     workspaceFileChangeGateway,
     workspaceRoot,
   ]);

@@ -524,13 +524,6 @@ export function EditorRuntimeHost({
   }, [focusRegisteredEditorGroup, onGroupFocusRunnerChange]);
 
   const registrations = [...registrationsRef.current.values()];
-  const registrationEntries = [...registrationsRef.current.entries()];
-  const owningRegistrationEntries = registrationEntries.filter(([, registration]) =>
-    registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
-  );
-  const contentSyncRegistrationEntries = admittedWorkspaceRootRef.current
-    ? owningRegistrationEntries
-    : registrationEntries;
   const activeRegistration =
     activeRuntimeRegistrationEntry(
       registrationsRef.current,
@@ -541,6 +534,13 @@ export function EditorRuntimeHost({
     activeRegistration ?? registrations.find(({ monacoApi }) => monacoApi) ?? null;
   activeRegistrationRef.current = activeRegistration;
   useEffect(() => {
+    const registrationEntries = [...registrationsRef.current.entries()];
+    const owningRegistrationEntries = registrationEntries.filter(([, registration]) =>
+      registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
+    );
+    const contentSyncRegistrationEntries = admittedWorkspaceRootRef.current
+      ? owningRegistrationEntries
+      : registrationEntries;
     const bindingAuthorities = new Map<string, EditorGroupDocumentSessionAuthority>();
     const bindingRegistrations = contentSyncRegistrationEntries.flatMap(
       ([registrationId, registration]) => {

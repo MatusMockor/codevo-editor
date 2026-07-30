@@ -160,5 +160,5 @@ export function useEditorActiveModelLifecycle({
     });
 
     return () => disposable.dispose();
-  }, [editor, generatedSurfaceId, runtime]);
+  }, [editor, generatedSurfaceId, runtime, runtimeRegistrationRef]);
 }

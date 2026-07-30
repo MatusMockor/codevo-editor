@@ -295,12 +295,9 @@ export function useLanguageServerRuntimeLifecycle(
   );
 
   const isLanguageServerSessionActiveForRoot = useCallback(
-    (rootPath: string, sessionId: number) => {
-      return (
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
-        isLanguageServerSessionCurrentForRoot(rootPath, sessionId)
-      );
-    },
+    (rootPath: string, sessionId: number) =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+      isLanguageServerSessionCurrentForRoot(rootPath, sessionId),
     [currentWorkspaceRootRef, isLanguageServerSessionCurrentForRoot],
   );
 
@@ -1095,7 +1092,8 @@ export function useLanguageServerRuntimeLifecycle(
       return;
     }
 
-    const requestedOwner = currentRuntimeOwner;
+    const requestedOwner = currentRuntimeOwner,
+      runtimeOwnerRef = currentRuntimeOwnerRef;
     const requestedRoot = requestedOwner.executionRoot;
     const cachedStatus = cachedLanguageServerRuntimeStatusForOwner(
       languageServerRuntimeStatusByRootRef.current,
@@ -1178,7 +1176,7 @@ export function useLanguageServerRuntimeLifecycle(
       return () => {
         cleanUpAutostartLease(
           requestedOwner,
-          currentRuntimeOwnerRef.current,
+          runtimeOwnerRef.current,
           isPhpEligible(),
           () => cancelPhpLeaseForOwner(requestedOwner.ownerKey),
           () => invalidatePhpLeaseForOwner(requestedOwner.ownerKey),
@@ -1295,15 +1293,13 @@ export function useLanguageServerRuntimeLifecycle(
     return () => {
       cleanUpAutostartLease(
         requestedOwner,
-        currentRuntimeOwnerRef.current,
+        runtimeOwnerRef.current,
         isPhpEligible(),
         () => {
           cancelled = true;
           cancelPhpLease(autostartLease);
         },
-        () => {
-          releasePhpLease(autostartLease);
-        },
+        () => releasePhpLease(autostartLease),
       );
     };
   }, [
@@ -1355,7 +1351,8 @@ export function useLanguageServerRuntimeLifecycle(
       return;
     }
 
-    const requestedOwner = currentRuntimeOwner;
+    const requestedOwner = currentRuntimeOwner,
+      runtimeOwnerRef = currentRuntimeOwnerRef;
     const requestedRoot = requestedOwner.executionRoot;
     const requestedRevision = ownerRevision(requestedOwner);
     const autostartOwnerKey = requestedOwner.ownerKey;
@@ -1410,7 +1407,7 @@ export function useLanguageServerRuntimeLifecycle(
       return () => {
         cleanUpAutostartLease(
           requestedOwner,
-          currentRuntimeOwnerRef.current,
+          runtimeOwnerRef.current,
           isJavaScriptTypeScriptEligible(),
           () => cancelJavaScriptTypeScriptLeaseForOwner(requestedOwner.ownerKey),
           () => invalidateJavaScriptTypeScriptLeaseForOwner(requestedOwner.ownerKey),
@@ -1577,15 +1574,13 @@ export function useLanguageServerRuntimeLifecycle(
     return () => {
       cleanUpAutostartLease(
         requestedOwner,
-        currentRuntimeOwnerRef.current,
+        runtimeOwnerRef.current,
         isJavaScriptTypeScriptEligible(),
         () => {
           cancelled = true;
           cancelAutostartLease?.();
         },
-        () => {
-          releaseAutostartLease?.();
-        },
+        () => releaseAutostartLease?.(),
       );
     };
   }, [

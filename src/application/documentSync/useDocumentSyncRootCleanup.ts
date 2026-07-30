@@ -65,6 +65,11 @@ export interface DocumentSyncRootCleanup {
 export function useDocumentSyncRootCleanup(
   dependencies: RootCleanupDependencies,
 ): DocumentSyncRootCleanup {
+  const javaScriptTypeScriptIncrementalSyncRef =
+    dependencies.javaScriptTypeScriptIncrementalSyncRef;
+  const javaScriptTypeScriptSyncedDocumentPathsRef =
+    dependencies.javaScriptTypeScriptSyncedDocumentPathsRef;
+  const reportErrorForActiveWorkspaceRoot = dependencies.reportErrorForActiveWorkspaceRoot;
   const closePhpDocuments = useCallback(
     (rootPath: string) =>
       closePhpDocumentsForRoot({
@@ -122,10 +127,10 @@ export function useDocumentSyncRootCleanup(
 
   const closeJavaScriptTypeScriptDocuments = useCallback(
     async (rootPath: string) => {
-      const incrementalSync = dependencies.javaScriptTypeScriptIncrementalSyncRef?.current ?? null;
+      const incrementalSync = javaScriptTypeScriptIncrementalSyncRef?.current ?? null;
       if (incrementalSync) await incrementalSync.closeRoot(rootPath);
 
-      for (const syncKey of dependencies.javaScriptTypeScriptSyncedDocumentPathsRef.current) {
+      for (const syncKey of javaScriptTypeScriptSyncedDocumentPathsRef.current) {
         if (languageServerPathFromDocumentSyncKey(rootPath, syncKey) !== null) {
           dependencies.javaScriptTypeScriptDocumentChangeMailbox.drop(syncKey);
         }
@@ -135,7 +140,7 @@ export function useDocumentSyncRootCleanup(
         rootPath,
         syncGenerationRef: dependencies.javaScriptTypeScriptDocumentSyncGenerationRef,
         state: {
-          syncedPathsRef: dependencies.javaScriptTypeScriptSyncedDocumentPathsRef,
+          syncedPathsRef: javaScriptTypeScriptSyncedDocumentPathsRef,
           syncedContentRef: dependencies.javaScriptTypeScriptSyncedDocumentContentRef,
           pendingChangesRef: dependencies.javaScriptTypeScriptPendingDocumentChangesRef,
           pendingOpenAttemptsRef:
@@ -161,11 +166,7 @@ export function useDocumentSyncRootCleanup(
         gateway: dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway,
         isSessionCurrent: dependencies.isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
         reportError: (requestedRoot, error) =>
-          dependencies.reportErrorForActiveWorkspaceRoot(
-            requestedRoot,
-            "JavaScript/TypeScript",
-            error,
-          ),
+          reportErrorForActiveWorkspaceRoot(requestedRoot, "JavaScript/TypeScript", error),
       });
     },
     [
@@ -180,7 +181,7 @@ export function useDocumentSyncRootCleanup(
       dependencies.javaScriptTypeScriptDocumentSyncGenerationRef,
       dependencies.javaScriptTypeScriptDocumentVersionsByUriRef,
       dependencies.javaScriptTypeScriptDocumentVersionsRef,
-      dependencies.javaScriptTypeScriptIncrementalSyncRef,
+      javaScriptTypeScriptIncrementalSyncRef,
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       dependencies.javaScriptTypeScriptLanguageServerRuntimeStatusRef,
       dependencies.javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
@@ -189,8 +190,8 @@ export function useDocumentSyncRootCleanup(
       dependencies.javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef,
       dependencies.javaScriptTypeScriptRuntimeStatusByRootRef,
       dependencies.javaScriptTypeScriptSyncedDocumentContentRef,
-      dependencies.javaScriptTypeScriptSyncedDocumentPathsRef,
-      dependencies.reportErrorForActiveWorkspaceRoot,
+      javaScriptTypeScriptSyncedDocumentPathsRef,
+      reportErrorForActiveWorkspaceRoot,
     ],
   );
 
