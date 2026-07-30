@@ -43,6 +43,12 @@ enum CleanupSettlement {
     },
 }
 
+enum SessionInstallation {
+    Continue,
+    HandedOffToStop,
+    Rejected,
+}
+
 impl LanguageServerSupervisor {
     pub fn new() -> Self {
         Self::new_with_label("PHPactor")
@@ -563,14 +569,21 @@ impl LanguageServerSupervisor {
             stop_requested: Arc::clone(&stop_requested),
         });
 
-        let installed = self.install_session(&mut session);
-        drop(spawning);
-        if !installed {
-            if let Some(session) = session {
-                terminate_session(session);
+        match self.install_session(&mut session) {
+            SessionInstallation::Continue => {
+                drop(spawning);
             }
-
-            return Ok(LanguageServerRuntimeStatus::Stopped);
+            SessionInstallation::HandedOffToStop => {
+                drop(spawning);
+                return Ok(LanguageServerRuntimeStatus::Stopped);
+            }
+            SessionInstallation::Rejected => {
+                if let Some(session) = session {
+                    terminate_session(session);
+                }
+                drop(spawning);
+                return Ok(LanguageServerRuntimeStatus::Stopped);
+            }
         }
 
         let init_bytes = match serde_json::to_vec(initialize_request) {
@@ -1060,22 +1073,27 @@ impl LanguageServerSupervisor {
         Ok(())
     }
 
-    fn install_session(&self, session: &mut Option<RunningSession>) -> bool {
+    fn install_session(&self, session: &mut Option<RunningSession>) -> SessionInstallation {
         let mut current = self
             .session
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if !matches!(self.status(), LanguageServerRuntimeStatus::Starting { .. }) {
-            return false;
+            return SessionInstallation::Rejected;
         }
 
         if current.is_some() {
-            return false;
+            return SessionInstallation::Rejected;
         }
 
+        let stop_is_pending = self.lifecycle_gate.stop_is_pending();
         *current = session.take();
-        true
+        if stop_is_pending {
+            SessionInstallation::HandedOffToStop
+        } else {
+            SessionInstallation::Continue
+        }
     }
 
     fn attach_reader(

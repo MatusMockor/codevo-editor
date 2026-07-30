@@ -89,33 +89,71 @@ pub(super) enum LifecycleOperation {
     Stopping,
 }
 
+struct LifecycleState {
+    operation: LifecycleOperation,
+    waiting_stops: usize,
+}
+
 pub(super) struct LifecycleGate {
-    operation: Mutex<LifecycleOperation>,
+    state: Mutex<LifecycleState>,
     settled: Condvar,
 }
 
 impl LifecycleGate {
     pub(super) fn new() -> Self {
         Self {
-            operation: Mutex::new(LifecycleOperation::Idle),
+            state: Mutex::new(LifecycleState {
+                operation: LifecycleOperation::Idle,
+                waiting_stops: 0,
+            }),
             settled: Condvar::new(),
         }
     }
 
     pub(super) fn acquire(&self, operation: LifecycleOperation) -> LifecyclePermit<'_> {
-        let mut current = self
-            .operation
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while *current != LifecycleOperation::Idle {
-            current = self
+        let registered_stop = operation == LifecycleOperation::Stopping
+            && state.operation != LifecycleOperation::Idle;
+        if registered_stop {
+            state.waiting_stops += 1;
+            self.settled.notify_all();
+        }
+        while state.operation != LifecycleOperation::Idle {
+            state = self
                 .settled
-                .wait(current)
+                .wait(state)
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
-        *current = operation;
-        drop(current);
+        if registered_stop {
+            state.waiting_stops -= 1;
+        }
+        state.operation = operation;
+        drop(state);
         LifecyclePermit { gate: self }
+    }
+
+    pub(super) fn stop_is_pending(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .waiting_stops
+            > 0
+    }
+
+    #[cfg(test)]
+    pub(super) fn wait_for_pending_stop(&self, timeout: Duration) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (state, _) = self
+            .settled
+            .wait_timeout_while(state, timeout, |state| state.waiting_stops == 0)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.waiting_stops > 0
     }
 }
 
@@ -125,13 +163,13 @@ pub(super) struct LifecyclePermit<'a> {
 
 impl Drop for LifecyclePermit<'_> {
     fn drop(&mut self) {
-        let mut operation = self
+        let mut state = self
             .gate
-            .operation
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *operation = LifecycleOperation::Idle;
-        drop(operation);
+        state.operation = LifecycleOperation::Idle;
+        drop(state);
         self.gate.settled.notify_all();
     }
 }

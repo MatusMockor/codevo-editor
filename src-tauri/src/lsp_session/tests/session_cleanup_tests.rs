@@ -460,7 +460,10 @@ fn stop_linearizes_with_in_flight_spawn_and_reaps_the_installed_session() {
     let stop = std::thread::spawn(move || {
         stop_tx.send(stop_supervisor.stop()).expect("report stop");
     });
-    assert!(stop_rx.recv_timeout(Duration::from_millis(25)).is_err());
+    assert!(supervisor
+        .lifecycle_gate
+        .wait_for_pending_stop(Duration::from_secs(2)));
+    assert!(stop_rx.try_recv().is_err());
     release.wait();
     assert_eq!(
         stop_rx.recv_timeout(Duration::from_secs(2)).expect("stop"),
