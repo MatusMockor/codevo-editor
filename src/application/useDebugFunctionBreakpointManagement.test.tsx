@@ -15,6 +15,7 @@ describe("useDebugFunctionBreakpointManagement", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    window.localStorage.clear();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -23,6 +24,7 @@ describe("useDebugFunctionBreakpointManagement", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    window.localStorage.clear();
   });
 
   it("keeps roots isolated and rechecks the exact owner after gateway awaits", async () => {
