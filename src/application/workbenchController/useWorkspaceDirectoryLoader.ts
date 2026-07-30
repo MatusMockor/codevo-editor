@@ -2,18 +2,15 @@ import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction 
 import type { FileEntry, WorkspaceFileGateway } from "../../domain/workspace";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { workspacePathBelongsToRoot } from "./workspacePathPolicy";
-
-export interface InFlightDirectoryLoad {
-  readonly generation: number;
-  readonly path: string;
-  readonly promise: Promise<FileEntry[]>;
-  readonly requestId: symbol;
-  readonly rootPath: string | null;
-}
+import {
+  MAX_DIRECTORY_ENTRIES_PER_LOAD,
+  type BoundedDirectoryLoadResult,
+  type BoundedInFlightDirectoryLoads,
+} from "./boundedInFlightDirectoryLoads";
 
 interface WorkspaceDirectoryLoaderOptions {
   readonly currentWorkspaceRootRef: MutableRefObject<string | null>;
-  readonly inFlightLoadsRef: MutableRefObject<Map<string, InFlightDirectoryLoad>>;
+  readonly inFlightLoadsRef: MutableRefObject<BoundedInFlightDirectoryLoads>;
   readonly openWorkspaceRequestTokenRef: MutableRefObject<number>;
   readonly reportError: (source: string, error: unknown) => void;
   readonly setEntriesByDirectory: Dispatch<SetStateAction<Record<string, FileEntry[]>>>;
@@ -26,6 +23,13 @@ export interface LoadWorkspaceDirectoryOptions {
   readonly clearMessage?: boolean;
   readonly isMutationOwnerCurrent?: () => boolean;
   readonly requireActiveRoot?: boolean;
+}
+
+export async function loadCompleteWorkspaceDirectoryEntries(
+  load: () => Promise<BoundedDirectoryLoadResult | undefined>,
+): Promise<FileEntry[] | null> {
+  const result = await load();
+  return result && !result.truncated ? [...result.entries] : null;
 }
 
 export function useWorkspaceDirectoryLoader({
@@ -42,7 +46,7 @@ export function useWorkspaceDirectoryLoader({
     async (
       path: string,
       options: LoadWorkspaceDirectoryOptions = {},
-    ): Promise<FileEntry[] | undefined> => {
+    ): Promise<BoundedDirectoryLoadResult | undefined> => {
       const rootPath = currentWorkspaceRootRef.current;
       const generation = openWorkspaceRequestTokenRef.current;
       const normalizedPath = normalizedWorkspaceRootKey(path);
@@ -64,18 +68,28 @@ export function useWorkspaceDirectoryLoader({
 
       let sharedRead = activeRequest?.promise;
       if (!sharedRead) {
+        const readDirectoryBounded = workspaceFiles.readDirectoryBounded;
+        if (!readDirectoryBounded) {
+          setMessage("Bounded directory reading is unavailable for this workspace.");
+          return;
+        }
+        if (!inFlightLoadsRef.current.canAdmit(requestKey, generation)) {
+          setMessage("Too many directory reads are still pending. Wait for one to finish.");
+          return;
+        }
         setLoadingDirectories((current) => new Set(current).add(normalizedPath));
 
         const requestId = Symbol(requestKey);
         const request = (async () => {
           await Promise.resolve();
           try {
-            return await workspaceFiles.readDirectory(normalizedPath);
+            return await readDirectoryBounded.call(
+              workspaceFiles,
+              normalizedPath,
+              MAX_DIRECTORY_ENTRIES_PER_LOAD,
+            );
           } finally {
-            const registeredRequest = inFlightLoadsRef.current.get(requestKey);
-            if (registeredRequest?.requestId === requestId) {
-              inFlightLoadsRef.current.delete(requestKey);
-            }
+            inFlightLoadsRef.current.deleteIfCurrent(requestKey, requestId);
 
             setLoadingDirectories((current) => {
               const hasActiveRequestForPath = [...inFlightLoadsRef.current.values()].some(
@@ -95,7 +109,7 @@ export function useWorkspaceDirectoryLoader({
           }
         })();
 
-        inFlightLoadsRef.current.set(requestKey, {
+        inFlightLoadsRef.current.admit(requestKey, {
           generation,
           path: normalizedPath,
           promise: request,
@@ -106,19 +120,23 @@ export function useWorkspaceDirectoryLoader({
       }
 
       try {
-        const entries = await sharedRead;
+        const result = await sharedRead;
         if (!isActiveRoot()) {
           return;
         }
 
         setEntriesByDirectory((current) => ({
           ...current,
-          [normalizedPath]: entries,
+          [normalizedPath]: [...result.entries],
         }));
-        if (clearMessage) {
+        if (result.truncated) {
+          setMessage(
+            `Showing the first ${MAX_DIRECTORY_ENTRIES_PER_LOAD.toLocaleString()} entries. Refine this directory before continuing.`,
+          );
+        } else if (clearMessage) {
           setMessage(null);
         }
-        return entries;
+        return result;
       } catch (error) {
         if (!isActiveRoot()) {
           return;

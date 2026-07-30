@@ -160,6 +160,37 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     expect(received.some((event) => event.kind === "rescanRequired")).toBe(true);
   });
 
+  it("coalesces duplicate pre-receipt events without declaring overflow", async () => {
+    let resolveStart:
+      ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+    let emit: ((event: { payload: WireChange }) => void) | undefined;
+    const gateway = new TauriWorkspaceFileChangeGateway(
+      vi.fn(
+        () =>
+          new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+            resolveStart = resolve;
+          }),
+      ),
+      vi.fn(async (_event, handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+      () => true,
+    );
+    const received: WorkspaceFileChangeEvent[] = [];
+    await gateway.subscribeFileChanges((event) => received.push(event));
+
+    const starting = gateway.startWatching("/alias/a");
+    await vi.waitFor(() => expect(resolveStart).toBeTypeOf("function"));
+    for (let index = 0; index < 129; index += 1) {
+      emit?.({ payload: wireChange("/canonical/a", 6) });
+    }
+    resolveStart?.({ rootPath: "/canonical/a", watchGeneration: 6 });
+    await starting;
+
+    expect(received).toEqual([change("/alias/a")]);
+  });
+
   it("attributes a pre-receipt overflow to the root whose event was dropped", async () => {
     const resolvers: Array<(receipt: { rootPath: string; watchGeneration: number }) => void> = [];
     const invoke = vi.fn(
@@ -491,6 +522,35 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     expect(received).toEqual([change("/alias/a")]);
   });
 
+  it("retains newer root capacity when an older same-root transport rejects late", async () => {
+    const settlements: Array<{
+      reject: (error: Error) => void;
+      resolve: (receipt: { rootPath: string; watchGeneration: number }) => void;
+    }> = [];
+    const gateway = new TauriWorkspaceFileChangeGateway(
+      vi.fn(
+        () =>
+          new Promise<{ rootPath: string; watchGeneration: number }>((resolve, reject) =>
+            settlements.push({ reject, resolve }),
+          ),
+      ),
+      vi.fn(async () => () => undefined),
+      () => true,
+      { maxRoots: 1 },
+    );
+
+    const older = gateway.startWatching("/a");
+    const olderExpectation = expect(older).rejects.toThrow("older failed");
+    const newer = gateway.startWatching("/a");
+    await vi.waitFor(() => expect(settlements).toHaveLength(2));
+    settlements[1]?.resolve({ rootPath: "/a", watchGeneration: 2 });
+    await newer;
+    settlements[0]?.reject(new Error("older failed"));
+    await olderExpectation;
+
+    await expect(gateway.startWatching("/b")).rejects.toThrow("root capacity");
+  });
+
   it("does not let a slower alias overwrite newer canonical routing", async () => {
     const resolvers: Array<(receipt: { rootPath: string; watchGeneration: number }) => void> = [];
     const invoke = vi.fn(
@@ -521,5 +581,287 @@ describe("TauriWorkspaceFileChangeGateway generation fencing", () => {
     emit?.({ payload: wireChange("/real/project", 12) });
 
     expect(received).toEqual([change("/real/project")]);
+  });
+
+  it("times out transport registration and releases the start admission", async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = new TauriWorkspaceFileChangeGateway(
+        vi.fn(),
+        vi.fn((): Promise<() => void> => new Promise(() => undefined)),
+        () => true,
+        { operationTimeoutMs: 10, maxStartsInFlight: 1 },
+      );
+
+      const first = gateway.startWatching("/a");
+      const firstExpectation = expect(first).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(10);
+      await firstExpectation;
+
+      const second = gateway.startWatching("/b");
+      const secondExpectation = expect(second).rejects.toThrow("transport capacity");
+      await secondExpectation;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains start transport permits after caller timeout until IPC settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = new TauriWorkspaceFileChangeGateway(
+        vi.fn(() => new Promise(() => undefined)),
+        vi.fn(async () => () => undefined),
+        () => true,
+        { operationTimeoutMs: 10, maxStartsInFlight: 1 },
+      );
+
+      const first = gateway.startWatching("/a");
+      const firstExpectation = expect(first).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(10);
+      await firstExpectation;
+
+      await expect(gateway.startWatching("/b")).rejects.toThrow("transport capacity");
+      await gateway.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops a valid late start receipt and releases its root capacity", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveStart:
+        ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+      const invoke = vi.fn((command: string) => {
+        if (command === "start_workspace_file_watch" && !resolveStart) {
+          return new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+            resolveStart = resolve;
+          });
+        }
+        if (command === "stop_workspace_file_watch") {
+          return Promise.resolve(true);
+        }
+        return Promise.resolve({ rootPath: "/b", watchGeneration: 2 });
+      });
+      const gateway = new TauriWorkspaceFileChangeGateway(
+        invoke,
+        vi.fn(async () => () => undefined),
+        () => true,
+        { operationTimeoutMs: 10, maxRoots: 1, maxStartsInFlight: 1 },
+      );
+
+      const first = gateway.startWatching("/a");
+      const firstExpectation = expect(first).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(10);
+      await firstExpectation;
+      resolveStart?.({ rootPath: "/a", watchGeneration: 1 });
+
+      await vi.waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("stop_workspace_file_watch", {
+          rootPath: "/a",
+          watchGeneration: 1,
+        }),
+      );
+      await expect(gateway.startWatching("/b")).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed when a late start receipt is malformed", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveStart: ((receipt: unknown) => void) | undefined;
+      const invoke = vi.fn((command: string) => {
+        if (command === "start_workspace_file_watch" && !resolveStart) {
+          return new Promise<unknown>((resolve) => {
+            resolveStart = resolve;
+          });
+        }
+        return Promise.resolve(true);
+      });
+      const gateway = new TauriWorkspaceFileChangeGateway(
+        invoke,
+        vi.fn(async () => () => undefined),
+        () => true,
+        { operationTimeoutMs: 10, maxRoots: 1, maxStartsInFlight: 1 },
+      );
+
+      const first = gateway.startWatching("/a");
+      const firstExpectation = expect(first).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(10);
+      await firstExpectation;
+      resolveStart?.({ rootPath: "/a", watchGeneration: 1, unexpected: true });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(invoke).not.toHaveBeenCalledWith("stop_workspace_file_watch", expect.anything());
+      await expect(gateway.startWatching("/b")).rejects.toThrow("root capacity");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds listener admissions and retains lifetime root capacity after release", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({ rootPath: "/a", watchGeneration: 1 })
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce({ rootPath: "/b", watchGeneration: 2 })
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce({ rootPath: "/a", watchGeneration: 1 });
+    const gateway = new TauriWorkspaceFileChangeGateway(
+      invoke,
+      vi.fn(async () => () => undefined),
+      () => true,
+      { maxListeners: 1, maxRoots: 1 },
+    );
+    const unsubscribe = await gateway.subscribeFileChanges(() => undefined);
+
+    await expect(gateway.subscribeFileChanges(() => undefined)).rejects.toThrow(
+      "listener capacity",
+    );
+    await gateway.startWatching("/a");
+    await expect(gateway.startWatching("/b")).rejects.toThrow("root capacity");
+
+    unsubscribe();
+    await gateway.releaseRoot("/a");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("stop_workspace_file_watch", {
+        rootPath: "/a",
+        watchGeneration: 1,
+      }),
+    );
+    await expect(gateway.startWatching("/b")).resolves.toBeUndefined();
+    await gateway.releaseRoot("/b");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("stop_workspace_file_watch", {
+        rootPath: "/b",
+        watchGeneration: 2,
+      }),
+    );
+    await expect(gateway.startWatching("/a")).resolves.toBeUndefined();
+  });
+
+  it("keeps an exact-generation tombstone across A-B-A start overlap", async () => {
+    const resolvers: Array<(receipt: { rootPath: string; watchGeneration: number }) => void> = [];
+    let emit: ((event: { payload: WireChange }) => void) | undefined;
+    const gateway = new TauriWorkspaceFileChangeGateway(
+      vi.fn((command) =>
+        command === "stop_workspace_file_watch"
+          ? Promise.resolve(true)
+          : new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+              resolvers.push(resolve);
+            }),
+      ),
+      vi.fn(async (_event, handler) => {
+        emit = handler;
+        return () => undefined;
+      }),
+      () => true,
+    );
+    const received: WorkspaceFileChangeEvent[] = [];
+    await gateway.subscribeFileChanges((event) => received.push(event));
+
+    const firstA = gateway.startWatching("/a");
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1));
+    resolvers[0]?.({ rootPath: "/canonical/a", watchGeneration: 1 });
+    await firstA;
+    await gateway.releaseRoot("/a");
+
+    const startingB = gateway.startWatching("/b");
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+    emit?.({ payload: wireChange("/canonical/a", 1) });
+    resolvers[1]?.({ rootPath: "/canonical/b", watchGeneration: 2 });
+    await startingB;
+
+    const secondA = gateway.startWatching("/a");
+    await vi.waitFor(() => expect(resolvers).toHaveLength(3));
+    resolvers[2]?.({ rootPath: "/canonical/a", watchGeneration: 1 });
+    await secondA;
+    emit?.({ payload: wireChange("/canonical/a", 1) });
+
+    expect(received).toEqual([change("/a", "rescanRequired"), change("/a")]);
+  });
+
+  it("disposes the transport subscription and rejects late starts", async () => {
+    const unlisten = vi.fn();
+    let resolveStart:
+      ((receipt: { rootPath: string; watchGeneration: number }) => void) | undefined;
+    const gateway = new TauriWorkspaceFileChangeGateway(
+      vi.fn(
+        () =>
+          new Promise<{ rootPath: string; watchGeneration: number }>((resolve) => {
+            resolveStart = resolve;
+          }),
+      ),
+      vi.fn(async () => unlisten),
+      () => true,
+    );
+
+    const starting = gateway.startWatching("/a");
+    await vi.waitFor(() => expect(resolveStart).toBeTypeOf("function"));
+    await gateway.dispose();
+    resolveStart?.({ rootPath: "/a", watchGeneration: 1 });
+
+    await expect(starting).rejects.toThrow("disposed");
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it("disposal immediately rejects a never-settling listener registration", async () => {
+    const gateway = new TauriWorkspaceFileChangeGateway(
+      vi.fn(),
+      vi.fn((): Promise<() => void> => new Promise(() => undefined)),
+      () => true,
+      { operationTimeoutMs: 60_000 },
+    );
+    const starting = gateway.startWatching("/a");
+    const startingExpectation = expect(starting).rejects.toThrow("disposed");
+
+    await gateway.dispose();
+
+    await startingExpectation;
+  });
+
+  it("bounds disposal wait while retaining a never-settling stop permit", async () => {
+    vi.useFakeTimers();
+    try {
+      const unlisten = vi.fn();
+      const invoke = vi
+        .fn()
+        .mockResolvedValueOnce({ rootPath: "/a", watchGeneration: 1 })
+        .mockImplementationOnce(() => new Promise(() => undefined));
+      const gateway = new TauriWorkspaceFileChangeGateway(
+        invoke,
+        vi.fn(async () => unlisten),
+        () => true,
+        { operationTimeoutMs: 10 },
+      );
+      await gateway.startWatching("/a");
+
+      const disposing = gateway.dispose();
+      const disposingExpectation = expect(disposing).resolves.toBeUndefined();
+      await vi.advanceTimersByTimeAsync(10);
+
+      await disposingExpectation;
+      expect(unlisten).toHaveBeenCalledOnce();
+      expect(invoke).toHaveBeenLastCalledWith("stop_workspace_file_watch", {
+        rootPath: "/a",
+        watchGeneration: 1,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects an oversized root before listener or start IPC", async () => {
+    const invoke = vi.fn();
+    const listen = vi.fn(async () => () => undefined);
+    const gateway = new TauriWorkspaceFileChangeGateway(invoke, listen, () => true);
+
+    await expect(gateway.startWatching(`/${"x".repeat(32_768)}`)).rejects.toThrow("too large");
+    expect(listen).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

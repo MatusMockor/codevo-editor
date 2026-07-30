@@ -2,6 +2,7 @@ import { useCallback, type MutableRefObject } from "react";
 import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPort";
 import type { WorkspaceIdentityGateway } from "../workspaceIdentityGatewayPort";
 import { withWorkspaceIdentityLease } from "./workspaceIdentityPolicy";
+import type { WorkspaceRequestTokenRegistry } from "./workspaceRequestTokenRegistry";
 
 type WorkspaceIdentityReleaseOutcome = "deferred" | "released";
 
@@ -13,7 +14,7 @@ interface WorkspaceIdentityAdmissionLease {
 interface ManagedWorkspaceIdentityOwnershipOptions {
   readonly deferredCleanupIdsRef: MutableRefObject<Set<string>>;
   readonly identityGateway: WorkspaceIdentityGateway;
-  readonly identityRequestTokensRef: MutableRefObject<Set<number>>;
+  readonly identityRequestTokensRef: MutableRefObject<WorkspaceRequestTokenRegistry>;
   readonly mountedRef: MutableRefObject<boolean>;
   readonly nextAdmissionGenerationRef: MutableRefObject<number>;
   readonly ownedGenerationByIdRef: MutableRefObject<Record<string, number>>;
@@ -50,6 +51,9 @@ export function useManagedWorkspaceIdentityOwnership({
       workspaceId: string,
       requestedReleaseGeneration?: number,
     ): Promise<WorkspaceIdentityReleaseOutcome> => {
+      if (releasedIdsRef.current.has(workspaceId)) {
+        return "released";
+      }
       const releaseGeneration =
         requestedReleaseGeneration ?? releaseGenerationByIdRef.current[workspaceId];
       const ownedGeneration = ownedGenerationByIdRef.current[workspaceId];
@@ -68,7 +72,7 @@ export function useManagedWorkspaceIdentityOwnership({
         return "deferred";
       }
 
-      if (identityRequestTokensRef.current.size > 0) {
+      if (identityRequestTokensRef.current.hasPending()) {
         deferredCleanupIdsRef.current.add(workspaceId);
         return "deferred";
       }
@@ -98,6 +102,7 @@ export function useManagedWorkspaceIdentityOwnership({
       }
 
       if (releaseGeneration === undefined) {
+        releasedIdsRef.current.add(workspaceId);
         return "released";
       }
 
@@ -127,7 +132,7 @@ export function useManagedWorkspaceIdentityOwnership({
   );
 
   const flushDeferredCleanup = useCallback(() => {
-    if (identityRequestTokensRef.current.size > 0) {
+    if (identityRequestTokensRef.current.hasPending()) {
       return;
     }
 

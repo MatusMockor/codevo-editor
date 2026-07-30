@@ -4,6 +4,7 @@ import type {
   WorkspaceIdentityDescriptor,
   WorkspaceIdentityGateway,
 } from "../workspaceIdentityGatewayPort";
+import type { LatestWorkspaceRequestTokenRegistry } from "./workspaceRequestTokenRegistry";
 
 interface WorkspaceCloseOwnership {
   readonly isCurrent: () => boolean;
@@ -27,7 +28,7 @@ interface WorkspaceOpenRequestLifecycleInput {
   readonly openWorkspaceRequestInFlightTokenRef: MutableRefObject<number | null>;
   readonly openWorkspaceRequestPathRef: MutableRefObject<string | null>;
   readonly openWorkspaceRequestTokenRef: MutableRefObject<number>;
-  readonly pendingWorkspaceIdentityRequestTokensRef: MutableRefObject<Set<number>>;
+  readonly pendingWorkspaceIdentityRequestTokensRef: MutableRefObject<LatestWorkspaceRequestTokenRegistry>;
   readonly performOpenWorkspacePath: PerformOpenWorkspacePath;
   readonly reportError: (source: string, error: unknown) => void;
   readonly resolveCachedWorkspaceState: (rootPath: string) => Readonly<{
@@ -117,7 +118,7 @@ export function useWorkspaceOpenRequestLifecycle({
       openWorkspaceRequestTokenRef.current = requestToken;
       openWorkspaceRequestPathRef.current = path;
       openWorkspaceRequestInFlightTokenRef.current = requestToken;
-      pendingWorkspaceIdentityRequestTokensRef.current.add(requestToken);
+      pendingWorkspaceIdentityRequestTokensRef.current.issue(requestToken);
       return requestToken;
     },
     [
@@ -131,7 +132,7 @@ export function useWorkspaceOpenRequestLifecycle({
   );
   const completeOpenWorkspaceRequest = useCallback(
     (requestToken: number) => {
-      pendingWorkspaceIdentityRequestTokensRef.current.delete(requestToken);
+      pendingWorkspaceIdentityRequestTokensRef.current.complete(requestToken);
       completeDeferredIdentityCleanup();
       if (openWorkspaceRequestInFlightTokenRef.current === requestToken) {
         openWorkspaceRequestInFlightTokenRef.current = null;

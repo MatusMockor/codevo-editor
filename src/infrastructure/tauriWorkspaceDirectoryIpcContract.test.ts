@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   invokeWorkspaceDirectoryIpc,
   WORKSPACE_DIRECTORY_MAX_ENTRIES,
+  WORKSPACE_DIRECTORY_MAX_NAME_UTF8_BYTES,
+  WORKSPACE_DIRECTORY_MAX_TOTAL_UTF8_BYTES,
 } from "./tauriWorkspaceDirectoryIpcContract";
 
 describe("workspace directory IPC contract", () => {
@@ -77,5 +79,37 @@ describe("workspace directory IPC contract", () => {
         { workspaceId: "ws-1", relativePath: "", maxEntries: 1 },
       ),
     ).rejects.toThrow("at most 1 entries");
+  });
+
+  it("rejects oversized fields before IPC and aggregate response amplification", async () => {
+    const invoke = vi.fn();
+    await expect(
+      invokeWorkspaceDirectoryIpc(invoke, {
+        workspaceId: "w".repeat(1_025),
+        relativePath: "",
+        maxEntries: 1,
+      }),
+    ).rejects.toThrow("1024 bytes");
+    expect(invoke).not.toHaveBeenCalled();
+
+    const name = "x".repeat(WORKSPACE_DIRECTORY_MAX_NAME_UTF8_BYTES / 2);
+    const entryCount = Math.floor(WORKSPACE_DIRECTORY_MAX_TOTAL_UTF8_BYTES / (name.length * 2)) + 1;
+    await expect(
+      invokeWorkspaceDirectoryIpc(
+        vi.fn().mockResolvedValue({
+          entries: Array.from({ length: entryCount }, () => ({
+            name,
+            relativePath: name,
+            kind: "file",
+          })),
+          truncated: true,
+        }),
+        {
+          workspaceId: "ws-1",
+          relativePath: "",
+          maxEntries: entryCount,
+        },
+      ),
+    ).rejects.toThrow("aggregate UTF-8 bytes");
   });
 });

@@ -382,9 +382,16 @@ export function featuresGateway(): LanguageServerFeaturesGateway {
 
 function identifiedRequest<T>(
   promise: Promise<T>,
-  sessionId: number,
+  sessionId: number | undefined,
 ): Promise<T> & { readonly requestId: number; readonly sessionId: number } {
-  return Object.assign(promise, { requestId: 1, sessionId });
+  return Object.assign(promise, { requestId: 1, sessionId: requiredSessionId(sessionId) });
+}
+
+function requiredSessionId(sessionId: number | undefined): number {
+  if (sessionId === undefined) {
+    throw new Error("Expected an active language-server session");
+  }
+  return sessionId;
 }
 
 function javaScriptTypeScriptFeaturesGateway(
@@ -645,6 +652,10 @@ function createControllerDependencies(
       createTextFile: vi.fn(async () => undefined),
       deletePath: vi.fn(async () => undefined),
       readDirectory: vi.fn(readDirectory ?? (async () => [])),
+      readDirectoryBounded: vi.fn(async (path: string, maxEntries: number) => {
+        const entries = await (readDirectory ?? (async () => []))(path);
+        return { entries: entries.slice(0, maxEntries), truncated: entries.length > maxEntries };
+      }),
       readTextFile,
       renamePath: vi.fn(async () => undefined),
       writeTextFile: vi.fn(async () => undefined),

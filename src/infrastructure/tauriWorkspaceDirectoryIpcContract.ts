@@ -1,4 +1,9 @@
 export const WORKSPACE_DIRECTORY_MAX_ENTRIES = 50_000;
+export const WORKSPACE_DIRECTORY_MAX_NAME_UTF8_BYTES = 1_024;
+export const WORKSPACE_DIRECTORY_MAX_RELATIVE_PATH_UTF8_BYTES = 32_768;
+export const WORKSPACE_DIRECTORY_MAX_TOTAL_UTF8_BYTES = 4 * 1024 * 1024;
+export const WORKSPACE_DIRECTORY_MAX_WORKSPACE_ID_UTF8_BYTES = 1_024;
+const utf8Encoder = new TextEncoder();
 
 export const WORKSPACE_DIRECTORY_IPC_COMMANDS = {
   readBounded: "workspace_read_directory_bounded",
@@ -34,7 +39,18 @@ export async function invokeWorkspaceDirectoryIpc(
     ["workspaceId", "relativePath", "maxEntries"],
     "workspace_read_directory_bounded args",
   );
-  nonEmptyString(input.workspaceId, "workspace_read_directory_bounded args.workspaceId");
+  boundedString(
+    input.workspaceId,
+    "workspace_read_directory_bounded args.workspaceId",
+    WORKSPACE_DIRECTORY_MAX_WORKSPACE_ID_UTF8_BYTES,
+    false,
+  );
+  boundedString(
+    input.relativePath,
+    "workspace_read_directory_bounded args.relativePath",
+    WORKSPACE_DIRECTORY_MAX_RELATIVE_PATH_UTF8_BYTES,
+    true,
+  );
   relativePath(input.relativePath, "workspace_read_directory_bounded args.relativePath", true);
   const maxEntries = positiveInteger(
     input.maxEntries,
@@ -58,6 +74,7 @@ export async function invokeWorkspaceDirectoryIpc(
     invalid("workspace_read_directory_bounded result.entries", `at most ${maxEntries} entries`);
   if (typeof output.truncated !== "boolean")
     invalid("workspace_read_directory_bounded result.truncated", "a boolean");
+  let totalUtf8Bytes = 0;
   const entries = output.entries.map((value, index) => {
     const path = `workspace_read_directory_bounded result.entries[${index}]`;
     const entry = record(value, path);
@@ -65,13 +82,51 @@ export async function invokeWorkspaceDirectoryIpc(
     if (entry.kind !== "directory" && entry.kind !== "file")
       invalid(`${path}.kind`, '"directory" or "file"');
     const kind: "directory" | "file" = entry.kind;
+    const name = boundedString(
+      entry.name,
+      `${path}.name`,
+      WORKSPACE_DIRECTORY_MAX_NAME_UTF8_BYTES,
+      false,
+    );
+    const entryRelativePath = boundedString(
+      entry.relativePath,
+      `${path}.relativePath`,
+      WORKSPACE_DIRECTORY_MAX_RELATIVE_PATH_UTF8_BYTES,
+      false,
+    );
+    totalUtf8Bytes +=
+      utf8Encoder.encode(name).byteLength + utf8Encoder.encode(entryRelativePath).byteLength;
+    if (totalUtf8Bytes > WORKSPACE_DIRECTORY_MAX_TOTAL_UTF8_BYTES) {
+      invalid(
+        "workspace_read_directory_bounded result.entries",
+        `at most ${WORKSPACE_DIRECTORY_MAX_TOTAL_UTF8_BYTES} aggregate UTF-8 bytes`,
+      );
+    }
     return {
-      name: nonEmptyString(entry.name, `${path}.name`),
-      relativePath: relativePath(entry.relativePath, `${path}.relativePath`, false),
+      name,
+      relativePath: relativePath(entryRelativePath, `${path}.relativePath`, false),
       kind,
     };
   });
   return { entries, truncated: output.truncated };
+}
+
+function boundedString(
+  value: unknown,
+  path: string,
+  maxUtf8Bytes: number,
+  allowEmpty: boolean,
+): string {
+  const candidate = string(value, path);
+  if (
+    (!allowEmpty && candidate.length === 0) ||
+    candidate.length > maxUtf8Bytes ||
+    candidate.includes("\0") ||
+    utf8Encoder.encode(candidate).byteLength > maxUtf8Bytes
+  ) {
+    return invalid(path, `a UTF-8 string of at most ${maxUtf8Bytes} bytes`);
+  }
+  return candidate;
 }
 
 function relativePath(value: unknown, path: string, allowEmpty: boolean): string {
@@ -104,12 +159,6 @@ function record(value: unknown, path: string): Record<string, unknown> {
 function string(value: unknown, path: string): string {
   if (typeof value !== "string") return invalid(path, "a string");
   return value;
-}
-
-function nonEmptyString(value: unknown, path: string): string {
-  const candidate = string(value, path);
-  if (!candidate) return invalid(path, "a non-empty string");
-  return candidate;
 }
 
 function positiveInteger(value: unknown, path: string): number {

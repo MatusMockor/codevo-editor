@@ -222,9 +222,9 @@ function stubJavaScriptTypeScriptFeaturesGateway(): JavaScriptTypeScriptLanguage
   const gateway = stubFeaturesGateway();
   const identifiedRequest = <T,>(
     promise: Promise<T>,
-    sessionId: number,
+    sessionId: number | undefined,
   ): Promise<T> & { readonly requestId: number; readonly sessionId: number } =>
-    Object.assign(promise, { requestId: 1, sessionId });
+    Object.assign(promise, { requestId: 1, sessionId: requiredSessionId(sessionId) });
 
   return {
     ...gateway,
@@ -261,6 +261,13 @@ function stubJavaScriptTypeScriptFeaturesGateway(): JavaScriptTypeScriptLanguage
     workspaceSymbols: (rootPath, query, sessionId) =>
       identifiedRequest(gateway.workspaceSymbols(rootPath, query), sessionId),
   };
+}
+
+function requiredSessionId(sessionId: number | undefined): number {
+  if (sessionId === undefined) {
+    throw new Error("Expected an active language-server session");
+  }
+  return sessionId;
 }
 
 interface RenderOptions {
@@ -325,6 +332,7 @@ function buildDependencies({
       createTextFile: vi.fn(async () => undefined),
       deletePath: vi.fn(async () => undefined),
       readDirectory: vi.fn(async () => []),
+      readDirectoryBounded: vi.fn(async () => ({ entries: [], truncated: false })),
       readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
       renamePath: vi.fn(async () => undefined),
       writeTextFile: vi.fn(async () => undefined),

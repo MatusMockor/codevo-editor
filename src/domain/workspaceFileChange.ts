@@ -3,11 +3,7 @@ import type { EditorDocument } from "./workspace";
 export type WorkspaceFileChangeUnsubscribeFn = () => void;
 
 export type WorkspaceFileChangeKind =
-  | "created"
-  | "deleted"
-  | "modified"
-  | "renamed"
-  | "rescanRequired";
+  "created" | "deleted" | "modified" | "renamed" | "rescanRequired";
 
 export type WorkspaceFileChangeFileKind = "directory" | "file";
 
@@ -33,9 +29,11 @@ export interface WorkspaceFileChangeGateway {
    * are reported. Idempotent per root.
    */
   startWatching(rootPath: string): Promise<void>;
+  releaseRoot?(rootPath: string): Promise<void> | void;
   subscribeFileChanges(
     listener: (event: WorkspaceFileChangeEvent) => void,
   ): Promise<WorkspaceFileChangeUnsubscribeFn>;
+  dispose?(): Promise<void> | void;
 }
 
 /**

@@ -28,8 +28,19 @@ interface PendingWorkspaceFileChangeWireEvent {
   event: WorkspaceFileChangeWireEvent;
 }
 
+interface WorkspaceFileChangeGatewayLimits {
+  readonly maxListeners?: number;
+  readonly maxRoots?: number;
+  readonly maxStartsInFlight?: number;
+  readonly operationTimeoutMs?: number;
+}
+
 const MAX_PENDING_WORKSPACE_FILE_CHANGE_WIRE_EVENTS = 128;
 const MAX_WORKSPACE_FILE_CHANGE_PATH_LENGTH = 32_768;
+const DEFAULT_MAX_WORKSPACE_FILE_CHANGE_LISTENERS = 16;
+const DEFAULT_MAX_WORKSPACE_FILE_CHANGE_ROOTS = 16;
+const DEFAULT_MAX_WORKSPACE_FILE_CHANGE_STARTS = 16;
+const DEFAULT_WORKSPACE_FILE_CHANGE_OPERATION_TIMEOUT_MS = 15_000;
 const utf8Encoder = new TextEncoder();
 
 const invokeStartCommand: InvokeStartCommand = (command, args) => invoke<unknown>(command, args);
@@ -40,30 +51,98 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
   private readonly expectedGenerationByRoot = new Map<string, number>();
   private readonly canonicalRootByRequestedRoot = new Map<string, string>();
   private readonly requestedRootByCanonicalRoot = new Map<string, string>();
+  private readonly rootsNeedingRescan = new Set<string>();
   private readonly startLeaseByRequestedRoot = new Map<string, number>();
   private readonly latestLeaseByCanonicalRoot = new Map<string, number>();
+  private readonly knownRequestedRoots = new Set<string>();
+  private readonly pendingRequestedRoots = new Set<string>();
+  private readonly pendingStopByRequestedRoot = new Map<string, Promise<boolean>>();
+  private readonly releasedGenerationByCanonicalRoot = new Map<string, number>();
+  private releasedGenerationOverflowed = false;
   private readonly pendingWireEvents: PendingWorkspaceFileChangeWireEvent[] = [];
   private readonly listeners = new Set<(event: WorkspaceFileChangeEvent) => void>();
   private listenPromise: Promise<WorkspaceFileChangeUnsubscribeFn> | null = null;
+  private listenAttempt: symbol | null = null;
+  private listenRegistrationOutstanding = false;
+  private listenUnsubscribe: WorkspaceFileChangeUnsubscribeFn | null = null;
   private readonly overflowedWireRoots = new Set<string>();
+  private readonly maxListeners: number;
+  private readonly maxRoots: number;
+  private readonly maxStartsInFlight: number;
+  private readonly operationTimeoutMs: number;
+  private rejectDisposal!: (error: Error) => void;
+  private readonly disposal = new Promise<never>((_resolve, reject) => {
+    this.rejectDisposal = reject;
+  });
   private listenerGapDirty = false;
+  private pendingGlobalOverflow = false;
   private nextStartLease = 0;
+  private outstandingStartTransports = 0;
+  private outstandingStopTransports = 0;
   private startsInFlight = 0;
+  private disposed = false;
 
   constructor(
     private readonly invokeCommand: InvokeStartCommand = invokeStartCommand,
     private readonly listenToEvent: ListenToFileChangeEvent = listenToFileChangeEvent,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
-  ) {}
+    limits: WorkspaceFileChangeGatewayLimits = {},
+  ) {
+    this.maxListeners = positiveInteger(
+      limits.maxListeners,
+      DEFAULT_MAX_WORKSPACE_FILE_CHANGE_LISTENERS,
+    );
+    this.maxRoots = positiveInteger(limits.maxRoots, DEFAULT_MAX_WORKSPACE_FILE_CHANGE_ROOTS);
+    this.maxStartsInFlight = positiveInteger(
+      limits.maxStartsInFlight,
+      DEFAULT_MAX_WORKSPACE_FILE_CHANGE_STARTS,
+    );
+    this.operationTimeoutMs = positiveInteger(
+      limits.operationTimeoutMs,
+      DEFAULT_WORKSPACE_FILE_CHANGE_OPERATION_TIMEOUT_MS,
+    );
+    void this.disposal.catch(() => undefined);
+  }
 
   async startWatching(rootPath: string): Promise<void> {
     if (!this.isRuntimeAvailable()) {
       return;
     }
 
-    await this.ensureListening();
+    this.assertNotDisposed();
+    if (boundedString(rootPath) === null) {
+      throw new Error("Workspace file watcher root is invalid or too large.");
+    }
+    const pendingStop = this.pendingStopByRequestedRoot.get(rootPath);
+    if (pendingStop && !(await pendingStop)) {
+      throw new Error("Workspace file watcher cleanup could not be confirmed.");
+    }
+    if (
+      !this.knownRequestedRoots.has(rootPath) &&
+      !this.pendingRequestedRoots.has(rootPath) &&
+      this.knownRequestedRoots.size + this.pendingRequestedRoots.size >= this.maxRoots
+    ) {
+      throw new Error("Workspace file watcher root capacity has been reached.");
+    }
+    if (this.startsInFlight >= this.maxStartsInFlight) {
+      throw new Error("Workspace file watcher start capacity has been reached.");
+    }
     const startLease = ++this.nextStartLease;
+    this.pendingRequestedRoots.add(rootPath);
     this.startLeaseByRequestedRoot.set(rootPath, startLease);
+    this.startsInFlight += 1;
+    try {
+      await this.ensureListening();
+      this.assertNotDisposed();
+    } catch (error) {
+      if (this.startLeaseByRequestedRoot.get(rootPath) === startLease) {
+        this.startLeaseByRequestedRoot.delete(rootPath);
+      }
+      this.pendingRequestedRoots.delete(rootPath);
+      this.startsInFlight -= 1;
+      throw error;
+    }
+    this.pendingRequestedRoots.delete(rootPath);
     const previouslyAdmittedCanonicalRoot = this.canonicalRootByRequestedRoot.get(rootPath);
     if (
       previouslyAdmittedCanonicalRoot &&
@@ -73,18 +152,45 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
       // slip through while a replacement start receipt is in flight.
       this.expectedGenerationByRoot.delete(previouslyAdmittedCanonicalRoot);
     }
-    this.startsInFlight += 1;
+    let abandoned = false;
     try {
-      const receipt = parseStartReceipt(
-        await this.invokeCommand("start_workspace_file_watch", { rootPath }),
+      const startTransport = this.invokeStartBounded(rootPath, startLease);
+      void startTransport.then(
+        (value) => {
+          if (abandoned) {
+            void this.cleanupLateStartReceipt(rootPath, value);
+          }
+        },
+        () => undefined,
       );
-      if (this.startLeaseByRequestedRoot.get(rootPath) !== startLease) {
+      const receipt = parseStartReceipt(
+        await withTimeout(
+          startTransport,
+          this.operationTimeoutMs,
+          "Workspace file watcher start",
+          this.disposal,
+        ),
+      );
+      if (this.disposed) {
+        await this.stopWatchExact(receipt.rootPath, receipt.watchGeneration);
+        this.assertNotDisposed();
+      }
+      const currentStartLease = this.startLeaseByRequestedRoot.get(rootPath);
+      if (currentStartLease !== startLease) {
+        if (currentStartLease === undefined) {
+          await this.stopWatchExact(receipt.rootPath, receipt.watchGeneration);
+        }
         return;
+      }
+      const releasedGeneration = this.releasedGenerationByCanonicalRoot.get(receipt.rootPath);
+      if (releasedGeneration !== undefined && receipt.watchGeneration < releasedGeneration) {
+        throw new Error("Workspace file watcher returned a released watch generation.");
       }
       const latestCanonicalLease = this.latestLeaseByCanonicalRoot.get(receipt.rootPath) ?? 0;
       if (startLease < latestCanonicalLease) {
         return;
       }
+      this.releasedGenerationByCanonicalRoot.delete(receipt.rootPath);
       this.latestLeaseByCanonicalRoot.set(receipt.rootPath, startLease);
       const previousCanonicalRoot = this.canonicalRootByRequestedRoot.get(rootPath);
       if (previousCanonicalRoot && previousCanonicalRoot !== receipt.rootPath) {
@@ -95,7 +201,9 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
       this.expectedGenerationByRoot.set(receipt.rootPath, receipt.watchGeneration);
       this.flushPendingWireEvents(receipt.rootPath, receipt.watchGeneration);
     } catch (error) {
+      abandoned = true;
       if (this.startLeaseByRequestedRoot.get(rootPath) === startLease) {
+        this.rootsNeedingRescan.add(rootPath);
         const previousCanonicalRoot = this.canonicalRootByRequestedRoot.get(rootPath);
         if (previousCanonicalRoot) {
           this.canonicalRootByRequestedRoot.delete(rootPath);
@@ -109,6 +217,7 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
       if (this.startsInFlight === 0) {
         this.pendingWireEvents.length = 0;
         this.overflowedWireRoots.clear();
+        this.pendingGlobalOverflow = false;
       }
     }
   }
@@ -118,6 +227,10 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
   ): Promise<WorkspaceFileChangeUnsubscribeFn> {
     if (!this.isRuntimeAvailable()) {
       return () => undefined;
+    }
+    this.assertNotDisposed();
+    if (!this.listeners.has(listener) && this.listeners.size >= this.maxListeners) {
+      throw new Error("Workspace file watcher listener capacity has been reached.");
     }
     this.listeners.add(listener);
     let recoveryAttempted = false;
@@ -151,6 +264,73 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
     };
   }
 
+  async releaseRoot(rootPath: string): Promise<void> {
+    const canonicalRoot = this.canonicalRootByRequestedRoot.get(rootPath);
+    if (
+      !canonicalRoot &&
+      !this.startLeaseByRequestedRoot.has(rootPath) &&
+      !this.knownRequestedRoots.has(rootPath)
+    ) {
+      return;
+    }
+    const generation = canonicalRoot ? this.expectedGenerationByRoot.get(canonicalRoot) : undefined;
+    const hasOtherOwner = canonicalRoot
+      ? this.hasOtherRequestedRootForCanonical(canonicalRoot, rootPath)
+      : false;
+    this.startLeaseByRequestedRoot.delete(rootPath);
+    this.rootsNeedingRescan.add(rootPath);
+    this.canonicalRootByRequestedRoot.delete(rootPath);
+    if (!canonicalRoot) {
+      return;
+    }
+    this.revokeCanonicalRootIfUnreferenced(canonicalRoot, rootPath);
+    if (!hasOtherOwner && generation !== undefined) {
+      const stopping = this.stopWatchExact(canonicalRoot, generation);
+      this.pendingStopByRequestedRoot.set(rootPath, stopping);
+      const stopped = await stopping;
+      if (stopped) {
+        if (
+          !this.startLeaseByRequestedRoot.has(rootPath) &&
+          !this.canonicalRootByRequestedRoot.has(rootPath)
+        ) {
+          this.knownRequestedRoots.delete(rootPath);
+        }
+      }
+      if (this.pendingStopByRequestedRoot.get(rootPath) === stopping) {
+        this.pendingStopByRequestedRoot.delete(rootPath);
+      }
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.rejectDisposal(new Error("Workspace file watcher gateway was disposed."));
+    const stops = [...this.expectedGenerationByRoot].map(([rootPath, generation]) =>
+      this.stopWatchExact(rootPath, generation),
+    );
+    await Promise.allSettled(stops);
+    this.listeners.clear();
+    this.pendingWireEvents.length = 0;
+    this.overflowedWireRoots.clear();
+    this.pendingGlobalOverflow = false;
+    this.expectedGenerationByRoot.clear();
+    this.canonicalRootByRequestedRoot.clear();
+    this.requestedRootByCanonicalRoot.clear();
+    this.startLeaseByRequestedRoot.clear();
+    this.latestLeaseByCanonicalRoot.clear();
+    this.releasedGenerationByCanonicalRoot.clear();
+    this.releasedGenerationOverflowed = false;
+    this.rootsNeedingRescan.clear();
+    this.listenAttempt = null;
+    const unsubscribe = this.listenUnsubscribe;
+    this.listenUnsubscribe = null;
+    this.listenPromise = null;
+    unsubscribe?.();
+  }
+
   private flushPendingWireEvents(rootPath: string, watchGeneration: number): void {
     const retained: PendingWorkspaceFileChangeWireEvent[] = [];
     for (const pending of this.pendingWireEvents) {
@@ -161,8 +341,12 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
       }
     }
     this.pendingWireEvents.splice(0, this.pendingWireEvents.length, ...retained);
-    if (this.overflowedWireRoots.delete(rootPath)) {
-      const requestedRoot = this.requestedRootByCanonicalRoot.get(rootPath) ?? rootPath;
+    const requestedRoot = this.requestedRootByCanonicalRoot.get(rootPath) ?? rootPath;
+    if (
+      this.overflowedWireRoots.delete(rootPath) ||
+      this.pendingGlobalOverflow ||
+      this.rootsNeedingRescan.delete(requestedRoot)
+    ) {
       this.dispatchDomainEvent({
         rootPath: requestedRoot,
         kind: "rescanRequired",
@@ -194,8 +378,13 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
       this.requestedRootByCanonicalRoot.set(canonicalRoot, replacementRequestedRoot[0]);
       return;
     }
-    this.expectedGenerationByRoot.delete(canonicalRoot);
     this.requestedRootByCanonicalRoot.delete(canonicalRoot);
+    const generation = this.expectedGenerationByRoot.get(canonicalRoot);
+    if (generation !== undefined) {
+      this.rememberReleasedGeneration(canonicalRoot, generation);
+    }
+    this.expectedGenerationByRoot.delete(canonicalRoot);
+    this.latestLeaseByCanonicalRoot.delete(canonicalRoot);
     this.dropPendingWireEvents(canonicalRoot);
   }
 
@@ -227,10 +416,44 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
   }
 
   private ensureListening(): Promise<WorkspaceFileChangeUnsubscribeFn> {
-    this.listenPromise ??= this.listenToEvent(WORKSPACE_FILE_CHANGED_EVENT, (event) => {
-      this.handleWireEvent(event.payload);
-    }).catch((error: unknown) => {
-      this.listenPromise = null;
+    this.assertNotDisposed();
+    if (this.listenPromise) {
+      return this.listenPromise;
+    }
+    if (this.listenRegistrationOutstanding) {
+      return Promise.reject(
+        new Error("Workspace file watcher listener transport capacity has been reached."),
+      );
+    }
+    const attempt = Symbol("workspace-file-change-listener");
+    this.listenAttempt = attempt;
+    this.listenRegistrationOutstanding = true;
+    const registration = this.listenToEvent(WORKSPACE_FILE_CHANGED_EVENT, (event) => {
+      if (!this.disposed && this.listenAttempt === attempt) {
+        this.handleWireEvent(event.payload);
+      }
+    }).then((unsubscribe) => {
+      if (this.disposed || this.listenAttempt !== attempt) {
+        unsubscribe();
+        throw new Error("Workspace file watcher listener is no longer current.");
+      }
+      this.listenUnsubscribe = unsubscribe;
+      return unsubscribe;
+    });
+    const releaseRegistration = () => {
+      this.listenRegistrationOutstanding = false;
+    };
+    void registration.then(releaseRegistration, releaseRegistration);
+    this.listenPromise = withTimeout(
+      registration,
+      this.operationTimeoutMs,
+      "Workspace file watcher listener registration",
+      this.disposal,
+    ).catch((error: unknown) => {
+      if (this.listenAttempt === attempt) {
+        this.listenAttempt = null;
+        this.listenPromise = null;
+      }
       throw error;
     });
     return this.listenPromise;
@@ -243,11 +466,37 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
     }
     const expectedGeneration = this.expectedGenerationByRoot.get(payload.rootPath);
     if (expectedGeneration === undefined) {
+      if (this.releasedGenerationOverflowed) {
+        if (this.startsInFlight > 0) {
+          this.pendingGlobalOverflow = true;
+        }
+        return;
+      }
+      const releasedGeneration = this.releasedGenerationByCanonicalRoot.get(payload.rootPath);
+      if (releasedGeneration !== undefined && payload.watchGeneration <= releasedGeneration) {
+        return;
+      }
       if (this.startsInFlight > 0) {
+        const duplicateIndex = this.pendingWireEvents.findIndex(
+          (pending) =>
+            pending.event.rootPath === payload.rootPath &&
+            pending.event.watchGeneration === payload.watchGeneration &&
+            pending.event.kind === payload.kind &&
+            pending.event.relativePath === payload.relativePath &&
+            pending.event.previousRelativePath === payload.previousRelativePath,
+        );
+        if (duplicateIndex >= 0) {
+          this.pendingWireEvents[duplicateIndex] = { event: payload };
+          return;
+        }
         if (this.pendingWireEvents.length >= MAX_PENDING_WORKSPACE_FILE_CHANGE_WIRE_EVENTS) {
           const dropped = this.pendingWireEvents.shift();
           if (dropped) {
-            this.overflowedWireRoots.add(dropped.event.rootPath);
+            if (this.overflowedWireRoots.size < this.maxRoots) {
+              this.overflowedWireRoots.add(dropped.event.rootPath);
+            } else {
+              this.pendingGlobalOverflow = true;
+            }
           }
         }
         this.pendingWireEvents.push({ event: payload });
@@ -275,6 +524,139 @@ export class TauriWorkspaceFileChangeGateway implements WorkspaceFileChangeGatew
       }
     }
   }
+
+  private assertNotDisposed(): void {
+    if (this.disposed) {
+      throw new Error("Workspace file watcher gateway was disposed.");
+    }
+  }
+
+  private rememberReleasedGeneration(canonicalRoot: string, generation: number): void {
+    this.releasedGenerationByCanonicalRoot.delete(canonicalRoot);
+    this.releasedGenerationByCanonicalRoot.set(canonicalRoot, generation);
+    while (this.releasedGenerationByCanonicalRoot.size > this.maxRoots) {
+      const oldestRoot = this.releasedGenerationByCanonicalRoot.keys().next().value;
+      if (oldestRoot === undefined) {
+        return;
+      }
+      this.releasedGenerationByCanonicalRoot.delete(oldestRoot);
+      this.releasedGenerationOverflowed = true;
+    }
+  }
+
+  private invokeStartBounded(rootPath: string, startLease: number): Promise<unknown> {
+    if (this.outstandingStartTransports >= this.maxStartsInFlight) {
+      return Promise.reject(
+        new Error("Workspace file watcher transport capacity has been reached."),
+      );
+    }
+    const newlyKnownRoot = !this.knownRequestedRoots.has(rootPath);
+    this.knownRequestedRoots.add(rootPath);
+    this.outstandingStartTransports += 1;
+    let operation: Promise<unknown>;
+    try {
+      operation = this.invokeCommand("start_workspace_file_watch", { rootPath });
+    } catch (error) {
+      this.outstandingStartTransports -= 1;
+      if (
+        newlyKnownRoot &&
+        this.startLeaseByRequestedRoot.get(rootPath) === startLease &&
+        !this.canonicalRootByRequestedRoot.has(rootPath)
+      ) {
+        this.knownRequestedRoots.delete(rootPath);
+      }
+      throw error;
+    }
+    const release = () => {
+      this.outstandingStartTransports -= 1;
+    };
+    void operation.then(release, () => {
+      release();
+      if (
+        newlyKnownRoot &&
+        this.startLeaseByRequestedRoot.get(rootPath) === startLease &&
+        !this.canonicalRootByRequestedRoot.has(rootPath)
+      ) {
+        this.knownRequestedRoots.delete(rootPath);
+      }
+    });
+    return operation;
+  }
+
+  private async cleanupLateStartReceipt(rootPath: string, value: unknown): Promise<void> {
+    let receipt: WorkspaceFileWatchStartReceipt;
+    try {
+      receipt = parseStartReceipt(value);
+    } catch {
+      this.rootsNeedingRescan.add(rootPath);
+      return;
+    }
+    const stopped = await this.stopWatchExact(receipt.rootPath, receipt.watchGeneration);
+    if (
+      stopped &&
+      !this.startLeaseByRequestedRoot.has(rootPath) &&
+      !this.canonicalRootByRequestedRoot.has(rootPath)
+    ) {
+      this.knownRequestedRoots.delete(rootPath);
+    }
+  }
+
+  private async stopWatchExact(rootPath: string, watchGeneration: number): Promise<boolean> {
+    if (this.outstandingStopTransports >= this.maxRoots) {
+      return false;
+    }
+    this.outstandingStopTransports += 1;
+    let operation: Promise<unknown>;
+    try {
+      operation = this.invokeCommand("stop_workspace_file_watch", {
+        rootPath,
+        watchGeneration,
+      });
+    } catch {
+      this.outstandingStopTransports -= 1;
+      return false;
+    }
+    const release = () => {
+      this.outstandingStopTransports -= 1;
+    };
+    void operation.then(release, release);
+    try {
+      return (
+        (await withTimeout(operation, this.operationTimeoutMs, "Workspace file watcher stop")) ===
+        true
+      );
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function withTimeout<Result>(
+  operation: Promise<Result>,
+  timeoutMs: number,
+  label: string,
+  cancellation?: Promise<never>,
+): Promise<Result> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race(
+      cancellation ? [operation, timeout, cancellation] : [operation, timeout],
+    );
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && (value ?? 0) > 0 ? (value as number) : fallback;
 }
 
 function parseStartReceipt(value: unknown): WorkspaceFileWatchStartReceipt {
@@ -346,6 +728,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function boundedString(value: unknown, allowEmpty = false): string | null {
   return typeof value === "string" &&
+    value.length <= MAX_WORKSPACE_FILE_CHANGE_PATH_LENGTH &&
     utf8Encoder.encode(value).byteLength <= MAX_WORKSPACE_FILE_CHANGE_PATH_LENGTH &&
     !value.includes("\0") &&
     (allowEmpty || value.length > 0)

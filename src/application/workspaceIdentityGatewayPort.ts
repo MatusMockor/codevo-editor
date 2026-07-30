@@ -10,6 +10,17 @@ export interface NativeWorkspaceDescriptor {
   unicodeNormalizationPolicy: NativeUnicodeNormalizationPolicy;
 }
 
+export interface NativeWorkspaceRegistrationReceipt {
+  admissionToken: number;
+  createdIdentity: boolean;
+  workspaceId: string;
+}
+
+export interface NativeWorkspaceRegistrationResult {
+  descriptor: NativeWorkspaceDescriptor;
+  registration: NativeWorkspaceRegistrationReceipt;
+}
+
 export interface WorkspaceIdentityDescriptor {
   workspaceId: string;
   selectedPath: string;
@@ -20,7 +31,12 @@ export interface WorkspaceIdentityDescriptor {
 }
 
 export type NativeWorkspaceOpenResult =
-  { status: "cancelled" } | { status: "opened"; descriptor: NativeWorkspaceDescriptor };
+  | { status: "cancelled" }
+  | {
+      status: "opened";
+      descriptor: NativeWorkspaceDescriptor;
+      registration: NativeWorkspaceRegistrationReceipt;
+    };
 
 export type WorkspaceOpenResult =
   { status: "cancelled" } | { status: "opened"; descriptor: WorkspaceIdentityDescriptor };
