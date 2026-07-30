@@ -162,6 +162,7 @@ export interface JavaScriptTypeScriptProjectDescriptor {
   hasPackageJson: boolean;
   hasTsconfig: boolean;
   hasJsconfig: boolean;
+  projectConfigDiscoveryTruncated?: boolean;
   packageName: string | null;
   packageManager: string | null;
   packages?: NpmPackageDescriptor[];
@@ -207,6 +208,10 @@ export function javaScriptTypeScriptWorkspaceLabel(
 export function javaScriptTypeScriptProjectScopeLabel(
   descriptor: JavaScriptTypeScriptProjectDescriptor,
 ): string {
+  if (descriptor.projectConfigDiscoveryTruncated) {
+    return "Project scan limited";
+  }
+
   if (descriptor.hasTsconfig || descriptor.hasJsconfig) {
     return "Project-wide";
   }

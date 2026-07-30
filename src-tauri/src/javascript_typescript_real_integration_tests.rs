@@ -237,6 +237,216 @@ fn real_typescript_server_keeps_project_reference_intelligence_inside_workspace(
 
 #[cfg(unix)]
 #[test]
+fn real_typescript_server_honors_nearest_extended_config_for_typescript_and_javascript() {
+    let _serial = lock_real_server_tests();
+    let Some(runtime) = real_typescript_runtime() else {
+        eprintln!(
+            "skipping real TypeScript integration: Node, typescript-language-server, or tsserver is unavailable"
+        );
+        return;
+    };
+
+    let workspace = TempWorkspace::new("typescript-extended-nearest-config");
+    let fixture = write_extended_config_fixture(&workspace.0);
+    let registry = JavaScriptTypeScriptLanguageServerRegistry::new();
+    let (diagnostics_sink, diagnostics_receiver) = DiagnosticsChannel::new();
+    let root = workspace.0.to_string_lossy().to_string();
+    let _running = start_real_session(&registry, &root, &runtime, diagnostics_sink);
+
+    open_document(
+        &registry,
+        &root,
+        &fixture.consumer,
+        &fixture.consumer_source,
+    );
+    open_document(&registry, &root, &fixture.direct, &fixture.direct_source);
+    open_document(&registry, &root, &fixture.barrel, &fixture.barrel_source);
+    open_document(
+        &registry,
+        &root,
+        &fixture.reexported,
+        &fixture.reexported_source,
+    );
+    open_document(
+        &registry,
+        &root,
+        &fixture.relative,
+        &fixture.relative_source,
+    );
+    open_javascript_document(
+        &registry,
+        &root,
+        &fixture.checked_javascript,
+        &fixture.checked_javascript_source,
+    );
+    let checked_uri = file_uri(&fixture.checked_javascript);
+    let (checked_diagnostic, checked_observed_diagnostics) =
+        wait_for_diagnostic(&diagnostics_receiver, &checked_uri);
+
+    assert_definition_resolves_to(
+        &registry,
+        &root,
+        &fixture.consumer,
+        &fixture.consumer_source,
+        "directValue.directMember",
+        &fixture.direct,
+    );
+    assert_definition_resolves_to(
+        &registry,
+        &root,
+        &fixture.consumer,
+        &fixture.consumer_source,
+        "reexportedValue.reexportedMember",
+        &fixture.reexported,
+    );
+    assert_definition_resolves_to(
+        &registry,
+        &root,
+        &fixture.consumer,
+        &fixture.consumer_source,
+        "relativeValue.relativeMember",
+        &fixture.relative,
+    );
+
+    let member_completion = request(
+        &registry,
+        &root,
+        "textDocument/completion",
+        position_params(
+            &fixture.consumer,
+            position_after(&fixture.consumer_source, "directValue."),
+        ),
+    );
+    let direct_member = completion_items(member_completion)
+        .into_iter()
+        .find(|item| item.get("label").and_then(Value::as_str) == Some("directMember"))
+        .unwrap_or_else(|| panic!("real completion must offer directMember"));
+    let resolved_member = request(&registry, &root, "completionItem/resolve", direct_member);
+    assert_eq!(
+        resolved_member.get("label").and_then(Value::as_str),
+        Some("directMember"),
+        "completion resolve must retain the selected real server item"
+    );
+
+    let direct_usage = position_after_last(&fixture.consumer_source, "directValue");
+    let references = request(
+        &registry,
+        &root,
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": file_uri(&fixture.consumer) },
+            "position": { "line": direct_usage.0, "character": direct_usage.1 },
+            "context": { "includeDeclaration": true },
+        }),
+    );
+    let reference_uris = location_uris(&references);
+    assert!(
+        reference_uris.contains(&file_uri(&fixture.direct))
+            && reference_uris.contains(&file_uri(&fixture.consumer)),
+        "references must include the aliased declaration and consumer: {references:#}"
+    );
+    assert!(
+        reference_uris
+            .iter()
+            .all(|uri| uri.starts_with(&file_uri(&workspace.0))),
+        "references leaked outside the active workspace: {reference_uris:?}"
+    );
+
+    let direct_declaration = position_after(&fixture.direct_source, "directValue");
+    let rename = request(
+        &registry,
+        &root,
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": file_uri(&fixture.direct) },
+            "position": {
+                "line": direct_declaration.0,
+                "character": direct_declaration.1,
+            },
+            "newName": "renamedDirectValue",
+        }),
+    );
+    let rename_uris = workspace_edit_uris(&rename);
+    assert!(
+        rename_uris.contains(&file_uri(&fixture.direct))
+            && rename_uris.contains(&file_uri(&fixture.consumer)),
+        "rename must edit the aliased declaration and consumer: {rename:#}"
+    );
+    assert!(
+        rename_uris
+            .iter()
+            .all(|uri| uri.starts_with(&file_uri(&workspace.0))),
+        "rename leaked outside the active workspace: {rename_uris:?}"
+    );
+
+    open_document(
+        &registry,
+        &root,
+        &fixture.unresolved_import,
+        &fixture.unresolved_import_source,
+    );
+    let unresolved_uri = file_uri(&fixture.unresolved_import);
+    let (unresolved_diagnostic, _) = wait_for_diagnostic(&diagnostics_receiver, &unresolved_uri);
+    let unresolved_diagnostics = diagnostics_as_lsp_values(&unresolved_diagnostic);
+    let code_actions = request(
+        &registry,
+        &root,
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": unresolved_uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 11 },
+            },
+            "context": {
+                "diagnostics": unresolved_diagnostics,
+                "only": ["quickfix"],
+            },
+        }),
+    );
+    let import_action = code_actions
+        .as_array()
+        .and_then(|actions| {
+            actions.iter().find(|action| {
+                action
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .is_some_and(|title| title.to_ascii_lowercase().contains("import"))
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!("missing import must produce a real quick-fix code action: {code_actions:#}")
+        });
+    let import_edit = import_action
+        .get("edit")
+        .unwrap_or_else(|| panic!("missing-import quick fix must carry a workspace edit"));
+    assert_eq!(
+        workspace_edit_uris(import_edit),
+        vec![file_uri(&fixture.unresolved_import)],
+        "the auto-import edit must target only the unresolved document"
+    );
+    assert!(
+        import_edit.to_string().contains("directValue"),
+        "the real auto-import edit must insert the missing symbol: {import_edit:#}"
+    );
+
+    assert!(
+        checked_diagnostic
+            .diagnostics
+            .iter()
+            .any(|item| item.message.contains("not assignable to type 'number'")),
+        "the nearest config must enable allowJs/checkJs for its JavaScript source: {checked_diagnostic:?}"
+    );
+    assert!(
+        checked_observed_diagnostics
+            .iter()
+            .all(|event| event.uri.starts_with(&file_uri(&workspace.0))),
+        "extended-config diagnostics leaked outside the active workspace: {checked_observed_diagnostics:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn real_typescript_server_keeps_parallel_workspace_sessions_isolated() {
     let _serial = lock_real_server_tests();
     let Some(runtime) = real_typescript_runtime() else {
@@ -731,6 +941,132 @@ struct ProjectReferenceFixture {
     control_source: String,
 }
 
+struct ExtendedConfigFixture {
+    barrel: PathBuf,
+    checked_javascript: PathBuf,
+    consumer: PathBuf,
+    direct: PathBuf,
+    reexported: PathBuf,
+    relative: PathBuf,
+    unresolved_import: PathBuf,
+    barrel_source: String,
+    checked_javascript_source: String,
+    consumer_source: String,
+    direct_source: String,
+    reexported_source: String,
+    relative_source: String,
+    unresolved_import_source: String,
+}
+
+fn write_extended_config_fixture(root: &Path) -> ExtendedConfigFixture {
+    let app_source_root = root.join("apps/api/src");
+    let core_root = root.join("shared/core");
+    let barrel_root = root.join("shared/barrel");
+    fs::create_dir_all(&app_source_root).expect("create nested application source");
+    fs::create_dir_all(&core_root).expect("create aliased core source");
+    fs::create_dir_all(&barrel_root).expect("create barrel source");
+
+    fs::write(
+        root.join("tsconfig.base.json"),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "paths": {
+      "@core/*": ["shared/core/*"],
+      "@barrel": ["shared/barrel/index.ts"]
+    },
+    "strict": true,
+    "target": "ES2022"
+  }
+}
+"#,
+    )
+    .expect("write base tsconfig");
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "checkJs": false
+  },
+  "files": []
+}
+"#,
+    )
+    .expect("write root tsconfig control");
+    fs::write(
+        root.join("apps/api/tsconfig.json"),
+        r#"{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*"]
+}
+"#,
+    )
+    .expect("write nearest application tsconfig");
+
+    let direct_source =
+        "export const directValue = { directMember: \"direct\" } as const;\n".to_string();
+    let reexported_source =
+        "export const reexportedValue = { reexportedMember: \"barrel\" } as const;\n".to_string();
+    let barrel_source = "export { reexportedValue } from \"./reexported.js\";\n".to_string();
+    let relative_source =
+        "export const relativeValue = { relativeMember: \"relative\" } as const;\n".to_string();
+    let consumer_source = r#"import { directValue } from "@core/direct";
+import { reexportedValue } from "@barrel";
+import { relativeValue } from "./relative.js";
+
+directValue.directMember;
+reexportedValue.reexportedMember;
+relativeValue.relativeMember;
+"#
+    .to_string();
+    let checked_javascript_source =
+        "/** @type {number} */\nconst checkedValue = \"wrong\";\ncheckedValue;\n".to_string();
+    let unresolved_import_source = "directValue.directMember;\n".to_string();
+
+    let direct = core_root.join("direct.ts");
+    let reexported = barrel_root.join("reexported.ts");
+    let barrel = barrel_root.join("index.ts");
+    let relative = app_source_root.join("relative.ts");
+    let consumer = app_source_root.join("consumer.ts");
+    let checked_javascript = app_source_root.join("checked.js");
+    let unresolved_import = app_source_root.join("unresolved-import.ts");
+    fs::write(&direct, &direct_source).expect("write directly aliased source");
+    fs::write(&reexported, &reexported_source).expect("write re-exported source");
+    fs::write(&barrel, &barrel_source).expect("write barrel source");
+    fs::write(&relative, &relative_source).expect("write relative source");
+    fs::write(&consumer, &consumer_source).expect("write TypeScript consumer");
+    fs::write(&checked_javascript, &checked_javascript_source)
+        .expect("write checked JavaScript source");
+    fs::write(&unresolved_import, &unresolved_import_source)
+        .expect("write unresolved import source");
+
+    ExtendedConfigFixture {
+        barrel,
+        checked_javascript,
+        consumer,
+        direct,
+        reexported,
+        relative,
+        unresolved_import,
+        barrel_source,
+        checked_javascript_source,
+        consumer_source,
+        direct_source,
+        reexported_source,
+        relative_source,
+        unresolved_import_source,
+    }
+}
+
 fn write_project_reference_fixture(root: &Path) -> ProjectReferenceFixture {
     let package_a_root = root.join("packages/package-a");
     let package_b_root = root.join("packages/package-b");
@@ -842,6 +1178,54 @@ fn open_document(
         .expect("open TypeScript document");
 }
 
+fn open_javascript_document(
+    registry: &JavaScriptTypeScriptLanguageServerRegistry,
+    root: &str,
+    path: &Path,
+    text: &str,
+) {
+    registry
+        .send_notification(
+            root,
+            &JsonRpcNotification {
+                jsonrpc: "2.0".to_string(),
+                method: "textDocument/didOpen".to_string(),
+                params: json!({
+                    "textDocument": {
+                        "uri": file_uri(path),
+                        "languageId": "javascript",
+                        "version": 1,
+                        "text": text,
+                    }
+                }),
+            },
+        )
+        .expect("open JavaScript document");
+}
+
+fn assert_definition_resolves_to(
+    registry: &JavaScriptTypeScriptLanguageServerRegistry,
+    root: &str,
+    consumer: &Path,
+    consumer_source: &str,
+    usage: &str,
+    expected_path: &Path,
+) {
+    let result = request(
+        registry,
+        root,
+        "textDocument/definition",
+        position_params(consumer, position_after(consumer_source, usage)),
+    );
+    assert!(
+        location_uris(&result)
+            .iter()
+            .any(|uri| uri == &file_uri(expected_path)),
+        "{usage:?} should resolve to {} through the real server: {result:#}",
+        expected_path.display()
+    );
+}
+
 fn request(
     registry: &JavaScriptTypeScriptLanguageServerRegistry,
     root: &str,
@@ -891,13 +1275,7 @@ fn position_at_offset(source: &str, offset: usize) -> (u64, u64) {
 }
 
 fn completion_labels(result: Value) -> Vec<String> {
-    let items = result
-        .get("items")
-        .and_then(Value::as_array)
-        .or_else(|| result.as_array())
-        .cloned()
-        .unwrap_or_default();
-    items
+    completion_items(result)
         .into_iter()
         .filter_map(|item| {
             item.get("label")
@@ -905,6 +1283,16 @@ fn completion_labels(result: Value) -> Vec<String> {
                 .map(str::to_string)
         })
         .collect()
+}
+
+fn completion_items(result: Value) -> Vec<Value> {
+    let items = result
+        .get("items")
+        .and_then(Value::as_array)
+        .or_else(|| result.as_array())
+        .cloned()
+        .unwrap_or_default();
+    items
 }
 
 fn location_uris(result: &Value) -> Vec<String> {
@@ -919,6 +1307,58 @@ fn location_uris(result: &Value) -> Vec<String> {
                 .or_else(|| item.get("targetUri"))
                 .and_then(Value::as_str)
                 .map(str::to_string)
+        })
+        .collect()
+}
+
+fn workspace_edit_uris(result: &Value) -> Vec<String> {
+    let mut uris = result
+        .get("changes")
+        .and_then(Value::as_object)
+        .map(|changes| changes.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if let Some(document_changes) = result.get("documentChanges").and_then(Value::as_array) {
+        for change in document_changes {
+            for uri in [
+                change.pointer("/textDocument/uri"),
+                change.get("uri"),
+                change.get("oldUri"),
+                change.get("newUri"),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            {
+                uris.push(uri.to_string());
+            }
+        }
+    }
+    uris.sort_unstable();
+    uris.dedup();
+    uris
+}
+
+fn diagnostics_as_lsp_values(event: &LanguageServerDiagnosticEvent) -> Vec<Value> {
+    event
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            json!({
+                "range": {
+                    "start": {
+                        "line": diagnostic.line,
+                        "character": diagnostic.character,
+                    },
+                    "end": {
+                        "line": diagnostic.end_line,
+                        "character": diagnostic.end_character,
+                    },
+                },
+                "message": diagnostic.message,
+                "code": diagnostic.code,
+                "source": diagnostic.source,
+                "data": diagnostic.data,
+            })
         })
         .collect()
 }

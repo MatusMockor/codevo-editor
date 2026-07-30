@@ -268,4 +268,26 @@ describe("workspace path helpers", () => {
       "example-web · JS/TS · Inferred (partial) · npm",
     );
   });
+
+  it("labels bounded project-config discovery exhaustion truthfully", () => {
+    const descriptor: JavaScriptTypeScriptProjectDescriptor = {
+      frameworks: [],
+      hasJsconfig: false,
+      hasPackageJson: false,
+      hasTsconfig: false,
+      packageManager: null,
+      packageName: null,
+      projectConfigDiscoveryTruncated: true,
+      typeScriptDependencyVersion: null,
+      usesTypeScript: false,
+      workspaceTypeScriptVersion: null,
+    };
+
+    expect(javaScriptTypeScriptProjectScopeLabel(descriptor)).toBe(
+      "Project scan limited",
+    );
+    expect(javaScriptTypeScriptWorkspaceLabel(descriptor, "bundled")).toBe(
+      "JavaScript/TypeScript · JS/TS · Project scan limited",
+    );
+  });
 });

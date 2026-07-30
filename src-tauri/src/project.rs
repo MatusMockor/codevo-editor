@@ -5,7 +5,7 @@ use crate::composer::{
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     ffi::OsString,
     fs, io,
     path::Path,
@@ -13,6 +13,9 @@ use std::{
 
 const NPM_PACKAGE_VERSION_FALLBACK_LIMIT: usize = 512;
 const ROOT_SOURCE_DETECTION_ENTRY_LIMIT: usize = 512;
+const NESTED_PROJECT_CONFIG_DIRECTORY_LIMIT: usize = 256;
+const NESTED_PROJECT_CONFIG_ENTRY_LIMIT: usize = 4_096;
+const NESTED_PROJECT_CONFIG_DEPTH_LIMIT: usize = 8;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +47,7 @@ pub struct JavaScriptTypeScriptProjectDescriptor {
     pub package_name: Option<String>,
     pub package_manager: Option<String>,
     pub packages: Vec<NpmPackageDescriptor>,
+    pub project_config_discovery_truncated: bool,
     pub frameworks: Vec<String>,
     pub type_script_dependency_version: Option<String>,
     pub uses_type_script: bool,
@@ -118,8 +122,15 @@ fn detect_javascript_typescript_project(
 ) -> Option<JavaScriptTypeScriptProjectDescriptor> {
     let package_json_path = root.join("package.json");
     let has_package_json = package_json_path.is_file();
-    let has_tsconfig = root.join("tsconfig.json").is_file();
-    let has_jsconfig = root.join("jsconfig.json").is_file();
+    let has_root_tsconfig = root.join("tsconfig.json").is_file();
+    let has_root_jsconfig = root.join("jsconfig.json").is_file();
+    let nested_configs = if has_root_tsconfig && has_root_jsconfig {
+        NestedProjectConfigDetection::default()
+    } else {
+        detect_nested_javascript_typescript_configs(root)
+    };
+    let has_tsconfig = has_root_tsconfig || nested_configs.has_tsconfig;
+    let has_jsconfig = has_root_jsconfig || nested_configs.has_jsconfig;
     let has_project_configuration = has_package_json || has_tsconfig || has_jsconfig;
     let root_source_kind = if has_project_configuration {
         None
@@ -127,7 +138,10 @@ fn detect_javascript_typescript_project(
         detect_root_javascript_typescript_source(root)
     };
 
-    if !has_project_configuration && root_source_kind.is_none() {
+    if !has_project_configuration
+        && root_source_kind.is_none()
+        && !nested_configs.discovery_truncated
+    {
         return None;
     }
 
@@ -169,6 +183,7 @@ fn detect_javascript_typescript_project(
         package_name,
         package_manager,
         packages,
+        project_config_discovery_truncated: nested_configs.discovery_truncated,
         frameworks: detect_frameworks(&dependencies),
         type_script_dependency_version: type_script_dependency_version.clone(),
         uses_type_script: has_tsconfig
@@ -179,6 +194,129 @@ fn detect_javascript_typescript_project(
             || dependencies.iter().any(|name| name.starts_with("@types/")),
         workspace_type_script_version,
     })
+}
+
+#[derive(Default)]
+struct NestedProjectConfigDetection {
+    has_tsconfig: bool,
+    has_jsconfig: bool,
+    discovery_truncated: bool,
+}
+
+fn detect_nested_javascript_typescript_configs(root: &Path) -> NestedProjectConfigDetection {
+    detect_nested_javascript_typescript_configs_with_limits(
+        root,
+        NESTED_PROJECT_CONFIG_DIRECTORY_LIMIT,
+        NESTED_PROJECT_CONFIG_ENTRY_LIMIT,
+        NESTED_PROJECT_CONFIG_DEPTH_LIMIT,
+    )
+}
+
+fn detect_nested_javascript_typescript_configs_with_limits(
+    root: &Path,
+    directory_limit: usize,
+    entry_limit: usize,
+    depth_limit: usize,
+) -> NestedProjectConfigDetection {
+    let mut pending = VecDeque::from([(root.to_path_buf(), 0_usize)]);
+    let mut visited_directories = 0_usize;
+    let mut visited_entries = 0_usize;
+    let mut has_tsconfig = false;
+    let mut has_jsconfig = false;
+    let mut discovery_truncated = false;
+
+    while !pending.is_empty() {
+        if has_tsconfig && has_jsconfig {
+            break;
+        }
+        if visited_directories >= directory_limit || visited_entries >= entry_limit {
+            discovery_truncated = true;
+            break;
+        }
+        let (directory, depth) = pending
+            .pop_front()
+            .expect("non-empty project-config scan queue");
+        visited_directories += 1;
+
+        let Ok(directory_entries) = fs::read_dir(&directory) else {
+            discovery_truncated = true;
+            continue;
+        };
+        let remaining_entry_capacity = entry_limit.saturating_sub(visited_entries);
+        let mut bounded_entries = Vec::new();
+        for entry in directory_entries.take(remaining_entry_capacity.saturating_add(1)) {
+            match entry {
+                Ok(entry) => bounded_entries.push(entry),
+                Err(_) => discovery_truncated = true,
+            }
+        }
+        if bounded_entries.len() > remaining_entry_capacity {
+            return NestedProjectConfigDetection {
+                has_tsconfig,
+                has_jsconfig,
+                discovery_truncated: true,
+            };
+        }
+        bounded_entries.sort_unstable_by_key(|entry| entry.file_name());
+
+        for entry in bounded_entries {
+            if visited_entries >= entry_limit {
+                break;
+            }
+            visited_entries += 1;
+            let file_name = entry.file_name();
+            let Ok(file_type) = entry.file_type() else {
+                discovery_truncated = true;
+                continue;
+            };
+            let Some(file_name_text) = file_name.to_str() else {
+                if file_type.is_dir() {
+                    discovery_truncated = true;
+                }
+                continue;
+            };
+
+            if file_type.is_file() {
+                match file_name_text {
+                    "tsconfig.json" => has_tsconfig = true,
+                    "jsconfig.json" => has_jsconfig = true,
+                    _ => {}
+                }
+                continue;
+            }
+
+            if file_type.is_dir() && !is_ignored_project_config_directory(file_name_text) {
+                if depth < depth_limit {
+                    pending.push_back((entry.path(), depth + 1));
+                } else {
+                    discovery_truncated = true;
+                }
+            }
+        }
+    }
+
+    NestedProjectConfigDetection {
+        has_tsconfig,
+        has_jsconfig,
+        discovery_truncated: discovery_truncated && !(has_tsconfig && has_jsconfig),
+    }
+}
+
+fn is_ignored_project_config_directory(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        ".cache"
+            | ".git"
+            | ".next"
+            | ".turbo"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "node_modules"
+            | "out"
+            | "target"
+            | "vendor"
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -483,7 +621,8 @@ fn detect_frameworks(dependencies: &BTreeSet<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_javascript_typescript_source_file_names, npm_package_descriptors,
+        detect_javascript_typescript_source_file_names,
+        detect_nested_javascript_typescript_configs_with_limits, npm_package_descriptors,
         ComposerWorkspaceDetector, JavaScriptTypeScriptSourceKind, WorkspaceDetector,
         NPM_PACKAGE_VERSION_FALLBACK_LIMIT, ROOT_SOURCE_DETECTION_ENTRY_LIMIT,
     };
@@ -807,6 +946,130 @@ mod tests {
         assert_eq!(js_ts.frameworks, Vec::<String>::new());
         assert!(js_ts.uses_type_script);
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn detects_workspace_with_only_a_nested_typescript_config() {
+        let root = create_temp_dir("workspace-nested-tsconfig-only");
+        fs::create_dir_all(root.join("apps/api/src")).expect("create nested TypeScript project");
+        fs::write(root.join("apps/api/tsconfig.json"), "{}").expect("write nested tsconfig");
+        fs::write(
+            root.join("apps/api/src/server.ts"),
+            "export const ready = true;",
+        )
+        .expect("write nested TypeScript source");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor
+            .js_ts
+            .expect("nested tsconfig must activate JavaScript/TypeScript support");
+
+        assert!(!js_ts.has_package_json);
+        assert!(js_ts.has_tsconfig);
+        assert!(!js_ts.has_jsconfig);
+        assert!(js_ts.uses_type_script);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn reports_both_root_and_nested_project_config_kinds() {
+        let root = create_temp_dir("workspace-mixed-project-configs");
+        fs::create_dir_all(root.join("apps/legacy")).expect("create nested JavaScript project");
+        fs::write(root.join("tsconfig.json"), "{}").expect("write root tsconfig");
+        fs::write(root.join("apps/legacy/jsconfig.json"), "{}").expect("write nested jsconfig");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor.js_ts.expect("mixed project descriptor");
+
+        assert!(js_ts.has_tsconfig);
+        assert!(js_ts.has_jsconfig);
+        assert!(!js_ts.project_config_discovery_truncated);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn reports_nested_project_config_scan_exhaustion() {
+        let root = create_temp_dir("workspace-project-config-scan-limit");
+        fs::create_dir_all(root.join("apps")).expect("create apps directory");
+        fs::create_dir_all(root.join("packages")).expect("create packages directory");
+
+        let detection = detect_nested_javascript_typescript_configs_with_limits(&root, 8, 1, 8);
+
+        assert!(!detection.has_tsconfig);
+        assert!(!detection.has_jsconfig);
+        assert!(detection.discovery_truncated);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn reports_exact_directory_limit_before_dropping_pending_work() {
+        let root = create_temp_dir("workspace-project-config-directory-limit");
+        fs::create_dir_all(root.join("apps")).expect("create pending directory");
+
+        let detection = detect_nested_javascript_typescript_configs_with_limits(&root, 1, 8, 8);
+
+        assert!(detection.discovery_truncated);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn reports_depth_pruning_as_incomplete_discovery() {
+        let root = create_temp_dir("workspace-project-config-depth-limit");
+        fs::create_dir_all(root.join("apps/api")).expect("create deep project");
+        fs::write(root.join("apps/api/tsconfig.json"), "{}").expect("write deep tsconfig");
+
+        let detection = detect_nested_javascript_typescript_configs_with_limits(&root, 8, 8, 0);
+
+        assert!(!detection.has_tsconfig);
+        assert!(detection.discovery_truncated);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn ignores_project_configs_inside_dependency_and_build_directories() {
+        let root = create_temp_dir("workspace-ignored-nested-configs");
+        for directory in [
+            ".cache/generated",
+            ".turbo/generated",
+            "node_modules/dependency",
+            "dist/generated",
+            "target/output",
+        ] {
+            fs::create_dir_all(root.join(directory)).expect("create ignored directory");
+            fs::write(root.join(directory).join("tsconfig.json"), "{}")
+                .expect("write ignored tsconfig");
+        }
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+
+        assert!(
+            descriptor.js_ts.is_none(),
+            "generated and dependency configs must not activate workspace language support"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn does_not_follow_nested_project_config_symlinks() {
+        let root = create_temp_dir("workspace-nested-config-symlink");
+        let outside = create_temp_dir("workspace-nested-config-symlink-outside");
+        fs::write(outside.join("tsconfig.json"), "{}").expect("write outside tsconfig");
+        std::os::unix::fs::symlink(&outside, root.join("linked-project"))
+            .expect("link outside project");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+
+        assert!(
+            descriptor.js_ts.is_none(),
+            "a symlinked foreign config must not activate workspace language support"
+        );
+        fs::remove_dir_all(root).expect("cleanup root");
+        fs::remove_dir_all(outside).expect("cleanup outside");
     }
 
     #[test]
