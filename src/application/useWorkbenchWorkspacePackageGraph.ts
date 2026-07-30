@@ -4,6 +4,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { useWorkbenchDiscoveryVersions } from "./useWorkbenchDiscoveryVersions";
 import { useWorkspacePackageGraph } from "./useWorkspacePackageGraph";
+import type { WorkspacePackageProcessingRuntime } from "./workspacePackageGraphProcessing";
 
 const UNAVAILABLE_GATEWAY: WorkspaceSourceDiscoveryGateway = {
   enumerateJavaScriptSourceFiles: () => Promise.resolve({ files: [], truncated: true, visited: 0 }),
@@ -15,6 +16,7 @@ export function useWorkbenchWorkspacePackageGraph(
   symfonyEnabled: boolean,
   gateway: WorkspaceSourceDiscoveryGateway | undefined,
   owner: WorkspaceRuntimeOwner | null,
+  processingRuntime?: WorkspacePackageProcessingRuntime,
 ) {
   const versions = useWorkbenchDiscoveryVersions(workspaceDescriptor?.php, symfonyEnabled);
   const rootPath = owner?.executionRoot ?? null;
@@ -26,6 +28,7 @@ export function useWorkbenchWorkspacePackageGraph(
       workspaceRootKeysEqual(workspaceDescriptor.rootPath, rootPath),
     ),
     gateway: gateway ?? UNAVAILABLE_GATEWAY,
+    processingRuntime,
     rootPath,
     workspaceId: owner?.ownerKey ?? null,
   });

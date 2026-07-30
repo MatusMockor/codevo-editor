@@ -6,7 +6,7 @@ export const MAX_WORKSPACE_SPECIFIER_DEPTH = 8;
 
 const MAX_GLOB_LENGTH = 512;
 const MAX_GLOB_SEGMENTS = 64;
-const MAX_GLOB_MATCH_OPERATIONS = 65_536;
+export const MAX_WORKSPACE_GLOB_MATCH_OPERATIONS = 4_096;
 const MAX_PACKAGE_NAME_LENGTH = 214;
 const MAX_RELATIVE_PATH_LENGTH = 4_096;
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/iu;
@@ -352,7 +352,7 @@ function globMatches(path: string, pattern: string, budget: GlobBudget): boolean
   const visited = new Set<string>();
   while (pending.length > 0) {
     budget.matchOperations += 1;
-    if (budget.matchOperations > MAX_GLOB_MATCH_OPERATIONS) {
+    if (budget.matchOperations > MAX_WORKSPACE_GLOB_MATCH_OPERATIONS) {
       budget.truncated = true;
       return false;
     }
@@ -390,7 +390,7 @@ function segmentMatches(value: string, pattern: string, budget: GlobBudget): boo
   let wildcardValueIndex = -1;
   while (valueIndex < value.length) {
     budget.matchOperations += 1;
-    if (budget.matchOperations > MAX_GLOB_MATCH_OPERATIONS) {
+    if (budget.matchOperations > MAX_WORKSPACE_GLOB_MATCH_OPERATIONS) {
       budget.truncated = true;
       return false;
     }
@@ -413,7 +413,7 @@ function segmentMatches(value: string, pattern: string, budget: GlobBudget): boo
   }
   while (pattern[patternIndex] === "*") {
     budget.matchOperations += 1;
-    if (budget.matchOperations > MAX_GLOB_MATCH_OPERATIONS) {
+    if (budget.matchOperations > MAX_WORKSPACE_GLOB_MATCH_OPERATIONS) {
       budget.truncated = true;
       return false;
     }

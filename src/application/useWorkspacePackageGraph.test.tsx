@@ -13,9 +13,16 @@ import { useWorkbenchWorkspacePackageGraph } from "./useWorkbenchWorkspacePackag
 import {
   useWorkspacePackageGraph,
   PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS,
+  WORKSPACE_PACKAGE_DISCOVERY_DEADLINE_MS,
   WORKSPACE_PACKAGE_DISCOVERY_LIMITS,
   type WorkspacePackageDiscovery,
 } from "./useWorkspacePackageGraph";
+import type { WorkspacePackageProcessingRuntime } from "./workspacePackageGraphProcessing";
+
+const IMMEDIATE_PROCESSING_RUNTIME: WorkspacePackageProcessingRuntime = {
+  now: () => 0,
+  yieldToMainThread: () => Promise.resolve(),
+};
 
 describe("useWorkspacePackageGraph", () => {
   let host: HTMLDivElement;
@@ -89,6 +96,7 @@ describe("useWorkspacePackageGraph", () => {
         false,
         gateway,
         createWorkspaceRuntimeOwner("workspace", "/workspace"),
+        IMMEDIATE_PROCESSING_RUNTIME,
       );
       expressConsumer = controller.workspacePackageDiscovery;
       handleWorkspaceFileChange = controller.handleWorkspaceDiscoveryFileChange;
@@ -141,7 +149,13 @@ describe("useWorkspacePackageGraph", () => {
     expect(packageForPath?.("/workspace/packages/api/src/index.ts")).toEqual({
       kind: "loading",
     });
-    await waitForReact(() => expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS + 10),
+      );
+    });
+    expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(2);
+    expect(expressConsumer?.authority).toBe("complete");
   });
 
   it("publishes loading authority before the first owned discovery settles", () => {
@@ -310,6 +324,7 @@ describe("useWorkspacePackageGraph", () => {
         discoveryVersion: 0,
         enabled: true,
         gateway,
+        processingRuntime: IMMEDIATE_PROCESSING_RUNTIME,
         rootPath: owner === "a" ? "/workspace" : "/discarded",
         workspaceId: owner,
       });
@@ -411,7 +426,13 @@ describe("useWorkspacePackageGraph", () => {
       );
     });
     harness.invalidate();
-    await waitForReact(() => expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS + 10),
+      );
+    });
+    expect(gateway.enumeratePackageJsonFiles).toHaveBeenCalledTimes(2);
+    expect(harness.current().authority).toBe("complete");
 
     expect(PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS).toBe(75);
   });
@@ -477,11 +498,61 @@ describe("useWorkspacePackageGraph", () => {
     expect(harness.current().unscopedAuthorityUncertain).toBe(false);
   });
 
+  it("rejects an oversized source before UTF-8 encoding or JSON parsing", async () => {
+    const gateway = packageGateway();
+    const enumeratePackageJsonFiles = gateway.enumeratePackageJsonFiles;
+    expect(enumeratePackageJsonFiles).toBeDefined();
+    vi.mocked(enumeratePackageJsonFiles!).mockResolvedValue({
+      files: ["package.json"],
+      truncated: false,
+      visited: 1,
+    });
+    vi.mocked(gateway.readSourceTextBounded).mockImplementation(async (_rootPath, path) => {
+      if (path === "pnpm-workspace.yaml") return { status: "notFound" };
+      return {
+        status: "ok",
+        content: "x".repeat(256 * 1024 + 1),
+      };
+    });
+    const harness = renderDiscovery(root, gateway);
+
+    await waitForReact(() => expect(harness.current().authority).toBe("bounded"));
+
+    expect(harness.current().incompleteDirectories).toEqual([""]);
+    expect(harness.current().packageManifests).toEqual([]);
+    expect(harness.current().unscopedAuthorityUncertain).toBe(true);
+  });
+
   it("uses the backend effective package enumeration bounds", () => {
     expect(WORKSPACE_PACKAGE_DISCOVERY_LIMITS).toEqual({
       maxFiles: 256,
       maxVisited: 50_000,
     });
+  });
+
+  it("fails closed at the discovery deadline instead of retaining a hung owner", async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = packageGateway();
+      const enumeratePackageJsonFiles = gateway.enumeratePackageJsonFiles;
+      expect(enumeratePackageJsonFiles).toBeDefined();
+      vi.mocked(enumeratePackageJsonFiles!).mockReturnValue(new Promise(() => undefined));
+      const harness = renderDiscovery(root, gateway);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(WORKSPACE_PACKAGE_DISCOVERY_DEADLINE_MS);
+      });
+
+      expect(harness.current()).toEqual(
+        expect.objectContaining({
+          authority: "bounded",
+          loaded: true,
+          ownerKey: "workspace\u0000/workspace",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -540,6 +611,7 @@ function renderDiscovery(
       discoveryVersion,
       enabled: true,
       gateway,
+      processingRuntime: IMMEDIATE_PROCESSING_RUNTIME,
       rootPath: owner.rootPath,
       workspaceId: owner.workspaceId,
     });

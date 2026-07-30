@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ExpressRoutePackageJsonDir } from "../domain/expressRouteScanRoots";
 import type { WorkspaceSourceDiscoveryGateway } from "../domain/workspaceSourceDiscovery";
 import {
-  createWorkspacePackageGraph,
   MAX_WORKSPACE_PACKAGES,
   type WorkspacePackage,
   type WorkspacePackageManifestInput,
@@ -11,6 +10,12 @@ import {
   createWorkspacePackagePathLookup,
   type WorkspacePackagePathAnswer,
 } from "../domain/workspacePackageForPath";
+import {
+  processWorkspacePackageGraph,
+  type WorkspacePackageManifestSource,
+  type WorkspacePackageProcessingRuntime,
+} from "./workspacePackageGraphProcessing";
+import { runWorkspacePackageDiscoveryOperation } from "./workspacePackageDiscoveryOperationQueue";
 
 export const WORKSPACE_PACKAGE_DISCOVERY_LIMITS = {
   maxFiles: 256,
@@ -20,8 +25,9 @@ export const MAX_WORKSPACE_PACKAGE_MANIFEST_BYTES = 256 * 1024;
 export const MAX_TOTAL_WORKSPACE_PACKAGE_MANIFEST_BYTES = 16 * 1024 * 1024;
 export const MAX_PNPM_WORKSPACE_MANIFEST_BYTES = 256 * 1024;
 export const PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS = 75;
+export const WORKSPACE_PACKAGE_DISCOVERY_DEADLINE_MS = 5_000;
 
-const READ_CONCURRENCY = 8;
+const READ_CONCURRENCY = 4;
 
 export type WorkspacePackageAuthority = "loading" | "bounded" | "complete";
 
@@ -47,6 +53,7 @@ interface UseWorkspacePackageGraphOptions {
   readonly discoveryVersion: number;
   readonly enabled: boolean;
   readonly gateway: WorkspaceSourceDiscoveryGateway;
+  readonly processingRuntime?: WorkspacePackageProcessingRuntime;
   readonly rootPath: string | null;
   readonly workspaceId: string | null;
 }
@@ -88,6 +95,7 @@ export function useWorkspacePackageGraph({
   discoveryVersion,
   enabled,
   gateway,
+  processingRuntime,
   rootPath,
   workspaceId,
 }: UseWorkspacePackageGraphOptions): WorkspacePackageDiscovery {
@@ -116,8 +124,8 @@ export function useWorkspacePackageGraph({
         : { discoveryVersion, value: initialDiscovery(ownerKey) },
     );
 
-    const discover = async () => {
-      const enumeration = await enumeratePackageJsonFiles(gateway, rootPath);
+    const discover = async (signal: AbortSignal) => {
+      const enumeration = await enumeratePackageJsonFiles(gateway, rootPath, signal);
       if (!isCurrent()) return;
       if (enumeration.truncated || enumeration.files.length > MAX_WORKSPACE_PACKAGES) {
         setStoredDiscovery({ discoveryVersion, value: boundedDiscovery(ownerKey) });
@@ -130,50 +138,74 @@ export function useWorkspacePackageGraph({
         return;
       }
 
-      const pnpmWorkspaceRead = readPnpmWorkspaceSource(gateway, rootPath, isCurrent);
-      const manifestRead = await readPackageManifests(gateway, rootPath, candidates, isCurrent);
+      const pnpmWorkspaceRead = readPnpmWorkspaceSource(gateway, rootPath, isCurrent, signal);
+      const manifestRead = await readPackageManifests(
+        gateway,
+        rootPath,
+        candidates,
+        isCurrent,
+        signal,
+      );
       if (!manifestRead || !isCurrent()) return;
       const pnpmWorkspace = await pnpmWorkspaceRead;
       if (!pnpmWorkspace || !isCurrent()) return;
 
       const authorityComplete = !manifestRead.bounded && !pnpmWorkspace.bounded;
-      const graph = createWorkspacePackageGraph({
-        authorityComplete,
-        packageManifests: manifestRead.manifests,
-        pnpmWorkspaceYaml: pnpmWorkspace.source,
-        rootPackageJson:
-          manifestRead.manifests.find(({ relativeDirPath }) => relativeDirPath === "")
-            ?.packageJson ?? {},
-        sourceFilePaths: [],
-      });
+      const processing = await processWorkspacePackageGraph(
+        {
+          authorityComplete,
+          manifestSources: manifestRead.manifestSources,
+          pnpmWorkspaceYaml: pnpmWorkspace.source,
+        },
+        signal,
+        processingRuntime,
+      );
       if (!isCurrent()) return;
-      const authority = graph.truncated || !authorityComplete ? "bounded" : "complete";
+      const incompleteDirectories = [
+        ...new Set([...manifestRead.incompleteDirectories, ...processing.incompleteDirectories]),
+      ].sort(compareText);
+      const processingBounded =
+        processing.timedOut || processing.truncated || processing.incompleteDirectories.length > 0;
+      const authority = processingBounded || !authorityComplete ? "bounded" : "complete";
       setStoredDiscovery({
         discoveryVersion,
         value: {
           authority,
           authorityDirectories: manifestRead.authorityDirectories,
-          incompleteDirectories: manifestRead.incompleteDirectories,
+          incompleteDirectories,
           loaded: true,
           ownerKey,
-          packageJsonDirs: manifestRead.packageJsonDirs,
-          packageManifests: manifestRead.manifests,
-          packages: graph.packages,
+          packageJsonDirs: processing.packageJsonDirs,
+          packageManifests: processing.manifests,
+          packages: processing.packages,
           pnpmWorkspaceYaml: pnpmWorkspace.source,
-          rootPackageJson:
-            manifestRead.manifests.find(({ relativeDirPath }) => relativeDirPath === "")
-              ?.packageJson ?? {},
-          unscopedAuthorityUncertain: manifestRead.unscopedAuthorityUncertain,
+          rootPackageJson: processing.rootPackageJson,
+          unscopedAuthorityUncertain:
+            manifestRead.unscopedAuthorityUncertain || incompleteDirectories.includes(""),
         },
       });
     };
 
+    let controller: AbortController | null = null;
+    let deadlineTimer: number | null = null;
     const delay = previousOwnerKey === ownerKey ? PACKAGE_DISCOVERY_INVALIDATION_DEBOUNCE_MS : 0;
     const startDiscovery = () => {
-      void discover().catch(() => {
-        if (!isCurrent()) return;
-        setStoredDiscovery({ discoveryVersion, value: boundedDiscovery(ownerKey) });
-      });
+      controller = new AbortController();
+      deadlineTimer = window.setTimeout(
+        () => controller?.abort(),
+        WORKSPACE_PACKAGE_DISCOVERY_DEADLINE_MS,
+      );
+      void discover(controller.signal)
+        .catch(() => {
+          if (!isCurrent()) return;
+          setStoredDiscovery({ discoveryVersion, value: boundedDiscovery(ownerKey) });
+        })
+        .finally(() => {
+          if (deadlineTimer !== null) {
+            window.clearTimeout(deadlineTimer);
+            deadlineTimer = null;
+          }
+        });
     };
     const timer = delay > 0 ? window.setTimeout(startDiscovery, delay) : null;
     if (timer === null) {
@@ -184,9 +216,13 @@ export function useWorkspacePackageGraph({
       if (timer !== null) {
         window.clearTimeout(timer);
       }
+      if (deadlineTimer !== null) {
+        window.clearTimeout(deadlineTimer);
+      }
+      controller?.abort();
       if (sequenceRef.current === sequence) sequenceRef.current += 1;
     };
-  }, [discoveryVersion, gateway, ownerKey, rootPath]);
+  }, [discoveryVersion, gateway, ownerKey, processingRuntime, rootPath]);
 
   const ownedDiscovery =
     storedDiscovery.discoveryVersion === discoveryVersion &&
@@ -219,13 +255,17 @@ export function useWorkspacePackageGraph({
 async function enumeratePackageJsonFiles(
   gateway: WorkspaceSourceDiscoveryGateway,
   rootPath: string,
+  signal: AbortSignal,
 ): Promise<{ readonly files: readonly string[]; readonly truncated: boolean }> {
   if (!gateway.enumeratePackageJsonFiles) {
     return { files: [], truncated: true };
   }
   try {
-    return await gateway.enumeratePackageJsonFiles(rootPath, WORKSPACE_PACKAGE_DISCOVERY_LIMITS);
+    return await runWorkspacePackageDiscoveryOperation(gateway, signal, () =>
+      gateway.enumeratePackageJsonFiles!(rootPath, WORKSPACE_PACKAGE_DISCOVERY_LIMITS),
+    );
   } catch {
+    if (signal.aborted) throw abortError();
     return { files: [], truncated: true };
   }
 }
@@ -254,8 +294,7 @@ interface PackageManifestRead {
   readonly authorityDirectories: readonly string[];
   readonly bounded: boolean;
   readonly incompleteDirectories: readonly string[];
-  readonly manifests: readonly WorkspacePackageManifestInput[];
-  readonly packageJsonDirs: readonly ExpressRoutePackageJsonDir[];
+  readonly manifestSources: readonly WorkspacePackageManifestSource[];
   readonly unscopedAuthorityUncertain: boolean;
 }
 
@@ -264,11 +303,11 @@ async function readPackageManifests(
   rootPath: string,
   candidates: readonly PackageManifestCandidate[],
   isCurrent: () => boolean,
+  signal: AbortSignal,
 ): Promise<PackageManifestRead | null> {
   const authorityDirectories = new Set<string>();
   const incompleteDirectories = new Set<string>();
-  const manifests: WorkspacePackageManifestInput[] = [];
-  const packageJsonDirs: ExpressRoutePackageJsonDir[] = [];
+  const manifestSources: WorkspacePackageManifestSource[] = [];
   let totalBytes = 0;
   let bounded = false;
 
@@ -280,7 +319,7 @@ async function readPackageManifests(
     const batch = candidates.slice(start, start + READ_CONCURRENCY);
     const reads = await Promise.all(
       batch.map(({ relativePath }) =>
-        readManifestSource(gateway, rootPath, relativePath, isCurrent),
+        readManifestSource(gateway, rootPath, relativePath, isCurrent, signal),
       ),
     );
     if (!isCurrent()) return null;
@@ -289,6 +328,11 @@ async function readPackageManifests(
       const source = reads[index];
       if (!candidate) continue;
       if (source === null) {
+        bounded = true;
+        incompleteDirectories.add(candidate.relativeDirPath);
+        continue;
+      }
+      if (source.length > MAX_WORKSPACE_PACKAGE_MANIFEST_BYTES) {
         bounded = true;
         incompleteDirectories.add(candidate.relativeDirPath);
         continue;
@@ -302,18 +346,16 @@ async function readPackageManifests(
         incompleteDirectories.add(candidate.relativeDirPath);
         continue;
       }
-      const packageJson = parseManifest(source);
-      if (!packageJson) {
-        bounded = true;
-        incompleteDirectories.add(candidate.relativeDirPath);
-        continue;
-      }
       totalBytes += bytes;
-      manifests.push({ packageJson, relativeDirPath: candidate.relativeDirPath });
-      packageJsonDirs.push({
-        packageName: typeof packageJson.name === "string" ? packageJson.name : undefined,
+      manifestSources.push({
         relativeDirPath: candidate.relativeDirPath,
+        source,
+        utf8Bytes: bytes,
       });
+    }
+    if (start + READ_CONCURRENCY < candidates.length) {
+      await yieldDiscoveryTurn(signal);
+      if (!isCurrent()) return null;
     }
   }
 
@@ -321,8 +363,7 @@ async function readPackageManifests(
     authorityDirectories: [...authorityDirectories].sort(compareText),
     bounded,
     incompleteDirectories: [...incompleteDirectories].sort(compareText),
-    manifests,
-    packageJsonDirs,
+    manifestSources,
     unscopedAuthorityUncertain: incompleteDirectories.has(""),
   };
 }
@@ -332,24 +373,22 @@ async function readManifestSource(
   rootPath: string,
   relativePath: string,
   isCurrent: () => boolean,
+  signal: AbortSignal,
 ): Promise<string | null> {
   try {
-    let read = await gateway.readSourceTextBounded(
-      rootPath,
-      relativePath,
-      MAX_WORKSPACE_PACKAGE_MANIFEST_BYTES,
+    let read = await runWorkspacePackageDiscoveryOperation(gateway, signal, () =>
+      gateway.readSourceTextBounded(rootPath, relativePath, MAX_WORKSPACE_PACKAGE_MANIFEST_BYTES),
     );
     if (!isCurrent()) return null;
     if (read.status === "changed") {
-      read = await gateway.readSourceTextBounded(
-        rootPath,
-        relativePath,
-        MAX_WORKSPACE_PACKAGE_MANIFEST_BYTES,
+      read = await runWorkspacePackageDiscoveryOperation(gateway, signal, () =>
+        gateway.readSourceTextBounded(rootPath, relativePath, MAX_WORKSPACE_PACKAGE_MANIFEST_BYTES),
       );
     }
     if (!isCurrent() || read.status !== "ok") return null;
     return read.content;
   } catch {
+    if (signal.aborted) throw abortError();
     return null;
   }
 }
@@ -358,26 +397,38 @@ async function readPnpmWorkspaceSource(
   gateway: WorkspaceSourceDiscoveryGateway,
   rootPath: string,
   isCurrent: () => boolean,
+  signal: AbortSignal,
 ): Promise<{ readonly bounded: boolean; readonly source: string | undefined } | null> {
   try {
-    let read = await gateway.readSourceTextBounded(
-      rootPath,
-      "pnpm-workspace.yaml",
-      MAX_PNPM_WORKSPACE_MANIFEST_BYTES,
-    );
-    if (!isCurrent()) return null;
-    if (read.status === "changed") {
-      read = await gateway.readSourceTextBounded(
+    let read = await runWorkspacePackageDiscoveryOperation(gateway, signal, () =>
+      gateway.readSourceTextBounded(
         rootPath,
         "pnpm-workspace.yaml",
         MAX_PNPM_WORKSPACE_MANIFEST_BYTES,
+      ),
+    );
+    if (!isCurrent()) return null;
+    if (read.status === "changed") {
+      read = await runWorkspacePackageDiscoveryOperation(gateway, signal, () =>
+        gateway.readSourceTextBounded(
+          rootPath,
+          "pnpm-workspace.yaml",
+          MAX_PNPM_WORKSPACE_MANIFEST_BYTES,
+        ),
       );
     }
     if (!isCurrent()) return null;
     if (read.status === "notFound") return { bounded: false, source: undefined };
     if (read.status !== "ok") return { bounded: true, source: undefined };
+    if (
+      read.content.length > MAX_PNPM_WORKSPACE_MANIFEST_BYTES ||
+      utf8Bytes(read.content) > MAX_PNPM_WORKSPACE_MANIFEST_BYTES
+    ) {
+      return { bounded: true, source: undefined };
+    }
     return { bounded: false, source: read.content };
   } catch {
+    if (signal.aborted) throw abortError();
     return { bounded: true, source: undefined };
   }
 }
@@ -402,18 +453,42 @@ function packageJsonDirPath(relativePath: string): string | null {
   return relativeDirPath;
 }
 
-function parseManifest(source: string): Readonly<Record<string, unknown>> | null {
-  try {
-    const parsed: unknown = JSON.parse(source);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return parsed as Readonly<Record<string, unknown>>;
-  } catch {
-    return null;
-  }
-}
-
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw abortError();
+  return await new Promise<T>((resolve, reject) => {
+    const cancel = () => {
+      signal.removeEventListener("abort", cancel);
+      reject(abortError());
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    void promise.then(
+      (value) => {
+        signal.removeEventListener("abort", cancel);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", cancel);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function yieldDiscoveryTurn(signal: AbortSignal): Promise<void> {
+  await abortable(
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 0);
+    }),
+    signal,
+  );
+}
+
+function abortError(): DOMException {
+  return new DOMException("Workspace package discovery was cancelled.", "AbortError");
 }
 
 function compareText(left: string, right: string): number {
