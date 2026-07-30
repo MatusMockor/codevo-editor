@@ -46,7 +46,7 @@
     },
     "src-tauri/src/lsp_session.rs": {
       "rawLines": 4500,
-      "structuralTokens": 23631
+      "structuralTokens": 23622
     },
     "src-tauri/src/lsp.rs": { "rawLines": 2364, "structuralTokens": 10802 },
     "src-tauri/src/workspace_file_commands.rs": {
@@ -55,28 +55,28 @@
     },
     "src/App.tsx": { "rawLines": 1654, "structuralTokens": 8363 },
     "src/application/useDocumentSync.ts": {
-      "rawLines": 1665,
-      "structuralTokens": 5784
+      "rawLines": 1626,
+      "structuralTokens": 5697
     },
     "src/application/useLanguageServerRuntimeLifecycle.ts": {
       "rawLines": 1979,
-      "structuralTokens": 6737
+      "structuralTokens": 6638
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 8221,
-      "structuralTokens": 29650
+      "structuralTokens": 29635
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2508,
       "structuralTokens": 10441
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
-      "rawLines": 2720,
-      "structuralTokens": 11417
+      "rawLines": 2704,
+      "structuralTokens": 11288
     },
     "src/components/languageServerMonacoProviders.ts": {
-      "rawLines": 3055,
-      "structuralTokens": 7431
+      "rawLines": 2972,
+      "structuralTokens": 7381
     },
     "src/components/SettingsDialog.tsx": {
       "rawLines": 1762,
