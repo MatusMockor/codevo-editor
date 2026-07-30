@@ -1,5 +1,5 @@
 import type * as Monaco from "monaco-editor";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { MAX_MONACO_DIAGNOSTIC_ITEMS } from "./editorDiagnosticMonacoMappings";
 import { createEditorRuntimeMarkerReconciler } from "./editorRuntimeModels";
@@ -61,22 +61,28 @@ const diagnostic: LanguageServerDiagnostic = {
   source: "typescript",
 };
 
-const toMarker = vi.fn(() => ({
+const markerData = () => ({
   endColumn: 2,
   endLineNumber: 1,
   message: "Problem",
   severity: 8,
   startColumn: 1,
   startLineNumber: 1,
-}));
+});
+
+const toMarker = vi.fn(markerData);
 
 describe("createEditorRuntimeMarkerReconciler", () => {
+  beforeEach(() => {
+    toMarker.mockClear();
+  });
+
   it("maps and publishes at most the Monaco diagnostic budget", () => {
     const path = "/workspace/src/index.ts";
     const model = fakeModel(path);
     const harness = fakeMonaco([model]);
     const diagnostics = Array<LanguageServerDiagnostic>(100_000).fill(diagnostic);
-    const projection = vi.fn(toMarker);
+    const projection = vi.fn(markerData);
 
     createEditorRuntimeMarkerReconciler(harness.monaco, null, { [path]: diagnostics }, projection);
 
