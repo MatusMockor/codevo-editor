@@ -7,6 +7,10 @@ import type {
 } from "../domain/editorSurfaceCommand";
 import { editorSurfaceCommandInvocationScopesEqual } from "../domain/editorSurfaceCommand";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import {
+  largeSmartDocumentStatusFromMetrics,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkspacePathPolicy } from "../domain/workspacePath";
 import {
@@ -24,6 +28,7 @@ interface UseEditorSurfaceImportActionsOptions {
   readonly getDocumentSyncVersionRef: MutableRefObject<
     (rootPath: string, path: string) => number | null
   >;
+  readonly largeSmartDocumentPolicyRef: MutableRefObject<LargeSmartDocumentPolicy>;
   readonly reportErrorRef: MutableRefObject<(error: unknown) => void>;
   readonly runtimeStatus: LanguageServerRuntimeStatus | null;
   readonly runtimeStatusRef: MutableRefObject<LanguageServerRuntimeStatus | null>;
@@ -42,6 +47,7 @@ export function useEditorSurfaceImportActions({
   featureGateway,
   flushPendingDocumentRef,
   getDocumentSyncVersionRef,
+  largeSmartDocumentPolicyRef,
   modelMatchesDocument,
   reportErrorRef,
   runtimeStatus,
@@ -74,7 +80,7 @@ export function useEditorSurfaceImportActions({
     inFlightRef.current = null;
   }, [featureGateway, runtimeStatus, workspaceOwnerKey, workspaceRoot, workspaceTrusted]);
 
-  const capture = useCallback(
+  const preflight = useCallback(
     (commandId: EditorSurfaceCommandId) => {
       const document = activeDocumentRef.current;
       const rootPath = workspaceRootRef.current;
@@ -97,9 +103,14 @@ export function useEditorSurfaceImportActions({
       try {
         const kind = editorSurfaceImportActionKind(commandId, model.getLanguageId());
         const scope = captureScope();
-        if (!kind || !scope) return null;
+        if (
+          !kind ||
+          !scope ||
+          !isImportActionModelEligible(model, largeSmartDocumentPolicyRef.current)
+        ) {
+          return null;
+        }
         return {
-          content: model.getValue(),
           epoch: authorityEpochRef.current,
           gateway: featureGatewayRef.current,
           kind,
@@ -119,6 +130,7 @@ export function useEditorSurfaceImportActions({
       activeDocumentRef,
       captureScope,
       editor,
+      largeSmartDocumentPolicyRef,
       modelMatchesDocument,
       runtimeStatusRef,
       workspacePathPolicy,
@@ -128,15 +140,23 @@ export function useEditorSurfaceImportActions({
 
   const isEnabled = useCallback(
     (commandId: EditorSurfaceCommandId): boolean =>
-      inFlightRef.current === null && capture(commandId) !== null,
-    [capture],
+      inFlightRef.current === null && preflight(commandId) !== null,
+    [preflight],
   );
 
   const run = useCallback(
     (commandId: EditorSurfaceCommandId): void => {
       if (inFlightRef.current !== null || !editor) return;
-      const captured = capture(commandId);
-      if (!captured) return;
+      const authority = preflight(commandId);
+      if (!authority) return;
+      let content: string;
+      try {
+        content = authority.model.getValue();
+      } catch {
+        return;
+      }
+      if (authority.model.getVersionId() !== authority.version) return;
+      const captured = { ...authority, content };
       const token = {};
       inFlightRef.current = token;
       const isCurrent = (): boolean => {
@@ -157,7 +177,7 @@ export function useEditorSurfaceImportActions({
             editorSurfaceCommandInvocationScopesEqual(currentScope, captured.scope) &&
             editor.getModel() === captured.model &&
             captured.model.getVersionId() === captured.version &&
-            captured.model.getValue() === captured.content &&
+            isImportActionModelEligible(captured.model, largeSmartDocumentPolicyRef.current) &&
             currentStatus?.kind === "running" &&
             currentStatus.sessionId === captured.sessionId &&
             currentStatus.capabilities.codeAction === true &&
@@ -203,13 +223,14 @@ export function useEditorSurfaceImportActions({
     },
     [
       activeDocumentRef,
-      capture,
       captureScope,
       editor,
       flushPendingDocumentRef,
       getDocumentSyncVersionRef,
+      largeSmartDocumentPolicyRef,
       reportErrorRef,
       runtimeStatusRef,
+      preflight,
       workspaceRootRef,
     ],
   );
@@ -220,4 +241,19 @@ export function useEditorSurfaceImportActions({
   }, []);
 
   return { invalidateAuthority, isEnabled, run };
+}
+
+function isImportActionModelEligible(
+  model: Monaco.editor.ITextModel,
+  policy: LargeSmartDocumentPolicy,
+): boolean {
+  return (
+    largeSmartDocumentStatusFromMetrics(
+      {
+        lineCount: model.getLineCount(),
+        utf16Length: model.getValueLength(),
+      },
+      policy,
+    ).kind === "eligible"
+  );
 }

@@ -9,7 +9,6 @@ import {
   type ReactNode,
 } from "react";
 import type * as Monaco from "monaco-editor";
-import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import type { DebugHoverEvaluationPort } from "../application/useDebugHoverEvaluation";
 import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
@@ -53,8 +52,9 @@ import {
   registerWorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
 import {
+  createEditorRuntimeMarkerReconciler,
   disposeUnretainedEditorRuntimeModels,
-  reconcileEditorRuntimeMarkers,
+  type EditorRuntimeMarkerReconciler,
 } from "./editorRuntimeModels";
 import { monacoModelRegistry, type MonacoRuntimeRetentionPublisher } from "./monacoModelRegistry";
 import {
@@ -159,10 +159,7 @@ export function EditorRuntimeHost({
     monacoApi: typeof Monaco;
     root: string;
   } | null>(null);
-  const previousDiagnosticsRef = useRef<
-    Readonly<Record<string, readonly LanguageServerDiagnostic[]>>
-  >({});
-  const markedModelsRef = useRef<WeakSet<Monaco.editor.ITextModel>>(new WeakSet());
+  const markerReconcilerRef = useRef<EditorRuntimeMarkerReconciler | null>(null);
   const disposedModelsRef = useRef<WeakSet<Monaco.editor.ITextModel>>(new WeakSet());
   const lifecycleGenerationRef = useRef(0);
   const focusRequestGenerationRef = useRef(0);
@@ -1101,6 +1098,8 @@ export function EditorRuntimeHost({
 
   useEffect(() => {
     if (!activeRegistration?.monacoApi) {
+      markerReconcilerRef.current?.dispose();
+      markerReconcilerRef.current = null;
       return;
     }
 
@@ -1127,24 +1126,31 @@ export function EditorRuntimeHost({
             preserveWorkspaceMappings,
           });
         }
-        markedModelsRef.current = new WeakSet();
         disposedModelsRef.current = new WeakSet();
-        previousDiagnosticsRef.current = {};
       }
       retainEditorRuntimeWorkspace(monacoApi, workspaceRoot, workspaceLeaseOwnerRef.current);
       runtimeWorkspaceRef.current = { monacoApi, root: workspaceRoot };
     }
 
     const diagnosticsByPath = activeRegistration.diagnosticsByPath;
-    reconcileEditorRuntimeMarkers(
-      monacoApi,
-      workspaceRoot,
-      diagnosticsByPath,
-      previousDiagnosticsRef.current,
-      markedModelsRef.current,
-      activeRegistration.toMarker,
-    );
-    previousDiagnosticsRef.current = diagnosticsByPath;
+    const markerReconciler = markerReconcilerRef.current;
+    const markerRootMatches =
+      markerReconciler !== null &&
+      (markerReconciler.workspaceRoot === workspaceRoot ||
+        (markerReconciler.workspaceRoot !== null &&
+          workspaceRoot !== null &&
+          workspaceRootKeysEqual(markerReconciler.workspaceRoot, workspaceRoot)));
+    if (markerReconciler?.monacoApi !== monacoApi || !markerRootMatches) {
+      markerReconciler?.dispose();
+      markerReconcilerRef.current = createEditorRuntimeMarkerReconciler(
+        monacoApi,
+        workspaceRoot,
+        diagnosticsByPath,
+        activeRegistration.toMarker,
+      );
+    } else {
+      markerReconciler.reconcile(diagnosticsByPath, activeRegistration.toMarker);
+    }
 
     const currentOwningRegistrations = [...registrationsRef.current.values()].filter(
       (registration) => registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current),
@@ -1215,6 +1221,8 @@ export function EditorRuntimeHost({
   useEffect(
     () => () => {
       contentSyncCoordinatorRef.current?.dispose();
+      markerReconcilerRef.current?.dispose();
+      markerReconcilerRef.current = null;
       for (const listener of bindingModelListenersRef.current.values()) listener.dispose();
       bindingModelListenersRef.current.clear();
       localPhpValidationCoordinatorRef.current.dispose();

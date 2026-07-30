@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { NavigationLocation } from "../domain/navigation";
 import {
   implementationChooserTitle,
@@ -12,6 +12,7 @@ import {
   toLanguageServerTextDocumentPosition,
   type EditorPosition,
   type EditorRevealTarget,
+  type IdentifiedLanguageServerRequest,
   type JavaScriptTypeScriptLanguageServerFeaturesGateway,
   type LanguageServerFeature,
   type LanguageServerFeaturesGateway,
@@ -34,15 +35,26 @@ import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import type { LatteDefinitionOutcome } from "./latteIntelligenceContracts";
 import type { NavigationRequest } from "./navigationRequest";
 import type { LanguageServerDocumentRequestLease } from "./useDocumentSync";
+import {
+  createDefinitionNavigationRequestCoordinator,
+  DEFINITION_NAVIGATION_REQUEST_INTERRUPTED,
+  type DefinitionNavigationRequestCoordinator,
+  type DefinitionNavigationRequestLease,
+} from "./definitionNavigationRequestCoordinator";
 
 export interface ImplementationChooserState {
   targets: ImplementationTarget[];
   title: string;
 }
 
+export const MAX_NAVIGATION_LOCATION_TARGETS = 64;
+export const MAX_NAVIGATION_TARGET_SOURCE_BYTES = 128 * 1024;
+export const MAX_NAVIGATION_TARGET_TOTAL_SOURCE_BYTES = 512 * 1024;
+
 interface OpenNavigationOptions {
   readOnly?: boolean;
   shouldCommit?: () => boolean;
+  shouldFinalize?: () => boolean;
 }
 
 export interface WorkbenchImplementationChooserState {
@@ -208,32 +220,82 @@ export function useWorkbenchLanguageNavigation(
     workspaceRoot,
   } = dependencies;
   const implementationChooserCommitPredicateRef = useRef<(() => boolean) | null>(null);
+  const implementationChooserFinalizePredicateRef = useRef<(() => boolean) | null>(null);
+  const definitionRequestCoordinatorRef = useRef<DefinitionNavigationRequestCoordinator | null>(
+    null,
+  );
+  if (!definitionRequestCoordinatorRef.current) {
+    definitionRequestCoordinatorRef.current = createDefinitionNavigationRequestCoordinator();
+  }
+
+  useEffect(() => {
+    const coordinator =
+      definitionRequestCoordinatorRef.current ?? createDefinitionNavigationRequestCoordinator();
+    definitionRequestCoordinatorRef.current = coordinator;
+
+    return () => {
+      coordinator.dispose();
+      if (definitionRequestCoordinatorRef.current === coordinator) {
+        definitionRequestCoordinatorRef.current = null;
+      }
+    };
+  }, []);
 
   const implementationTargetsFromLocations = useCallback(
     async (
       locations: LanguageServerLocation[],
       shouldContinue: () => boolean = () => true,
-    ): Promise<ImplementationTarget[]> => {
+      requestLease?: DefinitionNavigationRequestLease,
+    ): Promise<{ readonly targets: ImplementationTarget[]; readonly truncated: boolean }> => {
       const uniqueTargets = new Map<string, ImplementationTarget>();
+      const projectedLocations = locations.slice(0, MAX_NAVIGATION_LOCATION_TARGETS);
+      const sourcesByPath = new Map<string, string | null>();
+      let retainedSourceBytes = 0;
 
-      for (const location of locations) {
+      for (const location of projectedLocations) {
         if (!shouldContinue()) {
-          return [];
+          return { targets: [], truncated: locations.length > projectedLocations.length };
         }
 
         const path = pathFromLanguageServerUri(location.uri);
         let source: string | null = null;
 
         if (path) {
-          try {
-            source = documents[path]?.content ?? (await workspaceFiles.readTextFile(path));
-          } catch {
-            source = null;
+          if (sourcesByPath.has(path)) {
+            source = sourcesByPath.get(path) ?? null;
+          } else {
+            try {
+              const remainingSourceBytes =
+                MAX_NAVIGATION_TARGET_TOTAL_SOURCE_BYTES - retainedSourceBytes;
+              const maximumSourceBytes = Math.min(
+                MAX_NAVIGATION_TARGET_SOURCE_BYTES,
+                remainingSourceBytes,
+              );
+              const openDocumentSource = documents[path]?.content;
+              if (openDocumentSource !== undefined) {
+                source = boundedNavigationTargetSource(openDocumentSource, maximumSourceBytes);
+              } else if (maximumSourceBytes > 0 && workspaceFiles.readTextFileBounded) {
+                const pendingSource = workspaceFiles.readTextFileBounded(path, maximumSourceBytes);
+                const resolvedSource = requestLease
+                  ? await requestLease.waitFor(pendingSource)
+                  : await pendingSource;
+                source =
+                  resolvedSource === DEFINITION_NAVIGATION_REQUEST_INTERRUPTED ||
+                  resolvedSource.status === "tooLarge"
+                    ? null
+                    : resolvedSource.content;
+              }
+              sourcesByPath.set(path, source);
+              retainedSourceBytes += source ? utf8ByteLength(source) : 0;
+            } catch {
+              sourcesByPath.set(path, null);
+              source = null;
+            }
           }
         }
 
         if (!shouldContinue()) {
-          return [];
+          return { targets: [], truncated: locations.length > projectedLocations.length };
         }
 
         const target = implementationTargetFromLocation(location, source);
@@ -245,7 +307,10 @@ export function useWorkbenchLanguageNavigation(
         uniqueTargets.set(target.id, target);
       }
 
-      return [...uniqueTargets.values()];
+      return {
+        targets: [...uniqueTargets.values()],
+        truncated: locations.length > projectedLocations.length,
+      };
     },
     [documents, workspaceFiles],
   );
@@ -280,11 +345,7 @@ export function useWorkbenchLanguageNavigation(
         shouldCommit,
       });
 
-      if (!opened) {
-        return false;
-      }
-
-      if (ownerFence && !ownerFence.isCurrent()) {
+      if (!opened || !(options.shouldFinalize?.() ?? shouldCommit())) {
         return false;
       }
 
@@ -311,6 +372,7 @@ export function useWorkbenchLanguageNavigation(
       }
 
       const chooserShouldCommit = implementationChooserCommitPredicateRef.current;
+      const chooserShouldFinalize = implementationChooserFinalizePredicateRef.current;
       const shouldCommit = () => {
         if (!ownerFence.isCurrent()) {
           return false;
@@ -332,6 +394,7 @@ export function useWorkbenchLanguageNavigation(
             ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(workspaceRoot, target.path)
             : false,
           shouldCommit,
+          shouldFinalize: chooserShouldFinalize ?? shouldCommit,
         },
         ownerFence,
       );
@@ -341,6 +404,7 @@ export function useWorkbenchLanguageNavigation(
       }
 
       implementationChooserCommitPredicateRef.current = null;
+      implementationChooserFinalizePredicateRef.current = null;
       setImplementationChooser(null);
     },
     [
@@ -360,6 +424,7 @@ export function useWorkbenchLanguageNavigation(
       label: string,
       ownerFence: WorkspaceRuntimeOwnerFence,
       requestedPosition?: EditorPosition,
+      definitionRequestLease?: DefinitionNavigationRequestLease,
     ): Promise<boolean> => {
       const document = activeDocumentRef.current;
       const requestedRoot = workspaceRoot;
@@ -386,12 +451,18 @@ export function useWorkbenchLanguageNavigation(
       }
 
       const requestedPath = document.path;
+      const isRequestedDocumentActive = () =>
+        activeDocumentRef.current === document &&
+        activeDocumentRef.current?.path === requestedPath &&
+        activeDocumentRef.current?.content === document.content &&
+        activeDocumentRef.current?.revision === document.revision;
       const isRequestedSessionActive = () =>
         ownerFence.isCurrent() &&
         isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId, ownerFence.owner);
 
       if (feature === "implementation" || feature === "definition") {
         implementationChooserCommitPredicateRef.current = null;
+        implementationChooserFinalizePredicateRef.current = null;
         setImplementationChooser(null);
       }
 
@@ -405,8 +476,14 @@ export function useWorkbenchLanguageNavigation(
           return false;
         }
 
-        const isDocumentRequestCurrent = () =>
+        const isDocumentLeaseFinalizable = () =>
           isRequestedSessionActive() && isLanguageServerDocumentRequestLeaseCurrent(documentLease);
+        const isDocumentLeaseCurrent = () =>
+          isDocumentLeaseFinalizable() && isRequestedDocumentActive();
+        const isDocumentRequestCurrent = () =>
+          isDocumentLeaseCurrent() && definitionRequestLease?.isCurrent() !== false;
+        const isDocumentRequestFinalizable = () =>
+          isDocumentLeaseFinalizable() && definitionRequestLease?.isRequestCurrent() !== false;
 
         if (!isDocumentRequestCurrent()) {
           return false;
@@ -416,18 +493,50 @@ export function useWorkbenchLanguageNavigation(
           return false;
         }
 
-        const locations =
+        const requestPosition = toLanguageServerTextDocumentPosition(requestedPath, editorPosition);
+        const identifiedRequests = languageServerFeaturesGateway.identifiedRequests;
+        const identifiedRequest = identifiedRequests?.[feature](
+          requestedRoot,
+          requestPosition,
+          requestedSessionId,
+        );
+        if (
+          definitionRequestLease &&
+          identifiedRequest &&
+          rejectForeignIdentifiedRequest(
+            requestedRoot,
+            requestedSessionId,
+            identifiedRequest,
+            identifiedRequests?.cancelRequest.bind(identifiedRequests),
+          )
+        ) {
+          return false;
+        }
+        if (identifiedRequest && definitionRequestLease) {
+          definitionRequestLease.observeBackendRequest(
+            requestedRoot,
+            identifiedRequest,
+            identifiedRequests?.cancelRequest.bind(identifiedRequests),
+          );
+        }
+        const pendingLocations =
+          identifiedRequest ??
+          languageServerFeaturesGateway[feature](requestedRoot, requestPosition);
+        const measuredLocations =
           feature === "definition"
-            ? await measureLatency(latencyTrackerForRoot(requestedRoot), "definition", () =>
-                languageServerFeaturesGateway[feature](
-                  requestedRoot,
-                  toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-                ),
+            ? measureLatency(
+                latencyTrackerForRoot(requestedRoot),
+                "definition",
+                () => pendingLocations,
               )
-            : await languageServerFeaturesGateway[feature](
-                requestedRoot,
-                toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-              );
+            : pendingLocations;
+        const locations = definitionRequestLease
+          ? await definitionRequestLease.waitFor(measuredLocations)
+          : await measuredLocations;
+
+        if (locations === DEFINITION_NAVIGATION_REQUEST_INTERRUPTED) {
+          return false;
+        }
 
         if (!isDocumentRequestCurrent()) {
           return false;
@@ -436,22 +545,28 @@ export function useWorkbenchLanguageNavigation(
         const symbolName = identifierAtEditorPosition(document.content, editorPosition);
 
         if ((feature === "implementation" || feature === "definition") && locations.length > 1) {
-          const targets = await implementationTargetsFromLocations(
+          const targetProjection = await implementationTargetsFromLocations(
             locations,
             isDocumentRequestCurrent,
+            definitionRequestLease,
           );
+          const { targets } = targetProjection;
 
           if (!isDocumentRequestCurrent()) {
             return false;
           }
 
-          if (targets.length > 1) {
-            implementationChooserCommitPredicateRef.current = isDocumentRequestCurrent;
+          if (targets.length > 1 || (targetProjection.truncated && targets.length > 0)) {
+            implementationChooserCommitPredicateRef.current = isDocumentLeaseCurrent;
+            implementationChooserFinalizePredicateRef.current = isDocumentLeaseFinalizable;
             setImplementationChooser({
               targets,
               title:
                 feature === "definition"
-                  ? `Definitions for ${symbolName ?? "symbol"}`
+                  ? definitionChooserTitle(
+                      symbolName,
+                      targetProjection.truncated ? locations.length : null,
+                    )
                   : implementationChooserTitle(symbolName),
             });
             return true;
@@ -474,6 +589,7 @@ export function useWorkbenchLanguageNavigation(
                   onlyTarget.path,
                 ),
                 shouldCommit: isDocumentRequestCurrent,
+                shouldFinalize: isDocumentRequestFinalizable,
               },
               ownerFence,
             );
@@ -493,7 +609,7 @@ export function useWorkbenchLanguageNavigation(
           return false;
         }
 
-        if (!isRequestedSessionActive()) {
+        if (!isDocumentRequestCurrent()) {
           return false;
         }
 
@@ -509,11 +625,7 @@ export function useWorkbenchLanguageNavigation(
           shouldCommit: isDocumentRequestCurrent,
         });
 
-        if (!opened) {
-          return false;
-        }
-
-        if (!isRequestedSessionActive()) {
+        if (!opened || !isDocumentRequestFinalizable()) {
           return false;
         }
 
@@ -528,7 +640,10 @@ export function useWorkbenchLanguageNavigation(
         );
         return true;
       } catch (error) {
-        if (!isRequestedSessionActive()) {
+        if (
+          !isRequestedSessionActive() ||
+          (definitionRequestLease && !definitionRequestLease.isCurrent())
+        ) {
           return false;
         }
 
@@ -569,6 +684,7 @@ export function useWorkbenchLanguageNavigation(
       label: string,
       ownerFence: WorkspaceRuntimeOwnerFence,
       requestedPosition?: EditorPosition,
+      definitionRequestLease?: DefinitionNavigationRequestLease,
     ): Promise<boolean> => {
       const document = activeDocumentRef.current;
       const requestedRoot = workspaceRoot;
@@ -595,6 +711,11 @@ export function useWorkbenchLanguageNavigation(
       }
 
       const requestedPath = document.path;
+      const isRequestedDocumentActive = () =>
+        activeDocumentRef.current === document &&
+        activeDocumentRef.current?.path === requestedPath &&
+        activeDocumentRef.current?.content === document.content &&
+        activeDocumentRef.current?.revision === document.revision;
       const isRequestedJavaScriptTypeScriptSessionActive = () =>
         ownerFence.isCurrent() &&
         isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
@@ -602,16 +723,25 @@ export function useWorkbenchLanguageNavigation(
           requestedSessionId,
           ownerFence.owner,
         );
+      const isRequestedJavaScriptTypeScriptDocumentActive = () =>
+        isRequestedJavaScriptTypeScriptSessionActive() && isRequestedDocumentActive();
+      const isNavigationRequestCurrent = () =>
+        isRequestedJavaScriptTypeScriptDocumentActive() &&
+        definitionRequestLease?.isCurrent() !== false;
+      const isNavigationRequestFinalizable = () =>
+        isRequestedJavaScriptTypeScriptSessionActive() &&
+        definitionRequestLease?.isRequestCurrent() !== false;
 
       if (feature === "implementation" || feature === "definition") {
         implementationChooserCommitPredicateRef.current = null;
+        implementationChooserFinalizePredicateRef.current = null;
         setImplementationChooser(null);
       }
 
       try {
         await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
 
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+        if (!isNavigationRequestCurrent()) {
           return false;
         }
 
@@ -619,36 +749,72 @@ export function useWorkbenchLanguageNavigation(
           return false;
         }
 
-        const locations = await javaScriptTypeScriptLanguageServerFeaturesGateway[feature](
+        const backendRequest = javaScriptTypeScriptLanguageServerFeaturesGateway[feature](
           requestedRoot,
           toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
           requestedSessionId,
         );
+        if (
+          definitionRequestLease &&
+          rejectForeignIdentifiedRequest(
+            requestedRoot,
+            requestedSessionId,
+            backendRequest,
+            javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests?.cancelRequest.bind(
+              javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests,
+            ),
+          )
+        ) {
+          return false;
+        }
+        if (definitionRequestLease) {
+          definitionRequestLease.observeBackendRequest(
+            requestedRoot,
+            backendRequest,
+            javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests?.cancelRequest.bind(
+              javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests,
+            ),
+          );
+        }
+        const locations = definitionRequestLease
+          ? await definitionRequestLease.waitFor(backendRequest)
+          : await backendRequest;
 
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+        if (locations === DEFINITION_NAVIGATION_REQUEST_INTERRUPTED) {
+          return false;
+        }
+
+        if (!isNavigationRequestCurrent()) {
           return false;
         }
 
         const symbolName = identifierAtEditorPosition(document.content, editorPosition);
 
         if ((feature === "implementation" || feature === "definition") && locations.length > 1) {
-          const targets = await implementationTargetsFromLocations(
+          const targetProjection = await implementationTargetsFromLocations(
             locations,
-            isRequestedJavaScriptTypeScriptSessionActive,
+            isNavigationRequestCurrent,
+            definitionRequestLease,
           );
+          const { targets } = targetProjection;
 
-          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          if (!isNavigationRequestCurrent()) {
             return false;
           }
 
-          if (targets.length > 1) {
+          if (targets.length > 1 || (targetProjection.truncated && targets.length > 0)) {
             implementationChooserCommitPredicateRef.current =
+              isRequestedJavaScriptTypeScriptDocumentActive;
+            implementationChooserFinalizePredicateRef.current =
               isRequestedJavaScriptTypeScriptSessionActive;
             setImplementationChooser({
               targets,
               title:
                 feature === "definition"
-                  ? `Definitions for ${symbolName ?? "symbol"}`
+                  ? definitionChooserTitle(
+                      symbolName,
+                      targetProjection.truncated ? locations.length : null,
+                    )
                   : implementationChooserTitle(symbolName),
             });
             return true;
@@ -657,7 +823,7 @@ export function useWorkbenchLanguageNavigation(
           const [onlyTarget] = targets;
 
           if (onlyTarget) {
-            if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+            if (!isNavigationRequestCurrent()) {
               return false;
             }
 
@@ -667,14 +833,15 @@ export function useWorkbenchLanguageNavigation(
                 requestedRoot,
                 onlyTarget.path,
               ),
-              shouldCommit: isRequestedJavaScriptTypeScriptSessionActive,
+              shouldCommit: isNavigationRequestCurrent,
+              shouldFinalize: isNavigationRequestFinalizable,
             });
 
             if (!opened) {
               return false;
             }
 
-            if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+            if (!isNavigationRequestFinalizable()) {
               return false;
             }
 
@@ -698,7 +865,7 @@ export function useWorkbenchLanguageNavigation(
           return false;
         }
 
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+        if (!isNavigationRequestCurrent()) {
           return false;
         }
 
@@ -715,14 +882,14 @@ export function useWorkbenchLanguageNavigation(
             requestedRoot,
             targetPath,
           ),
-          shouldCommit: isRequestedJavaScriptTypeScriptSessionActive,
+          shouldCommit: isNavigationRequestCurrent,
         });
 
         if (!opened) {
           return false;
         }
 
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+        if (!isNavigationRequestFinalizable()) {
           return false;
         }
 
@@ -737,7 +904,10 @@ export function useWorkbenchLanguageNavigation(
         );
         return true;
       } catch (error) {
-        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+        if (
+          !isRequestedJavaScriptTypeScriptSessionActive() ||
+          (definitionRequestLease && !definitionRequestLease.isCurrent())
+        ) {
           return false;
         }
 
@@ -775,113 +945,159 @@ export function useWorkbenchLanguageNavigation(
 
     const document = activeDocumentRef.current;
     const editorPosition = activeEditorPositionRef.current;
-
-    if (document?.path.endsWith(".blade.php") && editorPosition) {
-      const openedBladeTarget = await provideBladeDefinition(
-        document.content,
-        documentOffsetAtEditorPosition(document.content, editorPosition),
-        { canNavigate: ownerFence.isCurrent },
-      );
-
-      if (!ownerFence.isCurrent()) {
-        return;
-      }
-
-      if (openedBladeTarget) {
-        return;
-      }
-    }
-
-    if (document?.path.endsWith(".latte") && editorPosition) {
-      const offset = documentOffsetAtEditorPosition(document.content, editorPosition);
-      const latteDefinition = await provideLatteDefinitionOutcome(document.content, offset, {
-        canNavigate: ownerFence.isCurrent,
-      });
-
-      if (!ownerFence.isCurrent()) {
-        return;
-      }
-
-      if (latteDefinition.handled || latteDefinition.shouldBlockFallback) {
-        return;
-      }
-    }
-
-    if (document?.path.endsWith(".neon") && editorPosition) {
-      const openedNeonTarget = await provideNeonDefinition(
-        document.content,
-        documentOffsetAtEditorPosition(document.content, editorPosition),
-        { canNavigate: ownerFence.isCurrent },
-      );
-
-      if (!ownerFence.isCurrent()) {
-        return;
-      }
-
-      if (openedNeonTarget) {
-        return;
-      }
-    }
-
-    const openedJavaScriptTypeScriptTarget = await goToJavaScriptTypeScriptLanguageServerLocation(
-      "definition",
-      "definition",
-      ownerFence,
+    const requestedRoot = workspaceRoot;
+    const definitionRequestLease = definitionRequestCoordinatorRef.current?.begin(
+      () =>
+        ownerFence.isCurrent() &&
+        workspaceRoot === requestedRoot &&
+        activeDocumentRef.current === document &&
+        activeDocumentRef.current?.path === document?.path &&
+        activeDocumentRef.current?.content === document?.content &&
+        activeDocumentRef.current?.revision === document?.revision,
     );
 
-    if (!ownerFence.isCurrent()) {
+    if (!definitionRequestLease) {
       return;
     }
 
-    if (openedJavaScriptTypeScriptTarget) {
-      return;
-    }
+    const waitForDefinitionStep = async <T>(
+      step: Promise<T>,
+    ): Promise<T | typeof DEFINITION_NAVIGATION_REQUEST_INTERRUPTED> =>
+      definitionRequestLease.waitFor(step);
 
-    const openedContextualPhpTarget = await goToContextualPhpDefinition({
-      canNavigate: ownerFence.isCurrent,
-    });
+    try {
+      if (document?.path.endsWith(".blade.php") && editorPosition) {
+        const openedBladeTarget = await waitForDefinitionStep(
+          provideBladeDefinition(
+            document.content,
+            documentOffsetAtEditorPosition(document.content, editorPosition),
+            { canNavigate: definitionRequestLease.isCurrent },
+          ),
+        );
 
-    if (!ownerFence.isCurrent()) {
-      return;
-    }
+        if (!definitionRequestLease.isCurrent()) {
+          return;
+        }
 
-    if (openedContextualPhpTarget) {
-      return;
-    }
+        if (openedBladeTarget === true) {
+          return;
+        }
+      }
 
-    if (document?.language === "php" && editorPosition) {
-      const openedPhpFrameworkTarget = await providePhpFrameworkDefinition(
-        document.content,
-        documentOffsetAtEditorPosition(document.content, editorPosition),
-        { canNavigate: ownerFence.isCurrent },
+      if (document?.path.endsWith(".latte") && editorPosition) {
+        const offset = documentOffsetAtEditorPosition(document.content, editorPosition);
+        const latteDefinition = await waitForDefinitionStep(
+          provideLatteDefinitionOutcome(document.content, offset, {
+            canNavigate: definitionRequestLease.isCurrent,
+          }),
+        );
+
+        if (
+          !definitionRequestLease.isCurrent() ||
+          latteDefinition === DEFINITION_NAVIGATION_REQUEST_INTERRUPTED
+        ) {
+          return;
+        }
+
+        if (latteDefinition.handled || latteDefinition.shouldBlockFallback) {
+          return;
+        }
+      }
+
+      if (document?.path.endsWith(".neon") && editorPosition) {
+        const openedNeonTarget = await waitForDefinitionStep(
+          provideNeonDefinition(
+            document.content,
+            documentOffsetAtEditorPosition(document.content, editorPosition),
+            { canNavigate: definitionRequestLease.isCurrent },
+          ),
+        );
+
+        if (!definitionRequestLease.isCurrent()) {
+          return;
+        }
+
+        if (openedNeonTarget === true) {
+          return;
+        }
+      }
+
+      const openedJavaScriptTypeScriptTarget = await waitForDefinitionStep(
+        goToJavaScriptTypeScriptLanguageServerLocation(
+          "definition",
+          "definition",
+          ownerFence,
+          undefined,
+          definitionRequestLease,
+        ),
       );
 
-      if (!ownerFence.isCurrent()) {
+      if (!definitionRequestLease.isCurrent()) {
         return;
       }
 
-      if (openedPhpFrameworkTarget) {
+      if (openedJavaScriptTypeScriptTarget === true) {
         return;
       }
+
+      const openedContextualPhpTarget = await waitForDefinitionStep(
+        goToContextualPhpDefinition({
+          canNavigate: definitionRequestLease.isCurrent,
+        }),
+      );
+
+      if (!definitionRequestLease.isCurrent()) {
+        return;
+      }
+
+      if (openedContextualPhpTarget === true) {
+        return;
+      }
+
+      if (document?.language === "php" && editorPosition) {
+        const openedPhpFrameworkTarget = await waitForDefinitionStep(
+          providePhpFrameworkDefinition(
+            document.content,
+            documentOffsetAtEditorPosition(document.content, editorPosition),
+            { canNavigate: definitionRequestLease.isCurrent },
+          ),
+        );
+
+        if (!definitionRequestLease.isCurrent()) {
+          return;
+        }
+
+        if (openedPhpFrameworkTarget === true) {
+          return;
+        }
+      }
+
+      const openedLanguageServerTarget = await waitForDefinitionStep(
+        goToLanguageServerLocation(
+          "definition",
+          "definition",
+          ownerFence,
+          undefined,
+          definitionRequestLease,
+        ),
+      );
+
+      if (!definitionRequestLease.isCurrent()) {
+        return;
+      }
+
+      if (openedLanguageServerTarget === true) {
+        return;
+      }
+
+      await waitForDefinitionStep(
+        goToIndexedSymbolDefinition({
+          canNavigate: definitionRequestLease.isCurrent,
+        }),
+      );
+    } finally {
+      definitionRequestLease.finish();
     }
-
-    const openedLanguageServerTarget = await goToLanguageServerLocation(
-      "definition",
-      "definition",
-      ownerFence,
-    );
-
-    if (!ownerFence.isCurrent()) {
-      return;
-    }
-
-    if (openedLanguageServerTarget) {
-      return;
-    }
-
-    await goToIndexedSymbolDefinition({
-      canNavigate: ownerFence.isCurrent,
-    });
   }, [
     activeDocumentRef,
     activeEditorPositionRef,
@@ -895,6 +1111,7 @@ export function useWorkbenchLanguageNavigation(
     provideNeonDefinition,
     providePhpFrameworkDefinition,
     resolveCurrentWorkspaceRuntimeOwner,
+    workspaceRoot,
   ]);
 
   const goToSourceDefinition = useCallback(async () => {
@@ -1104,6 +1321,46 @@ function shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
   path: string,
 ): boolean {
   return isJavaScriptTypeScriptNavigationPath(path) && !isSessionPathInWorkspace(rootPath, path);
+}
+
+function boundedNavigationTargetSource(source: string | null, maximumBytes: number): string | null {
+  if (!source || maximumBytes <= 0 || source.length > maximumBytes) {
+    return null;
+  }
+
+  return utf8ByteLength(source) <= maximumBytes ? source : null;
+}
+
+function utf8ByteLength(source: string): number {
+  return new TextEncoder().encode(source).byteLength;
+}
+
+function rejectForeignIdentifiedRequest<T>(
+  rootPath: string,
+  expectedSessionId: number,
+  request: IdentifiedLanguageServerRequest<T>,
+  cancelRequest:
+    ((rootPath: string, sessionId: number, requestId: number) => Promise<void>) | undefined,
+): boolean {
+  const validRequestId = Number.isSafeInteger(request.requestId) && request.requestId > 0;
+  const validSessionId = Number.isSafeInteger(request.sessionId) && request.sessionId > 0;
+  if (request.sessionId === expectedSessionId && validRequestId && validSessionId) {
+    return false;
+  }
+
+  void request.catch(() => undefined);
+  if (cancelRequest && validRequestId && validSessionId) {
+    void cancelRequest(rootPath, request.sessionId, request.requestId).catch(() => undefined);
+  }
+  return true;
+}
+
+function definitionChooserTitle(symbolName: string | null, totalLocations: number | null): string {
+  const title = `Definitions for ${symbolName ?? "symbol"}`;
+
+  return totalLocations === null
+    ? title
+    : `${title} (showing a bounded subset of ${totalLocations})`;
 }
 
 function isJavaScriptTypeScriptNavigationPath(path: string): boolean {

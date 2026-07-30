@@ -3349,7 +3349,9 @@ describe("EditorSurface", () => {
     };
     const replacementModel: FakeModel = {
       getLanguageId: vi.fn(() => "typescript"),
+      getLineCount: vi.fn(() => 2),
       getValue: vi.fn(() => activeDocument.content),
+      getValueLength: vi.fn(() => activeDocument.content.length),
       getVersionId: vi.fn(() => 8),
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
@@ -6189,6 +6191,7 @@ class InvoiceServiceTest extends TestCase
           monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={runningJavaScriptTypeScriptRuntimeStatus()}
           onCursorPositionChange={onCursorPositionChange}
           onGoBack={vi.fn()}
           onGoForward={vi.fn()}
@@ -6205,6 +6208,7 @@ class InvoiceServiceTest extends TestCase
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -6285,12 +6289,14 @@ class InvoiceServiceTest extends TestCase
           onOpenClass={vi.fn()}
           onOpenFile={vi.fn()}
           onOpenFileStructure={vi.fn()}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={runningJavaScriptTypeScriptRuntimeStatus()}
           runCommand={runCommand}
           onRevealTargetHandled={vi.fn()}
           onRevertChangeHunk={vi.fn()}
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -6321,10 +6327,10 @@ class InvoiceServiceTest extends TestCase
         editorSurfaceScope: expect.objectContaining({
           documentPath: activeDocument.path,
           modelIdentity: model,
-          ownerKey: null,
+          ownerKey: "/workspace",
         }),
         hasActiveDocument: true,
-        hasWorkspace: false,
+        hasWorkspace: true,
       }),
     );
     expect(onGoToDefinition).not.toHaveBeenCalled();
@@ -6384,12 +6390,19 @@ class InvoiceServiceTest extends TestCase
           return "executed";
         };
         const sharedProps = memoGuardProps(populatedDocument);
+        const managedRuntimeStatus: LanguageServerRuntimeStatus = {
+          capabilities: emptyLanguageServerCapabilities(),
+          kind: "running",
+          rootPath: "/workspace",
+          sessionId: 1,
+        };
 
         return (
           <EditorRuntimeHost>
             <EditorSurface
               {...sharedProps}
               activeDocument={null}
+              javaScriptTypeScriptLanguageServerRuntimeStatus={managedRuntimeStatus}
               onEditorFocused={() => setActiveGroup("empty")}
               runCommand={runCommand}
               runtimeMembership={{ groupId: "empty" }}
@@ -6397,6 +6410,7 @@ class InvoiceServiceTest extends TestCase
             />
             <EditorSurface
               {...sharedProps}
+              javaScriptTypeScriptLanguageServerRuntimeStatus={managedRuntimeStatus}
               onEditorFocused={() => setActiveGroup("populated")}
               onGoToDefinition={fallbackDefinition}
               runCommand={runCommand}
@@ -6527,6 +6541,176 @@ class InvoiceServiceTest extends TestCase
     });
   });
 
+  it("preserves Monaco definition gestures and actions when the managed TypeScript runtime is absent", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          {...memoGuardProps(activeDocument)}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={null}
+          onGoToDefinition={onGoToDefinition}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const position = { column: 7, lineNumber: 2 };
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          metaKey: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position,
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(editor.setPosition).not.toHaveBeenCalledWith(position);
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(stopPropagation).not.toHaveBeenCalled();
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+
+    await editor.gotoDefinitionContribution.gotoDefinition(position, false);
+    expect(editor.gotoDefinitionContributionNavigate).toHaveBeenCalledWith(position, false);
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          middleButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          position,
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledWith(position);
+    expect(editor.trigger).toHaveBeenCalledWith("mouse", "editor.action.revealDefinition", {});
+
+    const f12Action = [...editor.addAction.mock.calls]
+      .reverse()
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.dispatchF12");
+    f12Action?.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.action.revealDefinition", {});
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+  });
+
+  it("uses managed definition navigation only for its exact runtime lease and restores Monaco on cleanup", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\nconsole.log(value);\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const originalGotoDefinition = editor.gotoDefinitionContribution.gotoDefinition;
+    const onGoToDefinition = vi.fn();
+    const managedRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 9,
+    };
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const renderSurface = (status: LanguageServerRuntimeStatus | null) =>
+      root.render(
+        <EditorSurface
+          {...memoGuardProps(activeDocument)}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={status}
+          onGoToDefinition={onGoToDefinition}
+          workspaceRoot="/workspace"
+        />,
+      );
+
+    await act(async () => {
+      renderSurface(managedRuntimeStatus);
+      await Promise.resolve();
+    });
+
+    expect(editor.gotoDefinitionContribution.gotoDefinition).not.toBe(originalGotoDefinition);
+    await editor.gotoDefinitionContribution.gotoDefinition({ column: 7, lineNumber: 2 }, false);
+    expect(editor.gotoDefinitionContributionNavigate).not.toHaveBeenCalled();
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          metaKey: true,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          position: { column: 7, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    const managedF12Action = [...editor.addAction.mock.calls]
+      .reverse()
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.dispatchF12");
+    managedF12Action?.run();
+    expect(onGoToDefinition).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      renderSurface(null);
+      await Promise.resolve();
+    });
+    expect(editor.gotoDefinitionContribution.gotoDefinition).toBe(originalGotoDefinition);
+
+    await act(async () => {
+      renderSurface(managedRuntimeStatus);
+      await Promise.resolve();
+    });
+    expect(editor.gotoDefinitionContribution.gotoDefinition).not.toBe(originalGotoDefinition);
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    expect(editor.gotoDefinitionContribution.gotoDefinition).toBe(originalGotoDefinition);
+    expect(editor.gotoDefinitionContributionDispose).not.toHaveBeenCalled();
+  });
+
   it("neutralizes Monaco's built-in Cmd-hover definition navigation without disposing the contribution so only explicit Cmd+click / Cmd+B navigate", async () => {
     stubNavigatorPlatform("MacIntel");
 
@@ -6645,6 +6829,7 @@ class InvoiceServiceTest extends TestCase
           onCursorPositionChange={vi.fn()}
           onGoBack={vi.fn()}
           onGoForward={vi.fn()}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={runningJavaScriptTypeScriptRuntimeStatus()}
           onGoToDefinition={onGoToDefinition}
           onGoToImplementationAt={vi.fn()}
           onGoToSuperMethod={vi.fn()}
@@ -6658,6 +6843,7 @@ class InvoiceServiceTest extends TestCase
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -6727,6 +6913,7 @@ class InvoiceServiceTest extends TestCase
           onCursorPositionChange={vi.fn()}
           onGoBack={vi.fn()}
           onGoForward={vi.fn()}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={runningJavaScriptTypeScriptRuntimeStatus()}
           onGoToDefinition={onGoToDefinition}
           onGoToImplementationAt={vi.fn()}
           onGoToSuperMethod={vi.fn()}
@@ -6740,6 +6927,7 @@ class InvoiceServiceTest extends TestCase
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -11798,6 +11986,7 @@ class Foo
           onCursorPositionChange={vi.fn()}
           onGoBack={vi.fn()}
           onGoForward={vi.fn()}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={runningJavaScriptTypeScriptRuntimeStatus()}
           onGoToDefinition={onGoToDefinition}
           onGoToImplementationAt={onGoToImplementationAt}
           onGoToSuperMethod={vi.fn()}
@@ -11811,6 +12000,7 @@ class Foo
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -11927,6 +12117,53 @@ class Foo
     },
   );
 
+  it("falls back to Monaco when an explicit unmanaged F12 definition binding is unavailable", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const runCommand = vi.fn<CommandExecutionRunner>(() => "disabled");
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          keymap: {
+            ...defaultKeymapSettings("mac"),
+            "editor.goToDefinition": "F12",
+          },
+          runCommand,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const f12Action = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.dispatchF12");
+    f12Action?.run();
+
+    expect(runCommand).toHaveBeenCalledWith(
+      "editor.goToDefinition",
+      expect.objectContaining({ hasActiveDocument: true }),
+    );
+    expect(editor.trigger).toHaveBeenCalledExactlyOnceWith(
+      "keyboard",
+      "editor.action.revealDefinition",
+      {},
+    );
+  });
+
   it("registers reference shortcuts and preserves Monaco fallbacks without a command runner", async () => {
     stubNavigatorPlatform("MacIntel");
 
@@ -12029,6 +12266,93 @@ class Foo
       expect(editor.trigger).not.toHaveBeenCalled();
     },
   );
+
+  it.each<CommandExecutionOutcome>(["executed", "missing"])(
+    "keeps managed references in the truthful workbench panel when the command is %s",
+    async (outcome) => {
+      const activeDocument: EditorDocument = {
+        content: "const value = 1;\n",
+        language: "typescript",
+        name: "example.ts",
+        path: "/workspace/src/example.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: { fsPath: activeDocument.path, path: activeDocument.path },
+      };
+      const editor = createEditor(model);
+      const runCommand = vi.fn<CommandExecutionRunner>(() => outcome);
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = createMonaco(model);
+
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(activeDocument),
+            javaScriptTypeScriptLanguageServerRuntimeStatus:
+              runningJavaScriptTypeScriptRuntimeStatus(),
+            runCommand,
+            workspaceRoot: "/workspace",
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      const findReferencesAction = editor.addAction.mock.calls
+        .map(([action]) => action)
+        .find((action) => action.id === "mockor.findReferences");
+      findReferencesAction?.run();
+
+      expect(runCommand).toHaveBeenCalledWith(
+        "editor.findReferences",
+        expect.objectContaining({ hasWorkspace: true }),
+      );
+      expect(editor.trigger).not.toHaveBeenCalledWith(
+        "keyboard",
+        "editor.action.goToReferences",
+        {},
+      );
+    },
+  );
+
+  it("keeps Monaco references available for a non-TypeScript document beside a managed runtime", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nfunction value(): int { return 1; }\n",
+      language: "php",
+      name: "example.php",
+      path: "/workspace/src/example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          javaScriptTypeScriptLanguageServerRuntimeStatus:
+            runningJavaScriptTypeScriptRuntimeStatus(),
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const findReferencesAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.findReferences");
+    findReferencesAction?.run();
+
+    expect(editor.trigger).toHaveBeenCalledExactlyOnceWith(
+      "keyboard",
+      "editor.action.goToReferences",
+      {},
+    );
+  });
 
   it("preserves reference fallbacks when registry commands are missing", async () => {
     const activeDocument: EditorDocument = {
@@ -12163,7 +12487,15 @@ class Foo
       editorSurfaceMocks.monaco = createMonaco(model);
 
       await act(async () => {
-        root.render(createElement(EditorSurface, { ...props, runCommand }));
+        root.render(
+          createElement(EditorSurface, {
+            ...props,
+            javaScriptTypeScriptLanguageServerRuntimeStatus:
+              runningJavaScriptTypeScriptRuntimeStatus(),
+            runCommand,
+            workspaceRoot: "/workspace",
+          }),
+        );
         await Promise.resolve();
       });
 
@@ -14800,6 +15132,7 @@ class Foo
       const keymap = defaultKeymapSettings();
       const goBack = vi.fn();
       const goToDefinition = vi.fn();
+      const managedRuntimeStatus = runningJavaScriptTypeScriptRuntimeStatus();
       const renderPanes = (revision: number) =>
         createElement(
           "div",
@@ -14807,10 +15140,12 @@ class Foo
           ...Array.from({ length: paneCount }, (_, paneIndex) =>
             createElement(EditorSurface, {
               ...memoGuardProps(activeDocument),
+              javaScriptTypeScriptLanguageServerRuntimeStatus: managedRuntimeStatus,
               key: `pane-${paneIndex}`,
               keymap,
               onGoBack: () => goBack(revision, paneIndex),
               onGoToDefinition: () => goToDefinition(revision, paneIndex),
+              workspaceRoot: "/workspace",
             }),
           ),
         );
@@ -16936,6 +17271,17 @@ function debugDecorationCalls(editor: FakeEditor) {
   return [...breakpointDecorationCalls(editor), ...stoppedLineDecorationCalls(editor)];
 }
 
+function runningJavaScriptTypeScriptRuntimeStatus(
+  rootPath = "/workspace",
+): LanguageServerRuntimeStatus {
+  return {
+    capabilities: emptyLanguageServerCapabilities(),
+    kind: "running",
+    rootPath,
+    sessionId: 1,
+  };
+}
+
 function memoGuardProps(
   activeDocument: EditorDocument,
   overrides: Partial<{
@@ -17655,7 +18001,9 @@ function languageServerFeaturesGateway() {
     documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
-    executeCommandLocations: vi.fn(async () => []),
+    executeCommandLocations: vi.fn((_rootPath, _command, sessionId?: number) =>
+      identified([], sessionId),
+    ),
     foldingRanges: vi.fn(async () => []),
     formatting: vi.fn(async () => []),
     hover: vi.fn((_rootPath, _position, sessionId?: number) => identified(null, sessionId)),

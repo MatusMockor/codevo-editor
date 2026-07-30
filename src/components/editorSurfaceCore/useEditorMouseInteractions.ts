@@ -22,6 +22,7 @@ interface EditorMouseInteractionsOptions {
   readonly activeDocumentRef: MutableRefObject<EditorDocument | null>;
   readonly changeHunksRef: MutableRefObject<readonly EditorChangeHunk[]>;
   readonly commandExecutionRunnerRef: MutableRefObject<CommandExecutionRunner | undefined>;
+  readonly customDefinitionNavigationEnabled: boolean;
   readonly editor: Monaco.editor.IStandaloneCodeEditor | null;
   readonly goToDefinition: () => void;
   readonly editorActionCommandPortRef: MutableRefObject<{
@@ -48,6 +49,7 @@ export function useEditorMouseInteractions({
   activeDocumentRef,
   changeHunksRef,
   commandExecutionRunnerRef,
+  customDefinitionNavigationEnabled,
   editor,
   goToDefinition,
   editorActionCommandPortRef,
@@ -114,10 +116,18 @@ export function useEditorMouseInteractions({
       const contentPosition = event.target.position;
 
       if (isContentText && shouldNavigateToDefinition && contentPosition) {
+        if (!customDefinitionNavigationEnabled && !isMiddleClick) {
+          return;
+        }
+
         event.event.preventDefault();
         event.event.stopPropagation();
         editor.setPosition(contentPosition);
-        runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", goToDefinition);
+        if (customDefinitionNavigationEnabled) {
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", goToDefinition);
+        } else {
+          editor.trigger("mouse", "editor.action.revealDefinition", {});
+        }
         return;
       }
 
@@ -212,6 +222,7 @@ export function useEditorMouseInteractions({
     activeDocumentRef,
     changeHunksRef,
     commandExecutionRunnerRef,
+    customDefinitionNavigationEnabled,
     editor,
     gitBlameLinesRef,
     goToDefinition,

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type {
   IdentifiedLanguageServerRequest,
+  IdentifiedLanguageServerRequestsPort,
   JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
@@ -17,6 +18,7 @@ import {
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 import {
+  MAX_NAVIGATION_LOCATION_TARGETS,
   useWorkbenchLanguageNavigation,
   type WorkbenchLanguageNavigation,
   type WorkbenchLanguageNavigationDependencies,
@@ -106,6 +108,31 @@ function identifiedRequest<T>(value: T, sessionId: number): IdentifiedLanguageSe
   });
 }
 
+function deferredIdentifiedRequest<T>(requestId: number, sessionId = 7) {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return {
+    promise: Object.assign(promise, { requestId, sessionId }),
+    reject,
+    resolve,
+  };
+}
+
+function installRequestCancellation(gateway: JavaScriptTypeScriptLanguageServerFeaturesGateway) {
+  const cancelRequest = vi.fn(async () => undefined);
+  Object.assign(gateway, {
+    identifiedRequests: {
+      cancelRequest,
+    } as unknown as IdentifiedLanguageServerRequestsPort,
+  });
+  return cancelRequest;
+}
+
 function javaScriptTypeScriptLanguageServerGateway(): JavaScriptTypeScriptLanguageServerFeaturesGateway {
   return {
     ...languageServerGateway(),
@@ -118,6 +145,9 @@ function javaScriptTypeScriptLanguageServerGateway(): JavaScriptTypeScriptLangua
     ),
     declaration: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
     definition: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    executeCommandLocations: vi.fn((_rootPath, _command, sessionId) =>
+      identifiedRequest([], sessionId),
+    ),
     documentHighlights: vi.fn((_rootPath, _position, sessionId) =>
       identifiedRequest([], sessionId),
     ),
@@ -148,12 +178,16 @@ function workspaceFiles(): WorkspaceFileGateway {
     deletePath: vi.fn(async () => undefined),
     readDirectory: vi.fn(async () => []),
     readTextFile: vi.fn(async () => ""),
+    readTextFileBounded: vi.fn(async () => ({ content: "", status: "ok" as const })),
     renamePath: vi.fn(async () => undefined),
     writeTextFile: vi.fn(async () => undefined),
   };
 }
 
-function renderNavigation(overrides: Partial<WorkbenchLanguageNavigationDependencies> = {}) {
+function renderNavigation(
+  overrides: Partial<WorkbenchLanguageNavigationDependencies> = {},
+  strict = false,
+) {
   const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
   const source = "{varType App\\Model\\Consent $consent}\n{$consent->name}";
   const activeDocument: EditorDocument = {
@@ -229,7 +263,15 @@ function renderNavigation(overrides: Partial<WorkbenchLanguageNavigationDependen
   }
 
   act(() => {
-    root.render(<Harness />);
+    root.render(
+      strict ? (
+        <StrictMode>
+          <Harness />
+        </StrictMode>
+      ) : (
+        <Harness />
+      ),
+    );
   });
 
   return { api: () => api as WorkbenchLanguageNavigation, deps, root, source };
@@ -456,7 +498,7 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
     });
 
     const bladeRequest = vi.mocked(bladeHarness.deps.provideBladeDefinition).mock.calls[0]?.[2];
-    expect(bladeRequest?.canNavigate()).toBe(true);
+    expect(bladeRequest?.canNavigate()).toBe(false);
 
     const latteHarness = renderNavigation();
 
@@ -471,9 +513,9 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
     const indexedRequest = vi.mocked(latteHarness.deps.goToIndexedSymbolDefinition).mock
       .calls[0]?.[0];
 
-    expect(latteRequest?.canNavigate()).toBe(true);
-    expect(contextualRequest?.canNavigate()).toBe(true);
-    expect(indexedRequest?.canNavigate()).toBe(true);
+    expect(latteRequest?.canNavigate()).toBe(false);
+    expect(contextualRequest?.canNavigate()).toBe(false);
+    expect(indexedRequest?.canNavigate()).toBe(false);
 
     bladeHarness.root.unmount();
     latteHarness.root.unmount();
@@ -668,6 +710,33 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
     harness.root.unmount();
   });
 
+  it("fails closed and cancels generic definition metadata from a foreign session", async () => {
+    const gateway = languageServerGateway();
+    const cancelRequest = vi.fn(async () => undefined);
+    const foreignRequest = Object.assign(
+      Promise.resolve([navigationLocation(`${ROOT}/src/foreign.php`)]),
+      { requestId: 107, sessionId: 8 },
+    );
+    Object.assign(gateway, {
+      identifiedRequests: {
+        cancelRequest,
+        definition: vi.fn(() => foreignRequest),
+      } as unknown as IdentifiedLanguageServerRequestsPort,
+    });
+    const harness = renderPhpNavigation(`${ROOT}/src/unused.php`, {
+      languageServerFeaturesGateway: gateway,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 8, 107);
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+    expect(harness.deps.setEditorRevealTarget).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+
   it("does not call phpactor when an explicit-root document lease is unavailable", async () => {
     const requestLease = vi.fn(async () => null);
     const harness = renderPhpNavigation(`${ROOT}/app/Services/Service.php`, {
@@ -708,9 +777,9 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
       navigationLocation(`${ROOT}/src/Second.php`, 2),
     ]);
     const files = workspaceFiles();
-    vi.mocked(files.readTextFile).mockImplementation(async () => {
+    vi.mocked(files.readTextFileBounded!).mockImplementation(async () => {
       leaseCurrent = false;
-      return "<?php function service() {}";
+      return { content: "<?php function service() {}", status: "ok" };
     });
     const harness = renderPhpNavigation(`${ROOT}/src/Unused.php`, {
       isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => leaseCurrent),
@@ -731,7 +800,7 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
       await harness.api().goToImplementation();
     });
 
-    expect(files.readTextFile).toHaveBeenCalledTimes(1);
+    expect(files.readTextFileBounded).toHaveBeenCalledTimes(1);
     expect(harness.deps.setImplementationChooser).not.toHaveBeenCalledWith(
       expect.objectContaining({ targets: expect.any(Array) }),
     );
@@ -850,9 +919,11 @@ function navigationLocation(path: string, line = 3) {
 describe("useWorkbenchLanguageNavigation JavaScript and TypeScript definitions", () => {
   function renderTypeScriptDefinitionNavigation(
     locations: ReturnType<typeof navigationLocation>[],
+    gateway = javaScriptTypeScriptLanguageServerGateway(),
   ) {
-    const gateway = javaScriptTypeScriptLanguageServerGateway();
-    vi.mocked(gateway.definition).mockResolvedValue(locations);
+    vi.mocked(gateway.definition).mockImplementation((_rootPath, _position, sessionId) =>
+      identifiedRequest(locations, sessionId),
+    );
     const source = "service();";
 
     return renderNavigation({
@@ -899,6 +970,33 @@ describe("useWorkbenchLanguageNavigation JavaScript and TypeScript definitions",
       path: targetPath,
       position: { column: 3, lineNumber: 4 },
     });
+    harness.root.unmount();
+  });
+
+  it("finalizes reveal and history after the opener activates the expected target model", async () => {
+    const targetPath = `${ROOT}/packages/service/src/activated.ts`;
+    const harness = renderTypeScriptDefinitionNavigation([navigationLocation(targetPath)]);
+    vi.mocked(harness.deps.openPathForNavigation).mockImplementation(async (path) => {
+      harness.deps.activeDocumentRef.current = {
+        content: "export const activated = true;",
+        language: "typescript",
+        name: "activated.ts",
+        path,
+        savedContent: "export const activated = true;",
+      };
+      return true;
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.recordNavigationLocationSnapshot).toHaveBeenCalledTimes(1);
+    expect(harness.deps.setEditorRevealTarget).toHaveBeenCalledWith({
+      path: targetPath,
+      position: { column: 3, lineNumber: 4 },
+    });
+    expect(harness.deps.setMessage).toHaveBeenCalledWith("Opened definition activated.ts:4:3");
     harness.root.unmount();
   });
 
@@ -1007,6 +1105,331 @@ describe("useWorkbenchLanguageNavigation JavaScript and TypeScript definitions",
     expect(harness.deps.setMessage).not.toHaveBeenCalled();
     expect(harness.deps.setImplementationChooser).not.toHaveBeenCalledWith(
       expect.objectContaining({ targets: expect.any(Array) }),
+    );
+    harness.root.unmount();
+  });
+
+  it("fails closed and cancels a definition response identified for a foreign session", async () => {
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    const cancelRequest = installRequestCancellation(gateway);
+    const harness = renderTypeScriptDefinitionNavigation([], gateway);
+    vi.mocked(gateway.definition).mockReturnValue(
+      Object.assign(Promise.resolve([navigationLocation(`${ROOT}/src/foreign.ts`)]), {
+        requestId: 106,
+        sessionId: 8,
+      }),
+    );
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 8, 106);
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+    expect(harness.deps.setEditorRevealTarget).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+
+  it("recreates the definition coordinator after the StrictMode effect probe", async () => {
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    vi.mocked(gateway.definition).mockImplementation((_rootPath, _position, sessionId) =>
+      identifiedRequest([navigationLocation(`${ROOT}/src/strict.ts`)], sessionId),
+    );
+    const source = "service();";
+    const harness = renderNavigation(
+      {
+        activeDocumentRef: {
+          current: {
+            content: source,
+            language: "typescript",
+            name: "source.ts",
+            path: `${ROOT}/src/source.ts`,
+            savedContent: source,
+          },
+        },
+        activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+        javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+        javaScriptTypeScriptLanguageServerRuntimeStatus: {
+          capabilities: {
+            ...emptyLanguageServerCapabilities(),
+            definition: true,
+          },
+          kind: "running",
+          rootPath: ROOT,
+          sessionId: 7,
+        },
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+      },
+      true,
+    );
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      `${ROOT}/src/strict.ts`,
+      expect.any(Object),
+    );
+    harness.root.unmount();
+  });
+
+  it("cancels a superseded click and only opens the latest reverse-order result", async () => {
+    const first = deferredIdentifiedRequest<ReturnType<typeof navigationLocation>[]>(101);
+    const second = deferredIdentifiedRequest<ReturnType<typeof navigationLocation>[]>(102);
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    const cancelRequest = installRequestCancellation(gateway);
+    vi.mocked(gateway.definition)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const harness = renderTypeScriptDefinitionNavigation([], gateway);
+    let firstNavigation!: Promise<void>;
+    let secondNavigation!: Promise<void>;
+
+    await act(async () => {
+      firstNavigation = harness.api().goToDefinition();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      secondNavigation = harness.api().goToDefinition();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 101);
+
+    second.resolve([navigationLocation(`${ROOT}/src/latest.ts`, 2)]);
+    await act(async () => {
+      await secondNavigation;
+    });
+    first.resolve([navigationLocation(`${ROOT}/src/stale.ts`, 1)]);
+    await act(async () => {
+      await firstNavigation;
+    });
+
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledTimes(1);
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      `${ROOT}/src/latest.ts`,
+      expect.objectContaining({ shouldCommit: expect.any(Function) }),
+    );
+    harness.root.unmount();
+  });
+
+  it("revalidates the exact latest request after an older target open settles", async () => {
+    let resolveStaleOpen!: (opened: boolean) => void;
+    const staleOpen = new Promise<boolean>((resolve) => {
+      resolveStaleOpen = resolve;
+    });
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    vi.mocked(gateway.definition)
+      .mockReturnValueOnce(identifiedRequest([navigationLocation(`${ROOT}/src/stale.ts`)], 7))
+      .mockReturnValueOnce(identifiedRequest([navigationLocation(`${ROOT}/src/latest.ts`)], 7));
+    const harness = renderTypeScriptDefinitionNavigation([], gateway);
+    vi.mocked(harness.deps.openPathForNavigation).mockImplementation(async (path) =>
+      path.endsWith("/stale.ts") ? staleOpen : true,
+    );
+    let firstNavigation!: Promise<void>;
+
+    await act(async () => {
+      firstNavigation = harness.api().goToDefinition();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await harness.api().goToDefinition();
+      await firstNavigation;
+    });
+    resolveStaleOpen(true);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.deps.setEditorRevealTarget).toHaveBeenCalledTimes(1);
+    expect(harness.deps.setEditorRevealTarget).toHaveBeenCalledWith({
+      path: `${ROOT}/src/latest.ts`,
+      position: { column: 3, lineNumber: 4 },
+    });
+    expect(harness.deps.recordNavigationLocationSnapshot).toHaveBeenCalledTimes(1);
+    expect(harness.deps.setMessage).toHaveBeenCalledTimes(1);
+    harness.root.unmount();
+  });
+
+  it("drops a pending definition after the exact document model changes", async () => {
+    const pending = deferredIdentifiedRequest<ReturnType<typeof navigationLocation>[]>(103);
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    installRequestCancellation(gateway);
+    vi.mocked(gateway.definition).mockReturnValue(pending.promise);
+    const harness = renderTypeScriptDefinitionNavigation([], gateway);
+    const activeDocumentRef = harness.deps.activeDocumentRef;
+    const original = activeDocumentRef.current as EditorDocument;
+    let navigation!: Promise<void>;
+
+    await act(async () => {
+      navigation = harness.api().goToDefinition();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    activeDocumentRef.current = {
+      ...original,
+      content: "service(edited);",
+    };
+    pending.resolve([navigationLocation(`${ROOT}/src/stale.ts`)]);
+
+    await act(async () => {
+      await navigation;
+    });
+
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+    expect(harness.deps.setEditorRevealTarget).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+
+  it("times out and cancels a hung backend definition request", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = deferredIdentifiedRequest<ReturnType<typeof navigationLocation>[]>(104);
+      const gateway = javaScriptTypeScriptLanguageServerGateway();
+      const cancelRequest = installRequestCancellation(gateway);
+      const harness = renderTypeScriptDefinitionNavigation([], gateway);
+      vi.mocked(gateway.definition).mockReturnValue(pending.promise);
+      let navigation!: Promise<void>;
+
+      await act(async () => {
+        navigation = harness.api().goToDefinition();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_500);
+        await navigation;
+      });
+
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 104);
+      expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+      harness.root.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending backend definition request on unmount", async () => {
+    const pending = deferredIdentifiedRequest<ReturnType<typeof navigationLocation>[]>(105);
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    const cancelRequest = installRequestCancellation(gateway);
+    const harness = renderTypeScriptDefinitionNavigation([], gateway);
+    vi.mocked(gateway.definition).mockReturnValue(pending.promise);
+    let navigation!: Promise<void>;
+
+    await act(async () => {
+      navigation = harness.api().goToDefinition();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      harness.root.unmount();
+      await navigation;
+    });
+
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 105);
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+  });
+
+  it("bounds huge definition projections and reports the incomplete chooser truthfully", async () => {
+    const locations = Array.from({ length: 1_000 }, (_, index) =>
+      navigationLocation(`${ROOT}/src/target-${index}.ts`, index),
+    );
+    const harness = renderTypeScriptDefinitionNavigation(locations);
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.workspaceFiles.readTextFileBounded).toHaveBeenCalledTimes(
+      MAX_NAVIGATION_LOCATION_TARGETS,
+    );
+    const chooserCalls = vi.mocked(harness.deps.setImplementationChooser).mock.calls;
+    const chooser = chooserCalls[chooserCalls.length - 1]?.[0];
+    expect(chooser?.targets).toHaveLength(MAX_NAVIGATION_LOCATION_TARGETS);
+    expect(chooser?.title).toBe("Definitions for name (showing a bounded subset of 1000)");
+    harness.root.unmount();
+  });
+
+  it("caps the total source bytes retained while preparing definition targets", async () => {
+    const locations = Array.from({ length: 20 }, (_, index) =>
+      navigationLocation(`${ROOT}/src/target-${index}.ts`, index),
+    );
+    const harness = renderTypeScriptDefinitionNavigation(locations);
+    vi.mocked(harness.deps.workspaceFiles.readTextFileBounded!).mockImplementation(
+      async (_path, maximumBytes) => ({
+        content: "x".repeat(maximumBytes),
+        status: "ok",
+      }),
+    );
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(harness.deps.workspaceFiles.readTextFileBounded).toHaveBeenCalledTimes(4);
+    expect(
+      vi
+        .mocked(harness.deps.workspaceFiles.readTextFileBounded!)
+        .mock.calls.reduce((total, call) => total + call[1], 0),
+    ).toBe(512 * 1024);
+    harness.root.unmount();
+  });
+
+  it("stops target disk preparation when a newer click supersedes it", async () => {
+    let resolveRead!: (source: string) => void;
+    const blockedRead = new Promise<string>((resolve) => {
+      resolveRead = resolve;
+    });
+    const gateway = javaScriptTypeScriptLanguageServerGateway();
+    vi.mocked(gateway.definition)
+      .mockReturnValueOnce(
+        identifiedRequest(
+          [
+            navigationLocation(`${ROOT}/src/slow-a.ts`),
+            navigationLocation(`${ROOT}/src/slow-b.ts`),
+          ],
+          7,
+        ),
+      )
+      .mockReturnValueOnce(identifiedRequest([navigationLocation(`${ROOT}/src/latest.ts`)], 7));
+    const readTextFileBounded = vi
+      .fn()
+      .mockReturnValueOnce(blockedRead.then((content) => ({ content, status: "ok" as const })))
+      .mockResolvedValue({ content: "export const latest = true;", status: "ok" as const });
+    const harness = renderTypeScriptDefinitionNavigation([], gateway);
+    harness.deps.workspaceFiles.readTextFileBounded = readTextFileBounded;
+    let firstNavigation!: Promise<void>;
+
+    await act(async () => {
+      firstNavigation = harness.api().goToDefinition();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+    resolveRead("export const stale = true;");
+    await act(async () => {
+      await firstNavigation;
+    });
+
+    expect(readTextFileBounded).toHaveBeenCalledTimes(1);
+    expect(readTextFileBounded).not.toHaveBeenCalledWith(
+      `${ROOT}/src/slow-b.ts`,
+      expect.any(Number),
+    );
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledTimes(1);
+    expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
+      `${ROOT}/src/latest.ts`,
+      expect.any(Object),
     );
     harness.root.unmount();
   });
@@ -1163,9 +1586,9 @@ describe.each([
       navigationLocation(`${ROOT}/src/Second.ts`, 2),
     ]);
     const files = workspaceFiles();
-    vi.mocked(files.readTextFile).mockImplementation(async () => {
+    vi.mocked(files.readTextFileBounded!).mockImplementation(async () => {
       currentOwner = replacementOwner;
-      return "export function service() {}";
+      return { content: "export function service() {}", status: "ok" };
     });
     const source = language === "php" ? "<?php service();" : "service();";
     const status: LanguageServerRuntimeStatus = {
@@ -1202,7 +1625,7 @@ describe.each([
       await harness.api().goToImplementation();
     });
 
-    expect(files.readTextFile).toHaveBeenCalledTimes(1);
+    expect(files.readTextFileBounded).toHaveBeenCalledTimes(1);
     expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
     expect(harness.deps.setImplementationChooser).not.toHaveBeenCalledWith(
       expect.objectContaining({ targets: expect.any(Array) }),

@@ -62,11 +62,7 @@ import {
   type KeymapSettings,
 } from "../domain/keymap";
 import { monacoKeybindingsForShortcut } from "./monacoKeybindings";
-import {
-  requestRegisteredCommand,
-  runCommandChain,
-  runRegisteredCommand,
-} from "../application/commandChain";
+import { requestRegisteredCommand, runRegisteredCommand } from "../application/commandChain";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 import {
   defaultLargeSmartDocumentPolicy,
@@ -109,11 +105,7 @@ import {
   type WorkspaceSessionViewState,
 } from "../domain/settings";
 import { type JavaScriptTypeScriptWorkspaceEditApplicationContext } from "./javascriptTypescriptLanguageServerMonacoProviders";
-import {
-  disableJavaScriptTypeScriptDefinitionGesture,
-  javaScriptTypeScriptDefinitionGesture,
-  useJavaScriptTypeScriptTransientNavigationModels,
-} from "./javascriptTypescriptMonacoProviderRegistration";
+import { useJavaScriptTypeScriptTransientNavigationModels } from "./javascriptTypescriptMonacoProviderRegistration";
 import {
   type LanguageServerMonacoDocumentRequestLease,
   type PhpCodeActionDescriptor,
@@ -140,10 +132,7 @@ import { clampNumber } from "./editorChangeMonacoMappings";
 import type { EditorSurfaceCoverageProps } from "./useEditorSurfaceCoverageDecorations";
 import { useEditorBreakpointDecorations } from "./useEditorBreakpointDecorations";
 import { useEditorRuntimeDecorations } from "./useEditorRuntimeDecorations";
-import {
-  isJavaScriptTypeScriptRuntimeActiveForWorkspace,
-  isLargeSmartModel,
-} from "./editorSurfaceModelGuards";
+import { isLargeSmartModel } from "./editorSurfaceModelGuards";
 import type { EditorRuntimeMembershipInput } from "./editorRuntimeMembership";
 import {
   useEditorSurfaceFrameworkProviderRefs,
@@ -158,7 +147,6 @@ import {
 import { loadJsonSchemaForDocument } from "../infrastructure/jsonSchemaLoader";
 import {
   modelMatchesWorkspacePath,
-  modelPath,
   type WorkspaceIdentityDescriptor,
 } from "./phpMonacoDocumentContext";
 import {
@@ -171,7 +159,6 @@ import {
   triggerEditorSurfaceCommand,
   type SurroundWithRequest,
 } from "./editorSurfaceCore/editorCommands";
-import { pruneClosedPaths } from "./editorSurfaceCore/modelViewState";
 import {
   EMPTY_BOOKMARK_LINES,
   EMPTY_BREADCRUMB_SYMBOLS,
@@ -193,6 +180,11 @@ import { useEditorNavigationLifecycle } from "./editorSurfaceCore/useEditorNavig
 import { useEditorBreadcrumbLifecycle } from "./editorSurfaceCore/useEditorBreadcrumbLifecycle";
 import { useEditorInputLifecycle } from "./editorSurfaceCore/useEditorInputLifecycle";
 import { useEditorActiveModelLifecycle } from "./editorSurfaceCore/useEditorActiveModelLifecycle";
+import { useEditorModelCachePruning } from "./editorSurfaceCore/useEditorModelCachePruning";
+import {
+  configuredF12NeedsNativeDefinition,
+  useEditorDefinitionNavigation,
+} from "./editorSurfaceCore/useEditorDefinitionNavigation";
 import {
   type EditorChangePreviewState,
   useEditorMouseInteractions,
@@ -725,6 +717,16 @@ function EditorSurfaceComponent({
   const javaScriptTypeScriptRuntimeStatusRef = useRef(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
   );
+  const {
+    customNavigationEnabled: customDefinitionNavigationEnabled,
+    managedDocumentActive: managedJavaScriptTypeScriptDocumentActive,
+    managedRuntimeActive: managedJavaScriptTypeScriptRuntimeActive,
+  } = useEditorDefinitionNavigation({
+    activeDocument,
+    editor: editorApi,
+    runtimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
+    workspaceRoot,
+  });
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
   const getLanguageServerDocumentLifecycleIdentityRef = useRef(
     getLanguageServerDocumentLifecycleIdentity,
@@ -769,6 +771,7 @@ function EditorSurfaceComponent({
     featureGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
     flushPendingDocumentRef: flushPendingJavaScriptTypeScriptRef,
     getDocumentSyncVersionRef: getJavaScriptTypeScriptDocumentSyncVersionRef,
+    largeSmartDocumentPolicyRef,
     modelMatchesDocument: modelMatchesProject,
     reportErrorRef: errorReporterRef,
     runtimeStatus: javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -1145,6 +1148,10 @@ function EditorSurfaceComponent({
     templateLanguageProvidersRef,
     userSnippetsRef,
   };
+  const toRuntimeDiagnosticMarker = useCallback(
+    (diagnostic: LanguageServerDiagnostic) => toMonacoDiagnosticMarker(monacoApi!, diagnostic),
+    [monacoApi],
+  );
   const runtimeRegistration: EditorRuntimeSurfaceRegistration = {
     activePath: activeDocument?.path ?? null,
     diagnosticsByPath: languageServerDiagnosticsByPath,
@@ -1168,6 +1175,8 @@ function EditorSurfaceComponent({
       javaScriptTypeScriptProviderContext: {
         applyWorkspaceEdit: (edit, editContext) =>
           applyJavaScriptTypeScriptWorkspaceEditRef.current(edit, editContext),
+        cancelRequest:
+          javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests?.cancelRequest,
         completeFunctionCalls: javaScriptTypeScriptCompleteFunctionCalls,
         featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
         flushPendingDocumentChange: (path) => flushPendingJavaScriptTypeScriptRef.current(path),
@@ -1215,12 +1224,9 @@ function EditorSurfaceComponent({
       ...navigationHistoryPaths,
       ...(runtimeMembership?.retainPaths ?? []),
     ],
-    toMarker: (diagnostic) => toMonacoDiagnosticMarker(monacoApi!, diagnostic),
+    toMarker: toRuntimeDiagnosticMarker,
     typescriptJavascriptDefaults: {
-      managedLanguageServerActive: isJavaScriptTypeScriptRuntimeActiveForWorkspace(
-        javaScriptTypeScriptLanguageServerRuntimeStatus,
-        workspaceRoot,
-      ),
+      managedLanguageServerActive: managedJavaScriptTypeScriptRuntimeActive,
       validationEnabled: javaScriptTypeScriptValidationEnabled,
     },
     workspaceIdentityDescriptor: completeWorkspaceIdentityDescriptor,
@@ -1424,14 +1430,26 @@ function EditorSurfaceComponent({
         keybindings: [monacoApi.KeyCode.F12],
         run: () => {
           if (configuredF12CommandIds.length > 0) {
-            runCommandChain(commandExecutionRunnerRef.current, configuredF12CommandIds);
+            if (
+              configuredF12NeedsNativeDefinition({
+                commandIds: configuredF12CommandIds,
+                customNavigationEnabled: customDefinitionNavigationEnabled,
+                runCommand: commandExecutionRunnerRef.current,
+              })
+            ) {
+              triggerEditorAction(editorApi, "editor.action.revealDefinition");
+            }
             return;
           }
 
           if (definitionUsesDefaultShortcut) {
-            runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", () =>
-              editorActionCommandPortRef.current.goToDefinition(),
-            );
+            if (customDefinitionNavigationEnabled) {
+              runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", () =>
+                editorActionCommandPortRef.current.goToDefinition(),
+              );
+            } else {
+              triggerEditorAction(editorApi, "editor.action.revealDefinition");
+            }
           }
         },
       }),
@@ -1439,10 +1457,16 @@ function EditorSurfaceComponent({
         id: "mockor.goToDefinition",
         label: "Go to Definition",
         keybindings: keybinding("editor.goToDefinition"),
-        run: () =>
+        run: () => {
+          if (!customDefinitionNavigationEnabled) {
+            triggerEditorAction(editorApi, "editor.action.revealDefinition");
+            return;
+          }
+
           runRegisteredCommand(commandExecutionRunnerRef, "editor.goToDefinition", () =>
             editorActionCommandPortRef.current.goToDefinition(),
-          ),
+          );
+        },
       }),
       editorApi.addAction({
         id: "mockor.quickDefinition",
@@ -1509,10 +1533,16 @@ function EditorSurfaceComponent({
         label: "Find All References",
         keybindingContext: "!referenceSearchVisible && !inReferenceSearchEditor",
         keybindings: keybinding("editor.findReferences"),
-        run: () =>
+        run: () => {
+          if (managedJavaScriptTypeScriptDocumentActive) {
+            requestRegisteredCommand(commandExecutionRunnerRef, "editor.findReferences");
+            return;
+          }
+
           runRegisteredCommand(commandExecutionRunnerRef, "editor.findReferences", () =>
             triggerEditorAction(editorApi, "editor.action.goToReferences"),
-          ),
+          );
+        },
       }),
       editorApi.addAction({
         id: "mockor.findFileReferences",
@@ -1850,7 +1880,13 @@ function EditorSurfaceComponent({
     return () => {
       disposables.forEach((disposable) => disposable?.dispose());
     };
-  }, [editorApi, keymap, monacoApi]);
+  }, [
+    customDefinitionNavigationEnabled,
+    editorApi,
+    keymap,
+    managedJavaScriptTypeScriptDocumentActive,
+    monacoApi,
+  ]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {
@@ -1906,6 +1942,7 @@ function EditorSurfaceComponent({
     activeDocumentRef,
     changeHunksRef,
     commandExecutionRunnerRef,
+    customDefinitionNavigationEnabled,
     editor: editorApi,
     editorActionCommandPortRef,
     gitBlameLinesRef,
@@ -1920,16 +1957,6 @@ function EditorSurfaceComponent({
     testGutterTargetsRef,
     toggleBreakpointAction,
   });
-
-  useEffect(() => {
-    const gesture = javaScriptTypeScriptDefinitionGesture(editorApi);
-
-    if (typeof gesture?.gotoDefinition !== "function") {
-      return;
-    }
-
-    disableJavaScriptTypeScriptDefinitionGesture(gesture);
-  }, [editorApi]);
 
   useEditorChangeDecorations({
     activeDocumentPath,
@@ -2229,48 +2256,19 @@ function EditorSurfaceComponent({
     };
   }, [activeDocumentLanguage, activeDocumentPath, recoverVisibleLocalPhpDiagnostics]);
 
-  useEffect(() => {
-    if (!monacoApi) {
-      return;
-    }
-
-    // EditorSurface lives for the whole app session, so the per-path caches grow
-    // without bound as distinct files are visited. Prune entries whose model is
-    // no longer open (the live Monaco model set is the source of truth for "open
-    // documents") to stop the slow leak. Keyed on the active path so it re-runs
-    // when files are opened, closed, or switched. Conservative by construction:
-    // entries for still-open paths are never dropped.
-    const openPaths = new Set(
-      monacoApi.editor
-        .getModels()
-        .filter((model) => {
-          const path = modelPath(model);
-          return Boolean(path && modelMatchesProject(model, workspaceRoot, path));
-        })
-        .map((model) => modelPath(model))
-        .filter((path): path is string => path !== null),
-    );
-    const localDiagnosticPaths = new Set([
-      ...Object.keys(syntaxDiagnosticsByPath),
-      ...Object.keys(phpInspectionDiagnosticCountsByPath),
-    ]);
-    localDiagnosticPaths.forEach((path) => {
-      if (!openPaths.has(path)) {
-        onLocalPhpDiagnosticsChange(path, []);
-      }
-    });
-
-    setSyntaxDiagnosticsByPath((current) => pruneClosedPaths(current, openPaths));
-    setPhpInspectionDiagnosticCountsByPath((current) => pruneClosedPaths(current, openPaths));
-    setBreadcrumbSymbolsByPath((current) => pruneClosedPaths(current, openPaths));
-  }, [
-    activeDocument?.path,
-    monacoApi,
+  useEditorModelCachePruning({
+    activeDocumentPath: activeDocumentPath ?? null,
+    breadcrumbSymbolsByPath,
+    monaco: monacoApi,
     onLocalPhpDiagnosticsChange,
     phpInspectionDiagnosticCountsByPath,
+    setBreadcrumbSymbolsByPath,
+    setPhpInspectionDiagnosticCountsByPath,
+    setSyntaxDiagnosticsByPath,
     syntaxDiagnosticsByPath,
+    workspaceAuthority: workspaceIdentityDescriptor,
     workspaceRoot,
-  ]);
+  });
 
   useEffect(() => {
     if (activeDocument?.language === "php") {
