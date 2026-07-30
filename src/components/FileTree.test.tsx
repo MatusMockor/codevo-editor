@@ -79,6 +79,81 @@ describe("FileTree", () => {
     expect(onPrefetchFile).not.toHaveBeenCalled();
   });
 
+  it("moves from accessible loading to a bounded retry state and recovers", () => {
+    const onRetryDirectory = vi.fn();
+    const onToggleDirectory = vi.fn();
+    const expandedDirectories = new Set(["/workspace/src"]);
+
+    renderTree({
+      expandedDirectories,
+      loadingDirectories: new Set(["/workspace/src"]),
+      onRetryDirectory,
+      onToggleDirectory,
+    });
+
+    const loadingRow = rowByLabel("src");
+    expect(loadingRow.getAttribute("aria-busy")).toBe("true");
+    expect(loadingRow.querySelector('[role="status"]')?.textContent).toBe("Loading...");
+    expect(retryButton()).toBeNull();
+
+    renderTree({
+      expandedDirectories,
+      failedDirectories: new Set(["/workspace/src"]),
+      onRetryDirectory,
+      onToggleDirectory,
+    });
+
+    const failedRow = rowByLabel("src");
+    const failedRowShell = failedRow.closest<HTMLElement>(".tree-row-shell");
+    expect(failedRow.hasAttribute("aria-busy")).toBe(false);
+    expect(failedRowShell?.style.height).toBe("32px");
+    expect(failedRow.style.height).toBe("32px");
+    expect(failedRow.querySelector('[role="status"]')?.textContent).toBe("Could not load");
+
+    const retry = retryButton();
+    expect(retry).not.toBeNull();
+    expect(retry?.getAttribute("aria-label")).toBe("Retry loading src");
+    expect(failedRow.contains(retry)).toBe(false);
+
+    act(() => {
+      retry?.focus();
+      retry?.click();
+    });
+
+    expect(document.activeElement).toBe(retry);
+    expect(onRetryDirectory).toHaveBeenCalledTimes(1);
+    expect(onRetryDirectory).toHaveBeenCalledWith("/workspace/src");
+    expect(onToggleDirectory).not.toHaveBeenCalled();
+
+    act(() => failedRow.click());
+    expect(onToggleDirectory).toHaveBeenCalledWith("/workspace/src");
+
+    renderTree({
+      expandedDirectories,
+      failedDirectories: new Set(),
+      onRetryDirectory,
+      onToggleDirectory,
+    });
+
+    expect(rowByLabel("src").querySelector('[role="status"]')).toBeNull();
+    expect(retryButton()).toBeNull();
+  });
+
+  it("keeps loading authoritative over a previous failure", () => {
+    renderTree({
+      expandedDirectories: new Set(["/workspace/src"]),
+      failedDirectories: new Set(["/workspace/src"]),
+      loadingDirectories: new Set(["/workspace/src"]),
+      onRetryDirectory: vi.fn(),
+    });
+
+    const directoryRow = rowByLabel("src");
+    expect(directoryRow.getAttribute("aria-busy")).toBe("true");
+    expect(directoryRow.querySelector('[role="status"]')?.textContent).toBe("Loading...");
+    expect(directoryRow.textContent).not.toContain("Could not load");
+    expect(retryButton()).toBeNull();
+  });
+
   it("renders the file context menu and dispatches every entry action", () => {
     const onRenameEntry = vi.fn();
     const onRevealEntry = vi.fn();
@@ -144,16 +219,12 @@ describe("FileTree", () => {
     const firstItem = menuItems()[0];
     act(() => firstItem.focus());
     act(() =>
-      firstItem.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
-      ),
+      firstItem.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })),
     );
     expect(document.activeElement).toBe(menuItems()[1]);
 
     act(() =>
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
-      ),
+      document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
     );
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
@@ -199,9 +270,7 @@ describe("FileTree", () => {
       });
       viewport.getBoundingClientRect.mockClear();
 
-      const tree = host.querySelector<HTMLElement>(
-        '[aria-label="Workspace files"]',
-      );
+      const tree = host.querySelector<HTMLElement>('[aria-label="Workspace files"]');
       expect(tree).not.toBeNull();
 
       act(() => {
@@ -330,6 +399,10 @@ describe("FileTree", () => {
     });
   }
 
+  function retryButton(): HTMLButtonElement | null {
+    return host.querySelector<HTMLButtonElement>(".tree-row-retry");
+  }
+
   function menuItems(): HTMLButtonElement[] {
     return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
   }
@@ -345,11 +418,7 @@ describe("FileTree", () => {
   }
 });
 
-function fileEntry(
-  path: string,
-  name: string,
-  kind: "directory" | "file",
-): FileEntry {
+function fileEntry(path: string, name: string, kind: "directory" | "file"): FileEntry {
   return { kind, name, path };
 }
 
@@ -401,16 +470,8 @@ function installAnimationFrameMock() {
     },
     restore() {
       callbacks.clear();
-      restoreProperty(
-        globalThis,
-        "requestAnimationFrame",
-        originalRequestAnimationFrame,
-      );
-      restoreProperty(
-        globalThis,
-        "cancelAnimationFrame",
-        originalCancelAnimationFrame,
-      );
+      restoreProperty(globalThis, "requestAnimationFrame", originalRequestAnimationFrame);
+      restoreProperty(globalThis, "cancelAnimationFrame", originalCancelAnimationFrame);
     },
   };
 }

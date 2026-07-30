@@ -13,6 +13,7 @@ const TREE_ROW_OVERSCAN = 8;
 const TREE_VIEWPORT_FALLBACK_HEIGHT = 360;
 const TREE_PADDING_TOP = 6;
 const TREE_PADDING_BOTTOM = 10;
+const EMPTY_FAILED_DIRECTORIES: ReadonlySet<string> = new Set();
 
 interface VisibleTreeRow {
   entry: FileEntry;
@@ -30,6 +31,7 @@ interface FileTreeProps {
   fileStatusesByPath?: Record<string, GitChangeStatus>;
   expandedDirectories: Set<string>;
   loadingDirectories: Set<string>;
+  failedDirectories?: ReadonlySet<string>;
   activePath: string | null;
   revealActivePath: boolean;
   revealActivePathSignal: number;
@@ -39,6 +41,7 @@ interface FileTreeProps {
   onRevealEntry?(entry: FileEntry): void;
   onOpenEntryInTerminal?(entry: FileEntry): void;
   onToggleDirectory(path: string): void;
+  onRetryDirectory?(path: string): void;
   onPrefetchFile?(entry: FileEntry): void;
   onCancelPrefetchFile?(entry: FileEntry): void;
 }
@@ -49,6 +52,7 @@ function FileTreeComponent({
   fileStatusesByPath,
   expandedDirectories,
   loadingDirectories,
+  failedDirectories = EMPTY_FAILED_DIRECTORIES,
   activePath,
   revealActivePath,
   revealActivePathSignal,
@@ -58,6 +62,7 @@ function FileTreeComponent({
   onRevealEntry,
   onOpenEntryInTerminal,
   onToggleDirectory,
+  onRetryDirectory,
   onPrefetchFile,
   onCancelPrefetchFile,
 }: FileTreeProps) {
@@ -340,12 +345,18 @@ function FileTreeComponent({
                 isActive={entry.path === activePath}
                 isExpanded={isDirectory && expandedDirectories.has(entry.path)}
                 isLoading={isDirectory && loadingDirectories.has(entry.path)}
+                loadFailed={
+                  isDirectory &&
+                  expandedDirectories.has(entry.path) &&
+                  failedDirectories.has(entry.path)
+                }
                 key={entry.path}
                 level={level}
                 onOpenFile={onOpenFile}
                 onPreviewFile={onPreviewFile}
                 onOpenContextMenu={openContextMenu}
                 onToggleDirectory={onToggleDirectory}
+                onRetryDirectory={onRetryDirectory}
                 onPrefetchFile={onPrefetchFile}
                 onCancelPrefetchFile={onCancelPrefetchFile}
                 status={fileStatusesByPath?.[entry.path]}
@@ -387,12 +398,14 @@ interface TreeRowProps {
   isActive: boolean;
   isExpanded: boolean;
   isLoading: boolean;
+  loadFailed: boolean;
   status?: GitChangeStatus;
   activeRowRef: RefObject<HTMLButtonElement | null>;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onOpenContextMenu(entry: FileEntry, position: { x: number; y: number }): void;
   onToggleDirectory(path: string): void;
+  onRetryDirectory?(path: string): void;
   onPrefetchFile?(entry: FileEntry): void;
   onCancelPrefetchFile?(entry: FileEntry): void;
 }
@@ -403,89 +416,119 @@ const TreeRow = memo(function TreeRow({
   isActive,
   isExpanded,
   isLoading,
+  loadFailed,
   status,
   activeRowRef,
   onOpenFile,
   onPreviewFile,
   onOpenContextMenu,
   onToggleDirectory,
+  onRetryDirectory,
   onPrefetchFile,
   onCancelPrefetchFile,
 }: TreeRowProps) {
   const isDirectory = entry.kind === "directory";
   const isExpandable = isDirectory;
+  const showLoadFailure = loadFailed && !isLoading;
   const title = status ? `${entry.path} (${gitStatusTitle(status)})` : entry.path;
 
   return (
-    <button
-      aria-expanded={isExpandable ? isExpanded : undefined}
-      className={isActive ? "tree-row tree-row-virtual active" : "tree-row tree-row-virtual"}
-      onClick={(event) => {
-        if (event.detail > 1) {
-          return;
-        }
-
-        if (isDirectory) {
-          onToggleDirectory(entry.path);
-          return;
-        }
-
-        onPreviewFile(entry);
-      }}
-      onMouseEnter={() => {
-        if (isDirectory) {
-          return;
-        }
-
-        onPrefetchFile?.(entry);
-      }}
-      onMouseLeave={() => {
-        if (isDirectory) {
-          return;
-        }
-
-        onCancelPrefetchFile?.(entry);
-      }}
-      onFocus={() => {
-        if (isDirectory) {
-          return;
-        }
-
-        onPrefetchFile?.(entry);
-      }}
-      onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        onOpenContextMenu(entry, { x: event.clientX, y: event.clientY });
-      }}
-      ref={isActive ? activeRowRef : undefined}
+    <div
+      className="tree-row-shell"
       style={
         {
           "--tree-level": level,
           height: `${TREE_ROW_HEIGHT}px`,
         } as CSSProperties
       }
-      title={title}
-      type="button"
     >
-      <ChevronRight
-        aria-hidden="true"
-        className={getChevronClassName(isExpandable, isExpanded)}
-        size={15}
-      />
-      <TreeEntryIcon kind={entry.kind} expanded={isExpanded} />
-      <span>{entry.name}</span>
-      {isLoading ? (
-        <small aria-live="polite" className="tree-row-meta">
-          Loading...
-        </small>
+      <button
+        aria-busy={isLoading || undefined}
+        aria-expanded={isExpandable ? isExpanded : undefined}
+        className={[
+          "tree-row tree-row-virtual",
+          isActive ? "active" : "",
+          showLoadFailure ? "has-load-failure" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        onClick={(event) => {
+          if (event.detail > 1) {
+            return;
+          }
+
+          if (isDirectory) {
+            onToggleDirectory(entry.path);
+            return;
+          }
+
+          onPreviewFile(entry);
+        }}
+        onMouseEnter={() => {
+          if (isDirectory) {
+            return;
+          }
+
+          onPrefetchFile?.(entry);
+        }}
+        onMouseLeave={() => {
+          if (isDirectory) {
+            return;
+          }
+
+          onCancelPrefetchFile?.(entry);
+        }}
+        onFocus={() => {
+          if (isDirectory) {
+            return;
+          }
+
+          onPrefetchFile?.(entry);
+        }}
+        onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onOpenContextMenu(entry, { x: event.clientX, y: event.clientY });
+        }}
+        ref={isActive ? activeRowRef : undefined}
+        style={{ height: `${TREE_ROW_HEIGHT}px` }}
+        title={title}
+        type="button"
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={getChevronClassName(isExpandable, isExpanded)}
+          size={15}
+        />
+        <TreeEntryIcon kind={entry.kind} expanded={isExpanded} />
+        <span>{entry.name}</span>
+        {isLoading ? (
+          <small aria-live="polite" className="tree-row-meta" role="status">
+            Loading...
+          </small>
+        ) : showLoadFailure ? (
+          <small aria-live="polite" className="tree-row-meta tree-row-load-failure" role="status">
+            Could not load
+          </small>
+        ) : null}
+        {status ? (
+          <span aria-label={gitStatusTitle(status)} className={getTreeGitStatusClassName(status)}>
+            {gitStatusLabel(status)}
+          </span>
+        ) : null}
+      </button>
+      {showLoadFailure && onRetryDirectory ? (
+        <button
+          aria-label={`Retry loading ${entry.name}`}
+          className="tree-row-retry"
+          onClick={() => onRetryDirectory(entry.path)}
+          title="Retry loading folder"
+          type="button"
+        >
+          Retry
+        </button>
       ) : null}
-      {status ? (
-        <span aria-label={gitStatusTitle(status)} className={getTreeGitStatusClassName(status)}>
-          {gitStatusLabel(status)}
-        </span>
-      ) : null}
-    </button>
+    </div>
   );
 });
 

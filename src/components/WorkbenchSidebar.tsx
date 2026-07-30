@@ -119,12 +119,14 @@ export function WorkbenchSidebar({
           fileStatusesByPath={fileStatusesByPath}
           entriesByDirectory={workbench.entriesByDirectory}
           expandedDirectories={workbench.expandedDirectories}
+          failedDirectories={workbench.failedDirectories}
           loadingDirectories={workbench.loadingDirectories}
           onOpenFile={workbench.openPinnedFile}
           onPreviewFile={workbench.previewFile}
           onOpenEntryInTerminal={workbench.openEntryInTerminal}
           onRenameEntry={workbench.renameEntry}
           onRevealEntry={workbench.revealEntry}
+          onRetryDirectory={workbench.retryDirectory}
           onToggleDirectory={workbench.toggleDirectory}
           onPrefetchFile={workbench.prefetchFile}
           onCancelPrefetchFile={workbench.cancelFilePrefetch}

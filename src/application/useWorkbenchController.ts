@@ -55,10 +55,8 @@ import {
 } from "./workbenchController/useManagedLanguageServerInstallLifecycle";
 import { useWorkspaceOpenRequestLifecycle } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
 import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
-import {
-  loadCompleteWorkspaceDirectoryEntries,
-  useWorkspaceDirectoryLoader,
-} from "./workbenchController/useWorkspaceDirectoryLoader";
+import { loadCompleteWorkspaceDirectoryEntries } from "./workbenchController/useWorkspaceDirectoryLoader";
+import { useWorkspaceDirectoryExplorer } from "./workbenchController/useWorkspaceDirectoryExplorer";
 import { useWorkspaceSessionRestorer } from "./workbenchController/useWorkspaceSessionRestorer";
 import { LatestWorkspaceRequestTokenRegistry } from "./workbenchController/workspaceRequestTokenRegistry";
 import { boundedInFlightDirectoryLoadsFor } from "./workbenchController/boundedInFlightDirectoryLoads";
@@ -440,7 +438,7 @@ import {
   type EditorSplitDirection,
 } from "../domain/editorGroups";
 import { sortBookmarks, type Bookmark } from "../domain/bookmarks";
-import { measureLatency, type LatencyTracker } from "../domain/latencyTracker";
+import type { LatencyTracker } from "../domain/latencyTracker";
 import {
   createWorkspaceTextFileWithContent,
   getFileName,
@@ -1387,6 +1385,32 @@ export function useWorkbenchController(
   const latencyTrackerForRoot = useWorkbenchLatencyTrackerForRoot({
     currentWorkspaceRootRef,
     latencyTrackersByRootRef,
+  });
+  const {
+    adoptCachedDirectoryProjection,
+    cachedDirectoryNeedsRefresh,
+    failedDirectories,
+    loadDirectory,
+    primeCachedDirectoryEntries,
+    refreshCachedExpandedDirectories,
+    resetDirectoryExplorerLifecycle,
+    retryDirectory,
+    toggleDirectory,
+  } = useWorkspaceDirectoryExplorer({
+    currentWorkspaceRootRef,
+    entriesByDirectory,
+    expandedDirectories,
+    inFlightLoadsRef: inFlightDirectoryLoadsRef,
+    latencyTrackerForRoot,
+    openWorkspaceRequestTokenRef,
+    reportError,
+    setEntriesByDirectory,
+    setExpandedDirectories,
+    setLoadingDirectories,
+    setManuallyCollapsedDirectories,
+    setMessage,
+    workspaceFiles,
+    workspaceRoot,
   });
   const quickOpenPrefixDispatch = useQuickOpenPrefixDispatch();
   const {
@@ -2533,6 +2557,7 @@ export function useWorkbenchController(
       setInstallingManagedTypeScriptLanguageServer(false);
       setEntriesByDirectory({});
       setLoadingDirectories(new Set());
+      resetDirectoryExplorerLifecycle();
       setExpandedDirectories(new Set());
       setManuallyCollapsedDirectories(new Set());
       resetEditorSurfaceState();
@@ -2638,17 +2663,6 @@ export function useWorkbenchController(
       setWorkspaceSymbolsResults,
     ],
   );
-
-  const loadDirectory = useWorkspaceDirectoryLoader({
-    currentWorkspaceRootRef,
-    inFlightLoadsRef: inFlightDirectoryLoadsRef,
-    openWorkspaceRequestTokenRef,
-    reportError,
-    setEntriesByDirectory,
-    setLoadingDirectories,
-    setMessage,
-    workspaceFiles,
-  });
 
   const loadPackageScripts = useCallback(
     async (
@@ -3015,6 +3029,7 @@ export function useWorkbenchController(
         }
       }
 
+      primeCachedDirectoryEntries(cachedWorkspaceState, replacingOwnerAtSameRoot);
       phpFrameworkNavigationGenerationRef.current += 1;
       setWorkspaceRoot(path);
       setPackageScriptsByRoot((current) => ({
@@ -3082,9 +3097,12 @@ export function useWorkbenchController(
       restoreJavaScriptTypeScriptDiagnosticsForRoot(path, explicitRuntimeOwner);
 
       if (cachedWorkspaceState) {
-        restoreCachedWorkspaceState(path, cachedWorkspaceState);
+        const cachedWorkspaceSnapshot = cachedWorkspaceState;
+        adoptCachedDirectoryProjection(path, cachedWorkspaceSnapshot);
+        restoreCachedWorkspaceState(path, cachedWorkspaceSnapshot);
         activateCurrentDocumentSessionAuthority();
       } else {
+        resetDirectoryExplorerLifecycle();
         setEntriesByDirectory({});
         setExpandedDirectories(new Set([path]));
         setManuallyCollapsedDirectories(new Set());
@@ -3255,6 +3273,14 @@ export function useWorkbenchController(
 
         if (!isCurrentOpenWorkspaceOwnerRequest()) {
           return;
+        }
+
+        if (cachedWorkspaceState) {
+          refreshCachedExpandedDirectories({
+            isMutationOwnerCurrent: isCurrentOpenWorkspaceOwnerRequest,
+            projection: cachedWorkspaceState,
+            rootPath: path,
+          });
         }
 
         await loadPackageScripts(path, entries ?? [], isCurrentOpenWorkspaceOwnerRequest);
@@ -3596,54 +3622,6 @@ export function useWorkbenchController(
   });
   openFileRef.current = openFile;
 
-  const toggleDirectory = useCallback(
-    async (path: string) => {
-      const isExpanded = expandedDirectories.has(path);
-
-      setExpandedDirectories((current) => {
-        const next = new Set(current);
-
-        if (next.has(path)) {
-          next.delete(path);
-          return next;
-        }
-
-        next.add(path);
-        return next;
-      });
-
-      setManuallyCollapsedDirectories((current) => {
-        const next = new Set(current);
-
-        if (isExpanded) {
-          next.add(path);
-          return next;
-        }
-
-        next.delete(path);
-        return next;
-      });
-
-      if (isExpanded || entriesByDirectory[path]) {
-        return;
-      }
-
-      // Folder-expand latency: only timed here (the interactive expand of an
-      // uncached directory), not for the many programmatic `loadDirectory`
-      // callers (workspace-root load, session restore, reveal), so the metric
-      // reflects what the user feels when clicking a folder chevron.
-      if (!workspaceRoot) {
-        await loadDirectory(path);
-        return;
-      }
-
-      await measureLatency(latencyTrackerForRoot(workspaceRoot), "folderExpand", () =>
-        loadDirectory(path),
-      );
-    },
-    [entriesByDirectory, expandedDirectories, latencyTrackerForRoot, loadDirectory, workspaceRoot],
-  );
-
   const revealPathInTree = useCallback(
     (path: string, respectManualCollapses: boolean) => {
       const requestedRoot = workspaceRoot;
@@ -3692,7 +3670,7 @@ export function useWorkbenchController(
         if (
           (respectManualCollapses &&
             isBlockedByManuallyCollapsedDirectory(directory, manuallyCollapsedDirectories)) ||
-          entriesByDirectory[directory] ||
+          (entriesByDirectory[directory] && !cachedDirectoryNeedsRefresh(directory)) ||
           loadingDirectories.has(directory)
         ) {
           continue;
@@ -3703,6 +3681,7 @@ export function useWorkbenchController(
     },
     [
       entriesByDirectory,
+      cachedDirectoryNeedsRefresh,
       loadDirectory,
       loadingDirectories,
       manuallyCollapsedDirectories,
@@ -7934,6 +7913,7 @@ export function useWorkbenchController(
     closeExternalFileCompare: externalFileConflicts.closeCompare,
     entriesByDirectory,
     expandedDirectories,
+    failedDirectories,
     expandedPhpFilePaths,
     fileStructureCanIncludeInheritedMembers,
     fileStructureInitialQuery,
@@ -8189,6 +8169,7 @@ export function useWorkbenchController(
     refreshPhpTree,
     refreshGitStatus,
     revealDirectoryInTree,
+    retryDirectory,
     revertGitChanges,
     revertActiveEditorChangeHunk,
     saveActiveDocument,

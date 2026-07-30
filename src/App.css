@@ -1133,6 +1133,11 @@ button {
   min-width: 0;
 }
 
+.tree-row-shell {
+  position: relative;
+  width: 100%;
+}
+
 .tree-row {
   display: grid;
   width: calc(100% - 16px);
@@ -1151,6 +1156,34 @@ button {
   transition:
     background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard);
+}
+
+.tree-row.has-load-failure {
+  padding-right: 58px;
+}
+
+.tree-row-retry {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  z-index: 1;
+  min-width: 42px;
+  margin: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 22px;
+  padding: 0 5px;
+  transform: translateY(-50%);
+}
+
+.tree-row-retry:hover,
+.tree-row-retry:focus-visible {
+  background: var(--color-hover);
+  color: var(--color-text-strong);
 }
 
 .tree-row:hover {
@@ -1179,6 +1212,10 @@ button {
 .tree-row-virtual {
   margin: 0;
   width: calc(100% - 16px);
+}
+
+.tree-row-shell > .tree-row {
+  margin: 0;
 }
 
 .tree-virtual-window {
@@ -1224,6 +1261,10 @@ button {
 
 .tree-row-meta {
   color: var(--color-text-subtle);
+}
+
+.tree-row-load-failure {
+  color: var(--color-danger);
 }
 
 .tree-row-status-added,

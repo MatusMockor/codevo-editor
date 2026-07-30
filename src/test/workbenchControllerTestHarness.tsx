@@ -92,6 +92,7 @@ export interface RenderControllerOptions {
   editorGroupFocusRunner?: WorkbenchControllerOptions["editorGroupFocusRunner"];
   gitGateway?: GitGateway;
   localHistoryGateway?: LocalHistoryGateway;
+  onWorkbenchRender?: (workbench: WorkbenchController) => void;
   markdownPreviewRenderer?: WorkbenchControllerOptions["markdownPreviewRenderer"];
   indexProgressGateway?: IndexProgressGateway;
   javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
@@ -194,6 +195,7 @@ export function setupWorkbenchControllerTestHarness() {
     editorGroupFocusRunner,
     gitGateway,
     localHistoryGateway,
+    onWorkbenchRender,
     markdownPreviewRenderer,
     javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
     indexProgressGateway,
@@ -306,6 +308,7 @@ export function setupWorkbenchControllerTestHarness() {
           dependencies={dependencies}
           onWorkbench={(nextWorkbench) => {
             workbench = nextWorkbench;
+            onWorkbenchRender?.(nextWorkbench);
           }}
           renderQuickOpenSurfaces={renderQuickOpenSurfaces}
         />,
