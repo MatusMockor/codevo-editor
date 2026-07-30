@@ -10,8 +10,8 @@ use std::{
     collections::HashMap,
     path::{Component, Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        Arc, Condvar, Mutex,
     },
 };
 use tauri::{AppHandle, Emitter};
@@ -84,7 +84,10 @@ impl WorkspaceFileChangeEmitter for AppHandleWorkspaceFileChangeEmitter {
 pub struct WorkspaceFileChangeWatchRegistry {
     next_generation: AtomicU64,
     sessions: Mutex<HashMap<String, WorkspaceFileChangeWatchSession>>,
-    recovery_by_root: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    recovery_by_root: Mutex<HashMap<String, Arc<WorkspaceWatchRecovery>>>,
+    transitions: Mutex<HashMap<String, WorkspaceWatchTransition>>,
+    stop_completed: Condvar,
+    stopping_all: AtomicBool,
 }
 
 struct WorkspaceFileChangeWatchSession {
@@ -93,47 +96,247 @@ struct WorkspaceFileChangeWatchSession {
 }
 
 impl WorkspaceFileChangeWatchSession {
-    fn stop(&mut self) {
+    fn revoke(&self) {
         self.authority.revoke();
+    }
+
+    fn stop_backend(&mut self) {
         self.session.stop();
     }
 }
 
+fn stop_watch_backend(watch_session: &mut WorkspaceFileChangeWatchSession) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        watch_session.stop_backend();
+    }))
+    .is_err()
+    {
+        watch_session
+            .authority
+            .recovery
+            .pending
+            .store(true, Ordering::Release);
+    }
+}
+
+enum WorkspaceWatchTransitionKind {
+    Starting {
+        cancelled: Arc<AtomicBool>,
+        authority: Arc<Mutex<Option<Arc<WorkspaceWatchSinkAuthority>>>>,
+    },
+    Stopping,
+}
+
+struct PendingWorkspaceWatchSession {
+    authority: Arc<WorkspaceWatchSinkAuthority>,
+    session: Option<Box<dyn WorkspaceWatchSession>>,
+}
+
+impl PendingWorkspaceWatchSession {
+    fn commit(mut self) -> Box<dyn WorkspaceWatchSession> {
+        self.session
+            .take()
+            .expect("pending workspace watch session")
+    }
+}
+
+impl Drop for PendingWorkspaceWatchSession {
+    fn drop(&mut self) {
+        if let Some(mut session) = self.session.take() {
+            self.authority.revoke();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.stop()));
+        }
+    }
+}
+
+struct WorkspaceWatchTransition {
+    token: Arc<()>,
+    kind: WorkspaceWatchTransitionKind,
+}
+
+struct WorkspaceWatchTransitionReservation<'a> {
+    root_key: String,
+    token: Arc<()>,
+    transitions: &'a Mutex<HashMap<String, WorkspaceWatchTransition>>,
+    stop_completed: &'a Condvar,
+}
+
+impl Drop for WorkspaceWatchTransitionReservation<'_> {
+    fn drop(&mut self) {
+        let mut transitions = self
+            .transitions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if transitions
+            .get(&self.root_key)
+            .is_some_and(|transition| Arc::ptr_eq(&transition.token, &self.token))
+        {
+            transitions.remove(&self.root_key);
+        }
+        self.stop_completed.notify_all();
+    }
+}
+
 const MAX_WORKSPACE_WATCH_BATCH_EVENTS: usize = 4_096;
+const MAX_WORKSPACE_WATCH_RECOVERY_ROOTS: usize = 128;
 const MAX_SAFE_JAVASCRIPT_WATCH_GENERATION: u64 = 9_007_199_254_740_991;
+const WORKSPACE_WATCH_TRANSITION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+struct WorkspaceWatchRecovery {
+    pending: AtomicBool,
+    publishers: AtomicUsize,
+}
+
+impl WorkspaceWatchRecovery {
+    fn new() -> Self {
+        Self {
+            pending: AtomicBool::new(false),
+            publishers: AtomicUsize::new(0),
+        }
+    }
+
+    fn is_settled(&self) -> bool {
+        self.publishers.load(Ordering::Acquire) == 0 && !self.pending.load(Ordering::Acquire)
+    }
+}
 
 struct WorkspaceWatchSinkAuthority {
     active: AtomicBool,
     generation: u64,
-    recovery_pending: Arc<AtomicBool>,
+    recovery: Arc<WorkspaceWatchRecovery>,
+    #[cfg(test)]
+    before_emit: Mutex<Option<Arc<WorkspaceWatchBeforeEmitGate>>>,
 }
 
 impl WorkspaceWatchSinkAuthority {
     #[cfg(test)]
     fn new(generation: u64) -> Self {
-        Self::with_recovery(generation, Arc::new(AtomicBool::new(false)))
+        Self::with_recovery(generation, Arc::new(WorkspaceWatchRecovery::new()))
     }
 
-    fn with_recovery(generation: u64, recovery_pending: Arc<AtomicBool>) -> Self {
+    fn with_recovery(generation: u64, recovery: Arc<WorkspaceWatchRecovery>) -> Self {
         Self {
             active: AtomicBool::new(true),
             generation,
-            recovery_pending,
+            recovery,
+            #[cfg(test)]
+            before_emit: Mutex::new(None),
         }
     }
 
     fn is_active(&self) -> bool {
-        self.active.load(Ordering::Acquire)
+        self.active.load(Ordering::SeqCst)
     }
 
     fn revoke(&self) {
-        self.active.store(false, Ordering::Release);
+        self.active.store(false, Ordering::SeqCst);
+        if self.recovery.publishers.load(Ordering::SeqCst) > 0 {
+            self.recovery.pending.store(true, Ordering::Release);
+        }
     }
 
-    fn publish_if_active(&self, publish: impl FnOnce()) {
-        if self.is_active() {
-            publish();
+    fn acquire_publish(&self) -> Option<WorkspaceWatchPublishGuard<'_>> {
+        if !self.is_active() {
+            return None;
         }
+
+        self.recovery.publishers.fetch_add(1, Ordering::SeqCst);
+        if !self.is_active() {
+            self.recovery.publishers.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+
+        Some(WorkspaceWatchPublishGuard {
+            recovery: &self.recovery,
+        })
+    }
+
+    #[cfg(test)]
+    fn install_before_emit_gate(&self, gate: Arc<WorkspaceWatchBeforeEmitGate>) {
+        *self.before_emit.lock().expect("before emit gate") = Some(gate);
+    }
+
+    #[cfg(test)]
+    fn wait_before_emit_if_configured(&self) {
+        let gate = self.before_emit.lock().expect("before emit gate").clone();
+        if let Some(gate) = gate {
+            gate.wait();
+        }
+    }
+}
+
+struct WorkspaceWatchPublishGuard<'a> {
+    recovery: &'a WorkspaceWatchRecovery,
+}
+
+impl Drop for WorkspaceWatchPublishGuard<'_> {
+    fn drop(&mut self) {
+        self.recovery.publishers.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+struct WorkspaceWatchRecoveryClaim<'a> {
+    recovery: &'a WorkspaceWatchRecovery,
+    claimed: bool,
+    committed: bool,
+}
+
+impl<'a> WorkspaceWatchRecoveryClaim<'a> {
+    fn acquire(recovery: &'a WorkspaceWatchRecovery) -> Self {
+        Self {
+            recovery,
+            claimed: recovery.pending.swap(false, Ordering::AcqRel),
+            committed: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for WorkspaceWatchRecoveryClaim<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.recovery.pending.store(true, Ordering::Release);
+        }
+    }
+}
+
+#[cfg(test)]
+struct WorkspaceWatchBeforeEmitGate {
+    entered: AtomicBool,
+    released: AtomicBool,
+}
+
+#[cfg(test)]
+impl WorkspaceWatchBeforeEmitGate {
+    fn new() -> Self {
+        Self {
+            entered: AtomicBool::new(false),
+            released: AtomicBool::new(false),
+        }
+    }
+
+    fn wait(&self) {
+        self.entered.store(true, Ordering::Release);
+        while !self.released.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+    }
+
+    fn wait_until_entered(&self) {
+        for _ in 0..100 {
+            if self.entered.load(Ordering::Acquire) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("publish did not reach the before-emit gate");
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::Release);
     }
 }
 
@@ -143,6 +346,9 @@ impl WorkspaceFileChangeWatchRegistry {
             next_generation: AtomicU64::new(1),
             sessions: Mutex::new(HashMap::new()),
             recovery_by_root: Mutex::new(HashMap::new()),
+            transitions: Mutex::new(HashMap::new()),
+            stop_completed: Condvar::new(),
+            stopping_all: AtomicBool::new(false),
         }
     }
 
@@ -179,14 +385,87 @@ impl WorkspaceFileChangeWatchRegistry {
             .canonicalize()
             .map_err(|error| format!("Failed to watch workspace: {error}"))?;
         let root_key = workspace_watch_id(&root);
-        let mut sessions = self.sessions.lock().map_err(|error| error.to_string())?;
-
-        if let Some(session) = sessions.get(&root_key) {
-            return Ok(WorkspaceFileWatchStartReceipt {
-                root_path: root_key,
-                watch_generation: session.authority.generation,
-            });
-        }
+        let transition_deadline = std::time::Instant::now() + WORKSPACE_WATCH_TRANSITION_TIMEOUT;
+        let (start_reservation, start_cancelled, start_authority) = loop {
+            let sessions = self
+                .sessions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if self.stopping_all.load(Ordering::SeqCst) {
+                return Err("Workspace watchers are stopping.".to_string());
+            }
+            if let Some(session) = sessions.get(&root_key) {
+                return Ok(WorkspaceFileWatchStartReceipt {
+                    root_path: root_key,
+                    watch_generation: session.authority.generation,
+                });
+            }
+            let mut transitions = self
+                .transitions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if !transitions.contains_key(&root_key) {
+                if self.stopping_all.load(Ordering::SeqCst) {
+                    return Err("Workspace watchers are stopping.".to_string());
+                }
+                let mut recovery_by_root = self
+                    .recovery_by_root
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                recovery_by_root.retain(|key, recovery| {
+                    sessions.contains_key(key)
+                        || transitions.contains_key(key)
+                        || !recovery.is_settled()
+                });
+                if sessions.len() + transitions.len() >= MAX_WORKSPACE_WATCH_RECOVERY_ROOTS {
+                    return Err(format!(
+                        "Workspace watch recovery capacity ({MAX_WORKSPACE_WATCH_RECOVERY_ROOTS}) was reached."
+                    ));
+                }
+                if !recovery_by_root.contains_key(&root_key)
+                    && recovery_by_root.len() >= MAX_WORKSPACE_WATCH_RECOVERY_ROOTS
+                {
+                    return Err(format!(
+                        "Workspace watch recovery capacity ({MAX_WORKSPACE_WATCH_RECOVERY_ROOTS}) was reached."
+                    ));
+                }
+                let token = Arc::new(());
+                let cancelled = Arc::new(AtomicBool::new(false));
+                let authority = Arc::new(Mutex::new(None));
+                transitions.insert(
+                    root_key.clone(),
+                    WorkspaceWatchTransition {
+                        token: Arc::clone(&token),
+                        kind: WorkspaceWatchTransitionKind::Starting {
+                            cancelled: Arc::clone(&cancelled),
+                            authority: Arc::clone(&authority),
+                        },
+                    },
+                );
+                let reservation = WorkspaceWatchTransitionReservation {
+                    root_key: root_key.clone(),
+                    token,
+                    transitions: &self.transitions,
+                    stop_completed: &self.stop_completed,
+                };
+                drop(transitions);
+                drop(sessions);
+                break (reservation, cancelled, authority);
+            }
+            drop(sessions);
+            let now = std::time::Instant::now();
+            if now >= transition_deadline {
+                return Err("Workspace watch transition timed out.".to_string());
+            }
+            let (transitions, timeout) = self
+                .stop_completed
+                .wait_timeout(transitions, transition_deadline - now)
+                .unwrap_or_else(|error| error.into_inner());
+            if timeout.timed_out() && transitions.contains_key(&root_key) {
+                return Err("Workspace watch transition timed out.".to_string());
+            }
+            drop(transitions);
+        };
 
         let generation = self
             .next_generation
@@ -194,26 +473,76 @@ impl WorkspaceFileChangeWatchRegistry {
                 (generation < MAX_SAFE_JAVASCRIPT_WATCH_GENERATION).then_some(generation + 1)
             })
             .map_err(|_| "Workspace watch generation space is exhausted.".to_string())?;
-        let recovery_pending = self
-            .recovery_by_root
-            .lock()
-            .map_err(|error| error.to_string())?
-            .entry(root_key.clone())
-            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
-            .clone();
+        let recovery = {
+            let sessions = self
+                .sessions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let transitions = self
+                .transitions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let mut recovery_by_root = self
+                .recovery_by_root
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            recovery_by_root.retain(|key, recovery| {
+                sessions.contains_key(key)
+                    || transitions.contains_key(key)
+                    || !recovery.is_settled()
+            });
+            if !recovery_by_root.contains_key(&root_key)
+                && recovery_by_root.len() >= MAX_WORKSPACE_WATCH_RECOVERY_ROOTS
+            {
+                return Err(format!(
+                    "Workspace watch recovery capacity ({MAX_WORKSPACE_WATCH_RECOVERY_ROOTS}) was reached."
+                ));
+            }
+            recovery_by_root
+                .entry(root_key.clone())
+                .or_insert_with(|| Arc::new(WorkspaceWatchRecovery::new()))
+                .clone()
+        };
         let authority = Arc::new(WorkspaceWatchSinkAuthority::with_recovery(
-            generation,
-            recovery_pending,
+            generation, recovery,
         ));
+        *start_authority
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(Arc::clone(&authority));
+        if start_cancelled.load(Ordering::Acquire) || self.stopping_all.load(Ordering::SeqCst) {
+            authority.revoke();
+            self.remove_settled_recovery(&root_key, &authority.recovery);
+            return Err("Workspace watch start was cancelled.".to_string());
+        }
         let sink = sink_factory(&root_key, Arc::clone(&authority));
-        let session = match watcher.watch(WorkspaceWatchRequest::new(root), Arc::clone(&sink)) {
-            Ok(session) => session,
-            Err(error) => {
+        let session = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            watcher.watch(WorkspaceWatchRequest::new(root), Arc::clone(&sink))
+        })) {
+            Ok(Ok(session)) => session,
+            Ok(Err(error)) => {
+                authority.recovery.pending.store(true, Ordering::Release);
                 authority.revoke();
+                self.remove_settled_recovery(&root_key, &authority.recovery);
                 return Err(format!("Failed to start workspace watcher: {error}"));
             }
+            Err(_) => {
+                authority.recovery.pending.store(true, Ordering::Release);
+                authority.revoke();
+                self.remove_settled_recovery(&root_key, &authority.recovery);
+                return Err("Failed to start workspace watcher: backend panicked.".to_string());
+            }
         };
-        if authority.recovery_pending.load(Ordering::Acquire) {
+        let pending_session = PendingWorkspaceWatchSession {
+            authority: Arc::clone(&authority),
+            session: Some(session),
+        };
+        if start_cancelled.load(Ordering::Acquire) {
+            authority.recovery.pending.store(true, Ordering::Release);
+            drop(pending_session);
+            self.remove_settled_recovery(&root_key, &authority.recovery);
+            return Err("Workspace watch start was cancelled.".to_string());
+        }
+        if authority.recovery.pending.load(Ordering::Acquire) {
             sink.publish(WorkspaceWatchEventBatch {
                 events: vec![WorkspaceWatchEvent {
                     backend: crate::file_watcher::WorkspaceWatchBackend::Native,
@@ -227,40 +556,117 @@ impl WorkspaceFileChangeWatchRegistry {
                 }],
             });
         }
-
-        sessions.insert(
-            root_key.clone(),
-            WorkspaceFileChangeWatchSession { authority, session },
-        );
-        Ok(WorkspaceFileWatchStartReceipt {
-            root_path: root_key,
-            watch_generation: generation,
-        })
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let transitions = self
+            .transitions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let may_commit = !self.stopping_all.load(Ordering::SeqCst)
+            && !start_cancelled.load(Ordering::Acquire)
+            && transitions
+                .get(&root_key)
+                .is_some_and(|transition| Arc::ptr_eq(&transition.token, &start_reservation.token));
+        if may_commit {
+            let session = pending_session.commit();
+            sessions.insert(
+                root_key.clone(),
+                WorkspaceFileChangeWatchSession { authority, session },
+            );
+            drop(transitions);
+            drop(sessions);
+            drop(start_reservation);
+            return Ok(WorkspaceFileWatchStartReceipt {
+                root_path: root_key,
+                watch_generation: generation,
+            });
+        }
+        drop(transitions);
+        drop(sessions);
+        authority.revoke();
+        authority.recovery.pending.store(true, Ordering::Release);
+        drop(pending_session);
+        self.remove_settled_recovery(&root_key, &authority.recovery);
+        Err("Workspace watch start was cancelled.".to_string())
     }
 
     pub fn stop(&self, root_path: &str) {
-        let Ok(mut sessions) = self.sessions.lock() else {
-            return;
-        };
-        let Some(root_key) = workspace_watch_id_candidates(&PathBuf::from(root_path))
+        let candidates = workspace_watch_id_candidates(&PathBuf::from(root_path));
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(root_key) = candidates
+            .iter()
+            .cloned()
             .into_iter()
             .find(|candidate| sessions.contains_key(candidate))
         else {
+            let mut transitions = self
+                .transitions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let pending_start = candidates.into_iter().find(|candidate| {
+                transitions.get(candidate).is_some_and(|transition| {
+                    if let WorkspaceWatchTransitionKind::Starting {
+                        cancelled,
+                        authority,
+                    } = &transition.kind
+                    {
+                        cancelled.store(true, Ordering::Release);
+                        if let Some(authority) = authority
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .as_ref()
+                        {
+                            authority.revoke();
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                })
+            });
+            drop(sessions);
+            if let Some(root_key) = pending_start {
+                let deadline = std::time::Instant::now() + WORKSPACE_WATCH_TRANSITION_TIMEOUT;
+                while transitions.contains_key(&root_key) {
+                    let now = std::time::Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    let (next, timeout) = self
+                        .stop_completed
+                        .wait_timeout(transitions, deadline - now)
+                        .unwrap_or_else(|error| error.into_inner());
+                    transitions = next;
+                    if timeout.timed_out() {
+                        break;
+                    }
+                }
+            }
             return;
         };
         let Some(mut watch_session) = sessions.remove(&root_key) else {
             return;
         };
-        if let Ok(mut recovery) = self.recovery_by_root.lock() {
-            recovery.remove(&root_key);
-        }
+        watch_session.revoke();
+        let stop_reservation = self.reserve_stopping(root_key.clone());
         drop(sessions);
 
-        watch_session.stop();
+        stop_watch_backend(&mut watch_session);
+        self.remove_settled_recovery(&root_key, &watch_session.authority.recovery);
+        drop(stop_reservation);
     }
 
     pub fn stop_generation(&self, root_path: &str, watch_generation: u64) -> bool {
-        let Some(mut watch_session) = self.sessions.lock().ok().and_then(|mut sessions| {
+        let Some(watch_session) = (|| {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let matching_key = workspace_watch_id_candidates(&PathBuf::from(root_path))
                 .into_iter()
                 .find(|candidate| {
@@ -269,32 +675,175 @@ impl WorkspaceFileChangeWatchRegistry {
                         .is_some_and(|session| session.authority.generation == watch_generation)
                 })?;
             let session = sessions.remove(&matching_key)?;
-            if let Ok(mut recovery) = self.recovery_by_root.lock() {
-                recovery.remove(&matching_key);
-            }
-            Some(session)
-        }) else {
+            session.revoke();
+            let reservation = self.reserve_stopping(matching_key.clone());
+            Some((matching_key, session, reservation))
+        })() else {
             return false;
         };
 
-        watch_session.stop();
+        let (matching_key, mut watch_session, stop_reservation) = watch_session;
+        stop_watch_backend(&mut watch_session);
+        self.remove_settled_recovery(&matching_key, &watch_session.authority.recovery);
+        drop(stop_reservation);
         true
     }
 
     pub fn stop_all(&self) {
+        if self
+            .stopping_all
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            let deadline = std::time::Instant::now() + WORKSPACE_WATCH_TRANSITION_TIMEOUT;
+            let mut transitions = self
+                .transitions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            while self.stopping_all.load(Ordering::SeqCst) {
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                let (next, timeout) = self
+                    .stop_completed
+                    .wait_timeout(transitions, deadline - now)
+                    .unwrap_or_else(|error| error.into_inner());
+                transitions = next;
+                if timeout.timed_out() {
+                    break;
+                }
+            }
+            return;
+        }
+        struct StopAllGuard<'a> {
+            stopping_all: &'a AtomicBool,
+            stop_completed: &'a Condvar,
+        }
+        impl Drop for StopAllGuard<'_> {
+            fn drop(&mut self) {
+                self.stopping_all.store(false, Ordering::SeqCst);
+                self.stop_completed.notify_all();
+            }
+        }
+        let _stop_all_guard = StopAllGuard {
+            stopping_all: &self.stopping_all,
+            stop_completed: &self.stop_completed,
+        };
+        {
+            let transitions = self
+                .transitions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            for transition in transitions.values() {
+                if let WorkspaceWatchTransitionKind::Starting {
+                    cancelled,
+                    authority,
+                } = &transition.kind
+                {
+                    cancelled.store(true, Ordering::Release);
+                    if let Some(authority) = authority
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .as_ref()
+                    {
+                        authority.revoke();
+                    }
+                }
+            }
+        }
         let sessions = self
             .sessions
             .lock()
             .map(|mut sessions| {
+                let sessions = sessions
+                    .drain()
+                    .map(|(root_key, session)| {
+                        session.revoke();
+                        (root_key, session)
+                    })
+                    .collect::<Vec<_>>();
+                sessions
+            })
+            .unwrap_or_else(|error| {
+                let mut sessions = error.into_inner();
                 sessions
                     .drain()
-                    .map(|(_, session)| session)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+                    .map(|(root_key, session)| {
+                        session.revoke();
+                        (root_key, session)
+                    })
+                    .collect()
+            });
 
-        for mut watch_session in sessions {
-            watch_session.stop();
+        let mut reserved_sessions = sessions
+            .into_iter()
+            .map(|(root_key, watch_session)| {
+                let stop_reservation = self.reserve_stopping(root_key.clone());
+                (root_key, watch_session, stop_reservation)
+            })
+            .collect::<Vec<_>>();
+        for (root_key, watch_session, _stop_reservation) in &mut reserved_sessions {
+            stop_watch_backend(watch_session);
+            self.remove_settled_recovery(root_key, &watch_session.authority.recovery);
+        }
+        drop(reserved_sessions);
+
+        let deadline = std::time::Instant::now() + WORKSPACE_WATCH_TRANSITION_TIMEOUT;
+        let mut transitions = self
+            .transitions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while transitions.values().any(|transition| {
+            matches!(
+                transition.kind,
+                WorkspaceWatchTransitionKind::Starting { .. }
+            )
+        }) {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            let (next, timeout) = self
+                .stop_completed
+                .wait_timeout(transitions, deadline - now)
+                .unwrap_or_else(|error| error.into_inner());
+            transitions = next;
+            if timeout.timed_out() {
+                break;
+            }
+        }
+    }
+
+    fn reserve_stopping(&self, root_key: String) -> WorkspaceWatchTransitionReservation<'_> {
+        let token = Arc::new(());
+        self.transitions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(
+                root_key.clone(),
+                WorkspaceWatchTransition {
+                    token: Arc::clone(&token),
+                    kind: WorkspaceWatchTransitionKind::Stopping,
+                },
+            );
+        WorkspaceWatchTransitionReservation {
+            root_key,
+            token,
+            transitions: &self.transitions,
+            stop_completed: &self.stop_completed,
+        }
+    }
+
+    fn remove_settled_recovery(&self, root_key: &str, expected: &Arc<WorkspaceWatchRecovery>) {
+        let Ok(mut recovery_by_root) = self.recovery_by_root.lock() else {
+            return;
+        };
+        if recovery_by_root
+            .get(root_key)
+            .is_some_and(|current| Arc::ptr_eq(current, expected) && current.is_settled())
+        {
+            recovery_by_root.remove(root_key);
         }
     }
 }
@@ -318,18 +867,28 @@ struct WorkspaceFileChangeSink {
 }
 
 impl WorkspaceWatchEventSink for WorkspaceFileChangeSink {
-    fn error(&self, _error: WorkspaceWatchError) {}
+    fn error(&self, _error: WorkspaceWatchError) {
+        self.publish(WorkspaceWatchEventBatch {
+            events: vec![WorkspaceWatchEvent {
+                backend: crate::file_watcher::WorkspaceWatchBackend::Native,
+                file_kind: Some(WorkspaceWatchFileKind::Directory),
+                kind: WorkspaceWatchEventKind::RescanRequired,
+                path: self.root_path.clone(),
+                previous_path: None,
+                previous_relative_path: None,
+                relative_path: String::new(),
+                root_path: self.root_path.clone(),
+            }],
+        });
+    }
 
     fn publish(&self, batch: WorkspaceWatchEventBatch) {
-        if !self.authority.is_active() {
+        let Some(_publish_guard) = self.authority.acquire_publish() else {
             return;
-        }
+        };
+        let mut recovery_claim = WorkspaceWatchRecoveryClaim::acquire(&self.authority.recovery);
         let oversized = batch.events.len() > MAX_WORKSPACE_WATCH_BATCH_EVENTS;
-        let force_rescan = oversized
-            || self
-                .authority
-                .recovery_pending
-                .swap(false, Ordering::AcqRel);
+        let force_rescan = oversized || recovery_claim.claimed;
         let events = if oversized {
             &[][..]
         } else {
@@ -343,34 +902,47 @@ impl WorkspaceWatchEventSink for WorkspaceFileChangeSink {
         );
 
         if payloads.is_empty() {
+            recovery_claim.commit();
             return;
         }
 
-        self.authority.publish_if_active(|| {
-            if let Err(published) = self.emitter.emit_file_changes(&payloads) {
-                if self
-                    .emitter
-                    .emit_file_changes(&payloads[published..])
-                    .is_err()
-                {
-                    let recovery = WorkspaceFileChangedPayload {
-                        watch_generation: self.authority.generation,
-                        root_path: self.root_path.clone(),
-                        kind: WorkspaceWatchEventKind::RescanRequired,
-                        path: self.root_path.clone(),
-                        previous_path: None,
-                        relative_path: String::new(),
-                        previous_relative_path: None,
-                        file_kind: None,
-                    };
-                    if self.emitter.emit_file_changes(&[recovery]).is_err() {
-                        self.authority
-                            .recovery_pending
-                            .store(true, Ordering::Release);
-                    }
+        #[cfg(test)]
+        self.authority.wait_before_emit_if_configured();
+        if !self.authority.is_active() {
+            return;
+        }
+
+        if let Err(published) = self.emitter.emit_file_changes(&payloads) {
+            if !self.authority.is_active() {
+                return;
+            }
+            if self
+                .emitter
+                .emit_file_changes(&payloads[published..])
+                .is_err()
+            {
+                if !self.authority.is_active() {
+                    return;
+                }
+                let recovery = WorkspaceFileChangedPayload {
+                    watch_generation: self.authority.generation,
+                    root_path: self.root_path.clone(),
+                    kind: WorkspaceWatchEventKind::RescanRequired,
+                    path: self.root_path.clone(),
+                    previous_path: None,
+                    relative_path: String::new(),
+                    previous_relative_path: None,
+                    file_kind: None,
+                };
+                if self.emitter.emit_file_changes(&[recovery]).is_err() {
+                    self.authority
+                        .recovery
+                        .pending
+                        .store(true, Ordering::Release);
                 }
             }
-        });
+        }
+        recovery_claim.commit();
     }
 }
 
@@ -601,778 +1173,4 @@ fn path_key(path: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        workspace_file_changed_payloads, WorkspaceFileChangeEmitter, WorkspaceFileChangeSink,
-        WorkspaceFileChangeWatchRegistry, WorkspaceFileChangedPayload,
-        WorkspaceFileWatchStartReceipt, WorkspaceWatchSinkAuthority,
-    };
-    use crate::file_watcher::{
-        WorkspaceFileWatcher, WorkspaceWatchBackend, WorkspaceWatchError, WorkspaceWatchEvent,
-        WorkspaceWatchEventBatch, WorkspaceWatchEventKind, WorkspaceWatchEventSink,
-        WorkspaceWatchFileKind, WorkspaceWatchRequest, WorkspaceWatchSession,
-    };
-    use std::{
-        fs, io,
-        path::{Path, PathBuf},
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc, Mutex,
-        },
-        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-    };
-
-    const WORKSPACE_ROOT: &str = "/workspace";
-
-    #[test]
-    fn maps_delete_and_modify_events_to_frontend_payloads() {
-        let payloads = workspace_file_changed_payloads(
-            WORKSPACE_ROOT,
-            7,
-            &[
-                event(WorkspaceWatchEventKind::Deleted, "/workspace/src/User.php"),
-                event(WorkspaceWatchEventKind::Modified, "/workspace/src/App.tsx"),
-                event(WorkspaceWatchEventKind::Created, "/workspace/src/New.php"),
-            ],
-            false,
-        );
-
-        assert_eq!(payloads.len(), 3);
-        assert_eq!(payloads[0].kind, WorkspaceWatchEventKind::Deleted);
-        assert_eq!(payloads[0].path, "/workspace/src/User.php");
-        assert_eq!(payloads[0].relative_path, "src/User.php");
-        assert_eq!(payloads[0].root_path, WORKSPACE_ROOT);
-        assert_eq!(payloads[0].watch_generation, 7);
-        assert_eq!(payloads[1].kind, WorkspaceWatchEventKind::Modified);
-        assert_eq!(payloads[2].kind, WorkspaceWatchEventKind::Created);
-    }
-
-    #[test]
-    fn maps_rename_events_with_previous_path() {
-        let mut rename = event(
-            WorkspaceWatchEventKind::Renamed,
-            "/workspace/src/Account.php",
-        );
-        rename.previous_path = Some("/workspace/src/User.php".to_string());
-        rename.previous_relative_path = Some("src/User.php".to_string());
-
-        let payloads = workspace_file_changed_payloads(WORKSPACE_ROOT, 1, &[rename], false);
-
-        assert_eq!(payloads.len(), 1);
-        assert_eq!(payloads[0].kind, WorkspaceWatchEventKind::Renamed);
-        assert_eq!(payloads[0].path, "/workspace/src/Account.php");
-        assert_eq!(
-            payloads[0].previous_path,
-            Some("/workspace/src/User.php".to_string())
-        );
-        assert_eq!(
-            payloads[0].previous_relative_path,
-            Some("src/User.php".to_string())
-        );
-    }
-
-    #[test]
-    fn maps_cross_root_renames_to_only_the_authorized_side() {
-        let mut outside_to_inside =
-            event(WorkspaceWatchEventKind::Renamed, "/workspace/src/new.ts");
-        outside_to_inside.previous_path = Some("/other/src/old.ts".to_string());
-        let mut inside_to_outside = event(WorkspaceWatchEventKind::Renamed, "/other/src/moved.ts");
-        inside_to_outside.previous_path = Some("/workspace/src/original.ts".to_string());
-
-        let payloads = workspace_file_changed_payloads(
-            WORKSPACE_ROOT,
-            2,
-            &[outside_to_inside, inside_to_outside],
-            false,
-        );
-
-        assert_eq!(payloads.len(), 2);
-        assert_eq!(payloads[0].kind, WorkspaceWatchEventKind::Created);
-        assert_eq!(payloads[0].path, "/workspace/src/new.ts");
-        assert_eq!(payloads[0].previous_path, None);
-        assert_eq!(payloads[1].kind, WorkspaceWatchEventKind::Deleted);
-        assert_eq!(payloads[1].path, "/workspace/src/original.ts");
-        assert_eq!(payloads[1].relative_path, "src/original.ts");
-    }
-
-    #[test]
-    fn coalesces_rescan_events_and_drops_events_outside_root() {
-        let payloads = workspace_file_changed_payloads(
-            WORKSPACE_ROOT,
-            1,
-            &[
-                event(WorkspaceWatchEventKind::RescanRequired, WORKSPACE_ROOT),
-                event(WorkspaceWatchEventKind::Deleted, "/other/src/User.php"),
-                event(
-                    WorkspaceWatchEventKind::Deleted,
-                    "/workspace/../other/User.php",
-                ),
-            ],
-            false,
-        );
-
-        assert_eq!(payloads.len(), 1);
-        assert_eq!(payloads[0].kind, WorkspaceWatchEventKind::RescanRequired);
-        assert_eq!(payloads[0].root_path, WORKSPACE_ROOT);
-        assert_eq!(payloads[0].path, WORKSPACE_ROOT);
-        assert_eq!(payloads[0].relative_path, "");
-        assert_eq!(payloads[0].file_kind, None);
-
-        assert!(workspace_file_changed_payloads(
-            WORKSPACE_ROOT,
-            1,
-            &[event(
-                WorkspaceWatchEventKind::RescanRequired,
-                "/other/src/User.php"
-            )],
-            false
-        )
-        .is_empty());
-    }
-
-    #[test]
-    fn mixed_rescan_batch_preserves_concrete_events() {
-        let payloads = workspace_file_changed_payloads(
-            WORKSPACE_ROOT,
-            3,
-            &[
-                event(WorkspaceWatchEventKind::Created, "/workspace/src/new.ts"),
-                event(WorkspaceWatchEventKind::RescanRequired, WORKSPACE_ROOT),
-                event(WorkspaceWatchEventKind::Deleted, "/workspace/src/old.ts"),
-            ],
-            false,
-        );
-
-        assert_eq!(payloads.len(), 3);
-        assert_eq!(payloads[0].kind, WorkspaceWatchEventKind::Created);
-        assert_eq!(payloads[1].kind, WorkspaceWatchEventKind::Deleted);
-        assert_eq!(payloads[2].kind, WorkspaceWatchEventKind::RescanRequired);
-        assert!(payloads.iter().all(|payload| payload.watch_generation == 3));
-    }
-
-    #[test]
-    fn foreign_rescan_is_not_promoted_to_the_sink_root() {
-        let foreign = root_rescan_event("/other");
-        assert!(workspace_file_changed_payloads(WORKSPACE_ROOT, 1, &[foreign], false).is_empty());
-    }
-
-    #[test]
-    fn sink_emits_only_events_for_its_own_root() {
-        let recorder = RecordingEmitter::default();
-        let sink = WorkspaceFileChangeSink {
-            authority: Arc::new(WorkspaceWatchSinkAuthority::new(1)),
-            emitter: Arc::new(recorder.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        };
-
-        sink.publish(WorkspaceWatchEventBatch {
-            events: vec![
-                event(WorkspaceWatchEventKind::Deleted, "/workspace/src/User.php"),
-                event(WorkspaceWatchEventKind::Deleted, "/elsewhere/src/Other.php"),
-            ],
-        });
-
-        let emitted = recorder.payloads();
-        assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].path, "/workspace/src/User.php");
-    }
-
-    #[test]
-    fn sink_preserves_a_trailing_rescan_after_the_upstream_coalescing_window() {
-        let recorder = RecordingEmitter::default();
-        let sink = WorkspaceFileChangeSink {
-            authority: Arc::new(WorkspaceWatchSinkAuthority::new(1)),
-            emitter: Arc::new(recorder.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        };
-        let rescan = event(WorkspaceWatchEventKind::RescanRequired, WORKSPACE_ROOT);
-
-        sink.publish(WorkspaceWatchEventBatch {
-            events: vec![rescan.clone()],
-        });
-        sink.publish(WorkspaceWatchEventBatch {
-            events: vec![rescan],
-        });
-
-        let emitted = recorder.payloads();
-        assert_eq!(emitted.len(), 2);
-        assert_eq!(emitted[0].kind, WorkspaceWatchEventKind::RescanRequired);
-        assert_eq!(emitted[1].kind, WorkspaceWatchEventKind::RescanRequired);
-    }
-
-    #[test]
-    fn revoking_a_watch_does_not_wait_for_a_blocking_emitter() {
-        let emitter = BlockingEmitter::default();
-        let authority = Arc::new(WorkspaceWatchSinkAuthority::new(1));
-        let sink = Arc::new(WorkspaceFileChangeSink {
-            authority: Arc::clone(&authority),
-            emitter: Arc::new(emitter.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        });
-        let publisher = Arc::clone(&sink);
-        let publish_thread = std::thread::spawn(move || {
-            publisher.publish(WorkspaceWatchEventBatch {
-                events: vec![event(
-                    WorkspaceWatchEventKind::Modified,
-                    "/workspace/src/index.ts",
-                )],
-            });
-        });
-        emitter.wait_until_entered();
-
-        let started = Instant::now();
-        authority.revoke();
-
-        assert!(started.elapsed() < Duration::from_millis(100));
-        publish_thread.join().expect("publish thread");
-    }
-
-    #[test]
-    fn sink_retries_a_failed_frontend_emit_once() {
-        let emitter = FlakyEmitter::default();
-        let sink = WorkspaceFileChangeSink {
-            authority: Arc::new(WorkspaceWatchSinkAuthority::new(1)),
-            emitter: Arc::new(emitter.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        };
-
-        sink.publish(WorkspaceWatchEventBatch {
-            events: vec![event(
-                WorkspaceWatchEventKind::RescanRequired,
-                WORKSPACE_ROOT,
-            )],
-        });
-
-        assert_eq!(emitter.attempts(), 2);
-        assert_eq!(emitter.payloads().len(), 1);
-    }
-
-    #[test]
-    fn sink_resumes_after_a_partial_emit_without_duplicate_payloads() {
-        let emitter = PartialEmitter::default();
-        let sink = WorkspaceFileChangeSink {
-            authority: Arc::new(WorkspaceWatchSinkAuthority::new(1)),
-            emitter: Arc::new(emitter.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        };
-
-        sink.publish(WorkspaceWatchEventBatch {
-            events: vec![
-                event(WorkspaceWatchEventKind::Created, "/workspace/a.ts"),
-                event(WorkspaceWatchEventKind::Created, "/workspace/b.ts"),
-            ],
-        });
-
-        let payloads = emitter.payloads();
-        assert_eq!(payloads.len(), 2);
-        assert_eq!(payloads[0].path, "/workspace/a.ts");
-        assert_eq!(payloads[1].path, "/workspace/b.ts");
-    }
-
-    #[test]
-    fn repeated_emit_failure_escalates_to_one_rescan_payload() {
-        let emitter = AlwaysFailEmitter::default();
-        let sink = WorkspaceFileChangeSink {
-            authority: Arc::new(WorkspaceWatchSinkAuthority::new(8)),
-            emitter: Arc::new(emitter.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        };
-
-        sink.publish(WorkspaceWatchEventBatch {
-            events: vec![event(
-                WorkspaceWatchEventKind::Modified,
-                "/workspace/src/index.ts",
-            )],
-        });
-
-        let attempts = emitter.attempted_kinds();
-        assert_eq!(
-            attempts,
-            vec![
-                WorkspaceWatchEventKind::Modified,
-                WorkspaceWatchEventKind::Modified,
-                WorkspaceWatchEventKind::RescanRequired,
-            ]
-        );
-    }
-
-    #[test]
-    fn failed_recovery_is_retained_and_replayed_on_the_next_event() {
-        let emitter = RecoveringEmitter::default();
-        let sink = WorkspaceFileChangeSink {
-            authority: Arc::new(WorkspaceWatchSinkAuthority::new(11)),
-            emitter: Arc::new(emitter.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        };
-        let batch = || WorkspaceWatchEventBatch {
-            events: vec![event(
-                WorkspaceWatchEventKind::Modified,
-                "/workspace/src/index.ts",
-            )],
-        };
-
-        sink.publish(batch());
-        sink.publish(batch());
-
-        let delivered = emitter.delivered();
-        assert_eq!(delivered.len(), 2);
-        assert_eq!(delivered[0].kind, WorkspaceWatchEventKind::Modified);
-        assert_eq!(delivered[1].kind, WorkspaceWatchEventKind::RescanRequired);
-    }
-
-    #[test]
-    fn oversized_batch_fails_closed_to_one_rescan_without_partial_events() {
-        let recorder = RecordingEmitter::default();
-        let sink = WorkspaceFileChangeSink {
-            authority: Arc::new(WorkspaceWatchSinkAuthority::new(9)),
-            emitter: Arc::new(recorder.clone()),
-            root_path: WORKSPACE_ROOT.to_string(),
-        };
-        let events = (0..=super::MAX_WORKSPACE_WATCH_BATCH_EVENTS)
-            .map(|index| {
-                event(
-                    WorkspaceWatchEventKind::Modified,
-                    &format!("/workspace/src/{index}.ts"),
-                )
-            })
-            .collect();
-
-        sink.publish(WorkspaceWatchEventBatch { events });
-
-        let emitted = recorder.payloads();
-        assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].kind, WorkspaceWatchEventKind::RescanRequired);
-        assert_eq!(emitted[0].root_path, WORKSPACE_ROOT);
-        assert_eq!(emitted[0].path, WORKSPACE_ROOT);
-        assert_eq!(emitted[0].watch_generation, 9);
-    }
-
-    #[test]
-    fn watch_registry_rejects_a_stale_sink_after_an_a_b_a_replacement() {
-        let registry = WorkspaceFileChangeWatchRegistry::new();
-        let watcher = RecordingWatcher::default();
-        let recorder = RecordingEmitter::default();
-        let root = temp_workspace("generic-watch-a-b-a");
-
-        for _ in 0..2 {
-            registry
-                .start_with_watcher(&path_string(&root), &watcher, |root_key, authority| {
-                    Arc::new(WorkspaceFileChangeSink {
-                        authority,
-                        emitter: Arc::new(recorder.clone()),
-                        root_path: root_key.to_string(),
-                    })
-                })
-                .expect("start workspace watch");
-            if watcher.started_roots().len() == 1 {
-                registry.stop(&path_string(&root));
-            }
-        }
-
-        let stale = watcher.sink(0);
-        let current = watcher.sink(1);
-        let batch = WorkspaceWatchEventBatch {
-            events: vec![root_rescan_event(&path_string(&root))],
-        };
-        stale.publish(batch.clone());
-        current.publish(batch);
-
-        let emitted = recorder.payloads();
-        assert_eq!(emitted.len(), 1);
-        assert_eq!(emitted[0].root_path, path_string(&root));
-        assert_eq!(emitted[0].watch_generation, 2);
-    }
-
-    #[test]
-    fn restarted_watch_replays_retained_recovery_before_returning() {
-        let registry = WorkspaceFileChangeWatchRegistry::new();
-        let watcher = RecordingWatcher::default();
-        let failing = AlwaysFailEmitter::default();
-        let recovered = RecordingEmitter::default();
-        let root = temp_workspace("generic-watch-retained-recovery");
-        registry
-            .start_with_watcher(&path_string(&root), &watcher, |root_key, authority| {
-                Arc::new(WorkspaceFileChangeSink {
-                    authority,
-                    emitter: Arc::new(failing.clone()),
-                    root_path: root_key.to_string(),
-                })
-            })
-            .expect("start failing watch");
-        watcher.sink(0).publish(WorkspaceWatchEventBatch {
-            events: vec![event(
-                WorkspaceWatchEventKind::Modified,
-                &path_string(&root.join("src/index.ts")),
-            )],
-        });
-        registry.stop(&path_string(&root));
-
-        registry
-            .start_with_watcher(&path_string(&root), &watcher, |root_key, authority| {
-                Arc::new(WorkspaceFileChangeSink {
-                    authority,
-                    emitter: Arc::new(recovered.clone()),
-                    root_path: root_key.to_string(),
-                })
-            })
-            .expect("restart recovered watch");
-
-        let payloads = recovered.payloads();
-        assert_eq!(payloads.len(), 1);
-        assert_eq!(payloads[0].kind, WorkspaceWatchEventKind::RescanRequired);
-        assert_eq!(payloads[0].watch_generation, 2);
-    }
-
-    #[test]
-    fn watch_registry_stop_stops_requested_root_only() {
-        let registry = WorkspaceFileChangeWatchRegistry::new();
-        let watcher = RecordingWatcher::default();
-        let root_a = temp_workspace("generic-watch-stop-a");
-        let root_b = temp_workspace("generic-watch-stop-b");
-
-        start_with_watcher(&registry, &root_a, &watcher);
-        start_with_watcher(&registry, &root_b, &watcher);
-
-        registry.stop(&path_string(&root_a));
-        registry.stop(&path_string(&root_a));
-
-        assert_eq!(watcher.started_roots().len(), 2);
-        assert_eq!(watcher.stopped_roots(), vec![root_a.clone()]);
-
-        registry.stop_all();
-
-        let stopped = watcher.stopped_roots();
-        assert_eq!(stopped.len(), 2);
-        assert!(stopped.contains(&root_a));
-        assert!(stopped.contains(&root_b));
-    }
-
-    #[test]
-    fn watch_registry_start_is_idempotent_for_same_canonical_root() {
-        let registry = WorkspaceFileChangeWatchRegistry::new();
-        let watcher = RecordingWatcher::default();
-        let root = temp_workspace("generic-watch-start-idempotent");
-
-        let first = start_with_watcher(&registry, &root, &watcher);
-        let second = start_with_watcher(&registry, &root, &watcher);
-
-        assert_eq!(watcher.started_roots(), vec![root]);
-        assert!(watcher.stopped_roots().is_empty());
-        assert_eq!(first, second);
-    }
-
-    #[test]
-    fn watch_registry_stop_generation_rejects_stale_owner() {
-        let registry = WorkspaceFileChangeWatchRegistry::new();
-        let watcher = RecordingWatcher::default();
-        let root = temp_workspace("generic-watch-stop-generation");
-        let receipt = start_with_watcher(&registry, &root, &watcher);
-
-        assert!(!registry.stop_generation(&path_string(&root), receipt.watch_generation + 1));
-        assert!(watcher.stopped_roots().is_empty());
-        assert!(registry.stop_generation(&path_string(&root), receipt.watch_generation));
-        assert_eq!(watcher.stopped_roots(), vec![root]);
-    }
-
-    #[test]
-    fn watch_registry_drop_stops_all_sessions() {
-        let watcher = RecordingWatcher::default();
-        let root_a = temp_workspace("generic-watch-drop-a");
-        let root_b = temp_workspace("generic-watch-drop-b");
-
-        {
-            let registry = WorkspaceFileChangeWatchRegistry::new();
-            start_with_watcher(&registry, &root_a, &watcher);
-            start_with_watcher(&registry, &root_b, &watcher);
-
-            assert!(watcher.stopped_roots().is_empty());
-        }
-
-        let stopped = watcher.stopped_roots();
-        assert_eq!(stopped.len(), 2);
-        assert!(stopped.contains(&root_a));
-        assert!(stopped.contains(&root_b));
-    }
-
-    fn event(kind: WorkspaceWatchEventKind, path: &str) -> WorkspaceWatchEvent {
-        let rescan = matches!(kind, WorkspaceWatchEventKind::RescanRequired);
-        WorkspaceWatchEvent {
-            backend: WorkspaceWatchBackend::Native,
-            file_kind: Some(if rescan {
-                WorkspaceWatchFileKind::Directory
-            } else {
-                WorkspaceWatchFileKind::File
-            }),
-            kind,
-            path: path.to_string(),
-            previous_path: None,
-            previous_relative_path: None,
-            relative_path: if rescan {
-                String::new()
-            } else {
-                path.trim_start_matches("/workspace/").to_string()
-            },
-            root_path: WORKSPACE_ROOT.to_string(),
-        }
-    }
-
-    fn root_rescan_event(root_path: &str) -> WorkspaceWatchEvent {
-        let mut event = event(WorkspaceWatchEventKind::RescanRequired, root_path);
-        event.root_path = root_path.to_string();
-        event
-    }
-
-    fn start_with_watcher(
-        registry: &WorkspaceFileChangeWatchRegistry,
-        root: &Path,
-        watcher: &RecordingWatcher,
-    ) -> WorkspaceFileWatchStartReceipt {
-        registry
-            .start_with_watcher(&path_string(root), watcher, |_, _| {
-                Arc::new(NoopWatchSink) as Arc<dyn WorkspaceWatchEventSink>
-            })
-            .expect("start workspace watch")
-    }
-
-    #[derive(Clone, Default)]
-    struct RecordingEmitter {
-        payloads: Arc<Mutex<Vec<WorkspaceFileChangedPayload>>>,
-    }
-
-    impl RecordingEmitter {
-        fn payloads(&self) -> Vec<WorkspaceFileChangedPayload> {
-            self.payloads.lock().expect("payloads").clone()
-        }
-    }
-
-    impl WorkspaceFileChangeEmitter for RecordingEmitter {
-        fn emit_file_changes(&self, payloads: &[WorkspaceFileChangedPayload]) -> Result<(), usize> {
-            self.payloads
-                .lock()
-                .expect("payloads")
-                .extend_from_slice(payloads);
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct FlakyEmitter {
-        attempts: Arc<Mutex<usize>>,
-        payloads: Arc<Mutex<Vec<WorkspaceFileChangedPayload>>>,
-    }
-
-    impl FlakyEmitter {
-        fn attempts(&self) -> usize {
-            *self.attempts.lock().expect("attempts")
-        }
-
-        fn payloads(&self) -> Vec<WorkspaceFileChangedPayload> {
-            self.payloads.lock().expect("payloads").clone()
-        }
-    }
-
-    impl WorkspaceFileChangeEmitter for FlakyEmitter {
-        fn emit_file_changes(&self, payloads: &[WorkspaceFileChangedPayload]) -> Result<(), usize> {
-            let mut attempts = self.attempts.lock().expect("attempts");
-            *attempts += 1;
-            if *attempts == 1 {
-                return Err(0);
-            }
-            self.payloads
-                .lock()
-                .expect("payloads")
-                .extend_from_slice(payloads);
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct PartialEmitter {
-        attempts: Arc<Mutex<usize>>,
-        payloads: Arc<Mutex<Vec<WorkspaceFileChangedPayload>>>,
-    }
-
-    impl PartialEmitter {
-        fn payloads(&self) -> Vec<WorkspaceFileChangedPayload> {
-            self.payloads.lock().expect("payloads").clone()
-        }
-    }
-
-    impl WorkspaceFileChangeEmitter for PartialEmitter {
-        fn emit_file_changes(&self, payloads: &[WorkspaceFileChangedPayload]) -> Result<(), usize> {
-            let mut attempts = self.attempts.lock().expect("attempts");
-            *attempts += 1;
-            if *attempts == 1 {
-                self.payloads
-                    .lock()
-                    .expect("payloads")
-                    .push(payloads[0].clone());
-                return Err(1);
-            }
-            self.payloads
-                .lock()
-                .expect("payloads")
-                .extend_from_slice(payloads);
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct BlockingEmitter {
-        entered: Arc<AtomicBool>,
-    }
-
-    impl BlockingEmitter {
-        fn wait_until_entered(&self) {
-            for _ in 0..100 {
-                if self.entered.load(Ordering::Acquire) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            panic!("blocking emitter was not entered");
-        }
-    }
-
-    impl WorkspaceFileChangeEmitter for BlockingEmitter {
-        fn emit_file_changes(
-            &self,
-            _payloads: &[WorkspaceFileChangedPayload],
-        ) -> Result<(), usize> {
-            self.entered.store(true, Ordering::Release);
-            std::thread::sleep(Duration::from_millis(250));
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct AlwaysFailEmitter {
-        attempted_kinds: Arc<Mutex<Vec<WorkspaceWatchEventKind>>>,
-    }
-
-    impl AlwaysFailEmitter {
-        fn attempted_kinds(&self) -> Vec<WorkspaceWatchEventKind> {
-            self.attempted_kinds
-                .lock()
-                .expect("attempted kinds")
-                .clone()
-        }
-    }
-
-    impl WorkspaceFileChangeEmitter for AlwaysFailEmitter {
-        fn emit_file_changes(&self, payloads: &[WorkspaceFileChangedPayload]) -> Result<(), usize> {
-            self.attempted_kinds
-                .lock()
-                .expect("attempted kinds")
-                .push(payloads[0].kind);
-            Err(0)
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct RecoveringEmitter {
-        attempts: Arc<Mutex<usize>>,
-        delivered: Arc<Mutex<Vec<WorkspaceFileChangedPayload>>>,
-    }
-
-    impl RecoveringEmitter {
-        fn delivered(&self) -> Vec<WorkspaceFileChangedPayload> {
-            self.delivered.lock().expect("delivered").clone()
-        }
-    }
-
-    impl WorkspaceFileChangeEmitter for RecoveringEmitter {
-        fn emit_file_changes(&self, payloads: &[WorkspaceFileChangedPayload]) -> Result<(), usize> {
-            let mut attempts = self.attempts.lock().expect("attempts");
-            *attempts += 1;
-            if *attempts <= 3 {
-                return Err(0);
-            }
-            self.delivered
-                .lock()
-                .expect("delivered")
-                .extend_from_slice(payloads);
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct RecordingWatcher {
-        sinks: Arc<Mutex<Vec<Arc<dyn WorkspaceWatchEventSink>>>>,
-        started: Arc<Mutex<Vec<PathBuf>>>,
-        stopped: Arc<Mutex<Vec<PathBuf>>>,
-    }
-
-    impl RecordingWatcher {
-        fn started_roots(&self) -> Vec<PathBuf> {
-            self.started.lock().expect("started roots").clone()
-        }
-
-        fn stopped_roots(&self) -> Vec<PathBuf> {
-            self.stopped.lock().expect("stopped roots").clone()
-        }
-
-        fn sink(&self, index: usize) -> Arc<dyn WorkspaceWatchEventSink> {
-            Arc::clone(&self.sinks.lock().expect("watch sinks")[index])
-        }
-    }
-
-    impl WorkspaceFileWatcher for RecordingWatcher {
-        fn watch(
-            &self,
-            request: WorkspaceWatchRequest,
-            sink: Arc<dyn WorkspaceWatchEventSink>,
-        ) -> io::Result<Box<dyn WorkspaceWatchSession>> {
-            self.started
-                .lock()
-                .expect("started roots")
-                .push(request.root_path.clone());
-            self.sinks.lock().expect("watch sinks").push(sink);
-
-            Ok(Box::new(RecordingWatchSession {
-                root_path: request.root_path,
-                stopped: Arc::clone(&self.stopped),
-            }))
-        }
-    }
-
-    struct RecordingWatchSession {
-        root_path: PathBuf,
-        stopped: Arc<Mutex<Vec<PathBuf>>>,
-    }
-
-    impl WorkspaceWatchSession for RecordingWatchSession {
-        fn stop(&mut self) {
-            self.stopped
-                .lock()
-                .expect("stopped roots")
-                .push(self.root_path.clone());
-        }
-    }
-
-    struct NoopWatchSink;
-
-    impl WorkspaceWatchEventSink for NoopWatchSink {
-        fn error(&self, _error: WorkspaceWatchError) {}
-
-        fn publish(&self, _batch: WorkspaceWatchEventBatch) {}
-    }
-
-    fn temp_workspace(label: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("editor-generic-watch-{label}-{}", unique_suffix()));
-        fs::create_dir_all(&root).expect("temp workspace");
-        root.canonicalize().expect("canonical temp workspace")
-    }
-
-    fn unique_suffix() -> u128 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos()
-    }
-
-    fn path_string(path: &Path) -> String {
-        path.to_string_lossy().to_string()
-    }
-}
+mod tests;

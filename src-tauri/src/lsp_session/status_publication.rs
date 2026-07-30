@@ -1,7 +1,7 @@
 use super::{LanguageServerRuntimeStatus, StatusSink};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -9,28 +9,49 @@ const MAX_STATUS_PUBLISHERS: usize = 64;
 const MAX_CALLBACK_ATTEMPTS: usize = 2;
 const MAX_CALLBACK_RETRY_ROUNDS: usize = 6;
 const CALLBACK_RETRY_DELAY: Duration = Duration::from_millis(10);
-static ACTIVE_STATUS_PUBLISHERS: AtomicUsize = AtomicUsize::new(0);
 
-struct PublisherPermit;
+struct PublisherCapacity {
+    active: AtomicUsize,
+    limit: usize,
+}
 
-impl PublisherPermit {
-    fn reserve() -> Result<Self, String> {
-        ACTIVE_STATUS_PUBLISHERS
+impl PublisherCapacity {
+    fn new(limit: usize) -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+            limit,
+        }
+    }
+
+    fn reserve(self: &Arc<Self>) -> Result<PublisherPermit, String> {
+        self.active
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |active| {
-                (active < MAX_STATUS_PUBLISHERS).then_some(active + 1)
+                (active < self.limit).then_some(active + 1)
             })
-            .map(|_| Self)
+            .map(|_| PublisherPermit {
+                capacity: Arc::clone(self),
+            })
             .map_err(|_| {
                 format!(
-                    "Language server status publisher capacity ({MAX_STATUS_PUBLISHERS}) was reached."
+                    "Language server status publisher capacity ({}) was reached.",
+                    self.limit
                 )
             })
     }
 }
 
+fn global_publisher_capacity() -> Arc<PublisherCapacity> {
+    static CAPACITY: OnceLock<Arc<PublisherCapacity>> = OnceLock::new();
+    Arc::clone(CAPACITY.get_or_init(|| Arc::new(PublisherCapacity::new(MAX_STATUS_PUBLISHERS))))
+}
+
+struct PublisherPermit {
+    capacity: Arc<PublisherCapacity>,
+}
+
 impl Drop for PublisherPermit {
     fn drop(&mut self) {
-        ACTIVE_STATUS_PUBLISHERS.fetch_sub(1, Ordering::SeqCst);
+        self.capacity.active.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -49,6 +70,7 @@ struct PublicationState {
 
 pub(super) struct StatusPublicationQueue {
     authoritative: Arc<Mutex<LanguageServerRuntimeStatus>>,
+    capacity: Arc<PublisherCapacity>,
     state: Arc<Mutex<PublicationState>>,
 }
 
@@ -82,8 +104,16 @@ impl Drop for StatusSinkAdmission {
 
 impl StatusPublicationQueue {
     pub(super) fn new(authoritative: Arc<Mutex<LanguageServerRuntimeStatus>>) -> Self {
+        Self::with_capacity(authoritative, global_publisher_capacity())
+    }
+
+    fn with_capacity(
+        authoritative: Arc<Mutex<LanguageServerRuntimeStatus>>,
+        capacity: Arc<PublisherCapacity>,
+    ) -> Self {
         Self {
             authoritative,
+            capacity,
             state: Arc::new(Mutex::new(PublicationState::default())),
         }
     }
@@ -108,7 +138,7 @@ impl StatusPublicationQueue {
                 committed: false,
             });
         }
-        let permit = PublisherPermit::reserve()?;
+        let permit = self.capacity.reserve()?;
         state.leased_sinks.push((Arc::clone(sink), permit));
         Ok(StatusSinkAdmission {
             state: Arc::clone(&self.state),
@@ -133,7 +163,7 @@ impl StatusPublicationQueue {
             .iter()
             .any(|(leased, _)| Arc::ptr_eq(leased, &sink));
         if newly_admitted {
-            let permit = PublisherPermit::reserve()?;
+            let permit = self.capacity.reserve()?;
             state.leased_sinks.push((Arc::clone(&sink), permit));
         }
 
@@ -297,7 +327,7 @@ fn publish_for_sink(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Barrier, Condvar, OnceLock};
+    use std::sync::{Barrier, Condvar};
     use std::time::{Duration, Instant};
 
     struct BlockingSink {
@@ -353,17 +383,19 @@ mod tests {
         }
     }
 
-    fn status_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
-        GUARD
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn test_queue(
+        authoritative: Arc<Mutex<LanguageServerRuntimeStatus>>,
+    ) -> (StatusPublicationQueue, Arc<PublisherCapacity>) {
+        let capacity = Arc::new(PublisherCapacity::new(MAX_STATUS_PUBLISHERS));
+        (
+            StatusPublicationQueue::with_capacity(authoritative, Arc::clone(&capacity)),
+            capacity,
+        )
     }
 
-    fn wait_for_test_publishers_to_settle() {
+    fn wait_for_test_publishers_to_settle(capacity: &PublisherCapacity) {
         let deadline = Instant::now() + Duration::from_secs(1);
-        while ACTIVE_STATUS_PUBLISHERS.load(Ordering::SeqCst) != 0 {
+        while capacity.active.load(Ordering::SeqCst) != 0 {
             assert!(
                 Instant::now() < deadline,
                 "status publisher permits did not settle"
@@ -385,12 +417,11 @@ mod tests {
 
     #[test]
     fn paused_crash_publication_drains_authoritative_stop_last() {
-        let _guard = status_test_guard();
         let crashed = LanguageServerRuntimeStatus::Crashed {
             message: "boom".to_string(),
         };
         let authoritative = Arc::new(Mutex::new(crashed.clone()));
-        let queue = StatusPublicationQueue::new(Arc::clone(&authoritative));
+        let (queue, capacity) = test_queue(Arc::clone(&authoritative));
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -422,18 +453,21 @@ mod tests {
             std::thread::yield_now();
         }
         drop(queue);
-        wait_for_test_publishers_to_settle();
+        wait_for_test_publishers_to_settle(&capacity);
     }
 
     #[test]
     fn sixty_four_blocked_sinks_isolate_and_the_next_sink_fails_explicitly() {
-        let _guard = status_test_guard();
         let status = LanguageServerRuntimeStatus::Stopped;
+        let capacity = Arc::new(PublisherCapacity::new(MAX_STATUS_PUBLISHERS));
         let entered = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let mut queues = Vec::new();
         for _ in 0..MAX_STATUS_PUBLISHERS {
-            let queue = StatusPublicationQueue::new(Arc::new(Mutex::new(status.clone())));
+            let queue = StatusPublicationQueue::with_capacity(
+                Arc::new(Mutex::new(status.clone())),
+                Arc::clone(&capacity),
+            );
             let sink: Arc<dyn StatusSink> = Arc::new(GateSink {
                 entered: Arc::clone(&entered),
                 gate: Arc::clone(&gate),
@@ -443,7 +477,10 @@ mod tests {
                 .expect("publisher within capacity");
             queues.push(queue);
         }
-        let overflow = StatusPublicationQueue::new(Arc::new(Mutex::new(status.clone())));
+        let overflow = StatusPublicationQueue::with_capacity(
+            Arc::new(Mutex::new(status.clone())),
+            Arc::clone(&capacity),
+        );
         assert!(overflow
             .publish(
                 Arc::new(GateSink {
@@ -459,17 +496,16 @@ mod tests {
         settled.notify_all();
         drop(queues);
         drop(overflow);
-        wait_for_test_publishers_to_settle();
+        wait_for_test_publishers_to_settle(&capacity);
     }
 
     #[test]
     fn callback_panics_back_off_then_remain_dirty_until_a_later_retry() {
-        let _guard = status_test_guard();
         let status = LanguageServerRuntimeStatus::Running {
             session_id: 7,
             capabilities: Default::default(),
         };
-        let queue = StatusPublicationQueue::new(Arc::new(Mutex::new(status.clone())));
+        let (queue, capacity) = test_queue(Arc::new(Mutex::new(status.clone())));
         let calls = Arc::new(AtomicUsize::new(0));
         let panic = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let sink: Arc<dyn StatusSink> = Arc::new(TogglePanicSink {
@@ -501,14 +537,13 @@ mod tests {
             std::thread::yield_now();
         }
         drop(queue);
-        wait_for_test_publishers_to_settle();
+        wait_for_test_publishers_to_settle(&capacity);
     }
 
     #[test]
     fn dropped_provisional_admissions_release_global_capacity() {
-        let _guard = status_test_guard();
-        let queue =
-            StatusPublicationQueue::new(Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)));
+        let (queue, capacity) =
+            test_queue(Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)));
         for _ in 0..(MAX_STATUS_PUBLISHERS * 2) {
             let sink: Arc<dyn StatusSink> = Arc::new(GateSink {
                 entered: Arc::new(AtomicUsize::new(0)),
@@ -516,18 +551,17 @@ mod tests {
             });
             drop(queue.admit_sink(&sink).expect("provisional admission"));
         }
-        assert_eq!(ACTIVE_STATUS_PUBLISHERS.load(Ordering::SeqCst), 0);
+        assert_eq!(capacity.active.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn final_callback_failure_preserves_a_newer_pending_terminal_status() {
-        let _guard = status_test_guard();
         let running = LanguageServerRuntimeStatus::Running {
             session_id: 9,
             capabilities: Default::default(),
         };
         let authoritative = Arc::new(Mutex::new(running.clone()));
-        let queue = StatusPublicationQueue::new(Arc::clone(&authoritative));
+        let (queue, capacity) = test_queue(Arc::clone(&authoritative));
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
         let sink: Arc<dyn StatusSink> = Arc::new(FinalFailureGateSink {
@@ -564,6 +598,6 @@ mod tests {
             break;
         }
         drop(queue);
-        wait_for_test_publishers_to_settle();
+        wait_for_test_publishers_to_settle(&capacity);
     }
 }
