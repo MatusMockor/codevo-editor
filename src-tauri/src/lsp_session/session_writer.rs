@@ -324,7 +324,9 @@ mod tests {
     use super::*;
     use std::{
         collections::VecDeque,
+        net::Shutdown,
         os::fd::AsRawFd,
+        os::unix::net::UnixStream,
         sync::{
             atomic::{AtomicUsize, Ordering},
             mpsc, Condvar,
@@ -523,19 +525,100 @@ mod tests {
         drop(writer);
     }
 
+    struct DropOrderObservingUnixPipeIo {
+        original_flags: libc::c_int,
+        set_flags_calls: AtomicUsize,
+        restored_while_owned: AtomicBool,
+        writer_owned: Arc<AtomicBool>,
+    }
+
+    struct OwnershipObservingWriter {
+        stream: UnixStream,
+        owned: Arc<AtomicBool>,
+    }
+
+    impl Write for OwnershipObservingWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.stream.write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.stream.flush()
+        }
+    }
+
+    impl Drop for OwnershipObservingWriter {
+        fn drop(&mut self) {
+            self.owned.store(false, Ordering::SeqCst);
+        }
+    }
+
+    impl UnixPipeIo for DropOrderObservingUnixPipeIo {
+        fn get_flags(&self, fd: libc::c_int) -> io::Result<libc::c_int> {
+            LibcUnixPipeIo.get_flags(fd)
+        }
+
+        fn set_flags(&self, fd: libc::c_int, flags: libc::c_int) -> io::Result<()> {
+            let previous_calls = self.set_flags_calls.load(Ordering::SeqCst);
+            let is_restore = previous_calls > 0 && flags == self.original_flags;
+            if is_restore && !self.writer_owned.load(Ordering::SeqCst) {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "writer owner dropped before strategy",
+                ));
+            }
+            LibcUnixPipeIo.set_flags(fd, flags)?;
+            self.set_flags_calls.fetch_add(1, Ordering::SeqCst);
+            if is_restore {
+                self.restored_while_owned.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+
+        fn write(&self, fd: libc::c_int, bytes: &[u8]) -> io::Result<usize> {
+            LibcUnixPipeIo.write(fd, bytes)
+        }
+
+        fn poll_writable(&self, fd: libc::c_int, deadline: Instant) -> io::Result<bool> {
+            LibcUnixPipeIo.poll_writable(fd, deadline)
+        }
+    }
+
     #[test]
-    fn owned_pipe_reports_real_epipe_and_drops_strategy_before_fd_owner() {
-        let (reader, writer) = std::io::pipe().expect("pipe");
+    fn owned_descriptor_reports_real_epipe_and_drops_strategy_before_fd_owner() {
+        let (reader, writer) = UnixStream::pair().expect("socket pair");
         let fd = writer.as_raw_fd();
-        let strategy = Arc::new(UnixNonblockingPipeStrategy::new(fd).expect("strategy"));
-        let session = SessionMessageWriter::from_strategy(Box::new(writer), strategy);
-        drop(reader);
+        let original_flags = LibcUnixPipeIo.get_flags(fd).expect("original flags");
+        let writer_owned = Arc::new(AtomicBool::new(true));
+        let io = Arc::new(DropOrderObservingUnixPipeIo {
+            original_flags,
+            set_flags_calls: AtomicUsize::new(0),
+            restored_while_owned: AtomicBool::new(false),
+            writer_owned: Arc::clone(&writer_owned),
+        });
+        let strategy =
+            Arc::new(UnixNonblockingPipeStrategy::new_with_io(fd, io.clone()).expect("strategy"));
+        writer
+            .shutdown(Shutdown::Write)
+            .expect("close the owned write direction");
+        let session = SessionMessageWriter::from_strategy(
+            Box::new(OwnershipObservingWriter {
+                stream: writer,
+                owned: writer_owned,
+            }),
+            strategy,
+        );
 
         let error = session
-            .write_message(b"closed peer", Duration::from_secs(1))
-            .expect_err("closed pipe");
+            .write_message(b"closed writer", Duration::from_secs(1))
+            .expect_err("closed writer");
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
         drop(session);
+        assert!(
+            io.restored_while_owned.load(Ordering::SeqCst),
+            "strategy must restore descriptor flags before the writer owner closes it"
+        );
+        drop(reader);
     }
 
     struct PermanentlyUnavailableStrategy {
