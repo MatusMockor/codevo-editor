@@ -1,15 +1,13 @@
 import {
   pathFromLanguageServerUri,
   type LanguageServerCodeActionCommand,
-  type LanguageServerLocation,
+  type LanguageServerLocationList,
 } from "./languageServerFeatures";
 import { fileUriFromPath } from "./languageServerDocumentSync";
 
 const FIND_ALL_FILE_REFERENCES_COMMAND = "_typescript.findAllFileReferences";
 
-export function findAllFileReferencesCommand(
-  path: string,
-): LanguageServerCodeActionCommand {
+export function findAllFileReferencesCommand(path: string): LanguageServerCodeActionCommand {
   return {
     arguments: [fileUriFromPath(path)],
     command: FIND_ALL_FILE_REFERENCES_COMMAND,
@@ -18,16 +16,25 @@ export function findAllFileReferencesCommand(
 }
 
 export function filterFileReferenceLocationsToWorkspace(
-  locations: LanguageServerLocation[],
+  locations: LanguageServerLocationList,
   workspaceRoot: string,
-): LanguageServerLocation[] {
-  const rootPrefix = workspaceRoot.endsWith("/")
-    ? workspaceRoot
-    : `${workspaceRoot}/`;
+): LanguageServerLocationList {
+  const rootPrefix = workspaceRoot.endsWith("/") ? workspaceRoot : `${workspaceRoot}/`;
 
-  return locations.filter((location) => {
+  const filtered = locations.filter((location) => {
     const path = pathFromLanguageServerUri(location.uri);
 
     return Boolean(path && (path === workspaceRoot || path.startsWith(rootPrefix)));
   });
+  Object.defineProperties(filtered, {
+    isIncomplete: {
+      configurable: true,
+      value: locations.isIncomplete === true || filtered.length !== locations.length,
+    },
+    totalCount: {
+      configurable: true,
+      value: locations.totalCount ?? locations.length,
+    },
+  });
+  return filtered;
 }

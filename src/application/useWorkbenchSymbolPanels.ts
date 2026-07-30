@@ -1,5 +1,7 @@
 import {
   useCallback,
+  useEffect,
+  useRef,
   useState,
   type Dispatch,
   type MutableRefObject,
@@ -28,7 +30,11 @@ import {
   type LanguageServerTextDocumentPosition,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import type { ReferenceRow, ReferencesView } from "../domain/referencesView";
+import {
+  projectReferencesView,
+  type ReferenceRow,
+  type ReferencesView,
+} from "../domain/referencesView";
 import type { TypeHierarchyRow, TypeHierarchyView } from "../domain/typeHierarchy";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -78,27 +84,71 @@ type CancelJavaScriptTypeScriptLanguageServerRequest = (
   requestId: number,
 ) => Promise<void>;
 
+type BeginReferencesRequest = (cancel: () => void) => () => void;
+
+async function runBoundedSymbolPanelRequest<Result>(
+  request: Promise<Result>,
+  beginRequest: BeginReferencesRequest,
+): Promise<Result | typeof SYMBOL_PANEL_REQUEST_TIMED_OUT> {
+  let resolveCancellation: () => void = () => undefined;
+  const cancellation = new Promise<typeof SYMBOL_PANEL_REQUEST_TIMED_OUT>((resolve) => {
+    resolveCancellation = () => resolve(SYMBOL_PANEL_REQUEST_TIMED_OUT);
+  });
+  const releaseRequest = beginRequest(resolveCancellation);
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof SYMBOL_PANEL_REQUEST_TIMED_OUT>((resolve) => {
+    timeoutHandle = setTimeout(
+      () => resolve(SYMBOL_PANEL_REQUEST_TIMED_OUT),
+      SYMBOL_PANEL_REQUEST_TIMEOUT_MS,
+    );
+  });
+
+  return Promise.race([request, timeout, cancellation]).finally(() => {
+    clearTimeout(timeoutHandle);
+    releaseRequest();
+  });
+}
+
 async function runBoundedJavaScriptTypeScriptReferencesRequest(
   request: IdentifiedLanguageServerRequest<LanguageServerLocation[]>,
   expectedSessionId: number,
   rootPath: string,
   cancelRequest: CancelJavaScriptTypeScriptLanguageServerRequest,
+  beginRequest: BeginReferencesRequest,
 ): Promise<LanguageServerLocation[] | typeof SYMBOL_PANEL_REQUEST_TIMED_OUT> {
+  let resolveCancellation: () => void = () => undefined;
+  const cancellation = new Promise<typeof SYMBOL_PANEL_REQUEST_TIMED_OUT>((resolve) => {
+    resolveCancellation = () => resolve(SYMBOL_PANEL_REQUEST_TIMED_OUT);
+  });
+  let cancellationStarted = false;
+  const cancelOnce = () => {
+    if (cancellationStarted) {
+      return;
+    }
+
+    cancellationStarted = true;
+    resolveCancellation();
+    void cancelRequest(rootPath, request.sessionId, request.requestId).catch(() => undefined);
+  };
+
   if (request.sessionId !== expectedSessionId) {
     void request.catch(() => undefined);
+    cancelOnce();
     return SYMBOL_PANEL_REQUEST_TIMED_OUT;
   }
 
+  const releaseRequest = beginRequest(cancelOnce);
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<typeof SYMBOL_PANEL_REQUEST_TIMED_OUT>((resolve) => {
     timeoutHandle = setTimeout(() => {
-      void cancelRequest(rootPath, request.sessionId, request.requestId).catch(() => undefined);
+      cancelOnce();
       resolve(SYMBOL_PANEL_REQUEST_TIMED_OUT);
     }, SYMBOL_PANEL_REQUEST_TIMEOUT_MS);
   });
 
-  return Promise.race([request, timeout]).finally(() => {
+  return Promise.race([request, timeout, cancellation]).finally(() => {
     clearTimeout(timeoutHandle);
+    releaseRequest();
   });
 }
 
@@ -187,14 +237,53 @@ export function useWorkbenchSymbolPanels(
 
   const [callHierarchyView, setCallHierarchyView] = useState<CallHierarchyView | null>(null);
   const [typeHierarchyView, setTypeHierarchyView] = useState<TypeHierarchyView | null>(null);
-  const [referencesView, setReferencesView] = useState<ReferencesView | null>(null);
+  const [referencesView, setReferencesViewState] = useState<ReferencesView | null>(null);
+  const referencesRequestGenerationRef = useRef(0);
+  const activeReferencesRequestRef = useRef<{
+    cancel(): void;
+  } | null>(null);
+  const cancelActiveReferencesRequest = useCallback(() => {
+    const request = activeReferencesRequestRef.current;
+    activeReferencesRequestRef.current = null;
+    request?.cancel();
+  }, []);
+  const beginReferencesRequest = useCallback(
+    (cancel: () => void) => {
+      cancelActiveReferencesRequest();
+      const request = { cancel };
+      activeReferencesRequestRef.current = request;
+
+      return () => {
+        if (activeReferencesRequestRef.current === request) {
+          activeReferencesRequestRef.current = null;
+        }
+      };
+    },
+    [cancelActiveReferencesRequest],
+  );
+  const setReferencesView = useCallback<Dispatch<SetStateAction<ReferencesView | null>>>(
+    (view) => {
+      cancelActiveReferencesRequest();
+      referencesRequestGenerationRef.current += 1;
+      setReferencesViewState(view);
+    },
+    [cancelActiveReferencesRequest],
+  );
+
+  useEffect(
+    () => () => {
+      cancelActiveReferencesRequest();
+      referencesRequestGenerationRef.current += 1;
+    },
+    [cancelActiveReferencesRequest],
+  );
 
   const closeSymbolPanels = useCallback(() => {
     closeCompetingSurfaces();
     setCallHierarchyView(null);
     setTypeHierarchyView(null);
     setReferencesView(null);
-  }, [closeCompetingSurfaces]);
+  }, [closeCompetingSurfaces, setReferencesView]);
 
   const languageServerFeatureContext = useCallback(
     (
@@ -239,7 +328,10 @@ export function useWorkbenchSymbolPanels(
           featuresGateway: languageServerFeaturesGateway,
           isSessionActive,
           references: (rootPath, position) =>
-            languageServerFeaturesGateway.references(rootPath, position),
+            runBoundedSymbolPanelRequest(
+              languageServerFeaturesGateway.references(rootPath, position),
+              beginReferencesRequest,
+            ),
           prepareDocumentRequest: async (path) => {
             const lease = await requestLanguageServerDocumentLease(workspaceRoot, path);
 
@@ -294,6 +386,7 @@ export function useWorkbenchSymbolPanels(
             requestedSessionId,
             rootPath,
             cancelJavaScriptTypeScriptLanguageServerRequest,
+            beginReferencesRequest,
           );
         },
         prepareDocumentRequest: async (path) => {
@@ -309,6 +402,7 @@ export function useWorkbenchSymbolPanels(
       };
     },
     [
+      beginReferencesRequest,
       flushPendingJavaScriptTypeScriptDocumentChange,
       cancelJavaScriptTypeScriptLanguageServerRequest,
       isLanguageServerDocumentRequestLeaseCurrent,
@@ -439,6 +533,7 @@ export function useWorkbenchSymbolPanels(
     [
       openNavigationTarget,
       resolveCurrentWorkspaceRuntimeOwner,
+      setReferencesView,
       shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
       workspaceRoot,
     ],
@@ -688,11 +783,14 @@ export function useWorkbenchSymbolPanels(
     const requestedPath = document.path;
     let isRequestedSessionActive = context.isSessionActive;
     closeSymbolPanels();
+    const requestGeneration = referencesRequestGenerationRef.current;
+    const isReferencesRequestCurrent = () =>
+      referencesRequestGenerationRef.current === requestGeneration && isRequestedSessionActive();
 
     try {
       const documentRequest = await context.prepareDocumentRequest(requestedPath);
 
-      if (!documentRequest || !documentRequest()) {
+      if (!documentRequest || !isReferencesRequestCurrent() || !documentRequest()) {
         return;
       }
 
@@ -703,20 +801,25 @@ export function useWorkbenchSymbolPanels(
         toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
       );
 
-      if (locations === SYMBOL_PANEL_REQUEST_TIMED_OUT || !isRequestedSessionActive()) {
+      if (locations === SYMBOL_PANEL_REQUEST_TIMED_OUT || !isReferencesRequestCurrent()) {
         return;
       }
 
       if (locations.length === 0) {
-        setReferencesView({ locations: [], symbol: symbolName });
-        setMessage(`No references found for ${symbolName}.`);
+        const view = projectReferencesView(symbolName, locations);
+        setReferencesView(view);
+        setMessage(
+          view.isIncomplete
+            ? `References for ${symbolName} were limited by safety bounds.`
+            : `No references found for ${symbolName}.`,
+        );
         return;
       }
 
-      setReferencesView({ locations, symbol: symbolName });
+      setReferencesView(projectReferencesView(symbolName, locations));
       setMessage(null);
     } catch (error) {
-      if (!isRequestedSessionActive()) {
+      if (!isReferencesRequestCurrent()) {
         return;
       }
 
@@ -730,6 +833,7 @@ export function useWorkbenchSymbolPanels(
     reportError,
     resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
+    setReferencesView,
     workspaceRoot,
   ]);
 
@@ -777,21 +881,30 @@ export function useWorkbenchSymbolPanels(
       );
 
     closeSymbolPanels();
+    const requestGeneration = referencesRequestGenerationRef.current;
+    const isReferencesRequestCurrent = () =>
+      referencesRequestGenerationRef.current === requestGeneration && isRequestedSessionActive();
 
     try {
       await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
 
-      if (!isRequestedSessionActive()) {
+      if (!isReferencesRequestCurrent()) {
         return;
       }
 
-      const locations =
-        await javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations(
+      const locations = await runBoundedJavaScriptTypeScriptReferencesRequest(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.executeCommandLocations(
           requestedRoot,
           findAllFileReferencesCommand(requestedPath),
-        );
+          requestedSessionId,
+        ),
+        requestedSessionId,
+        requestedRoot,
+        cancelJavaScriptTypeScriptLanguageServerRequest,
+        beginReferencesRequest,
+      );
 
-      if (!isRequestedSessionActive()) {
+      if (locations === SYMBOL_PANEL_REQUEST_TIMED_OUT || !isReferencesRequestCurrent()) {
         return;
       }
 
@@ -799,15 +912,20 @@ export function useWorkbenchSymbolPanels(
       const symbol = document.name;
 
       if (workspaceLocations.length === 0) {
-        setReferencesView({ locations: [], symbol });
-        setMessage(`No file references found for ${symbol}.`);
+        const view = projectReferencesView(symbol, workspaceLocations);
+        setReferencesView(view);
+        setMessage(
+          view.isIncomplete
+            ? `File references for ${symbol} were limited by safety bounds.`
+            : `No file references found for ${symbol}.`,
+        );
         return;
       }
 
-      setReferencesView({ locations: workspaceLocations, symbol });
+      setReferencesView(projectReferencesView(symbol, workspaceLocations));
       setMessage(null);
     } catch (error) {
-      if (!isRequestedSessionActive()) {
+      if (!isReferencesRequestCurrent()) {
         return;
       }
 
@@ -815,6 +933,8 @@ export function useWorkbenchSymbolPanels(
     }
   }, [
     activeDocumentRef,
+    beginReferencesRequest,
+    cancelJavaScriptTypeScriptLanguageServerRequest,
     closeSymbolPanels,
     flushPendingJavaScriptTypeScriptDocumentChange,
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
@@ -824,6 +944,7 @@ export function useWorkbenchSymbolPanels(
     reportError,
     resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
+    setReferencesView,
     workspaceRoot,
   ]);
 

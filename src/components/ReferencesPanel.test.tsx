@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LanguageServerLocation } from "../domain/languageServerFeatures";
 import type { ReferenceRow, ReferencesView } from "../domain/referencesView";
-import { ReferencesPanel } from "./ReferencesPanel";
+import { REFERENCES_PANEL_PAGE_SIZE, ReferencesPanel } from "./ReferencesPanel";
 
 describe("ReferencesPanel", () => {
   let host: HTMLDivElement;
@@ -54,9 +54,7 @@ describe("ReferencesPanel", () => {
     await renderPanel({ onOpen });
 
     await act(async () => {
-      referenceRowButtons()[2].dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      referenceRowButtons()[2].dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(onOpen).toHaveBeenCalledOnce();
@@ -75,20 +73,68 @@ describe("ReferencesPanel", () => {
     expect(host.textContent).toContain("No references found");
   });
 
+  it("surfaces incomplete projections instead of presenting them as complete", async () => {
+    await renderPanel({
+      view: {
+        isIncomplete: true,
+        locations: defaultView().locations.slice(0, 2),
+        symbol: "loadUser",
+        totalCount: 7,
+      },
+    });
+
+    expect(host.textContent).toContain("Showing 2 of 7 references");
+    expect(host.textContent).toContain("Some references were omitted by safety limits.");
+  });
+
+  it("keeps large result rendering bounded and navigates across pages", async () => {
+    const locations = Array.from({ length: REFERENCES_PANEL_PAGE_SIZE * 3 }, (_, index) =>
+      location(`file:///workspace/src/file-${index}.ts`, index, 0),
+    );
+    const onOpen = vi.fn();
+    await renderPanel({
+      onOpen,
+      view: {
+        locations,
+        symbol: "value",
+        totalCount: locations.length,
+      },
+    });
+
+    expect(referenceRowButtons()).toHaveLength(REFERENCES_PANEL_PAGE_SIZE);
+
+    await act(async () => {
+      const next = Array.from(host.querySelectorAll("button")).find(
+        (button) => button.textContent === "Next",
+      );
+      next?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(referenceRowButtons()).toHaveLength(REFERENCES_PANEL_PAGE_SIZE);
+    expect(host.textContent).toContain(
+      `${REFERENCES_PANEL_PAGE_SIZE + 1}–${REFERENCES_PANEL_PAGE_SIZE * 2}`,
+    );
+    const firstVisibleTitle = referenceRowButtons()[0]?.title;
+
+    await act(async () => {
+      panelDialog().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+
+    expect(onOpen).toHaveBeenCalledOnce();
+    const opened = onOpen.mock.calls[0][0] as ReferenceRow;
+    expect(`${opened.relativePath}:${opened.line}:${opened.column}`).toBe(firstVisibleTitle);
+  });
+
   it("opens the active row with Enter", async () => {
     const onOpen = vi.fn();
     await renderPanel({ onOpen });
 
     await act(async () => {
-      panelDialog().dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
-      );
+      panelDialog().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
     });
 
     expect(onOpen).toHaveBeenCalledOnce();
-    expect((onOpen.mock.calls[0][0] as ReferenceRow).relativePath).toBe(
-      "app/A.php",
-    );
+    expect((onOpen.mock.calls[0][0] as ReferenceRow).relativePath).toBe("app/A.php");
   });
 
   it("closes when Escape is pressed", async () => {
@@ -96,9 +142,7 @@ describe("ReferencesPanel", () => {
     await renderPanel({ onClose });
 
     await act(async () => {
-      panelDialog().dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
-      );
+      panelDialog().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
     });
 
     expect(onClose).toHaveBeenCalledOnce();
@@ -121,9 +165,7 @@ describe("ReferencesPanel", () => {
           onOpen={overrides.onOpen ?? vi.fn()}
           view={overrides.view ?? defaultView()}
           workspaceRoot={
-            overrides.workspaceRoot === undefined
-              ? "/workspace"
-              : overrides.workspaceRoot
+            overrides.workspaceRoot === undefined ? "/workspace" : overrides.workspaceRoot
           }
         />,
       );
@@ -132,9 +174,7 @@ describe("ReferencesPanel", () => {
   }
 
   function referenceRowButtons(): HTMLButtonElement[] {
-    return Array.from(
-      host.querySelectorAll<HTMLButtonElement>('[role="option"]'),
-    );
+    return Array.from(host.querySelectorAll<HTMLButtonElement>('[role="option"]'));
   }
 
   function panelDialog(): HTMLElement {
@@ -159,11 +199,7 @@ function defaultView(): ReferencesView {
   };
 }
 
-function location(
-  uri: string,
-  line: number,
-  character: number,
-): LanguageServerLocation {
+function location(uri: string, line: number, character: number): LanguageServerLocation {
   return {
     uri,
     range: {

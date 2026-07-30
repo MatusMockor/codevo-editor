@@ -397,7 +397,7 @@ pub(super) async fn javascript_typescript_text_document_references(
     request_id: u64,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
+) -> Result<BoundedLanguageServerLocations, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
     let request = LspTextDocumentFeatureRequestFactory.references(&position);
     let Some(result) = registry
@@ -410,7 +410,10 @@ pub(super) async fn javascript_typescript_text_document_references(
         )
         .await?
     else {
-        return Ok(Vec::new());
+        return parse_bounded_reference_locations_result(&serde_json::Value::Null);
     };
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+    filter_bounded_lsp_locations_to_workspace(
+        &root_path,
+        parse_bounded_reference_locations_result(&result)?,
+    )
 }

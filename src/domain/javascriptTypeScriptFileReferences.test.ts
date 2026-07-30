@@ -38,14 +38,30 @@ describe("javascriptTypeScriptFileReferences", () => {
       ),
     ).toEqual([inside]);
   });
+
+  it("preserves backend truncation metadata and marks workspace filtering incomplete", () => {
+    const inside = {
+      uri: "file:///workspace/src/userService.ts",
+      range: range(1, 2, 1, 13),
+    };
+    const outside = {
+      uri: "file:///other/src/userService.ts",
+      range: range(2, 2, 2, 13),
+    };
+    const locations = Object.assign([inside, outside], {
+      isIncomplete: true,
+      totalCount: 7,
+    });
+
+    const filtered = filterFileReferenceLocationsToWorkspace(locations, "/workspace");
+
+    expect(filtered).toEqual([inside]);
+    expect(filtered.isIncomplete).toBe(true);
+    expect(filtered.totalCount).toBe(7);
+  });
 });
 
-function range(
-  startLine: number,
-  startCharacter: number,
-  endLine: number,
-  endCharacter: number,
-) {
+function range(startLine: number, startCharacter: number, endLine: number, endCharacter: number) {
   return {
     end: { character: endCharacter, line: endLine },
     start: { character: startCharacter, line: startLine },

@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyLanguageServerCompletionList,
+  type BoundedLanguageServerLocations,
   type IdentifiedLanguageServerRequest,
   type IdentifiedLanguageServerRequestsPort,
   type JavaScriptTypeScriptLanguageServerFeaturesGateway,
@@ -23,6 +24,7 @@ import {
   type LanguageServerInlayHint,
   type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
+  type LanguageServerLocationList,
   type LanguageServerOutgoingCall,
   type LanguageServerPosition,
   type LanguageServerPrepareRenameResult,
@@ -201,12 +203,20 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
       this.cancelRequest(rootPath, sessionId, requestId),
     completion: (rootPath, position, context, sessionId) =>
       this.completion(rootPath, position, context, sessionId),
+    resolveCompletionItem: (rootPath, item, sessionId) =>
+      this.resolveCompletionItem(rootPath, item, sessionId),
+    formatting: (rootPath, path, options, sessionId) =>
+      this.formatting(rootPath, path, options, sessionId),
     declaration: (rootPath, position, sessionId) => this.declaration(rootPath, position, sessionId),
     definition: (rootPath, position, sessionId) => this.definition(rootPath, position, sessionId),
     hover: (rootPath, position, sessionId) => this.hover(rootPath, position, sessionId),
     implementation: (rootPath, position, sessionId) =>
       this.implementation(rootPath, position, sessionId),
     references: (rootPath, position, sessionId) => this.references(rootPath, position, sessionId),
+    prepareRename: (rootPath, position, sessionId) =>
+      this.prepareRename(rootPath, position, sessionId),
+    rename: (rootPath, position, newName, sessionId) =>
+      this.rename(rootPath, position, newName, sessionId),
     signatureHelp: (rootPath, position, context, sessionId) =>
       this.signatureHelp(rootPath, position, context, sessionId),
     sourceDefinition: (rootPath, position, sessionId) =>
@@ -266,8 +276,14 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
   resolveCompletionItem(
     rootPath: string,
     item: LanguageServerCompletionItem,
-  ): Promise<LanguageServerCompletionItem> {
-    return this.invokeWhenAvailable(this.commands.completionResolve, { item, rootPath }, item);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCompletionItem> {
+    return this.invokeFeatureRequest(
+      this.commands.completionResolve,
+      { item, rootPath },
+      item,
+      sessionId,
+    );
   }
 
   definition(
@@ -399,11 +415,10 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
     sessionId?: number,
-  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]> {
-    return this.invokeFeatureRequest(
+  ): IdentifiedLanguageServerRequest<LanguageServerLocationList> {
+    return this.invokeBoundedLocationsRequest(
       this.commands.references,
       { position, rootPath },
-      [],
       sessionId,
     );
   }
@@ -481,16 +496,28 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
   prepareRename(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerPrepareRenameResult | null> {
-    return this.invokeWhenAvailable(this.commands.prepareRename, { position, rootPath }, null);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerPrepareRenameResult | null> {
+    return this.invokeFeatureRequest(
+      this.commands.prepareRename,
+      { position, rootPath },
+      null,
+      sessionId,
+    );
   }
 
   rename(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
     newName: string,
-  ): Promise<LanguageServerWorkspaceEdit | null> {
-    return this.invokeWhenAvailable(this.commands.rename, { newName, position, rootPath }, null);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerWorkspaceEdit | null> {
+    return this.invokeFeatureRequest(
+      this.commands.rename,
+      { newName, position, rootPath },
+      null,
+      sessionId,
+    );
   }
 
   codeActions(
@@ -581,11 +608,12 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
   executeCommandLocations(
     rootPath: string,
     command: LanguageServerCodeActionCommand,
-  ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocationList> {
+    return this.invokeBoundedLocationsRequest(
       this.commands.executeCommandLocations,
       { command, rootPath },
-      [],
+      sessionId,
     );
   }
 
@@ -651,8 +679,14 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
     rootPath: string,
     path: string,
     options: LanguageServerFormattingOptions,
-  ): Promise<LanguageServerTextEdit[]> {
-    return this.invokeWhenAvailable(this.commands.formatting, { options, path, rootPath }, []);
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerTextEdit[]> {
+    return this.invokeFeatureRequest(
+      this.commands.formatting,
+      { options, path, rootPath },
+      [],
+      sessionId,
+    );
   }
 
   onTypeFormatting(
@@ -715,6 +749,33 @@ export class TauriLanguageServerFeaturesGateway implements JavaScriptTypeScriptL
     return Object.assign(this.invokeWhenAvailable(command, invokeArgs, fallback), {
       requestId,
       sessionId: identifiedSessionId,
+    });
+  }
+
+  private invokeBoundedLocationsRequest(
+    command: string,
+    args: Record<string, unknown>,
+    sessionId?: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocationList> {
+    const request = this.invokeFeatureRequest<BoundedLanguageServerLocations>(
+      command,
+      args,
+      { isIncomplete: false, locations: [], totalCount: 0 },
+      sessionId,
+    );
+    const mapped = request.then((result) => {
+      const locations = Array.isArray(result) ? result : result.locations;
+      const isIncomplete = Array.isArray(result) ? false : result.isIncomplete;
+      const totalCount = Array.isArray(result) ? result.length : result.totalCount;
+      Object.defineProperties(locations, {
+        isIncomplete: { configurable: true, value: isIncomplete },
+        totalCount: { configurable: true, value: totalCount },
+      });
+      return locations;
+    });
+    return Object.assign(mapped, {
+      requestId: request.requestId,
+      sessionId: request.sessionId,
     });
   }
 }

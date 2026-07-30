@@ -8,9 +8,11 @@ mod code_action_projection;
 mod completion_projection;
 mod document_highlight_projection;
 mod document_symbol_projection;
+mod hover_projection;
 mod linked_editing_projection;
 mod rename_projection;
 mod workspace_symbol_projection;
+pub use hover_projection::{parse_hover_result, LanguageServerHover};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +79,19 @@ pub struct LanguageServerRange {
 pub struct LanguageServerLocation {
     pub uri: String,
     pub range: LanguageServerRange,
+}
+
+pub const MAX_REFERENCE_LOCATIONS: usize = 2_000;
+pub const MAX_INSPECTED_REFERENCE_LOCATIONS: usize = 4_000;
+pub const MAX_REFERENCE_LOCATION_URI_BYTES: usize = 16 * 1_024;
+pub const MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES: usize = 2 * 1_024 * 1_024;
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundedLanguageServerLocations {
+    pub locations: Vec<LanguageServerLocation>,
+    pub total_count: usize,
+    pub is_incomplete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -360,12 +375,6 @@ pub struct LanguageServerFormattingOptions {
     pub insert_spaces: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LanguageServerHover {
-    pub contents: String,
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCompletionItem {
@@ -545,22 +554,6 @@ mod request_factory;
 pub use request_factory::{
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
 };
-pub fn parse_hover_result(value: &Value) -> Result<Option<LanguageServerHover>, String> {
-    if value.is_null() {
-        return Ok(None);
-    }
-
-    let Some(contents) = value.get("contents").and_then(markup_to_string) else {
-        return Err("Language server returned a malformed hover response.".to_string());
-    };
-
-    if contents.trim().is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(LanguageServerHover { contents }))
-}
-
 pub fn parse_completion_result(value: &Value) -> Result<LanguageServerCompletionList, String> {
     completion_projection::project_completion_result(value)
 }
@@ -579,6 +572,50 @@ pub fn parse_definition_result(value: &Value) -> Result<Vec<LanguageServerLocati
     }
 
     parse_definition_item(value).map(|location| vec![location])
+}
+
+pub fn parse_bounded_reference_locations_result(
+    value: &Value,
+) -> Result<BoundedLanguageServerLocations, String> {
+    if value.is_null() {
+        return Ok(BoundedLanguageServerLocations {
+            locations: Vec::new(),
+            total_count: 0,
+            is_incomplete: false,
+        });
+    }
+
+    let (items, total_count): (&[Value], usize) = if let Some(items) = value.as_array() {
+        (items, items.len())
+    } else {
+        (std::slice::from_ref(value), 1)
+    };
+    let inspected_count = items.len().min(MAX_INSPECTED_REFERENCE_LOCATIONS);
+    let mut locations = Vec::with_capacity(inspected_count.min(MAX_REFERENCE_LOCATIONS));
+    let mut retained_uri_bytes = 0usize;
+
+    for item in items.iter().take(inspected_count) {
+        if locations.len() >= MAX_REFERENCE_LOCATIONS {
+            break;
+        }
+
+        let location = parse_definition_item(item)?;
+        let uri_bytes = location.uri.len();
+        if uri_bytes > MAX_REFERENCE_LOCATION_URI_BYTES
+            || retained_uri_bytes.saturating_add(uri_bytes) > MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES
+        {
+            continue;
+        }
+
+        retained_uri_bytes += uri_bytes;
+        locations.push(location);
+    }
+
+    Ok(BoundedLanguageServerLocations {
+        is_incomplete: locations.len() != total_count,
+        locations,
+        total_count,
+    })
 }
 
 pub fn parse_inlay_hints_result(value: &Value) -> Result<Vec<LanguageServerInlayHint>, String> {

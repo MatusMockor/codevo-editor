@@ -219,7 +219,9 @@ function javaScriptTypeScriptSymbolPanelGateway(
   references: WorkbenchSymbolPanelsDependencies["javaScriptTypeScriptLanguageServerFeaturesGateway"]["references"],
 ): WorkbenchSymbolPanelsDependencies["javaScriptTypeScriptLanguageServerFeaturesGateway"] {
   return {
-    executeCommandLocations: vi.fn(async () => []),
+    executeCommandLocations: vi.fn((_rootPath, _command, sessionId) =>
+      Object.assign(Promise.resolve([]), { requestId: 2, sessionId }),
+    ),
     incomingCalls: vi.fn(async () => []),
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
@@ -366,7 +368,7 @@ describe("useWorkbenchSymbolPanels JavaScript/TypeScript reference request owner
     }
   });
 
-  it("consumes a late rejection from mismatched session authority without cancelling it", async () => {
+  it("cancels a mismatched exact request and consumes its late rejection", async () => {
     let rejectReferences: (reason: unknown) => void = () => undefined;
     const pendingReferences = new Promise<ReturnType<typeof referenceRow>["location"][]>(
       (_resolve, reject) => {
@@ -396,7 +398,8 @@ describe("useWorkbenchSymbolPanels JavaScript/TypeScript reference request owner
       await Promise.resolve();
     });
 
-    expect(cancelRequest).not.toHaveBeenCalled();
+    expect(cancelRequest).toHaveBeenCalledOnce();
+    expect(cancelRequest).toHaveBeenCalledWith(ROOT, 8, 24);
     expect(harness.api().referencesView).toBeNull();
     expect(harness.deps.reportError).not.toHaveBeenCalled();
     harness.root.unmount();
@@ -449,24 +452,324 @@ describe.each([
   });
 });
 
+describe("useWorkbenchSymbolPanels reference request generation", () => {
+  it("cancels the superseded exact request and keeps the newest reverse-order result", async () => {
+    let resolveFirst: (locations: ReturnType<typeof referenceRow>["location"][]) => void = () =>
+      undefined;
+    const firstResult = new Promise<ReturnType<typeof referenceRow>["location"][]>((resolve) => {
+      resolveFirst = resolve;
+    });
+    let requestNumber = 0;
+    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) => {
+      requestNumber += 1;
+      const result =
+        requestNumber === 1
+          ? firstResult
+          : Promise.resolve([referenceRow(`${ROOT}/src/Newest.ts`).location]);
+      return Object.assign(result, {
+        requestId: requestNumber === 1 ? 31 : 32,
+        sessionId,
+      });
+    });
+    const cancelRequest = vi.fn(async () => undefined);
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
+      javaScriptTypeScriptLanguageServerFeaturesGateway:
+        javaScriptTypeScriptSymbolPanelGateway(references),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+    let firstOpening = Promise.resolve();
+
+    await act(async () => {
+      firstOpening = harness.api().openReferencesPanel();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(references).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await harness.api().openReferencesPanel();
+    });
+
+    expect(cancelRequest).toHaveBeenCalledTimes(1);
+    expect(cancelRequest).toHaveBeenCalledWith(ROOT, 7, 31);
+    expect(harness.api().referencesView?.locations[0]?.uri).toContain("Newest.ts");
+
+    await act(async () => {
+      resolveFirst([referenceRow(`${ROOT}/src/Stale.ts`).location]);
+      await firstOpening;
+    });
+
+    expect(harness.api().referencesView?.locations[0]?.uri).toContain("Newest.ts");
+    expect(harness.api().referencesView?.locations[0]?.uri).not.toContain("Stale.ts");
+    harness.root.unmount();
+  });
+
+  it("does not publish a pending result after unmount", async () => {
+    let resolveReferences: (
+      locations: ReturnType<typeof referenceRow>["location"][],
+    ) => void = () => undefined;
+    const pendingResult = new Promise<ReturnType<typeof referenceRow>["location"][]>((resolve) => {
+      resolveReferences = resolve;
+    });
+    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) =>
+      Object.assign(pendingResult, { requestId: 33, sessionId }),
+    );
+    const cancelRequest = vi.fn(async () => undefined);
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
+      javaScriptTypeScriptLanguageServerFeaturesGateway:
+        javaScriptTypeScriptSymbolPanelGateway(references),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+    let opening = Promise.resolve();
+
+    await act(async () => {
+      opening = harness.api().openReferencesPanel();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(references).toHaveBeenCalledTimes(1));
+
+    act(() => harness.root.unmount());
+    expect(cancelRequest).toHaveBeenCalledOnce();
+    expect(cancelRequest).toHaveBeenCalledWith(ROOT, 7, 33);
+    resolveReferences([referenceRow(`${ROOT}/src/Late.ts`).location]);
+    await opening;
+
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
+    expect(harness.deps.reportError).not.toHaveBeenCalled();
+  });
+
+  it("keeps a supersession storm to one active exact backend request", async () => {
+    const rejectByRequestId = new Map<number, (reason: unknown) => void>();
+    let nextRequestId = 100;
+    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) => {
+      const requestId = nextRequestId;
+      nextRequestId += 1;
+      const result = new Promise<ReturnType<typeof referenceRow>["location"][]>(
+        (_resolve, reject) => {
+          rejectByRequestId.set(requestId, reject);
+        },
+      );
+      return Object.assign(result, { requestId, sessionId });
+    });
+    const cancelRequest = vi.fn(
+      async (_rootPath: string, _sessionId: number, requestId: number) => {
+        rejectByRequestId.get(requestId)?.(new Error("cancelled"));
+      },
+    );
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
+      javaScriptTypeScriptLanguageServerFeaturesGateway:
+        javaScriptTypeScriptSymbolPanelGateway(references),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+    const openings: Promise<void>[] = [];
+
+    for (let index = 0; index < 32; index += 1) {
+      await act(async () => {
+        openings.push(harness.api().openReferencesPanel());
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(references).toHaveBeenCalledTimes(index + 1));
+    }
+
+    act(() => harness.root.unmount());
+    await Promise.all(openings);
+
+    expect(cancelRequest).toHaveBeenCalledTimes(32);
+    expect(
+      new Set(
+        cancelRequest.mock.calls.map(([, sessionId, requestId]) => `${sessionId}:${requestId}`),
+      ).size,
+    ).toBe(32);
+    expect(harness.deps.reportError).not.toHaveBeenCalled();
+  });
+});
+
 describe("useWorkbenchSymbolPanels file references owner fence", () => {
-  it("drops a replaced owner's file-reference result", async () => {
-    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
-    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
-    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
-    const gateway = {
-      executeCommandLocations: vi.fn(async () => {
-        currentOwner = replacementOwner;
-        return [referenceRow(`${ROOT}/src/Target.ts`).location];
-      }),
-    } as unknown as LanguageServerFeaturesGateway;
+  it("keeps an all-omitted file-reference receipt truthfully incomplete", async () => {
+    const executeCommandLocations = vi.fn(
+      (_rootPath: string, _command: unknown, sessionId: number) =>
+        Object.assign(
+          Promise.resolve(
+            Object.assign([], {
+              isIncomplete: true,
+              totalCount: 5,
+            }),
+          ),
+          { requestId: 50, sessionId },
+        ),
+    );
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
       javaScriptTypeScriptLanguageServerFeaturesGateway: {
         ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
           Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
         ),
-        executeCommandLocations: gateway.executeCommandLocations,
+        executeCommandLocations,
+      },
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+
+    await act(async () => {
+      await harness.api().openFileReferencesPanel();
+    });
+
+    expect(harness.api().referencesView).toMatchObject({
+      isIncomplete: true,
+      locations: [],
+      totalCount: 5,
+    });
+    expect(harness.deps.setMessage).toHaveBeenLastCalledWith(
+      expect.stringContaining("limited by safety bounds"),
+    );
+    harness.root.unmount();
+  });
+
+  it("cancels superseded and unmounted exact requests across an A-B-A owner replacement", async () => {
+    const ownerA = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = ownerA;
+    const rejectByRequestId = new Map<number, (reason: unknown) => void>();
+    let nextRequestId = 51;
+    const executeCommandLocations = vi.fn(
+      (_rootPath: string, _command: unknown, sessionId: number) => {
+        const requestId = nextRequestId;
+        nextRequestId += 1;
+        const pending = new Promise<ReturnType<typeof referenceRow>["location"][]>(
+          (_resolve, reject) => {
+            rejectByRequestId.set(requestId, reject);
+          },
+        );
+        return Object.assign(pending, { requestId, sessionId });
+      },
+    );
+    const cancelRequest = vi.fn(
+      async (_rootPath: string, _sessionId: number, requestId: number) => {
+        rejectByRequestId.get(requestId)?.(new Error("cancelled"));
+      },
+    );
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: {
+        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
+          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ),
+        executeCommandLocations,
+      },
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+    const openings: Promise<void>[] = [];
+
+    await act(async () => {
+      openings.push(harness.api().openFileReferencesPanel());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(executeCommandLocations).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      openings.push(harness.api().openFileReferencesPanel());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(executeCommandLocations).toHaveBeenCalledTimes(2));
+    expect(cancelRequest).toHaveBeenCalledWith(ROOT, 7, 51);
+
+    currentOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    currentOwner = createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT);
+    act(() => harness.root.unmount());
+    await Promise.all(openings);
+
+    expect(cancelRequest).toHaveBeenCalledTimes(2);
+    expect(cancelRequest).toHaveBeenLastCalledWith(ROOT, 7, 52);
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
+    expect(harness.deps.reportError).not.toHaveBeenCalled();
+  });
+
+  it("settles and exactly cancels an identified file-reference request at the deadline", async () => {
+    vi.useFakeTimers();
+    let resolveLocations: (locations: ReturnType<typeof referenceRow>["location"][]) => void = () =>
+      undefined;
+    const pendingLocations = new Promise<ReturnType<typeof referenceRow>["location"][]>(
+      (resolve) => {
+        resolveLocations = resolve;
+      },
+    );
+    const executeCommandLocations = vi.fn(
+      (_rootPath: string, _command: unknown, sessionId: number) =>
+        Object.assign(pendingLocations, { requestId: 41, sessionId }),
+    );
+    const cancelRequest = vi.fn(async () => undefined);
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: {
+        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
+          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ),
+        executeCommandLocations,
+      },
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+    });
+
+    try {
+      await act(async () => {
+        const opening = harness.api().openFileReferencesPanel();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(2_500);
+        await opening;
+      });
+
+      expect(harness.api().referencesView).toBeNull();
+      expect(harness.deps.setMessage).not.toHaveBeenCalled();
+      expect(cancelRequest).toHaveBeenCalledOnce();
+      expect(cancelRequest).toHaveBeenCalledWith(ROOT, 7, 41);
+
+      await act(async () => {
+        resolveLocations([referenceRow(`${ROOT}/src/Late.ts`).location]);
+        await Promise.resolve();
+      });
+
+      expect(harness.api().referencesView).toBeNull();
+    } finally {
+      harness.root.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a replaced owner's file-reference result", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    const executeCommandLocations = vi.fn(
+      (_rootPath: string, _command: unknown, sessionId: number) =>
+        Object.assign(
+          Promise.resolve().then(() => {
+            currentOwner = replacementOwner;
+            return [referenceRow(`${ROOT}/src/Target.ts`).location];
+          }),
+          { requestId: 42, sessionId },
+        ),
+    );
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      javaScriptTypeScriptLanguageServerFeaturesGateway: {
+        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
+          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ),
+        executeCommandLocations,
       },
       javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
@@ -488,12 +791,19 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
     const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
     let currentOwner: WorkspaceRuntimeOwner = owner;
     const isSessionActive = vi.fn(() => true);
-    const gateway = {
-      executeCommandLocations: vi.fn(async () => {
-        currentOwner = transferWorkspaceRuntimeOwner(owner, "/workspace-alias");
-        return [referenceRow(`${ROOT}/src/Target.ts`).location];
-      }),
-    } as unknown as LanguageServerFeaturesGateway;
+    const executeCommandLocations = vi.fn(
+      (_rootPath: string, _command: unknown, sessionId: number) =>
+        Object.assign(
+          Promise.resolve().then(() => {
+            currentOwner = transferWorkspaceRuntimeOwner(owner, "/workspace-alias");
+            return Object.assign([referenceRow(`${ROOT}/src/Target.ts`).location], {
+              isIncomplete: true,
+              totalCount: 5,
+            });
+          }),
+          { requestId: 43, sessionId },
+        ),
+    );
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: isSessionActive,
@@ -501,7 +811,7 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
         ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
           Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
         ),
-        executeCommandLocations: gateway.executeCommandLocations,
+        executeCommandLocations,
       },
       javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
@@ -514,6 +824,10 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
 
     expect(isSessionActive).toHaveBeenCalledWith(ROOT, 7, owner);
     expect(harness.api().referencesView?.locations).toHaveLength(1);
+    expect(harness.api().referencesView).toMatchObject({
+      isIncomplete: true,
+      totalCount: 5,
+    });
     expect(harness.deps.setMessage).toHaveBeenLastCalledWith(null);
 
     harness.root.unmount();

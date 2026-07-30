@@ -1017,6 +1017,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           path: "/project/src/user.ts",
         },
         "account",
+        1,
       );
     }
   });
@@ -1189,10 +1190,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       vi.mocked(gateway.completion).mockImplementationOnce(() =>
         Object.assign(completion.promise, { requestId: 51 }),
       );
-      const cancelRequest = vi.fn(async () => undefined);
+      const cancelRequest = vi.mocked(gateway.identifiedRequests!.cancelRequest);
       registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         monaco as any,
-        providerContext({ cancelRequest, featuresGateway: gateway }),
+        providerContext({ featuresGateway: gateway }),
       );
       const completionProvider = (monaco.languages.registerCompletionItemProvider as any).mock
         .calls[0][1];
@@ -1208,6 +1209,202 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       completion.resolve({ isIncomplete: false, items: [] });
       await flushMicrotasks();
       expect(cancelRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels exact pending TypeScript rename requests once under cancellation storms", async () => {
+    const monaco = createMonaco();
+    const pendingPrepare =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["prepareRename"]>>>();
+    const pendingRename =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.prepareRename).mockImplementationOnce(() => pendingPrepare.promise);
+    vi.mocked(gateway.rename).mockImplementationOnce(() => pendingRename.promise);
+    const cancelRequest = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+
+    const prepareToken = cancellableToken();
+    const prepare = provider.resolveRenameLocation(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      prepareToken,
+    );
+    await vi.waitFor(() => expect(gateway.prepareRename).toHaveBeenCalledOnce());
+    for (let index = 0; index < 1_000; index += 1) {
+      prepareToken.fire();
+    }
+    await expect(prepare).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+      "/project",
+      1,
+      pendingPrepare.promise.requestId,
+    );
+
+    const renameToken = cancellableToken();
+    const rename = provider.provideRenameEdits(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      "Account",
+      renameToken,
+    );
+    await vi.waitFor(() => expect(gateway.rename).toHaveBeenCalledOnce());
+    for (let index = 0; index < 1_000; index += 1) {
+      renameToken.fire();
+    }
+    await expect(rename).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenNthCalledWith(
+      2,
+      "/project",
+      1,
+      pendingRename.promise.requestId,
+    );
+    expect(cancelRequest).toHaveBeenCalledTimes(2);
+
+    pendingPrepare.resolve(null);
+    pendingRename.resolve(null);
+    await flushMicrotasks();
+    expect(cancelRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a late TypeScript rename after an unobserved owner A-B-A transition", async () => {
+    const monaco = createMonaco();
+    let ownerEpoch = 1;
+    const pendingRename =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.rename).mockImplementationOnce(() => pendingRename.promise);
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+        getActiveJavaScriptTypeScriptOwnerEpoch: () => ownerEpoch,
+      }),
+    );
+    const provider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+    const rename = provider.provideRenameEdits(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      "Account",
+    );
+    await vi.waitFor(() => expect(gateway.rename).toHaveBeenCalledOnce());
+
+    ownerEpoch = 2;
+    ownerEpoch = 3;
+    pendingRename.resolve(workspaceEdit("file:///project/src/user.ts", "Account"));
+
+    await expect(rename).resolves.toBeNull();
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
+  });
+
+  it("fails closed and cancels a rename response identified for another session", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    const foreignRequest = identifiedResponse(
+      workspaceEdit("file:///project/src/user.ts", "Account"),
+      2,
+    );
+    vi.mocked(gateway.rename).mockImplementationOnce(() => foreignRequest);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const provider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+
+    await expect(
+      provider.provideRenameEdits(textModel(), { column: 4, lineNumber: 1 }, "Account"),
+    ).resolves.toBeNull();
+    expect(gateway.identifiedRequests?.cancelRequest).toHaveBeenCalledExactlyOnceWith(
+      "/project",
+      2,
+      foreignRequest.requestId,
+    );
+  });
+
+  it("times out exact TypeScript rename and lazy completion-resolve requests", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const monaco = createMonaco();
+      const pendingRename =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>>();
+      const pendingResolve =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCompletionItem"]>>
+        >();
+      const gateway = featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [
+            {
+              data: { entryNames: ["loadUser"] },
+              detail: "function",
+              documentation: null,
+              insertText: "loadUser",
+              kind: 3,
+              label: "loadUser",
+            },
+          ],
+        },
+      });
+      vi.mocked(gateway.rename).mockImplementationOnce(() => pendingRename.promise);
+      vi.mocked(gateway.resolveCompletionItem).mockImplementationOnce(() => pendingResolve.promise);
+      const cancelRequest = vi.fn(async () => undefined);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({ cancelRequest, featuresGateway: gateway }),
+      );
+      const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+      const completionProvider = (monaco.languages.registerCompletionItemProvider as any).mock
+        .calls[0][1];
+
+      const rename = renameProvider.provideRenameEdits(
+        textModel(),
+        { column: 4, lineNumber: 1 },
+        "Account",
+      );
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(rename).resolves.toBeNull();
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+        "/project",
+        1,
+        pendingRename.promise.requestId,
+      );
+
+      const completion = await completionProvider.provideCompletionItems(textModel(), {
+        column: 4,
+        lineNumber: 1,
+      });
+      const originalItem = completion.suggestions[0];
+      const resolved = completionProvider.resolveCompletionItem(originalItem);
+      await vi.advanceTimersByTimeAsync(2_500);
+      await expect(resolved).resolves.toBe(originalItem);
+      expect(cancelRequest).toHaveBeenNthCalledWith(
+        2,
+        "/project",
+        1,
+        pendingResolve.promise.requestId,
+      );
+      expect(cancelRequest).toHaveBeenCalledTimes(2);
+
+      pendingRename.resolve(null);
+      pendingResolve.resolve({
+        detail: "late",
+        documentation: null,
+        insertText: "late",
+        kind: 3,
+        label: "late",
+      });
+      await flushMicrotasks();
+      expect(cancelRequest).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
@@ -1460,6 +1657,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       hoverProvider.provideHover(textModel(), { column: 4, lineNumber: 2 }, token),
     ).resolves.toEqual({
       contents: [{ value: "type User = { id: string }" }],
+      range: {
+        endColumn: 4,
+        endLineNumber: 2,
+        startColumn: 4,
+        startLineNumber: 2,
+      },
     });
   });
 
@@ -1743,6 +1946,66 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
     await expect(resolve).resolves.toBe(originalAction);
     expect(cancelRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not report code-action rejections raced by already-cancelled tokens", async () => {
+    const monaco = createMonaco();
+    const action = {
+      command: null,
+      data: { resolve: true },
+      edit: null,
+      isPreferred: false,
+      kind: "quickfix",
+      title: "Resolve me",
+    };
+    const rejectedProvide = Object.assign(Promise.reject(new Error("stale provide error")), {
+      requestId: 91,
+      sessionId: 1,
+    });
+    const rejectedResolve = Object.assign(Promise.reject(new Error("stale resolve error")), {
+      requestId: 92,
+      sessionId: 1,
+    });
+    const gateway = featuresGateway();
+    vi.mocked(gateway.codeActions)
+      .mockImplementationOnce(() => rejectedProvide)
+      .mockImplementationOnce((_root, _path, _range, _context, sessionId) =>
+        identifiedResponse([action], sessionId),
+      );
+    vi.mocked(gateway.resolveCodeAction).mockImplementationOnce(() => rejectedResolve);
+    const reportError = vi.fn();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, reportError }),
+    );
+    const provider = (monaco.languages.registerCodeActionProvider as any).mock.calls[0][1];
+    const provideToken = cancellableToken();
+    provideToken.fire();
+
+    await expect(
+      provider.provideCodeActions(
+        textModel(),
+        new monaco.Range(1, 1, 1, 5),
+        { markers: [], only: "quickfix" },
+        provideToken,
+      ),
+    ).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+
+    const actions = await provider.provideCodeActions(textModel(), new monaco.Range(1, 1, 1, 5), {
+      markers: [],
+      only: "quickfix",
+    });
+    const originalAction = actions.actions[0];
+    const resolveToken = cancellableToken();
+    resolveToken.fire();
+
+    await expect(provider.resolveCodeAction(originalAction, resolveToken)).resolves.toBe(
+      originalAction,
+    );
+    expect(reportError).not.toHaveBeenCalled();
   });
 
   it("times out pending TypeScript code-action provide and resolve requests", async () => {
@@ -3978,11 +4241,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
     const renameLocation = await renameProvider.resolveRenameLocation(model, position);
 
-    expect(gateway.prepareRename).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 0,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.prepareRename).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
     expect(renameLocation).toEqual({
       range: expect.objectContaining({
         endColumn: 6,
@@ -4003,6 +4270,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         path: "/project/src/user.ts",
       },
       "Account",
+      1,
     );
     expect(rename.edits).toEqual([
       {
@@ -4115,10 +4383,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       tabSize: 2,
     });
 
-    expect(gateway.formatting).toHaveBeenCalledWith("/project", "/project/src/user.ts", {
-      insertSpaces: true,
-      tabSize: 2,
-    });
+    expect(gateway.identifiedRequests?.formatting).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      {
+        insertSpaces: true,
+        tabSize: 2,
+      },
+      1,
+    );
+    expect(gateway.formatting).not.toHaveBeenCalled();
     expect(formatting).toEqual([
       {
         range: expect.objectContaining({
@@ -5278,6 +5552,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.resolveCompletionItem).toHaveBeenCalledWith(
       "/project",
       expect.objectContaining({ label: "loadUser" }),
+      1,
     );
   });
 
@@ -5377,6 +5652,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         data: { entryNames: ["loadUser"] },
         label: "loadUser",
       }),
+      1,
     );
     expect(resolved).toEqual(
       expect.objectContaining({
@@ -5470,6 +5746,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.resolveCompletionItem).toHaveBeenCalledWith(
       "/project",
       expect.objectContaining({ label: "loadUser" }),
+      1,
     );
   });
 
@@ -5526,6 +5803,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.resolveCompletionItem).toHaveBeenCalledWith(
       "/project",
       expect.objectContaining({ label: "loadUser" }),
+      1,
     );
   });
 
@@ -6499,6 +6777,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         path: "/project/src/user.ts",
       },
       "Account",
+      1,
     );
     expect(model.pushEditOperations).toHaveBeenCalledWith(
       [],
@@ -6576,6 +6855,77 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       }),
     );
     expect(closedFileRollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects and rolls back atomic rename finalization after Monaco cancellation", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const hostCommit = createDeferred<void>();
+    const closedFileRollback = vi.fn();
+    let applicationContext: JavaScriptTypeScriptWorkspaceEditApplicationContext | null = null;
+    const applyWorkspaceEdit = vi.fn(async (_edit, context) => {
+      applicationContext = context;
+      const openModelCommit = context.applyOpenModels?.();
+      await hostCommit.promise;
+      const finalized =
+        openModelCommit?.kind === "applied" ? openModelCommit.finalize?.() : openModelCommit;
+      if (finalized?.kind === "rejected") {
+        closedFileRollback();
+        return { kind: "rejected" as const, reason: "inactiveWorkspace" as const };
+      }
+      return { kind: "accepted" as const };
+    });
+    const gateway = featuresGateway({
+      rename: workspaceEdit("file:///project/src/closed.ts", "Account"),
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ applyWorkspaceEdit, featuresGateway: gateway }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+    const token = cancellableToken();
+    const rename = renameProvider.provideRenameEdits(
+      model,
+      { column: 3, lineNumber: 1 },
+      "Account",
+      token,
+    );
+    await vi.waitFor(() => expect(applicationContext).not.toBeNull());
+
+    token.fire();
+    hostCommit.resolve();
+
+    await expect(rename).resolves.toBeNull();
+    expect(closedFileRollback).toHaveBeenCalledTimes(1);
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
+  });
+
+  it("does not report a rename rejection raced by an already-cancelled token", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    const rejectedRequest = Object.assign(Promise.reject(new Error("stale rename error")), {
+      requestId: 88,
+      sessionId: 1,
+    });
+    vi.mocked(gateway.rename).mockImplementationOnce(() => rejectedRequest);
+    const reportError = vi.fn();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, reportError }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+    const token = cancellableToken();
+    token.fire();
+
+    await expect(
+      renameProvider.provideRenameEdits(
+        textModel(),
+        { column: 3, lineNumber: 1 },
+        "Account",
+        token,
+      ),
+    ).resolves.toBeNull();
+    expect(reportError).not.toHaveBeenCalled();
   });
 
   it("returns no rename edit when the workspace applier rejects the operation", async () => {
@@ -6946,11 +7296,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     prepareRename.reject(new Error("Cannot rename this symbol."));
 
     await expect(renameLocationPromise).resolves.toBeNull();
-    expect(gateway.prepareRename).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 0,
-      path: "/project/src/user.ts",
-    });
+    expect(gateway.prepareRename).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      1,
+    );
   });
 
   it("ignores stale TypeScript lazy resolves after switching project tabs", async () => {
@@ -7663,6 +8017,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     await expect(provider.provideHover(model, { column: 1, lineNumber: 1 })).resolves.toEqual({
       contents: [{ value: "type User" }],
+      range: {
+        endColumn: 1,
+        endLineNumber: 1,
+        startColumn: 1,
+        startLineNumber: 1,
+      },
     });
     activeDocument = { ...activeDocument, content: "x".repeat(16 * 1024 + 1) };
     model.setSnapshot(activeDocument.content, 2);
@@ -7672,6 +8032,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     model.setSnapshot(activeDocument.content, 3);
     await expect(provider.provideHover(model, { column: 1, lineNumber: 1 })).resolves.toEqual({
       contents: [{ value: "type User" }],
+      range: {
+        endColumn: 1,
+        endLineNumber: 1,
+        startColumn: 1,
+        startLineNumber: 1,
+      },
     });
 
     expect(gateway.hover).toHaveBeenCalledTimes(2);
@@ -7875,6 +8241,15 @@ function featuresGateway(
     resolvedInlayHint: Awaited<ReturnType<LanguageServerFeaturesGateway["resolveInlayHint"]>>;
   }> = {},
 ): LanguageServerFeaturesGateway {
+  const prepareRename = vi.fn((_rootPath, _position, sessionId?: number) =>
+    identifiedResponse(responses.prepareRename ?? null, sessionId),
+  );
+  const rename = vi.fn((_rootPath, _position, _newName, sessionId?: number) =>
+    identifiedResponse(responses.rename ?? null, sessionId),
+  );
+  const resolveCompletionItem = vi.fn((_rootPath, item, sessionId?: number) =>
+    identifiedResponse(responses.resolvedCompletionItem ?? item, sessionId),
+  );
   return {
     codeActions: vi.fn((_rootPath, _path, _range, _context, sessionId) =>
       identifiedResponse(responses.codeActions ?? [], sessionId),
@@ -7906,7 +8281,9 @@ function featuresGateway(
     documentLinks: vi.fn(async () => responses.documentLinks ?? []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
-    executeCommandLocations: vi.fn(async () => []),
+    executeCommandLocations: vi.fn((_rootPath, _command, sessionId) =>
+      identifiedResponse([], sessionId),
+    ),
     foldingRanges: vi.fn(async () => responses.foldingRanges ?? []),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn((_rootPath, _position, sessionId) => identifiedResponse(null, sessionId)),
@@ -7921,7 +8298,7 @@ function featuresGateway(
     onTypeFormatting: vi.fn(async () => responses.onTypeFormatting ?? []),
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
-    prepareRename: vi.fn(async () => responses.prepareRename ?? null),
+    prepareRename,
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
     rangeSemanticTokens: vi.fn((_rootPath, _path, _range, sessionId) =>
@@ -7930,7 +8307,7 @@ function featuresGateway(
     references: vi.fn((_rootPath, _position, sessionId) =>
       identifiedResponse(responses.references ?? [], sessionId),
     ),
-    rename: vi.fn(async () => responses.rename ?? null),
+    rename,
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
     semanticTokens: vi.fn((_rootPath, _path, sessionId) =>
       identifiedResponse(responses.semanticTokens ?? null, sessionId),
@@ -7950,9 +8327,41 @@ function featuresGateway(
     workspaceSymbols: vi.fn((_rootPath, _query, sessionId) =>
       identifiedResponse(responses.workspaceSymbols ?? [], sessionId),
     ),
-    resolveCompletionItem: vi.fn(
-      async (_rootPath, item) => responses.resolvedCompletionItem ?? item,
-    ),
+    identifiedRequests: {
+      cancelRequest: vi.fn(async () => undefined),
+      completion: vi.fn((_rootPath, _position, _context, sessionId) =>
+        identifiedResponse(responses.completion ?? { isIncomplete: false, items: [] }, sessionId),
+      ),
+      declaration: vi.fn((_rootPath, _position, sessionId) =>
+        identifiedResponse(responses.declaration ?? [], sessionId),
+      ),
+      definition: vi.fn((_rootPath, _position, sessionId) =>
+        identifiedResponse(responses.definition ?? [], sessionId),
+      ),
+      formatting: vi.fn((_rootPath, _path, _options, sessionId) =>
+        identifiedResponse(responses.formatting ?? [], sessionId),
+      ),
+      hover: vi.fn((_rootPath, _position, sessionId) => identifiedResponse(null, sessionId)),
+      implementation: vi.fn((_rootPath, _position, sessionId) =>
+        identifiedResponse(responses.implementation ?? [], sessionId),
+      ),
+      prepareRename,
+      references: vi.fn((_rootPath, _position, sessionId) =>
+        identifiedResponse(responses.references ?? [], sessionId),
+      ),
+      rename,
+      resolveCompletionItem,
+      signatureHelp: vi.fn((_rootPath, _position, _context, sessionId) =>
+        identifiedResponse(responses.signatureHelp ?? null, sessionId),
+      ),
+      sourceDefinition: vi.fn((_rootPath, _position, sessionId) =>
+        identifiedResponse([], sessionId),
+      ),
+      typeDefinition: vi.fn((_rootPath, _position, sessionId) =>
+        identifiedResponse(responses.typeDefinition ?? [], sessionId),
+      ),
+    },
+    resolveCompletionItem,
     resolveCodeAction: vi.fn((_rootPath, action, sessionId) =>
       identifiedResponse(responses.resolvedCodeAction ?? action, sessionId),
     ),
@@ -8081,6 +8490,7 @@ function textModel() {
   return {
     getValue: vi.fn(() => value),
     getVersionId: vi.fn(() => 7),
+    isValidRange: vi.fn(() => true),
     getValueInRange: vi.fn(() => "user"),
     getWordAtPosition: vi.fn(() => ({
       endColumn: 5,

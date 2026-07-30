@@ -1,5 +1,6 @@
 import type * as Monaco from "monaco-editor";
 import type { LanguageServerMonacoProviderContext } from "./languageServerProviderContext";
+import { projectLanguageServerHover } from "../languageServerHoverMonacoProjection";
 import {
   FEATURE_REQUEST_CANCELLED,
   FEATURE_REQUEST_TIMED_OUT,
@@ -52,7 +53,7 @@ export async function provideHover(
       return null;
     }
 
-    return { contents: [{ value: hover.contents }] };
+    return projectLanguageServerHover(hover, model, position);
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;

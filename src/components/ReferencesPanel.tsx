@@ -17,6 +17,8 @@ interface ReferencesPanelProps {
   workspaceRoot: string | null;
 }
 
+export const REFERENCES_PANEL_PAGE_SIZE = 100;
+
 export function ReferencesPanel({
   isOpen,
   onClose,
@@ -31,13 +33,19 @@ export function ReferencesPanel({
     () => (view ? referenceRows(view, workspaceRoot) : []),
     [view, workspaceRoot],
   );
-  const groups = useMemo(() => referenceGroups(rows), [rows]);
   const indexById = useMemo(() => {
     const map = new Map<string, number>();
     rows.forEach((row, index) => map.set(row.id, index));
     return map;
   }, [rows]);
   const activeRow = rows[activeIndex];
+  const pageStart =
+    Math.floor(activeIndex / REFERENCES_PANEL_PAGE_SIZE) * REFERENCES_PANEL_PAGE_SIZE;
+  const visibleRows = useMemo(
+    () => rows.slice(pageStart, pageStart + REFERENCES_PANEL_PAGE_SIZE),
+    [pageStart, rows],
+  );
+  const visibleGroups = useMemo(() => referenceGroups(visibleRows), [visibleRows]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -45,8 +53,9 @@ export function ReferencesPanel({
       return;
     }
 
+    setActiveIndex(0);
     containerRef.current?.focus();
-  }, [isOpen]);
+  }, [isOpen, view]);
 
   useEffect(() => {
     setActiveIndex((current) => Math.min(current, Math.max(rows.length - 1, 0)));
@@ -69,9 +78,7 @@ export function ReferencesPanel({
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((current) =>
-        Math.min(current + 1, Math.max(rows.length - 1, 0)),
-      );
+      setActiveIndex((current) => Math.min(current + 1, Math.max(rows.length - 1, 0)));
       return;
     }
 
@@ -102,7 +109,10 @@ export function ReferencesPanel({
         <header className="references-panel-header">
           <span>
             <strong>References to {view.symbol}</strong>
-            <small>{referencesSummaryLabel(rows.length)}</small>
+            <small>{referencesSummaryLabel(rows.length, view.totalCount, view.isIncomplete)}</small>
+            {view.isIncomplete ? (
+              <small role="status">Some references were omitted by safety limits.</small>
+            ) : null}
           </span>
           <CornerDownLeft aria-hidden="true" size={15} />
         </header>
@@ -111,7 +121,7 @@ export function ReferencesPanel({
           {rows.length === 0 ? (
             <div className="references-panel-empty">No references found</div>
           ) : null}
-          {groups.map((group) => (
+          {visibleGroups.map((group) => (
             <section className="references-panel-group" key={group.path}>
               <h2 title={group.path}>{group.relativePath}</h2>
               {group.rows.map((row) => {
@@ -121,9 +131,7 @@ export function ReferencesPanel({
                   <button
                     aria-selected={index === activeIndex}
                     className={
-                      index === activeIndex
-                        ? "references-panel-row active"
-                        : "references-panel-row"
+                      index === activeIndex ? "references-panel-row active" : "references-panel-row"
                     }
                     key={row.id}
                     onClick={() => onOpen(row)}
@@ -148,6 +156,30 @@ export function ReferencesPanel({
             </section>
           ))}
         </div>
+        {rows.length > REFERENCES_PANEL_PAGE_SIZE ? (
+          <footer className="references-panel-pagination">
+            <button
+              disabled={pageStart === 0}
+              onClick={() => setActiveIndex(Math.max(0, pageStart - REFERENCES_PANEL_PAGE_SIZE))}
+              type="button"
+            >
+              Previous
+            </button>
+            <span>
+              {pageStart + 1}–{Math.min(pageStart + REFERENCES_PANEL_PAGE_SIZE, rows.length)} of{" "}
+              {rows.length}
+            </span>
+            <button
+              disabled={pageStart + REFERENCES_PANEL_PAGE_SIZE >= rows.length}
+              onClick={() =>
+                setActiveIndex(Math.min(rows.length - 1, pageStart + REFERENCES_PANEL_PAGE_SIZE))
+              }
+              type="button"
+            >
+              Next
+            </button>
+          </footer>
+        ) : null}
       </section>
     </div>
   );

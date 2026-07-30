@@ -248,6 +248,8 @@ function stubJavaScriptTypeScriptFeaturesGateway(): JavaScriptTypeScriptLanguage
       identifiedRequest(gateway.rangeSemanticTokens(rootPath, path, range), sessionId),
     references: (rootPath, position, sessionId) =>
       identifiedRequest(gateway.references(rootPath, position), sessionId),
+    executeCommandLocations: (rootPath, command, sessionId) =>
+      identifiedRequest(gateway.executeCommandLocations(rootPath, command), sessionId),
     resolveCodeAction: (rootPath, action, sessionId) =>
       identifiedRequest(gateway.resolveCodeAction(rootPath, action), sessionId),
     semanticTokens: (rootPath, path, sessionId) =>

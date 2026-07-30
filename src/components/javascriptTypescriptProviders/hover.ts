@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import type { JavaScriptTypeScriptLanguageServerFeaturesGateway } from "../../domain/languageServerFeatures";
 import { HOVER_FEATURE_REQUEST_TIMEOUT_MS } from "../languageServerRequestCancellation";
+import { projectLanguageServerHover } from "../languageServerHoverMonacoProjection";
 import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
   runBoundedJavaScriptTypeScriptProviderRequest,
@@ -12,6 +13,8 @@ interface HoverProviderContext {
   cancelRequest?: JavaScriptTypeScriptProviderRequestCancellationPort;
   featuresGateway: Pick<JavaScriptTypeScriptLanguageServerFeaturesGateway, "hover">;
 }
+
+export { projectLanguageServerHover } from "../languageServerHoverMonacoProjection";
 
 export async function provideJavaScriptTypeScriptHover<Context extends HoverProviderContext>(
   context: Context,
@@ -44,7 +47,7 @@ export async function provideJavaScriptTypeScriptHover<Context extends HoverProv
     ) {
       return null;
     }
-    return hover ? { contents: [{ value: hover.contents }] } : null;
+    return hover ? projectLanguageServerHover(hover, model, position) : null;
   } catch (error) {
     if (!token?.isCancellationRequested) {
       boundary.reportActiveRequestError(context, request, error);

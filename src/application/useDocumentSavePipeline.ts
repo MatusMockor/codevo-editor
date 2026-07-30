@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
 import { planFormatOnSave, type FormatOnSavePlan } from "../domain/formatOnSave";
 import {
@@ -15,12 +15,18 @@ import type { EditorDocument } from "../domain/workspace";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type {
+  IdentifiedLanguageServerRequest,
   JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerFeaturesGateway,
   LanguageServerTextEdit,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { applyLanguageServerTextEdits } from "./languageServerTextEdits";
+import {
+  createDocumentSaveParticipantRequestPool,
+  DOCUMENT_SAVE_PARTICIPANT_INTERRUPTED,
+  type DocumentSaveParticipantRequestPool,
+} from "./documentSaveParticipantRequestCoordinator";
 
 export interface DocumentSavePipelineDependencies {
   workspaceSettingsRef: MutableRefObject<WorkspaceSettings>;
@@ -32,7 +38,7 @@ export interface DocumentSavePipelineDependencies {
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerFeaturesGateway: Pick<
     JavaScriptTypeScriptLanguageServerFeaturesGateway,
-    "codeActions" | "formatting" | "resolveCodeAction"
+    "codeActions" | "formatting" | "identifiedRequests" | "resolveCodeAction"
   >;
   flushPendingDocumentChangeForRoot: (rootPath: string, path: string) => Promise<void>;
   flushPendingJavaScriptTypeScriptDocumentChangeForRoot: (
@@ -105,29 +111,55 @@ export function useDocumentSavePipeline(
     isLanguageServerSessionActiveForRoot,
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
   } = dependencies;
+  const sourceActionRequestPoolRef = useRef<DocumentSaveParticipantRequestPool | null>(
+    createDocumentSaveParticipantRequestPool(),
+  );
+
+  useEffect(() => {
+    const pool = sourceActionRequestPoolRef.current ?? createDocumentSaveParticipantRequestPool();
+    sourceActionRequestPoolRef.current = pool;
+
+    return () => {
+      pool.dispose();
+      if (sourceActionRequestPoolRef.current === pool) {
+        sourceActionRequestPoolRef.current = null;
+      }
+    };
+  }, []);
 
   const requestFormatOnSaveEdits = useCallback(
-    async (
+    (
       plan: FormatOnSavePlan,
       requestedRoot: string,
       path: string,
       content: string,
       settings: WorkspaceSettings,
-    ): Promise<LanguageServerTextEdit[]> => {
+    ): {
+      identifiedRequest?: IdentifiedLanguageServerRequest<LanguageServerTextEdit[]>;
+      request: Promise<LanguageServerTextEdit[]>;
+    } => {
       const options = formattingOptionsFromContent(content, {
         insertSpaces: settings.defaultInsertSpaces,
         tabSize: settings.defaultTabSize,
       });
 
       if (plan.provider === "javaScriptTypeScript") {
-        return javaScriptTypeScriptLanguageServerFeaturesGateway.formatting(
-          requestedRoot,
-          path,
-          options,
-        );
+        const request =
+          javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests?.formatting?.(
+            requestedRoot,
+            path,
+            options,
+            plan.sessionId,
+          );
+        if (!request) {
+          return { request: Promise.resolve([]) };
+        }
+        return { identifiedRequest: request, request };
       }
 
-      return languageServerFeaturesGateway.formatting(requestedRoot, path, options);
+      return {
+        request: languageServerFeaturesGateway.formatting(requestedRoot, path, options),
+      };
     },
     [javaScriptTypeScriptLanguageServerFeaturesGateway, languageServerFeaturesGateway],
   );
@@ -183,25 +215,59 @@ export function useDocumentSavePipeline(
               context.owner,
             )
           : isLanguageServerSessionActiveForRoot(requestedRoot, plan.sessionId, context.owner);
+      const requestPool = sourceActionRequestPoolRef.current;
+      if (!requestPool) {
+        return document.content;
+      }
+      const requestLease = requestPool.begin(
+        [context.owner?.ownerKey ?? "active", requestedRoot, document.path, "format"].join(
+          "\u0000",
+        ),
+        [requestedRoot, document.path].join("\u0000"),
+        isRequestedSessionActive,
+      );
+      const cancelRequest =
+        javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests?.cancelRequest.bind(
+          javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests,
+        );
 
       try {
         // Flush any debounced document change so the language server formats the
         // current content rather than the stale snapshot it last received.
-        await flushPendingDocumentChangeForFormatOnSave(plan, requestedRoot, document.path);
+        const flushResult = await requestLease.waitFor(
+          flushPendingDocumentChangeForFormatOnSave(plan, requestedRoot, document.path),
+        );
 
-        if (!isRequestedSessionActive()) {
+        if (flushResult === DOCUMENT_SAVE_PARTICIPANT_INTERRUPTED || !requestLease.isCurrent()) {
           return document.content;
         }
 
-        const edits = await requestFormatOnSaveEdits(
+        const formatRequest = requestFormatOnSaveEdits(
           plan,
           requestedRoot,
           document.path,
           document.content,
           context.settings,
         );
+        if (formatRequest.identifiedRequest) {
+          requestLease.observeBackendRequest(
+            requestedRoot,
+            formatRequest.identifiedRequest,
+            cancelRequest,
+          );
+          if (formatRequest.identifiedRequest.sessionId !== plan.sessionId) {
+            void requestLease.waitFor(formatRequest.request);
+            void cancelRequest?.(
+              requestedRoot,
+              formatRequest.identifiedRequest.sessionId,
+              formatRequest.identifiedRequest.requestId,
+            ).catch(() => undefined);
+            return document.content;
+          }
+        }
+        const edits = await requestLease.waitFor(formatRequest.request);
 
-        if (!isRequestedSessionActive()) {
+        if (edits === DOCUMENT_SAVE_PARTICIPANT_INTERRUPTED || !requestLease.isCurrent()) {
           return document.content;
         }
 
@@ -212,12 +278,15 @@ export function useDocumentSavePipeline(
         return applyLanguageServerTextEdits(document.content, edits);
       } catch {
         return document.content;
+      } finally {
+        requestLease.finish();
       }
     },
     [
       flushPendingDocumentChangeForFormatOnSave,
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       isLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests,
       requestFormatOnSaveEdits,
     ],
   );
@@ -317,13 +386,28 @@ export function useDocumentSavePipeline(
           plan.sessionId,
           context.owner,
         );
+      const requestPool = sourceActionRequestPoolRef.current;
+      if (!requestPool) {
+        return content;
+      }
+      const requestLease = requestPool.begin(
+        [context.owner?.ownerKey ?? "active", requestedRoot, document.path].join("\u0000"),
+        [requestedRoot, document.path].join("\u0000"),
+        isRequestedSessionActive,
+      );
+      const cancelRequest =
+        javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests?.cancelRequest.bind(
+          javaScriptTypeScriptLanguageServerFeaturesGateway.identifiedRequests,
+        );
 
       try {
         // Flush any debounced change so the server organizes the current content
         // rather than the stale snapshot it last received.
-        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(requestedRoot, document.path);
+        const flushResult = await requestLease.waitFor(
+          flushPendingJavaScriptTypeScriptDocumentChangeForRoot(requestedRoot, document.path),
+        );
 
-        if (!isRequestedSessionActive()) {
+        if (flushResult === DOCUMENT_SAVE_PARTICIPANT_INTERRUPTED || !requestLease.isCurrent()) {
           return content;
         }
 
@@ -331,15 +415,26 @@ export function useDocumentSavePipeline(
 
         for (const sourceActionKind of plan.sourceActionKinds) {
           try {
-            const actions = await javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
+            const actionsRequest = javaScriptTypeScriptLanguageServerFeaturesGateway.codeActions(
               requestedRoot,
               document.path,
               fullDocumentRange(currentContent),
               organizeImportsCodeActionContext(sourceActionKind),
               plan.sessionId,
             );
+            requestLease.observeBackendRequest(requestedRoot, actionsRequest, cancelRequest);
+            if (actionsRequest.sessionId !== plan.sessionId) {
+              void requestLease.waitFor(actionsRequest);
+              void cancelRequest?.(
+                requestedRoot,
+                actionsRequest.sessionId,
+                actionsRequest.requestId,
+              ).catch(() => undefined);
+              return content;
+            }
+            const actions = await requestLease.waitFor(actionsRequest);
 
-            if (!isRequestedSessionActive()) {
+            if (actions === DOCUMENT_SAVE_PARTICIPANT_INTERRUPTED || !requestLease.isCurrent()) {
               return content;
             }
 
@@ -349,14 +444,28 @@ export function useDocumentSavePipeline(
               const actionToResolve = organizeImportsCodeActionToResolve(actions, sourceActionKind);
 
               if (actionToResolve) {
-                const resolvedAction =
-                  await javaScriptTypeScriptLanguageServerFeaturesGateway.resolveCodeAction(
+                const resolveRequest =
+                  javaScriptTypeScriptLanguageServerFeaturesGateway.resolveCodeAction(
                     requestedRoot,
                     actionToResolve,
                     plan.sessionId,
                   );
+                requestLease.observeBackendRequest(requestedRoot, resolveRequest, cancelRequest);
+                if (resolveRequest.sessionId !== plan.sessionId) {
+                  void requestLease.waitFor(resolveRequest);
+                  void cancelRequest?.(
+                    requestedRoot,
+                    resolveRequest.sessionId,
+                    resolveRequest.requestId,
+                  ).catch(() => undefined);
+                  return content;
+                }
+                const resolvedAction = await requestLease.waitFor(resolveRequest);
 
-                if (!isRequestedSessionActive()) {
+                if (
+                  resolvedAction === DOCUMENT_SAVE_PARTICIPANT_INTERRUPTED ||
+                  !requestLease.isCurrent()
+                ) {
                   return content;
                 }
 
@@ -373,13 +482,18 @@ export function useDocumentSavePipeline(
               break;
             }
           } catch {
+            if (!requestLease.isCurrent()) {
+              return content;
+            }
             continue;
           }
         }
 
-        return currentContent;
+        return requestLease.isCurrent() ? currentContent : content;
       } catch {
         return content;
+      } finally {
+        requestLease.finish();
       }
     },
     [

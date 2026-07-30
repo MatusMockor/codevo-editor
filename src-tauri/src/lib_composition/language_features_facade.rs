@@ -1,25 +1,26 @@
 use super::workspace_facade::{
     ensure_lsp_command_payload_paths_in_workspace, ensure_lsp_document_link_payload_in_workspace,
     ensure_lsp_inlay_hint_payload_in_workspace, ensure_lsp_path_in_workspace,
-    ensure_lsp_position_in_workspace, filter_lsp_document_link_to_workspace,
-    filter_lsp_document_links_to_workspace, filter_lsp_inlay_hint_to_workspace,
-    filter_lsp_inlay_hints_to_workspace, filter_lsp_locations_to_workspace,
+    ensure_lsp_position_in_workspace, filter_bounded_lsp_locations_to_workspace,
+    filter_lsp_document_link_to_workspace, filter_lsp_document_links_to_workspace,
+    filter_lsp_inlay_hint_to_workspace, filter_lsp_inlay_hints_to_workspace,
     filter_lsp_workspace_symbols_to_workspace, filter_optional_lsp_workspace_edit_to_workspace,
 };
 use crate::lsp::JsonRpcNotification;
 use crate::lsp_capability_support::supports_inlay_hint_resolve as lsp_status_supports_inlay_hint_resolve;
 use crate::lsp_features::{
-    parse_definition_result, parse_document_highlights_result, parse_document_links_result,
-    parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
-    parse_inlay_hint_result, parse_inlay_hints_result, parse_linked_editing_ranges_result,
-    parse_optional_workspace_edit_result, parse_selection_ranges_result,
-    parse_semantic_tokens_result, parse_signature_help_result, parse_workspace_symbols_result,
+    parse_bounded_reference_locations_result, parse_document_highlights_result,
+    parse_document_links_result, parse_document_symbols_result, parse_folding_ranges_result,
+    parse_formatting_result, parse_inlay_hint_result, parse_inlay_hints_result,
+    parse_linked_editing_ranges_result, parse_optional_workspace_edit_result,
+    parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
+    parse_workspace_symbols_result, BoundedLanguageServerLocations,
     LanguageServerCodeActionCommand, LanguageServerDocumentHighlight, LanguageServerDocumentLink,
     LanguageServerDocumentSymbol, LanguageServerFoldingRange, LanguageServerFormattingOptions,
-    LanguageServerInlayHint, LanguageServerLinkedEditingRanges, LanguageServerLocation,
-    LanguageServerPosition, LanguageServerRange, LanguageServerSelectionRange,
-    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerSignatureHelpContext,
-    LanguageServerTextEdit, LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    LanguageServerInlayHint, LanguageServerLinkedEditingRanges, LanguageServerPosition,
+    LanguageServerRange, LanguageServerSelectionRange, LanguageServerSemanticTokens,
+    LanguageServerSignatureHelp, LanguageServerSignatureHelpContext, LanguageServerTextEdit,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
     TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentOnTypeFormatting,
     TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting,
@@ -58,7 +59,7 @@ pub(crate) async fn language_server_execute_command_locations(
     root_path: String,
     command: LanguageServerCodeActionCommand,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
+) -> Result<BoundedLanguageServerLocations, String> {
     ensure_lsp_command_payload_paths_in_workspace(&root_path, &command)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
@@ -67,10 +68,13 @@ pub(crate) async fn language_server_execute_command_locations(
         .send_request_async(&root_path, &request.method, request.params)
         .await?
     else {
-        return Ok(Vec::new());
+        return parse_bounded_reference_locations_result(&Value::Null);
     };
 
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+    filter_bounded_lsp_locations_to_workspace(
+        &root_path,
+        parse_bounded_reference_locations_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -99,21 +103,32 @@ pub(crate) async fn javascript_typescript_language_server_execute_command(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_language_server_execute_command_locations(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     command: LanguageServerCodeActionCommand,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
+) -> Result<BoundedLanguageServerLocations, String> {
     ensure_lsp_command_payload_paths_in_workspace(&root_path, &command)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.execute_command(&command);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
-        return Ok(Vec::new());
+        return parse_bounded_reference_locations_result(&Value::Null);
     };
 
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+    filter_bounded_lsp_locations_to_workspace(
+        &root_path,
+        parse_bounded_reference_locations_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -577,6 +592,8 @@ pub(crate) async fn text_document_formatting(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_formatting(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     path: String,
     options: LanguageServerFormattingOptions,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -586,7 +603,13 @@ pub(crate) async fn javascript_typescript_text_document_formatting(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.formatting(&TextDocumentFormatting { path, options });
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(Vec::new());

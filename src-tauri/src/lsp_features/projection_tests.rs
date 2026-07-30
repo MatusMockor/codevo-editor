@@ -6,22 +6,91 @@ fn parses_hover_markup_variants() {
     assert_eq!(
         parse_hover_result(&json!({
             "contents": { "kind": "markdown", "value": "**User**" },
+            "range": {
+                "start": { "line": 2, "character": 4 },
+                "end": { "line": 2, "character": 8 }
+            }
         }))
         .expect("hover"),
         Some(LanguageServerHover {
-            contents: "**User**".to_string(),
+            contents: vec![hover_projection::LanguageServerHoverContent::Markdown {
+                value: "**User**".to_string(),
+            }],
+            range: Some(LanguageServerRange {
+                start: LanguageServerPosition {
+                    line: 2,
+                    character: 4,
+                },
+                end: LanguageServerPosition {
+                    line: 2,
+                    character: 8,
+                },
+            }),
         })
     );
+    let structured = parse_hover_result(&json!({
+        "contents": [
+            "one",
+            { "language": "typescript", "value": "const value = 1;" },
+            { "kind": "plaintext", "value": "literal * markdown" }
+        ],
+    }))
+    .expect("hover")
+    .expect("hover value");
     assert_eq!(
-        parse_hover_result(&json!({
-            "contents": ["one", { "language": "php", "value": "two" }],
-        }))
-        .expect("hover")
-        .expect("hover value")
-        .contents,
-        "one\n\ntwo"
+        structured.contents,
+        vec![
+            hover_projection::LanguageServerHoverContent::Markdown {
+                value: "one".to_string(),
+            },
+            hover_projection::LanguageServerHoverContent::Code {
+                language: "typescript".to_string(),
+                value: "const value = 1;".to_string(),
+            },
+            hover_projection::LanguageServerHoverContent::Plaintext {
+                value: "literal * markdown".to_string(),
+            },
+        ]
     );
     assert_eq!(parse_hover_result(&json!(null)).expect("hover"), None);
+}
+
+#[test]
+fn rejects_malformed_reversed_and_oversized_hover_payloads() {
+    assert!(parse_hover_result(&json!({
+        "contents": { "kind": "html", "value": "<script>bad()</script>" }
+    }))
+    .expect_err("unsupported kind")
+    .contains("unsupported"));
+    assert!(parse_hover_result(&json!({
+        "contents": { "language": "typescript" }
+    }))
+    .expect_err("missing value")
+    .contains("malformed"));
+    assert!(parse_hover_result(&json!({
+        "contents": "hover",
+        "range": {
+            "start": { "line": 3, "character": 8 },
+            "end": { "line": 3, "character": 2 }
+        }
+    }))
+    .expect_err("reversed range")
+    .contains("reversed"));
+    assert!(parse_hover_result(&json!({
+        "contents": "ž".repeat(hover_projection::MAX_HOVER_CONTENT_ITEM_BYTES / 2 + 1)
+    }))
+    .expect_err("utf8 byte bound")
+    .contains("too large"));
+    assert!(parse_hover_result(&json!({
+        "contents": vec!["hover"; hover_projection::MAX_HOVER_CONTENT_ITEMS + 1]
+    }))
+    .expect_err("item bound")
+    .contains("too many"));
+    assert!(parse_hover_result(&json!({
+        "contents": vec!["x".repeat(14 * 1024); 5]
+    }))
+    .expect_err("total byte bound")
+    .contains("too large"));
 }
 
 #[test]
@@ -436,6 +505,65 @@ fn parses_definition_locations_and_location_links() {
         parse_definition_result(&json!(null)).expect("definition"),
         []
     );
+}
+
+#[test]
+fn bounds_reference_locations_before_wire_serialization_and_reports_total() {
+    let locations = (0..MAX_INSPECTED_REFERENCE_LOCATIONS + 5)
+        .map(|index| {
+            json!({
+                "uri": format!("file:///workspace/src/reference-{index}.ts"),
+                "range": {
+                    "start": { "line": index, "character": 0 },
+                    "end": { "line": index, "character": 1 }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let projected =
+        parse_bounded_reference_locations_result(&Value::Array(locations)).expect("references");
+
+    assert_eq!(projected.locations.len(), MAX_REFERENCE_LOCATIONS);
+    assert_eq!(projected.total_count, MAX_INSPECTED_REFERENCE_LOCATIONS + 5);
+    assert!(projected.is_incomplete);
+    assert!(
+        projected
+            .locations
+            .iter()
+            .map(|location| location.uri.len())
+            .sum::<usize>()
+            <= MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES
+    );
+}
+
+#[test]
+fn omits_oversized_reference_uris_truthfully() {
+    let oversized_uri = format!(
+        "file:///workspace/{}.ts",
+        "x".repeat(MAX_REFERENCE_LOCATION_URI_BYTES)
+    );
+    let projected = parse_bounded_reference_locations_result(&json!([
+        {
+            "uri": oversized_uri,
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 1 }
+            }
+        },
+        {
+            "uri": "file:///workspace/src/retained.ts",
+            "range": {
+                "start": { "line": 1, "character": 0 },
+                "end": { "line": 1, "character": 1 }
+            }
+        }
+    ]))
+    .expect("references");
+
+    assert_eq!(projected.locations.len(), 1);
+    assert_eq!(projected.total_count, 2);
+    assert!(projected.is_incomplete);
 }
 
 #[test]

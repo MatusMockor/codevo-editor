@@ -456,7 +456,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       }
 
       if (command === "language_server_execute_command_locations") {
-        return definition;
+        return { isIncomplete: false, locations: definition, totalCount: definition.length };
+      }
+
+      if (command === "text_document_references") {
+        return { isIncomplete: false, locations: definition, totalCount: definition.length };
       }
 
       if (command === "text_document_will_create_files") {
@@ -1087,7 +1091,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         uri: "file:///project/src/User.ts",
       },
     ];
-    const invokeCommand = vi.fn<InvokeCommand>(async () => definition);
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) =>
+      command.endsWith("_references")
+        ? { isIncomplete: false, locations: definition, totalCount: definition.length }
+        : definition,
+    );
     const gateway = new TauriLanguageServerFeaturesGateway(
       invokeCommand,
       () => true,
@@ -1187,6 +1195,84 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(resolve).resolves.toBe(response);
   });
 
+  it("identifies JavaScript and TypeScript rename and completion-resolve requests", async () => {
+    const item = completionItem();
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (command.endsWith("completion_resolve")) {
+        return item;
+      }
+      return command.endsWith("formatting") ? [] : null;
+    });
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "javascriptTypeScript",
+    );
+    const sessionId = 19;
+    const prepare = gateway.identifiedRequests.prepareRename!("/project", position(), sessionId);
+    const rename = gateway.identifiedRequests.rename!("/project", position(), "Account", sessionId);
+    const resolve = gateway.identifiedRequests.resolveCompletionItem!("/project", item, sessionId);
+    const formatting = gateway.identifiedRequests.formatting!(
+      "/project",
+      "/project/src/User.ts",
+      { insertSpaces: true, tabSize: 2 },
+      sessionId,
+    );
+
+    expect(
+      new Set([prepare.requestId, rename.requestId, resolve.requestId, formatting.requestId]).size,
+    ).toBe(4);
+    expect(prepare.sessionId).toBe(sessionId);
+    expect(rename.sessionId).toBe(sessionId);
+    expect(resolve.sessionId).toBe(sessionId);
+    expect(formatting.sessionId).toBe(sessionId);
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_prepare_rename",
+      {
+        position: position(),
+        requestId: prepare.requestId,
+        rootPath: "/project",
+        sessionId,
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_text_document_rename", {
+      newName: "Account",
+      position: position(),
+      requestId: rename.requestId,
+      rootPath: "/project",
+      sessionId,
+    });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_completion_resolve",
+      {
+        item,
+        requestId: resolve.requestId,
+        rootPath: "/project",
+        sessionId,
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_text_document_formatting", {
+      options: { insertSpaces: true, tabSize: 2 },
+      path: "/project/src/User.ts",
+      requestId: formatting.requestId,
+      rootPath: "/project",
+      sessionId,
+    });
+    await expect(prepare).resolves.toBeNull();
+    await expect(rename).resolves.toBeNull();
+    await expect(resolve).resolves.toBe(item);
+    await expect(formatting).resolves.toEqual([]);
+
+    await gateway.cancelRequest("/project", sessionId, rename.requestId);
+    expect(invokeCommand).toHaveBeenCalledWith("cancel_lsp_request", {
+      requestId: rename.requestId,
+      rootPath: "/project",
+      serverKind: "javascriptTypeScript",
+      sessionId,
+    });
+  });
+
   it("identifies cancellable JavaScript and TypeScript workspace-symbol requests", async () => {
     const symbols = [
       {
@@ -1249,6 +1335,27 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       expect(() => gateway.resolveCodeAction("/project", codeAction(), sessionId)).toThrow(
         "JavaScript/TypeScript language-server request requires an active session.",
       );
+      expect(() =>
+        gateway.identifiedRequests.prepareRename!("/project", position(), sessionId as number),
+      ).toThrow("JavaScript/TypeScript language-server request requires an active session.");
+      expect(() =>
+        gateway.identifiedRequests.rename!("/project", position(), "Account", sessionId as number),
+      ).toThrow("JavaScript/TypeScript language-server request requires an active session.");
+      expect(() =>
+        gateway.identifiedRequests.resolveCompletionItem!(
+          "/project",
+          completionItem(),
+          sessionId as number,
+        ),
+      ).toThrow("JavaScript/TypeScript language-server request requires an active session.");
+      expect(() =>
+        gateway.identifiedRequests.formatting!(
+          "/project",
+          "/project/src/User.ts",
+          { insertSpaces: true, tabSize: 2 },
+          sessionId as number,
+        ),
+      ).toThrow("JavaScript/TypeScript language-server request requires an active session.");
       expect(() => gateway.workspaceSymbols("/project", "User", sessionId)).toThrow(
         "JavaScript/TypeScript language-server request requires an active session.",
       );
@@ -1337,21 +1444,34 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         uri: "file:///project/src/User.ts",
       },
     ];
-    const invokeCommand = vi.fn<InvokeCommand>(async () => locations);
+    const invokeCommand = vi.fn<InvokeCommand>(async () => ({
+      isIncomplete: true,
+      locations,
+      totalCount: 3,
+    }));
     const gateway = new TauriLanguageServerFeaturesGateway(
       invokeCommand,
       () => true,
       JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
     );
 
-    await expect(gateway.executeCommandLocations("/project", command())).resolves.toEqual(
-      locations,
-    );
+    const sessionId = 17;
+    const request = gateway.executeCommandLocations("/project", command(), sessionId);
+
+    await expect(request).resolves.toEqual(locations);
+    await expect(request).resolves.toMatchObject({
+      isIncomplete: true,
+      totalCount: 3,
+    });
+    expect(request.sessionId).toBe(sessionId);
+    expect(request.requestId).toEqual(expect.any(Number));
     expect(invokeCommand).toHaveBeenCalledWith(
       "javascript_typescript_language_server_execute_command_locations",
       {
         command: command(),
+        requestId: request.requestId,
         rootPath: "/project",
+        sessionId,
       },
     );
   });

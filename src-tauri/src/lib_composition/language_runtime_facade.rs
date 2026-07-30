@@ -5,13 +5,14 @@ use super::workspace_facade::{
     ensure_lsp_completion_item_payload_in_workspace, ensure_lsp_path_in_workspace,
     ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
     ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
-    filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_code_action_to_workspace,
-    filter_lsp_code_actions_to_workspace, filter_lsp_code_lens_to_workspace,
-    filter_lsp_code_lenses_to_workspace, filter_lsp_completion_item_to_workspace,
-    filter_lsp_completion_list_to_workspace, filter_lsp_incoming_calls_to_workspace,
-    filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
-    filter_lsp_type_hierarchy_items_to_workspace, filter_optional_lsp_workspace_edit_to_workspace,
-    reveal_path_in_workspace, workspace_root_for_disposal,
+    filter_bounded_lsp_locations_to_workspace, filter_lsp_call_hierarchy_items_to_workspace,
+    filter_lsp_code_action_to_workspace, filter_lsp_code_actions_to_workspace,
+    filter_lsp_code_lens_to_workspace, filter_lsp_code_lenses_to_workspace,
+    filter_lsp_completion_item_to_workspace, filter_lsp_completion_list_to_workspace,
+    filter_lsp_incoming_calls_to_workspace, filter_lsp_locations_to_workspace,
+    filter_lsp_outgoing_calls_to_workspace, filter_lsp_type_hierarchy_items_to_workspace,
+    filter_optional_lsp_workspace_edit_to_workspace, reveal_path_in_workspace,
+    workspace_root_for_disposal,
 };
 use super::workspace_services::{
     build_php_language_server_plan, JavaScriptTypeScriptLanguageServerRequest,
@@ -26,15 +27,16 @@ use crate::lsp_document::{
     TextDocumentSyncNotificationFactory,
 };
 use crate::lsp_features::{
-    parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_item_result,
-    parse_completion_result, parse_definition_result, parse_hover_result,
-    parse_incoming_calls_result, parse_outgoing_calls_result, parse_prepare_rename_result,
-    parse_type_hierarchy_items_result, parse_workspace_edit_result,
-    LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionContext,
-    LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
-    LanguageServerCompletionList, LanguageServerHover, LanguageServerIncomingCall,
-    LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPrepareRenameResult,
-    LanguageServerRange, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+    parse_bounded_reference_locations_result, parse_call_hierarchy_items_result,
+    parse_code_action_result, parse_completion_item_result, parse_completion_result,
+    parse_definition_result, parse_hover_result, parse_incoming_calls_result,
+    parse_outgoing_calls_result, parse_prepare_rename_result, parse_type_hierarchy_items_result,
+    parse_workspace_edit_result, BoundedLanguageServerLocations, LanguageServerCallHierarchyItem,
+    LanguageServerCodeAction, LanguageServerCodeActionContext, LanguageServerCodeLens,
+    LanguageServerCompletionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
+    LanguageServerHover, LanguageServerIncomingCall, LanguageServerLocation,
+    LanguageServerOutgoingCall, LanguageServerPrepareRenameResult, LanguageServerRange,
+    LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
     LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
     TextDocumentFeatureRequestFactory, TextDocumentPosition, TextDocumentRange, TextDocumentRename,
 };
@@ -767,6 +769,8 @@ pub(crate) async fn text_document_completion_resolve(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_completion_resolve(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     item: LanguageServerCompletionItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionItem, String> {
@@ -775,7 +779,13 @@ pub(crate) async fn javascript_typescript_text_document_completion_resolve(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_completion_item(&item);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(item);
@@ -906,7 +916,7 @@ pub(crate) async fn text_document_references(
     session_id: Option<u64>,
     request_id: Option<u64>,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerLocation>, String> {
+) -> Result<BoundedLanguageServerLocations, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
@@ -921,10 +931,13 @@ pub(crate) async fn text_document_references(
     )
     .await?
     else {
-        return Ok(Vec::new());
+        return parse_bounded_reference_locations_result(&serde_json::Value::Null);
     };
 
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+    filter_bounded_lsp_locations_to_workspace(
+        &root_path,
+        parse_bounded_reference_locations_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -950,6 +963,8 @@ pub(crate) async fn text_document_prepare_rename(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_prepare_rename(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerPrepareRenameResult>, String> {
@@ -958,7 +973,13 @@ pub(crate) async fn javascript_typescript_text_document_prepare_rename(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_rename(&position);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(None);
@@ -999,6 +1020,8 @@ pub(crate) async fn text_document_rename(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_rename(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     position: TextDocumentPosition,
     new_name: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -1013,7 +1036,13 @@ pub(crate) async fn javascript_typescript_text_document_rename(
         path: position.path,
     });
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(None);

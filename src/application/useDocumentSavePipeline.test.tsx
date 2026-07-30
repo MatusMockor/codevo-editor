@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type {
+  IdentifiedLanguageServerRequest,
+  IdentifiedLanguageServerRequestsPort,
   JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerCodeAction,
   LanguageServerCodeActionContext,
@@ -120,22 +122,68 @@ function featuresGateway(
   overrides: Partial<LanguageServerFeaturesGateway> = {},
 ): LanguageServerFeaturesGateway & JavaScriptTypeScriptLanguageServerFeaturesGateway {
   const codeActions = overrides.codeActions ?? (async () => []);
+  const formatting = overrides.formatting ?? (async () => []);
   const resolveCodeAction =
     overrides.resolveCodeAction ?? (async (_root, codeAction) => codeAction);
+  const formattingRequest = vi.fn((rootPath, path, options, sessionId = 1) =>
+    identified(formatting(rootPath, path, options), sessionId),
+  );
+  const identifiedRequestPort = overrides.identifiedRequests
+    ? {
+        ...overrides.identifiedRequests,
+        formatting: overrides.identifiedRequests.formatting ?? formattingRequest,
+      }
+    : ({
+        cancelRequest: vi.fn(async () => undefined),
+        formatting: formattingRequest,
+      } as unknown as IdentifiedLanguageServerRequestsPort);
   return {
     ...overrides,
     codeActions: vi.fn((rootPath, path, range, context, sessionId = 1) =>
       identified(codeActions(rootPath, path, range, context), sessionId),
     ),
-    formatting: overrides.formatting ?? vi.fn(async () => []),
+    formatting: formattingRequest,
+    identifiedRequests: identifiedRequestPort,
     resolveCodeAction: vi.fn((rootPath, action, sessionId = 1) =>
       identified(resolveCodeAction(rootPath, action), sessionId),
     ),
   } as unknown as LanguageServerFeaturesGateway & JavaScriptTypeScriptLanguageServerFeaturesGateway;
 }
 
-function identified<T>(promise: Promise<T>, sessionId: number) {
-  return Object.assign(promise, { requestId: 1, sessionId });
+function identified<T>(
+  promise: Promise<T>,
+  sessionId: number,
+  requestId = 1,
+): IdentifiedLanguageServerRequest<T> {
+  return Object.assign(promise, { requestId, sessionId });
+}
+
+function deferred<T>(
+  sessionId = 7,
+  requestId = 1,
+): {
+  promise: IdentifiedLanguageServerRequest<T>;
+  reject: (error: unknown) => void;
+  resolve: (value: T) => void;
+} {
+  let reject!: (error: unknown) => void;
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    reject = rejectPromise;
+    resolve = resolvePromise;
+  });
+
+  return {
+    promise: identified(promise, sessionId, requestId),
+    reject,
+    resolve,
+  };
+}
+
+function identifiedRequests(
+  cancelRequest: IdentifiedLanguageServerRequestsPort["cancelRequest"],
+): IdentifiedLanguageServerRequestsPort {
+  return { cancelRequest } as IdentifiedLanguageServerRequestsPort;
 }
 
 function makeDeps(
@@ -250,6 +298,7 @@ describe("useDocumentSavePipeline", () => {
       ROOT,
       `${ROOT}/src/App.ts`,
       expect.objectContaining({ insertSpaces: true, tabSize: 4 }),
+      7,
     );
     harness.unmount();
   });
@@ -405,6 +454,49 @@ describe("useDocumentSavePipeline", () => {
 
     expect(result).toBe(original);
     harness.unmount();
+  });
+
+  it("times out a hung formatter, exactly cancels it, and ignores a late edit", async () => {
+    vi.useFakeTimers();
+    try {
+      const path = `${ROOT}/src/App.ts`;
+      const original = "const value=1;\n";
+      const formatted = "const value = 1;\n";
+      const pending = deferred<LanguageServerTextEdit[]>(7, 31);
+      const cancelRequest = vi.fn(async () => undefined);
+      const jsTsGateway = featuresGateway({
+        identifiedRequests: identifiedRequests(cancelRequest),
+      });
+      vi.mocked(jsTsGateway.formatting).mockReturnValueOnce(pending.promise);
+      const harness = renderPipeline(
+        makeDeps({
+          javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+            current: runningStatus({ formatting: true }),
+          },
+          workspaceSettingsRef: {
+            current: { ...defaultWorkspaceSettings(), formatOnSave: true },
+          },
+        }),
+      );
+
+      const result = harness
+        .pipeline()
+        .formattedContentForSave(editorDocument(path, original), ROOT);
+      await act(async () => undefined);
+      await act(async () => vi.advanceTimersByTimeAsync(2_500));
+
+      await expect(result).resolves.toBe(original);
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 31);
+
+      pending.resolve([fullTextEdit(original, formatted)]);
+      await act(async () => undefined);
+      await expect(result).resolves.toBe(original);
+      expect(cancelRequest).toHaveBeenCalledTimes(1);
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("returns original content when the JS/TS session becomes inactive after await", async () => {
@@ -710,5 +802,317 @@ describe("useDocumentSavePipeline", () => {
     expect(jsTsGateway.resolveCodeAction).not.toHaveBeenCalled();
     expect(result).toBe(sorted);
     harness.unmount();
+  });
+
+  it("times out a hung source action, cancels its exact backend request, and ignores its late edit", async () => {
+    vi.useFakeTimers();
+    try {
+      const path = `${ROOT}/src/App.ts`;
+      const original = "import { b } from './b';\nimport { a } from './a';\n";
+      const organized = "import { a } from './a';\nimport { b } from './b';\n";
+      const pending = deferred<LanguageServerCodeAction[]>(7, 41);
+      const cancelRequest = vi.fn(async () => undefined);
+      const jsTsGateway = featuresGateway({
+        identifiedRequests: identifiedRequests(cancelRequest),
+      });
+      vi.mocked(jsTsGateway.codeActions).mockReturnValueOnce(pending.promise);
+      const harness = renderPipeline(
+        makeDeps({
+          javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+            current: runningStatus({ codeAction: true }),
+          },
+          workspaceSettingsRef: {
+            current: {
+              ...defaultWorkspaceSettings(),
+              javaScriptTypeScriptOrganizeImportsOnSave: true,
+            },
+          },
+        }),
+      );
+
+      const result = harness
+        .pipeline()
+        .organizedImportsContentForSave(editorDocument(path, original), original, ROOT);
+      await act(async () => undefined);
+      await act(async () => vi.advanceTimersByTimeAsync(2_500));
+
+      await expect(result).resolves.toBe(original);
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 41);
+
+      pending.resolve([action(path, original, organized)]);
+      await act(async () => undefined);
+      await expect(result).resolves.toBe(original);
+      expect(cancelRequest).toHaveBeenCalledTimes(1);
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("immediately rejects and cancels a foreign-session source action receipt", async () => {
+    const path = `${ROOT}/src/App.ts`;
+    const original = "import { b } from './b';\n";
+    const foreign = deferred<LanguageServerCodeAction[]>(99, 46);
+    const cancelRequest = vi.fn(async () => undefined);
+    const jsTsGateway = featuresGateway({
+      identifiedRequests: identifiedRequests(cancelRequest),
+    });
+    vi.mocked(jsTsGateway.codeActions).mockReturnValueOnce(foreign.promise);
+    const harness = renderPipeline(
+      makeDeps({
+        javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+          current: runningStatus({ codeAction: true }, 7),
+        },
+        workspaceSettingsRef: {
+          current: {
+            ...defaultWorkspaceSettings(),
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
+          },
+        },
+      }),
+    );
+
+    await expect(
+      harness
+        .pipeline()
+        .organizedImportsContentForSave(editorDocument(path, original), original, ROOT),
+    ).resolves.toBe(original);
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 99, 46);
+    harness.unmount();
+    expect(cancelRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out and exactly cancels a hung source action resolve request", async () => {
+    vi.useFakeTimers();
+    try {
+      const path = `${ROOT}/src/App.ts`;
+      const original = "import { b } from './b';\n";
+      const resolvePending = deferred<LanguageServerCodeAction>(7, 52);
+      const cancelRequest = vi.fn(async () => undefined);
+      const jsTsGateway = featuresGateway({
+        identifiedRequests: identifiedRequests(cancelRequest),
+      });
+      vi.mocked(jsTsGateway.codeActions).mockReturnValueOnce(
+        identified(Promise.resolve([dataOnlyAction()]), 7, 51),
+      );
+      vi.mocked(jsTsGateway.resolveCodeAction).mockReturnValueOnce(resolvePending.promise);
+      const harness = renderPipeline(
+        makeDeps({
+          javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+            current: runningStatus({ codeAction: true }),
+          },
+          workspaceSettingsRef: {
+            current: {
+              ...defaultWorkspaceSettings(),
+              javaScriptTypeScriptOrganizeImportsOnSave: true,
+            },
+          },
+        }),
+      );
+
+      const result = harness
+        .pipeline()
+        .organizedImportsContentForSave(editorDocument(path, original), original, ROOT);
+      await act(async () => undefined);
+      await act(async () => vi.advanceTimersByTimeAsync(2_500));
+
+      await expect(result).resolves.toBe(original);
+      expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 52);
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a stale save generation and only applies the latest same-document result", async () => {
+    const path = `${ROOT}/src/App.ts`;
+    const original = "import { b } from './b';\nimport { a } from './a';\n";
+    const firstPending = deferred<LanguageServerCodeAction[]>(7, 61);
+    const latest = "import { a } from './a';\nimport { b } from './b';\n";
+    const cancelRequest = vi.fn(async () => undefined);
+    const jsTsGateway = featuresGateway({
+      identifiedRequests: identifiedRequests(cancelRequest),
+    });
+    vi.mocked(jsTsGateway.codeActions)
+      .mockReturnValueOnce(firstPending.promise)
+      .mockReturnValueOnce(identified(Promise.resolve([action(path, original, latest)]), 7, 62));
+    const harness = renderPipeline(
+      makeDeps({
+        javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+          current: runningStatus({ codeAction: true }),
+        },
+        workspaceSettingsRef: {
+          current: {
+            ...defaultWorkspaceSettings(),
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
+          },
+        },
+      }),
+    );
+    const document = editorDocument(path, original);
+
+    const staleResult = harness.pipeline().organizedImportsContentForSave(document, original, ROOT);
+    await act(async () => undefined);
+    const latestResult = harness
+      .pipeline()
+      .organizedImportsContentForSave(document, original, ROOT);
+
+    await expect(staleResult).resolves.toBe(original);
+    await expect(latestResult).resolves.toBe(latest);
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 61);
+    harness.unmount();
+  });
+
+  it("fences the superseded A generation across an independent A-B-A owner sequence", async () => {
+    const path = `${ROOT}/src/App.ts`;
+    const original = "import { b } from './b';\nimport { a } from './a';\n";
+    const ownerA = createWorkspaceRuntimeOwner("owner-a", ROOT);
+    const ownerB = createWorkspaceRuntimeOwner("owner-b", ROOT);
+    const firstA = deferred<LanguageServerCodeAction[]>(7, 71);
+    const pendingB = deferred<LanguageServerCodeAction[]>(7, 72);
+    const finalAContent = "import { a } from './a';\nimport { b } from './b';\n";
+    const cancelRequest = vi.fn(async () => undefined);
+    const jsTsGateway = featuresGateway({
+      identifiedRequests: identifiedRequests(cancelRequest),
+    });
+    vi.mocked(jsTsGateway.codeActions)
+      .mockReturnValueOnce(firstA.promise)
+      .mockReturnValueOnce(pendingB.promise)
+      .mockReturnValueOnce(
+        identified(Promise.resolve([action(path, original, finalAContent)]), 7, 73),
+      );
+    const harness = renderPipeline(
+      makeDeps({
+        javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+      }),
+    );
+    const context = (owner: ReturnType<typeof createWorkspaceRuntimeOwner>) => ({
+      canUseLanguageServerDocument: true,
+      hasPhpWorkspace: false,
+      javaScriptTypeScriptRuntimeStatus: runningStatus({ codeAction: true }),
+      javaScriptTypeScriptRuntimeStatusRoot: ROOT,
+      owner,
+      phpRuntimeStatus: null,
+      phpRuntimeStatusRoot: ROOT,
+      settings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptOrganizeImportsOnSave: true,
+      },
+    });
+    const document = editorDocument(path, original);
+
+    const staleA = harness
+      .pipeline()
+      .organizedImportsContentForOwnerSave(context(ownerA), document, original, ROOT);
+    await act(async () => undefined);
+    const staleB = harness
+      .pipeline()
+      .organizedImportsContentForOwnerSave(context(ownerB), document, original, ROOT);
+    await act(async () => undefined);
+    const finalA = harness
+      .pipeline()
+      .organizedImportsContentForOwnerSave(context(ownerA), document, original, ROOT);
+    pendingB.resolve([]);
+
+    await expect(staleA).resolves.toBe(original);
+    await expect(staleB).resolves.toBe(original);
+    await expect(finalA).resolves.toBe(finalAContent);
+    expect(cancelRequest).toHaveBeenNthCalledWith(1, ROOT, 7, 71);
+    expect(cancelRequest).toHaveBeenNthCalledWith(2, ROOT, 7, 72);
+    expect(cancelRequest).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it("keeps source action requests for different documents independent", async () => {
+    const firstPath = `${ROOT}/src/first.ts`;
+    const secondPath = `${ROOT}/src/second.ts`;
+    const firstOriginal = "import { b } from './b';\n";
+    const secondOriginal = "import { d } from './d';\n";
+    const firstOrganized = "import { a } from './a';\n";
+    const secondOrganized = "import { c } from './c';\n";
+    const firstPending = deferred<LanguageServerCodeAction[]>(7, 91);
+    const cancelRequest = vi.fn(async () => undefined);
+    const jsTsGateway = featuresGateway({
+      identifiedRequests: identifiedRequests(cancelRequest),
+    });
+    vi.mocked(jsTsGateway.codeActions)
+      .mockReturnValueOnce(firstPending.promise)
+      .mockReturnValueOnce(
+        identified(Promise.resolve([action(secondPath, secondOriginal, secondOrganized)]), 7, 92),
+      );
+    const harness = renderPipeline(
+      makeDeps({
+        javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+          current: runningStatus({ codeAction: true }),
+        },
+        workspaceSettingsRef: {
+          current: {
+            ...defaultWorkspaceSettings(),
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
+          },
+        },
+      }),
+    );
+
+    const firstResult = harness
+      .pipeline()
+      .organizedImportsContentForSave(
+        editorDocument(firstPath, firstOriginal),
+        firstOriginal,
+        ROOT,
+      );
+    await act(async () => undefined);
+    const secondResult = harness
+      .pipeline()
+      .organizedImportsContentForSave(
+        editorDocument(secondPath, secondOriginal),
+        secondOriginal,
+        ROOT,
+      );
+    firstPending.resolve([action(firstPath, firstOriginal, firstOrganized)]);
+
+    await expect(firstResult).resolves.toBe(firstOrganized);
+    await expect(secondResult).resolves.toBe(secondOrganized);
+    expect(cancelRequest).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("cancels an exact pending source action request on unmount", async () => {
+    const path = `${ROOT}/src/App.ts`;
+    const original = "import { b } from './b';\n";
+    const pending = deferred<LanguageServerCodeAction[]>(7, 81);
+    const cancelRequest = vi.fn(async () => undefined);
+    const jsTsGateway = featuresGateway({
+      identifiedRequests: identifiedRequests(cancelRequest),
+    });
+    vi.mocked(jsTsGateway.codeActions).mockReturnValueOnce(pending.promise);
+    const harness = renderPipeline(
+      makeDeps({
+        javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+          current: runningStatus({ codeAction: true }),
+        },
+        workspaceSettingsRef: {
+          current: {
+            ...defaultWorkspaceSettings(),
+            javaScriptTypeScriptOrganizeImportsOnSave: true,
+          },
+        },
+      }),
+    );
+
+    const result = harness
+      .pipeline()
+      .organizedImportsContentForSave(editorDocument(path, original), original, ROOT);
+    await act(async () => undefined);
+    harness.unmount();
+
+    await expect(result).resolves.toBe(original);
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(ROOT, 7, 81);
   });
 });

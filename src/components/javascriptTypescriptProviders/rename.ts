@@ -4,14 +4,17 @@ import type {
   LanguageServerWorkspaceEdit,
 } from "../../domain/languageServerFeatures";
 import type { JavaScriptTypeScriptProviderRequestBoundary } from "./requestBoundary";
+import {
+  javaScriptTypeScriptProviderRequestDidNotComplete,
+  runBoundedJavaScriptTypeScriptProviderRequest,
+  type JavaScriptTypeScriptProviderRequestCancellationPort,
+} from "./requestBoundary";
 import { toMonacoRange } from "./sharedMappings";
 
 interface RenameContext {
   applyWorkspaceEdit?: unknown;
-  featuresGateway: Pick<
-    JavaScriptTypeScriptLanguageServerFeaturesGateway,
-    "prepareRename" | "rename"
-  >;
+  cancelRequest?: JavaScriptTypeScriptProviderRequestCancellationPort;
+  featuresGateway: Pick<JavaScriptTypeScriptLanguageServerFeaturesGateway, "identifiedRequests">;
 }
 
 export interface JavaScriptTypeScriptRenameDependencies<Context> {
@@ -39,6 +42,7 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
   model: Monaco.editor.ITextModel,
   position: Monaco.Position,
   newName: string,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.WorkspaceEdit | null> {
   const request = boundary.createFeatureRequest(context, model, position, "rename");
   if (!request) {
@@ -48,8 +52,26 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
     if (!(await boundary.flushActiveRequest(context, request))) {
       return null;
     }
-    const edit = await context.featuresGateway.rename(request.rootPath, request.position, newName);
-    if (!boundary.isActiveRequest(context, request) || !edit) {
+    const identifiedRequests = context.featuresGateway.identifiedRequests;
+    if (!identifiedRequests?.rename) {
+      return null;
+    }
+    const edit = await runBoundedJavaScriptTypeScriptProviderRequest(
+      identifiedRequests.rename(request.rootPath, request.position, newName, request.sessionId),
+      request.sessionId,
+      token,
+      request.rootPath,
+      undefined,
+      context.cancelRequest ??
+        ((rootPath, sessionId, requestId) =>
+          identifiedRequests.cancelRequest(rootPath, sessionId, requestId)),
+    );
+    if (
+      javaScriptTypeScriptProviderRequestDidNotComplete(edit) ||
+      token?.isCancellationRequested ||
+      !boundary.isActiveRequest(context, request) ||
+      !edit
+    ) {
       return null;
     }
     if (!dependencies.editIsFullyInRoot(edit, request.rootPath)) {
@@ -61,13 +83,19 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
         context,
         edit,
         request.rootPath,
-        () => boundary.isActiveRequest(context, request),
+        () => token?.isCancellationRequested !== true && boundary.isActiveRequest(context, request),
       );
-      return applied && boundary.isActiveRequest(context, request) ? { edits: [] } : null;
+      return applied &&
+        token?.isCancellationRequested !== true &&
+        boundary.isActiveRequest(context, request)
+        ? { edits: [] }
+        : null;
     }
     return dependencies.toWorkspaceEdit(monaco, model, edit, request.rootPath);
   } catch (error) {
-    boundary.reportActiveRequestError(context, request, error);
+    if (!token?.isCancellationRequested) {
+      boundary.reportActiveRequestError(context, request, error);
+    }
     return null;
   }
 }
@@ -78,6 +106,7 @@ export async function resolveJavaScriptTypeScriptRenameLocation<Context extends 
   boundary: JavaScriptTypeScriptProviderRequestBoundary<Context>,
   model: Monaco.editor.ITextModel,
   position: Monaco.Position,
+  token?: Monaco.CancellationToken,
 ): Promise<(Monaco.languages.RenameLocation & Monaco.languages.Rejection) | null> {
   const request = boundary.createFeatureRequest(context, model, position, "prepareRename");
   if (!request) {
@@ -87,11 +116,25 @@ export async function resolveJavaScriptTypeScriptRenameLocation<Context extends 
     if (!(await boundary.flushActiveRequest(context, request))) {
       return null;
     }
-    const prepared = await context.featuresGateway.prepareRename(
+    const identifiedRequests = context.featuresGateway.identifiedRequests;
+    if (!identifiedRequests?.prepareRename) {
+      return null;
+    }
+    const prepared = await runBoundedJavaScriptTypeScriptProviderRequest(
+      identifiedRequests.prepareRename(request.rootPath, request.position, request.sessionId),
+      request.sessionId,
+      token,
       request.rootPath,
-      request.position,
+      undefined,
+      context.cancelRequest ??
+        ((rootPath, sessionId, requestId) =>
+          identifiedRequests.cancelRequest(rootPath, sessionId, requestId)),
     );
-    if (!boundary.isActiveRequest(context, request)) {
+    if (
+      javaScriptTypeScriptProviderRequestDidNotComplete(prepared) ||
+      token?.isCancellationRequested ||
+      !boundary.isActiveRequest(context, request)
+    ) {
       return null;
     }
     if (!prepared?.range || prepared.defaultBehavior) {
@@ -114,7 +157,7 @@ export async function resolveJavaScriptTypeScriptRenameLocation<Context extends 
     const range = toMonacoRange(monaco, prepared.range);
     return { range, text: prepared.placeholder ?? model.getValueInRange(range) };
   } catch (error) {
-    if (!boundary.isActiveRequest(context, request)) {
+    if (token?.isCancellationRequested || !boundary.isActiveRequest(context, request)) {
       return null;
     }
     return {

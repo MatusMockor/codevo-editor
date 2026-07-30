@@ -372,6 +372,12 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     await expect(registered.hoverProvider.provideHover(model(), position())).resolves.toEqual({
       contents: [{ value: "**User**" }],
+      range: {
+        endColumn: 5,
+        endLineNumber: 11,
+        startColumn: 5,
+        startLineNumber: 11,
+      },
     });
     expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/User.php");
     expect(gateway.hover).toHaveBeenCalledWith("/project", {
@@ -663,6 +669,12 @@ describe("registerLanguageServerMonacoProviders", () => {
       registered.hoverProvider.provideHover(model(), position(), token),
     ).resolves.toEqual({
       contents: [{ value: "**Warm user**" }],
+      range: {
+        endColumn: 5,
+        endLineNumber: 11,
+        startColumn: 5,
+        startLineNumber: 11,
+      },
     });
   });
 
@@ -13051,6 +13063,12 @@ describe("registerLanguageServerMonacoProviders PHP presenter-link completion", 
     ).toThrow(failure);
     await expect(oldHoverProvider.provideHover(model(), position())).resolves.toEqual({
       contents: [{ value: "still active" }],
+      range: {
+        endColumn: 5,
+        endLineNumber: 11,
+        startColumn: 5,
+        startLineNumber: 11,
+      },
     });
   });
 });
@@ -13909,7 +13927,10 @@ function identifiedRequestsPort({
     definition: () => identifiedRequest(Promise.resolve([]), 4, 7),
     hover: () => hover,
     implementation: () => identifiedRequest(Promise.resolve([]), 5, 7),
+    prepareRename: () => identifiedRequest(Promise.resolve(null), 10, 7),
     references: () => identifiedRequest(Promise.resolve([]), 6, 7),
+    rename: () => identifiedRequest(Promise.resolve(null), 11, 7),
+    resolveCompletionItem: (_rootPath, item) => identifiedRequest(Promise.resolve(item), 12, 7),
     signatureHelp: () => identifiedRequest(Promise.resolve(null), 7, 7),
     sourceDefinition: () => identifiedRequest(Promise.resolve([]), 8, 7),
     typeDefinition: () => identifiedRequest(Promise.resolve([]), 9, 7),
@@ -14154,6 +14175,7 @@ function model(
     getLineContent: vi.fn(() => overrides.lineContent ?? "$user"),
     getValueInRange: vi.fn(() => "$user"),
     getVersionId: vi.fn(() => 42),
+    isValidRange: vi.fn(() => true),
     getWordAtPosition: vi.fn(() => ({
       endColumn: overrides.word?.endColumn ?? 5,
       startColumn: overrides.word?.startColumn ?? 2,

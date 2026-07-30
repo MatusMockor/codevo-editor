@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LanguageServerLocation } from "./languageServerFeatures";
 import {
+  MAX_REFERENCE_VIEW_INSPECTED_LOCATIONS,
+  MAX_REFERENCE_VIEW_LOCATIONS,
+  MAX_REFERENCE_VIEW_LOCATION_URI_UTF8_BYTES,
+  projectReferencesView,
   referenceGroups,
   referenceRows,
   referencesSummaryLabel,
@@ -81,14 +85,79 @@ describe("referencesSummaryLabel", () => {
     expect(referencesSummaryLabel(0)).toBe("No references");
     expect(referencesSummaryLabel(1)).toBe("1 reference");
     expect(referencesSummaryLabel(3)).toBe("3 references");
+    expect(referencesSummaryLabel(2, 5, true)).toBe("Showing 2 of 5 references");
   });
 });
 
-function location(
-  uri: string,
-  line: number,
-  character: number,
-): LanguageServerLocation {
+describe("projectReferencesView", () => {
+  it("caps retained locations and truthfully reports an incomplete result", () => {
+    const locations = Array.from({ length: MAX_REFERENCE_VIEW_LOCATIONS + 3 }, (_, index) =>
+      location(`file:///workspace/src/file-${index}.ts`, index, 0),
+    );
+
+    const view = projectReferencesView("value", locations);
+
+    expect(view.locations).toHaveLength(MAX_REFERENCE_VIEW_LOCATIONS);
+    expect(view.totalCount).toBe(MAX_REFERENCE_VIEW_LOCATIONS + 3);
+    expect(view.isIncomplete).toBe(true);
+  });
+
+  it("accounts for UTF-8 bytes and omits unresolvable locations without hiding truncation", () => {
+    const oversizedUri = `file:///workspace/${"😀".repeat(
+      MAX_REFERENCE_VIEW_LOCATION_URI_UTF8_BYTES / 4,
+    )}.ts`;
+    const view = projectReferencesView("value", [
+      location(oversizedUri, 0, 0),
+      location("untitled:Untitled-1", 0, 0),
+      location("file:///workspace/src/value.ts", 1, 0),
+    ]);
+
+    expect(view.locations.map(({ uri }) => uri)).toEqual(["file:///workspace/src/value.ts"]);
+    expect(view.totalCount).toBe(3);
+    expect(view.isIncomplete).toBe(true);
+  });
+
+  it("bounds inspection work even when early locations are unusable", () => {
+    const locations = Array.from({ length: MAX_REFERENCE_VIEW_INSPECTED_LOCATIONS }, (_, index) =>
+      location(`untitled:Untitled-${index}`, 0, 0),
+    );
+    locations.push(location("file:///workspace/src/beyond-budget.ts", 0, 0));
+
+    const view = projectReferencesView("value", locations);
+
+    expect(view.locations).toEqual([]);
+    expect(view.totalCount).toBe(MAX_REFERENCE_VIEW_INSPECTED_LOCATIONS + 1);
+    expect(view.isIncomplete).toBe(true);
+  });
+
+  it("preserves truthful truncation metadata from the bounded backend receipt", () => {
+    const locations = Object.assign([location("file:///workspace/src/value.ts", 0, 0)], {
+      isIncomplete: true,
+      totalCount: 9,
+    });
+
+    const view = projectReferencesView("value", locations);
+
+    expect(view.locations).toHaveLength(1);
+    expect(view.totalCount).toBe(9);
+    expect(view.isIncomplete).toBe(true);
+  });
+
+  it("keeps an all-omitted backend receipt incomplete instead of claiming no results", () => {
+    const locations = Object.assign([], {
+      isIncomplete: true,
+      totalCount: 5,
+    });
+
+    const view = projectReferencesView("value", locations);
+
+    expect(view.locations).toEqual([]);
+    expect(view.totalCount).toBe(5);
+    expect(view.isIncomplete).toBe(true);
+  });
+});
+
+function location(uri: string, line: number, character: number): LanguageServerLocation {
   return {
     uri,
     range: {

@@ -227,6 +227,7 @@ export async function resolveJavaScriptTypeScriptCompletionItem<
   context: Context,
   boundary: JavaScriptTypeScriptProviderRequestBoundary<Context>,
   item: Monaco.languages.CompletionItem,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CompletionItem> {
   const backedItem = item as LanguageServerBackedCompletionItem;
   if (
@@ -246,11 +247,29 @@ export async function resolveJavaScriptTypeScriptCompletionItem<
     if (!(await boundary.flushStoredPayload(context, backedItem))) {
       return item;
     }
-    const resolved = await context.featuresGateway.resolveCompletionItem(
+    const identifiedRequests = context.featuresGateway.identifiedRequests;
+    if (!identifiedRequests?.resolveCompletionItem) {
+      return item;
+    }
+    const resolved = await runBoundedJavaScriptTypeScriptProviderRequest(
+      identifiedRequests.resolveCompletionItem(
+        backedItem.__workspaceRoot,
+        backedItem.__languageServerItem,
+        backedItem.__languageServerSessionId,
+      ),
+      backedItem.__languageServerSessionId,
+      token,
       backedItem.__workspaceRoot,
-      backedItem.__languageServerItem,
+      undefined,
+      context.cancelRequest ??
+        ((rootPath, sessionId, requestId) =>
+          identifiedRequests.cancelRequest(rootPath, sessionId, requestId)),
     );
-    if (!boundary.isStoredPayloadActive(context, backedItem)) {
+    if (
+      javaScriptTypeScriptProviderRequestDidNotComplete(resolved) ||
+      token?.isCancellationRequested ||
+      !boundary.isStoredPayloadActive(context, backedItem)
+    ) {
       return item;
     }
     return boundary.attachStoredAuthority(
@@ -270,7 +289,9 @@ export async function resolveJavaScriptTypeScriptCompletionItem<
       backedItem,
     );
   } catch (error) {
-    boundary.reportStoredPayloadError(context, backedItem, error);
+    if (!token?.isCancellationRequested) {
+      boundary.reportStoredPayloadError(context, backedItem, error);
+    }
     return item;
   }
 }

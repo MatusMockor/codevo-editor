@@ -25,7 +25,14 @@ export interface LanguageServerTextDocumentPosition {
 }
 
 export interface LanguageServerHover {
-  contents: string;
+  readonly contents: string | readonly LanguageServerHoverContent[];
+  readonly range?: LanguageServerRange | null;
+}
+
+export interface LanguageServerHoverContent {
+  readonly kind: "code" | "markdown" | "plaintext";
+  readonly language?: string | null;
+  readonly value: string;
 }
 
 export interface LanguageServerCompletionTextEdit {
@@ -89,6 +96,17 @@ export interface LanguageServerLocation {
   uri: string;
   range: LanguageServerRange;
 }
+
+export interface BoundedLanguageServerLocations {
+  readonly isIncomplete: boolean;
+  readonly locations: LanguageServerLocation[];
+  readonly totalCount: number;
+}
+
+export type LanguageServerLocationList = LanguageServerLocation[] & {
+  readonly isIncomplete?: boolean;
+  readonly totalCount?: number;
+};
 
 export interface LanguageServerTextEdit {
   range: LanguageServerRange;
@@ -363,6 +381,17 @@ export interface IdentifiedLanguageServerRequestsPort {
     context: LanguageServerCompletionContext | undefined,
     sessionId: number,
   ): IdentifiedLanguageServerRequest<LanguageServerCompletionList>;
+  resolveCompletionItem?(
+    rootPath: string,
+    item: LanguageServerCompletionItem,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCompletionItem>;
+  formatting?(
+    rootPath: string,
+    path: string,
+    options: LanguageServerFormattingOptions,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerTextEdit[]>;
   definition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -399,6 +428,17 @@ export interface IdentifiedLanguageServerRequestsPort {
     context: LanguageServerSignatureHelpContext | undefined,
     sessionId: number,
   ): IdentifiedLanguageServerRequest<LanguageServerSignatureHelp | null>;
+  prepareRename?(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerPrepareRenameResult | null>;
+  rename?(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    newName: string,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerWorkspaceEdit | null>;
 }
 
 export interface LanguageServerFeaturesGateway {
@@ -419,7 +459,7 @@ export interface LanguageServerFeaturesGateway {
   definition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
-  ): Promise<LanguageServerLocation[]>;
+  ): Promise<LanguageServerLocationList>;
   sourceDefinition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -533,7 +573,7 @@ export interface LanguageServerFeaturesGateway {
   executeCommandLocations(
     rootPath: string,
     command: LanguageServerCodeActionCommand,
-  ): Promise<LanguageServerLocation[]>;
+  ): Promise<LanguageServerLocationList>;
   willCreateFiles(rootPath: string, path: string): Promise<LanguageServerWorkspaceEdit | null>;
   didCreateFiles(rootPath: string, path: string): Promise<void>;
   willRenameFiles(
@@ -578,6 +618,7 @@ type IdentifiedJavaScriptTypeScriptFeature =
   | "declaration"
   | "definition"
   | "documentHighlights"
+  | "executeCommandLocations"
   | "hover"
   | "implementation"
   | "linkedEditingRanges"
@@ -656,7 +697,12 @@ export type JavaScriptTypeScriptLanguageServerFeaturesGateway = Omit<
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
     sessionId: number,
-  ): IdentifiedLanguageServerRequest<LanguageServerLocation[]>;
+  ): IdentifiedLanguageServerRequest<LanguageServerLocationList>;
+  executeCommandLocations(
+    rootPath: string,
+    command: LanguageServerCodeActionCommand,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerLocationList>;
   workspaceSymbols(
     rootPath: string,
     query: string,

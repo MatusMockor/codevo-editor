@@ -788,6 +788,18 @@ pub(crate) fn filter_lsp_locations_to_workspace(
         .collect())
 }
 
+pub(crate) fn filter_bounded_lsp_locations_to_workspace(
+    root_path: &str,
+    mut result: crate::lsp_features::BoundedLanguageServerLocations,
+) -> Result<crate::lsp_features::BoundedLanguageServerLocations, String> {
+    let retained_before_filter = result.locations.len();
+    result
+        .locations
+        .retain(|location| is_lsp_file_uri_in_workspace(root_path, &location.uri));
+    result.is_incomplete |= result.locations.len() != retained_before_filter;
+    Ok(result)
+}
+
 pub(crate) fn parse_javascript_typescript_navigation_locations_result(
     result: &Value,
 ) -> Result<Vec<LanguageServerLocation>, String> {

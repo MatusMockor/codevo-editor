@@ -9,7 +9,6 @@ import {
   type LanguageServerDocumentLink,
   type LanguageServerFeature,
   type LanguageServerFoldingRange,
-  type LanguageServerFormattingOptions,
   type LanguageServerInlayHint,
   type LanguageServerLocation,
   type LanguageServerRefreshEvent,
@@ -70,6 +69,11 @@ import {
   toMonacoSemanticTokens,
 } from "./languageServerRequestCancellation";
 import { provideJavaScriptTypeScriptDocumentHighlights } from "./javascriptTypescriptProviders/documentHighlight";
+import {
+  provideJavaScriptTypeScriptDocumentFormattingEdits,
+  toJavaScriptTypeScriptFormattingOptions as toLanguageServerFormattingOptions,
+  type JavaScriptTypeScriptFormattingDependencies,
+} from "./javascriptTypescriptProviders/formatting";
 import {
   type JavaScriptTypeScriptNavigationFeature,
   type JavaScriptTypeScriptPreparedNavigationTarget,
@@ -299,6 +303,15 @@ const renameDependencies: JavaScriptTypeScriptRenameDependencies<JavaScriptTypeS
       toMonacoWorkspaceEdit(monaco, workspaceEditContext(model), edit, rootPath),
   };
 
+const formattingDependencies = (monaco: MonacoApi): JavaScriptTypeScriptFormattingDependencies => ({
+  createRequest: (context, model) => documentRequestContext(context, model, "formatting"),
+  flush: flushPendingDocumentChangeForActiveRoot,
+  isActive: isFeatureRequestActive,
+  reportError: reportErrorForActiveRequest,
+  toFormattingOptions: toLanguageServerFormattingOptions,
+  toMonacoTextEdit: (edit) => toMonacoTextEdit(monaco, edit),
+});
+
 export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -314,6 +327,16 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     get(target, property, receiver) {
       if (property === "getProviderRegistrationLease") {
         return () => registrationAuthority;
+      }
+      if (property === "cancelRequest") {
+        const identifiedRequests = target.featuresGateway.identifiedRequests;
+        return (
+          Reflect.get(target, property, receiver) ??
+          (identifiedRequests
+            ? (rootPath: string, sessionId: number, requestId: number) =>
+                identifiedRequests.cancelRequest(rootPath, sessionId, requestId)
+            : undefined)
+        );
       }
       return Reflect.get(target, property, receiver);
     },
@@ -501,12 +524,13 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
               completionContext,
               token,
             ),
-          resolveCompletionItem: (item) =>
+          resolveCompletionItem: (item, token) =>
             resolveJavaScriptTypeScriptCompletionItem(
               monaco,
               registeredContext,
               providerRequestBoundary,
               item,
+              token,
             ),
         },
         declaration: {
@@ -532,8 +556,14 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
             ),
         },
         documentFormatting: {
-          provideDocumentFormattingEdits: (model, options) =>
-            provideDocumentFormattingEdits(monaco, registeredContext, model, options),
+          provideDocumentFormattingEdits: (model, options, token) =>
+            provideJavaScriptTypeScriptDocumentFormattingEdits(
+              registeredContext,
+              model,
+              options,
+              token,
+              formattingDependencies(monaco),
+            ),
         },
         documentHighlight: {
           provideDocumentHighlights: (model, position, token) =>
@@ -632,15 +662,16 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
             ),
         },
         rename: {
-          resolveRenameLocation: (model, position) =>
+          resolveRenameLocation: (model, position, token) =>
             resolveJavaScriptTypeScriptRenameLocation(
               monaco,
               registeredContext,
               providerRequestBoundary,
               model,
               position,
+              token,
             ),
-          provideRenameEdits: (model, position, newName) =>
+          provideRenameEdits: (model, position, newName, token) =>
             provideJavaScriptTypeScriptRenameEdits(
               monaco,
               registeredContext,
@@ -649,6 +680,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
               model,
               position,
               newName,
+              token,
             ),
         },
         selectionRange: {
@@ -1324,7 +1356,9 @@ async function provideCodeActions(
       dispose: () => undefined,
     };
   } catch (error) {
-    reportErrorForActiveRequest(context, request, error);
+    if (!token?.isCancellationRequested) {
+      reportErrorForActiveRequest(context, request, error);
+    }
     return emptyCodeActionList();
   }
 }
@@ -1397,7 +1431,9 @@ async function resolveCodeAction(
       ? attachStoredProviderPayloadAuthority({ ...action, ...mapped }, backedAction)
       : action;
   } catch (error) {
-    reportErrorForStoredPayload(context, backedAction, error);
+    if (!token?.isCancellationRequested) {
+      reportErrorForStoredPayload(context, backedAction, error);
+    }
     return action;
   }
 }
@@ -1489,40 +1525,6 @@ async function resolveCodeLens(
   } catch (error) {
     reportErrorForStoredPayload(context, backedCodeLens, error);
     return codeLens;
-  }
-}
-
-async function provideDocumentFormattingEdits(
-  monaco: MonacoApi,
-  context: JavaScriptTypeScriptLanguageServerProviderContext,
-  model: MonacoModel,
-  options: Monaco.languages.FormattingOptions,
-): Promise<Monaco.languages.TextEdit[]> {
-  const request = documentRequestContext(context, model, "formatting");
-
-  if (!request) {
-    return [];
-  }
-
-  try {
-    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
-      return [];
-    }
-
-    const edits = await context.featuresGateway.formatting(
-      request.rootPath,
-      request.path,
-      toLanguageServerFormattingOptions(options),
-    );
-
-    if (!isFeatureRequestActive(context, request)) {
-      return [];
-    }
-
-    return edits.map((edit) => toMonacoTextEdit(monaco, edit));
-  } catch (error) {
-    reportErrorForActiveRequest(context, request, error);
-    return [];
   }
 }
 
@@ -2519,15 +2521,6 @@ function monacoInlayHintKindFromLspKind(
   }
 
   return monaco.languages.InlayHintKind.Type;
-}
-
-function toLanguageServerFormattingOptions(
-  options: Monaco.languages.FormattingOptions,
-): LanguageServerFormattingOptions {
-  return {
-    insertSpaces: options.insertSpaces,
-    tabSize: options.tabSize,
-  };
 }
 
 function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
