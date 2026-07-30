@@ -1163,6 +1163,7 @@ export function useWorkbenchLanguageNavigation(
     provideNeonDefinition,
     providePhpFrameworkDefinition,
     resolveCurrentWorkspaceRuntimeOwner,
+    setImplementationChooser,
     workspaceRoot,
   ]);
 
