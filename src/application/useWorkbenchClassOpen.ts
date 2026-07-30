@@ -29,6 +29,8 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { requestJavaScriptTypeScriptWorkspaceSymbols } from "./javaScriptTypeScriptWorkspaceSymbolRequest";
 
+export const INDEXED_PROJECT_SYMBOL_SEARCH_TIMEOUT_MS = 5_000;
+
 export interface WorkbenchClassOpenDependencies {
   workspaceRoot: string | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -110,6 +112,7 @@ export function useWorkbenchClassOpen(
   const [classOpenQuery, setClassOpenQuery] = useState("");
   const [classOpenLoading, setClassOpenLoading] = useState(false);
   const [classOpenResults, setClassOpenResults] = useState<ProjectSymbolSearchResult[]>([]);
+  const workspaceOwner = workspaceRoot ? resolveWorkspaceRuntimeOwner(workspaceRoot) : null;
 
   const canSearchClassOpenSymbols = useMemo(
     () =>
@@ -191,10 +194,31 @@ export function useWorkbenchClassOpen(
       }
 
       const requestedRoot = workspaceRoot;
+      const requestedOwner = workspaceOwner;
+      if (!requestedOwner) {
+        return [];
+      }
+      const requestAbort = new AbortController();
+      const abortRequest = () => requestAbort.abort();
+      signal?.addEventListener("abort", abortRequest, { once: true });
+      if (signal?.aborted) {
+        abortRequest();
+      }
+      const requestTimeout = window.setTimeout(
+        abortRequest,
+        INDEXED_PROJECT_SYMBOL_SEARCH_TIMEOUT_MS,
+      );
       const searches: Array<Promise<ProjectSymbolSearchResult[]>> = [];
 
       if (shouldIndexWorkspace(intelligenceMode)) {
-        searches.push(projectSymbolSearch.searchProjectSymbols(requestedRoot, query, limit));
+        searches.push(
+          projectSymbolSearch.searchProjectSymbols(
+            requestedRoot,
+            query,
+            limit,
+            requestAbort.signal,
+          ),
+        );
       }
 
       if (
@@ -206,8 +230,15 @@ export function useWorkbenchClassOpen(
         canUseLanguageServerFeature(languageServerRuntimeStatus.capabilities, "workspaceSymbol")
       ) {
         const requestedSessionId = languageServerRuntimeStatus.sessionId;
-        const isRequestedWorkspaceSymbolSessionActive = () =>
-          isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
+        const isRequestedWorkspaceSymbolSessionActive = () => {
+          const currentOwner = resolveWorkspaceRuntimeOwner(requestedRoot);
+          return (
+            !requestAbort.signal.aborted &&
+            currentOwner === requestedOwner &&
+            currentOwner.ownerKey === requestedOwner.ownerKey &&
+            isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId)
+          );
+        };
 
         searches.push(
           languageServerFeaturesGateway
@@ -246,12 +277,10 @@ export function useWorkbenchClassOpen(
         )
       ) {
         const requestedSessionId = javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
-        const requestedOwner = resolveWorkspaceRuntimeOwner(requestedRoot);
         const isRequestedWorkspaceSymbolSessionActive = () => {
           const currentOwner = resolveWorkspaceRuntimeOwner(requestedRoot);
           return (
-            requestedOwner !== null &&
-            signal?.aborted !== true &&
+            requestAbort.signal.aborted !== true &&
             currentOwner?.ownerKey === requestedOwner.ownerKey &&
             currentOwner === requestedOwner &&
             isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
@@ -269,7 +298,7 @@ export function useWorkbenchClassOpen(
             query,
             rootPath: requestedRoot,
             sessionId: requestedSessionId,
-            signal,
+            signal: requestAbort.signal,
           })
             .then((symbols) => {
               if (!isRequestedWorkspaceSymbolSessionActive()) {
@@ -293,15 +322,25 @@ export function useWorkbenchClassOpen(
         );
       }
 
-      const results = (await Promise.all(searches)).flat();
-      if (
-        signal?.aborted ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
-        return [];
-      }
+      try {
+        const results = (
+          await settleProjectSymbolSearchBeforeAbort(Promise.all(searches), requestAbort.signal)
+        ).flat();
+        const currentOwner = resolveWorkspaceRuntimeOwner(requestedRoot);
+        if (
+          requestAbort.signal.aborted ||
+          currentOwner !== requestedOwner ||
+          currentOwner.ownerKey !== requestedOwner.ownerKey ||
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return [];
+        }
 
-      return uniqueProjectSymbols(results).slice(0, limit);
+        return uniqueProjectSymbols(results).slice(0, limit);
+      } finally {
+        window.clearTimeout(requestTimeout);
+        signal?.removeEventListener("abort", abortRequest);
+      }
     },
     [
       currentWorkspaceRootRef,
@@ -318,6 +357,7 @@ export function useWorkbenchClassOpen(
       projectSymbolSearch,
       reportError,
       resolveWorkspaceRuntimeOwner,
+      workspaceOwner,
       workspaceRoot,
     ],
   );
@@ -374,6 +414,7 @@ export function useWorkbenchClassOpen(
     searchClassOpenSymbols,
     setMessage,
     workspaceRoot,
+    workspaceOwner,
   ]);
 
   return {
@@ -388,6 +429,27 @@ export function useWorkbenchClassOpen(
     setClassOpenResults,
     searchClassOpenSymbols,
   };
+}
+
+function settleProjectSymbolSearchBeforeAbort<T>(
+  request: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Project-symbol search timed out.", "AbortError"));
+  }
+  let rejectAborted: ((reason: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAborted = reject;
+  });
+  const abort = () => {
+    rejectAborted?.(new DOMException("Project-symbol search timed out.", "AbortError"));
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  return Promise.race([request, aborted]).finally(() => {
+    signal.removeEventListener("abort", abort);
+  });
 }
 
 function projectSymbolFromLanguageServerWorkspaceSymbol(

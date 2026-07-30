@@ -69,6 +69,28 @@ describe("useWorkbenchWorkspaceSymbols", () => {
     expect(harness.value().workspaceSymbolsLoading).toBe(false);
     harness.unmount();
   });
+
+  it("coalesces a 1,000-query typing storm into one indexed request", async () => {
+    vi.useFakeTimers();
+    const searchClassOpenSymbols = vi.fn(async () => [result("User")]);
+    const harness = renderWorkspaceSymbols(dependencies({ searchClassOpenSymbols }));
+
+    act(() => {
+      harness.value().setWorkspaceSymbolsOpen(true);
+      for (let index = 0; index < 1_000; index += 1) {
+        harness.value().setWorkspaceSymbolsQuery(`User${index}`);
+      }
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(120));
+
+    expect(searchClassOpenSymbols).toHaveBeenCalledExactlyOnceWith(
+      "User999",
+      120,
+      expect.any(AbortSignal),
+    );
+    expect(harness.value().workspaceSymbolsResults.map(({ name }) => name)).toEqual(["User"]);
+    harness.unmount();
+  });
 });
 
 function dependencies(

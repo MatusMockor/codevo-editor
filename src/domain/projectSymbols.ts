@@ -43,6 +43,7 @@ export interface ProjectSymbolSearchGateway {
     root: string,
     query: string,
     limit: number,
+    signal?: AbortSignal,
   ): Promise<ProjectSymbolSearchResult[]>;
 }
 

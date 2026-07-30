@@ -19,6 +19,7 @@ use crate::lsp::{
 use crate::php_file_outline::PhpFileOutline;
 use crate::php_tree::PhpTree;
 use crate::project::{ComposerWorkspaceDetector, WorkspaceDetector};
+use crate::project_commands::project_symbol_search_lifecycle::ProjectSymbolSearchLifecycle;
 use crate::search::{RipgrepTextSearcher, TextSearchOptions, TextSearchResult, TextSearcher};
 use crate::tools::{LocalPhpToolDetector, PhpToolDetector};
 use crate::trust::WorkspaceTrustService;
@@ -202,24 +203,59 @@ pub(crate) async fn search_text(
 }
 
 #[tauri::command]
+pub(crate) async fn begin_project_symbol_search(
+    root: String,
+    owner_id: String,
+    request_id: u64,
+    lifecycle: State<'_, ProjectSymbolSearchLifecycle>,
+) -> Result<String, String> {
+    let canonical_root = run_blocking_command(move || canonicalize_workspace_root(&root)).await?;
+    let canonical_root = canonical_root.to_string_lossy().to_string();
+    lifecycle.register(&canonical_root, &owner_id, request_id)?;
+    Ok(canonical_root)
+}
+
+#[tauri::command]
 pub(crate) async fn search_project_symbols(
     app: AppHandle,
     root: String,
     query: String,
     limit: usize,
+    owner_id: String,
+    request_id: u64,
+    lifecycle: State<'_, ProjectSymbolSearchLifecycle>,
 ) -> Result<Vec<ProjectSymbolSearchResult>, String> {
+    let lease = lifecycle.claim(&root, &owner_id, request_id)?;
+    if query.len() > 1024 {
+        return Err("Project-symbol search query is too large.".to_string());
+    }
     // Opening the per-workspace SQLite index and scanning it (LIKE + ORDER BY)
     // is blocking and contends with the background indexer; resolve the root and
     // run the whole round-trip off the main thread. The captured `root` keeps
     // this request bound to its own workspace database (no cross-root leakage).
     run_blocking_command(move || {
+        lease.ensure_current()?;
         let root = canonicalize_workspace_root(&root)?;
         let index = open_workspace_index(&app, &root)?;
-        index
+        lease.install_interrupt(index.interrupt_handle())?;
+        lease.ensure_current()?;
+        let results = index
             .search_project_symbols(&query, limit)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        lease.ensure_current()?;
+        Ok(results)
     })
     .await
+}
+
+#[tauri::command]
+pub(crate) fn cancel_project_symbol_search(
+    root: String,
+    owner_id: String,
+    request_id: u64,
+    lifecycle: State<'_, ProjectSymbolSearchLifecycle>,
+) -> Result<bool, String> {
+    lifecycle.cancel(&root, &owner_id, request_id)
 }
 
 #[tauri::command]

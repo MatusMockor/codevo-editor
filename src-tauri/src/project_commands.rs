@@ -7,6 +7,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
 
+#[path = "project_symbol_search_lifecycle.rs"]
+pub(crate) mod project_symbol_search_lifecycle;
+
 #[tauri::command]
 pub(crate) fn get_workspace_descriptor(
     registry: State<'_, WorkspaceRegistry>,

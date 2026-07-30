@@ -7,7 +7,7 @@ use crate::php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
 };
 use crate::php_tree::{build_php_tree, PhpTree, PhpTreeNodeKind, PhpTreeSymbolRecord};
-use rusqlite::{params, types::Type, Connection};
+use rusqlite::{params, types::Type, Connection, InterruptHandle};
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -182,7 +182,6 @@ pub fn commit_index_db_write(
 
 /// Result of a guarded batch transaction: either the batch committed (carrying the action's value)
 /// or it was rolled back because the workspace was cancelled before the commit.
-#[derive(Debug)]
 pub enum BatchOutcome<T> {
     Committed(T),
     RolledBack,
@@ -256,6 +255,10 @@ impl SqliteWorkspaceIndex {
             // Cancelled before commit: the transaction guard rolls back on drop.
             None => Ok(BatchOutcome::RolledBack),
         }
+    }
+
+    pub(crate) fn interrupt_handle(&self) -> InterruptHandle {
+        self.connection.get_interrupt_handle()
     }
 
     #[cfg(test)]
@@ -336,14 +339,10 @@ impl WorkspaceSymbolStore for SqliteWorkspaceIndex {
             ORDER BY ordinal
             ",
         )?;
-        let rows = statement.query_map([file_path], workspace_symbol_record)?;
-        let mut symbols = Vec::new();
-
-        for row in rows {
-            symbols.push(row?);
-        }
-
-        Ok(symbols)
+        let symbols = statement
+            .query_map([file_path], workspace_symbol_record)?
+            .collect();
+        symbols
     }
 
     fn replace_file_symbols(&self, file_symbols: &WorkspaceFileSymbols) -> rusqlite::Result<()> {

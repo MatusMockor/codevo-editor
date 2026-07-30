@@ -105,6 +105,9 @@ pub fn run() {
         .manage(terminal_task_admission)
         .manage(WorkspaceRegistry::new())
         .manage(workspace_commands::WorkspaceFileSearchLifecycle::default())
+        .manage(
+            project_commands::project_symbol_search_lifecycle::ProjectSymbolSearchLifecycle::default(),
+        )
         .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -284,6 +287,8 @@ pub fn run() {
             quality_commands::run_php_tests_junit,
             quality_commands::run_php_test_coverage_clover,
             search_files,
+            begin_project_symbol_search,
+            cancel_project_symbol_search,
             search_project_symbols,
             search_text,
             set_smart_mode,

@@ -1,24 +1,9 @@
-import {
-  useCallback,
-  useEffect,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { Command, CommandContext } from "./commandRegistry";
-import {
-  measureLatency,
-  type LatencyTracker,
-} from "../domain/latencyTracker";
+import { measureLatency, type LatencyTracker } from "../domain/latencyTracker";
 import type { ProjectSymbolSearchResult } from "../domain/projectSymbols";
-import {
-  buildSearchEverywhereModel,
-  type SearchEverywhereModel,
-} from "../domain/searchEverywhere";
-import type {
-  FileSearchGateway,
-  FileSearchResult,
-} from "../domain/workspace";
+import { buildSearchEverywhereModel, type SearchEverywhereModel } from "../domain/searchEverywhere";
+import type { FileSearchGateway, FileSearchResult } from "../domain/workspace";
 
 export interface WorkbenchSearchEverywhereDependencies {
   canSearchClassOpenSymbols: boolean;
@@ -28,6 +13,7 @@ export interface WorkbenchSearchEverywhereDependencies {
   searchClassOpenSymbols: (
     query: string,
     limit: number,
+    signal?: AbortSignal,
   ) => Promise<ProjectSymbolSearchResult[]>;
   workspaceRoot: string | null;
 }
@@ -39,10 +25,7 @@ export interface WorkbenchSearchEverywhere {
   setSearchEverywhereOpen: Dispatch<SetStateAction<boolean>>;
   setSearchEverywhereQuery: Dispatch<SetStateAction<string>>;
   resetSearchEverywhere: () => void;
-  searchEverywhereModelFor: (
-    commands: Command[],
-    context: CommandContext,
-  ) => SearchEverywhereModel;
+  searchEverywhereModelFor: (commands: Command[], context: CommandContext) => SearchEverywhereModel;
 }
 
 export function useWorkbenchSearchEverywhere(
@@ -60,9 +43,7 @@ export function useWorkbenchSearchEverywhere(
   const [searchEverywhereOpen, setSearchEverywhereOpen] = useState(false);
   const [searchEverywhereQuery, setSearchEverywhereQuery] = useState("");
   const [searchEverywhereLoading, setSearchEverywhereLoading] = useState(false);
-  const [searchEverywhereFiles, setSearchEverywhereFiles] = useState<
-    FileSearchResult[]
-  >([]);
+  const [searchEverywhereFiles, setSearchEverywhereFiles] = useState<FileSearchResult[]>([]);
   const [searchEverywhereSymbols, setSearchEverywhereSymbols] = useState<
     ProjectSymbolSearchResult[]
   >([]);
@@ -117,6 +98,7 @@ export function useWorkbenchSearchEverywhere(
 
     const requestedRoot = workspaceRoot;
     let active = true;
+    const abort = new AbortController();
     setSearchEverywhereLoading(true);
 
     const timeout = window.setTimeout(() => {
@@ -146,7 +128,7 @@ export function useWorkbenchSearchEverywhere(
       }
 
       const symbolSearchPromise = canSearchClassOpenSymbols
-        ? searchClassOpenSymbols(searchEverywhereQuery, 40)
+        ? searchClassOpenSymbols(searchEverywhereQuery, 40, abort.signal)
             .then((results) => {
               if (!active) {
                 return;
@@ -175,6 +157,7 @@ export function useWorkbenchSearchEverywhere(
 
     return () => {
       active = false;
+      abort.abort();
       window.clearTimeout(timeout);
     };
   }, [
