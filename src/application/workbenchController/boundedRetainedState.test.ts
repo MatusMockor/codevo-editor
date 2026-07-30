@@ -166,7 +166,7 @@ describe("bounded workbench retained state", () => {
     expect(tombstones).toEqual({});
   });
 
-  it("does not restore a removed tombstone after a newer create event", () => {
+  it("does not restore a removed tombstone after a newer authoritative present event", () => {
     const tombstones: Record<string, string> = {};
     const removed = beginExternallyRemovedDocumentEvent(
       tombstones,
@@ -183,6 +183,13 @@ describe("bounded workbench retained state", () => {
     markExternallyRemovedDocumentTombstone(tombstones, "/workspace", "/workspace/renamed.ts");
     beginWorkspaceFileTombstoneEvent(tombstones, {
       kind: "modified",
+      path: "/workspace/renamed.ts",
+      rootPath: "/workspace",
+    });
+    expect(tombstones).toEqual({ "/workspace/renamed.ts": "/workspace" });
+
+    beginWorkspaceFileTombstoneEvent(tombstones, {
+      kind: "created",
       path: "/workspace/renamed.ts",
       rootPath: "/workspace",
     });

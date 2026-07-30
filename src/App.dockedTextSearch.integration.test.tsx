@@ -87,11 +87,18 @@ describe("App docked text search integration", () => {
     mocks.invoke.mockImplementation((command, args) => {
       if (command === "register_workspace_path") {
         return Promise.resolve({
-          canonicalRootPath: "/workspace",
-          caseSensitive: true,
-          selectedRootPath: "/workspace",
-          unicodeNormalizationPolicy: "preserved",
-          workspaceId: "workspace-1",
+          descriptor: {
+            canonicalRootPath: "/workspace",
+            caseSensitive: true,
+            selectedRootPath: "/workspace",
+            unicodeNormalizationPolicy: "preserved",
+            workspaceId: "workspace-1",
+          },
+          registration: {
+            admissionToken: 1,
+            createdIdentity: true,
+            workspaceId: "workspace-1",
+          },
         });
       }
 

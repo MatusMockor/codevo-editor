@@ -65,6 +65,34 @@ describe("workspace settings save coordinator", () => {
     expect(coordinator.committed(ROOT)).toBe(baseline);
   });
 
+  it("waits for a save queued while the previously observed tail is settling", async () => {
+    const coordinator = createWorkspaceSettingsSaveCoordinator();
+    const firstWrite = deferred<void>();
+    const secondWrite = deferred<void>();
+    const firstSave = coordinator.save(ROOT, settings(false), settings(true), () => {
+      return firstWrite.promise;
+    });
+    const idle = coordinator.waitForIdle(ROOT);
+    expect(idle).not.toBeNull();
+
+    const secondSave = coordinator.save(ROOT, settings(false), settings(false), () => {
+      return secondWrite.promise;
+    });
+    let idleSettled = false;
+    void idle?.then(() => {
+      idleSettled = true;
+    });
+
+    firstWrite.resolve();
+    await firstSave;
+    await Promise.resolve();
+    expect(idleSettled).toBe(false);
+
+    secondWrite.resolve();
+    await Promise.all([secondSave, idle]);
+    expect(idleSettled).toBe(true);
+  });
+
   it("trailing-debounces navigation saves and flushes only the latest task", async () => {
     vi.useFakeTimers();
     const coordinator = createWorkspaceSettingsSaveCoordinator();

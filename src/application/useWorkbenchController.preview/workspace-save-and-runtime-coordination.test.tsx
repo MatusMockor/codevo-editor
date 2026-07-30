@@ -3947,13 +3947,13 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     act(() => {
       publishStatus?.(runningStatus(302));
     });
+    didOpenAttempts[0]?.reject(new Error("stale did open"));
     await waitForReact(() => {
       expect(didOpenAttempts).toHaveLength(2);
     });
 
     didOpenAttempts[1]?.resolve(undefined);
     await flushAsyncTurns();
-    didOpenAttempts[0]?.reject(new Error("stale did open"));
     await flushAsyncTurns(24);
     vi.mocked(
       dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange,

@@ -2733,52 +2733,6 @@ export function useWorkbenchController(
         typeof requestedSettingsIdentity === "string"
           ? [requestedSettingsIdentity]
           : (requestedSettingsIdentity.legacyRawKeys ?? []);
-      const pendingWorkspaceSettingsSave =
-        workspaceSettingsSaveCoordinator.waitForIdle(canonicalKey);
-      if (pendingWorkspaceSettingsSave) {
-        await pendingWorkspaceSettingsSave;
-      }
-      if (!isCurrentOpenWorkspaceRequest()) {
-        return;
-      }
-      const workspaceSettingsRevisionAtLoad = workspaceSettingsByRoot.revision(canonicalKey);
-      let workspaceSettingsLoad =
-        workspaceSettingsLoadByRootRef.current.get(workspaceSettingsLoadKey);
-      try {
-        const trackWorkspaceSettingsLoad = (
-          start: () => Promise<WorkspaceSettings>,
-          legacyRawKeys: readonly string[],
-        ) =>
-          workspaceSettingsLoadByRootRef.current.track(
-            workspaceSettingsLoadKey,
-            legacyRawKeys,
-            start,
-          );
-        workspaceSettingsLoad ??= trackWorkspaceSettingsLoad(
-          () => settingsGateway.loadWorkspaceSettings(requestedSettingsIdentity),
-          requestedLegacyRawKeys,
-        );
-        if (
-          !requestedLegacyRawKeys.every((legacyRawKey) =>
-            workspaceSettingsLoad?.legacyRawKeys.includes(legacyRawKey),
-          )
-        ) {
-          const previousLoad = workspaceSettingsLoad;
-          const continueWithWinningAlias = () =>
-            isCurrentOpenWorkspaceRequest()
-              ? settingsGateway.loadWorkspaceSettings(requestedSettingsIdentity)
-              : defaultWorkspaceSettings();
-          workspaceSettingsLoad = trackWorkspaceSettingsLoad(
-            () => previousLoad.promise.then(continueWithWinningAlias, continueWithWinningAlias),
-            [...new Set([...previousLoad.legacyRawKeys, ...requestedLegacyRawKeys])],
-          );
-        }
-      } catch (error) {
-        reportError("Settings", error);
-        if (error instanceof PendingWorkspaceSettingsLoadCapacityError) {
-          return;
-        }
-      }
       const previousWorkspaceIdentity = previousRootPath
         ? (workspaceIdentityByRootRef.current[previousRootPath] ?? null)
         : null;
@@ -2896,6 +2850,53 @@ export function useWorkbenchController(
       }
 
       adoptLegacyWorkspaceCache();
+      const pendingWorkspaceSettingsSave =
+        workspaceSettingsSaveCoordinator.waitForIdle(canonicalKey);
+      if (pendingWorkspaceSettingsSave) {
+        await pendingWorkspaceSettingsSave;
+      }
+      if (!isCurrentOpenWorkspaceRequest()) {
+        return;
+      }
+
+      const workspaceSettingsRevisionAtLoad = workspaceSettingsByRoot.revision(canonicalKey);
+      let workspaceSettingsLoad =
+        workspaceSettingsLoadByRootRef.current.get(workspaceSettingsLoadKey);
+      try {
+        const trackWorkspaceSettingsLoad = (
+          start: () => Promise<WorkspaceSettings>,
+          legacyRawKeys: readonly string[],
+        ) =>
+          workspaceSettingsLoadByRootRef.current.track(
+            workspaceSettingsLoadKey,
+            legacyRawKeys,
+            start,
+          );
+        workspaceSettingsLoad ??= trackWorkspaceSettingsLoad(
+          () => settingsGateway.loadWorkspaceSettings(requestedSettingsIdentity),
+          requestedLegacyRawKeys,
+        );
+        if (
+          !requestedLegacyRawKeys.every((legacyRawKey) =>
+            workspaceSettingsLoad?.legacyRawKeys.includes(legacyRawKey),
+          )
+        ) {
+          const previousLoad = workspaceSettingsLoad;
+          const continueWithWinningAlias = () =>
+            isCurrentOpenWorkspaceRequest()
+              ? settingsGateway.loadWorkspaceSettings(requestedSettingsIdentity)
+              : defaultWorkspaceSettings();
+          workspaceSettingsLoad = trackWorkspaceSettingsLoad(
+            () => previousLoad.promise.then(continueWithWinningAlias, continueWithWinningAlias),
+            [...new Set([...previousLoad.legacyRawKeys, ...requestedLegacyRawKeys])],
+          );
+        }
+      } catch (error) {
+        reportError("Settings", error);
+        if (error instanceof PendingWorkspaceSettingsLoadCapacityError) {
+          return;
+        }
+      }
       const identityAliasPaths = identityDescriptor
         ? workspaceIdentityAliasPaths(
             workspaceIdentityByRootRef.current,
@@ -2958,6 +2959,9 @@ export function useWorkbenchController(
         }));
         try {
           await stopBackgroundProjectRuntimes(runtimePolicy, path, previousRootPath);
+          if (!isCurrentOpenWorkspaceRequest()) {
+            return;
+          }
           for (const disposedRuntimeOwnerClaim of disposedRuntimeOwnerClaims) {
             const disposedRuntimeOwner = disposedRuntimeOwnerClaim.owner;
             if (disposedRuntimeOwnerClaim.generation === undefined) {
@@ -2978,10 +2982,6 @@ export function useWorkbenchController(
 
           reportError("Settings", error);
         }
-      }
-
-      if (!isCurrentOpenWorkspaceRequest()) {
-        return;
       }
 
       documentSessionAuthorityLifecycle.deactivate();

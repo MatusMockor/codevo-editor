@@ -80,10 +80,7 @@ export function createWorkspaceSettingsSaveCoordinator(): WorkspaceSettingsSaveC
     return created;
   };
 
-  const removeIdleNavigationSave = (
-    rootPath: string,
-    scheduled: ScheduledNavigationSave,
-  ): void => {
+  const removeIdleNavigationSave = (rootPath: string, scheduled: ScheduledNavigationSave): void => {
     if (scheduled.activeTasks > 0 || scheduled.task || scheduled.timer) {
       return;
     }
@@ -223,7 +220,11 @@ export function createWorkspaceSettingsSaveCoordinator(): WorkspaceSettingsSaveC
       if (!state || state.pendingSaves === 0) {
         return null;
       }
-      return state.tail;
+      return (async () => {
+        while (state.pendingSaves > 0) {
+          await state.tail;
+        }
+      })();
     },
   };
 }

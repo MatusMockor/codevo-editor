@@ -144,9 +144,7 @@ export function beginWorkspaceFileTombstoneEvent(
         ? event.path
         : null;
   const presentPath =
-    event.kind === "created" || event.kind === "modified" || event.kind === "renamed"
-      ? event.path
-      : null;
+    event.kind === "created" || event.kind === "renamed" ? event.path : null;
   const removedEventToken = removedPath
     ? beginExternallyRemovedDocumentEvent(tombstones, removedPath, "removed")
     : null;
