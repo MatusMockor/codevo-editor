@@ -11,6 +11,11 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+#[path = "workspace_directory_commands/admission.rs"]
+mod admission;
+
+use admission::reserve_directory_read;
+
 pub const WORKSPACE_DIRECTORY_ENTRY_LIMIT: usize = 50_000;
 pub const WORKSPACE_DIRECTORY_NAME_BYTE_LIMIT: usize = 1_024;
 pub const WORKSPACE_DIRECTORY_RELATIVE_PATH_BYTE_LIMIT: usize = 32_768;
@@ -43,7 +48,7 @@ pub fn read_directory_bounded(
     let directory = if path.as_os_str().is_empty() {
         reopen_directory(&registry.clone_root(id)?)?
     } else {
-        registry.open_descendant(id, path)?
+        registry.open_directory_descendant(id, path)?
     };
     read_open_directory_bounded(directory, max_entries)
 }
@@ -190,10 +195,14 @@ pub(crate) async fn workspace_read_directory_bounded(
             "max_entries must be between 1 and {WORKSPACE_DIRECTORY_ENTRY_LIMIT}"
         ));
     }
+    if !relative_path.is_empty() {
+        validate_relative_path(Path::new(&relative_path)).map_err(|error| error.to_string())?;
+    }
+    let admission =
+        reserve_directory_read(&workspace_id, &relative_path).map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        if !relative_path.is_empty() {
-            validate_relative_path(Path::new(&relative_path)).map_err(|error| error.to_string())?;
-        }
+        // Keep admission until the physical read completes even if the awaiting IPC is cancelled.
+        let _admission = admission;
         let registry = app.state::<WorkspaceRegistry>();
         let directory = if relative_path.is_empty() {
             reopen_directory(
@@ -202,7 +211,7 @@ pub(crate) async fn workspace_read_directory_bounded(
                     .map_err(|error| error.to_string())?,
             )
         } else {
-            registry.open_descendant(&workspace_id, Path::new(&relative_path))
+            registry.open_directory_descendant(&workspace_id, Path::new(&relative_path))
         }
         .map_err(|error| error.to_string())?;
         read_open_directory_bounded(directory, max_entries).map_err(|error| error.to_string())
@@ -214,14 +223,28 @@ pub(crate) async fn workspace_read_directory_bounded(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{
+        fs,
+        os::unix::fs::symlink,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "mockor-bounded-directory-{label}-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn enforces_cap_and_reports_truncation() {
-        let root =
-            std::env::temp_dir().join(format!("mockor-bounded-directory-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
+        let root = temp_root("root-cap");
         for name in ["one.php", "two.php", "three.php"] {
             fs::write(root.join(name), name).unwrap();
         }
@@ -242,6 +265,108 @@ mod tests {
             WORKSPACE_DIRECTORY_ENTRY_LIMIT + 1,
         )
         .is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_nested_directory_and_sorts_directories_before_files() {
+        let root = temp_root("nested-sorted");
+        fs::create_dir_all(root.join("src/zeta")).unwrap();
+        fs::create_dir(root.join("src/Alpha")).unwrap();
+        fs::write(root.join("src/z.ts"), "z").unwrap();
+        fs::write(root.join("src/A.ts"), "a").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        assert!(
+            registry.open_descendant(&id, Path::new("src")).is_err(),
+            "regular-file admission must continue rejecting directories"
+        );
+        let result = read_directory_bounded(&registry, &id, Path::new("src"), 10).unwrap();
+
+        assert!(!result.truncated);
+        assert_eq!(
+            result
+                .entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Alpha", "zeta", "A.ts", "z.ts"]
+        );
+        assert!(matches!(result.entries[0].kind, FileEntryKind::Directory));
+        assert!(matches!(result.entries[2].kind, FileEntryKind::File));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_regular_file_when_directory_is_required() {
+        let root = temp_root("file-as-directory");
+        fs::write(root.join("src"), "not a directory").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        assert!(read_directory_bounded(&registry, &id, Path::new("src"), 10).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_leaf_intermediate_and_outside_directory_symlinks() {
+        let root = temp_root("directory-symlinks");
+        let outside = temp_root("directory-symlinks-outside");
+        fs::create_dir_all(root.join("real/nested")).unwrap();
+        fs::create_dir(outside.join("secret")).unwrap();
+        symlink("real", root.join("intermediate")).unwrap();
+        symlink("real/nested", root.join("leaf")).unwrap();
+        symlink(outside.join("secret"), root.join("outside")).unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        for path in ["intermediate/nested", "leaf", "outside"] {
+            assert!(
+                read_directory_bounded(&registry, &id, Path::new(path), 10).is_err(),
+                "{path} must fail closed"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn nested_directory_read_stays_bound_to_registered_root_identity() {
+        let root = temp_root("retained-root");
+        let displaced = root.with_extension("displaced");
+        let replacement = root.with_extension("replacement");
+        fs::create_dir(root.join("src")).unwrap();
+        fs::write(root.join("src/original.ts"), "original").unwrap();
+        fs::create_dir_all(replacement.join("src")).unwrap();
+        fs::write(replacement.join("src/replacement.ts"), "replacement").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        fs::rename(&root, &displaced).unwrap();
+        fs::rename(&replacement, &root).unwrap();
+
+        let result = read_directory_bounded(&registry, &id, Path::new("src"), 10).unwrap();
+
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].name, "original.ts");
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(displaced).unwrap();
+    }
+
+    #[test]
+    fn nested_directory_enforces_cap_and_reports_truncation() {
+        let root = temp_root("nested-cap");
+        fs::create_dir(root.join("src")).unwrap();
+        for name in ["one.ts", "two.ts", "three.ts"] {
+            fs::write(root.join("src").join(name), name).unwrap();
+        }
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+
+        let result = read_directory_bounded(&registry, &id, Path::new("src"), 2).unwrap();
+
+        assert_eq!(result.entries.len(), 2);
+        assert!(result.truncated);
         fs::remove_dir_all(root).unwrap();
     }
 }

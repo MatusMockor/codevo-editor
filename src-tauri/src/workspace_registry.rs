@@ -221,6 +221,19 @@ impl WorkspaceRegistry {
         self.open_descendant_with_hook(workspace_id, relative_path, || Ok(()))
     }
 
+    /// Opens an existing descendant directory without following any intermediate or leaf symlink.
+    ///
+    /// This is deliberately separate from [`Self::open_descendant`], whose regular-file
+    /// invariant is relied on by workspace file commands.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) fn open_directory_descendant(
+        &self,
+        workspace_id: &WorkspaceId,
+        relative_path: &Path,
+    ) -> io::Result<File> {
+        self.open_directory_descendant_with_hook(workspace_id, relative_path, || Ok(()))
+    }
+
     pub(crate) fn clone_root(&self, workspace_id: &WorkspaceId) -> io::Result<File> {
         let workspaces = self.workspaces.lock().map_err(lock_error)?;
         workspaces
@@ -273,6 +286,29 @@ impl WorkspaceRegistry {
         };
         post_clone()?;
         open_relative_to(&root, relative_path)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn open_directory_descendant_with_hook<F>(
+        &self,
+        workspace_id: &WorkspaceId,
+        relative_path: &Path,
+        post_clone: F,
+    ) -> io::Result<File>
+    where
+        F: FnOnce() -> io::Result<()>,
+    {
+        validate_relative_path(relative_path)?;
+        let root = {
+            let workspaces = self.workspaces.lock().map_err(lock_error)?;
+            let workspace = workspaces
+                .get(workspace_id)
+                .filter(|workspace| workspace.unregister_generation.is_none())
+                .ok_or_else(unknown_workspace)?;
+            workspace.root.try_clone()?
+        };
+        post_clone()?;
+        open_directory_relative_to(&root, relative_path)
     }
 }
 
@@ -466,6 +502,11 @@ fn open_relative_to(root: &File, path: &Path) -> io::Result<File> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+fn open_directory_relative_to(root: &File, path: &Path) -> io::Result<File> {
+    open_directory_relative_to_with_hook(root, path, || Ok(()))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn open_file_relative_to(root: &File, path: &Path) -> io::Result<File> {
     open_relative_to(root, path)
 }
@@ -508,6 +549,35 @@ where
         ));
     }
     Ok(file)
+}
+
+#[cfg(target_os = "macos")]
+fn open_directory_relative_to_with_hook<F>(
+    root: &File,
+    path: &Path,
+    pre_open: F,
+) -> io::Result<File>
+where
+    F: FnOnce() -> io::Result<()>,
+{
+    validate_relative_path(path)?;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    pre_open()?;
+    let fd = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            path.as_ptr(),
+            libc::O_RDONLY
+                | libc::O_DIRECTORY
+                | libc::O_CLOEXEC
+                | MACOS_OPEN_BENEATH_NOFOLLOW_FLAGS,
+        )
+    };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -555,6 +625,47 @@ where
         ));
     }
     Ok(file)
+}
+
+#[cfg(target_os = "linux")]
+fn open_directory_relative_to_with_hook<F>(
+    root: &File,
+    path: &Path,
+    pre_open: F,
+) -> io::Result<File>
+where
+    F: FnOnce() -> io::Result<()>,
+{
+    validate_relative_path(path)?;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    pre_open()?;
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
+    let mut attempts = 0;
+    let fd = loop {
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_openat2,
+                root.as_raw_fd(),
+                path.as_ptr(),
+                &how,
+                std::mem::size_of::<libc::open_how>(),
+            ) as libc::c_int
+        };
+        if fd >= 0
+            || io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN)
+            || attempts == 2
+        {
+            break fd;
+        }
+        attempts += 1;
+    };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -847,6 +958,25 @@ mod tests {
             fs::read_to_string(moved.join("nested/value")).unwrap(),
             "outside"
         );
+    }
+
+    #[test]
+    fn directory_open_fails_closed_when_descendant_is_removed_after_root_clone() {
+        let registry = WorkspaceRegistry::new();
+        let root = temp_root("directory-delete-race");
+        fs::create_dir(root.join("src")).unwrap();
+        let descriptor = registry.register(&root).unwrap();
+
+        let result = registry.open_directory_descendant_with_hook(
+            &descriptor.workspace_id,
+            Path::new("src"),
+            || {
+                fs::remove_dir(root.join("src"))?;
+                Ok(())
+            },
+        );
+
+        assert!(result.is_err());
     }
 
     #[test]
