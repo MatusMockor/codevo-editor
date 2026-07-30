@@ -386,7 +386,10 @@ private function getElementDescendants(ActiveRow $element): array
       jobPath,
       position(1, 41),
       "SyncOrder",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
     expect(openPhpClassTarget).not.toHaveBeenCalled();
 
@@ -401,7 +404,10 @@ private function getElementDescendants(ActiveRow $element): array
         _path: string,
         _position: EditorPosition,
         _label: string,
-        options?: { shouldCommit?: () => boolean },
+        options?: {
+          shouldCommit?: () => boolean;
+          shouldFinalize?: () => boolean;
+        },
       ) => {
         currentWorkspaceRootRef.current = OTHER_ROOT;
         return options?.shouldCommit?.() ?? true;
@@ -635,7 +641,10 @@ private function getElementDescendants(ActiveRow $element): array
       jobPath,
       position(1, 41),
       "SyncOrder",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
     expect(openPhpClassTarget).not.toHaveBeenCalled();
 
@@ -925,7 +934,10 @@ private function getElementDescendants(ActiveRow $element): array
         _path: string,
         _position: EditorPosition,
         _label: string,
-        options?: { shouldCommit?: () => boolean },
+        options?: {
+          shouldCommit?: () => boolean;
+          shouldFinalize?: () => boolean;
+        },
       ) => {
         currentWorkspaceRootRef.current = OTHER_ROOT;
         return options?.shouldCommit?.() ?? true;

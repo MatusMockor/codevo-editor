@@ -131,6 +131,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/resources/views/partials/alert.blade.php`,
       { column: 1, lineNumber: 1 },
       "partials.alert",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -177,6 +182,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/app/View/Components/Alert.php`,
       { column: 1, lineNumber: 1 },
       "alert",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -202,6 +212,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/resources/views/components/alert.blade.php`,
       { column: 1, lineNumber: 1 },
       "alert",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -220,6 +235,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/app/Livewire/Admin/UserProfile.php`,
       { column: 1, lineNumber: 1 },
       "admin.user-profile",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -238,6 +258,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/app/Livewire/Counter.php`,
       { column: 1, lineNumber: 1 },
       "counter",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -256,6 +281,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/app/Livewire/Dashboard/Stats/Counter.php`,
       { column: 1, lineNumber: 1 },
       "dashboard.stats.counter",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -460,6 +490,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/resources/views/comments/show.blade.php`,
       position(3, 1),
       "comments.show",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -523,6 +558,11 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/routes/web.php`,
       position(12, 5),
       "Comments.Show",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 
@@ -584,11 +624,21 @@ describe("provideBladeDefinition", () => {
       `${ROOT}/config/app.php`,
       position(7, 10),
       "app.name",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
     expect(openNavigationTarget).toHaveBeenCalledWith(
       `${ROOT}/lang/en/messages.php`,
       position(2, 5),
       "messages.welcome",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 

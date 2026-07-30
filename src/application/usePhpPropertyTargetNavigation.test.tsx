@@ -48,9 +48,7 @@ class Invoice
       reference === "HasBilling" ? "App\\Models\\Concerns\\HasBilling" : null,
     ),
     resolvePhpClassSourcePaths: vi.fn(async (className) =>
-      className === "App\\Models\\Invoice"
-        ? [`${ROOT}/app/Models/Invoice.php`]
-        : [],
+      className === "App\\Models\\Invoice" ? [`${ROOT}/app/Models/Invoice.php`] : [],
     ),
     workspaceDescriptor: PHP_DESCRIPTOR,
     workspaceRoot: ROOT,
@@ -65,11 +63,7 @@ function renderHook(deps: PhpPropertyTargetNavigationDependencies) {
     api: null,
   };
 
-  function Harness({
-    dependencies,
-  }: {
-    dependencies: PhpPropertyTargetNavigationDependencies;
-  }) {
+  function Harness({ dependencies }: { dependencies: PhpPropertyTargetNavigationDependencies }) {
     captured.api = usePhpPropertyTargetNavigation(dependencies);
     return null;
   }
@@ -120,7 +114,10 @@ describe("usePhpPropertyTargetNavigation", () => {
       `${ROOT}/app/Models/Invoice.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "$number",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -172,7 +169,10 @@ trait HasBilling
       `${ROOT}/app/Models/Concerns/HasBilling.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "$billingCode",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -220,11 +220,14 @@ class Invoice
     await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
     const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
       shouldCommit?: () => boolean;
+      shouldFinalize?: () => boolean;
     };
     expect(options?.shouldCommit?.()).toBe(true);
+    expect(options?.shouldFinalize?.()).toBe(true);
 
     requestActive = false;
     expect(options?.shouldCommit?.()).toBe(false);
+    expect(options?.shouldFinalize?.()).toBe(false);
     targetOpen.resolve(true);
 
     await expect(navigationPromise).resolves.toBe(false);

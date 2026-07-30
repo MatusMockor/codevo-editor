@@ -135,7 +135,10 @@ describe("usePhpIndexedDefinitionNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       { column: 3, lineNumber: 9 },
       "ReportService",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -352,7 +355,10 @@ route('dashboard');`,
       path: string,
       _position: { column: number; lineNumber: number },
       _label: string,
-      options?: { shouldCommit?: () => boolean },
+      options?: {
+        shouldCommit?: () => boolean;
+        shouldFinalize?: () => boolean;
+      },
     ) => {
       openStarted.resolve();
       await finishOpen.promise;
@@ -378,7 +384,10 @@ route('dashboard');`,
       `${ROOT}/app/Services/ReportService.php`,
       { column: 3, lineNumber: 9 },
       "ReportService",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();

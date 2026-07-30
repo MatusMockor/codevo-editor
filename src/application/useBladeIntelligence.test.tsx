@@ -557,6 +557,11 @@ describe("useBladeIntelligence definition", () => {
       componentPath,
       { column: 1, lineNumber: 1 },
       "alert",
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
+      undefined,
     );
   });
 

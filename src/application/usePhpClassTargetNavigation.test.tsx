@@ -139,7 +139,10 @@ describe("usePhpClassTargetNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       { column: 5, lineNumber: 8 },
       "ReportService",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
     expect(deps.readNavigationFileContent).not.toHaveBeenCalled();
 
@@ -168,7 +171,10 @@ describe("usePhpClassTargetNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       expect.objectContaining({ lineNumber: 4 }),
       "ReportService",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -241,6 +247,7 @@ describe("usePhpClassTargetNavigation", () => {
     await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
     const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
       shouldCommit?: () => boolean;
+      shouldFinalize?: () => boolean;
     };
     expect(options?.shouldCommit?.()).toBe(true);
 

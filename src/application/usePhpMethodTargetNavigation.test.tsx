@@ -89,11 +89,7 @@ function renderHook(deps: PhpMethodTargetNavigationDependencies) {
     api: null,
   };
 
-  function Harness({
-    dependencies,
-  }: {
-    dependencies: PhpMethodTargetNavigationDependencies;
-  }) {
+  function Harness({ dependencies }: { dependencies: PhpMethodTargetNavigationDependencies }) {
     captured.api = usePhpMethodTargetNavigation(dependencies);
     return null;
   }
@@ -144,7 +140,10 @@ describe("usePhpMethodTargetNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       { column: 7, lineNumber: 12 },
       "render()",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
     expect(deps.readNavigationFileContent).not.toHaveBeenCalled();
 
@@ -166,14 +165,15 @@ describe("usePhpMethodTargetNavigation", () => {
       .openDirectPhpMethodTarget("App\\Services\\ReportService", "render");
 
     expect(handled).toBe(true);
-    expect(deps.resolvePhpClassSourcePaths).toHaveBeenCalledWith(
-      "App\\Services\\ReportService",
-    );
+    expect(deps.resolvePhpClassSourcePaths).toHaveBeenCalledWith("App\\Services\\ReportService");
     expect(openNavigationTarget).toHaveBeenCalledWith(
       `${ROOT}/app/Services/ReportService.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "render()",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -197,7 +197,10 @@ describe("usePhpMethodTargetNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "render()",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -270,11 +273,14 @@ describe("usePhpMethodTargetNavigation", () => {
     await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
     const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
       shouldCommit?: () => boolean;
+      shouldFinalize?: () => boolean;
     };
     expect(options?.shouldCommit?.()).toBe(true);
+    expect(options?.shouldFinalize?.()).toBe(true);
 
     requestActive = false;
     expect(options?.shouldCommit?.()).toBe(false);
+    expect(options?.shouldFinalize?.()).toBe(false);
     targetOpen.resolve(true);
 
     await expect(navigationPromise).resolves.toBe(false);

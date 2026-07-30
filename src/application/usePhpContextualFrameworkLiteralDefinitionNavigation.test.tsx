@@ -409,7 +409,10 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         testCase.expectedPath,
         POSITION,
         testCase.expectedLabel,
-        { shouldCommit: expect.any(Function) },
+        {
+          shouldCommit: expect.any(Function),
+          shouldFinalize: expect.any(Function),
+        },
       );
 
       harness.unmount();
@@ -459,7 +462,10 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       `${ROOT}/routes/web.php`,
       POSITION,
       "dashboard",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -497,7 +503,10 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       modelTarget.path,
       POSITION,
       modelTarget.label,
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -875,7 +884,10 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         _path: string,
         _position: EditorPosition,
         _label: string,
-        options?: { shouldCommit?: () => boolean },
+        options?: {
+          shouldCommit?: () => boolean;
+          shouldFinalize?: () => boolean;
+        },
       ) => {
         requestActive = false;
         expect(options?.shouldCommit?.()).toBe(false);

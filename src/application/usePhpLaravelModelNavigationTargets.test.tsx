@@ -151,7 +151,10 @@ describe("usePhpLaravelModelNavigationTargets", () => {
       MODEL_PATH,
       expect.objectContaining<Partial<EditorPosition>>({ lineNumber: 6 }),
       "content",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -171,7 +174,10 @@ describe("usePhpLaravelModelNavigationTargets", () => {
       MODEL_PATH,
       expect.objectContaining<Partial<EditorPosition>>({ lineNumber: 9 }),
       "full_name",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -211,20 +217,10 @@ describe("usePhpLaravelModelNavigationTargets", () => {
     const harness = renderHook(deps);
 
     await expect(
-      harness
-        .api()
-        .openPhpLaravelDynamicWhereTarget(
-          "App\\Models\\Comment",
-          "whereContent",
-        ),
+      harness.api().openPhpLaravelDynamicWhereTarget("App\\Models\\Comment", "whereContent"),
     ).resolves.toBe(false);
     await expect(
-      harness
-        .api()
-        .openPhpLaravelModelAttributeTarget(
-          "App\\Models\\Comment",
-          "full_name",
-        ),
+      harness.api().openPhpLaravelModelAttributeTarget("App\\Models\\Comment", "full_name"),
     ).resolves.toBe(false);
     expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
     expect(readNavigationFileContent).not.toHaveBeenCalled();
@@ -264,20 +260,21 @@ describe("usePhpLaravelModelNavigationTargets", () => {
     const harness = renderHook(deps);
     const navigationPromise = harness
       .api()
-      .openPhpLaravelDynamicWhereTarget(
-        "App\\Models\\Comment",
-        "whereContent",
-        { canNavigate: () => requestActive },
-      );
+      .openPhpLaravelDynamicWhereTarget("App\\Models\\Comment", "whereContent", {
+        canNavigate: () => requestActive,
+      });
 
     await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
     const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
       shouldCommit?: () => boolean;
+      shouldFinalize?: () => boolean;
     };
     expect(options?.shouldCommit?.()).toBe(true);
+    expect(options?.shouldFinalize?.()).toBe(true);
 
     requestActive = false;
     expect(options?.shouldCommit?.()).toBe(false);
+    expect(options?.shouldFinalize?.()).toBe(false);
     targetOpen.resolve(true);
 
     await expect(navigationPromise).resolves.toBe(false);

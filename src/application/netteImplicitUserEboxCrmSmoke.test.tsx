@@ -261,7 +261,10 @@ $user->`;
       USER_PATH,
       phpMethodPosition(userSource, "isAllowed"),
       "isAllowed()",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     semantic.unmount();

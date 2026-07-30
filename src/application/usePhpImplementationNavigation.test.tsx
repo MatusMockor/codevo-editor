@@ -183,7 +183,10 @@ describe("usePhpImplementationNavigation", () => {
       `${ROOT}/app/Services/FacebookAdapterService.php`,
       { column: 21, lineNumber: 6 },
       "FacebookAdapterService",
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();

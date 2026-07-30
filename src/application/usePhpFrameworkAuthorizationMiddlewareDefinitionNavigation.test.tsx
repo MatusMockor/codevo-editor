@@ -174,7 +174,10 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
       abilityTarget.path,
       abilityTarget.position,
       abilityTarget.name,
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -229,7 +232,10 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
       abilityTarget.path,
       abilityTarget.position,
       abilityTarget.name,
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -259,7 +265,10 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
       aliasTarget.path,
       aliasTarget.position,
       aliasTarget.name,
-      { shouldCommit: expect.any(Function) },
+      {
+        shouldCommit: expect.any(Function),
+        shouldFinalize: expect.any(Function),
+      },
     );
 
     harness.unmount();
@@ -381,7 +390,10 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
         _path: string,
         _position: EditorPosition,
         _label: string,
-        options?: { shouldCommit?: () => boolean },
+        options?: {
+          shouldCommit?: () => boolean;
+          shouldFinalize?: () => boolean;
+        },
       ) => {
         requestActive = false;
         expect(options?.shouldCommit?.()).toBe(false);
