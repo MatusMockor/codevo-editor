@@ -8,12 +8,13 @@ import {
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
   shouldCommit?: () => boolean;
+  shouldFinalize?: () => boolean;
 }
 
 interface NamedNavigationTarget {
@@ -67,8 +68,9 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
   setMessage,
   workspaceRoot,
 }: PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies): PhpFrameworkAuthorizationMiddlewareDefinitionNavigation {
-  const supportsAuthorizationAbilityTargets =
-    phpFrameworkSupportsAuthorizationAbilities(frameworkRuntime.providers);
+  const supportsAuthorizationAbilityTargets = phpFrameworkSupportsAuthorizationAbilities(
+    frameworkRuntime.providers,
+  );
   const supportsMiddlewareAliasTargets = phpFrameworkSupportsMiddlewareAliases(
     frameworkRuntime.providers,
   );
@@ -88,10 +90,11 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
     }): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          requestedRoot,
-        ) && canNavigate(request);
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        canNavigate(request);
+      const isRequestedRootFinalizable = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        canFinalizeNavigation(request);
 
       if (!requestedRoot || !activeDocument || !gate || !canNavigate(request)) {
         return false;
@@ -112,33 +115,22 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
         return false;
       }
 
-      const opened = await openNavigationTarget(
-        target.path,
-        target.position,
-        label(target),
-        { shouldCommit: isRequestedRootActive },
-      );
+      const opened = await openNavigationTarget(target.path, target.position, label(target), {
+        shouldCommit: isRequestedRootActive,
+        shouldFinalize: isRequestedRootFinalizable,
+      });
 
-      if (!isRequestedRootActive()) {
+      if (!isRequestedRootFinalizable()) {
         return false;
       }
 
       return opened;
     },
-    [
-      activeDocument,
-      currentWorkspaceRootRef,
-      openNavigationTarget,
-      setMessage,
-      workspaceRoot,
-    ],
+    [activeDocument, currentWorkspaceRootRef, openNavigationTarget, setMessage, workspaceRoot],
   );
 
   const goToPhpFrameworkAuthorizationAbilityDefinition = useCallback(
-    async (
-      context: AuthorizationAbilityContext,
-      request?: NavigationRequest,
-    ): Promise<boolean> =>
+    async (context: AuthorizationAbilityContext, request?: NavigationRequest): Promise<boolean> =>
       openResolvedTarget({
         gate: supportsAuthorizationAbilityTargets,
         label: (target) => target.name,
@@ -154,10 +146,7 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
             activeDocument.path,
           );
 
-          return (
-            abilities.find((ability) => ability.name === context.ability) ??
-            null
-          );
+          return abilities.find((ability) => ability.name === context.ability) ?? null;
         },
       }),
     [
@@ -169,10 +158,7 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
   );
 
   const goToPhpFrameworkMiddlewareAliasDefinition = useCallback(
-    async (
-      context: MiddlewareAliasContext,
-      request?: NavigationRequest,
-    ): Promise<boolean> =>
+    async (context: MiddlewareAliasContext, request?: NavigationRequest): Promise<boolean> =>
       openResolvedTarget({
         gate: supportsMiddlewareAliasTargets,
         label: (target) => target.name,

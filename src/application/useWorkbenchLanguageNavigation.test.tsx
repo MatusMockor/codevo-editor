@@ -319,6 +319,49 @@ describe("useWorkbenchLanguageNavigation Latte definition fallback", () => {
 });
 
 describe("useWorkbenchLanguageNavigation app-owned definition providers", () => {
+  it("drops a pending PHP definition after a same-root document A-B-A replacement", async () => {
+    let resolveContextual!: (opened: boolean) => void;
+    const pendingContextual = new Promise<boolean>((resolve) => {
+      resolveContextual = resolve;
+    });
+    const goToContextualPhpDefinition = vi.fn(() => pendingContextual);
+    const source = "<?php $user->name;";
+    const sourceDocument: EditorDocument = {
+      content: source,
+      language: "php",
+      name: "User.php",
+      path: `${ROOT}/src/User.php`,
+      savedContent: source,
+    };
+    const activeDocumentRef = { current: sourceDocument };
+    const harness = renderNavigation({
+      activeDocumentRef,
+      activeEditorPositionRef: { current: positionAtNeedle(source, "name") },
+      goToContextualPhpDefinition,
+    });
+    let navigation!: Promise<void>;
+
+    await act(async () => {
+      navigation = harness.api().goToDefinition();
+      await Promise.resolve();
+    });
+    activeDocumentRef.current = {
+      ...sourceDocument,
+      name: "Other.php",
+      path: `${ROOT}/src/Other.php`,
+    };
+    activeDocumentRef.current = { ...sourceDocument };
+    resolveContextual(false);
+
+    await act(async () => {
+      await navigation;
+    });
+
+    expect(harness.deps.providePhpFrameworkDefinition).not.toHaveBeenCalled();
+    expect(harness.deps.goToIndexedSymbolDefinition).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+
   it("runs PHP framework definitions after contextual and before indexed fallbacks", async () => {
     const calls: string[] = [];
     const source = "<?php $user->related('orders');";
@@ -589,7 +632,7 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
     expect(goToContextualPhpDefinition).not.toHaveBeenCalled();
     expect(goToIndexedSymbolDefinition).not.toHaveBeenCalled();
     expect(recordNavigationLocationSnapshot).not.toHaveBeenCalled();
-    expect(setImplementationChooser).not.toHaveBeenCalled();
+    expect(setImplementationChooser).toHaveBeenCalledExactlyOnceWith(null);
 
     harness.root.unmount();
   });

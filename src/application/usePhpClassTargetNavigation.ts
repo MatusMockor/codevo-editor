@@ -1,22 +1,12 @@
 import { useCallback, type MutableRefObject } from "react";
 import { shouldIndexWorkspace } from "../domain/intelligence";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpClassPathCandidates,
-  phpNamedTypePosition,
-} from "../domain/phpNavigation";
-import type {
-  EditorDocument,
-  IntelligenceMode,
-  WorkspaceDescriptor,
-} from "../domain/workspace";
+import { phpClassPathCandidates, phpNamedTypePosition } from "../domain/phpNavigation";
+import type { EditorDocument, IntelligenceMode, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
-import {
-  bestIndexedSymbolMatch,
-  editorPositionFromProjectSymbol,
-} from "./projectSymbolNavigation";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { bestIndexedSymbolMatch, editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export interface PhpClassTargetNavigationDependencies {
   activeDocument: EditorDocument | null;
@@ -26,7 +16,7 @@ export interface PhpClassTargetNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
-    options?: { shouldCommit?: () => boolean },
+    options?: { shouldCommit?: () => boolean; shouldFinalize?: () => boolean },
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent(path: string): Promise<string>;
@@ -53,11 +43,7 @@ export function usePhpClassTargetNavigation({
   workspaceRoot,
 }: PhpClassTargetNavigationDependencies): PhpClassTargetNavigation {
   const openPhpClassTarget = useCallback(
-    async (
-      className: string,
-      label: string,
-      request?: NavigationRequest,
-    ): Promise<boolean> => {
+    async (className: string, label: string, request?: NavigationRequest): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const requestedSourcePath = activeDocument?.path ?? "";
@@ -103,12 +89,12 @@ export function usePhpClassTargetNavigation({
             editorPositionFromProjectSymbol(indexedTarget),
             label,
             {
-              shouldCommit: () =>
-                isRequestedRootActive() && canNavigate(request),
+              shouldCommit: () => isRequestedRootActive() && canNavigate(request),
+              shouldFinalize: () => isRequestedRootActive() && canFinalizeNavigation(request),
             },
           );
 
-          return isRequestedRootActive() && canNavigate(request) && opened;
+          return isRequestedRootActive() && canFinalizeNavigation(request) && opened;
         }
       }
 
@@ -141,12 +127,12 @@ export function usePhpClassTargetNavigation({
             phpNamedTypePosition(content, shortPhpName(className)),
             label,
             {
-              shouldCommit: () =>
-                isRequestedRootActive() && canNavigate(request),
+              shouldCommit: () => isRequestedRootActive() && canNavigate(request),
+              shouldFinalize: () => isRequestedRootActive() && canFinalizeNavigation(request),
             },
           );
 
-          return isRequestedRootActive() && canNavigate(request) && opened;
+          return isRequestedRootActive() && canFinalizeNavigation(request) && opened;
         } catch {
           if (!isRequestedRootActive()) {
             return false;

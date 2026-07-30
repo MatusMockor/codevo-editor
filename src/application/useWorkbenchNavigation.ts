@@ -23,11 +23,12 @@ import type { NavigationLocation } from "../domain/navigation";
 import { shouldOpenPhpNavigationTargetReadOnly } from "../domain/phpNavigationTargetReadOnly";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { QuickOpenLocation } from "../domain/quickOpenQuery";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
   shouldCommit?: () => boolean;
+  shouldFinalize?: () => boolean;
 }
 
 interface OpenFileOptions {
@@ -298,7 +299,10 @@ export function useWorkbenchNavigation(
         ...(shouldCommit ? { shouldCommit } : {}),
       });
 
-      if (!opened || shouldCommit?.() === false) {
+      const shouldFinalize =
+        options.shouldFinalize ?? (request ? () => canFinalizeNavigation(request) : shouldCommit);
+
+      if (!opened || shouldFinalize?.() === false) {
         return false;
       }
 

@@ -10,7 +10,7 @@ import type {
   BladeIntelligenceDependencies,
 } from "./bladeIntelligenceContracts";
 import { editorPositionAtOffset } from "./bladePhpCompletionContext";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
@@ -58,13 +58,13 @@ export async function provideBladeDefinition(
     resolveBladeViewVariableTypeForView,
     workspaceRoot,
   } = dependencies;
-  const bladeCapabilities = createBladeFrameworkCapabilities(
-    () => frameworkRuntime.providers,
-  );
+  const bladeCapabilities = createBladeFrameworkCapabilities(() => frameworkRuntime.providers);
   const requestedRoot = workspaceRoot;
   const isRequestedRootActive = () =>
+    workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) && canNavigate(request);
+  const isRequestedRootFinalizable = () =>
     workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
-    canNavigate(request);
+    canFinalizeNavigation(request);
 
   if (!requestedRoot) {
     return false;
@@ -75,23 +75,21 @@ export async function provideBladeDefinition(
   }
 
   if (frameworkRuntime.supports("stringLiterals")) {
-    const openedFrameworkHelper = await openFrameworkHelperDefinition(
-      source,
-      offset,
-      {
-        activeDocument,
-        collectNamedRouteTargets,
-        findConfigTarget,
-        findTranslationTarget,
-        findViewTarget,
-        frameworkProviders: frameworkRuntime.providers,
+    const openedFrameworkHelper = await openFrameworkHelperDefinition(source, offset, {
+      activeDocument,
+      collectNamedRouteTargets,
+      findConfigTarget,
+      findTranslationTarget,
+      findViewTarget,
+      frameworkProviders: frameworkRuntime.providers,
+      isRequestedRootActive,
+      openNavigationTarget: guardedOpenNavigationTarget(
+        openNavigationTarget,
         isRequestedRootActive,
-        openNavigationTarget: guardedOpenNavigationTarget(
-          openNavigationTarget,
-          isRequestedRootActive,
-        ),
-      },
-    );
+        isRequestedRootFinalizable,
+        request,
+      ),
+    });
 
     if (openedFrameworkHelper) {
       return true;
@@ -110,10 +108,12 @@ export async function provideBladeDefinition(
       openDirectPhpPropertyTarget: guardedClassMemberNavigation(
         openDirectPhpPropertyTarget,
         isRequestedRootActive,
+        request,
       ),
       openPhpFrameworkModelAttributeTarget: guardedClassMemberNavigation(
         openPhpFrameworkModelAttributeTarget,
         isRequestedRootActive,
+        request,
       ),
       frameworkProviders: frameworkRuntime.providers,
       relativeWorkspacePath,
@@ -133,6 +133,8 @@ export async function provideBladeDefinition(
     openNavigationTarget: guardedOpenNavigationTarget(
       openNavigationTarget,
       isRequestedRootActive,
+      isRequestedRootFinalizable,
+      request,
     ),
     readNavigationFileContent,
     requestedRoot,
@@ -142,23 +144,30 @@ export async function provideBladeDefinition(
 function guardedOpenNavigationTarget(
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"],
   canOpen: () => boolean,
+  canFinalize: () => boolean,
+  request?: NavigationRequest,
 ): BladeIntelligenceDependencies["openNavigationTarget"] {
   return (path, position, label) => {
     if (!canOpen()) {
       return Promise.resolve(false);
     }
 
-    return openNavigationTarget(path, position, label);
+    return openNavigationTarget(
+      path,
+      position,
+      label,
+      {
+        shouldCommit: canOpen,
+        shouldFinalize: canFinalize,
+      },
+      request,
+    );
   };
 }
 
 function guardedClassMemberNavigation<
   T extends (className: string, memberName: string) => Promise<boolean>,
->(
-  openTarget: T,
-  canOpen: () => boolean,
-  request?: NavigationRequest,
-): T {
+>(openTarget: T, canOpen: () => boolean, request?: NavigationRequest): T {
   return ((className: string, memberName: string) => {
     if (!canOpen()) {
       return Promise.resolve(false);
@@ -249,15 +258,9 @@ async function openBladeViewDataMemberDefinition(
   offset: number,
   dependencies: BladeViewDataMemberDefinitionDependencies,
 ): Promise<boolean> {
-  const memberContext = phpIdentifierContextAt(
-    source,
-    editorPositionAtOffset(source, offset),
-  );
+  const memberContext = phpIdentifierContextAt(source, editorPositionAtOffset(source, offset));
 
-  if (
-    memberContext?.kind !== "methodCall" &&
-    memberContext?.kind !== "memberPropertyAccess"
-  ) {
+  if (memberContext?.kind !== "methodCall" && memberContext?.kind !== "memberPropertyAccess") {
     return false;
   }
 
@@ -269,22 +272,15 @@ async function openBladeViewDataMemberDefinition(
     relativePath,
     dependencies.frameworkProviders,
   );
-  const variableName = memberContext.variableName
-    ? `$${memberContext.variableName}`
-    : "";
+  const variableName = memberContext.variableName ? `$${memberContext.variableName}` : "";
   const memberName =
-    memberContext.kind === "methodCall"
-      ? memberContext.methodName
-      : memberContext.propertyName;
+    memberContext.kind === "methodCall" ? memberContext.methodName : memberContext.propertyName;
 
   if (!viewName || !variableName || !memberName) {
     return false;
   }
 
-  const className = await dependencies.resolveBladeViewVariableTypeForView(
-    viewName,
-    variableName,
-  );
+  const className = await dependencies.resolveBladeViewVariableTypeForView(viewName, variableName);
 
   if (!dependencies.isRequestedRootActive()) {
     return false;
@@ -294,10 +290,7 @@ async function openBladeViewDataMemberDefinition(
     return false;
   }
 
-  const openedMethod = await dependencies.openDirectPhpMethodTarget(
-    className,
-    memberName,
-  );
+  const openedMethod = await dependencies.openDirectPhpMethodTarget(className, memberName);
 
   if (!dependencies.isRequestedRootActive()) {
     return false;
@@ -354,19 +347,13 @@ async function openBladeReferenceDefinition(
     }
 
     return target
-      ? dependencies.openNavigationTarget(
-          target.path,
-          target.position,
-          reference.name,
-        )
+      ? dependencies.openNavigationTarget(target.path, target.position, reference.name)
       : false;
   }
 
   const candidateRelativePaths =
     reference.kind === "component"
-      ? dependencies.bladeCapabilities.componentNavigationCandidateRelativePaths(
-          reference.name,
-        )
+      ? dependencies.bladeCapabilities.componentNavigationCandidateRelativePaths(reference.name)
       : dependencies.bladeCapabilities
           .referenceCandidateWorkspacePaths(dependencies.requestedRoot, reference)
           .map((target) => target.relativePath);
@@ -396,11 +383,7 @@ async function openBladeReferenceDefinition(
       return false;
     }
 
-    return dependencies.openNavigationTarget(
-      path,
-      { column: 1, lineNumber: 1 },
-      reference.name,
-    );
+    return dependencies.openNavigationTarget(path, { column: 1, lineNumber: 1 }, reference.name);
   }
 
   return false;

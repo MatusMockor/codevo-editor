@@ -8,11 +8,12 @@ import {
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
   shouldCommit?: () => boolean;
+  shouldFinalize?: () => boolean;
 }
 
 export interface PhpLaravelModelNavigationTargetsDependencies {
@@ -53,15 +54,10 @@ export function usePhpLaravelModelNavigationTargets({
   workspaceRoot,
 }: PhpLaravelModelNavigationTargetsDependencies): PhpLaravelModelNavigationTargets {
   const canOpenLaravelModelSourceTargets =
-    frameworkRuntime.providers.length > 0 &&
-    frameworkRuntime.supports("eloquentModelSemantics");
+    frameworkRuntime.providers.length > 0 && frameworkRuntime.supports("eloquentModelSemantics");
 
   const openPhpLaravelDynamicWhereTarget = useCallback(
-    async (
-      className: string,
-      methodName: string,
-      request?: NavigationRequest,
-    ): Promise<boolean> =>
+    async (className: string, methodName: string, request?: NavigationRequest): Promise<boolean> =>
       openLaravelModelSourceTarget({
         className,
         canOpenLaravelModelSourceTargets,
@@ -162,14 +158,10 @@ async function openLaravelModelSourceTarget({
   const requestedDescriptor = workspaceDescriptor;
   const isRequestedRootActive = () =>
     workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-  const isNavigationActive = () =>
-    isRequestedRootActive() && canNavigate(request);
+  const isNavigationActive = () => isRequestedRootActive() && canNavigate(request);
+  const isNavigationFinalizable = () => isRequestedRootActive() && canFinalizeNavigation(request);
 
-  if (
-    !canOpenLaravelModelSourceTargets ||
-    !requestedRoot ||
-    !requestedDescriptor?.php
-  ) {
+  if (!canOpenLaravelModelSourceTargets || !requestedRoot || !requestedDescriptor?.php) {
     return false;
   }
 
@@ -201,14 +193,12 @@ async function openLaravelModelSourceTarget({
         return false;
       }
 
-      const opened = await openNavigationTarget(
-        path,
-        target.position,
-        target.attributeName,
-        { shouldCommit: isNavigationActive },
-      );
+      const opened = await openNavigationTarget(path, target.position, target.attributeName, {
+        shouldCommit: isNavigationActive,
+        shouldFinalize: isNavigationFinalizable,
+      });
 
-      return isNavigationActive() && opened;
+      return isNavigationFinalizable() && opened;
     } catch {
       if (!isNavigationActive()) {
         return false;

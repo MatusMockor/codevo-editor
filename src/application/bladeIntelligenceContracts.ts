@@ -5,10 +5,7 @@ import type {
   BladeReference,
 } from "../domain/bladeNavigation";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type {
-  FileEntry,
-  TextSearchGateway,
-} from "../domain/workspace";
+import type { FileEntry, TextSearchGateway } from "../domain/workspace";
 import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
@@ -46,15 +43,9 @@ export interface BladeFrameworkCapabilities {
     source: string,
     offset: number,
   ) => BladeComponentAttributeCompletion | null;
-  componentCompletionAt: (
-    source: string,
-    offset: number,
-  ) => BladeComponentCompletion | null;
+  componentCompletionAt: (source: string, offset: number) => BladeComponentCompletion | null;
   componentNavigationCandidateRelativePaths: (name: string) => string[];
-  directiveCompletionAt: (
-    source: string,
-    offset: number,
-  ) => BladeDirectiveCompletion | null;
+  directiveCompletionAt: (source: string, offset: number) => BladeDirectiveCompletion | null;
   readonly directiveNames: readonly string[];
   isInsideComment: (source: string, offset: number) => boolean;
   referenceAt: (source: string, offset: number) => BladeReference | null;
@@ -82,6 +73,11 @@ export interface BladeIntelligenceDependencies {
     path: string,
     position: EditorPosition,
     label: string,
+    options?: {
+      shouldCommit?: () => boolean;
+      shouldFinalize?: () => boolean;
+    },
+    request?: NavigationRequest,
   ) => Promise<boolean>;
   resolvePhpExpressionType: (
     source: string,
@@ -99,9 +95,7 @@ export interface BladeIntelligenceDependencies {
     position: EditorPosition,
     receiverExpression: string,
   ) => Promise<PhpMethodCompletion[]>;
-  ensurePhpFrameworkSourceCollectionsLoaded: (
-    requestedRoot: string,
-  ) => Promise<void>;
+  ensurePhpFrameworkSourceCollectionsLoaded: (requestedRoot: string) => Promise<void>;
   collectViewTargets: PhpFrameworkTargets["collectViewTargets"];
   collectConfigTargets: PhpFrameworkTargets["collectConfigTargets"];
   collectNamedRouteTargets: PhpFrameworkTargets["collectNamedRouteTargets"];
@@ -124,10 +118,7 @@ export interface BladeIntelligenceDependencies {
     className: string,
     attributeName: string,
   ) => Promise<boolean>;
-  openDirectPhpPropertyTarget: (
-    className: string,
-    propertyName: string,
-  ) => Promise<boolean>;
+  openDirectPhpPropertyTarget: (className: string, propertyName: string) => Promise<boolean>;
 }
 
 /** The Blade providers + cache lifecycle the controller mount consumes. */

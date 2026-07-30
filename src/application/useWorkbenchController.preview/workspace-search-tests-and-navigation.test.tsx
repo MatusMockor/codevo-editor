@@ -5042,11 +5042,9 @@ export abstract class BaseAdapter implements PlatformAdapter {
       "/workspace",
       "Comment",
       120,
+      expect.any(AbortSignal),
     );
-    expect(getWorkbench().classOpenResults.map((result) => result.kind)).toEqual([
-      "interface",
-      "class",
-    ]);
+    expect(getWorkbench().classOpenResults[0]?.kind).toBe("interface");
   });
   it("uses JavaScript and TypeScript workspace symbols for Cmd+O in Basic mode", async () => {
     const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {

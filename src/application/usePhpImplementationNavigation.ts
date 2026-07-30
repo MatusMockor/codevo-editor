@@ -14,23 +14,20 @@ import { phpCurrentClassName } from "../domain/phpSemanticEngine";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import type { EditorDocument, IntelligenceMode } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 import type { ImplementationChooserState } from "./useWorkbenchLanguageNavigation";
 
 export interface PhpImplementationNavigationDependencies {
   activeDocument: EditorDocument | null;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  identifierAtEditorPosition(
-    source: string,
-    position: EditorPosition,
-  ): string | null;
+  identifierAtEditorPosition(source: string, position: EditorPosition): string | null;
   intelligenceMode: IntelligenceMode;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
     label: string,
-    options?: { shouldCommit?: () => boolean },
+    options?: { shouldCommit?: () => boolean; shouldFinalize?: () => boolean },
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent(path: string): Promise<string>;
@@ -76,10 +73,7 @@ export function usePhpImplementationNavigation({
         return false;
       }
 
-      const normalizedTargetClassName = targetClassName
-        .trim()
-        .replace(/^\\+/, "")
-        .toLowerCase();
+      const normalizedTargetClassName = targetClassName.trim().replace(/^\\+/, "").toLowerCase();
 
       if (!normalizedTargetClassName) {
         return false;
@@ -152,11 +146,7 @@ export function usePhpImplementationNavigation({
 
       return false;
     },
-    [
-      readNavigationFileContent,
-      resolvePhpClassReference,
-      resolvePhpClassSourcePaths,
-    ],
+    [readNavigationFileContent, resolvePhpClassReference, resolvePhpClassSourcePaths],
   );
 
   const indexedPhpImplementationTargets = useCallback(
@@ -232,8 +222,7 @@ export function usePhpImplementationNavigation({
             return [];
           }
 
-          const candidateClassName =
-            symbol.containerName ?? phpCurrentClassName(source);
+          const candidateClassName = symbol.containerName ?? phpCurrentClassName(source);
 
           if (
             !candidateClassName ||
@@ -286,29 +275,18 @@ export function usePhpImplementationNavigation({
   );
 
   const goToIndexedPhpImplementation = useCallback(
-    async (
-      requestedPosition?: EditorPosition,
-      request?: NavigationRequest,
-    ): Promise<boolean> => {
+    async (requestedPosition?: EditorPosition, request?: NavigationRequest): Promise<boolean> => {
       const document = activeDocument;
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
       const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
-      if (
-        !document ||
-        !requestedRoot ||
-        !editorPosition ||
-        !canNavigate(request)
-      ) {
+      if (!document || !requestedRoot || !editorPosition || !canNavigate(request)) {
         return false;
       }
 
-      const targets = await indexedPhpImplementationTargets(
-        editorPosition,
-        request,
-      );
+      const targets = await indexedPhpImplementationTargets(editorPosition, request);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -322,10 +300,7 @@ export function usePhpImplementationNavigation({
         return false;
       }
 
-      const symbolName = identifierAtEditorPosition(
-        document.content,
-        editorPosition,
-      );
+      const symbolName = identifierAtEditorPosition(document.content, editorPosition);
 
       if (targets.length > 1) {
         if (!canNavigate(request)) {
@@ -359,15 +334,15 @@ export function usePhpImplementationNavigation({
       }
 
       await openNavigationTarget(target.path, target.position, target.label, {
-        shouldCommit: () =>
-          isRequestedRootActive() && canNavigate(request),
+        shouldCommit: () => isRequestedRootActive() && canNavigate(request),
+        shouldFinalize: () => isRequestedRootActive() && canFinalizeNavigation(request),
       });
 
       if (!isRequestedRootActive()) {
         return false;
       }
 
-      if (!canNavigate(request)) {
+      if (!canFinalizeNavigation(request)) {
         return false;
       }
 

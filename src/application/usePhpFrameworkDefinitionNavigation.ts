@@ -22,7 +22,7 @@ import {
   type PhpFrameworkLiteralNavigationDependencies,
 } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 import { createPhpFrameworkDefinitionNavigationContributionCatalog } from "./phpFrameworkDefinitionNavigationContributionCatalog";
 import {
   PhpFrameworkActivationScope,
@@ -32,6 +32,7 @@ import {
 interface OpenNavigationOptions {
   readOnly?: boolean;
   shouldCommit?: () => boolean;
+  shouldFinalize?: () => boolean;
 }
 
 export interface PhpFrameworkDefinitionNavigationDependencies {
@@ -164,9 +165,10 @@ export function usePhpFrameworkDefinitionNavigation({
 
         const opened = await openNavigationTarget(path, methodPosition, `${shortName}`, {
           shouldCommit: request.canNavigate,
+          shouldFinalize: () => canFinalizeNavigation(request),
         });
 
-        return canNavigate(request) && opened;
+        return canFinalizeNavigation(request) && opened;
       }
 
       if (!canNavigate(request)) {
@@ -174,7 +176,7 @@ export function usePhpFrameworkDefinitionNavigation({
       }
 
       const opened = await openPhpClassTarget(className, shortName, request);
-      return canNavigate(request) && opened;
+      return canFinalizeNavigation(request) && opened;
     },
     [
       openNavigationTarget,
@@ -304,7 +306,7 @@ export function usePhpFrameworkDefinitionNavigation({
         }
 
         const opened = await goToPhpFrameworkEventListenerDefinition(resolvedClassName, request);
-        return canNavigate(request) && opened;
+        return canFinalizeNavigation(request) && opened;
       }
 
       if (target.kind === "job") {
@@ -313,7 +315,7 @@ export function usePhpFrameworkDefinitionNavigation({
         }
 
         const opened = await openPhpFrameworkHandlerTarget(resolvedClassName, shortName, request);
-        return canNavigate(request) && opened;
+        return canFinalizeNavigation(request) && opened;
       }
 
       if (!canNavigate(request)) {
@@ -325,16 +327,16 @@ export function usePhpFrameworkDefinitionNavigation({
         request,
       );
 
+      if (openedListener) {
+        return canFinalizeNavigation(request);
+      }
+
       if (!canNavigate(request)) {
         return false;
       }
 
-      if (openedListener) {
-        return true;
-      }
-
       const opened = await openPhpFrameworkHandlerTarget(resolvedClassName, shortName, request);
-      return canNavigate(request) && opened;
+      return canFinalizeNavigation(request) && opened;
     },
     [goToPhpFrameworkEventListenerDefinition, openPhpFrameworkHandlerTarget],
   );
@@ -441,6 +443,11 @@ export function usePhpFrameworkDefinitionNavigation({
       }
 
       const fencedRequest: NavigationRequest = {
+        canFinalize: () =>
+          executionScope.canCommit() &&
+          workspaceRootKeysEqual(requestedRoot, executionScope.rootPath) &&
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, executionScope.rootPath) &&
+          canFinalizeNavigation(request),
         canNavigate: () =>
           executionScope.canCommit() &&
           workspaceRootKeysEqual(requestedRoot, executionScope.rootPath) &&
@@ -597,10 +604,13 @@ export function usePhpFrameworkDefinitionNavigation({
         literalTarget.path,
         literalTarget.position,
         literalTarget.label,
-        { shouldCommit: fencedRequest.canNavigate },
+        {
+          shouldCommit: fencedRequest.canNavigate,
+          shouldFinalize: () => canFinalizeNavigation(fencedRequest),
+        },
       );
 
-      return canNavigate(fencedRequest) && opened;
+      return canFinalizeNavigation(fencedRequest) && opened;
     },
     [
       activeDocument,

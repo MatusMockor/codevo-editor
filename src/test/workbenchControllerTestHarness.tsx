@@ -383,8 +383,9 @@ export function featuresGateway(): LanguageServerFeaturesGateway {
 function identifiedRequest<T>(
   promise: Promise<T>,
   sessionId: number | undefined,
+  requestId: number,
 ): Promise<T> & { readonly requestId: number; readonly sessionId: number } {
-  return Object.assign(promise, { requestId: 1, sessionId: requiredSessionId(sessionId) });
+  return Object.assign(promise, { requestId, sessionId: requiredSessionId(sessionId) });
 }
 
 function requiredSessionId(sessionId: number | undefined): number {
@@ -397,42 +398,70 @@ function requiredSessionId(sessionId: number | undefined): number {
 function javaScriptTypeScriptFeaturesGateway(
   gateway: LanguageServerFeaturesGateway = featuresGateway(),
 ): JavaScriptTypeScriptLanguageServerFeaturesGateway {
+  let nextRequestId = 0;
+  const identify = <T,>(promise: Promise<T>, sessionId: number | undefined) =>
+    identifiedRequest(promise, sessionId, ++nextRequestId);
+  const identifiedRequests = gateway.identifiedRequests ?? {
+    cancelRequest: vi.fn(async () => undefined),
+    completion: (rootPath, position, context, sessionId) =>
+      identify(gateway.completion(rootPath, position, context), sessionId),
+    declaration: (rootPath, position, sessionId) =>
+      identify(gateway.declaration(rootPath, position), sessionId),
+    definition: (rootPath, position, sessionId) =>
+      identify(gateway.definition(rootPath, position), sessionId),
+    formatting: (rootPath, path, options, sessionId) =>
+      identify(gateway.formatting(rootPath, path, options), sessionId),
+    hover: (rootPath, position, sessionId) =>
+      identify(gateway.hover(rootPath, position), sessionId),
+    implementation: (rootPath, position, sessionId) =>
+      identify(gateway.implementation(rootPath, position), sessionId),
+    references: (rootPath, position, sessionId) =>
+      identify(gateway.references(rootPath, position), sessionId),
+    signatureHelp: (rootPath, position, context, sessionId) =>
+      identify(gateway.signatureHelp(rootPath, position, context), sessionId),
+    sourceDefinition: (rootPath, position, sessionId) =>
+      identify(gateway.sourceDefinition(rootPath, position), sessionId),
+    typeDefinition: (rootPath, position, sessionId) =>
+      identify(gateway.typeDefinition(rootPath, position), sessionId),
+  };
+
   return {
     ...gateway,
+    identifiedRequests,
     codeActions: (rootPath, path, range, context, sessionId) =>
-      identifiedRequest(gateway.codeActions(rootPath, path, range, context), sessionId),
+      identify(gateway.codeActions(rootPath, path, range, context), sessionId),
     workspaceSymbols: (rootPath, query, sessionId) =>
-      identifiedRequest(gateway.workspaceSymbols(rootPath, query), sessionId),
+      identify(gateway.workspaceSymbols(rootPath, query), sessionId),
     completion: (rootPath, position, context, sessionId) =>
-      identifiedRequest(gateway.completion(rootPath, position, context), sessionId),
+      identify(gateway.completion(rootPath, position, context), sessionId),
     declaration: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.declaration(rootPath, position), sessionId),
+      identify(gateway.declaration(rootPath, position), sessionId),
     definition: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.definition(rootPath, position), sessionId),
+      identify(gateway.definition(rootPath, position), sessionId),
     documentHighlights: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.documentHighlights(rootPath, position), sessionId),
+      identify(gateway.documentHighlights(rootPath, position), sessionId),
     hover: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.hover(rootPath, position), sessionId),
+      identify(gateway.hover(rootPath, position), sessionId),
     implementation: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.implementation(rootPath, position), sessionId),
+      identify(gateway.implementation(rootPath, position), sessionId),
     linkedEditingRanges: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.linkedEditingRanges(rootPath, position), sessionId),
+      identify(gateway.linkedEditingRanges(rootPath, position), sessionId),
     rangeSemanticTokens: (rootPath, path, range, sessionId) =>
-      identifiedRequest(gateway.rangeSemanticTokens(rootPath, path, range), sessionId),
+      identify(gateway.rangeSemanticTokens(rootPath, path, range), sessionId),
     references: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.references(rootPath, position), sessionId),
+      identify(gateway.references(rootPath, position), sessionId),
     executeCommandLocations: (rootPath, command, sessionId) =>
-      identifiedRequest(gateway.executeCommandLocations(rootPath, command), sessionId),
+      identify(gateway.executeCommandLocations(rootPath, command), sessionId),
     resolveCodeAction: (rootPath, action, sessionId) =>
-      identifiedRequest(gateway.resolveCodeAction(rootPath, action), sessionId),
+      identify(gateway.resolveCodeAction(rootPath, action), sessionId),
     semanticTokens: (rootPath, path, sessionId) =>
-      identifiedRequest(gateway.semanticTokens(rootPath, path), sessionId),
+      identify(gateway.semanticTokens(rootPath, path), sessionId),
     signatureHelp: (rootPath, position, context, sessionId) =>
-      identifiedRequest(gateway.signatureHelp(rootPath, position, context), sessionId),
+      identify(gateway.signatureHelp(rootPath, position, context), sessionId),
     sourceDefinition: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.sourceDefinition(rootPath, position), sessionId),
+      identify(gateway.sourceDefinition(rootPath, position), sessionId),
     typeDefinition: (rootPath, position, sessionId) =>
-      identifiedRequest(gateway.typeDefinition(rootPath, position), sessionId),
+      identify(gateway.typeDefinition(rootPath, position), sessionId),
   };
 }
 
@@ -659,6 +688,13 @@ function createControllerDependencies(
         return { entries: entries.slice(0, maxEntries), truncated: entries.length > maxEntries };
       }),
       readTextFile,
+      readTextFileBounded: vi.fn(async (path: string, maxBytes: number) => {
+        const content = await readTextFile(path);
+
+        return new TextEncoder().encode(content).byteLength > maxBytes
+          ? { status: "tooLarge" as const }
+          : { content, status: "ok" as const };
+      }),
       renamePath: vi.fn(async () => undefined),
       writeTextFile: vi.fn(async () => undefined),
       ...workspaceFiles,

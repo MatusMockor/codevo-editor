@@ -1,16 +1,10 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpPropertyPositionOrNull,
-  phpSuperTypeReferences,
-} from "../domain/phpNavigation";
-import {
-  phpMixinClassNames,
-  phpTraitClassNames,
-} from "../domain/phpMethodCompletions";
+import { phpPropertyPositionOrNull, phpSuperTypeReferences } from "../domain/phpNavigation";
+import { phpMixinClassNames, phpTraitClassNames } from "../domain/phpMethodCompletions";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export interface PhpPropertyTargetNavigationDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -18,7 +12,7 @@ export interface PhpPropertyTargetNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
-    options?: { shouldCommit?: () => boolean },
+    options?: { shouldCommit?: () => boolean; shouldFinalize?: () => boolean },
   ): Promise<boolean>;
   readNavigationFileContent(path: string): Promise<string>;
   resolvePhpClassReference(source: string, reference: string): string | null;
@@ -60,12 +54,8 @@ export function usePhpPropertyTargetNavigation({
       }
 
       const visitedClassNames = new Set<string>();
-      const openPropertyInClassHierarchy = async (
-        candidateClassName: string,
-      ): Promise<boolean> => {
-        const normalizedCandidate = candidateClassName
-          .trim()
-          .replace(/^\\+/, "");
+      const openPropertyInClassHierarchy = async (candidateClassName: string): Promise<boolean> => {
+        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
         const visitedKey = normalizedCandidate.toLowerCase();
 
         if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
@@ -82,9 +72,7 @@ export function usePhpPropertyTargetNavigation({
 
         visitedClassNames.add(visitedKey);
 
-        for (const path of await resolvePhpClassSourcePaths(
-          normalizedCandidate,
-        )) {
+        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
           if (!isRequestedRootActive()) {
             return false;
           }
@@ -115,52 +103,32 @@ export function usePhpPropertyTargetNavigation({
                 return false;
               }
 
-              const opened = await openNavigationTarget(
-                path,
-                position,
-                `$${propertyName}`,
-                {
-                  shouldCommit: () =>
-                    isRequestedRootActive() && canNavigate(request),
-                },
-              );
+              const opened = await openNavigationTarget(path, position, `$${propertyName}`, {
+                shouldCommit: () => isRequestedRootActive() && canNavigate(request),
+                shouldFinalize: () => isRequestedRootActive() && canFinalizeNavigation(request),
+              });
 
-              return isRequestedRootActive() && canNavigate(request) && opened;
+              return isRequestedRootActive() && canFinalizeNavigation(request) && opened;
             }
 
             for (const traitName of phpTraitClassNames(content)) {
-              const resolvedTraitName = resolvePhpClassReference(
-                content,
-                traitName,
-              );
+              const resolvedTraitName = resolvePhpClassReference(content, traitName);
 
-              if (
-                resolvedTraitName &&
-                (await openPropertyInClassHierarchy(resolvedTraitName))
-              ) {
+              if (resolvedTraitName && (await openPropertyInClassHierarchy(resolvedTraitName))) {
                 return true;
               }
             }
 
             for (const mixinName of phpMixinClassNames(content)) {
-              const resolvedMixinName = resolvePhpClassReference(
-                content,
-                mixinName,
-              );
+              const resolvedMixinName = resolvePhpClassReference(content, mixinName);
 
-              if (
-                resolvedMixinName &&
-                (await openPropertyInClassHierarchy(resolvedMixinName))
-              ) {
+              if (resolvedMixinName && (await openPropertyInClassHierarchy(resolvedMixinName))) {
                 return true;
               }
             }
 
             for (const superTypeName of phpSuperTypeReferences(content)) {
-              const resolvedSuperTypeName = resolvePhpClassReference(
-                content,
-                superTypeName,
-              );
+              const resolvedSuperTypeName = resolvePhpClassReference(content, superTypeName);
 
               if (
                 resolvedSuperTypeName &&

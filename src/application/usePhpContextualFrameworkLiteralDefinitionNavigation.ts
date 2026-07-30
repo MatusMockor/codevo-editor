@@ -10,13 +10,14 @@ import {
   type PhpContextualFrameworkLiteralDefinitionRequest,
   type PhpFrameworkLiteralNavigationDependencies,
 } from "./phpFrameworkLiteralDefinitionResolverRegistry";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export type { PhpContextualFrameworkLiteralDefinitionRequest } from "./phpFrameworkLiteralDefinitionResolverRegistry";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
   shouldCommit?: () => boolean;
+  shouldFinalize?: () => boolean;
 }
 
 export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
@@ -59,10 +60,11 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
     ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          requestedRoot,
-        ) && canNavigate(navigationRequest);
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        canNavigate(navigationRequest);
+      const isRequestedRootFinalizable = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        canFinalizeNavigation(navigationRequest);
 
       if (
         !requestedRoot ||
@@ -90,12 +92,11 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       }
 
       if (!target) {
-        const missingMessage =
-          phpFrameworkContextualLiteralDefinitionMissingMessage(
-            request,
-            activeDocument,
-            providers,
-          );
+        const missingMessage = phpFrameworkContextualLiteralDefinitionMissingMessage(
+          request,
+          activeDocument,
+          providers,
+        );
 
         if (missingMessage) {
           if (!isRequestedRootActive()) {
@@ -115,14 +116,12 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
         return false;
       }
 
-      const opened = await openNavigationTarget(
-        target.path,
-        target.position,
-        target.label,
-        { shouldCommit: isRequestedRootActive },
-      );
+      const opened = await openNavigationTarget(target.path, target.position, target.label, {
+        shouldCommit: isRequestedRootActive,
+        shouldFinalize: isRequestedRootFinalizable,
+      });
 
-      if (!isRequestedRootActive()) {
+      if (!isRequestedRootFinalizable()) {
         return false;
       }
 

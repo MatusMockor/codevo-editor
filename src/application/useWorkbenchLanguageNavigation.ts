@@ -483,7 +483,7 @@ export function useWorkbenchLanguageNavigation(
         const isDocumentRequestCurrent = () =>
           isDocumentLeaseCurrent() && definitionRequestLease?.isCurrent() !== false;
         const isDocumentRequestFinalizable = () =>
-          isDocumentLeaseFinalizable() && definitionRequestLease?.isRequestCurrent() !== false;
+          isRequestedSessionActive() && definitionRequestLease?.isRequestCurrent() !== false;
 
         if (!isDocumentRequestCurrent()) {
           return false;
@@ -558,7 +558,7 @@ export function useWorkbenchLanguageNavigation(
 
           if (targets.length > 1 || (targetProjection.truncated && targets.length > 0)) {
             implementationChooserCommitPredicateRef.current = isDocumentLeaseCurrent;
-            implementationChooserFinalizePredicateRef.current = isDocumentLeaseFinalizable;
+            implementationChooserFinalizePredicateRef.current = isRequestedSessionActive;
             setImplementationChooser({
               targets,
               title:
@@ -726,8 +726,8 @@ export function useWorkbenchLanguageNavigation(
       const isRequestedJavaScriptTypeScriptDocumentActive = () =>
         isRequestedJavaScriptTypeScriptSessionActive() && isRequestedDocumentActive();
       const isNavigationRequestCurrent = () =>
-        isRequestedJavaScriptTypeScriptDocumentActive() &&
-        definitionRequestLease?.isCurrent() !== false;
+        isRequestedJavaScriptTypeScriptSessionActive() &&
+        (definitionRequestLease ? definitionRequestLease.isCurrent() : isRequestedDocumentActive());
       const isNavigationRequestFinalizable = () =>
         isRequestedJavaScriptTypeScriptSessionActive() &&
         definitionRequestLease?.isRequestCurrent() !== false;
@@ -946,19 +946,56 @@ export function useWorkbenchLanguageNavigation(
     const document = activeDocumentRef.current;
     const editorPosition = activeEditorPositionRef.current;
     const requestedRoot = workspaceRoot;
-    const definitionRequestLease = definitionRequestCoordinatorRef.current?.begin(
-      () =>
-        ownerFence.isCurrent() &&
-        workspaceRoot === requestedRoot &&
-        activeDocumentRef.current === document &&
-        activeDocumentRef.current?.path === document?.path &&
-        activeDocumentRef.current?.content === document?.content &&
-        activeDocumentRef.current?.revision === document?.revision,
-    );
+    const definitionRequestLease = definitionRequestCoordinatorRef.current?.begin(() => {
+      if (!ownerFence.isCurrent() || workspaceRoot !== requestedRoot) {
+        return false;
+      }
+
+      const activeDocument = activeDocumentRef.current;
+      const sourceDocumentIsCurrent =
+        activeDocument === document &&
+        activeDocument?.path === document?.path &&
+        activeDocument?.content === document?.content &&
+        activeDocument?.revision === document?.revision;
+
+      if (sourceDocumentIsCurrent) {
+        return true;
+      }
+
+      const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
+      if (
+        currentOwner?.ownerKey !== ownerFence.owner.ownerKey ||
+        currentOwner.executionRoot === ownerFence.owner.executionRoot
+      ) {
+        return false;
+      }
+
+      if (!activeDocument) {
+        return true;
+      }
+
+      if (!document) {
+        return false;
+      }
+
+      const sourceRelativePath = relativeSessionPath(ownerFence.owner.executionRoot, document.path);
+
+      return (
+        sourceRelativePath !== null &&
+        sourceRelativePath ===
+          relativeSessionPath(currentOwner.executionRoot, activeDocument.path) &&
+        activeDocument.content === document.content &&
+        activeDocument.revision === document.revision
+      );
+    });
 
     if (!definitionRequestLease) {
       return;
     }
+
+    implementationChooserCommitPredicateRef.current = null;
+    implementationChooserFinalizePredicateRef.current = null;
+    setImplementationChooser(null);
 
     const waitForDefinitionStep = async <T>(
       step: Promise<T>,
@@ -971,7 +1008,11 @@ export function useWorkbenchLanguageNavigation(
           provideBladeDefinition(
             document.content,
             documentOffsetAtEditorPosition(document.content, editorPosition),
-            { canNavigate: definitionRequestLease.isCurrent },
+            {
+              canFinalize: () =>
+                ownerFence.isCurrent() && definitionRequestLease.isRequestCurrent(),
+              canNavigate: definitionRequestLease.isCurrent,
+            },
           ),
         );
 
@@ -988,6 +1029,7 @@ export function useWorkbenchLanguageNavigation(
         const offset = documentOffsetAtEditorPosition(document.content, editorPosition);
         const latteDefinition = await waitForDefinitionStep(
           provideLatteDefinitionOutcome(document.content, offset, {
+            canFinalize: () => ownerFence.isCurrent() && definitionRequestLease.isRequestCurrent(),
             canNavigate: definitionRequestLease.isCurrent,
           }),
         );
@@ -1009,7 +1051,11 @@ export function useWorkbenchLanguageNavigation(
           provideNeonDefinition(
             document.content,
             documentOffsetAtEditorPosition(document.content, editorPosition),
-            { canNavigate: definitionRequestLease.isCurrent },
+            {
+              canFinalize: () =>
+                ownerFence.isCurrent() && definitionRequestLease.isRequestCurrent(),
+              canNavigate: definitionRequestLease.isCurrent,
+            },
           ),
         );
 
@@ -1042,6 +1088,7 @@ export function useWorkbenchLanguageNavigation(
 
       const openedContextualPhpTarget = await waitForDefinitionStep(
         goToContextualPhpDefinition({
+          canFinalize: () => ownerFence.isCurrent() && definitionRequestLease.isRequestCurrent(),
           canNavigate: definitionRequestLease.isCurrent,
         }),
       );
@@ -1059,7 +1106,11 @@ export function useWorkbenchLanguageNavigation(
           providePhpFrameworkDefinition(
             document.content,
             documentOffsetAtEditorPosition(document.content, editorPosition),
-            { canNavigate: definitionRequestLease.isCurrent },
+            {
+              canFinalize: () =>
+                ownerFence.isCurrent() && definitionRequestLease.isRequestCurrent(),
+              canNavigate: definitionRequestLease.isCurrent,
+            },
           ),
         );
 
@@ -1092,6 +1143,7 @@ export function useWorkbenchLanguageNavigation(
 
       await waitForDefinitionStep(
         goToIndexedSymbolDefinition({
+          canFinalize: () => ownerFence.isCurrent() && definitionRequestLease.isRequestCurrent(),
           canNavigate: definitionRequestLease.isCurrent,
         }),
       );
@@ -1387,4 +1439,11 @@ function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
 
 function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
+}
+
+function relativeSessionPath(rootPath: string, path: string): string | null {
+  const root = normalizedSessionPath(rootPath);
+  const candidate = normalizedSessionPath(path);
+
+  return candidate.startsWith(`${root}/`) ? candidate.slice(root.length + 1) : null;
 }

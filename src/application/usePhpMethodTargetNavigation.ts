@@ -9,18 +9,12 @@ import {
   phpSuperTypeReferences,
   type PhpMethodDefinitionHint,
 } from "../domain/phpNavigation";
-import {
-  phpMixinClassNames,
-  phpTraitClassNames,
-} from "../domain/phpMethodCompletions";
-import type {
-  IntelligenceMode,
-  WorkspaceDescriptor,
-} from "../domain/workspace";
+import { phpMixinClassNames, phpTraitClassNames } from "../domain/phpMethodCompletions";
+import type { IntelligenceMode, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import { editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
-import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export interface PhpMethodTargetNavigationDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -29,7 +23,7 @@ export interface PhpMethodTargetNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
-    options?: { shouldCommit?: () => boolean },
+    options?: { shouldCommit?: () => boolean; shouldFinalize?: () => boolean },
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent(path: string): Promise<string>;
@@ -65,10 +59,7 @@ export function usePhpMethodTargetNavigation({
   workspaceRoot,
 }: PhpMethodTargetNavigationDependencies): PhpMethodTargetNavigation {
   const openPhpMethodHintTarget = useCallback(
-    async (
-      hint: PhpMethodDefinitionHint,
-      request?: NavigationRequest,
-    ): Promise<boolean> => {
+    async (hint: PhpMethodDefinitionHint, request?: NavigationRequest): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
@@ -107,12 +98,12 @@ export function usePhpMethodTargetNavigation({
             phpMethodPosition(content, hint.methodName),
             `${hint.methodName}()`,
             {
-              shouldCommit: () =>
-                isRequestedRootActive() && canNavigate(request),
+              shouldCommit: () => isRequestedRootActive() && canNavigate(request),
+              shouldFinalize: () => isRequestedRootActive() && canFinalizeNavigation(request),
             },
           );
 
-          return isRequestedRootActive() && canNavigate(request) && opened;
+          return isRequestedRootActive() && canFinalizeNavigation(request) && opened;
         } catch {
           if (!isRequestedRootActive()) {
             return false;
@@ -191,12 +182,12 @@ export function usePhpMethodTargetNavigation({
             editorPositionFromProjectSymbol(target),
             `${methodName}()`,
             {
-              shouldCommit: () =>
-                isRequestedRootActive() && canNavigate(request),
+              shouldCommit: () => isRequestedRootActive() && canNavigate(request),
+              shouldFinalize: () => isRequestedRootActive() && canFinalizeNavigation(request),
             },
           );
 
-          return isRequestedRootActive() && canNavigate(request) && opened;
+          return isRequestedRootActive() && canFinalizeNavigation(request) && opened;
         }
       }
 
@@ -205,12 +196,8 @@ export function usePhpMethodTargetNavigation({
       }
 
       const visitedClassNames = new Set<string>();
-      const openMethodInClassHierarchy = async (
-        candidateClassName: string,
-      ): Promise<boolean> => {
-        const normalizedCandidate = candidateClassName
-          .trim()
-          .replace(/^\\+/, "");
+      const openMethodInClassHierarchy = async (candidateClassName: string): Promise<boolean> => {
+        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
         const visitedKey = normalizedCandidate.toLowerCase();
 
         if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
@@ -227,9 +214,7 @@ export function usePhpMethodTargetNavigation({
 
         visitedClassNames.add(visitedKey);
 
-        for (const path of await resolvePhpClassSourcePaths(
-          normalizedCandidate,
-        )) {
+        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
           if (!isRequestedRootActive()) {
             return false;
           }
@@ -262,52 +247,32 @@ export function usePhpMethodTargetNavigation({
                 return false;
               }
 
-              const opened = await openNavigationTarget(
-                path,
-                position,
-                `${methodName}()`,
-                {
-                  shouldCommit: () =>
-                    isRequestedRootActive() && canNavigate(request),
-                },
-              );
+              const opened = await openNavigationTarget(path, position, `${methodName}()`, {
+                shouldCommit: () => isRequestedRootActive() && canNavigate(request),
+                shouldFinalize: () => isRequestedRootActive() && canFinalizeNavigation(request),
+              });
 
-              return isRequestedRootActive() && canNavigate(request) && opened;
+              return isRequestedRootActive() && canFinalizeNavigation(request) && opened;
             }
 
             for (const traitName of phpTraitClassNames(content)) {
-              const resolvedTraitName = resolvePhpClassReference(
-                content,
-                traitName,
-              );
+              const resolvedTraitName = resolvePhpClassReference(content, traitName);
 
-              if (
-                resolvedTraitName &&
-                (await openMethodInClassHierarchy(resolvedTraitName))
-              ) {
+              if (resolvedTraitName && (await openMethodInClassHierarchy(resolvedTraitName))) {
                 return true;
               }
             }
 
             for (const mixinName of phpMixinClassNames(content)) {
-              const resolvedMixinName = resolvePhpClassReference(
-                content,
-                mixinName,
-              );
+              const resolvedMixinName = resolvePhpClassReference(content, mixinName);
 
-              if (
-                resolvedMixinName &&
-                (await openMethodInClassHierarchy(resolvedMixinName))
-              ) {
+              if (resolvedMixinName && (await openMethodInClassHierarchy(resolvedMixinName))) {
                 return true;
               }
             }
 
             for (const superTypeName of phpSuperTypeReferences(content)) {
-              const resolvedSuperTypeName = resolvePhpClassReference(
-                content,
-                superTypeName,
-              );
+              const resolvedSuperTypeName = resolvePhpClassReference(content, superTypeName);
 
               if (
                 resolvedSuperTypeName &&
@@ -336,8 +301,7 @@ export function usePhpMethodTargetNavigation({
         return true;
       }
 
-      const boundConcreteClassName =
-        await resolvePhpFrameworkBoundConcrete(className);
+      const boundConcreteClassName = await resolvePhpFrameworkBoundConcrete(className);
 
       if (!isRequestedRootActive()) {
         return false;
@@ -347,9 +311,7 @@ export function usePhpMethodTargetNavigation({
         return false;
       }
 
-      return boundConcreteClassName
-        ? openMethodInClassHierarchy(boundConcreteClassName)
-        : false;
+      return boundConcreteClassName ? openMethodInClassHierarchy(boundConcreteClassName) : false;
     },
     [
       currentWorkspaceRootRef,
