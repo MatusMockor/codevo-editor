@@ -24,8 +24,8 @@
         "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
         "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx"
       ],
-      "rawLines": 71701,
-      "structuralTokens": 336377
+      "rawLines": 71699,
+      "structuralTokens": 336374
     }
   },
   "files": {
@@ -39,10 +39,10 @@
     },
     "src-tauri/src/git.rs": { "rawLines": 7113, "structuralTokens": 44029 },
     "src-tauri/src/index.rs": { "rawLines": 2089, "structuralTokens": 10272 },
-    "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 812 },
+    "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 810 },
     "src-tauri/src/lsp_features.rs": {
-      "rawLines": 1292,
-      "structuralTokens": 7593
+      "rawLines": 1260,
+      "structuralTokens": 7379
     },
     "src-tauri/src/lsp_session.rs": {
       "rawLines": 4500,
