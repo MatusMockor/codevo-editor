@@ -10,9 +10,16 @@ mod document_highlight_projection;
 mod document_symbol_projection;
 mod hover_projection;
 mod linked_editing_projection;
+mod reference_projection;
 mod rename_projection;
 mod workspace_symbol_projection;
 pub use hover_projection::{parse_hover_result, LanguageServerHover};
+#[allow(unused_imports)]
+pub use reference_projection::{
+    parse_bounded_reference_locations_result, parse_definition_result,
+    BoundedLanguageServerLocations, MAX_INSPECTED_REFERENCE_LOCATIONS, MAX_REFERENCE_LOCATIONS,
+    MAX_REFERENCE_LOCATION_URI_BYTES, MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,19 +86,6 @@ pub struct LanguageServerRange {
 pub struct LanguageServerLocation {
     pub uri: String,
     pub range: LanguageServerRange,
-}
-
-pub const MAX_REFERENCE_LOCATIONS: usize = 2_000;
-pub const MAX_INSPECTED_REFERENCE_LOCATIONS: usize = 4_000;
-pub const MAX_REFERENCE_LOCATION_URI_BYTES: usize = 16 * 1_024;
-pub const MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES: usize = 2 * 1_024 * 1_024;
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BoundedLanguageServerLocations {
-    pub locations: Vec<LanguageServerLocation>,
-    pub total_count: usize,
-    pub is_incomplete: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -562,62 +556,6 @@ pub fn parse_completion_item_result(value: &Value) -> Result<LanguageServerCompl
     completion_projection::project_completion_item_result(value)
 }
 
-pub fn parse_definition_result(value: &Value) -> Result<Vec<LanguageServerLocation>, String> {
-    if value.is_null() {
-        return Ok(Vec::new());
-    }
-
-    if let Some(items) = value.as_array() {
-        return items.iter().map(parse_definition_item).collect();
-    }
-
-    parse_definition_item(value).map(|location| vec![location])
-}
-
-pub fn parse_bounded_reference_locations_result(
-    value: &Value,
-) -> Result<BoundedLanguageServerLocations, String> {
-    if value.is_null() {
-        return Ok(BoundedLanguageServerLocations {
-            locations: Vec::new(),
-            total_count: 0,
-            is_incomplete: false,
-        });
-    }
-
-    let (items, total_count): (&[Value], usize) = if let Some(items) = value.as_array() {
-        (items, items.len())
-    } else {
-        (std::slice::from_ref(value), 1)
-    };
-    let inspected_count = items.len().min(MAX_INSPECTED_REFERENCE_LOCATIONS);
-    let mut locations = Vec::with_capacity(inspected_count.min(MAX_REFERENCE_LOCATIONS));
-    let mut retained_uri_bytes = 0usize;
-
-    for item in items.iter().take(inspected_count) {
-        if locations.len() >= MAX_REFERENCE_LOCATIONS {
-            break;
-        }
-
-        let location = parse_definition_item(item)?;
-        let uri_bytes = location.uri.len();
-        if uri_bytes > MAX_REFERENCE_LOCATION_URI_BYTES
-            || retained_uri_bytes.saturating_add(uri_bytes) > MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES
-        {
-            continue;
-        }
-
-        retained_uri_bytes += uri_bytes;
-        locations.push(location);
-    }
-
-    Ok(BoundedLanguageServerLocations {
-        is_incomplete: locations.len() != total_count,
-        locations,
-        total_count,
-    })
-}
-
 pub fn parse_inlay_hints_result(value: &Value) -> Result<Vec<LanguageServerInlayHint>, String> {
     if value.is_null() {
         return Ok(Vec::new());
@@ -949,26 +887,6 @@ fn markup_to_string(value: &Value) -> Option<String> {
         .get("value")
         .and_then(Value::as_str)
         .map(ToString::to_string)
-}
-
-fn parse_definition_item(value: &Value) -> Result<LanguageServerLocation, String> {
-    if value.get("uri").is_some() {
-        return serde_json::from_value::<LanguageServerLocation>(value.clone())
-            .map_err(|error| format!("Language server returned a malformed location: {error}"));
-    }
-
-    if value.get("targetUri").is_some() {
-        let link = serde_json::from_value::<LanguageServerLocationLink>(value.clone()).map_err(
-            |error| format!("Language server returned a malformed location link: {error}"),
-        )?;
-
-        return Ok(LanguageServerLocation {
-            uri: link.target_uri,
-            range: link.target_range,
-        });
-    }
-
-    Err("Language server returned a malformed definition response.".to_string())
 }
 
 fn parse_inlay_hint_item(value: &Value) -> Result<LanguageServerInlayHint, String> {
@@ -1334,13 +1252,6 @@ fn parse_code_action_command(value: &Value) -> Option<LanguageServerCodeActionCo
     }
 
     serde_json::from_value::<LanguageServerCodeActionCommand>(command_value.clone()).ok()
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LanguageServerLocationLink {
-    target_uri: String,
-    target_range: LanguageServerRange,
 }
 
 #[cfg(test)]

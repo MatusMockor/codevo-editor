@@ -541,15 +541,11 @@ fn bounds_reference_locations_before_wire_serialization_and_reports_total() {
 fn omits_oversized_reference_uris_truthfully() {
     let oversized_uri = format!(
         "file:///workspace/{}.ts",
-        "x".repeat(MAX_REFERENCE_LOCATION_URI_BYTES)
+        "x".repeat(MAX_REFERENCE_LOCATION_URI_BYTES - "file:///workspace/.ts".len() + 1)
     );
     let projected = parse_bounded_reference_locations_result(&json!([
         {
-            "uri": oversized_uri,
-            "range": {
-                "start": { "line": 0, "character": 0 },
-                "end": { "line": 0, "character": 1 }
-            }
+            "uri": oversized_uri
         },
         {
             "uri": "file:///workspace/src/retained.ts",
@@ -563,6 +559,70 @@ fn omits_oversized_reference_uris_truthfully() {
 
     assert_eq!(projected.locations.len(), 1);
     assert_eq!(projected.total_count, 2);
+    assert!(projected.is_incomplete);
+}
+
+#[test]
+fn accepts_exact_reference_uri_and_aggregate_byte_limits() {
+    let exact_uri = format!(
+        "file:///{}",
+        "x".repeat(MAX_REFERENCE_LOCATION_URI_BYTES - "file:///".len())
+    );
+    let mut exact_limit_locations = (0..MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES
+        / MAX_REFERENCE_LOCATION_URI_BYTES)
+        .map(|line| {
+            json!({
+                "uri": exact_uri.clone(),
+                "range": {
+                    "start": { "line": line, "character": 0 },
+                    "end": { "line": line, "character": 1 }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let projected =
+        parse_bounded_reference_locations_result(&Value::Array(exact_limit_locations.clone()))
+            .expect("exact aggregate byte limit");
+
+    assert_eq!(
+        projected.locations.len(),
+        MAX_REFERENCE_LOCATION_URI_TOTAL_BYTES / MAX_REFERENCE_LOCATION_URI_BYTES
+    );
+    assert!(!projected.is_incomplete);
+
+    exact_limit_locations.push(json!({
+        "uri": "x",
+        "range": {
+            "start": { "line": 999, "character": 0 },
+            "end": { "line": 999, "character": 1 }
+        }
+    }));
+    let projected_plus_one =
+        parse_bounded_reference_locations_result(&Value::Array(exact_limit_locations))
+            .expect("one byte past aggregate limit");
+
+    assert_eq!(
+        projected_plus_one.locations.len(),
+        projected.locations.len()
+    );
+    assert_eq!(projected_plus_one.total_count, projected.total_count + 1);
+    assert!(projected_plus_one.is_incomplete);
+}
+
+#[test]
+fn measures_multibyte_reference_uri_limits_in_utf8_bytes() {
+    let oversized_uri = format!(
+        "file:///{}",
+        "ž".repeat((MAX_REFERENCE_LOCATION_URI_BYTES - "file:///".len()) / 2 + 1)
+    );
+    let projected = parse_bounded_reference_locations_result(&json!([{
+        "uri": oversized_uri
+    }]))
+    .expect("oversized UTF-8 URI is omitted before location parsing");
+
+    assert!(projected.locations.is_empty());
+    assert_eq!(projected.total_count, 1);
     assert!(projected.is_incomplete);
 }
 

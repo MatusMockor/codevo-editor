@@ -154,14 +154,13 @@ use crate::js_test_run::batch::JsTestBatchRegistry;
 use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use crate::lsp_capability_support::supports_code_action_resolve as lsp_status_supports_code_action_resolve;
 use crate::lsp_features::{
-    parse_bounded_reference_locations_result, parse_code_action_result,
-    parse_document_highlights_result, parse_linked_editing_ranges_result,
+    parse_code_action_result, parse_document_highlights_result, parse_linked_editing_ranges_result,
     parse_resolved_code_action_result, parse_semantic_tokens_result,
     parse_workspace_symbols_result, validate_code_action_context,
     validate_code_action_request_range, validate_code_action_resolve_request,
-    BoundedLanguageServerLocations, LanguageServerCodeAction, LanguageServerCodeActionContext,
-    LanguageServerDocumentHighlight, LanguageServerLinkedEditingRanges, LanguageServerLocation,
-    LanguageServerRange, LanguageServerSemanticTokens, LanguageServerWorkspaceSymbol,
+    LanguageServerCodeAction, LanguageServerCodeActionContext, LanguageServerDocumentHighlight,
+    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerRange,
+    LanguageServerSemanticTokens, LanguageServerWorkspaceSymbol,
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory, TextDocumentPosition,
     TextDocumentRange,
 };

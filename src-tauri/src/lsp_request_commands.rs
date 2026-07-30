@@ -1,4 +1,7 @@
 use super::*;
+use crate::lsp_features::{
+    parse_bounded_reference_locations_result, BoundedLanguageServerLocations,
+};
 use serde::Deserialize;
 
 const MAX_WORKSPACE_SYMBOL_QUERY_UTF8_BYTES: usize = 4 * 1024;
