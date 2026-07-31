@@ -19,6 +19,8 @@
     "format:check:changed": "node ./scripts/check-changed-format.mjs",
     "format:rust:check": "node ./scripts/check-rust-format.mjs",
     "perf:fixtures": "node ./scripts/perf/generate-fixtures.mjs",
+    "perf:run": "node ./scripts/perf/run-perf-scenarios.mjs",
+    "perf:smoke": "node ./scripts/perf/run-perf-scenarios.mjs --smoke",
     "preview": "vite preview",
     "tauri": "tauri",
     "debug": "node ./scripts/debug-tauri.mjs",
