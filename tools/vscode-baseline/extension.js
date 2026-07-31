@@ -158,6 +158,9 @@ async function runLargeFilesScenarios(root) {
   const filenames = ["large-5k.ts", "large-20k.ts", "large-100k.ts", "minified.ts", "huge-union.ts"];
   await captureScenario(results, "tab-switch-cycle", async () => {
     const uris = filenames.map((filename) => vscode.Uri.file(path.join(root, filename)));
+    for (const uri of uris) {
+      await vscode.commands.executeCommand("vscode.open", uri);
+    }
     const samples = [];
     for (let cycle = 0; cycle < 6; cycle += 1) {
       for (const uri of uris) {

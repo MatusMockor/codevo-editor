@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { FIXTURE_VERSION } from "../../scripts/perf/perfScenarios.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), "../..");
@@ -61,11 +62,20 @@ function killIsolatedProfileProcesses(userDataDir) {
   spawnSync("pkill", ["-9", "-f", userDataDir]);
 }
 
+function ipcSafeTmpDir() {
+  if (process.platform === "win32") {
+    return os.tmpdir();
+  }
+
+  return "/tmp";
+}
+
 async function captureRoot(label, fixtureRoot, allScenarios, failures) {
   const runId = label + "-" + Date.now();
-  const outPath = path.join(os.tmpdir(), "codevo-vscode-baseline-out-" + runId + ".json");
-  const userDataDir = path.join(os.tmpdir(), "codevo-vscode-baseline-user-data-" + runId);
-  const extensionsDir = path.join(os.tmpdir(), "codevo-vscode-baseline-extensions-" + runId);
+  const tmpDir = ipcSafeTmpDir();
+  const outPath = path.join(tmpDir, "codevo-vscode-baseline-out-" + runId + ".json");
+  const userDataDir = path.join(tmpDir, "codevo-vscode-baseline-user-data-" + runId);
+  const extensionsDir = path.join(tmpDir, "codevo-vscode-baseline-extensions-" + runId);
   seedIsolatedProfile(userDataDir);
   const result = spawnSync("code", [
     "--new-window",
@@ -105,7 +115,7 @@ async function main() {
 
   const vscodeVersion = spawnSync("code", ["--version"], { encoding: "utf8" }).stdout.trim().split("\n")[0];
   const capturedAt = new Date().toISOString();
-  const merged = { capturedAt, vscodeVersion, scenarios: allScenarios };
+  const merged = { capturedAt, vscodeVersion, fixtureVersion: FIXTURE_VERSION, scenarios: allScenarios };
   const baselinesDir = path.join(repoRoot, "perf/baselines");
   const finalPath = path.join(baselinesDir, "vscode.json");
   const tempPath = finalPath + ".tmp-" + process.pid;

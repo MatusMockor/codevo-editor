@@ -1,3 +1,5 @@
+export const FIXTURE_VERSION = "large-files@v2:seed5/20/100, monorepo@50pkg";
+
 export const PERF_SCENARIOS = [
   { id: "typing-large-5k", kind: "bridge", run: "typing-large-5k" },
   { id: "typing-large-20k", kind: "bridge", run: "typing-large-20k" },
@@ -62,7 +64,12 @@ export function shapeRunResult({
         };
       }
 
-      return { id: scenario.id, unit: "ms", samples: [], p50: 0, p95: 0 };
+      return {
+        id: scenario.id,
+        unit: "ms",
+        status: "not-run",
+        reason: `No "${scenario.run}" latency tracker samples were recorded for this run.`,
+      };
     },
   );
 
@@ -293,7 +300,11 @@ export function inPagePerfRunnerSource() {
   }
 
   function bridgeError() {
-    return new Error("Codevo QA/performance bridges are unavailable. Start with npm run debug:qa and VITE_CODEVO_PERF_BRIDGE=1.");
+    return new Error(
+      "Codevo QA/performance bridges are unavailable. Start the app with VITE_CODEVO_QA_BRIDGE=1 " +
+        "VITE_CODEVO_PERF_BRIDGE=1 npm run debug:tauri (npm run debug:qa builds a production bundle " +
+        "where the DEV-gated bridges never install).",
+    );
   }
 
   function joinPath(root, relativePath) {

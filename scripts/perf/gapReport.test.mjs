@@ -71,6 +71,33 @@ const realShapeBaseline = {
 };
 
 describe("buildGapReport against real codevo-*.json shape", () => {
+  it("renders not-run tracker scenarios as neither pass nor fail", () => {
+    const report = buildGapReport({
+      codevo: {
+        scenarios: [
+          {
+            id: "completion-large-20k",
+            unit: "ms",
+            status: "not-run",
+            reason: "No completion latency samples were recorded.",
+          },
+        ],
+        failedPaths: [],
+      },
+      baseline: { scenarios: [{ id: "completion-large-20k", p95: 12 }] },
+      tolerances: DEFAULT_TOLERANCES,
+    });
+    const completion = report.rows.find((row) => row.id === "completion-large-20k");
+    expect(completion.status).toBe("not-run");
+    expect(completion.codevoP95).toBeNull();
+    expect(completion.ratio).toBeNull();
+    expect(report.failures).toHaveLength(0);
+
+    const markdown = renderGapReportMarkdown(report);
+    expect(markdown).not.toContain("| pass |");
+    expect(markdown).toContain("not-run");
+  });
+
   it("detects skipped scenarios via status, never producing NaN", () => {
     const report = buildGapReport({
       codevo: realShapeCodevo,

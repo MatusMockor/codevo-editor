@@ -3,15 +3,18 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inPagePerfRunnerSource, shapeRunResult } from "./perfScenarios.mjs";
+import { inPagePerfRunnerSource, shapeRunResult, FIXTURE_VERSION } from "./perfScenarios.mjs";
 
 const DEFAULT_CDP_URL = "http://127.0.0.1:9222";
 const DEFAULT_TARGET_URL = "localhost:1420";
 const DEFAULT_WAIT_MS = 10000;
 const DEFAULT_INTERVAL_MS = 100;
-const FIXTURE_VERSION = "large-files@seed5/20/100, monorepo@50pkg";
 const CONNECTION_GUIDANCE =
-  "Start the app with: npm run debug:qa (QA bridge) and VITE_CODEVO_PERF_BRIDGE=1, plus remote debugging port 9222";
+  "CDP is unavailable on macOS WKWebView (it works against WebView2 on Windows). On macOS, use the " +
+  'manual lane instead: run VITE_CODEVO_QA_BRIDGE=1 VITE_CODEVO_PERF_BRIDGE=1 npm run debug:tauri ' +
+  "(a dev build - npm run debug:qa is a production bundle where the DEV-gated bridges never install), " +
+  "open Tauri WebView DevTools, and paste the snippet from inPagePerfRunnerSource() in " +
+  "scripts/perf/perfScenarios.mjs into the console (same pattern as docs/DEV_QA.md's manual lane).";
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), "../..");
 
@@ -240,6 +243,10 @@ function scenarioSummary(scenario, trackerSnapshot) {
     return `skipped: ${scenario.reason}`;
   }
 
+  if (scenario.status === "not-run") {
+    return `not-run: ${scenario.reason}`;
+  }
+
   if (scenario.id === "memory-sample") {
     return memorySampleSummary(scenario);
   }
@@ -272,6 +279,10 @@ function hasEmptyNonSkippedScenario(shaped, trackerSnapshot, smoke) {
 
     if (smoke && !["typing-large-5k", "tab-switch-cycle"].includes(scenario.id)) {
       return false;
+    }
+
+    if (scenario.status === "not-run") {
+      return true;
     }
 
     return scenarioSummary(scenario, trackerSnapshot) === 0;

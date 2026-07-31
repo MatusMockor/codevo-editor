@@ -68,6 +68,10 @@ function budgetForId(id, tolerances) {
 }
 
 function statusFor({ codevoScenario, baselineScenario, ratio, budget }) {
+  if (codevoScenario.status === "not-run") {
+    return "not-run";
+  }
+
   if (codevoScenario.skipped === true || codevoScenario.status === "skipped") {
     return "skipped";
   }

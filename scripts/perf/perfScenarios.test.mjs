@@ -75,6 +75,33 @@ describe("shapeRunResult", () => {
     expect(memory.memorySample).toBeNull();
     expect(result.failedPaths).toEqual([]);
   });
+
+  it("marks a tracker scenario absent from the snapshot as not-run instead of fabricating zero samples", () => {
+    const result = shapeRunResult({
+      capturedAt: "2026-07-31T00:00:00.000Z",
+      trackerSnapshot: [],
+    });
+    const completion = result.scenarios.find((s) => s.id === "completion-large-20k");
+    expect(completion.status).toBe("not-run");
+    expect(completion.reason).toBeTruthy();
+    expect(completion.p50).toBeUndefined();
+    expect(completion.p95).toBeUndefined();
+    expect(completion.samples).toBeUndefined();
+
+    const quickOpen = result.scenarios.find((s) => s.id === "quickopen-monorepo");
+    expect(quickOpen.status).toBe("not-run");
+    expect(quickOpen.reason).toBeTruthy();
+  });
+
+  it("still marks rename-large-20k as skipped (not not-run) when no rename data was recorded", () => {
+    const result = shapeRunResult({
+      capturedAt: "2026-07-31T00:00:00.000Z",
+      trackerSnapshot: [],
+    });
+    const rename = result.scenarios.find((s) => s.id === "rename-large-20k");
+    expect(rename.status).toBe("skipped");
+    expect(rename.reason).toBe("Rename produced no latency tracker data.");
+  });
 });
 
 describe("inPagePerfRunnerSource", () => {

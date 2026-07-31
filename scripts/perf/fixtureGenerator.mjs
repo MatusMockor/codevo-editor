@@ -106,6 +106,14 @@ export const LARGE_FILE_SPECS = [
 export function writeLargeFileFixtures({ rootDir, fs }) {
   const dir = path.join(rootDir, "large-files");
   fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "@perf/large-files", private: true }, null, 2),
+  );
+  fs.writeFileSync(
+    path.join(dir, "tsconfig.json"),
+    JSON.stringify({ compilerOptions: { strict: true }, include: ["*.ts"] }, null, 2),
+  );
   for (const spec of LARGE_FILE_SPECS) {
     fs.writeFileSync(
       path.join(dir, spec.name),

@@ -1,10 +1,23 @@
 import { describe, expect, it } from "vitest";
+import { Volume } from "memfs";
 import {
   createSeededRandom,
   generateHugeUnionTsFileContent,
   generateLargeTsFileContent,
   generateMinifiedTsFileContent,
+  writeLargeFileFixtures,
 } from "./fixtureGenerator.mjs";
+
+function memFs() {
+  const volume = new Volume();
+  return {
+    volume,
+    fs: {
+      mkdirSync: (p, o) => volume.mkdirSync(p, o),
+      writeFileSync: (p, c) => volume.writeFileSync(p, c),
+    },
+  };
+}
 
 describe("createSeededRandom", () => {
   it("is deterministic for the same seed", () => {
@@ -65,5 +78,27 @@ describe("generateHugeUnionTsFileContent", () => {
   it("emits the requested union member count", () => {
     const content = generateHugeUnionTsFileContent({ members: 2000 });
     expect(content.split("|").length).toBeGreaterThanOrEqual(2000);
+  });
+});
+
+describe("writeLargeFileFixtures", () => {
+  it("emits project markers so the directory can be opened as a workspace", () => {
+    const { volume, fs } = memFs();
+    writeLargeFileFixtures({ rootDir: "/fx", fs });
+
+    const pkg = JSON.parse(volume.readFileSync("/fx/large-files/package.json", "utf8"));
+    expect(pkg).toEqual({ name: "@perf/large-files", private: true });
+
+    const tsconfig = JSON.parse(volume.readFileSync("/fx/large-files/tsconfig.json", "utf8"));
+    expect(tsconfig).toEqual({ compilerOptions: { strict: true }, include: ["*.ts"] });
+  });
+
+  it("still writes all five large-file fixtures alongside the markers", () => {
+    const { volume, fs } = memFs();
+    writeLargeFileFixtures({ rootDir: "/fx", fs });
+
+    for (const name of ["large-5k.ts", "large-20k.ts", "large-100k.ts", "minified.ts", "huge-union.ts"]) {
+      expect(volume.readFileSync(`/fx/large-files/${name}`, "utf8").length).toBeGreaterThan(0);
+    }
   });
 });
