@@ -23,7 +23,9 @@ import {
 import { presentOptionalNodeRunWithoutDebugging } from "./application/nodeRunWithoutDebuggingPresentation";
 import { useAppFrameworkBottomPanels } from "./application/useAppFrameworkBottomPanels";
 import { useNoticeToastRenderers } from "./components/useNoticeToastRenderers";
+import { usePerfScenarioBridgeInstall } from "./components/usePerfScenarioBridgeInstall";
 import { useAppSyntaxHighlighterPreload, useAppWindowTitle } from "./application/useAppBootEffects";
+import { usePrefersLightTheme } from "./application/usePrefersLightTheme";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
 import { BrowserEditorChangeHunksGateway } from "./infrastructure/browserEditorChangeHunksGateway";
 import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
@@ -421,6 +423,7 @@ function App() {
     [workbench.activeDocument?.path, activeDocumentIsDirty, workbench.workspaceRoot],
   );
   useAppWindowTitle(windowTitle);
+  usePerfScenarioBridgeInstall(workbench);
   const activeLargeDocumentStatus = useMemo(
     () =>
       largeSmartDocumentStatus(
@@ -1625,36 +1628,6 @@ function App() {
       />
     </main>
   );
-}
-
-function usePrefersLightTheme(): boolean {
-  const [prefersLight, setPrefersLight] = useState(() => {
-    if (typeof window === "undefined") {
-      return false;
-    }
-
-    if (!window.matchMedia) {
-      return false;
-    }
-
-    return window.matchMedia("(prefers-color-scheme: light)").matches;
-  });
-
-  useEffect(() => {
-    if (!window.matchMedia) {
-      return;
-    }
-
-    const media = window.matchMedia("(prefers-color-scheme: light)");
-    const updatePreference = () => setPrefersLight(media.matches);
-
-    updatePreference();
-    media.addEventListener("change", updatePreference);
-
-    return () => media.removeEventListener("change", updatePreference);
-  }, []);
-
-  return prefersLight;
 }
 
 export default App;
