@@ -23,7 +23,7 @@ async function main() {
 
   console.log(renderGapReportMarkdown(report));
 
-  if (report.failures.length > 0) {
+  if (report.failures.length > 0 || report.failedPaths.length > 0) {
     process.exitCode = 1;
   }
 }

@@ -7,23 +7,58 @@ const MEMORY_SAMPLE_ID = "memory-sample";
 
 export function buildGapReport({ codevo, baseline, tolerances }) {
   const baselineById = new Map(baseline.scenarios.map((scenario) => [scenario.id, scenario]));
-  const rows = codevo.scenarios
-    .filter((scenario) => scenario.id !== MEMORY_SAMPLE_ID)
-    .map((scenario) => buildRow(scenario, baselineById.get(scenario.id), tolerances));
+  const codevoById = new Map(
+    codevo.scenarios
+      .filter((scenario) => scenario.id !== MEMORY_SAMPLE_ID)
+      .map((scenario) => [scenario.id, scenario]),
+  );
+  const forwardRows = [...codevoById.values()].map((scenario) =>
+    buildRow(scenario, baselineById.get(scenario.id), tolerances),
+  );
+  const missingRows = baseline.scenarios
+    .filter((scenario) => !codevoById.has(scenario.id))
+    .map((scenario) => buildMissingCodevoRow(scenario, tolerances));
+  const rows = [...forwardRows, ...missingRows];
   const failures = rows.filter((row) => row.status === "fail");
+  const failedPaths = Array.isArray(codevo.failedPaths) ? codevo.failedPaths : [];
 
-  return { rows, failures };
+  return { rows, failures, failedPaths };
 }
 
 function buildRow(codevoScenario, baselineScenario, tolerances) {
   const id = codevoScenario.id;
-  const codevoP95 = codevoScenario.p95;
-  const vscodeP95 = baselineScenario?.p95;
-  const ratio = typeof vscodeP95 === "number" && vscodeP95 > 0 ? codevoP95 / vscodeP95 : null;
+  const codevoP95 = normalizedNumber(codevoScenario.p95);
+  const vscodeP95 = normalizedNumber(baselineScenario?.p95);
+  const ratio = ratioFor(codevoP95, vscodeP95);
   const budget = budgetForId(id, tolerances);
   const status = statusFor({ codevoScenario, baselineScenario, ratio, budget });
 
-  return { id, codevoP95, vscodeP95: vscodeP95 ?? null, ratio, budget, status };
+  return { id, codevoP95, vscodeP95, ratio, budget, status };
+}
+
+function buildMissingCodevoRow(baselineScenario, tolerances) {
+  const id = baselineScenario.id;
+
+  return {
+    id,
+    codevoP95: null,
+    vscodeP95: normalizedNumber(baselineScenario.p95),
+    ratio: null,
+    budget: budgetForId(id, tolerances),
+    status: "no-result",
+  };
+}
+
+function normalizedNumber(value) {
+  return typeof value === "number" ? value : null;
+}
+
+function ratioFor(codevoP95, vscodeP95) {
+  if (typeof codevoP95 === "number" && typeof vscodeP95 === "number" && vscodeP95 > 0) {
+    return codevoP95 / vscodeP95;
+  }
+
+  return null;
 }
 
 function budgetForId(id, tolerances) {
@@ -33,7 +68,7 @@ function budgetForId(id, tolerances) {
 }
 
 function statusFor({ codevoScenario, baselineScenario, ratio, budget }) {
-  if (codevoScenario.skipped === true) {
+  if (codevoScenario.skipped === true || codevoScenario.status === "skipped") {
     return "skipped";
   }
 
@@ -41,7 +76,11 @@ function statusFor({ codevoScenario, baselineScenario, ratio, budget }) {
     return "no-baseline";
   }
 
-  if (ratio !== null && budget !== null && ratio > budget) {
+  if (budget === null) {
+    return "no-budget";
+  }
+
+  if (ratio !== null && ratio > budget) {
     return "fail";
   }
 
@@ -52,8 +91,17 @@ export function renderGapReportMarkdown(report) {
   const header = "| Scenario | Codevo p95 | VS Code p95 | Ratio | Budget | Status |";
   const divider = "| --- | --- | --- | --- | --- | --- |";
   const rows = report.rows.map(renderRow);
+  const lines = [header, divider, ...rows];
 
-  return [header, divider, ...rows].join("\n");
+  if (report.failedPaths?.length > 0) {
+    lines.push("", renderFailedPaths(report.failedPaths));
+  }
+
+  return lines.join("\n");
+}
+
+function renderFailedPaths(failedPaths) {
+  return `Failed paths: ${failedPaths.length} (${failedPaths.join(", ")})`;
 }
 
 function renderRow(row) {
