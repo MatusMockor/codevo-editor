@@ -1,6 +1,7 @@
 import { useCallback, type MutableRefObject } from "react";
 import {
   createLatencyTracker,
+  type LatencyOperationKind,
   type LatencySnapshotEntry,
   type LatencyTracker,
 } from "../../domain/latencyTracker";
@@ -49,11 +50,7 @@ export function useWorkbenchLatencyReporting({
   );
 
   const recordCompletionLatency = useCallback(
-    (
-      durationMs: number,
-      rootPath?: string,
-      feature: "completion" | "definition" = "completion",
-    ) => {
+    (durationMs: number, rootPath?: string, feature: LatencyOperationKind = "completion") => {
       const requestedRoot = rootPath ?? currentWorkspaceRootRef.current;
 
       if (!requestedRoot) {

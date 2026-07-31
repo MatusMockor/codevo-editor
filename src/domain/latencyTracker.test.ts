@@ -7,6 +7,24 @@ import {
   type LatencyOperationKind,
 } from "./latencyTracker";
 
+describe("latency operation kinds", () => {
+  it("includes references and rename with labels", () => {
+    expect(LATENCY_OPERATION_KINDS).toContain("references");
+    expect(LATENCY_OPERATION_KINDS).toContain("rename");
+    expect(latencyOperationLabel("references")).toBe("References");
+    expect(latencyOperationLabel("rename")).toBe("Rename");
+  });
+
+  it("records and snapshots the new kinds", () => {
+    const tracker = createLatencyTracker();
+    tracker.record("references", 12);
+    tracker.record("rename", 30);
+    const kinds = tracker.snapshot().map((entry) => entry.kind);
+    expect(kinds).toContain("references");
+    expect(kinds).toContain("rename");
+  });
+});
+
 describe("createLatencyTracker", () => {
   it("starts with no samples for any operation kind", () => {
     const tracker = createLatencyTracker();
@@ -169,6 +187,8 @@ describe("latencyOperationLabel", () => {
       "searchEverywhere",
       "definition",
       "completion",
+      "references",
+      "rename",
       "folderExpand",
       "debug-variables-render",
       "debug-console-append",
