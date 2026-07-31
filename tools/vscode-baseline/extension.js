@@ -25,17 +25,49 @@ async function runTimed(repetitions, operation) {
   return { samples, outcomes };
 }
 
-function measurement(id, samples, method) {
+function measurement(id, samples, method, resultCounts) {
   const { p50, p95 } = percentilesFromSamples(samples);
-  return { id, unit: "ms", samples, p50, p95, method };
+  const base = { id, unit: "ms", samples, p50, p95, method };
+  if (resultCounts === undefined) {
+    return base;
+  }
+  return { ...base, resultCounts };
 }
 
-function assertResultBearing(id, outcomes, isNonEmpty) {
-  const hasResult = outcomes.some(isNonEmpty);
-  if (hasResult) {
+function assertResultBearing(id, resultCounts) {
+  const allNonEmpty = resultCounts.every((count) => count > 0);
+  if (allNonEmpty) {
     return;
   }
-  throw new Error(id + " resolved with no results across " + outcomes.length + " repetitions");
+  throw new Error(id + " returned an empty result on at least one repetition (counts: " + resultCounts.join(",") + ")");
+}
+
+function completionCount(list) {
+  if (list && Array.isArray(list.items)) {
+    return list.items.length;
+  }
+  return 0;
+}
+
+function locationsCount(locations) {
+  if (Array.isArray(locations)) {
+    return locations.length;
+  }
+  return 0;
+}
+
+function renameEditCount(edit) {
+  if (edit && typeof edit.size === "number") {
+    return edit.size;
+  }
+  return 0;
+}
+
+function filesCount(files) {
+  if (Array.isArray(files)) {
+    return files.length;
+  }
+  return 0;
 }
 
 async function captureScenario(results, id, operation) {
@@ -71,11 +103,12 @@ async function captureTypingScenario(results, root, id, filename) {
   });
 }
 
-async function captureProviderScenario(results, id, repetitions, method, operation, isNonEmpty) {
+async function captureProviderScenario(results, id, repetitions, method, operation, getCount) {
   await captureScenario(results, id, async () => {
     const { samples, outcomes } = await runTimed(repetitions, operation);
-    assertResultBearing(id, outcomes, isNonEmpty);
-    return measurement(id, samples, method);
+    const resultCounts = outcomes.map(getCount);
+    assertResultBearing(id, resultCounts);
+    return measurement(id, samples, method, resultCounts);
   });
 }
 
@@ -163,7 +196,7 @@ async function runLargeFilesScenarios(root) {
     10,
     "executeCompletionItemProvider",
     async () => vscode.commands.executeCommand("vscode.executeCompletionItemProvider", uri, completionPosition),
-    (list) => Boolean(list && Array.isArray(list.items) && list.items.length > 0),
+    completionCount,
   );
 
   if (targets.length > 0) {
@@ -178,7 +211,7 @@ async function runLargeFilesScenarios(root) {
           uri,
           targets[index % targets.length].refPosition,
         ),
-      (locations) => Array.isArray(locations) && locations.length > 0,
+      locationsCount,
     );
     await captureProviderScenario(
       results,
@@ -191,7 +224,7 @@ async function runLargeFilesScenarios(root) {
           uri,
           targets[index % targets.length].declPosition,
         ),
-      (locations) => Array.isArray(locations) && locations.length > 0,
+      locationsCount,
     );
     await captureProviderScenario(
       results,
@@ -207,7 +240,7 @@ async function runLargeFilesScenarios(root) {
           target.name + "Renamed" + index,
         );
       },
-      (edit) => Boolean(edit && edit.size > 0),
+      renameEditCount,
     );
   }
   return results;
@@ -221,13 +254,17 @@ async function runMonorepoScenarios() {
     10,
     "findFiles-proxy",
     async () => vscode.workspace.findFiles("**/file-0*.ts", "**/node_modules/**", 200),
-    (files) => Array.isArray(files) && files.length > 0,
+    filesCount,
   );
   return results;
 }
 
 async function runScenarios() {
-  const root = vscode.workspace.workspaceFolders[0].uri.fsPath;
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return [{ id: "harness", error: "no workspace folder is open" }];
+  }
+  const root = folders[0].uri.fsPath;
   const isLargeFilesRoot = fs.existsSync(path.join(root, "large-20k.ts"));
   if (isLargeFilesRoot) {
     return runLargeFilesScenarios(root);
@@ -242,14 +279,13 @@ function activate(context) {
     try {
       scenarios = await runScenarios();
     } catch (error) {
-      const root = vscode.workspace.workspaceFolders[0].uri.fsPath;
-      const isLargeFilesRoot = fs.existsSync(path.join(root, "large-20k.ts"));
-      const id = isLargeFilesRoot ? "typing-large-5k" : "quickopen-monorepo";
-      scenarios = [{ id, error: String(error && error.message || error) }];
+      scenarios = [{ id: "harness", error: String((error && error.message) || error) }];
     } finally {
       const outPath = process.env.CODEVO_BASELINE_OUT;
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, JSON.stringify({ scenarios }, null, 2) + "\n");
+      if (outPath) {
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, JSON.stringify({ scenarios }, null, 2) + "\n");
+      }
       await vscode.commands.executeCommand("workbench.action.closeWindow");
     }
   })();

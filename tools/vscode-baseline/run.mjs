@@ -9,6 +9,22 @@ const repoRoot = path.resolve(path.dirname(scriptPath), "../..");
 const extensionDir = path.join(repoRoot, "tools/vscode-baseline");
 const largeFilesRoot = path.join(repoRoot, "perf/fixtures/large-files");
 const monorepoRoot = path.join(repoRoot, "perf/fixtures/monorepo");
+const EXPECTED_SCENARIO_IDS = [
+  "typing-large-5k",
+  "typing-large-20k",
+  "typing-large-100k",
+  "tab-switch-cycle",
+  "completion-large-20k",
+  "definition-large-20k",
+  "references-large-20k",
+  "rename-large-20k",
+  "quickopen-monorepo",
+];
+
+function findMissingScenarioIds(scenarios) {
+  const presentIds = new Set(scenarios.map((scenario) => scenario.id));
+  return EXPECTED_SCENARIO_IDS.filter((id) => !presentIds.has(id));
+}
 
 function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -91,16 +107,26 @@ async function main() {
   const capturedAt = new Date().toISOString();
   const merged = { capturedAt, vscodeVersion, scenarios: allScenarios };
   const baselinesDir = path.join(repoRoot, "perf/baselines");
+  const finalPath = path.join(baselinesDir, "vscode.json");
+  const tempPath = finalPath + ".tmp-" + process.pid;
   fs.mkdirSync(baselinesDir, { recursive: true });
-  fs.writeFileSync(path.join(baselinesDir, "vscode.json"), JSON.stringify(merged, null, 2) + "\n");
+  fs.writeFileSync(tempPath, JSON.stringify(merged, null, 2) + "\n");
 
-  const failedEntries = [...allScenarios.filter((scenario) => Object.prototype.hasOwnProperty.call(scenario, "error")), ...failures];
+  const missingIds = findMissingScenarioIds(allScenarios);
+  const failedEntries = [
+    ...allScenarios.filter((scenario) => Object.prototype.hasOwnProperty.call(scenario, "error")),
+    ...failures,
+    ...missingIds.map((id) => ({ id, error: "scenario missing from captured output" })),
+  ];
   if (failedEntries.length > 0) {
     for (const failure of failedEntries) {
       console.error(failure.id + ": " + failure.error);
     }
+    fs.rmSync(tempPath, { force: true });
     process.exit(1);
   }
+
+  fs.renameSync(tempPath, finalPath);
 
   console.log("Captured VS Code baseline scenarios:");
   for (const scenario of allScenarios) {
