@@ -63,16 +63,16 @@
       "structuralTokens": 6637
     },
     "src/application/useWorkbenchController.ts": {
-      "rawLines": 8221,
-      "structuralTokens": 29558
+      "rawLines": 8256,
+      "structuralTokens": 29562
     },
     "src/components/EditorSurface.tsx": {
-      "rawLines": 2506,
-      "structuralTokens": 10345
+      "rawLines": 2507,
+      "structuralTokens": 10350
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
-      "rawLines": 2697,
-      "structuralTokens": 11284
+      "rawLines": 2698,
+      "structuralTokens": 11289
     },
     "src/components/languageServerMonacoProviders.ts": {
       "rawLines": 2972,
