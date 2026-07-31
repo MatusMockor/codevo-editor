@@ -1506,12 +1506,16 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const { forgetLatencyTrackerForRoot, getLatencySnapshot, recordCompletionLatency } =
-    useWorkbenchLatencyReporting({
-      currentWorkspaceRootRef,
-      latencyTrackersByRootRef,
-      latencyTrackerForRoot,
-    });
+  const {
+    clearLatencyMetrics,
+    forgetLatencyTrackerForRoot,
+    getLatencySnapshot,
+    recordCompletionLatency,
+  } = useWorkbenchLatencyReporting({
+    currentWorkspaceRootRef,
+    latencyTrackersByRootRef,
+    latencyTrackerForRoot,
+  });
 
   const {
     applyAppSettings,
@@ -8160,6 +8164,7 @@ export function useWorkbenchController(
     nodePackageScripts,
     vscodeProcessTasks: vscodeProcessTaskComposition.state,
     openNodePackageScript,
+    clearLatencyMetrics,
     getLatencySnapshot,
     recordCompletionLatency,
     reportCommandError,

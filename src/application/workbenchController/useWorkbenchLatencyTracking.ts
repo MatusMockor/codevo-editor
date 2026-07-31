@@ -38,6 +38,17 @@ export function useWorkbenchLatencyReporting({
 }: UseWorkbenchLatencyTrackingOptions & {
   readonly latencyTrackerForRoot: (rootPath: string) => LatencyTracker;
 }) {
+  const clearLatencyMetrics = useCallback(() => {
+    const requestedRoot = currentWorkspaceRootRef.current;
+
+    if (!requestedRoot) {
+      return;
+    }
+
+    const rootKey = normalizedWorkspaceRootKey(requestedRoot);
+    latencyTrackersByRootRef.current[rootKey]?.clear();
+  }, [currentWorkspaceRootRef, latencyTrackersByRootRef]);
+
   const forgetLatencyTrackerForRoot = useCallback(
     (rootPath: string | null | undefined) => {
       const rootKey = normalizedWorkspaceRootKey(rootPath);
@@ -74,6 +85,7 @@ export function useWorkbenchLatencyReporting({
   }, [currentWorkspaceRootRef, latencyTrackersByRootRef]);
 
   return {
+    clearLatencyMetrics,
     forgetLatencyTrackerForRoot,
     getLatencySnapshot,
     recordCompletionLatency,
