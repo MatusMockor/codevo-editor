@@ -18,6 +18,7 @@
     "format:check": "prettier --check eslint.config.js .github/workflows/*.yml package.json vite.config.ts scripts/check-clippy-warning-budget.mjs scripts/check-changed-format.mjs scripts/check-exhaustive-deps-budget.mjs scripts/check-exhaustive-deps-budget.test.mjs scripts/check-hotspot-size-budget.mjs scripts/check-hotspot-size-budget.test.mjs scripts/check-rust-format.mjs scripts/check-rust-format.test.mjs scripts/hotspot-size-baseline.json scripts/react-hooks-exhaustive-deps-baseline.json",
     "format:check:changed": "node ./scripts/check-changed-format.mjs",
     "format:rust:check": "node ./scripts/check-rust-format.mjs",
+    "perf:fixtures": "node ./scripts/perf/generate-fixtures.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "debug": "node ./scripts/debug-tauri.mjs",
