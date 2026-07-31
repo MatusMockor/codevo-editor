@@ -7,6 +7,9 @@ export interface PerfScenarioBridgeHost {
   readonly getLatencySnapshot: () => LatencySnapshotEntry[];
   readonly clearLatencyMetrics: () => void;
   readonly setActivePath: (path: string) => void;
+  readonly quickOpenLoading: boolean;
+  readonly setQuickOpenOpen: (isOpen: boolean) => void;
+  readonly setQuickOpenQuery: (query: string) => void;
 }
 
 export interface PerfMonacoEditorApi {
@@ -53,6 +56,13 @@ export function usePerfScenarioBridgeInstall(
         activateDocument: (path) => {
           hostRef.current.setActivePath(path);
         },
+        setQuickOpenOpen: (isOpen) => {
+          hostRef.current.setQuickOpenOpen(isOpen);
+        },
+        setQuickOpenQuery: (query) => {
+          hostRef.current.setQuickOpenQuery(query);
+        },
+        isQuickOpenLoading: () => hostRef.current.quickOpenLoading,
         getActiveEditor: () => {
           const editors = monaco.editor.getEditors();
 

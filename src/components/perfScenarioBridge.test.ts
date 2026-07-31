@@ -37,6 +37,50 @@ function createRecordingEditor(actionIds: readonly string[] = []): RecordingEdit
   return { typed, ranActions, editor };
 }
 
+interface FakeQuickOpen {
+  readonly events: string[];
+  readonly frames: () => number;
+  readonly scheduleFrame: (callback: () => void) => void;
+  readonly setQuickOpenOpen: (isOpen: boolean) => void;
+  readonly setQuickOpenQuery: (query: string) => void;
+  readonly isQuickOpenLoading: () => boolean;
+}
+
+function createFakeQuickOpen(timing: {
+  loadingStartsAfter: number;
+  loadingEndsAfter: number;
+}): FakeQuickOpen {
+  const events: string[] = [];
+  let frame = 0;
+  let queryFrame: number | null = null;
+
+  return {
+    events,
+    frames: () => frame,
+    scheduleFrame: (callback) => {
+      frame += 1;
+      callback();
+    },
+    setQuickOpenOpen: (isOpen) => {
+      events.push(`open:${String(isOpen)}`);
+      queryFrame = null;
+    },
+    setQuickOpenQuery: (query) => {
+      events.push(`query:${query}`);
+      queryFrame = frame;
+    },
+    isQuickOpenLoading: () => {
+      if (queryFrame === null) {
+        return false;
+      }
+
+      const elapsed = frame - queryFrame;
+
+      return elapsed >= timing.loadingStartsAfter && elapsed < timing.loadingEndsAfter;
+    },
+  };
+}
+
 describe("perfScenarioBridgeEnabled", () => {
   it("is disabled outside DEV", () => {
     expect(perfScenarioBridgeEnabled({ DEV: false, VITE_CODEVO_PERF_BRIDGE: "1" }, null)).toBe(
@@ -74,6 +118,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -91,6 +138,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument,
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -112,6 +162,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument,
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -130,6 +183,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -147,6 +203,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => recording.editor,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: (callback) => {
@@ -171,6 +230,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => recording.editor,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -182,12 +244,103 @@ describe("installPerfScenarioBridge", () => {
     dispose();
   });
 
+  it("drives a real quick open search and reports that it settled", async () => {
+    const quickOpen = createFakeQuickOpen({ loadingStartsAfter: 1, loadingEndsAfter: 4 });
+    const dispose = installPerfScenarioBridge({
+      getLatencySnapshot: () => [],
+      clearLatencyMetrics: () => {},
+      activateDocument: () => {},
+      setQuickOpenOpen: quickOpen.setQuickOpenOpen,
+      setQuickOpenQuery: quickOpen.setQuickOpenQuery,
+      isQuickOpenLoading: quickOpen.isQuickOpenLoading,
+      getActiveEditor: () => null,
+      getRetainedCounts: () => ({ models: 0, editors: 0 }),
+      scheduleFrame: quickOpen.scheduleFrame,
+      now: () => 0,
+    });
+
+    await expect(window.__codevoPerf!.runQuickOpenQuery("moduleA")).resolves.toBe(true);
+
+    expect(quickOpen.events).toEqual(["open:true", "query:moduleA", "open:false"]);
+    expect(quickOpen.frames()).toBe(4);
+    dispose();
+  });
+
+  it("records no latency of its own for a quick open search", async () => {
+    const quickOpen = createFakeQuickOpen({ loadingStartsAfter: 1, loadingEndsAfter: 2 });
+    const clearLatencyMetrics = vi.fn();
+    const dispose = installPerfScenarioBridge({
+      getLatencySnapshot: () => [],
+      clearLatencyMetrics,
+      activateDocument: () => {},
+      setQuickOpenOpen: quickOpen.setQuickOpenOpen,
+      setQuickOpenQuery: quickOpen.setQuickOpenQuery,
+      isQuickOpenLoading: quickOpen.isQuickOpenLoading,
+      getActiveEditor: () => null,
+      getRetainedCounts: () => ({ models: 0, editors: 0 }),
+      scheduleFrame: quickOpen.scheduleFrame,
+      now: () => 0,
+    });
+
+    await window.__codevoPerf!.runQuickOpenQuery("pkg-3");
+
+    expect(window.__codevoPerf!.getLatencySnapshot()).toEqual([]);
+    expect(clearLatencyMetrics).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("reports failure and closes quick open when no search ever starts", async () => {
+    const quickOpen = createFakeQuickOpen({ loadingStartsAfter: 5000, loadingEndsAfter: 5001 });
+    const dispose = installPerfScenarioBridge({
+      getLatencySnapshot: () => [],
+      clearLatencyMetrics: () => {},
+      activateDocument: () => {},
+      setQuickOpenOpen: quickOpen.setQuickOpenOpen,
+      setQuickOpenQuery: quickOpen.setQuickOpenQuery,
+      isQuickOpenLoading: quickOpen.isQuickOpenLoading,
+      getActiveEditor: () => null,
+      getRetainedCounts: () => ({ models: 0, editors: 0 }),
+      scheduleFrame: quickOpen.scheduleFrame,
+      now: () => 0,
+    });
+
+    await expect(window.__codevoPerf!.runQuickOpenQuery("never")).resolves.toBe(false);
+
+    expect(quickOpen.frames()).toBe(600);
+    expect(quickOpen.events[quickOpen.events.length - 1]).toBe("open:false");
+    dispose();
+  });
+
+  it("reports failure when a search starts but never settles within the frame cap", async () => {
+    const quickOpen = createFakeQuickOpen({ loadingStartsAfter: 1, loadingEndsAfter: 5000 });
+    const dispose = installPerfScenarioBridge({
+      getLatencySnapshot: () => [],
+      clearLatencyMetrics: () => {},
+      activateDocument: () => {},
+      setQuickOpenOpen: quickOpen.setQuickOpenOpen,
+      setQuickOpenQuery: quickOpen.setQuickOpenQuery,
+      isQuickOpenLoading: quickOpen.isQuickOpenLoading,
+      getActiveEditor: () => null,
+      getRetainedCounts: () => ({ models: 0, editors: 0 }),
+      scheduleFrame: quickOpen.scheduleFrame,
+      now: () => 0,
+    });
+
+    await expect(window.__codevoPerf!.runQuickOpenQuery("stuck")).resolves.toBe(false);
+
+    expect(quickOpen.frames()).toBe(600);
+    dispose();
+  });
+
   it("runs an available editor action and reports missing ones", async () => {
     const recording = createRecordingEditor(["editor.action.formatDocument"]);
     const dispose = installPerfScenarioBridge({
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => recording.editor,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -208,6 +361,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -231,6 +387,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => snapshot,
       clearLatencyMetrics,
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -248,6 +407,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models, editors: 1 }),
       scheduleFrame: immediateFrame,
@@ -264,6 +426,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -281,6 +446,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,
@@ -290,6 +458,9 @@ describe("installPerfScenarioBridge", () => {
       getLatencySnapshot: () => [],
       clearLatencyMetrics: () => {},
       activateDocument: () => {},
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
+      isQuickOpenLoading: () => false,
       getActiveEditor: () => null,
       getRetainedCounts: () => ({ models: 0, editors: 0 }),
       scheduleFrame: immediateFrame,

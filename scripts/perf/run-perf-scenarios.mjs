@@ -41,6 +41,9 @@ async function main() {
     capturedAt,
     bridgeResults: result.bridgeResults,
     trackerSnapshot: result.trackerSnapshot,
+    retainedCounts: result.retainedCounts ?? null,
+    memorySample: result.memorySample ?? null,
+    failedPaths: result.failedPaths ?? [],
     fixtureVersion: FIXTURE_VERSION,
   });
   const resultsDirectory = path.join(repoRoot, "perf/results");
@@ -50,6 +53,18 @@ async function main() {
   await writeFile(resultPath, `${JSON.stringify(shaped, null, 2)}\n`, "utf8");
   printSummary(shaped, result.trackerSnapshot);
   console.log(`Wrote ${resultPath}`);
+
+  if (shaped.failedPaths.length > 0) {
+    console.error(
+      `Performance run failed: ${shaped.failedPaths.length} fixture path(s) could not be opened:`,
+    );
+
+    for (const failedPath of shaped.failedPaths) {
+      console.error(`  ${failedPath}`);
+    }
+
+    process.exitCode = 1;
+  }
 
   if (hasEmptyNonSkippedScenario(shaped, result.trackerSnapshot, args.smoke)) {
     console.error("Performance run failed: one or more non-skipped scenarios have zero samples.");
@@ -225,6 +240,10 @@ function scenarioSummary(scenario, trackerSnapshot) {
     return `skipped: ${scenario.reason}`;
   }
 
+  if (scenario.id === "memory-sample") {
+    return memorySampleSummary(scenario);
+  }
+
   if (scenario.samples) {
     return scenario.samples.length;
   }
@@ -233,9 +252,21 @@ function scenarioSummary(scenario, trackerSnapshot) {
   return tracker?.stats.count ?? 0;
 }
 
+function memorySampleSummary(scenario) {
+  const models = scenario.retainedCounts?.models ?? "-";
+  const editors = scenario.retainedCounts?.editors ?? "-";
+  const heap = scenario.memorySample?.usedJsHeapBytes ?? "unavailable";
+
+  return `models ${models}, editors ${editors}, heap ${heap}`;
+}
+
 function hasEmptyNonSkippedScenario(shaped, trackerSnapshot, smoke) {
   return shaped.scenarios.some((scenario) => {
     if (scenario.status === "skipped") {
+      return false;
+    }
+
+    if (scenario.id === "memory-sample") {
       return false;
     }
 

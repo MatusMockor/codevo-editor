@@ -3,6 +3,7 @@ import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 
 const MAX_TYPED_CHARACTERS = 2000;
 const MAX_TAB_SWITCHES = 200;
+const MAX_QUICK_OPEN_FRAMES = 600;
 const PERF_BRIDGE_STORAGE_KEY = "codevo.perfBridge";
 
 export interface PerfRetainedCounts {
@@ -19,6 +20,7 @@ export interface PerfScenarioBridge {
   clearLatencyMetrics(): void;
   typeTextInActiveEditor(text: string): Promise<number[]>;
   measureTabSwitches(paths: readonly string[]): Promise<number[]>;
+  runQuickOpenQuery(query: string): Promise<boolean>;
   runEditorAction(actionId: string): Promise<boolean>;
   getRetainedCounts(): PerfRetainedCounts;
   getMemorySample(): PerfMemorySample;
@@ -58,6 +60,9 @@ export interface PerfScenarioBridgeDependencies {
   readonly getLatencySnapshot: () => LatencySnapshotEntry[];
   readonly clearLatencyMetrics: () => void;
   readonly activateDocument: (path: string) => void;
+  readonly setQuickOpenOpen: (isOpen: boolean) => void;
+  readonly setQuickOpenQuery: (query: string) => void;
+  readonly isQuickOpenLoading: () => boolean;
   readonly getActiveEditor: () => MonacoEditor.ICodeEditor | null;
   readonly getRetainedCounts: () => PerfRetainedCounts;
   readonly scheduleFrame?: (callback: () => void) => void;
@@ -137,6 +142,33 @@ export function createPerfScenarioBridge(
       }
 
       return durations;
+    },
+    async runQuickOpenQuery(query: string): Promise<boolean> {
+      dependencies.setQuickOpenOpen(true);
+      dependencies.setQuickOpenQuery(query);
+
+      let sawLoading = false;
+
+      for (let tick = 0; tick < MAX_QUICK_OPEN_FRAMES; tick += 1) {
+        await nextFrame(scheduleFrame);
+
+        if (dependencies.isQuickOpenLoading()) {
+          sawLoading = true;
+          continue;
+        }
+
+        if (!sawLoading) {
+          continue;
+        }
+
+        dependencies.setQuickOpenOpen(false);
+
+        return true;
+      }
+
+      dependencies.setQuickOpenOpen(false);
+
+      return false;
     },
     async runEditorAction(actionId: string): Promise<boolean> {
       const action = dependencies.getActiveEditor()?.getAction(actionId);

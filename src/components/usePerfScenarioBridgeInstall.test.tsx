@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { editor as MonacoEditor } from "monaco-editor";
+import { resolveInReactAct } from "../test/reactTestLifecycle";
 import {
   usePerfScenarioBridgeInstall,
   type PerfMonacoEditorApi,
@@ -56,11 +57,73 @@ function mountBridgeHost(
   });
 }
 
+interface QuickOpenTrace {
+  readonly opened: boolean[];
+  readonly queries: string[];
+}
+
+function quickOpenHost(trace: QuickOpenTrace, loadingFrames: number): PerfScenarioBridgeHost {
+  let remainingLoadingReads = 0;
+
+  return {
+    getLatencySnapshot: () => [],
+    clearLatencyMetrics: () => {},
+    setActivePath: () => {},
+    get quickOpenLoading() {
+      if (remainingLoadingReads <= 0) {
+        return false;
+      }
+
+      remainingLoadingReads -= 1;
+
+      return true;
+    },
+    setQuickOpenOpen: (isOpen) => {
+      trace.opened.push(isOpen);
+      remainingLoadingReads = 0;
+    },
+    setQuickOpenQuery: (query) => {
+      trace.queries.push(query);
+      remainingLoadingReads = loadingFrames;
+    },
+  };
+}
+
+function HostProbe({ host }: { host: PerfScenarioBridgeHost }) {
+  usePerfScenarioBridgeInstall(host, stableEditorApiLoader);
+
+  return null;
+}
+
+function stableEditorApiLoader(): Promise<PerfMonacoEditorApi> {
+  return Promise.resolve(fakeEditorApi([], 0));
+}
+
+function mountHostProbe(host: PerfScenarioBridgeHost): (next: PerfScenarioBridgeHost) => void {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  mountedRoot = root;
+
+  const render = (next: PerfScenarioBridgeHost) => {
+    act(() => {
+      root.render(createElement(HostProbe, { host: next }));
+    });
+  };
+
+  render(host);
+
+  return render;
+}
+
 function silentHost(): PerfScenarioBridgeHost {
   return {
     getLatencySnapshot: () => [],
     clearLatencyMetrics: () => {},
     setActivePath: () => {},
+    quickOpenLoading: false,
+    setQuickOpenOpen: () => {},
+    setQuickOpenQuery: () => {},
   };
 }
 
@@ -107,6 +170,9 @@ describe("usePerfScenarioBridgeInstall", () => {
       ],
       clearLatencyMetrics,
       setActivePath,
+      quickOpenLoading: false,
+      setQuickOpenOpen: () => {},
+      setQuickOpenQuery: () => {},
     });
     await waitForBridge();
 
@@ -135,6 +201,36 @@ describe("usePerfScenarioBridgeInstall", () => {
     expect(ranOnUnfocused).toEqual([]);
     expect(window.__codevoPerf!.getRetainedCounts()).toEqual({ models: 3, editors: 2 });
   });
+
+  it("drives the host quick open surface on real animation frames", async () => {
+    window.localStorage.setItem("codevo.perfBridge", "1");
+    const trace: QuickOpenTrace = { opened: [], queries: [] };
+    mountBridgeHost(() => Promise.resolve(fakeEditorApi([], 0)), quickOpenHost(trace, 2));
+    await waitForBridge();
+
+    const settled = await resolveInReactAct(() =>
+      window.__codevoPerf!.runQuickOpenQuery("moduleA"),
+    );
+
+    expect(settled).toBe(true);
+    expect(trace.queries).toEqual(["moduleA"]);
+    expect(trace.opened).toEqual([true, false]);
+  }, 20000);
+
+  it("keeps reading the latest committed host after a re-render", async () => {
+    window.localStorage.setItem("codevo.perfBridge", "1");
+    const renamedSnapshot = [
+      { kind: "rename" as const, stats: { count: 2, last: 8, min: 8, max: 8, median: 8, p95: 8 } },
+    ];
+    const renderHostProbe = mountHostProbe(silentHost());
+    await waitForBridge();
+
+    expect(window.__codevoPerf!.getLatencySnapshot()).toEqual([]);
+
+    renderHostProbe({ ...silentHost(), getLatencySnapshot: () => renamedSnapshot });
+
+    expect(window.__codevoPerf!.getLatencySnapshot()).toEqual(renamedSnapshot);
+  }, 20000);
 
   it("removes the bridge on unmount", async () => {
     window.localStorage.setItem("codevo.perfBridge", "1");

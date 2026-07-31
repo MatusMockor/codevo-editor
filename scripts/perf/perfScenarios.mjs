@@ -28,6 +28,9 @@ export function shapeRunResult({
   capturedAt,
   bridgeResults = [],
   trackerSnapshot = [],
+  retainedCounts = null,
+  memorySample = null,
+  failedPaths = [],
   fixtureVersion,
 }) {
   const bridgeScenarios = bridgeResults.map(({ id, samples }) => ({
@@ -63,10 +66,18 @@ export function shapeRunResult({
     },
   );
 
+  const memoryScenario = {
+    id: "memory-sample",
+    unit: "count-bytes",
+    retainedCounts,
+    memorySample,
+  };
+
   return {
     capturedAt,
     fixtureVersion,
-    scenarios: [...bridgeScenarios, ...trackerScenarios],
+    failedPaths,
+    scenarios: [...bridgeScenarios, ...trackerScenarios, memoryScenario],
   };
 }
 
@@ -87,6 +98,7 @@ export function inPagePerfRunnerSource() {
   const perf = largeFileBridges.perf;
   const bridgeResults = [];
   const trackerSnapshot = [];
+  const failedPaths = [];
   const largeFileNames = ["large-5k.ts", "large-20k.ts", "large-100k.ts", "minified.ts", "huge-union.ts"];
   const largeFilePaths = largeFileNames.map((name) => joinPath(options.largeFilesRoot, name));
   const typingScenarios = [
@@ -97,7 +109,7 @@ export function inPagePerfRunnerSource() {
   const selectedTypingScenarios = options.smoke ? typingScenarios.slice(0, 1) : typingScenarios;
 
   for (const scenario of selectedTypingScenarios) {
-    await qa.openWorkspaceFile(scenario.path);
+    await openFile(qa, scenario.path);
     setMidFileCursor(qa);
     perf.clearLatencyMetrics();
     const samples = [];
@@ -111,7 +123,7 @@ export function inPagePerfRunnerSource() {
   }
 
   for (const path of largeFilePaths) {
-    await qa.openWorkspaceFile(path);
+    await openFile(qa, path);
   }
 
   const switchPaths = [];
@@ -130,12 +142,13 @@ export function inPagePerfRunnerSource() {
     return {
       bridgeResults,
       trackerSnapshot: [],
+      failedPaths,
       retainedCounts: perf.getRetainedCounts(),
-      memorySample: null,
+      memorySample: perf.getMemorySample(),
     };
   }
 
-  await qa.openWorkspaceFile(largeFilePaths[1]);
+  await openFile(qa, largeFilePaths[1]);
   setIdentifierCursor(qa);
   perf.clearLatencyMetrics();
 
@@ -162,14 +175,20 @@ export function inPagePerfRunnerSource() {
   const monorepoQa = monorepoBridges.qa;
   const monorepoPerf = monorepoBridges.perf;
   monorepoPerf.clearLatencyMetrics();
-  const deepPaths = [1, 6, 12, 18, 24, 30, 35, 40, 45, 50].map((packageNumber, index) => {
+  const deepPaths = [1, 6, 12, 18, 24, 30, 35, 40, 45, 49].map((packageNumber, index) => {
     const packageLabel = String(packageNumber).padStart(2, "0");
     const fileLabel = String(index + 1).padStart(3, "0");
     return joinPath(options.monorepoRoot, "packages/pkg-" + packageLabel + "/src/extra/file-" + fileLabel + ".ts");
   });
 
   for (const path of deepPaths) {
-    await monorepoQa.openWorkspaceFile(path);
+    await openFile(monorepoQa, path);
+  }
+
+  const quickOpenQueries = ["file-01", "moduleA", "pkg-3", "index", "moduleB", "extra", "file-05", "pkg-4", "large", "tsconfig"];
+
+  for (const query of quickOpenQueries) {
+    await monorepoPerf.runQuickOpenQuery(query);
   }
 
   captureTrackerKinds(monorepoPerf, trackerSnapshot, ["quickOpen"]);
@@ -177,9 +196,24 @@ export function inPagePerfRunnerSource() {
   return {
     bridgeResults,
     trackerSnapshot,
+    failedPaths,
     retainedCounts: monorepoPerf.getRetainedCounts(),
     memorySample: monorepoPerf.getMemorySample(),
   };
+
+  async function openFile(bridge, path) {
+    const opened = await bridge.openWorkspaceFile(path);
+
+    if (opened) {
+      return true;
+    }
+
+    if (!failedPaths.includes(path)) {
+      failedPaths.push(path);
+    }
+
+    return false;
+  }
 
   function setMidFileCursor(bridge) {
     const source = bridge.getValue() || "";
