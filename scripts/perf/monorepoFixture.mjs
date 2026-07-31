@@ -64,7 +64,14 @@ function writePackage({ root, fs, index }) {
     path.join(dir, "tsconfig.json"),
     JSON.stringify(
       {
-        compilerOptions: { composite: true, strict: true, module: "esnext", moduleResolution: "bundler" },
+        compilerOptions: {
+          composite: true,
+          strict: true,
+          module: "esnext",
+          moduleResolution: "bundler",
+          baseUrl: ".",
+          paths: { "@perf/*": ["../*/src"] },
+        },
         include: ["src"],
         references,
       },

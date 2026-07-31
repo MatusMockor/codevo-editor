@@ -30,6 +30,8 @@ describe("writeMonorepoFixture", () => {
     writeMonorepoFixture({ rootDir: "/fx", fs });
     const tsconfig = JSON.parse(volume.readFileSync("/fx/monorepo/packages/pkg-10/tsconfig.json", "utf8"));
     expect(tsconfig.references.length).toBeGreaterThan(0);
+    expect(tsconfig.compilerOptions.baseUrl).toBe(".");
+    expect(tsconfig.compilerOptions.paths["@perf/*"]).toEqual(["../*/src"]);
     const moduleA = volume.readFileSync("/fx/monorepo/packages/pkg-10/src/moduleA.ts", "utf8");
     expect(moduleA).toContain("@perf/pkg-");
     const barrel = volume.readFileSync("/fx/monorepo/packages/pkg-10/src/index.ts", "utf8");
