@@ -81,7 +81,7 @@ function writePackage({ root, fs, index }) {
   fs.writeFileSync(path.join(srcDir, "moduleB.ts"), moduleBody);
   fs.writeFileSync(
     path.join(srcDir, "index.ts"),
-    ['export * from "./moduleA";', 'export * from "./moduleB";', ""].join("\n"),
+    ['export * from "./moduleA";', 'export * as moduleB from "./moduleB";', ""].join("\n"),
   );
   for (let f = 0; f < EXTRA_FILES_PER_PACKAGE; f += 1) {
     const extraRandom = createSeededRandom(index * 1000 + f);

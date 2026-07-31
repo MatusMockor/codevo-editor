@@ -34,6 +34,7 @@ describe("writeMonorepoFixture", () => {
     expect(moduleA).toContain("@perf/pkg-");
     const barrel = volume.readFileSync("/fx/monorepo/packages/pkg-10/src/index.ts", "utf8");
     expect(barrel).toContain("export * from \"./moduleA\";");
+    expect(barrel).toContain("export * as moduleB from \"./moduleB\";");
   });
 
   it("is deterministic", () => {
