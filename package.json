@@ -19,6 +19,7 @@
     "format:check:changed": "node ./scripts/check-changed-format.mjs",
     "format:rust:check": "node ./scripts/check-rust-format.mjs",
     "perf:fixtures": "node ./scripts/perf/generate-fixtures.mjs",
+    "perf:report": "node ./scripts/perf/gap-report.mjs",
     "perf:run": "node ./scripts/perf/run-perf-scenarios.mjs",
     "perf:smoke": "node ./scripts/perf/run-perf-scenarios.mjs --smoke",
     "preview": "vite preview",
