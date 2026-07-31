@@ -1,0 +1,9 @@
+{
+  "name": "codevo-vscode-baseline",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "codevo",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"]
+}
