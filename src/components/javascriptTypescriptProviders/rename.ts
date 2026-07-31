@@ -3,6 +3,7 @@ import type {
   JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerWorkspaceEdit,
 } from "../../domain/languageServerFeatures";
+import type { LatencyOperationKind } from "../../domain/latencyTracker";
 import type { JavaScriptTypeScriptProviderRequestBoundary } from "./requestBoundary";
 import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
@@ -15,6 +16,7 @@ interface RenameContext {
   applyWorkspaceEdit?: unknown;
   cancelRequest?: JavaScriptTypeScriptProviderRequestCancellationPort;
   featuresGateway: Pick<JavaScriptTypeScriptLanguageServerFeaturesGateway, "identifiedRequests">;
+  recordLatency?(feature: LatencyOperationKind, durationMs: number, rootPath: string): void;
 }
 
 export interface JavaScriptTypeScriptRenameDependencies<Context> {
@@ -56,6 +58,7 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
     if (!identifiedRequests?.rename) {
       return null;
     }
+    const startedAt = performance.now();
     const edit = await runBoundedJavaScriptTypeScriptProviderRequest(
       identifiedRequests.rename(request.rootPath, request.position, newName, request.sessionId),
       request.sessionId,
@@ -74,6 +77,7 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
     ) {
       return null;
     }
+    context.recordLatency?.("rename", performance.now() - startedAt, request.rootPath);
     if (!dependencies.editIsFullyInRoot(edit, request.rootPath)) {
       return null;
     }

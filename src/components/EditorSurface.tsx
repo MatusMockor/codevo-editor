@@ -76,6 +76,7 @@ import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnosti
 import type { GitBlameLine } from "../domain/git";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import type { LatencyOperationKind } from "../domain/latencyTracker";
 import type {
   PhpSyntaxDiagnostic,
   PhpSyntaxDiagnosticsGateway,
@@ -335,7 +336,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   onRecordCompletionLatency?(
     durationMs: number,
     rootPath?: string,
-    feature?: "completion" | "definition",
+    feature?: LatencyOperationKind,
   ): void;
   onLocalPhpDiagnosticsChange?(path: string, diagnostics: LanguageServerDiagnostic[]): void;
   onRevealTargetHandled(target: EditorRevealTarget): void;

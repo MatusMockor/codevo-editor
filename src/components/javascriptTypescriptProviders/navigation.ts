@@ -3,6 +3,7 @@ import type {
   JavaScriptTypeScriptLanguageServerFeaturesGateway,
   LanguageServerLocation,
 } from "../../domain/languageServerFeatures";
+import type { LatencyOperationKind } from "../../domain/latencyTracker";
 import type {
   JavaScriptTypeScriptNavigationFeature,
   JavaScriptTypeScriptPreparedNavigationTarget,
@@ -30,7 +31,7 @@ interface NavigationContext {
     isCurrent: () => boolean,
     feature: JavaScriptTypeScriptNavigationFeature,
   ): Promise<readonly JavaScriptTypeScriptPreparedNavigationTarget[]>;
-  recordLatency?(feature: "completion" | "definition", durationMs: number, rootPath: string): void;
+  recordLatency?(feature: LatencyOperationKind, durationMs: number, rootPath: string): void;
 }
 
 async function prepareTargets<Context extends NavigationContext>(
@@ -85,8 +86,8 @@ async function provideNavigation<Context extends NavigationContext>(
     ) {
       return null;
     }
-    if (feature === "definition") {
-      context.recordLatency?.("definition", performance.now() - startedAt, request.rootPath);
+    if (feature === "definition" || feature === "references") {
+      context.recordLatency?.(feature, performance.now() - startedAt, request.rootPath);
     }
     const prepared = await prepareTargets(context, boundary, request, locations, feature, token);
     return prepared

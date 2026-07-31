@@ -6,6 +6,7 @@ import type {
   LanguageServerCompletionTextEdit,
   JavaScriptTypeScriptLanguageServerFeaturesGateway,
 } from "../../domain/languageServerFeatures";
+import type { LatencyOperationKind } from "../../domain/latencyTracker";
 import {
   normalizeUserSnippets,
   snippetCompletionSuggestions,
@@ -41,7 +42,7 @@ interface CompletionProviderContext extends CompletionSnippetContext {
   completeFunctionCalls?: boolean;
   featuresGateway: JavaScriptTypeScriptLanguageServerFeaturesGateway;
   getActiveDocument(): { language: string } | null;
-  recordLatency?(feature: "completion" | "definition", durationMs: number, rootPath: string): void;
+  recordLatency?(feature: LatencyOperationKind, durationMs: number, rootPath: string): void;
 }
 
 const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =

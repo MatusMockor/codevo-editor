@@ -1700,6 +1700,57 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(recordLatency.mock.calls.every(([, duration]) => duration >= 0)).toBe(true);
   });
 
+  it("records completed TypeScript references latency for the captured root", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      references: [
+        {
+          range: range(0, 0, 0, 4),
+          uri: "file:///project/src/target.ts",
+        },
+      ],
+    });
+    const recordLatency = vi.fn();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, recordLatency }),
+    );
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+
+    await referencesProvider.provideReferences(textModel(), {
+      column: 4,
+      lineNumber: 2,
+    });
+
+    expect(recordLatency).toHaveBeenCalledWith("references", expect.any(Number), "/project");
+    expect(recordLatency.mock.calls.every(([, duration]) => duration >= 0)).toBe(true);
+  });
+
+  it("records completed TypeScript rename latency for the captured root", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      rename: workspaceEdit("file:///project/src/user.ts", "Account"),
+    });
+    const recordLatency = vi.fn();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, recordLatency }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+
+    await renameProvider.provideRenameEdits(
+      textModel(),
+      {
+        column: 4,
+        lineNumber: 2,
+      },
+      "Account",
+    );
+
+    expect(recordLatency).toHaveBeenCalledWith("rename", expect.any(Number), "/project");
+    expect(recordLatency.mock.calls.every(([, duration]) => duration >= 0)).toBe(true);
+  });
+
   it("does not record a late TypeScript definition after an A-B-A owner replacement", async () => {
     const monaco = createMonaco();
     const definition =

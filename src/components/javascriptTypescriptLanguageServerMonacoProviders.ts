@@ -46,6 +46,7 @@ import {
 } from "../domain/documentHighlightRequestTracker";
 import { linkedEditingRangesFitProjection } from "../domain/linkedEditingRangesPolicy";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import type { LatencyOperationKind } from "../domain/latencyTracker";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   WORKSPACE_SYMBOL_REQUEST_TIMEOUT_MS,
@@ -275,7 +276,7 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
     isCurrent: () => boolean,
     feature: JavaScriptTypeScriptNavigationFeature,
   ): Promise<readonly JavaScriptTypeScriptPreparedNavigationTarget[]>;
-  recordLatency?(feature: "completion" | "definition", durationMs: number, rootPath: string): void;
+  recordLatency?(feature: LatencyOperationKind, durationMs: number, rootPath: string): void;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
