@@ -22,12 +22,31 @@ describe("generateLargeTsFileContent", () => {
     expect(first.split("\n").length).toBe(5000);
   });
 
+  it.each([1, 2])("produces exactly %i line(s)", (lines) => {
+    const content = generateLargeTsFileContent({ lines, random: createSeededRandom(1) });
+    expect(content.split("\n").length).toBe(lines);
+  });
+
   it("contains realistic TS constructs", () => {
     const content = generateLargeTsFileContent({ lines: 5000, random: createSeededRandom(1) });
     expect(content).toContain("export interface ");
     expect(content).toContain("export function ");
     expect(content).toContain("export type ");
     expect(content).toContain("import ");
+  });
+
+  it.each([
+    { lines: 5000, seed: 5 },
+    { lines: 20000, seed: 20 },
+    { lines: 100000, seed: 100 },
+  ])("keeps the $lines-line fixture syntactically complete", ({ lines, seed }) => {
+    const content = generateLargeTsFileContent({ lines, random: createSeededRandom(seed) });
+    const openingBraces = content.match(/{/g)?.length ?? 0;
+    const closingBraces = content.match(/}/g)?.length ?? 0;
+    const lastNonEmptyLine = content.split("\n").findLast((line) => line.length > 0);
+
+    expect(openingBraces).toBe(closingBraces);
+    expect(lastNonEmptyLine?.endsWith("{")).toBe(false);
   });
 });
 

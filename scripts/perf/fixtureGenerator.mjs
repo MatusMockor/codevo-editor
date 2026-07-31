@@ -54,20 +54,27 @@ function typeAliasBlock(random, index) {
 const BLOCK_BUILDERS = [interfaceBlock, functionBlock, typeAliasBlock];
 
 export function generateLargeTsFileContent({ lines, random }) {
-  const out = [`import { strict as assert } from "node:assert";`, `void assert;`];
+  const out = [];
+  if (lines > 1) {
+    out.push(`import { strict as assert } from "node:assert";`);
+  }
+  if (lines > 2) {
+    out.push(`void assert;`);
+  }
   let index = 0;
   while (out.length < lines - 1) {
     const block = pick(random, BLOCK_BUILDERS)(random, index);
+    if (out.length + block.length + 1 > lines - 1) {
+      break;
+    }
     out.push(...block, "");
     index += 1;
   }
-  return out
-    .slice(0, lines - 1)
-    .concat([""])
-    .join("\n")
-    .split("\n")
-    .slice(0, lines)
-    .join("\n");
+  while (out.length < lines - 1) {
+    out.push(`export const pad${index} = ${index};`);
+    index += 1;
+  }
+  return out.concat([""]).join("\n");
 }
 
 export function generateMinifiedTsFileContent({ statements, random }) {
