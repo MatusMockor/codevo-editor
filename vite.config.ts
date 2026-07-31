@@ -10,7 +10,6 @@ export default defineConfig(async () => ({
   base: "./",
 
   test: {
-    environment: "jsdom",
     execArgv: [
       "--max-old-space-size=6144",
       ...(process.allowedNodeEnvironmentFlags.has("--no-experimental-webstorage")
