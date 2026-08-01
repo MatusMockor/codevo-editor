@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
@@ -127,6 +127,7 @@ export interface RenderControllerOptions {
   ) => Promise<ReplaceInPathResult>;
   settingsGateway?: SettingsGateway;
   smartModeGateway?: SmartModeGateway;
+  strictMode?: boolean;
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
@@ -224,6 +225,7 @@ export function setupWorkbenchControllerTestHarness() {
     replaceInPath,
     settingsGateway,
     smartModeGateway,
+    strictMode = false,
     workspaceDetectionGateway,
     workspaceDescriptor,
     workspaceFileChangeGateway,
@@ -302,17 +304,19 @@ export function setupWorkbenchControllerTestHarness() {
       return workbench;
     };
 
+    const harness = (
+      <WorkbenchHarness
+        dependencies={dependencies}
+        onWorkbench={(nextWorkbench) => {
+          workbench = nextWorkbench;
+          onWorkbenchRender?.(nextWorkbench);
+        }}
+        renderQuickOpenSurfaces={renderQuickOpenSurfaces}
+      />
+    );
+
     act(() => {
-      mountedRoot.render(
-        <WorkbenchHarness
-          dependencies={dependencies}
-          onWorkbench={(nextWorkbench) => {
-            workbench = nextWorkbench;
-            onWorkbenchRender?.(nextWorkbench);
-          }}
-          renderQuickOpenSurfaces={renderQuickOpenSurfaces}
-        />,
-      );
+      mountedRoot.render(strictMode ? <StrictMode>{harness}</StrictMode> : harness);
     });
 
     return { dependencies, getWorkbench };

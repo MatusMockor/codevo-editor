@@ -3540,8 +3540,10 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    workbenchMountedRef.current = true;
+
+    return () => {
       documentSessionAuthorityLifecycle.deactivate();
       workbenchMountedRef.current = false;
       openWorkspaceRequestTokenRef.current += 1;
@@ -3565,14 +3567,13 @@ export function useWorkbenchController(
       for (const workspaceId of workspaceIds) {
         void releaseOwnedWorkspaceIdentity(workspaceId).catch(() => undefined);
       }
-    },
-    [
-      documentSessionAuthorityLifecycle,
-      externallyRemovedDocumentRootByPathRef,
-      releaseOwnedWorkspaceIdentity,
-      workspaceFileChangeGateway,
-    ],
-  );
+    };
+  }, [
+    documentSessionAuthorityLifecycle,
+    externallyRemovedDocumentRootByPathRef,
+    releaseOwnedWorkspaceIdentity,
+    workspaceFileChangeGateway,
+  ]);
 
   const refreshDirectory = useCallback(
     async (path: string) => {
