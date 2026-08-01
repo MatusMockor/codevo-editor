@@ -1,20 +1,29 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inPagePerfRunnerSource, shapeRunResult, FIXTURE_VERSION } from "./perfScenarios.mjs";
+import { shapeRunResult, FIXTURE_VERSION } from "./perfScenarios.mjs";
+import {
+  buildRunnerOptions,
+  buildSnippetExpression,
+  evaluateRunOutcome,
+  parseManualResult,
+  resultFileName,
+  scenarioSummary,
+} from "./runPerfScenariosCli.mjs";
 
 const DEFAULT_CDP_URL = "http://127.0.0.1:9222";
 const DEFAULT_TARGET_URL = "localhost:1420";
-const DEFAULT_WAIT_MS = 10000;
-const DEFAULT_INTERVAL_MS = 100;
 const CONNECTION_GUIDANCE =
   "CDP is unavailable on macOS WKWebView (it works against WebView2 on Windows). On macOS, use the " +
-  'manual lane instead: run VITE_CODEVO_QA_BRIDGE=1 VITE_CODEVO_PERF_BRIDGE=1 npm run debug:tauri ' +
+  "manual lane instead: run VITE_CODEVO_QA_BRIDGE=1 VITE_CODEVO_PERF_BRIDGE=1 npm run debug:tauri " +
   "(a dev build - npm run debug:qa is a production bundle where the DEV-gated bridges never install), " +
-  "open Tauri WebView DevTools, and paste the snippet from inPagePerfRunnerSource() in " +
-  "scripts/perf/perfScenarios.mjs into the console (same pattern as docs/DEV_QA.md's manual lane).";
+  "open Tauri WebView DevTools, and paste the snippet from --print-snippet into the console, then save " +
+  "the resulting JSON and run --from-json <path> (same pattern as docs/DEV_QA.md's manual lane).";
+const PRINT_SNIPPET_INSTRUCTION =
+  "Launch: VITE_CODEVO_QA_BRIDGE=1 VITE_CODEVO_PERF_BRIDGE=1 npm run debug:tauri -> open Tauri WebView " +
+  "DevTools console -> paste the snippet below -> copy the JSON value it returns.";
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), "../..");
 
@@ -25,20 +34,43 @@ main().catch((error) => {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const options = {
-    smoke: args.smoke,
-    largeFilesRoot: path.join(repoRoot, "perf/fixtures/large-files"),
-    monorepoRoot: path.join(repoRoot, "perf/fixtures/monorepo"),
-    fixtureVersion: FIXTURE_VERSION,
-    waitMs: DEFAULT_WAIT_MS,
-    intervalMs: DEFAULT_INTERVAL_MS,
-  };
-  const result = await runWithCdp(args, options);
 
-  if (args.smoke) {
-    validateSmokeResult(result);
+  if (args.printSnippet) {
+    printSnippetCommand(args.smoke);
+    return;
   }
 
+  if (args.fromJsonPath) {
+    const result = await readManualResultFile(args.fromJsonPath);
+    await finishRun(result, args.smoke);
+    return;
+  }
+
+  const options = buildRunnerOptions({ smoke: args.smoke, repoRoot });
+  const result = await runWithCdp(args, options);
+  await finishRun(result, args.smoke);
+}
+
+function printSnippetCommand(smoke) {
+  const options = buildRunnerOptions({ smoke, repoRoot });
+  console.error(PRINT_SNIPPET_INSTRUCTION);
+  console.log(buildSnippetExpression(options));
+}
+
+async function readManualResultFile(filePath) {
+  let raw;
+
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read --from-json file "${filePath}": ${detail}`);
+  }
+
+  return parseManualResult(raw);
+}
+
+async function finishRun(result, smoke) {
   const capturedAt = new Date().toISOString();
   const shaped = shapeRunResult({
     capturedAt,
@@ -50,27 +82,20 @@ async function main() {
     fixtureVersion: FIXTURE_VERSION,
   });
   const resultsDirectory = path.join(repoRoot, "perf/results");
-  const resultPath = path.join(resultsDirectory, `codevo-${capturedAt.replace(/[:.]/g, "-")}.json`);
+  const resultPath = path.join(resultsDirectory, resultFileName(capturedAt));
 
   await mkdir(resultsDirectory, { recursive: true });
   await writeFile(resultPath, `${JSON.stringify(shaped, null, 2)}\n`, "utf8");
   printSummary(shaped, result.trackerSnapshot);
   console.log(`Wrote ${resultPath}`);
 
-  if (shaped.failedPaths.length > 0) {
-    console.error(
-      `Performance run failed: ${shaped.failedPaths.length} fixture path(s) could not be opened:`,
-    );
+  const failures = evaluateRunOutcome({ result, shaped, smoke });
 
-    for (const failedPath of shaped.failedPaths) {
-      console.error(`  ${failedPath}`);
-    }
-
-    process.exitCode = 1;
+  for (const failure of failures) {
+    console.error(failure);
   }
 
-  if (hasEmptyNonSkippedScenario(shaped, result.trackerSnapshot, args.smoke)) {
-    console.error("Performance run failed: one or more non-skipped scenarios have zero samples.");
+  if (failures.length > 0) {
     process.exitCode = 1;
   }
 }
@@ -80,6 +105,8 @@ function parseArgs(args) {
     cdpUrl: process.env.CODEVO_EDITOR_QA_CDP_URL || DEFAULT_CDP_URL,
     targetUrl: process.env.CODEVO_EDITOR_QA_TARGET_URL || DEFAULT_TARGET_URL,
     smoke: false,
+    printSnippet: false,
+    fromJsonPath: "",
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -87,6 +114,17 @@ function parseArgs(args) {
 
     if (arg === "--smoke") {
       options.smoke = true;
+      continue;
+    }
+
+    if (arg === "--print-snippet") {
+      options.printSnippet = true;
+      continue;
+    }
+
+    if (arg === "--from-json") {
+      options.fromJsonPath = requiredValue(args, index, arg);
+      index += 1;
       continue;
     }
 
@@ -103,6 +141,10 @@ function parseArgs(args) {
     }
 
     throw new Error(`Unknown option "${arg}".`);
+  }
+
+  if (options.printSnippet && options.fromJsonPath) {
+    throw new Error("Use --print-snippet or --from-json, not both.");
   }
 
   return options;
@@ -137,7 +179,7 @@ async function runWithCdp(args, options) {
   }
 
   try {
-    const expression = `(${inPagePerfRunnerSource()})(${JSON.stringify(options)})`;
+    const expression = buildSnippetExpression(options);
     const response = await client.send("Runtime.evaluate", {
       awaitPromise: true,
       expression,
@@ -211,22 +253,6 @@ function formatCdpException(exceptionDetails) {
   return exceptionDetails.text || "Runtime.evaluate failed.";
 }
 
-function validateSmokeResult(result) {
-  const typing = result.bridgeResults.find(({ id }) => id === "typing-large-5k");
-  const tabSwitch = result.bridgeResults.find(({ id }) => id === "tab-switch-cycle");
-  const hasBridgeSamples = typing?.samples.length >= 1 && tabSwitch?.samples.length >= 1;
-  const hasEditor = result.retainedCounts?.editors >= 1;
-
-  if (hasBridgeSamples && hasEditor) {
-    return;
-  }
-
-  console.error(
-    "Performance smoke failed: typing-large-5k and tab-switch-cycle need samples, and retainedCounts.editors must be at least 1.",
-  );
-  process.exitCode = 1;
-}
-
 function printSummary(shaped, trackerSnapshot) {
   console.table(
     shaped.scenarios.map((scenario) => ({
@@ -236,57 +262,6 @@ function printSummary(shaped, trackerSnapshot) {
       samples: scenarioSummary(scenario, trackerSnapshot),
     })),
   );
-}
-
-function scenarioSummary(scenario, trackerSnapshot) {
-  if (scenario.status === "skipped") {
-    return `skipped: ${scenario.reason}`;
-  }
-
-  if (scenario.status === "not-run") {
-    return `not-run: ${scenario.reason}`;
-  }
-
-  if (scenario.id === "memory-sample") {
-    return memorySampleSummary(scenario);
-  }
-
-  if (scenario.samples) {
-    return scenario.samples.length;
-  }
-
-  const tracker = trackerSnapshot.find(({ kind }) => kind === scenario.trackerKind);
-  return tracker?.stats.count ?? 0;
-}
-
-function memorySampleSummary(scenario) {
-  const models = scenario.retainedCounts?.models ?? "-";
-  const editors = scenario.retainedCounts?.editors ?? "-";
-  const heap = scenario.memorySample?.usedJsHeapBytes ?? "unavailable";
-
-  return `models ${models}, editors ${editors}, heap ${heap}`;
-}
-
-function hasEmptyNonSkippedScenario(shaped, trackerSnapshot, smoke) {
-  return shaped.scenarios.some((scenario) => {
-    if (scenario.status === "skipped") {
-      return false;
-    }
-
-    if (scenario.id === "memory-sample") {
-      return false;
-    }
-
-    if (smoke && !["typing-large-5k", "tab-switch-cycle"].includes(scenario.id)) {
-      return false;
-    }
-
-    if (scenario.status === "not-run") {
-      return true;
-    }
-
-    return scenarioSummary(scenario, trackerSnapshot) === 0;
-  });
 }
 
 class CdpClient {

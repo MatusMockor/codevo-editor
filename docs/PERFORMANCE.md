@@ -13,10 +13,25 @@ captured by scripting VS Code directly through the closest available API per sce
 entry via `method`, see `perf/baselines/README.md` for the full capture methodology and its honesty
 notes).
 
-The currently working measurement lane on macOS is manual: run `VITE_CODEVO_QA_BRIDGE=1
-VITE_CODEVO_PERF_BRIDGE=1 npm run debug:tauri` (a dev-mode session, once workspace-open works there),
-open Tauri WebView DevTools, and paste `inPagePerfRunnerSource()` from `scripts/perf/perfScenarios.mjs`
-into the console - the same self-contained snippet approach `docs/DEV_QA.md` documents for
+The currently working measurement lane on macOS is manual, and `run-perf-scenarios.mjs` has a dedicated
+lane for it: run
+
+```bash
+node scripts/perf/run-perf-scenarios.mjs --print-snippet | pbcopy
+```
+
+to copy a ready-to-paste snippet (add `--smoke` for the shorter smoke subset). Then run
+`VITE_CODEVO_QA_BRIDGE=1 VITE_CODEVO_PERF_BRIDGE=1 npm run debug:tauri` (a dev-mode session, once
+workspace-open works there), open Tauri WebView DevTools, paste the snippet into the console, and save
+the JSON value it returns to a file. Ingest that file with
+
+```bash
+node scripts/perf/run-perf-scenarios.mjs --from-json <path/to/saved-result.json>
+```
+
+(again with `--smoke` if the snippet was run with `--smoke`), which shapes, persists, and summarizes the
+result exactly like the CDP lane - same `perf/results/codevo-<timestamp>.json` output, same summary
+table, same exit-1 rules. This mirrors the self-contained snippet approach `docs/DEV_QA.md` documents for
 `qa-project-scenarios.mjs`. A CDP transport for macOS remains an open decision for a future slice.
 
 ## C7 gap reports
