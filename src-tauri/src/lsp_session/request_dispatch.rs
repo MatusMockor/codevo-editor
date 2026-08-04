@@ -127,7 +127,7 @@ pub(super) fn send_request_with_timeout(
             Err(message)
         }
         Err(RecvTimeoutError::Timeout) => {
-            remove_pending_request(&pending_requests, wire_request_id);
+            pending_requests.retire(wire_request_id);
             supervisor.record_request_outcome_for_session(session_id, method, started_at, false);
             Err(LanguageServerRequestError::from(format!(
                 "Language server request `{method}` timed out."

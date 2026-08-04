@@ -262,7 +262,7 @@ export function QuickOpen({
         <div className="quick-open-results">
           {isLoading ? <div className="quick-open-state">Searching...</div> : null}
           {isTruncated ? <div className="quick-open-state">Results truncated</div> : null}
-          {!isLoading && results.length === 0 && !currentFileLocation ? (
+          {!isLoading && !isTruncated && results.length === 0 && !currentFileLocation ? (
             <div className="quick-open-state">No files found</div>
           ) : null}
           {currentFileLocation ? (

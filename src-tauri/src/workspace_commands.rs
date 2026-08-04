@@ -345,12 +345,11 @@ pub(crate) async fn workspace_search_files(
     .and_then(|result| result.map_err(|error| error.to_string()));
     let owner_result = ensure_search_owner(&registry, &descriptor, &token);
     token.finish();
-    let results = outcome?;
+    let execution = outcome?;
     owner_result?;
-    let truncated = results.iter().any(|result| result.truncated);
     Ok(DescriptorFileSearchResponse {
-        results,
-        truncated,
+        results: execution.results,
+        truncated: execution.truncated,
         request_generation,
     })
 }

@@ -10,7 +10,15 @@ const DEFAULT_WAIT_MS = 10000;
 const DEFAULT_INTERVAL_MS = 100;
 const MANUAL_RESULT_LABEL = "--from-json file";
 const REQUIRED_TRACKER_STATS = ["count", "last", "min", "max", "median", "p95"];
-const REQUIRED_ENVIRONMENT_FIELDS = ["editor", "bundleMode", "timerQuantizationMs", "capturedAt"];
+const REQUIRED_ENVIRONMENT_FIELDS = [
+  "editor",
+  "bundleMode",
+  "windowMode",
+  "hostPlatform",
+  "hostArch",
+  "timerQuantizationMs",
+  "capturedAt",
+];
 const MEMORY_SAMPLE_ID = "memory-sample";
 const OK_SCENARIO_STATUS = "ok";
 const POLICY_DISABLED_STATUS = "policy-disabled";
@@ -54,6 +62,22 @@ export function buildSnippetExpression(options) {
 
 export function parseManualResult(raw) {
   return normalizeRunnerResult(parseJson(raw), MANUAL_RESULT_LABEL);
+}
+
+export function capturedAtForImportedResult(result) {
+  const capturedAt = result?.environment?.capturedAt;
+
+  if (
+    typeof capturedAt !== "string" ||
+    capturedAt.length === 0 ||
+    !Number.isFinite(Date.parse(capturedAt))
+  ) {
+    throw new Error(
+      "--from-json requires environment.capturedAt from the measurement itself; ingestion time is not capture provenance.",
+    );
+  }
+
+  return capturedAt;
 }
 
 export function normalizeRunnerResult(parsed, label = MANUAL_RESULT_LABEL) {

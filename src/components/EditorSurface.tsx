@@ -863,13 +863,12 @@ function EditorSurfaceComponent({
   // open. It is scoped to this editor surface and cleared as soon as a template
   // is chosen or the picker is dismissed, so nothing leaks across tabs.
   const [surroundWithRequest, setSurroundWithRequest] = useState<SurroundWithRequest | null>(null);
-  const { activeDocumentIsLargeSmart, onModelContentChange } =
+  const { activeDocumentIsLargeSmart, activeDocumentLargeSmartMode, onModelContentChange } =
     useLargeSmartDocumentMetricsLifecycle({
-      content: activeDocumentContent,
+      document: activeDocument,
       onChangeRef,
-      path: activeDocumentPath,
       policy: largeSmartDocumentPolicy,
-      workspaceRoot: workspaceRoot ?? null,
+      workspaceRoot,
     });
 
   // A document switch must never apply a wrap meant for the previous file, so
@@ -2446,6 +2445,7 @@ function EditorSurfaceComponent({
     activeDocument,
     activeDocumentContentReady,
     activeDocumentIsLargeSmart,
+    activeDocumentLargeSmartMode,
     beforeMountTheme: monacoTheme,
     breakpointActions,
     breakpoints,

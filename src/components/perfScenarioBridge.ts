@@ -90,6 +90,7 @@ export interface PerfSampleProbe {
 
 export interface PerfEnvironmentSample {
   readonly bundleMode: "dev" | "production";
+  readonly windowMode: "focus-only" | "always-on-top-diagnostic" | "unknown";
   readonly strictMode: boolean;
   readonly timerQuantizationMs?: number;
   readonly windowSize: { readonly width: number; readonly height: number };
@@ -137,6 +138,7 @@ declare global {
 interface PerfScenarioBridgeEnvironment {
   DEV?: boolean;
   VITE_CODEVO_PERF_BRIDGE?: string;
+  VITE_CODEVO_PERF_WINDOW_MODE?: string;
 }
 
 export function perfScenarioBridgeEnabled(
@@ -751,6 +753,11 @@ export function createPerfScenarioBridge(
     },
     getEnvironmentSample: () => ({
       bundleMode: bundleEnvironment.DEV === true ? "dev" : "production",
+      windowMode:
+        bundleEnvironment.VITE_CODEVO_PERF_WINDOW_MODE === "focus-only" ||
+        bundleEnvironment.VITE_CODEVO_PERF_WINDOW_MODE === "always-on-top-diagnostic"
+          ? bundleEnvironment.VITE_CODEVO_PERF_WINDOW_MODE
+          : "unknown",
       strictMode: strictModeEnabled(),
       ...(timerQuantizationMs !== null ? { timerQuantizationMs } : {}),
       windowSize: { width: window.innerWidth, height: window.innerHeight },

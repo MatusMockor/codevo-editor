@@ -422,6 +422,21 @@ export class JavaScriptTypeScriptIncrementalSyncService {
     return arbitration.promise;
   }
 
+  currentServerVersion(binding: JavaScriptTypeScriptIncrementalSyncBinding): number | null {
+    const record = this.currentBinding(binding);
+    if (
+      !record ||
+      record.channel.state !== "open" ||
+      record.channel.pending.length > 0 ||
+      record.channel.pumpPromise !== null ||
+      record.channel.revisionArbitrations.size > 0 ||
+      !this.channelIsCurrent(record.channel)
+    ) {
+      return null;
+    }
+    return record.channel.serverVersion;
+  }
+
   async drainBeforeSave(
     binding: JavaScriptTypeScriptIncrementalSyncBinding,
     exactRevision: number,

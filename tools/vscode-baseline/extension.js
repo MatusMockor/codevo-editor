@@ -609,6 +609,11 @@ function buildEnvironment(timerQuantizationMs) {
     editor: "vscode",
     version: vscode.version,
     bundleMode: "production",
+    // The extension host cannot prove native window focus/level or viewport geometry.
+    // Keep UI rows fail-closed until a UI-observable baseline lane exists.
+    windowMode: "unknown",
+    hostPlatform: process.platform,
+    hostArch: process.arch,
     timerQuantizationMs,
     platform: process.platform + "-" + process.arch + "-" + os.release(),
     capturedAt: new Date().toISOString(),

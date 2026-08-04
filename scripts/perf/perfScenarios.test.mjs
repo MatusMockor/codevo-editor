@@ -27,7 +27,11 @@ import {
   TYPING_WARMUP_KEYSTROKES,
   VSCODE_TAB_SWITCH_WINDOW_NOTE,
 } from "./perfScenarios.mjs";
-import { blockedScenarioIds, evaluateRunOutcome } from "./runPerfScenariosCli.mjs";
+import {
+  blockedScenarioIds,
+  capturedAtForImportedResult,
+  evaluateRunOutcome,
+} from "./runPerfScenariosCli.mjs";
 
 const CANONICAL_BRIDGE_IDS = [
   "tab-switch-cycle",
@@ -105,6 +109,9 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
     getProviderProbeSamples: (kind) => [...(probe.get(kind) ?? [])],
     getEnvironmentSample: () => ({
       bundleMode: "dev",
+      windowMode: "focus-only",
+      hostPlatform: "darwin",
+      hostArch: "arm64",
       strictMode: false,
       timerQuantizationMs: 1,
       windowSize: { width: 1440, height: 900 },
@@ -374,6 +381,9 @@ describe("shapeRunResult", () => {
       capturedAt: "2026-08-03T00:00:00.000Z",
       environment: {
         bundleMode: "dev",
+        windowMode: "focus-only",
+        hostPlatform: "darwin",
+        hostArch: "arm64",
         strictMode: false,
         timerQuantizationMs: 1,
         windowSize: { width: 1440, height: 900 },
@@ -385,6 +395,9 @@ describe("shapeRunResult", () => {
     expect(typeof result.environment.version).toBe("string");
     expect(result.environment.version.length).toBeGreaterThan(0);
     expect(result.environment.bundleMode).toBe("dev");
+    expect(result.environment.windowMode).toBe("focus-only");
+    expect(result.environment.hostPlatform).toBe("darwin");
+    expect(result.environment.hostArch).toBe("arm64");
     expect(result.environment.strictMode).toBe(false);
     expect(result.environment.timerQuantizationMs).toBe(1);
     expect(result.environment.windowSize).toEqual({ width: 1440, height: 900 });
@@ -485,6 +498,8 @@ describe("inPagePerfRunnerSource", () => {
 
     expect(result.bridgeResults.map((entry) => entry.id)).toEqual(CANONICAL_BRIDGE_IDS);
     expect(result.trackerSnapshot).toEqual([]);
+    expect(capturedAtForImportedResult(result)).toBe(result.environment.capturedAt);
+    expect(Number.isFinite(Date.parse(result.environment.capturedAt))).toBe(true);
 
     const tabSwitch = entryOf(result, "tab-switch-cycle");
     expect(tabSwitch.cutPoint).toBe("tab-switch-rendered");
@@ -553,6 +568,10 @@ describe("inPagePerfRunnerSource", () => {
 
     expect(result.environment).toEqual({
       bundleMode: "dev",
+      capturedAt: result.environment.capturedAt,
+      windowMode: "focus-only",
+      hostPlatform: "darwin",
+      hostArch: "arm64",
       strictMode: false,
       timerQuantizationMs: 1,
       windowSize: { width: 1440, height: 900 },

@@ -11,6 +11,8 @@ import {
 } from "../../domain/editorConfig";
 import type { LargeSmartDocumentPolicy } from "../../domain/largeDocumentPolicy";
 import { isLargeSmartDocument } from "../../domain/largeDocumentPolicy";
+import { classifyJavaScriptTypeScriptLargeDocumentCapability } from "../../domain/javaScriptTypeScriptLargeDocumentCapability";
+import { isJavaScriptTypeScriptLanguageServerDocument } from "../../domain/languageServerDocumentSync";
 import type { EditorDocument } from "../../domain/workspace";
 import type { EditorRuntimeContextValue } from "../editorRuntimeContext";
 import type { EditorRuntimeSurfaceRegistration } from "../EditorRuntimeHost";
@@ -118,7 +120,9 @@ export function useEditorActiveModelLifecycle({
       return;
     }
 
-    if (isLargeSmartDocument(document, largeSmartDocumentPolicyRef.current)) {
+    if (
+      !isDocumentEligibleForBackgroundTokenization(document, largeSmartDocumentPolicyRef.current)
+    ) {
       tokenizer.stop();
       return;
     }
@@ -161,4 +165,16 @@ export function useEditorActiveModelLifecycle({
 
     return () => disposable.dispose();
   }, [editor, generatedSurfaceId, runtime, runtimeRegistrationRef]);
+}
+
+export function isDocumentEligibleForBackgroundTokenization(
+  document: EditorDocument,
+  policy: LargeSmartDocumentPolicy,
+): boolean {
+  if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
+    return (
+      classifyJavaScriptTypeScriptLargeDocumentCapability(document.content, policy).kind === "full"
+    );
+  }
+  return !isLargeSmartDocument(document, policy);
 }

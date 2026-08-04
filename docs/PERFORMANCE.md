@@ -40,6 +40,21 @@ truncated, malformed, or otherwise unvalidatable payload fails closed (HTTP 400 
 result file); a payload over the 8 MiB cap, an app crash before the post, a failed launch, and a timeout
 all stop the app and exit 1 with the real reason.
 
+Before measurement the autorun lane shows, unminimizes, and focuses its window. It deliberately does
+not change the window level: always-on-top changed WKWebView frame alignment in earlier captures and
+VS Code's harness has no equivalent elevation. `--diagnostic-elevation` is available only together
+with `--autorun`; it marks the run as `always-on-top-diagnostic`, so its UI rows are non-comparable.
+The lane queries the native window level before and after measurement: focus-only rejects a
+pre-elevated window and any mid-run elevation change, while diagnostic mode restores the exact
+original level before posting a result. Missing window authority, setup failure, post-run mismatch,
+or restore failure invalidates the run.
+A visible, focused, and bounded requestAnimationFrame-cadence preflight runs before every autorun.
+The cadence check is repeated after the scenarios, while blur, resize, and visibility changes are
+latched for the entire run. Hidden, unfocused, resized, suspended, or unstable rendering fails closed.
+
+Autorun hashes the complete fixture set before launching the app and again after receiving its result.
+Any added, removed, or changed fixture invalidates the run before a result file is written.
+
 Run token and what it actually protects. The driver mints a per-run token
 (`CODEVO_PERF_AUTORUN_TOKEN`) and passes it to the dev server, which bakes it into the same-origin
 runner module it serves to the page (`export const perfAutorunRunToken`). The page sends it back as
@@ -111,10 +126,15 @@ the JSON value it returns to a file. Ingest that file with
 node scripts/perf/run-perf-scenarios.mjs --from-json <path/to/saved-result.json>
 ```
 
-(again with `--smoke` if the snippet was run with `--smoke`), which shapes, persists, and summarizes the
-result exactly like the CDP lane - same `perf/results/codevo-<timestamp>.json` output, same summary
-table, same exit-1 rules. This mirrors the self-contained snippet approach `docs/DEV_QA.md` documents for
-`qa-project-scenarios.mjs`. A CDP transport for macOS remains an open decision for a future slice.
+(again with `--smoke` if the snippet was run with `--smoke`). The saved payload must carry its own
+`environment.capturedAt`; ingestion preserves that timestamp and never substitutes the import time.
+It shapes, persists, and summarizes the diagnostic result, but deliberately omits environment,
+fixture version, and fixture hashes because a pasted JSON file cannot prove those claims or a
+pre/post fixture fence. Consequently imported results always fail cross-editor comparability rather
+than borrowing the ingesting machine's identity or current fixture state. This mirrors the
+self-contained snippet approach `docs/DEV_QA.md` documents for `qa-project-scenarios.mjs`. A CDP
+transport for macOS remains an open decision for a future slice. CDP also does not own the app
+process, so it never stamps the runner shell's platform or architecture; only autorun may do that.
 
 ## Scenario lanes and what each one measures
 
@@ -222,8 +242,13 @@ ten `*Kind` declarations that have a usage), 2 warm-ups plus 10 measured samples
 discarded), a canonical scenario order, per-scenario cut points, per-sample result counts, and
 environment metadata including measured timer quantization. The gap report fails closed on any
 asymmetry: cut-point mismatch, warm-up or sample-count mismatch, target-order mismatch, result-count
-divergence beyond 10 percent, fixture-hash mismatch, missing metadata, or a median below ten timer
+divergence beyond 10 percent, fixture-hash mismatch, bundle-mode mismatch, host platform/architecture
+mismatch, missing or sentinel/invalid editor version identity, invalid capture timestamp, missing metadata, or a median below ten timer
 ticks (WKWebView quantizes `performance.now()` to about 1 ms; VS Code resolves microseconds).
+UI rows additionally require matching focus-only window mode and window size. The VS Code extension
+host cannot currently prove native focus/window level or viewport geometry and therefore records its
+window mode as `unknown`; historical captures omit the fields entirely. Both forms remain
+non-comparable by design until a UI-observable VS Code lane exists.
 Protocol: three clean runs plus one confirmation run per side, all on 2026-08-03 on the same
 machine. Values below are medians of the three clean runs; the confirmation run was consistent
 unless noted.
@@ -329,23 +354,24 @@ Optimizations shipped and measured:
    from contaminated-era samples and overstated the win). The residual remains Monaco first-frame
    rendering plus the frame-alignment effect below.
 
-Frame-alignment observation (open): all typing-*-frame rows and quickopen-ui shifted by roughly
+Frame-alignment observation: all typing-*-frame rows and quickopen-ui shifted by roughly
 one frame between the C7.3 finals and every later series (typing-frame ~12-20 ms -> exactly the
 ~33 ms two-frame floor; quickopen-ui p50 49 -> 55 ms). The shift coincides exactly with the perf
 window becoming always-on-top during runs (occlusion robustness added the same evening) and
 predates the tab-switch mechanism going live, so the suspected cause is different WindowServer
 compositing for floating windows - a measurement-environment effect, not a product change.
-Typing dispatch latency is unchanged (0-1 ms, quantization-limited). Unverified; follow-up
-candidate: re-measure with elevation off on an idle desktop.
+Typing dispatch latency is unchanged (0-1 ms, quantization-limited). The autorun default is now
+focus-only and historical elevated runs are explicitly non-comparable; a fresh focus-only capture
+is still required.
 
 Also fixed in this wave (user-visible correctness, not performance): the mislabeled "PHP IDE
 request failed" toast now derives its title from the actual server (generic when unknown); JS/TS
 document-symbol requests are policy-gated at every live entry point (Monaco provider, outline
 hook, breadcrumbs), so policy-large files no longer trigger the 2,000-root bound error toast - an
 instrumented full run captured exactly 5 documentSymbols calls, none for a policy-large document,
-and a workbench-level regression test with a positive control pins the gate. The perf window
-lifts itself (show/unminimize/setFocus/setAlwaysOnTop with restore) so autorun runs survive an
-occluded desktop; four core:window permissions were added to the Tauri capability for this.
+and a workbench-level regression test with a positive control pins the gate. The historical C7.4
+runner elevated the perf window. That behavior is now retained only behind the explicitly diagnostic
+flag described above and no longer participates in UI parity claims.
 
 Memory/stability over the long switching runs: retained counts stayed exactly at 8 models /
 1 editor across all full runs of both waves (each cycles all five large fixtures repeatedly);
@@ -355,4 +381,6 @@ Remaining after C7.4, in user-impact order: the frame-alignment observation abov
 rebuild spike class (one ~114-156 ms p95 sample per first run after a rebuild); tab-switch
 residual (Monaco first-frame rendering; floor-adjusted 1.23 info); completion-unbounded 314 vs
 276 ms p95 on ten times fewer items plus an occasional tsserver pause exceeding the 3 s attempt
-budget; the large-20k capability policy gap; and the dev-bundle vs production-build asymmetry.
+budget; the large-20k capability policy gap; and the dev-bundle vs production-build asymmetry. The
+gap report now rejects that final asymmetry globally, so existing dev-versus-production rows are not
+parity passes. A dedicated release production lane remains future work.

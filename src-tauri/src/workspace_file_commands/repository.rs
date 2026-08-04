@@ -105,6 +105,7 @@ impl<'a> WorkspaceFileRepository<'a> {
     ) -> io::Result<Vec<DescriptorFileSearchResult>> {
         self.prepare_file_search(&WorkspaceFileIndexCache::new(), id, scope, query, limit)?
             .execute(&|| true)
+            .map(|execution| execution.results)
     }
 
     pub(crate) fn prepare_file_search(

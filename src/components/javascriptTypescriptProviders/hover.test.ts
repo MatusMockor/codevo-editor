@@ -210,6 +210,7 @@ function requestBoundary(
   isActive: () => boolean = () => true,
 ): JavaScriptTypeScriptProviderRequestBoundary<TestContext> {
   const request: JavaScriptTypeScriptFeatureRequest = {
+    access: "full",
     model: textModel(),
     modelVersion: 1,
     ownerEpoch: 1,

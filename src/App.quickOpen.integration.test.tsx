@@ -11,10 +11,20 @@ import { useActiveEditorCursorSnapshot } from "./application/useEditorCursorSnap
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(),
+  largeFileContent: { current: null as string | null },
   onCursorPositionChange: {
     current: null as ((position: { column: number; lineNumber: number }) => void) | null,
   },
   surfaceRenderCount: { value: 0 },
+  updateActiveDocument: {
+    current: null as
+      | ((
+          content: string,
+          path?: string,
+          metrics?: { lineCount: number; utf16Length: number },
+        ) => void)
+      | null,
+  },
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -35,9 +45,15 @@ vi.mock("./infrastructure/shikiHighlighter", () => ({
 vi.mock("./components/ScopedEditorSurface", () => ({
   ScopedEditorSurface: ({
     cursorStore,
+    onChange,
     onCursorPositionChange,
   }: {
     cursorStore: EditorCursorStorePort;
+    onChange(
+      content: string,
+      path?: string,
+      metrics?: { lineCount: number; utf16Length: number },
+    ): void;
     onCursorPositionChange(position: { column: number; lineNumber: number }): void;
   }) => {
     const leaseRef = useRef<ReturnType<EditorCursorStorePort["activate"]>>(null);
@@ -60,6 +76,7 @@ vi.mock("./components/ScopedEditorSurface", () => ({
       },
       [cursorStore, onCursorPositionChange],
     );
+    mocks.updateActiveDocument.current = onChange;
     mocks.surfaceRenderCount.value += 1;
     return <div />;
   },
@@ -68,9 +85,11 @@ vi.mock("./components/ScopedEditorSurface", () => ({
 vi.mock("./components/StatusBar", () => ({
   StatusBar: ({
     cursorStore,
+    largeDocumentStatus,
     message,
   }: {
     cursorStore: EditorCursorStorePort;
+    largeDocumentStatus: { label: string; title: string } | null;
     message: string | null;
   }) => {
     const snapshot = useActiveEditorCursorSnapshot(cursorStore);
@@ -81,6 +100,9 @@ vi.mock("./components/StatusBar", () => ({
           {position ? `${position.lineNumber}:${position.column}` : "no-position"}
         </div>
         <div data-testid="status-message">{message}</div>
+        <div data-testid="large-document-status" title={largeDocumentStatus?.title}>
+          {largeDocumentStatus?.label}
+        </div>
       </>
     );
   },
@@ -123,7 +145,9 @@ describe("App Quick Open integration", () => {
     });
     localStorage.clear();
     mocks.onCursorPositionChange.current = null;
+    mocks.largeFileContent.current = null;
     mocks.surfaceRenderCount.value = 0;
+    mocks.updateActiveDocument.current = null;
     localStorage.setItem(
       "editor.settings.app",
       JSON.stringify({
@@ -132,7 +156,7 @@ describe("App Quick Open integration", () => {
         workspaceTabs: ["/workspace"],
       }),
     );
-    mocks.invoke.mockImplementation((command) => {
+    mocks.invoke.mockImplementation((command, args) => {
       if (command === "register_workspace_path") {
         return Promise.resolve({
           descriptor: {
@@ -167,7 +191,17 @@ describe("App Quick Open integration", () => {
       }
 
       if (command === "workspace_search_files") {
-        return Promise.resolve([]);
+        return mocks.largeFileContent.current
+          ? Promise.resolve({
+              requestGeneration: String(args?.requestGeneration ?? "app-test"),
+              results: [{ name: "large.ts", relativePath: "large.ts" }],
+              truncated: false,
+            })
+          : Promise.resolve([]);
+      }
+
+      if (command === "workspace_read_text_file" && mocks.largeFileContent.current) {
+        return Promise.resolve({ content: mocks.largeFileContent.current, revision: null });
       }
 
       if (command === "set_smart_mode") {
@@ -187,6 +221,67 @@ describe("App Quick Open integration", () => {
     localStorage.clear();
     vi.clearAllMocks();
   });
+
+  it("shows the editing-only status for custom-policy 3 MiB TypeScript and clears it after shrink", async () => {
+    const largeContent = "x".repeat(3 * 1024 * 1024);
+    mocks.largeFileContent.current = largeContent;
+    localStorage.setItem(
+      "editor.settings.workspace:canonical:workspace-1",
+      JSON.stringify({
+        largeFileMode: { characterLimit: 10 * 1024 * 1024, lineLimit: 200_000 },
+      }),
+    );
+    const { default: App } = await import("./App");
+    await act(async () => root.render(<App />));
+    await waitFor(() => {
+      expect(
+        host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
+      ).toBe("true");
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "p", metaKey: true }),
+      );
+    });
+    const input = await waitForElement<HTMLInputElement>(host, 'input[aria-label="Search files"]');
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "large",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await waitFor(() => {
+      expect(host.querySelector('button[title="/workspace/large.ts"]')).not.toBeNull();
+    });
+    act(() => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }),
+      );
+    });
+
+    await waitFor(() => {
+      const status = host.querySelector('[data-testid="large-document-status"]');
+      expect(status?.textContent).toBe("Large file mode");
+      expect(status?.getAttribute("title")).toContain("language features are unavailable");
+      expect(status?.getAttribute("title")).toContain("hard synchronization safety limits");
+      expect(mocks.updateActiveDocument.current).not.toBeNull();
+    });
+
+    const smallContent = "const value = 1;";
+    act(() => {
+      mocks.updateActiveDocument.current?.(smallContent, "/workspace/large.ts", {
+        lineCount: 1,
+        utf16Length: smallContent.length,
+      });
+    });
+    await waitFor(() => {
+      const status = host.querySelector('[data-testid="large-document-status"]');
+      expect(status?.textContent).toBe("");
+      expect(status?.getAttribute("title")).toBeNull();
+    });
+  }, 15_000);
 
   it("routes a command prefix through the real controller into Command Palette", async () => {
     const { default: App } = await import("./App");

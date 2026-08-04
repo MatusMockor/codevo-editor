@@ -103,11 +103,9 @@ import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
 import { WorkbenchSidebar } from "./components/WorkbenchSidebar";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
+import { useAppActiveLargeDocumentPresentation } from "./components/useAppActiveLargeDocumentPresentation";
 import { languageServerStatusLabel } from "./domain/languageServerRuntime";
-import {
-  defaultLargeSmartDocumentPolicy,
-  largeSmartDocumentStatus,
-} from "./domain/largeDocumentPolicy";
+import { defaultLargeSmartDocumentPolicy } from "./domain/largeDocumentPolicy";
 import type { EditorPosition } from "./domain/languageServerFeatures";
 import { ideProgressIndicator } from "./domain/ideProgress";
 import {
@@ -407,7 +405,6 @@ function App() {
     fileStatusesByPathRef.current = next;
     return next;
   }, [workbench.gitStatus?.changes]);
-  const activeDocumentContent = workbench.activeDocument?.content ?? null;
   const activeDocumentSavedContent = workbench.activeDocument?.savedContent ?? null;
   const activeLanguage = workbench.activeDocument?.language ?? null;
   const activeDocumentIsDirty = workbench.activeDocument
@@ -424,14 +421,13 @@ function App() {
   );
   useAppWindowTitle(windowTitle);
   usePerfScenarioBridgeInstall(workbench);
-  const activeLargeDocumentStatus = useMemo(
-    () =>
-      largeSmartDocumentStatus(
-        activeDocumentContent === null ? null : { content: activeDocumentContent },
-        workbench.workspaceSettings.largeFileMode,
-      ),
-    [activeDocumentContent, workbench.workspaceSettings.largeFileMode],
-  );
+  const { onChange: onActiveDocumentChange, status: activeLargeDocumentStatus } =
+    useAppActiveLargeDocumentPresentation({
+      activeDocument: workbench.activeDocument,
+      onChange: workbench.updateActiveDocument,
+      policy: workbench.workspaceSettings.largeFileMode,
+      workspaceRoot: workbench.workspaceRoot,
+    });
   // Stable list of open document paths for EditorSurface's model-dispose effect.
   // openDocuments is replaced on every keystroke (fresh document objects), so the
   // helper reuses the previous array while the ordered paths remain unchanged.
@@ -1015,7 +1011,7 @@ function App() {
           onOpenWorkspaceFile={workbench.openWorkspaceFile}
           onOpenWorkspaceRoot={workbench.openWorkspaceRoot}
           onOpenFileStructure={workbench.openFileStructure}
-          onChange={workbench.updateActiveDocument}
+          onChange={onActiveDocumentChange}
           onLanguageServerError={workbench.reportLanguageServerError}
           onOpenPhpChangeSignature={openPhpChangeSignature}
           onRecordCompletionLatency={workbench.recordCompletionLatency}
@@ -1053,6 +1049,7 @@ function App() {
       markActiveFileRevealSignal,
       monacoTheme,
       navigationHistoryPaths,
+      onActiveDocumentChange,
       openClass,
       openDocumentPaths,
       openFile,

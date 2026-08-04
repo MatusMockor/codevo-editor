@@ -534,10 +534,22 @@ impl DocumentChangeAdmissionState {
         }
         match compare_lifecycle_authority(&request.authority, &previous.authority) {
             AuthorityOrder::OlderOrForeign => Ok(DocumentChangeAdmissionDecision::StaleAuthority),
-            AuthorityOrder::Exact if previous.state == AdmittedDocumentState::Open => {
-                if request.version == previous.version
-                    && request.predecessor_lifecycle_token.is_none()
+            AuthorityOrder::Exact if previous.state == AdmittedDocumentState::Closed => {
+                if request.predecessor_lifecycle_token.as_deref()
+                    != Some(previous.lifecycle_token.as_str())
                 {
+                    return Ok(DocumentChangeAdmissionDecision::StaleAuthority);
+                }
+                if request.version <= previous.version {
+                    return Ok(DocumentChangeAdmissionDecision::StaleVersion);
+                }
+                Ok(DocumentChangeAdmissionDecision::Admit)
+            }
+            AuthorityOrder::Exact if request.predecessor_lifecycle_token.is_some() => {
+                Ok(DocumentChangeAdmissionDecision::StaleAuthority)
+            }
+            AuthorityOrder::Exact => {
+                if request.version == previous.version {
                     if fingerprint == &previous.fingerprint {
                         Ok(DocumentChangeAdmissionDecision::Idempotent)
                     } else {
@@ -547,7 +559,6 @@ impl DocumentChangeAdmissionState {
                     Ok(DocumentChangeAdmissionDecision::StaleVersion)
                 }
             }
-            AuthorityOrder::Exact => Ok(DocumentChangeAdmissionDecision::StaleAuthority),
             AuthorityOrder::Newer if previous.state == AdmittedDocumentState::Closed => {
                 if request.predecessor_lifecycle_token.as_deref()
                     == Some(previous.lifecycle_token.as_str())

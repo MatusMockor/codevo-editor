@@ -26,3 +26,16 @@ export function computeFixtureHashes(rootDir) {
   }
   return hashes;
 }
+
+export function fixtureHashFenceFailure(before, after) {
+  const beforeEntries = Object.entries(before ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  const afterEntries = Object.entries(after ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+
+  return JSON.stringify(beforeEntries) === JSON.stringify(afterEntries)
+    ? null
+    : "Performance fixtures changed while the measurement was running; the run is invalid.";
+}

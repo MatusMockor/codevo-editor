@@ -656,7 +656,7 @@ describe("installPerfScenarioBridge", () => {
     let tick = 0;
     const dispose = installPerfScenarioBridge({
       ...baseDependencies(),
-      bundleEnvironment: { DEV: true },
+      bundleEnvironment: { DEV: true, VITE_CODEVO_PERF_WINDOW_MODE: "focus-only" },
       now: () => {
         tick += 0.5;
         return tick;
@@ -665,12 +665,32 @@ describe("installPerfScenarioBridge", () => {
 
     const sample = window.__codevoPerf!.getEnvironmentSample();
     expect(sample.bundleMode).toBe("dev");
+    expect(sample.windowMode).toBe("focus-only");
     expect(typeof sample.strictMode).toBe("boolean");
     expect(sample.timerQuantizationMs).toBe(0.5);
     expect(sample.windowSize.width).toBeGreaterThan(0);
     expect(sample.windowSize.height).toBeGreaterThan(0);
     expect(typeof sample.platform).toBe("string");
     dispose();
+  });
+
+  it("marks explicit elevation as diagnostic and unknown modes fail closed", () => {
+    const diagnostic = installPerfScenarioBridge({
+      ...baseDependencies(),
+      bundleEnvironment: {
+        DEV: true,
+        VITE_CODEVO_PERF_WINDOW_MODE: "always-on-top-diagnostic",
+      },
+    });
+    expect(window.__codevoPerf!.getEnvironmentSample().windowMode).toBe("always-on-top-diagnostic");
+    diagnostic();
+
+    const unknown = installPerfScenarioBridge({
+      ...baseDependencies(),
+      bundleEnvironment: { DEV: true, VITE_CODEVO_PERF_WINDOW_MODE: "elevated" },
+    });
+    expect(window.__codevoPerf!.getEnvironmentSample().windowMode).toBe("unknown");
+    unknown();
   });
 
   it("omits timer quantization fail-closed when the clock never advances, never recording 0", () => {

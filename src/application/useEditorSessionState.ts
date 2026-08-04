@@ -26,6 +26,8 @@ import {
 } from "../domain/documentContentCommitCoalescing";
 import { isPersistableEditorDocumentPath } from "../domain/editorDocumentSchemes";
 import type { LargeSmartDocumentMetrics } from "../domain/largeDocumentPolicy";
+import { classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics } from "../domain/javaScriptTypeScriptLargeDocumentCapability";
+import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import {
   buildEditorSurfaceSnapshot,
@@ -304,10 +306,15 @@ export function useEditorSessionState(
         cachedClassification.lineCount === metrics.lineCount &&
         cachedClassification.utf16Length === metrics.utf16Length
           ? cachedClassification.large
-          : isDocumentContentCommitPolicyLarge(
-              metrics,
-              effectiveDocumentContentCommitCoalescingPolicy,
-            );
+          : isJavaScriptTypeScriptLanguageServerDocument(before)
+            ? classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics(
+                metrics,
+                effectiveDocumentContentCommitCoalescingPolicy,
+              ).kind !== "full"
+            : isDocumentContentCommitPolicyLarge(
+                metrics,
+                effectiveDocumentContentCommitCoalescingPolicy,
+              );
       const coalescable = isCoalescableLargeContentCommit(before, after, policyLarge);
       largeDocumentClassificationByPathRef.current.set(path, {
         characterLimit: effectiveDocumentContentCommitCoalescingPolicy.characterLimit,

@@ -23,6 +23,8 @@ use std::{
 
 const WORKSPACE_FILE_SEARCH_RESPONSE_BYTE_LIMIT: usize = 2 * 1024 * 1024;
 pub(super) const SEARCH_RESPONSE_ENVELOPE_RESERVE_BYTES: usize = 512;
+pub(super) const DESCRIPTOR_FILE_SEARCH_NAME_BYTE_LIMIT: usize = 255;
+pub(super) const DESCRIPTOR_FILE_SEARCH_RELATIVE_PATH_BYTE_LIMIT: usize = 4_096;
 
 struct IgnoreScope {
     matcher: ignore::gitignore::Gitignore,
@@ -60,7 +62,7 @@ pub(super) fn collect_ranked_files_with_truncation(
     display_root: &Path,
     is_current: &dyn Fn() -> bool,
 ) -> io::Result<(Vec<(PathBuf, FileMatchRank)>, bool)> {
-    let mut sink = RankingWalkSink::new(query, limit, None);
+    let mut sink = RankingWalkSink::new(query, limit, scope, None);
     let walk_truncated = visit_workspace_files(
         root,
         scope,
@@ -76,41 +78,68 @@ pub(super) fn collect_ranked_files_with_truncation(
 pub(super) trait WorkspaceWalkSink {
     fn visit_file(&mut self, relative: PathBuf) -> io::Result<bool>;
 
+    fn projection_omitted(&mut self) {}
+
     fn directory_completed(&mut self, _visited: &VisitedDirectory<'_>) -> io::Result<()> {
         Ok(())
     }
 }
 
-pub(super) struct FileVisitor<'a>(pub(super) &'a mut dyn FnMut(PathBuf) -> io::Result<bool>);
+pub(super) struct FileVisitor<'a> {
+    pub(super) visit: &'a mut dyn FnMut(PathBuf) -> io::Result<bool>,
+    pub(super) projection_truncated: &'a mut bool,
+}
 
 impl WorkspaceWalkSink for FileVisitor<'_> {
     fn visit_file(&mut self, relative: PathBuf) -> io::Result<bool> {
-        (self.0)(relative)
+        (self.visit)(relative)
+    }
+
+    fn projection_omitted(&mut self) {
+        *self.projection_truncated = true;
     }
 }
 
 struct RankingWalkSink<'a> {
     query: &'a str,
+    projection_scope: &'a Path,
     ranked: RankedPaths,
     index: Option<WorkspaceFileIndexBuilder>,
+    projection_truncated: bool,
 }
 
 impl<'a> RankingWalkSink<'a> {
-    fn new(query: &'a str, limit: usize, index: Option<WorkspaceFileIndexBuilder>) -> Self {
+    fn new(
+        query: &'a str,
+        limit: usize,
+        projection_scope: &'a Path,
+        index: Option<WorkspaceFileIndexBuilder>,
+    ) -> Self {
         Self {
             query,
+            projection_scope,
             ranked: RankedPaths::new(limit),
             index,
+            projection_truncated: false,
         }
     }
 }
 
 impl WorkspaceWalkSink for RankingWalkSink<'_> {
     fn visit_file(&mut self, relative: PathBuf) -> io::Result<bool> {
-        let display = relative.to_string_lossy();
-        self.ranked.offer(&relative, display.as_ref(), self.query);
+        let projected = relative
+            .strip_prefix(self.projection_scope)
+            .unwrap_or(&relative);
+        if !is_descriptor_file_search_path(projected) {
+            self.projection_truncated = true;
+            return Ok(true);
+        }
+        let display = relative
+            .to_str()
+            .expect("validated descriptor file-search paths are UTF-8");
+        self.ranked.offer(&relative, display, self.query);
         if let Some(index) = self.index.as_mut() {
-            index.record_file(&relative, display.as_ref());
+            index.record_file(&relative, display);
         }
         Ok(true)
     }
@@ -121,6 +150,30 @@ impl WorkspaceWalkSink for RankingWalkSink<'_> {
         };
         index.record_directory(visited)
     }
+
+    fn projection_omitted(&mut self) {
+        self.projection_truncated = true;
+    }
+}
+
+pub(super) fn is_descriptor_file_search_path(relative: &Path) -> bool {
+    let Some(relative_path) = relative.to_str() else {
+        return false;
+    };
+    let Some(name) = relative.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    !relative_path.is_empty()
+        && relative_path.len() <= DESCRIPTOR_FILE_SEARCH_RELATIVE_PATH_BYTE_LIMIT
+        && name.len() <= DESCRIPTOR_FILE_SEARCH_NAME_BYTE_LIMIT
+        && !relative_path.chars().any(char::is_control)
+        && !relative_path.contains('\\')
+        && !is_windows_drive_prefixed(relative_path)
+}
+
+fn is_windows_drive_prefixed(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 pub(super) fn visit_workspace_files(
@@ -169,6 +222,10 @@ pub(super) fn visit_workspace_files(
                 }
             };
             let path = relative.join(&entry.name);
+            if !entry.name_is_utf8 {
+                sink.projection_omitted();
+                continue;
+            }
             if crate::ignore_matcher::is_default_ignored_name(&entry.name)
                 || ignore_chain_ignores(&ignores, &display_root.join(&path), entry.is_directory)
             {
@@ -319,6 +376,12 @@ pub(crate) struct PreparedDescriptorFileSearch {
     pub(super) file_index: WorkspaceFileIndexCache,
 }
 
+#[derive(Debug)]
+pub(crate) struct DescriptorFileSearchExecution {
+    pub(crate) results: Vec<DescriptorFileSearchResult>,
+    pub(crate) truncated: bool,
+}
+
 impl PreparedDescriptorFileSearch {
     pub(crate) fn descriptor(&self) -> &ManagedWorkspaceDescriptor {
         &self.descriptor
@@ -326,6 +389,7 @@ impl PreparedDescriptorFileSearch {
 
     fn ranked_paths(
         &self,
+        visited_limit: usize,
         is_current: &(dyn Fn() -> bool + Sync),
     ) -> io::Result<(Vec<(PathBuf, FileMatchRank)>, bool)> {
         let key =
@@ -337,48 +401,68 @@ impl PreparedDescriptorFileSearch {
         let mut sink = RankingWalkSink::new(
             &self.query,
             self.limit,
+            &self.scope,
             Some(WorkspaceFileIndexBuilder::new(self.file_index.bounds())),
         );
         let walk_truncated = visit_workspace_files(
             &self.root,
             &self.scope,
-            WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
+            visited_limit,
             &self.descriptor.canonical_root_path,
             is_current,
             &mut sink,
         )?;
-        let RankingWalkSink { ranked, index, .. } = sink;
+        let RankingWalkSink {
+            ranked,
+            index,
+            projection_truncated,
+            ..
+        } = sink;
         if let Some(builder) = index {
-            match builder.finish(walk_truncated) {
+            match builder.finish(walk_truncated, projection_truncated) {
                 Ok(index) => self.file_index.store(key, index),
                 Err(rejection) => self.file_index.record_rejection(rejection),
             }
         }
         let (ranked, result_truncated) = ranked.finish();
-        Ok((ranked, walk_truncated || result_truncated))
+        Ok((
+            ranked,
+            walk_truncated || projection_truncated || result_truncated,
+        ))
     }
 
     pub(crate) fn execute(
         self,
         is_current: &(dyn Fn() -> bool + Sync),
-    ) -> io::Result<Vec<DescriptorFileSearchResult>> {
-        let (files, walk_truncated) = self.ranked_paths(is_current)?;
+    ) -> io::Result<DescriptorFileSearchExecution> {
+        self.execute_with_visited_limit(WORKSPACE_FILE_SEARCH_VISITED_LIMIT, is_current)
+    }
+
+    pub(super) fn execute_with_visited_limit(
+        self,
+        visited_limit: usize,
+        is_current: &(dyn Fn() -> bool + Sync),
+    ) -> io::Result<DescriptorFileSearchExecution> {
+        let (files, walk_truncated) = self.ranked_paths(visited_limit, is_current)?;
         let mut results = Vec::new();
         let mut response_bytes = SEARCH_RESPONSE_ENVELOPE_RESERVE_BYTES;
         let mut output_truncated = false;
         for (relative, _) in files {
+            let projected = relative.strip_prefix(&self.scope).unwrap_or(&relative);
+            if !is_descriptor_file_search_path(projected) {
+                output_truncated = true;
+                continue;
+            }
             let result = DescriptorFileSearchResult {
                 name: relative
                     .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
-                relative_path: relative
-                    .strip_prefix(&self.scope)
-                    .unwrap_or(&relative)
-                    .to_string_lossy()
-                    .into_owned(),
-                truncated: walk_truncated,
+                    .and_then(|name| name.to_str())
+                    .expect("validated descriptor file-search names are UTF-8")
+                    .to_owned(),
+                relative_path: projected
+                    .to_str()
+                    .expect("validated descriptor file-search paths are UTF-8")
+                    .to_owned(),
             };
             let serialized_bytes = serde_json::to_vec(&result)
                 .map_err(|error| io::Error::other(error.to_string()))?
@@ -394,19 +478,7 @@ impl PreparedDescriptorFileSearch {
             results.push(result);
         }
         let truncated = walk_truncated || output_truncated;
-        if truncated {
-            results
-                .iter_mut()
-                .for_each(|result| result.truncated = true);
-        }
-        if truncated && results.is_empty() {
-            results.push(DescriptorFileSearchResult {
-                name: String::new(),
-                relative_path: String::new(),
-                truncated: true,
-            });
-        }
-        Ok(results)
+        Ok(DescriptorFileSearchExecution { results, truncated })
     }
 }
 
@@ -432,6 +504,7 @@ impl PreparedDescriptorTextSearch {
         let mut response_bytes = SEARCH_RESPONSE_ENVELOPE_RESERVE_BYTES;
         let mut output_truncated = false;
         let mut candidate_skipped = false;
+        let mut projection_truncated = false;
         let scope = self.scope;
         let root = self.root;
         let matcher = self.matcher;
@@ -444,92 +517,98 @@ impl PreparedDescriptorTextSearch {
             WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
             &self.descriptor.canonical_root_path,
             is_current,
-            &mut FileVisitor(&mut |relative| {
-                if let Some(mask) = &masks {
-                    let matched = mask.matcher.matched(&relative, false);
-                    if matched.is_ignore() || (mask.has_positive && !matched.is_whitelist()) {
-                        return Ok(true);
+            &mut FileVisitor {
+                visit: &mut |relative| {
+                    if let Some(mask) = &masks {
+                        let matched = mask.matcher.matched(&relative, false);
+                        if matched.is_ignore() || (mask.has_positive && !matched.is_whitelist()) {
+                            return Ok(true);
+                        }
                     }
-                }
-                ensure_search_current(is_current)?;
-                let file = match open_regular(root.as_raw_fd(), &relative, libc::O_RDONLY) {
-                    Ok(file) => file,
-                    Err(error) if is_skippable_text_search_candidate_error(&error) => {
-                        candidate_skipped = true;
-                        return Ok(true);
-                    }
-                    Err(error) => return Err(error),
-                };
-                ensure_search_current(is_current)?;
-                let bytes = match read_bounded_search_file(file, is_current) {
-                    Ok(bytes) => bytes,
-                    Err(error) if is_skippable_text_search_candidate_error(&error) => {
-                        candidate_skipped = true;
-                        return Ok(true);
-                    }
-                    Err(error) => return Err(error),
-                };
-                ensure_search_current(is_current)?;
-                if bytes.len() as u64 > WORKSPACE_TEXT_SEARCH_FILE_SIZE_LIMIT {
-                    candidate_skipped = true;
-                    return Ok(true);
-                }
-                if bytes.contains(&0) {
-                    return Ok(true);
-                }
-                let content = match String::from_utf8(bytes) {
-                    Ok(content) => content,
-                    Err(_) => return Ok(true),
-                };
-                let relative_path = relative
-                    .strip_prefix(&scope)
-                    .unwrap_or(&relative)
-                    .to_string_lossy()
-                    .into_owned();
-
-                for (line_index, line) in content.lines().enumerate() {
                     ensure_search_current(is_current)?;
-                    for found in matcher.find_iter(line) {
-                        if results.len() >= limit {
-                            output_truncated = true;
-                            return Ok(false);
+                    let file = match open_regular(root.as_raw_fd(), &relative, libc::O_RDONLY) {
+                        Ok(file) => file,
+                        Err(error) if is_skippable_text_search_candidate_error(&error) => {
+                            candidate_skipped = true;
+                            return Ok(true);
                         }
-                        let preview = bounded_match_preview(line, found.start(), found.end());
-                        let result = DescriptorTextSearchResult {
-                            relative_path: relative_path.clone(),
-                            line_number: line_index as u64 + 1,
-                            column: line[..found.start()].encode_utf16().count() as u64 + 1,
-                            line_text: preview.line_text,
-                            match_start: preview.match_start,
-                            match_end: preview.match_end,
-                            preview_truncated: preview.preview_truncated,
-                            match_truncated: preview.match_truncated,
-                        };
-                        let serialized_bytes = serde_json::to_vec(&result)
-                            .map_err(|error| io::Error::other(error.to_string()))?
-                            .len()
-                            .saturating_add(1);
-                        if response_bytes.saturating_add(serialized_bytes)
-                            > WORKSPACE_TEXT_SEARCH_RESPONSE_BYTE_LIMIT
-                        {
-                            output_truncated = true;
-                            return Ok(false);
+                        Err(error) => return Err(error),
+                    };
+                    ensure_search_current(is_current)?;
+                    let bytes = match read_bounded_search_file(file, is_current) {
+                        Ok(bytes) => bytes,
+                        Err(error) if is_skippable_text_search_candidate_error(&error) => {
+                            candidate_skipped = true;
+                            return Ok(true);
                         }
-                        response_bytes += serialized_bytes;
-                        results.push(result);
-                        if results.len() >= limit {
-                            output_truncated = true;
-                            return Ok(false);
+                        Err(error) => return Err(error),
+                    };
+                    ensure_search_current(is_current)?;
+                    if bytes.len() as u64 > WORKSPACE_TEXT_SEARCH_FILE_SIZE_LIMIT {
+                        candidate_skipped = true;
+                        return Ok(true);
+                    }
+                    if bytes.contains(&0) {
+                        return Ok(true);
+                    }
+                    let content = match String::from_utf8(bytes) {
+                        Ok(content) => content,
+                        Err(_) => return Ok(true),
+                    };
+                    let relative_path = relative
+                        .strip_prefix(&scope)
+                        .unwrap_or(&relative)
+                        .to_string_lossy()
+                        .into_owned();
+
+                    for (line_index, line) in content.lines().enumerate() {
+                        ensure_search_current(is_current)?;
+                        for found in matcher.find_iter(line) {
+                            if results.len() >= limit {
+                                output_truncated = true;
+                                return Ok(false);
+                            }
+                            let preview = bounded_match_preview(line, found.start(), found.end());
+                            let result = DescriptorTextSearchResult {
+                                relative_path: relative_path.clone(),
+                                line_number: line_index as u64 + 1,
+                                column: line[..found.start()].encode_utf16().count() as u64 + 1,
+                                line_text: preview.line_text,
+                                match_start: preview.match_start,
+                                match_end: preview.match_end,
+                                preview_truncated: preview.preview_truncated,
+                                match_truncated: preview.match_truncated,
+                            };
+                            let serialized_bytes = serde_json::to_vec(&result)
+                                .map_err(|error| io::Error::other(error.to_string()))?
+                                .len()
+                                .saturating_add(1);
+                            if response_bytes.saturating_add(serialized_bytes)
+                                > WORKSPACE_TEXT_SEARCH_RESPONSE_BYTE_LIMIT
+                            {
+                                output_truncated = true;
+                                return Ok(false);
+                            }
+                            response_bytes += serialized_bytes;
+                            results.push(result);
+                            if results.len() >= limit {
+                                output_truncated = true;
+                                return Ok(false);
+                            }
                         }
                     }
-                }
-                Ok(true)
-            }),
+                    Ok(true)
+                },
+                projection_truncated: &mut projection_truncated,
+            },
         )?;
         ensure_search_current(is_current)?;
         Ok(DescriptorTextSearchResponse {
             results,
-            truncated: walk_truncated || output_truncated || candidate_skipped,
+            truncated: walk_truncated
+                || output_truncated
+                || candidate_skipped
+                || projection_truncated,
             request_generation: String::new(),
         })
     }

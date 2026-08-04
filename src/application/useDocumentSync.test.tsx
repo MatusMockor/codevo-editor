@@ -19,6 +19,7 @@ import {
   type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
+import { MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS } from "../domain/javaScriptTypeScriptLargeDocumentCapability";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
   MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -706,7 +707,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       },
     });
     const document = phpDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
 
     await api().syncOpenDocument(document);
@@ -1346,6 +1347,129 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
 });
 
 describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
+  it("does not scan normal or line-large content on incremental and legacy edit paths", async () => {
+    const harness = createHarness();
+    harness.deps.javaScriptTypeScriptIncrementalSyncRef = ref(
+      incrementalLifecycle({
+        currentDocumentSemanticMode: () => "incremental",
+        ownsLifecycle: () => true,
+      }),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    const legacyHarness = createHarness();
+    const legacy = renderDocumentSync(legacyHarness.deps);
+    const normal = tsDocument({ content: "x".repeat(100_000) });
+    const lineLarge = tsDocument({ content: "x\n".repeat(20_000) });
+    await legacy.api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "initial" }));
+    const charCodeAt = vi.spyOn(String.prototype, "charCodeAt");
+
+    try {
+      api().scheduleJavaScriptTypeScriptDocumentChange(normal);
+      api().scheduleJavaScriptTypeScriptDocumentChange(lineLarge);
+      expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, lineLarge.path)).toBeNull();
+      await api().flushPendingJavaScriptTypeScriptDocumentChange(lineLarge.path);
+      await api().syncSavedJavaScriptTypeScriptDocument(ROOT, lineLarge);
+      legacy.api().scheduleJavaScriptTypeScriptDocumentChange(normal);
+      legacy.api().scheduleJavaScriptTypeScriptDocumentChange(lineLarge);
+      expect(
+        legacy.api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, lineLarge.path),
+      ).toBeNull();
+      await legacy.api().flushPendingJavaScriptTypeScriptDocumentChange(lineLarge.path);
+      await legacy.api().syncSavedJavaScriptTypeScriptDocument(ROOT, lineLarge);
+
+      const scannedContent = charCodeAt.mock.contexts.map((receiver) => String(receiver));
+      expect(scannedContent).not.toContain(normal.content);
+      expect(scannedContent).not.toContain(lineLarge.content);
+      expect(Math.max(...scannedContent.map((content) => content.length))).toBeLessThan(
+        lineLarge.content.length,
+      );
+    } finally {
+      charCodeAt.mockRestore();
+    }
+  });
+
+  it("retires malformed legacy content after one rejected change and reopens after repair", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const valid = tsDocument({ content: "const valid = true;" });
+    const malformed = tsDocument({ content: "const invalid = '\ud800';" });
+    const repaired = tsDocument({ content: "const valid = false;" });
+    vi.mocked(harness.jstsGateway.didChange).mockRejectedValueOnce(
+      new TypeError("malformed Unicode payload"),
+    );
+    await api().syncOpenJavaScriptTypeScriptDocument(valid);
+
+    api().scheduleJavaScriptTypeScriptDocumentChange(malformed);
+    await vi.advanceTimersByTimeAsync(150);
+    await flushMicrotasks();
+
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledOnce();
+    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
+
+    api().scheduleJavaScriptTypeScriptDocumentChange(malformed);
+    await vi.advanceTimersByTimeAsync(150);
+    await flushMicrotasks();
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledOnce();
+
+    api().scheduleJavaScriptTypeScriptDocumentChange(repaired);
+    await flushMicrotasks();
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retire a repaired document after a stale malformed explicit flush rejects", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const valid = tsDocument({ content: "const value = 1;" });
+    const malformed = tsDocument({ content: "const value = '\ud800';" });
+    const repaired = tsDocument({ content: "const value = 2;" });
+    const rejectedChange = deferred<void>();
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(() => rejectedChange.promise);
+    await api().syncOpenJavaScriptTypeScriptDocument(valid);
+    api().scheduleJavaScriptTypeScriptDocumentChange(malformed);
+
+    const flushing = api().flushPendingJavaScriptTypeScriptDocumentChange(malformed.path);
+    await flushMicrotasks();
+    api().scheduleJavaScriptTypeScriptDocumentChange(repaired);
+    rejectedChange.reject(new TypeError("stale malformed change"));
+    await flushing;
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(repaired.path);
+
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
+    expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didChange).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ text: repaired.content }),
+      SESSION,
+    );
+  });
+
+  it("does not retire a repaired document after a stale malformed save rejects", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const valid = tsDocument({ content: "const value = 1;" });
+    const malformed = tsDocument({ content: "const value = '\ud800';" });
+    const repaired = tsDocument({ content: "const value = 2;" });
+    const rejectedChange = deferred<void>();
+    vi.mocked(harness.jstsGateway.didChange).mockImplementationOnce(() => rejectedChange.promise);
+    await api().syncOpenJavaScriptTypeScriptDocument(valid);
+    api().scheduleJavaScriptTypeScriptDocumentChange(malformed);
+
+    const saving = api().syncSavedJavaScriptTypeScriptDocument(ROOT, malformed);
+    await flushMicrotasks();
+    api().scheduleJavaScriptTypeScriptDocumentChange(repaired);
+    rejectedChange.reject(new TypeError("stale malformed save"));
+    await saving;
+    await api().flushPendingJavaScriptTypeScriptDocumentChange(repaired.path);
+
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
+    expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didChange).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ text: repaired.content }),
+      SESSION,
+    );
+  });
+
   it("does not duplicate legacy didOpen while an exact incremental lifecycle owns the path", async () => {
     const harness = createHarness();
     const document = tsDocument({ content: "bounded" });
@@ -1385,7 +1509,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const harness = createHarness();
     const exactLiveContent = "incremental latest";
     const document = tsDocument({ content: exactLiveContent });
-    const prepareSave = vi.fn(async () => ({
+    const prepareLatestSave = vi.fn(async () => ({
       content: exactLiveContent,
       permit: TEST_INCREMENTAL_SAVE_PERMIT,
       revision: 2,
@@ -1396,7 +1520,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
         isLeaseCurrent: () => true,
         isSavePermitCurrent: () => true,
         ownsLifecycle: () => true,
-        prepareSave,
+        prepareLatestSave,
         requestLifecycleLease: () => TEST_INCREMENTAL_LIFECYCLE_LEASE,
       }),
     );
@@ -1404,7 +1528,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
 
     await api().syncSavedJavaScriptTypeScriptDocument(ROOT, document);
 
-    expect(prepareSave).toHaveBeenCalledWith(TEST_INCREMENTAL_LIFECYCLE_LEASE);
+    expect(prepareLatestSave).toHaveBeenCalledWith(document.path, exactLiveContent);
     expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
     expect(harness.jstsGateway.didSave).toHaveBeenCalledWith(
       ROOT,
@@ -1426,7 +1550,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
         isLeaseCurrent: () => true,
         isSavePermitCurrent: () => false,
         ownsLifecycle: () => true,
-        prepareSave: async () => ({
+        prepareLatestSave: async () => ({
           content: document.content,
           permit: TEST_INCREMENTAL_SAVE_PERMIT,
           revision: 2,
@@ -1455,7 +1579,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
         fallbackToLegacy,
         isLeaseCurrent: () => true,
         ownsLifecycle: () => true,
-        prepareSave: async () => ({
+        prepareLatestSave: async () => ({
           content: "newer live content",
           permit: TEST_INCREMENTAL_SAVE_PERMIT,
           revision: 3,
@@ -1514,7 +1638,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(harness.warmUp).not.toHaveBeenCalled();
   });
 
-  it("retires and reopens an unchanged document when the large-file policy shrinks and expands", async () => {
+  it("keeps an unchanged policy-large document synced when the smart policy changes", async () => {
     const harness = createHarness();
     const rendered = renderDocumentSync(harness.deps);
     const document = tsDocument({
@@ -1528,8 +1652,8 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     };
     rendered.rerender(harness.deps);
     await rendered.api().syncOpenJavaScriptTypeScriptDocument(document);
-    expect(harness.jstsGateway.didClose).toHaveBeenCalledOnce();
-    expect(harness.jsts.syncedPaths.current).not.toContain(
+    expect(harness.jstsGateway.didClose).not.toHaveBeenCalled();
+    expect(harness.jsts.syncedPaths.current).toContain(
       languageServerDocumentSyncKey(ROOT, document.path),
     );
 
@@ -1539,7 +1663,23 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     };
     rendered.rerender(harness.deps);
     await rendered.api().syncOpenJavaScriptTypeScriptDocument(document);
-    expect(harness.jstsGateway.didOpen).toHaveBeenCalledTimes(2);
+    expect(harness.jstsGateway.didOpen).toHaveBeenCalledOnce();
+  });
+
+  it("never sends an oversized didOpen when a custom policy allows three MiB", async () => {
+    const harness = createHarness();
+    harness.deps.largeSmartDocumentPolicy = {
+      characterLimit: 3 * 1024 * 1024,
+      lineLimit: Number.POSITIVE_INFINITY,
+    };
+    const { api } = renderDocumentSync(harness.deps);
+    const oversized = tsDocument({ content: "x".repeat(3 * 1024 * 1024) });
+    harness.activeDocumentRef.current = oversized;
+
+    await api().syncOpenJavaScriptTypeScriptDocument(oversized);
+
+    expect(harness.jstsGateway.didOpen).not.toHaveBeenCalled();
+    expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, oversized.path)).toBeNull();
   });
 
   it("reports a JS/TS sync version only after exact didOpen settlement and while policy-eligible", async () => {
@@ -1564,7 +1704,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
 
     harness.activeDocumentRef.current = {
       ...document,
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     };
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, document.path)).toBeNull();
 
@@ -1636,7 +1776,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const { api } = renderDocumentSync(harness.deps);
     const original = tsDocument({ content: "const value = 1;" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const shrunken = tsDocument({ content: "const value = 2;" });
     harness.activeDocumentRef.current = original;
@@ -1669,7 +1809,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     expect(api().getJavaScriptTypeScriptDocumentSyncVersion(ROOT, shrunken.path)).toBe(2);
   });
 
-  it("keeps threshold minus one and exact threshold eligible, then closes once at plus one", async () => {
+  it("keeps the hard sync boundary eligible, then closes once at plus one", async () => {
     const harness = createHarness();
     harness.deps.largeSmartDocumentPolicy = {
       characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -1677,13 +1817,13 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     };
     const { api } = renderDocumentSync(harness.deps);
     const below = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT - 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS - 1),
     });
     const exact = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS),
     });
     const above = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     harness.activeDocumentRef.current = below;
 
@@ -1715,7 +1855,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const original = tsDocument({ content: "original" });
     const pending = tsDocument({ content: "pending" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const syncKey = languageServerDocumentSyncKey(ROOT, original.path);
     const uriKey = languageServerUriSyncKey(ROOT, fileUriFromPath(original.path));
@@ -1760,7 +1900,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const { api } = renderDocumentSync(harness.deps);
     const original = tsDocument({ content: "original" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const shrunken = tsDocument({ content: "current-full-text" });
     harness.activeDocumentRef.current = original;
@@ -1794,7 +1934,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const { api } = renderDocumentSync(harness.deps);
     const original = tsDocument({ content: "original" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const replacement = tsDocument({ content: "replacement" });
     const syncKey = languageServerDocumentSyncKey(ROOT, original.path);
@@ -1833,7 +1973,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const { api } = rendered;
     const original = tsDocument({ content: "original" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const replacement = tsDocument({ content: "replacement" });
     const syncKey = languageServerDocumentSyncKey(ROOT, original.path);
@@ -1882,7 +2022,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const { api } = renderDocumentSync(harness.deps);
     const original = tsDocument({ content: "original" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const replacement = tsDocument({ content: "replacement" });
     harness.activeDocumentRef.current = original;
@@ -1913,7 +2053,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const rendered = renderDocumentSync(harness.deps);
     const original = tsDocument({ content: "original" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const replacement = tsDocument({ content: "replacement" });
     harness.activeDocumentRef.current = original;
@@ -1955,7 +2095,7 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     const original = tsDocument({ content: "original" });
     const pending = tsDocument({ content: "pending" });
     const large = tsDocument({
-      content: "x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1),
+      content: "x".repeat(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS + 1),
     });
     const fresh = tsDocument({ content: "fresh-after-a-b-a" });
     harness.activeDocumentRef.current = original;
@@ -2600,11 +2740,14 @@ function incrementalLifecycle(
     closeDocument: async () => false,
     closeRoot: async () => undefined,
     confirmSave: () => false,
+    currentDocumentSemanticMode: () => null,
+    currentDocumentSyncVersion: () => null,
     drainBeforeSave: async () => false,
     fallbackToLegacy: async () => undefined,
     isLeaseCurrent: () => false,
     isSavePermitCurrent: () => false,
     ownsLifecycle: () => false,
+    prepareLatestSave: async () => null,
     prepareSave: async () => null,
     requestLifecycleLease: () => null,
     ...overrides,

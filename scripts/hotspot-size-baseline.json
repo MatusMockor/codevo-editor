@@ -53,10 +53,10 @@
       "rawLines": 2145,
       "structuralTokens": 14163
     },
-    "src/App.tsx": { "rawLines": 1633, "structuralTokens": 8252 },
+    "src/App.tsx": { "rawLines": 1630, "structuralTokens": 8243 },
     "src/application/useDocumentSync.ts": {
-      "rawLines": 1625,
-      "structuralTokens": 5683
+      "rawLines": 1526,
+      "structuralTokens": 5304
     },
     "src/application/useLanguageServerRuntimeLifecycle.ts": {
       "rawLines": 1979,
@@ -68,11 +68,11 @@
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2502,
-      "structuralTokens": 10330
+      "structuralTokens": 10325
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
-      "rawLines": 2224,
-      "structuralTokens": 9321
+      "rawLines": 2192,
+      "structuralTokens": 9224
     },
     "src/components/languageServerMonacoProviders.ts": {
       "rawLines": 2972,

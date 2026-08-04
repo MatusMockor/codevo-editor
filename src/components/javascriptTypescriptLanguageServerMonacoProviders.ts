@@ -93,8 +93,9 @@ import {
   isJavaScriptTypeScriptDocumentRequestAuthority,
   isJavaScriptTypeScriptDocumentRequestAuthorityActive,
   isJavaScriptTypeScriptProviderRequestAuthorityActive,
-  isLargeJavaScriptTypeScriptProviderDocument,
   isStoredJavaScriptTypeScriptDocumentAuthorityActive,
+  javaScriptTypeScriptProviderDocumentRequestAccess,
+  javaScriptTypeScriptProviderModelVersion,
   refreshStoredJavaScriptTypeScriptDocumentAuthority,
   type JavaScriptTypeScriptDocumentRequestAuthority,
   type JavaScriptTypeScriptProviderRequestAuthority,
@@ -136,6 +137,8 @@ import {
   runBoundedJavaScriptTypeScriptProviderRequest as runBoundedProviderRequest,
   type JavaScriptTypeScriptProviderRequestCancellationPort,
   type JavaScriptTypeScriptProviderRequestBoundary,
+  type JavaScriptTypeScriptFeatureRequestIntent,
+  type JavaScriptTypeScriptStoredAuthorityConsumer,
 } from "./javascriptTypescriptProviders/requestBoundary";
 import {
   provideJavaScriptTypeScriptDeclaration,
@@ -169,6 +172,11 @@ import {
   registerJavaScriptTypeScriptMonacoProvidersTransactionally,
   rollbackJavaScriptTypeScriptProviderRegistrationActivation,
 } from "./javascriptTypescriptProviders/registrationLifecycle";
+import { subscribeJavaScriptTypeScriptProviderEvents } from "./javascriptTypescriptProviders/eventSubscriptions";
+import {
+  javaScriptTypeScriptFeatureAllowsExplicitInteractiveAccess,
+  type JavaScriptTypeScriptInteractiveFeature,
+} from "./javascriptTypescriptProviders/explicitInteractiveAccess";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -260,7 +268,8 @@ const providerRequestBoundary: JavaScriptTypeScriptProviderRequestBoundary<JavaS
     flushActiveRequest: flushPendingDocumentChangeForActiveRoot,
     flushStoredPayload: flushPendingDocumentChangeForStoredPayload,
     isActiveRequest: (context, request) => isFeatureRequestActive(context, request),
-    isStoredPayloadActive: (context, payload) => isStoredDocumentPayloadActive(context, payload),
+    isStoredPayloadActive: (context, payload, consumer) =>
+      isStoredDocumentPayloadActive(context, payload, consumer),
     isStoredSessionActive: isStoredLanguageServerPayloadActive,
     reportActiveRequestError: reportErrorForActiveRequest,
     reportStoredPayloadError: reportErrorForStoredPayload,
@@ -373,29 +382,11 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         semanticTokensRefreshEmitter.dispose();
       },
     });
-    let refreshUnsubscribe: (() => void) | null = null;
-    let refreshSubscriptionDisposed = false;
-    const refreshSubscriptionDisposable = {
-      dispose: () => {
-        refreshSubscriptionDisposed = true;
-        refreshUnsubscribe?.();
-        refreshUnsubscribe = null;
-      },
-    };
-    let workspaceEditUnsubscribe: (() => void) | null = null;
-    let workspaceEditSubscriptionDisposed = false;
-    const workspaceEditSubscriptionDisposable = {
-      dispose: () => {
-        workspaceEditSubscriptionDisposed = true;
-        workspaceEditUnsubscribe?.();
-        workspaceEditUnsubscribe = null;
-      },
-    };
-
-    if (context.refreshGateway) {
-      disposables.push(refreshSubscriptionDisposable);
-      context.refreshGateway
-        .subscribeRefreshEvents((event) => {
+    subscribeJavaScriptTypeScriptProviderEvents(
+      context,
+      {
+        isRegistrationActive: () => registrationAuthority.active,
+        onRefresh: (event) => {
           handleLanguageServerRefreshEvent(
             registeredContext,
             event,
@@ -403,26 +394,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
             inlayHintRefreshEmitter,
             semanticTokensRefreshEmitter,
           );
-        })
-        .then((unsubscribe) => {
-          if (refreshSubscriptionDisposed) {
-            unsubscribe();
-            return;
-          }
-
-          refreshUnsubscribe = unsubscribe;
-        })
-        .catch((error) => {
-          if (registrationAuthority.active) {
-            context.reportError(error);
-          }
-        });
-    }
-
-    if (context.workspaceEditGateway) {
-      disposables.push(workspaceEditSubscriptionDisposable);
-      context.workspaceEditGateway
-        .subscribeWorkspaceEdits((event) => {
+        },
+        onWorkspaceEdit: (event) => {
           void applyWorkspaceEditEvent(monaco, registeredContext, event).catch((error) => {
             if (event.rootPath) {
               reportErrorForActiveWorkspaceEditEvent(registeredContext, event, error);
@@ -431,21 +404,10 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
 
             context.reportError(error);
           });
-        })
-        .then((unsubscribe) => {
-          if (workspaceEditSubscriptionDisposed) {
-            unsubscribe();
-            return;
-          }
-
-          workspaceEditUnsubscribe = unsubscribe;
-        })
-        .catch((error) => {
-          if (registrationAuthority.active) {
-            context.reportError(error);
-          }
-        });
-    }
+        },
+      },
+      disposables,
+    );
 
     const executeCommand = createJavaScriptTypeScriptExecuteCommandHandler(registeredContext, {
       applyWorkspaceEdit: (edit, rootPath, isStillActive, onApplied) =>
@@ -1396,19 +1358,8 @@ function featureRequestContext(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
-  feature:
-    | "completion"
-    | "declaration"
-    | "definition"
-    | "documentHighlight"
-    | "hover"
-    | "implementation"
-    | "linkedEditingRange"
-    | "prepareRename"
-    | "references"
-    | "rename"
-    | "signatureHelp"
-    | "typeDefinition",
+  feature: JavaScriptTypeScriptInteractiveFeature,
+  intent: JavaScriptTypeScriptFeatureRequestIntent = "automatic",
 ) {
   if (typeof context?.getActiveDocument !== "function") {
     return null;
@@ -1430,13 +1381,20 @@ function featureRequestContext(
     return null;
   }
 
+  const access = javaScriptTypeScriptProviderDocumentRequestAccess(
+    model,
+    activeDocument,
+    context.getLargeSmartDocumentPolicy(),
+  );
   if (
-    isLargeJavaScriptTypeScriptProviderDocument(
-      model,
-      activeDocument,
-      context.getLargeSmartDocumentPolicy(),
-    )
+    !access ||
+    (access === "explicit-interactive" &&
+      !javaScriptTypeScriptFeatureAllowsExplicitInteractiveAccess(feature, intent))
   ) {
+    return null;
+  }
+  const modelVersion = javaScriptTypeScriptProviderModelVersion(model);
+  if (modelVersion === null) {
     return null;
   }
 
@@ -1450,8 +1408,9 @@ function featureRequestContext(
   }
 
   return {
+    access,
     model,
-    modelVersion: model.getVersionId(),
+    modelVersion,
     ownerEpoch,
     path: activeDocument.path,
     position: toLanguageServerTextDocumentPosition(activeDocument.path, {
@@ -1499,13 +1458,17 @@ function documentRequestContext(
   ) {
     return null;
   }
+  const modelVersion = javaScriptTypeScriptProviderModelVersion(model);
+  if (modelVersion === null) {
+    return null;
+  }
 
   if (
-    isLargeJavaScriptTypeScriptProviderDocument(
+    javaScriptTypeScriptProviderDocumentRequestAccess(
       model,
       activeDocument,
       context.getLargeSmartDocumentPolicy(),
-    )
+    ) !== "full"
   ) {
     return null;
   }
@@ -1520,8 +1483,9 @@ function documentRequestContext(
   }
 
   return {
+    access: "full" as const,
     model,
-    modelVersion: model.getVersionId(),
+    modelVersion,
     ownerEpoch,
     path: activeDocument.path,
     registrationLease,
@@ -1579,6 +1543,7 @@ async function flushPendingDocumentChangeForActiveRoot(
 async function flushPendingDocumentChangeForStoredPayload(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   payload: StoredLanguageServerPayloadRequest,
+  consumer: JavaScriptTypeScriptStoredAuthorityConsumer = "fullOnly",
 ): Promise<boolean> {
   const authority = payload.__codeActionAuthority;
   const path = authority?.path ?? payload.path ?? payload.__sourcePath;
@@ -1589,7 +1554,7 @@ async function flushPendingDocumentChangeForStoredPayload(
     return false;
   }
 
-  if (!isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId)) {
+  if (!isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId, consumer)) {
     return false;
   }
 
@@ -1599,7 +1564,7 @@ async function flushPendingDocumentChangeForStoredPayload(
     (authority
       ? isCodeActionAuthorityActive(context, authority)
       : isStoredLanguageServerPayloadActive(context, rootPath, sessionId)) &&
-    isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId)
+    isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId, consumer)
   );
 }
 
@@ -1609,8 +1574,10 @@ function isStoredDocumentAuthorityActive(
   path: string,
   rootPath: string,
   sessionId: number,
+  consumer: JavaScriptTypeScriptStoredAuthorityConsumer = "fullOnly",
 ): boolean {
   return isStoredJavaScriptTypeScriptDocumentAuthorityActive(context, payload, {
+    allowExplicitInteractive: consumer === "completionResolve",
     path,
     rootAndSessionActive: isStoredLanguageServerPayloadActive(context, rootPath, sessionId),
     rootPath,
@@ -1620,6 +1587,7 @@ function isStoredDocumentAuthorityActive(
 function isStoredDocumentPayloadActive(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   payload: StoredLanguageServerPayloadRequest,
+  consumer: JavaScriptTypeScriptStoredAuthorityConsumer = "fullOnly",
 ): boolean {
   const authority = payload.__codeActionAuthority;
   const path = authority?.path ?? payload.path ?? payload.__sourcePath;
@@ -1629,7 +1597,7 @@ function isStoredDocumentPayloadActive(
     path &&
     rootPath &&
     sessionId != null &&
-    isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId),
+    isStoredDocumentAuthorityActive(context, payload, path, rootPath, sessionId, consumer),
   );
 }
 

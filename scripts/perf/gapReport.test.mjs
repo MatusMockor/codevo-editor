@@ -13,7 +13,7 @@ import { PERF_SCENARIOS } from "./perfScenarios.mjs";
 const FIXTURE_VERSION = "large-files@v4:medium-2k";
 const FIXTURE_HASHES = {
   "large-files/medium-2k.ts": "a".repeat(64),
-  "monorepo/package.json": "b".repeat(64),
+  "monorepo/": "b".repeat(64),
 };
 const TEN_TARGETS = Array.from({ length: 10 }, (_, index) => `AlphaKind${index}`);
 const TOLERANCES = [{ pattern: /^definition$/, budget: 1.25 }];
@@ -60,7 +60,17 @@ function runOf(overrides = {}) {
   return {
     fixtureVersion,
     fixtureHashes,
-    environment: environment === undefined ? { timerQuantizationMs } : environment,
+    environment:
+      environment === undefined
+        ? {
+            bundleMode: "production",
+            version: "1.0.0",
+            capturedAt: "2026-08-03T00:00:00.000Z",
+            hostPlatform: "darwin",
+            hostArch: "arm64",
+            timerQuantizationMs,
+          }
+        : environment,
     failedPaths,
     scenarios,
   };
@@ -74,9 +84,17 @@ function reportOf({
   baseline,
   requiredScenarioIds = [],
 }) {
+  const withEditor = (run, editor) => ({
+    ...run,
+    environment: { ...run.environment, editor: run.environment?.editor ?? editor },
+  });
+
   return buildGapReport({
-    codevo: codevo ?? runOf({ scenarios: codevoScenarios }),
-    baseline: baseline ?? runOf({ scenarios: baselineScenarios, timerQuantizationMs: 0.001 }),
+    codevo: withEditor(codevo ?? runOf({ scenarios: codevoScenarios }), "codevo"),
+    baseline: withEditor(
+      baseline ?? runOf({ scenarios: baselineScenarios, timerQuantizationMs: 0.001 }),
+      "vscode",
+    ),
     tolerances,
     requiredScenarioIds,
   });
@@ -103,7 +121,127 @@ describe("run-level fixture verification", () => {
     expect(report.verification.reasons).toEqual([]);
     expect(rowOf(report, "definition").status).toBe("pass");
     expect(renderGapReportMarkdown(report)).toContain(
-      "Run comparability: fixtureVersion, fixtureHashes, and timer quantization metadata match on both sides.",
+      "Run comparability: fixture, bundle, platform/architecture, and timer metadata match on both sides.",
+    );
+  });
+
+  it("fails closed for the historical Codevo dev versus VS Code production comparison", () => {
+    const report = reportOf({
+      codevo: runOf({
+        scenarios: [scenarioOf({})],
+        environment: {
+          bundleMode: "dev",
+          hostPlatform: "darwin",
+          hostArch: "arm64",
+          timerQuantizationMs: 1,
+        },
+      }),
+      baseline: runOf({ scenarios: [scenarioOf({})], timerQuantizationMs: 0.001 }),
+    });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons).toContain(
+      'environment.bundleMode mismatch: Codevo "dev" vs VS Code "production".',
+    );
+    expect(rowOf(report, "definition").status).toBe("non-comparable");
+    expect(renderGapReportMarkdown(report)).not.toContain("| pass |");
+  });
+
+  it.each([
+    ["version", undefined, "environment.version"],
+    ["version", "", "environment.version"],
+    ["capturedAt", undefined, "environment.capturedAt"],
+    ["capturedAt", "not-a-timestamp", "environment.capturedAt"],
+  ])("fails closed when both sides have invalid %s metadata", (field, value, reasonField) => {
+    const codevo = runOf({ scenarios: [scenarioOf({})] });
+    const baseline = runOf({ scenarios: [scenarioOf({})], timerQuantizationMs: 0.001 });
+    codevo.environment = { ...codevo.environment, [field]: value };
+    baseline.environment = { ...baseline.environment, [field]: value };
+    const report = reportOf({ codevo, baseline });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons.some((reason) => reason.includes(reasonField))).toBe(true);
+    expect(rowOf(report, "definition").status).toBe("non-comparable");
+    expect(renderGapReportMarkdown(report)).not.toContain("| pass |");
+  });
+
+  it.each([
+    ["codevo", "version", "   ", "Codevo"],
+    ["baseline", "version", "unknown", "VS Code"],
+    ["codevo", "version", "not-a-version", "Codevo"],
+    ["baseline", "version", "1.2", "VS Code"],
+    ["codevo", "capturedAt", "0", "Codevo"],
+    ["baseline", "capturedAt", "2026", "VS Code"],
+    ["codevo", "capturedAt", "2026-02-30T00:00:00.000Z", "Codevo"],
+    ["baseline", "capturedAt", "2026-08-03T00:00:00Z", "VS Code"],
+  ])("fails closed for noncanonical %s-side %s metadata", (side, field, value, label) => {
+    const codevo = runOf({ scenarios: [scenarioOf({})] });
+    const baseline = runOf({ scenarios: [scenarioOf({})], timerQuantizationMs: 0.001 });
+    const target = side === "codevo" ? codevo : baseline;
+    target.environment = { ...target.environment, [field]: value };
+    const report = reportOf({ codevo, baseline });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons).toContain(
+      field === "version"
+        ? `The ${label} run records no valid environment.version.`
+        : `The ${label} run records no valid environment.capturedAt.`,
+    );
+    expect(rowOf(report, "definition").status).toBe("non-comparable");
+  });
+
+  it.each([
+    ["hostPlatform", "linux"],
+    ["hostArch", "x64"],
+  ])("fails closed when environment.%s differs", (field, value) => {
+    const report = reportOf({
+      codevo: runOf({
+        scenarios: [scenarioOf({})],
+        environment: {
+          bundleMode: "production",
+          hostPlatform: "darwin",
+          hostArch: "arm64",
+          timerQuantizationMs: 1,
+          [field]: value,
+        },
+      }),
+      baseline: runOf({ scenarios: [scenarioOf({})], timerQuantizationMs: 0.001 }),
+    });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons.join(" ")).toContain(`environment.${field} mismatch`);
+  });
+
+  it("rejects swapped or missing editor identities", () => {
+    const report = reportOf({
+      codevo: runOf({
+        scenarios: [scenarioOf({})],
+        environment: {
+          editor: "vscode",
+          bundleMode: "production",
+          hostPlatform: "darwin",
+          hostArch: "arm64",
+          timerQuantizationMs: 1,
+        },
+      }),
+      baseline: runOf({
+        scenarios: [scenarioOf({})],
+        environment: {
+          editor: "codevo",
+          bundleMode: "production",
+          hostPlatform: "darwin",
+          hostArch: "arm64",
+          timerQuantizationMs: 0.001,
+        },
+      }),
+    });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons.join(" ")).toContain(
+      'Codevo-side environment.editor must be "codevo"',
+    );
+    expect(report.verification.reasons.join(" ")).toContain(
+      'VS Code-side environment.editor must be "vscode"',
     );
   });
 
@@ -160,13 +298,13 @@ describe("run-level fixture verification", () => {
     const report = reportOf({
       codevo: runOf({
         scenarios: [scenarioOf({})],
-        fixtureHashes: { ...FIXTURE_HASHES, "monorepo/": "e".repeat(64) },
+        fixtureHashes: { ...FIXTURE_HASHES, "large-files/extra.ts": "e".repeat(64) },
       }),
       baseline: runOf({ scenarios: [scenarioOf({})], timerQuantizationMs: 0.001 }),
     });
 
     expect(report.verification.reasons).toContain(
-      "fixtureHash keys missing from the VS Code baseline: monorepo/.",
+      "fixtureHash keys missing from the VS Code baseline: large-files/extra.ts.",
     );
     expect(report.failures[0].id).toBe("run-comparability");
   });
@@ -194,13 +332,54 @@ describe("run-level fixture verification", () => {
     const report = reportOf({
       codevo: runOf({
         scenarios: [scenarioOf({})],
-        fixtureHashes: { "only/here.ts": "d".repeat(64) },
+        fixtureHashes: { "large-files/only-here.ts": "d".repeat(64) },
       }),
       baseline: runOf({ scenarios: [scenarioOf({})], timerQuantizationMs: 0.001 }),
     });
 
     expect(report.verification.reasons).toContain(
       "The Codevo run and the VS Code baseline share no fixture path in fixtureHashes.",
+    );
+  });
+
+  it.each([
+    ["invalid digest", { "large-files/medium-2k.ts": "not-a-sha256" }],
+    ["invalid key", { "../large-files/medium-2k.ts": "a".repeat(64) }],
+    [
+      "partially invalid map",
+      { "large-files/medium-2k.ts": "a".repeat(64), "large-files/bad.ts": null },
+    ],
+  ])("fails closed for an %s fixture hash map", (_label, fixtureHashes) => {
+    const report = reportOf({
+      codevo: runOf({ scenarios: [scenarioOf({})], fixtureHashes }),
+      baseline: runOf({ scenarios: [scenarioOf({})], timerQuantizationMs: 0.001 }),
+    });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons).toContain("The Codevo run records no fixtureHashes.");
+  });
+
+  it("fails closed when matching bundle modes are outside the closed schema", () => {
+    const environment = {
+      bundleMode: "release-ish",
+      hostPlatform: "darwin",
+      hostArch: "arm64",
+      timerQuantizationMs: 1,
+    };
+    const report = reportOf({
+      codevo: runOf({ scenarios: [scenarioOf({})], environment }),
+      baseline: runOf({
+        scenarios: [scenarioOf({})],
+        environment: { ...environment, timerQuantizationMs: 0.001 },
+      }),
+    });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons).toContain(
+      'Codevo environment.bundleMode is invalid: "release-ish".',
+    );
+    expect(report.verification.reasons).toContain(
+      'VS Code environment.bundleMode is invalid: "release-ish".',
     );
   });
 
@@ -239,6 +418,50 @@ describe("run-level fixture verification", () => {
 });
 
 describe("join-time comparability verification", () => {
+  it("keeps UI rows non-comparable when window size metadata is absent", () => {
+    const report = reportOf(
+      comparablePair({ id: "tab-switch-cycle", cutPoint: "tab-switch-rendered" }),
+    );
+    const row = rowOf(report, "tab-switch-cycle");
+
+    expect(row.status).toBe("non-comparable");
+    expect(row.nonComparableReasons).toContain("missing Codevo focus/elevation metadata");
+    expect(row.nonComparableReasons).toContain("missing VS Code window-size metadata");
+  });
+
+  it("rejects diagnostic elevation even when UI window sizes match", () => {
+    const windowSize = { width: 1280, height: 820 };
+    const codevo = runOf({
+      scenarios: [scenarioOf({ id: "tab-switch-cycle", cutPoint: "tab-switch-rendered" })],
+      environment: {
+        bundleMode: "production",
+        hostPlatform: "darwin",
+        hostArch: "arm64",
+        timerQuantizationMs: 1,
+        windowMode: "always-on-top-diagnostic",
+        windowSize,
+      },
+    });
+    const baseline = runOf({
+      scenarios: [scenarioOf({ id: "tab-switch-cycle", cutPoint: "tab-switch-rendered" })],
+      timerQuantizationMs: 0.001,
+      environment: {
+        bundleMode: "production",
+        hostPlatform: "darwin",
+        hostArch: "arm64",
+        timerQuantizationMs: 0.001,
+        windowMode: "focus-only",
+        windowSize,
+      },
+    });
+    const row = rowOf(reportOf({ codevo, baseline }), "tab-switch-cycle");
+
+    expect(row.status).toBe("non-comparable");
+    expect(row.nonComparableReasons).toContain(
+      'Codevo window mode "always-on-top-diagnostic" is diagnostic and not parity-comparable',
+    );
+  });
+
   it("passes a comparable row inside its declared budget and fails it outside", () => {
     const passing = reportOf(comparablePair({ ms: 100, baseline: { ms: 90 } }));
     const failing = reportOf(comparablePair({ ms: 200, baseline: { ms: 90 } }));

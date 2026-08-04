@@ -15,10 +15,7 @@ import type {
   IncrementalDocumentContentEvent,
   NegotiatedDocumentSyncCapability,
 } from "../domain/incrementalDocumentSync";
-import {
-  DEFAULT_INCREMENTAL_DOCUMENT_SYNC_LIMITS,
-  boundedUtf8Length,
-} from "../domain/incrementalDocumentSync";
+import { DEFAULT_INCREMENTAL_DOCUMENT_SYNC_LIMITS } from "../domain/incrementalDocumentSync";
 import {
   AUTHORITATIVE_EDITOR_LIVE_EDIT,
   LEGACY_REQUIRED_EDITOR_LIVE_EDIT,
@@ -26,6 +23,22 @@ import {
 } from "./editorLiveEditArbitration";
 import type { JavaScriptTypeScriptDocumentLanguageId } from "../domain/incrementalLanguageServerDocumentSync";
 import type { LiveDocumentAuthority } from "../domain/liveDocumentContentAuthority";
+import { isWellFormedUnicode } from "../domain/unicodeText";
+import {
+  clearIncrementalSyncPending as clearPending,
+  deferredIncrementalSyncDecision as deferredArbitration,
+  incrementalSyncEventUtf8Bytes as incrementalEventUtf8Bytes,
+  incrementalSyncIncarnationToken as incarnationToken,
+  incrementalSyncWithDeadline as withDeadline,
+  isIncrementalSyncObject as isObject,
+  positiveIncrementalSyncLimit as positiveLimit,
+  safeIncrementalSyncCapture as safeCapture,
+  safeIncrementalSyncCurrent as safeCurrent,
+  safeIncrementalSyncLength as safeLength,
+  setIncrementalSyncSemanticMode as setAttachmentSemanticMode,
+  recordIncrementalSyncDegradedReopenCheckpoint as recordDegradedCheckpoint,
+  type IncrementalSyncDegradedReopenCheckpoint,
+} from "./javaScriptTypeScriptIncrementalSyncProductionBounds";
 
 export interface JavaScriptTypeScriptIncrementalRuntimeAuthority {
   readonly capability: NegotiatedDocumentSyncCapability;
@@ -109,36 +122,60 @@ export interface JavaScriptTypeScriptIncrementalSyncDocumentLifecyclePort {
   isLeaseCurrent(lease: JavaScriptTypeScriptIncrementalSyncLifecycleLease): boolean;
   isSavePermitCurrent(permit: JavaScriptTypeScriptIncrementalSyncSavePermit): boolean;
   ownsLifecycle(path: string): boolean;
+  prepareLatestSave(
+    path: string,
+    expectedContent: string,
+  ): Promise<JavaScriptTypeScriptIncrementalSyncPreparedSave | null>;
   prepareSave(
     lease: JavaScriptTypeScriptIncrementalSyncLifecycleLease,
   ): Promise<JavaScriptTypeScriptIncrementalSyncPreparedSave | null>;
   confirmSave(permit: JavaScriptTypeScriptIncrementalSyncSavePermit): boolean;
+  currentDocumentSemanticMode(
+    path: string,
+  ): EditorJavaScriptTypeScriptIncrementalSyncAttachment["semanticMode"] | null;
+  currentDocumentSyncVersion(path: string): number | null;
   requestLifecycleLease(path: string): JavaScriptTypeScriptIncrementalSyncLifecycleLease | null;
 }
 
 interface AttachmentCapabilities {
   binding: JavaScriptTypeScriptIncrementalSyncBinding | null;
   readonly channel: ChannelRecord;
+  establishGeneration: number;
   fallbackPublicationInProgress: boolean;
   readonly isCurrent: () => boolean;
+  readonly languageId: JavaScriptTypeScriptDocumentLanguageId;
+  readonly liveAuthority: LiveDocumentAuthority;
   readonly pendingEvents: PendingOpeningEvent[];
   pendingEventUtf8Bytes: number;
   released: boolean;
   readonly runtimeAuthority: JavaScriptTypeScriptIncrementalRuntimeAuthority;
-  readonly source: EditorJavaScriptTypeScriptIncrementalSyncSource;
+  source: EditorJavaScriptTypeScriptIncrementalSyncSource;
   state: "blocked" | "closed" | "degraded" | "fallback-pending" | "open" | "opening";
 }
 
 interface ChannelRecord {
   allowLegacyRestore: boolean;
   readonly attachments: Set<EditorJavaScriptTypeScriptIncrementalSyncAttachment>;
+  degradedTransition: Promise<void> | null;
+  degradedRevisionFloor: number;
+  readonly establishments: Set<Promise<void>>;
   lastObservedRevision: number;
+  latestDegradedCheckpoint: IncrementalSyncDegradedReopenCheckpoint | null;
   legacyHandoff: Promise<void> | null;
   legacyRestore: Promise<boolean> | null;
   readonly model: object;
   readonly path: string;
+  pendingSave: PendingDeferredSave | null;
   retired: boolean;
   readonly rootPath: string;
+}
+
+interface PendingDeferredSave {
+  readonly attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment;
+  readonly capabilities: AttachmentCapabilities;
+  readonly content: string;
+  readonly resolve: (prepared: JavaScriptTypeScriptIncrementalSyncPreparedSave | null) => void;
+  readonly runtimeAuthority: JavaScriptTypeScriptIncrementalRuntimeAuthority;
 }
 
 interface PendingClaim {
@@ -264,6 +301,26 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     return this.reconciliationRevisionIdentity;
   }
 
+  currentDocumentSyncVersion(path: string): number | null {
+    const capabilities = this.currentCapabilitiesForPath(path);
+    return capabilities?.binding ? this.service.currentServerVersion(capabilities.binding) : null;
+  }
+
+  currentDocumentSemanticMode(
+    path: string,
+  ): EditorJavaScriptTypeScriptIncrementalSyncAttachment["semanticMode"] | null {
+    const current = this.retainedCapabilitiesForPath(path);
+    if (
+      !current ||
+      (current.capabilities.state !== "open" &&
+        current.capabilities.state !== "opening" &&
+        current.capabilities.state !== "degraded")
+    ) {
+      return null;
+    }
+    return current.attachment.semanticMode;
+  }
+
   attach(
     authority: EditorGroupDocumentSessionAuthority,
     source: EditorJavaScriptTypeScriptIncrementalSyncSource,
@@ -304,6 +361,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     if (
       (!degraded && !existingChannel && initialText === null) ||
       (initialText !== null && initialText.length !== source.utf16Length) ||
+      (initialText !== null && !isWellFormedUnicode(initialText)) ||
       !safeCurrent(isCurrent) ||
       !this.runtime.isCurrent(runtimeAuthority)
     ) {
@@ -312,15 +370,19 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
 
     const channel =
       existingChannel ?? this.channelFor(runtimeAuthority.rootPath, authority.path, source.model);
-    const attachment = Object.freeze({
+    channel.degradedRevisionFloor = Math.max(channel.degradedRevisionFloor, source.versionId);
+    const attachment = {
       kind: "editor-javascript-typescript-incremental-sync-attachment" as const,
       semanticMode: degraded ? ("degraded-large-file" as const) : ("incremental" as const),
-    });
+    };
     const capabilities: AttachmentCapabilities = {
       binding: null,
       channel,
+      establishGeneration: 1,
       fallbackPublicationInProgress: false,
       isCurrent,
+      languageId,
+      liveAuthority,
       pendingEvents: [],
       pendingEventUtf8Bytes: 0,
       released: false,
@@ -332,7 +394,15 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     this.attachmentCapabilities.set(attachment, capabilities);
     if (!degraded) {
       this.beginHandoff(authority.path);
-      void this.establish(attachment, capabilities, source, languageId, liveAuthority, initialText);
+      this.startEstablish(
+        attachment,
+        capabilities,
+        source,
+        languageId,
+        liveAuthority,
+        initialText,
+        capabilities.establishGeneration,
+      );
     }
     return attachment;
   }
@@ -344,6 +414,21 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     const capabilities = this.currentAttachment(attachment, true);
     if (!capabilities) {
       return LEGACY_REQUIRED_EDITOR_LIVE_EDIT;
+    }
+    const currentUtf16Length = safeLength(capabilities.source.currentUtf16Length);
+    if (
+      currentUtf16Length === null ||
+      currentUtf16Length > MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS
+    ) {
+      recordDegradedCheckpoint(capabilities.channel, event, false);
+      capabilities.channel.lastObservedRevision = Math.max(
+        capabilities.channel.lastObservedRevision,
+        event.versionId,
+      );
+      if (capabilities.state === "open" || capabilities.state === "opening") {
+        this.transitionChannelToDegraded(capabilities.channel);
+      }
+      return AUTHORITATIVE_EDITOR_LIVE_EDIT;
     }
     if (capabilities.state === "blocked") {
       return AUTHORITATIVE_EDITOR_LIVE_EDIT;
@@ -362,11 +447,13 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       return AUTHORITATIVE_EDITOR_LIVE_EDIT;
     }
     if (capabilities.state === "degraded") {
+      const checkpointAdvanced = recordDegradedCheckpoint(capabilities.channel, event, true);
       capabilities.channel.lastObservedRevision = Math.max(
         capabilities.channel.lastObservedRevision,
         event.versionId,
       );
-      return this.currentAttachment(attachment, true) === capabilities
+      if (checkpointAdvanced) this.reopenChannelFromDegraded(capabilities.channel);
+      return this.retainedAttachment(attachment, capabilities)
         ? AUTHORITATIVE_EDITOR_LIVE_EDIT
         : LEGACY_REQUIRED_EDITOR_LIVE_EDIT;
     }
@@ -399,7 +486,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
         this.blockOverflowRevision(capabilities, event.versionId);
         return LEGACY_REQUIRED_EDITOR_LIVE_EDIT;
       }
-      const deferred = deferredArbitration();
+      const deferred = deferredArbitration<JavaScriptTypeScriptIncrementalSyncArbitration>();
       void this.retireOverflowChannel(capabilities, event.versionId).then(deferred.resolve, () =>
         deferred.resolve(blockedArbitrationForRevision(event.versionId)),
       );
@@ -414,7 +501,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       if (capabilities.state === "open" && capabilities.binding) {
         decision = this.service.acceptChange(capabilities.binding, event);
       } else {
-        const deferred = deferredArbitration();
+        const deferred = deferredArbitration<JavaScriptTypeScriptIncrementalSyncArbitration>();
         capabilities.pendingEvents.push({ event, resolve: deferred.resolve });
         capabilities.pendingEventUtf8Bytes += eventUtf8Bytes ?? 0;
         decision = deferred.promise;
@@ -551,6 +638,47 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     return Object.freeze({ content, permit, revision });
   }
 
+  async prepareLatestSave(
+    path: string,
+    expectedContent: string,
+  ): Promise<JavaScriptTypeScriptIncrementalSyncPreparedSave | null> {
+    if (
+      typeof expectedContent !== "string" ||
+      expectedContent.length > MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS ||
+      !isWellFormedUnicode(expectedContent)
+    ) {
+      return null;
+    }
+    const current = this.retainedCapabilitiesForPath(path);
+    if (!current) return null;
+    const { attachment, capabilities } = current;
+    if (
+      safeCapture(capabilities.source.captureCurrentContent) !== expectedContent ||
+      !this.retainedAttachment(attachment, capabilities)
+    ) {
+      return null;
+    }
+    if (capabilities.state === "open" && capabilities.binding) {
+      const lease = this.requestLifecycleLease(path);
+      return lease ? this.prepareSave(lease) : null;
+    }
+    if (capabilities.state !== "opening" && capabilities.state !== "degraded") return null;
+    capabilities.channel.pendingSave?.resolve(null);
+    const pendingSave = new Promise<JavaScriptTypeScriptIncrementalSyncPreparedSave | null>(
+      (resolve) => {
+        capabilities.channel.pendingSave = {
+          attachment,
+          capabilities,
+          content: expectedContent,
+          resolve,
+          runtimeAuthority: capabilities.runtimeAuthority,
+        };
+      },
+    );
+    if (capabilities.state === "degraded") this.reopenChannelFromDegraded(capabilities.channel);
+    return pendingSave;
+  }
+
   confirmSave(permit: JavaScriptTypeScriptIncrementalSyncSavePermit): boolean {
     const capabilities = this.savePermitCapabilities.get(permit);
     if (!capabilities || capabilities.consumed || !this.savePermitIsCurrent(capabilities)) {
@@ -570,7 +698,19 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     if (blocked && this.runtime.isCurrent(blocked.authority)) return true;
     if (blocked) this.blockedPaths.delete(path);
     return (
-      (this.handoffsByPath.get(path) ?? 0) > 0 || this.currentCapabilitiesForPath(path) !== null
+      (this.handoffsByPath.get(path) ?? 0) > 0 ||
+      this.currentCapabilitiesForPath(path) !== null ||
+      [...this.channels].some(
+        (channel) =>
+          channel.path === path &&
+          [...channel.attachments].some((attachment) => {
+            const capabilities = this.attachmentCapabilities.get(attachment);
+            return capabilities
+              ? this.retainedAttachment(attachment, capabilities) &&
+                  (capabilities.state === "degraded" || capabilities.state === "blocked")
+              : false;
+          }),
+      )
     );
   }
 
@@ -621,6 +761,9 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   async release(attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment): Promise<void> {
     const capabilities = this.attachmentCapabilities.get(attachment);
     if (!capabilities || capabilities.released) return;
+    if (capabilities.channel.pendingSave?.attachment === attachment) {
+      capabilities.channel.pendingSave = clearPending(capabilities.channel.pendingSave);
+    }
     capabilities.released = true;
     capabilities.channel.attachments.delete(attachment);
     if (!capabilities.binding) {
@@ -639,6 +782,35 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     );
   }
 
+  private startEstablish(
+    attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment,
+    capabilities: AttachmentCapabilities,
+    source: EditorJavaScriptTypeScriptIncrementalSyncSource,
+    languageId: JavaScriptTypeScriptDocumentLanguageId,
+    liveAuthority: LiveDocumentAuthority,
+    initialText: string | null,
+    establishGeneration: number,
+  ): void {
+    const { channel } = capabilities;
+    const settlement = this.establish(
+      attachment,
+      capabilities,
+      source,
+      languageId,
+      liveAuthority,
+      initialText,
+      establishGeneration,
+    );
+    channel.establishments.add(settlement);
+    const settled = () => {
+      channel.establishments.delete(settlement);
+      if (channel.establishments.size === 0 && channel.latestDegradedCheckpoint) {
+        this.reopenChannelFromDegraded(channel);
+      }
+    };
+    void settlement.then(settled, settled);
+  }
+
   private async establish(
     attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment,
     capabilities: AttachmentCapabilities,
@@ -646,6 +818,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     languageId: JavaScriptTypeScriptDocumentLanguageId,
     liveAuthority: LiveDocumentAuthority,
     initialText: string | null,
+    establishGeneration: number,
   ): Promise<void> {
     const { channel, runtimeAuthority } = capabilities;
     try {
@@ -660,8 +833,11 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       this.failOpening(capabilities, "blocked", "close-uncertain");
       return;
     }
-    if (!this.isOpeningCurrent(attachment, capabilities)) {
+    if (!this.isOpeningCurrent(attachment, capabilities, establishGeneration)) {
       this.endHandoff(channel.path);
+      if (capabilities.state === "degraded" && this.retainedAttachment(attachment, capabilities)) {
+        return;
+      }
       this.failOpening(capabilities, "legacy-fallback", "authority-stale");
       this.closeLocalChannel(channel);
       await this.restoreLegacyIfUnowned(channel, runtimeAuthority);
@@ -684,11 +860,14 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
         },
         capability: runtimeAuthority.capability,
         initialText,
-        isCurrent: () => this.isAttachmentCurrent(attachment, capabilities),
+        isCurrent: () =>
+          this.isOpeningCurrent(attachment, capabilities, establishGeneration) ||
+          (capabilities.establishGeneration === establishGeneration &&
+            this.isAttachmentCurrent(attachment, capabilities)),
         languageId,
         model: source.model,
         snapshotReader: {
-          getUtf16Length: () => safeLength(source.currentUtf16Length),
+          getUtf16Length: () => safeLength(source.currentUtf16Length) ?? Number.NaN,
           read: () => {
             const snapshot = safeCapture(source.captureCurrentContent);
             if (snapshot === null) {
@@ -705,14 +884,37 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     }
     this.endHandoff(channel.path);
 
-    if (result.status === "incremental" && this.isOpeningCurrent(attachment, capabilities)) {
+    if (capabilities.establishGeneration !== establishGeneration) {
+      if (result.status === "incremental") {
+        const release = await this.service.release(result.binding);
+        if (release.status === "blocked" && this.retainedAttachment(attachment, capabilities)) {
+          capabilities.state = "blocked";
+          this.blockedPaths.set(channel.path, { authority: runtimeAuthority });
+        }
+      }
+      return;
+    }
+
+    if (
+      result.status === "incremental" &&
+      this.isOpeningCurrent(attachment, capabilities, establishGeneration)
+    ) {
       capabilities.binding = result.binding;
       capabilities.state = "open";
       this.drainOpeningEvents(capabilities);
+      void this.settlePendingSave(channel);
       return;
     }
     if (result.status === "incremental") {
       const release = await this.service.release(result.binding);
+      if (capabilities.state === "degraded" && this.retainedAttachment(attachment, capabilities)) {
+        capabilities.binding = null;
+        if (release.status === "blocked") {
+          capabilities.state = "blocked";
+          this.blockedPaths.set(channel.path, { authority: runtimeAuthority });
+        }
+        return;
+      }
       if (release.status === "blocked") {
         this.failOpening(capabilities, "blocked", "close-uncertain");
       } else if (release.status === "released" && release.channel === "retained") {
@@ -742,6 +944,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     }
     if (result.status === "suppressed") {
       capabilities.state = "blocked";
+      channel.pendingSave = clearPending(channel.pendingSave);
       this.blockedPaths.set(channel.path, { authority: runtimeAuthority });
       for (const pending of capabilities.pendingEvents.splice(0)) {
         pending.resolve({
@@ -755,6 +958,143 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     this.failOpening(capabilities, "legacy-fallback", result.reason);
     this.closeLocalChannel(channel);
     await this.restoreLegacyIfUnowned(channel, runtimeAuthority);
+  }
+
+  private transitionChannelToDegraded(channel: ChannelRecord): void {
+    if (channel.degradedTransition) return;
+    const bindings = new Set<JavaScriptTypeScriptIncrementalSyncBinding>();
+    for (const attachment of channel.attachments) {
+      const capabilities = this.attachmentCapabilities.get(attachment);
+      if (!capabilities || capabilities.released) continue;
+      capabilities.establishGeneration += 1;
+      if (capabilities.binding) bindings.add(capabilities.binding);
+      capabilities.state = "degraded";
+      capabilities.pendingEventUtf8Bytes = 0;
+      setAttachmentSemanticMode(attachment, "degraded-large-file");
+      for (const pending of capabilities.pendingEvents.splice(0)) {
+        pending.resolve(blockedArbitrationForRevision(pending.event.versionId));
+      }
+    }
+    if (bindings.size === 0) return;
+    const transition = (async () => {
+      let blocked = false;
+      for (const binding of bindings) {
+        let result: JavaScriptTypeScriptIncrementalSyncReleaseResult;
+        try {
+          result = await withDeadline(
+            this.service.closeDocument(binding),
+            this.limits.operationTimeoutMs,
+          );
+        } catch {
+          result = { reason: "close-uncertain", status: "blocked" };
+        }
+        if (result.status === "blocked") blocked = true;
+      }
+      if (!this.channels.has(channel) || channel.retired) return;
+      let retainedCount = 0;
+      for (const attachment of channel.attachments) {
+        const capabilities = this.attachmentCapabilities.get(attachment);
+        if (!capabilities || capabilities.released) continue;
+        if (!this.retainedAttachment(attachment, capabilities)) continue;
+        retainedCount += 1;
+        if (blocked) {
+          capabilities.state = "blocked";
+          this.blockedPaths.set(channel.path, { authority: capabilities.runtimeAuthority });
+        } else {
+          capabilities.binding = null;
+        }
+      }
+      if (blocked || retainedCount === 0) channel.pendingSave = clearPending(channel.pendingSave);
+    })();
+    const settlement = transition.finally(() => {
+      if (channel.degradedTransition !== settlement) return;
+      channel.degradedTransition = null;
+      this.reopenChannelFromDegraded(channel);
+    });
+    channel.degradedTransition = settlement;
+  }
+
+  private reopenChannelFromDegraded(channel: ChannelRecord): void {
+    if (channel.degradedTransition) return;
+    if (channel.establishments.size > 0) return;
+    const checkpoint = channel.latestDegradedCheckpoint;
+    if (!checkpoint) {
+      channel.pendingSave = clearPending(channel.pendingSave);
+      return;
+    }
+    const reopenPlans: Array<{
+      readonly attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment;
+      readonly capabilities: AttachmentCapabilities;
+      readonly initialText: string;
+      readonly source: EditorJavaScriptTypeScriptIncrementalSyncSource;
+    }> = [];
+    for (const attachment of channel.attachments) {
+      const capabilities = this.attachmentCapabilities.get(attachment);
+      if (
+        !capabilities ||
+        capabilities.state !== "degraded" ||
+        !this.retainedAttachment(attachment, capabilities)
+      ) {
+        continue;
+      }
+      const utf16Length = safeLength(capabilities.source.currentUtf16Length);
+      if (
+        utf16Length === null ||
+        utf16Length > MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS
+      ) {
+        continue;
+      }
+      const initialText = safeCapture(capabilities.source.captureCurrentContent);
+      if (
+        initialText === null ||
+        initialText.length !== utf16Length ||
+        !isWellFormedUnicode(initialText)
+      ) {
+        continue;
+      }
+      const snapshotSource: EditorJavaScriptTypeScriptIncrementalSyncSource = {
+        ...capabilities.source,
+        alternativeVersionId: checkpoint.alternativeVersionId,
+        utf16Length,
+        versionId: checkpoint.versionId,
+      };
+      reopenPlans.push({ attachment, capabilities, initialText, source: snapshotSource });
+    }
+    if (channel.latestDegradedCheckpoint !== checkpoint) {
+      this.reopenChannelFromDegraded(channel);
+      return;
+    }
+    if (
+      reopenPlans.some(
+        ({ attachment, capabilities, source }) =>
+          !this.retainedAttachment(attachment, capabilities) ||
+          safeLength(source.currentUtf16Length) !== source.utf16Length,
+      )
+    ) {
+      channel.pendingSave = clearPending(channel.pendingSave);
+      return;
+    }
+    if (reopenPlans.length === 0) {
+      channel.pendingSave = clearPending(channel.pendingSave);
+      return;
+    }
+    channel.latestDegradedCheckpoint = null;
+    for (const { attachment, capabilities, initialText, source } of reopenPlans) {
+      capabilities.source = source;
+      capabilities.state = "opening";
+      capabilities.establishGeneration += 1;
+      setAttachmentSemanticMode(attachment, "incremental");
+      this.beginHandoff(channel.path);
+      this.startEstablish(
+        attachment,
+        capabilities,
+        source,
+        capabilities.languageId,
+        capabilities.liveAuthority,
+        initialText,
+        capabilities.establishGeneration,
+      );
+    }
   }
 
   private drainOpeningEvents(capabilities: AttachmentCapabilities): void {
@@ -772,6 +1112,8 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     reason: "close-uncertain" | JavaScriptTypeScriptIncrementalSyncFallbackReason,
   ): void {
     capabilities.state = status === "blocked" ? "blocked" : "closed";
+    if (status === "blocked")
+      capabilities.channel.pendingSave = clearPending(capabilities.channel.pendingSave);
     capabilities.pendingEventUtf8Bytes = 0;
     for (const pending of capabilities.pendingEvents.splice(0)) {
       if (status === "blocked") {
@@ -884,7 +1226,7 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
       0,
     );
     this.pendingClaims.delete(capabilities.channel.path);
-    const deferred = deferredArbitration();
+    const deferred = deferredArbitration<JavaScriptTypeScriptIncrementalSyncArbitration>();
     const claim: PendingClaim = {
       authority: capabilities.runtimeAuthority,
       blockingRetirement: true,
@@ -962,11 +1304,16 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     const channel: ChannelRecord = {
       allowLegacyRestore: true,
       attachments: new Set(),
+      degradedTransition: null,
+      degradedRevisionFloor: 0,
+      establishments: new Set(),
       lastObservedRevision: 0,
+      latestDegradedCheckpoint: null,
       legacyHandoff: null,
       legacyRestore: null,
       model,
       path,
+      pendingSave: null,
       retired: false,
       rootPath,
     };
@@ -1075,8 +1422,13 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   private isOpeningCurrent(
     attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment,
     capabilities: AttachmentCapabilities,
+    establishGeneration: number,
   ): boolean {
-    return this.isAttachmentCurrent(attachment, capabilities) && capabilities.state === "opening";
+    return (
+      capabilities.establishGeneration === establishGeneration &&
+      this.isAttachmentCurrent(attachment, capabilities) &&
+      capabilities.state === "opening"
+    );
   }
 
   private isAttachmentCurrent(
@@ -1093,7 +1445,67 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
     );
   }
 
+  private retainedAttachment(
+    attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment,
+    capabilities: AttachmentCapabilities,
+  ): boolean {
+    return (
+      this.attachmentCapabilities.get(attachment) === capabilities &&
+      !capabilities.released &&
+      !capabilities.channel.retired &&
+      this.channels.has(capabilities.channel) &&
+      this.runtime.isCurrent(capabilities.runtimeAuthority) &&
+      safeCurrent(capabilities.isCurrent)
+    );
+  }
+
+  private retainedCapabilitiesForPath(path: string): {
+    readonly attachment: EditorJavaScriptTypeScriptIncrementalSyncAttachment;
+    readonly capabilities: AttachmentCapabilities;
+  } | null {
+    for (const channel of this.channels) {
+      if (channel.path !== path || channel.retired) continue;
+      for (const attachment of channel.attachments) {
+        const capabilities = this.attachmentCapabilities.get(attachment);
+        if (capabilities && this.retainedAttachment(attachment, capabilities)) {
+          return { attachment, capabilities };
+        }
+      }
+    }
+    return null;
+  }
+
+  private async settlePendingSave(channel: ChannelRecord): Promise<void> {
+    const pending = channel.pendingSave;
+    if (!pending) return;
+    if (
+      !this.runtime.isCurrent(pending.runtimeAuthority) ||
+      !this.retainedAttachment(pending.attachment, pending.capabilities) ||
+      pending.capabilities.state !== "open" ||
+      safeCapture(pending.capabilities.source.captureCurrentContent) !== pending.content
+    ) {
+      if (channel.pendingSave === pending) channel.pendingSave = null;
+      pending.resolve(null);
+      return;
+    }
+    const lease = this.requestLifecycleLease(channel.path);
+    const prepared = lease ? await this.prepareSave(lease) : null;
+    if (channel.pendingSave !== pending) return;
+    channel.pendingSave = null;
+    if (
+      !prepared ||
+      prepared.content !== pending.content ||
+      !this.runtime.isCurrent(pending.runtimeAuthority) ||
+      !this.retainedAttachment(pending.attachment, pending.capabilities)
+    ) {
+      pending.resolve(null);
+      return;
+    }
+    pending.resolve(prepared);
+  }
+
   private closeLocalChannel(channel: ChannelRecord, preserveClaims = false): void {
+    channel.pendingSave = clearPending(channel.pendingSave);
     for (const attachment of channel.attachments) {
       const capabilities = this.attachmentCapabilities.get(attachment);
       if (capabilities) {
@@ -1234,28 +1646,6 @@ export class JavaScriptTypeScriptIncrementalSyncProductionCoordinator
   }
 }
 
-const incarnationTokens = new WeakMap<object, string>();
-let nextIncarnationToken = 1;
-
-function incarnationToken(value: object): string {
-  const existing = incarnationTokens.get(value);
-  if (existing) return existing;
-  const token = `editor-session-${nextIncarnationToken++}`;
-  incarnationTokens.set(value, token);
-  return token;
-}
-
-function deferredArbitration(): {
-  readonly promise: Promise<JavaScriptTypeScriptIncrementalSyncArbitration>;
-  readonly resolve: (decision: JavaScriptTypeScriptIncrementalSyncArbitration) => void;
-} {
-  let resolve!: (decision: JavaScriptTypeScriptIncrementalSyncArbitration) => void;
-  const promise = new Promise<JavaScriptTypeScriptIncrementalSyncArbitration>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
-}
-
 function legacyArbitrationForRevision(
   revision: number,
 ): JavaScriptTypeScriptIncrementalSyncArbitration {
@@ -1329,36 +1719,6 @@ function validSource(source: EditorJavaScriptTypeScriptIncrementalSyncSource): b
   );
 }
 
-function safeCapture(capture: () => string | null): string | null {
-  try {
-    const content = capture();
-    return typeof content === "string" ? content : null;
-  } catch {
-    return null;
-  }
-}
-
-function safeLength(read: () => number | null): number {
-  try {
-    const value = read();
-    return Number.isSafeInteger(value) && value !== null && value >= 0 ? value : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function safeCurrent(isCurrent: () => boolean): boolean {
-  try {
-    return isCurrent() && isCurrent();
-  } catch {
-    return false;
-  }
-}
-
-function isObject(value: unknown): value is object {
-  return (typeof value === "object" && value !== null) || typeof value === "function";
-}
-
 function normalizeProductionLimits(
   limits: Partial<JavaScriptTypeScriptIncrementalSyncProductionLimits>,
 ): JavaScriptTypeScriptIncrementalSyncProductionLimits {
@@ -1392,47 +1752,4 @@ function normalizeProductionLimits(
       DEFAULT_PRODUCTION_LIMITS.operationTimeoutMs,
     ),
   });
-}
-
-function positiveLimit(value: number | undefined, fallback: number): number {
-  return Number.isSafeInteger(value) && value !== undefined && value > 0 ? value : fallback;
-}
-
-/** Counts retained inserted text; fixed event overhead is bounded by the count budgets. */
-function incrementalEventUtf8Bytes(
-  event: IncrementalDocumentContentEvent,
-  limit: number,
-): number | null {
-  if (!Array.isArray(event?.changes)) {
-    return null;
-  }
-  let total = 0;
-  for (const change of event.changes) {
-    if (typeof change?.text !== "string") {
-      return null;
-    }
-    const receipt = boundedUtf8Length(change.text, limit - total);
-    if (receipt.status !== "within-limit") {
-      return null;
-    }
-    total += receipt.bytes;
-  }
-  return total;
-}
-
-async function withDeadline<T>(settlement: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("Incremental sync production operation exceeded its deadline.")),
-      timeoutMs,
-    );
-  });
-  try {
-    return await Promise.race([settlement, timeout]);
-  } finally {
-    if (timer !== null) {
-      clearTimeout(timer);
-    }
-  }
 }

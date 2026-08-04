@@ -119,6 +119,70 @@ fn successor_requires_one_checked_generation_step_and_exact_closed_predecessor()
 }
 
 #[test]
+fn exact_closed_document_reopens_with_exact_predecessor_and_fresh_token() {
+    let state = test_registry();
+    open(&state, open_request(), true);
+    close(&state, close_request(1), true);
+    let exact_reopen = decode_open(mutate(open_request_value(), |value| {
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+        value["text"] = json!("x");
+        value["version"] = json!(2);
+    }));
+    let receipt = deliver_validated_document_open(
+        &state,
+        &exact_reopen,
+        "/workspace",
+        "/workspace/a.ts",
+        |notification| {
+            assert_eq!(notification.params["textDocument"]["text"], "x");
+            Ok(true)
+        },
+    )
+    .expect("exact reopen receipt");
+    assert_eq!(
+        receipt,
+        DocumentOpenAdmissionReceipt::Admitted {
+            lifecycle_token: "lsp-document-lifecycle-2".to_string()
+        }
+    );
+}
+
+#[test]
+fn exact_closed_document_reopen_requires_strictly_newer_version() {
+    let state = test_registry();
+    open(&state, open_request(), true);
+    assert_eq!(
+        deliver(&state, &decode(request()), true),
+        DocumentChangeAdmissionReceipt::Admitted
+    );
+    close(&state, close_request(2), true);
+
+    for version in [1, 2] {
+        let stale_version = decode_open(mutate(open_request_value(), |value| {
+            value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+            value["version"] = json!(version);
+        }));
+        assert_eq!(
+            deliver_validated_document_open(
+                &state,
+                &stale_version,
+                "/workspace",
+                "/workspace/a.ts",
+                |_| panic!("non-increasing reopen must not send"),
+            )
+            .expect("stale reopen version receipt"),
+            DocumentOpenAdmissionReceipt::StaleVersion
+        );
+    }
+
+    let newer = decode_open(mutate(open_request_value(), |value| {
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+        value["version"] = json!(3);
+    }));
+    open(&state, newer, true);
+}
+
+#[test]
 fn production_tokens_are_random_bounded_hex_and_collision_retries_are_bounded() {
     let state = DocumentChangeAdmissionRegistry::default();
     let first = deliver_validated_document_open(
@@ -464,32 +528,221 @@ fn close_tombstone_blocks_late_change_and_old_reopen() {
 }
 
 #[test]
-fn close_then_newer_sync_generation_reopens_but_rejects_a_to_b_to_a_late_events() {
+fn reopen_rejects_missing_wrong_and_replayed_predecessors() {
     let state = test_registry();
     open(&state, open_request(), true);
     close(&state, close_request(1), true);
-    let newer_open = mutate(open_request_value(), |value| {
+
+    for rejected in [
+        open_request_value(),
+        mutate(open_request_value(), |value| {
+            value["predecessorLifecycleToken"] = json!("wrong-lifecycle-token");
+        }),
+    ] {
+        let rejected = decode_open(rejected);
+        assert_eq!(
+            deliver_validated_document_open(
+                &state,
+                &rejected,
+                "/workspace",
+                "/workspace/a.ts",
+                |_| panic!("invalid predecessor must not send"),
+            )
+            .expect("invalid predecessor receipt"),
+            DocumentOpenAdmissionReceipt::StaleAuthority
+        );
+    }
+
+    let exact_reopen = decode_open(mutate(open_request_value(), |value| {
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+        value["version"] = json!(2);
+    }));
+    let reopened_token = match deliver_validated_document_open(
+        &state,
+        &exact_reopen,
+        "/workspace",
+        "/workspace/a.ts",
+        |_| Ok(true),
+    )
+    .expect("exact reopen receipt")
+    {
+        DocumentOpenAdmissionReceipt::Admitted { lifecycle_token } => lifecycle_token,
+        other => panic!("unexpected exact reopen receipt: {other:?}"),
+    };
+    assert_ne!(reopened_token, "lsp-document-lifecycle-1");
+
+    let replay = decode_open(mutate(open_request_value(), |value| {
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+        value["version"] = json!(2);
+    }));
+    assert_eq!(
+        deliver_validated_document_open(
+            &state,
+            &replay,
+            "/workspace",
+            "/workspace/a.ts",
+            |_| panic!("consumed predecessor must not send"),
+        )
+        .expect("replayed predecessor receipt"),
+        DocumentOpenAdmissionReceipt::StaleAuthority
+    );
+
+    let second_close: BoundedDocumentDidCloseRequest =
+        serde_json::from_value(mutate(close_request_value(2), |value| {
+            value["authority"]["lifecycleToken"] = json!(reopened_token);
+        }))
+        .expect("second lifecycle close");
+    close(&state, second_close, true);
+    assert_eq!(
+        deliver_validated_document_open(
+            &state,
+            &replay,
+            "/workspace",
+            "/workspace/a.ts",
+            |_| panic!("old predecessor must not reopen a newer tombstone"),
+        )
+        .expect("old predecessor receipt"),
+        DocumentOpenAdmissionReceipt::StaleAuthority
+    );
+}
+
+#[test]
+fn reopened_document_rejects_old_lifecycle_change_and_close() {
+    let state = test_registry();
+    open(&state, open_request(), true);
+    close(&state, close_request(1), true);
+    let exact_reopen = decode_open(mutate(open_request_value(), |value| {
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+        value["version"] = json!(2);
+    }));
+    open(&state, exact_reopen, true);
+
+    assert_eq!(
+        deliver(&state, &decode(request()), true),
+        DocumentChangeAdmissionReceipt::StaleAuthority
+    );
+    assert_eq!(
+        deliver_validated_document_close(
+            &state,
+            &close_request(1),
+            "/workspace",
+            "/workspace/a.ts",
+            |_| panic!("old lifecycle close must not send"),
+        )
+        .expect("old lifecycle close receipt"),
+        DocumentChangeAdmissionReceipt::StaleAuthority
+    );
+
+    let current = decode(mutate(request(), |value| {
+        value["authority"]["lifecycleToken"] = json!("lsp-document-lifecycle-2");
+        value["change"]["version"] = json!(3);
+    }));
+    assert_eq!(
+        deliver(&state, &current, true),
+        DocumentChangeAdmissionReceipt::Admitted
+    );
+}
+
+#[test]
+fn reopen_fails_closed_for_stale_session_root_and_a_to_b_to_a_authority() {
+    let state = test_registry();
+    open(&state, open_request(), true);
+    close(&state, close_request(1), true);
+
+    let stale_session = decode_open(mutate(open_request_value(), |value| {
+        value["expectedSessionId"] = json!(9);
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+    }));
+    assert_eq!(
+        deliver_validated_document_open(
+            &state,
+            &stale_session,
+            "/workspace",
+            "/workspace/a.ts",
+            |_| panic!("stale session must not send"),
+        )
+        .expect("stale session reopen"),
+        DocumentOpenAdmissionReceipt::StaleSession
+    );
+
+    let stale_root = decode_open(mutate(open_request_value(), |value| {
+        value["rootPath"] = json!("/other-workspace");
+        value["path"] = json!("/other-workspace/a.ts");
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+    }));
+    assert_eq!(
+        deliver_validated_document_open(
+            &state,
+            &stale_root,
+            "/other-workspace",
+            "/other-workspace/a.ts",
+            |_| panic!("foreign root must not send"),
+        )
+        .expect("foreign root reopen"),
+        DocumentOpenAdmissionReceipt::StaleAuthority
+    );
+
+    let b = decode_open(mutate(open_request_value(), |value| {
         value["authority"]["documentIncarnation"] = json!("document-b");
         value["authority"]["modelIncarnation"] = json!("model-b");
         value["authority"]["syncGeneration"] = json!(4);
         value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
-    });
-    open(&state, decode_open(newer_open), true);
+    }));
+    open(&state, b, true);
 
-    let late_a = decode(request());
-    assert_eq!(
-        deliver(&state, &late_a, true),
-        DocumentChangeAdmissionReceipt::StaleAuthority
-    );
-    let b = decode(mutate(request(), |value| {
-        value["authority"]["documentIncarnation"] = json!("document-b");
-        value["authority"]["modelIncarnation"] = json!("model-b");
-        value["authority"]["syncGeneration"] = json!(4);
-        value["authority"]["lifecycleToken"] = json!("lsp-document-lifecycle-2");
+    let a_again = decode_open(mutate(open_request_value(), |value| {
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
     }));
     assert_eq!(
-        deliver(&state, &b, true),
-        DocumentChangeAdmissionReceipt::Admitted
+        deliver_validated_document_open(
+            &state,
+            &a_again,
+            "/workspace",
+            "/workspace/a.ts",
+            |_| panic!("A predecessor must not replay after B admission"),
+        )
+        .expect("A replay receipt"),
+        DocumentOpenAdmissionReceipt::StaleAuthority
+    );
+}
+
+#[test]
+fn failed_exact_reopen_rolls_back_token_and_preserves_tombstone_for_retry() {
+    let state = test_registry();
+    open(&state, open_request(), true);
+    close(&state, close_request(1), true);
+    let reopen = decode_open(mutate(open_request_value(), |value| {
+        value["predecessorLifecycleToken"] = json!("lsp-document-lifecycle-1");
+        value["version"] = json!(2);
+    }));
+
+    assert_eq!(
+        deliver_validated_document_open(&state, &reopen, "/workspace", "/workspace/a.ts", |_| Ok(
+            false
+        ),)
+        .expect("failed reopen receipt"),
+        DocumentOpenAdmissionReceipt::StaleSession
+    );
+    {
+        let inner = lock_admission(&state).expect("admission state after failed reopen");
+        let document = inner
+            .documents
+            .get(&admitted_document_key("/workspace", "/workspace/a.ts"))
+            .expect("closed tombstone retained");
+        assert_eq!(document.state, AdmittedDocumentState::Closed);
+        assert_eq!(document.lifecycle_token, "lsp-document-lifecycle-1");
+        assert!(inner.pending.is_empty());
+        assert!(inner.pending_lifecycle_tokens.is_empty());
+    }
+
+    assert_eq!(
+        deliver_validated_document_open(&state, &reopen, "/workspace", "/workspace/a.ts", |_| Ok(
+            true
+        ),)
+        .expect("retried reopen receipt"),
+        DocumentOpenAdmissionReceipt::Admitted {
+            lifecycle_token: "lsp-document-lifecycle-3".to_string()
+        }
     );
 }
 

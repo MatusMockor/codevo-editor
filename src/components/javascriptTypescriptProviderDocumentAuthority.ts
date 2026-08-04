@@ -1,4 +1,5 @@
 import type * as Monaco from "monaco-editor";
+import { classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics } from "../domain/javaScriptTypeScriptLargeDocumentCapability";
 import {
   isLargeSmartDocument,
   normalizeLargeSmartDocumentPolicy,
@@ -17,7 +18,10 @@ export interface JavaScriptTypeScriptProviderRequestAuthority {
   readonly registrationLease: JavaScriptTypeScriptProviderRegistrationLease;
 }
 
+export type JavaScriptTypeScriptDocumentRequestAccess = "explicit-interactive" | "full";
+
 export interface JavaScriptTypeScriptDocumentRequestAuthority extends JavaScriptTypeScriptProviderRequestAuthority {
+  readonly access: JavaScriptTypeScriptDocumentRequestAccess;
   readonly model: MonacoModel;
   readonly modelVersion: number;
   readonly path: string;
@@ -27,6 +31,7 @@ export interface JavaScriptTypeScriptDocumentRequestAuthority extends JavaScript
 }
 
 export interface StoredJavaScriptTypeScriptDocumentAuthority {
+  __documentRequestAccess?: JavaScriptTypeScriptDocumentRequestAccess;
   __documentModel?: MonacoModel;
   __documentModelVersion?: number;
   __documentOwnerEpoch?: number;
@@ -53,12 +58,84 @@ const largeDocumentByModelRevision = new WeakMap<
   }
 >();
 
+const requestAccessByModelRevision = new WeakMap<
+  MonacoModel,
+  {
+    readonly access: JavaScriptTypeScriptDocumentRequestAccess | null;
+    readonly characterLimit: number;
+    readonly lineLimit: number;
+    readonly modelVersion: number;
+  }
+>();
+
+export function javaScriptTypeScriptProviderDocumentRequestAccess(
+  model: MonacoModel,
+  _document: EditorDocument,
+  policy: LargeSmartDocumentPolicy,
+): JavaScriptTypeScriptDocumentRequestAccess | null {
+  const normalizedPolicy = normalizeLargeSmartDocumentPolicy(policy);
+  const modelVersion = javaScriptTypeScriptProviderModelVersion(model);
+  if (modelVersion === null) {
+    return null;
+  }
+  const cached = requestAccessByModelRevision.get(model);
+  if (
+    cached?.modelVersion === modelVersion &&
+    cached.characterLimit === normalizedPolicy.characterLimit &&
+    cached.lineLimit === normalizedPolicy.lineLimit
+  ) {
+    return cached.access;
+  }
+
+  if (typeof model.getValueLength !== "function" || typeof model.getLineCount !== "function") {
+    return null;
+  }
+
+  let capability: ReturnType<typeof classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics>;
+  try {
+    capability = classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics(
+      {
+        lineCount: model.getLineCount(),
+        utf16Length: model.getValueLength(),
+      },
+      normalizedPolicy,
+    );
+  } catch {
+    return null;
+  }
+  const access =
+    capability.kind === "full"
+      ? ("full" as const)
+      : capability.kind === "editing-degraded-interactive-lsp"
+        ? ("explicit-interactive" as const)
+        : null;
+  requestAccessByModelRevision.set(model, {
+    access,
+    characterLimit: normalizedPolicy.characterLimit,
+    lineLimit: normalizedPolicy.lineLimit,
+    modelVersion,
+  });
+  return access;
+}
+
+export function javaScriptTypeScriptProviderModelVersion(model: MonacoModel): number | null {
+  try {
+    const modelVersion = model.getVersionId();
+    return Number.isSafeInteger(modelVersion) && modelVersion >= 0 ? modelVersion : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isLargeJavaScriptTypeScriptProviderDocument(
   model: MonacoModel,
   document: EditorDocument,
   policy: LargeSmartDocumentPolicy,
 ): boolean {
-  const modelVersion = model.getVersionId();
+  const modelVersion = javaScriptTypeScriptProviderModelVersion(model);
+  if (modelVersion === null) {
+    return true;
+  }
   const normalizedPolicy = normalizeLargeSmartDocumentPolicy(policy);
   const cached = largeDocumentByModelRevision.get(model);
   if (
@@ -92,6 +169,10 @@ export function attachStoredJavaScriptTypeScriptDocumentAuthority<T extends obje
 ): T {
   const storedAuthority = "model" in authority ? null : authority;
   Object.defineProperties(payload, {
+    __documentRequestAccess: {
+      configurable: true,
+      value: "access" in authority ? authority.access : storedAuthority?.__documentRequestAccess,
+    },
     __documentModel: {
       configurable: true,
       value: "model" in authority ? authority.model : storedAuthority?.__documentModel,
@@ -199,13 +280,13 @@ export function isJavaScriptTypeScriptDocumentRequestAuthorityActive(
   if (
     !activeDocument ||
     activeDocument.path !== request.path ||
-    isLargeJavaScriptTypeScriptProviderDocument(
+    javaScriptTypeScriptProviderDocumentRequestAccess(
       request.model,
       activeDocument,
       context.getLargeSmartDocumentPolicy(),
-    ) ||
+    ) !== request.access ||
     (context.getActiveModel !== undefined && context.getActiveModel() !== request.model) ||
-    request.model.getVersionId() !== request.modelVersion
+    javaScriptTypeScriptProviderModelVersion(request.model) !== request.modelVersion
   ) {
     return false;
   }
@@ -224,6 +305,7 @@ export function isStoredJavaScriptTypeScriptDocumentAuthorityActive(
   context: JavaScriptTypeScriptDocumentAuthorityContext,
   payload: StoredJavaScriptTypeScriptDocumentAuthority,
   authority: {
+    readonly allowExplicitInteractive?: boolean;
     readonly path: string;
     readonly rootAndSessionActive: boolean;
     readonly rootPath: string;
@@ -232,7 +314,14 @@ export function isStoredJavaScriptTypeScriptDocumentAuthorityActive(
   const model = payload.__documentModel;
   const modelVersion = payload.__documentModelVersion;
   const syncVersion = payload.__documentSyncVersion;
-  if (!model || modelVersion === undefined || syncVersion === undefined) {
+  const access = storedJavaScriptTypeScriptDocumentRequestAccess(payload);
+  if (
+    !model ||
+    modelVersion === undefined ||
+    syncVersion === undefined ||
+    !access ||
+    (access === "explicit-interactive" && authority.allowExplicitInteractive !== true)
+  ) {
     return false;
   }
 
@@ -243,13 +332,13 @@ export function isStoredJavaScriptTypeScriptDocumentAuthorityActive(
     payload.__documentOwnerEpoch === context.getActiveJavaScriptTypeScriptOwnerEpoch() &&
     Boolean(activeDocument) &&
     activeDocument?.path === authority.path &&
-    !isLargeJavaScriptTypeScriptProviderDocument(
+    javaScriptTypeScriptProviderDocumentRequestAccess(
       model,
       activeDocument,
       context.getLargeSmartDocumentPolicy(),
-    ) &&
+    ) === access &&
     (context.getActiveModel === undefined || context.getActiveModel() === model) &&
-    model.getVersionId() === modelVersion &&
+    javaScriptTypeScriptProviderModelVersion(model) === modelVersion &&
     context.getDocumentSyncVersion(authority.rootPath, authority.path) === syncVersion
   );
 }
@@ -272,12 +361,13 @@ export function refreshStoredJavaScriptTypeScriptDocumentAuthority(
   }
 
   const syncVersion = context.getDocumentSyncVersion(authority.rootPath, authority.path);
-  if (syncVersion === null) {
+  const modelVersion = javaScriptTypeScriptProviderModelVersion(model);
+  if (syncVersion === null || modelVersion === null) {
     return false;
   }
 
   Object.defineProperties(payload, {
-    __documentModelVersion: { configurable: true, value: model.getVersionId() },
+    __documentModelVersion: { configurable: true, value: modelVersion },
     __documentOwnerEpoch: {
       configurable: true,
       value: context.getActiveJavaScriptTypeScriptOwnerEpoch(),
@@ -291,14 +381,21 @@ export function canContinueStoredJavaScriptTypeScriptDocumentAuthority(
   context: JavaScriptTypeScriptDocumentAuthorityContext,
   payload: StoredJavaScriptTypeScriptDocumentAuthority,
   authority: {
+    readonly allowExplicitInteractive?: boolean;
     readonly path: string;
     readonly rootAndSessionActive: boolean;
     readonly rootPath: string;
   },
 ): boolean {
   const model = payload.__documentModel;
+  const access = storedJavaScriptTypeScriptDocumentRequestAccess(payload);
   const activeDocument = context.getActiveDocument();
-  if (!model || !activeDocument) {
+  if (
+    !model ||
+    !activeDocument ||
+    !access ||
+    (access === "explicit-interactive" && authority.allowExplicitInteractive !== true)
+  ) {
     return false;
   }
 
@@ -307,10 +404,19 @@ export function canContinueStoredJavaScriptTypeScriptDocumentAuthority(
     payload.__documentRegistrationLease?.active === true &&
     activeDocument.path === authority.path &&
     (context.getActiveModel === undefined || context.getActiveModel() === model) &&
-    !isLargeJavaScriptTypeScriptProviderDocument(
+    javaScriptTypeScriptProviderDocumentRequestAccess(
       model,
       activeDocument,
       context.getLargeSmartDocumentPolicy(),
-    )
+    ) === access
   );
+}
+
+function storedJavaScriptTypeScriptDocumentRequestAccess(
+  payload: StoredJavaScriptTypeScriptDocumentAuthority,
+): JavaScriptTypeScriptDocumentRequestAccess | null {
+  return payload.__documentRequestAccess === "full" ||
+    payload.__documentRequestAccess === "explicit-interactive"
+    ? payload.__documentRequestAccess
+    : null;
 }

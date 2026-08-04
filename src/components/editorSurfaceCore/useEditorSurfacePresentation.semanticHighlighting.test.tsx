@@ -11,6 +11,7 @@ import {
 import type { EditorDocument } from "../../domain/workspace";
 import {
   largeDocumentFeatureNotice,
+  largeDocumentPresentationStatus,
   useEditorSurfacePresentation,
 } from "./useEditorSurfacePresentation";
 
@@ -158,6 +159,38 @@ describe("useEditorSurfacePresentation semantic highlighting", () => {
     expect(notice).not.toContain("minimap");
   });
 
+  it("distinguishes interactive JS/TS degradation from editing-only hard-limit mode", () => {
+    const interactive = largeDocumentFeatureNotice(false, "editing-degraded-interactive-lsp");
+    const editingOnly = largeDocumentFeatureNotice(false, "editing-only");
+
+    expect(interactive).toContain(
+      "Manual completion, definition, references, and rename remain available",
+    );
+    expect(interactive).not.toContain("unavailable");
+    expect(editingOnly).toContain("language features are unavailable");
+    expect(editingOnly).toContain("hard synchronization safety limits");
+    expect(editingOnly).toContain("Essential editing remains available");
+    expect(largeDocumentPresentationStatus(false, "editing-only")).toEqual({
+      label: "Large file mode",
+      title: editingOnly,
+    });
+    expect(largeDocumentPresentationStatus(false, "eligible")).toBeNull();
+  });
+
+  it.each([
+    [
+      "editing-degraded-interactive-lsp" as const,
+      "Manual completion, definition, references, and rename remain available",
+    ],
+    ["editing-only" as const, "language features are unavailable"],
+  ])("renders the %s tier-specific notice", async (mode, expectedText) => {
+    await renderPresentation(root, documentWithLines(20_000), true, false, mode);
+
+    expect(host.querySelector('[data-testid="editor-large-file-notice"]')?.textContent).toContain(
+      expectedText,
+    );
+  });
+
   it("removes the degraded notice when the exact document becomes eligible again", async () => {
     const large = documentWithLines(LARGE_SMART_DOCUMENT_LINE_LIMIT + 1);
 
@@ -268,12 +301,14 @@ async function renderPresentation(
   activeDocument: EditorDocument,
   activeDocumentIsLargeSmart: boolean,
   minimapEnabled = false,
+  activeDocumentLargeSmartMode?: PresentationOptions["activeDocumentLargeSmartMode"],
 ): Promise<void> {
   await act(async () => {
     root.render(
       createElement(PresentationHarness, {
         activeDocument,
         activeDocumentIsLargeSmart,
+        activeDocumentLargeSmartMode,
         minimapEnabled,
       }),
     );
@@ -284,15 +319,18 @@ async function renderPresentation(
 function PresentationHarness({
   activeDocument,
   activeDocumentIsLargeSmart,
+  activeDocumentLargeSmartMode,
   minimapEnabled,
 }: {
   readonly activeDocument: EditorDocument;
   readonly activeDocumentIsLargeSmart: boolean;
+  readonly activeDocumentLargeSmartMode?: PresentationOptions["activeDocumentLargeSmartMode"];
   readonly minimapEnabled: boolean;
 }) {
-  return useEditorSurfacePresentation(
-    presentationOptions(activeDocument, activeDocumentIsLargeSmart, minimapEnabled),
-  );
+  return useEditorSurfacePresentation({
+    ...presentationOptions(activeDocument, activeDocumentIsLargeSmart, minimapEnabled),
+    activeDocumentLargeSmartMode,
+  });
 }
 
 function presentationOptions(

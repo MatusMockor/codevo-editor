@@ -330,6 +330,7 @@ impl WorkspaceFileIndexBuilder {
     pub(super) fn finish(
         mut self,
         walk_truncated: bool,
+        projection_truncated: bool,
     ) -> Result<WorkspaceFileIndex, IndexRejection> {
         if walk_truncated {
             self.reject(IndexRejection::WalkTruncated);
@@ -340,6 +341,7 @@ impl WorkspaceFileIndexBuilder {
         Ok(WorkspaceFileIndex {
             files: self.files,
             directories: self.directories,
+            projection_truncated,
         })
     }
 }
@@ -347,6 +349,7 @@ impl WorkspaceFileIndexBuilder {
 pub(super) struct WorkspaceFileIndex {
     files: Vec<IndexedFile>,
     directories: Vec<IndexedDirectory>,
+    projection_truncated: bool,
 }
 
 impl WorkspaceFileIndex {
@@ -390,7 +393,8 @@ impl WorkspaceFileIndex {
         }
         let ranked = rank_files(&self.files, &prefilter, query, limit, is_current)?;
         ensure_current(is_current)?;
-        Ok(ranked.finish())
+        let (ranked, result_truncated) = ranked.finish();
+        Ok((ranked, self.projection_truncated || result_truncated))
     }
 
     fn ranked_parallel(
@@ -421,7 +425,8 @@ impl WorkspaceFileIndex {
             Ok(merged)
         })?;
         ensure_current(is_current)?;
-        Ok(merged.finish())
+        let (ranked, result_truncated) = merged.finish();
+        Ok((ranked, self.projection_truncated || result_truncated))
     }
 
     #[cfg(test)]

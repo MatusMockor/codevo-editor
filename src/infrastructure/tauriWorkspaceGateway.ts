@@ -40,6 +40,10 @@ const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT = "php://managed-phpactor-install
 const MANAGED_TYPESCRIPT_INSTALL_COMPLETED_EVENT =
   "typescript://managed-language-server-install-completed";
 const MAX_WORKSPACE_RELATIVE_WRITE_PATH_BYTES = 4_096;
+const MAX_DESCRIPTOR_FILE_SEARCH_RESULTS = 500;
+const MAX_DESCRIPTOR_FILE_SEARCH_NAME_BYTES = 255;
+const MAX_DESCRIPTOR_FILE_SEARCH_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DESCRIPTOR_FILE_SEARCH_ENVELOPE_RESERVE_BYTES = 512;
 import {
   pathFromLanguageServerUri,
   type LanguageServerWorkspaceEdit,
@@ -316,7 +320,7 @@ export class TauriWorkspaceGateway
         limit,
         requestGeneration,
       })
-        .then((payload) => parseDescriptorFileSearchResponse(payload, root))
+        .then((payload) => parseDescriptorFileSearchResponse(payload, root, limit))
         .then((response) => {
           if (response.requestGeneration !== requestGeneration) {
             throw new Error("File search returned a mismatched request generation.");
@@ -515,25 +519,18 @@ function assertMutationSucceeded(result: WorkspaceMutationResult | undefined): v
 }
 
 function assertNormalizedWorkspaceRelativeWritePath(relativePath: string): void {
-  if (
-    relativePath.length === 0 ||
-    relativePath.startsWith("/") ||
-    relativePath.endsWith("/") ||
-    relativePath.includes("\\") ||
-    /^[A-Za-z]:/.test(relativePath) ||
-    /\p{Cc}/u.test(relativePath) ||
-    relativePath
-      .split("/")
-      .some((segment) => segment === "" || segment === "." || segment === "..") ||
-    new TextEncoder().encode(relativePath).byteLength > MAX_WORKSPACE_RELATIVE_WRITE_PATH_BYTES
-  ) {
+  if (!isNormalizedWorkspaceRelativePath(relativePath)) {
     throw new TypeError(
       `Workspace-relative write path must be a normalized descendant path of at most ${MAX_WORKSPACE_RELATIVE_WRITE_PATH_BYTES} UTF-8 bytes.`,
     );
   }
 }
 
-function parseDescriptorFileSearchResponse(payload: unknown, root: string): FileSearchResponse {
+function parseDescriptorFileSearchResponse(
+  payload: unknown,
+  root: string,
+  requestedLimit: number,
+): FileSearchResponse {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("File search returned an invalid payload.");
   }
@@ -552,9 +549,27 @@ function parseDescriptorFileSearchResponse(payload: unknown, root: string): File
     throw new Error("File search returned an invalid payload.");
   }
 
+  const boundedLimit = Math.min(
+    MAX_DESCRIPTOR_FILE_SEARCH_RESULTS,
+    Math.max(1, Number.isSafeInteger(requestedLimit) ? requestedLimit : 1),
+  );
+  if (record.results.length > boundedLimit) {
+    throw new Error("File search returned too many results.");
+  }
+
+  let responseBytes = DESCRIPTOR_FILE_SEARCH_ENVELOPE_RESERVE_BYTES;
+  const results = record.results.map((value) => {
+    const result = parseDescriptorFileSearchResult(value, root);
+    responseBytes += new TextEncoder().encode(JSON.stringify(value)).byteLength + 1;
+    if (responseBytes > MAX_DESCRIPTOR_FILE_SEARCH_RESPONSE_BYTES) {
+      throw new Error("File search response exceeded its byte limit.");
+    }
+    return result;
+  });
+
   return {
     requestGeneration: record.requestGeneration,
-    results: record.results.map((value) => parseDescriptorFileSearchResult(value, root)),
+    results,
     truncated: record.truncated,
   };
 }
@@ -566,17 +581,25 @@ function parseDescriptorFileSearchResult(value: unknown, root: string): FileSear
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
   if (
-    keys.length !== 3 ||
+    keys.length !== 2 ||
     keys[0] !== "name" ||
     keys[1] !== "relativePath" ||
-    keys[2] !== "truncated" ||
     typeof record.name !== "string" ||
     record.name.length === 0 ||
     typeof record.relativePath !== "string" ||
-    record.relativePath.length === 0 ||
-    typeof record.truncated !== "boolean"
+    record.relativePath.length === 0
   ) {
     throw new Error("File search returned an invalid result.");
+  }
+  if (!isNormalizedWorkspaceRelativePath(record.relativePath)) {
+    throw new Error("File search returned an invalid result path.");
+  }
+  if (new TextEncoder().encode(record.name).byteLength > MAX_DESCRIPTOR_FILE_SEARCH_NAME_BYTES) {
+    throw new Error("File search returned an oversized result name.");
+  }
+  const segments = record.relativePath.split("/");
+  if (record.name !== segments[segments.length - 1]) {
+    throw new Error("File search returned an inconsistent result name.");
   }
   return {
     name: record.name,
@@ -767,7 +790,22 @@ function parseTextSearchResult(
 }
 
 function isValidSearchRequestGeneration(value: unknown): value is string {
-  return typeof value === "string" && /^[\x21-\x7e]{1,128}$/.test(value);
+  return typeof value === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+}
+
+function isNormalizedWorkspaceRelativePath(relativePath: string): boolean {
+  return !(
+    relativePath.length === 0 ||
+    relativePath.startsWith("/") ||
+    relativePath.endsWith("/") ||
+    relativePath.includes("\\") ||
+    /^[A-Za-z]:/.test(relativePath) ||
+    /\p{Cc}/u.test(relativePath) ||
+    relativePath
+      .split("/")
+      .some((segment) => segment === "" || segment === "." || segment === "..") ||
+    new TextEncoder().encode(relativePath).byteLength > MAX_WORKSPACE_RELATIVE_WRITE_PATH_BYTES
+  );
 }
 
 type TrustedWorkspaceTarget = Record<string, unknown> & {

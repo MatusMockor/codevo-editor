@@ -7,6 +7,7 @@ import {
   isJavaScriptTypeScriptDocumentRequestAuthorityActive,
   isLargeJavaScriptTypeScriptProviderDocument,
   isStoredJavaScriptTypeScriptDocumentAuthorityActive,
+  javaScriptTypeScriptProviderDocumentRequestAccess,
   type JavaScriptTypeScriptDocumentAuthorityContext,
   type JavaScriptTypeScriptDocumentRequestAuthority,
 } from "./javascriptTypescriptProviderDocumentAuthority";
@@ -50,6 +51,7 @@ function request(
   activeModel: Monaco.editor.ITextModel,
 ): JavaScriptTypeScriptDocumentRequestAuthority {
   return {
+    access: "full",
     model: activeModel,
     modelVersion: 7,
     ownerEpoch: 1,
@@ -154,5 +156,102 @@ describe("JavaScript/TypeScript provider document authority", () => {
     expect(isStoredJavaScriptTypeScriptDocumentAuthorityActive(context, payload, current)).toBe(
       false,
     );
+  });
+
+  it("stores a closed non-enumerable request access tier and requires an explicit consumer", () => {
+    const largeModel = model({
+      getLineCount: vi.fn(() => 20_001),
+      getValueLength: vi.fn(() => 200_000),
+    });
+    const interactiveRequest = {
+      ...request(largeModel),
+      access: "explicit-interactive" as const,
+    };
+    const payload = attachStoredJavaScriptTypeScriptDocumentAuthority({}, interactiveRequest);
+    const context = authorityContext(largeModel, document("x\n".repeat(20_000)));
+    const current = {
+      path: interactiveRequest.path,
+      rootAndSessionActive: true,
+      rootPath: interactiveRequest.rootPath,
+    };
+
+    expect(Object.keys(payload)).not.toContain("__documentRequestAccess");
+    expect(isStoredJavaScriptTypeScriptDocumentAuthorityActive(context, payload, current)).toBe(
+      false,
+    );
+    expect(
+      isStoredJavaScriptTypeScriptDocumentAuthorityActive(context, payload, {
+        ...current,
+        allowExplicitInteractive: true,
+      }),
+    ).toBe(true);
+    Object.defineProperty(payload, "__documentRequestAccess", {
+      configurable: true,
+      value: "unknown",
+    });
+    expect(
+      isStoredJavaScriptTypeScriptDocumentAuthorityActive(context, payload, {
+        ...current,
+        allowExplicitInteractive: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("classifies policy-large metrics without reading content and denies beyond hard sync", () => {
+    const getValue = vi.fn(() => {
+      throw new Error("provider admission must stay O(1)");
+    });
+    const interactiveModel = {
+      ...model({
+        getLineCount: vi.fn(() => 20_001),
+        getValueLength: vi.fn(() => 200_000),
+      }),
+      getValue,
+    };
+    const editingOnlyModel = model({
+      getLineCount: vi.fn(() => 1),
+      getValueLength: vi.fn(() => 2 * 1024 * 1024 + 1),
+    });
+
+    expect(
+      javaScriptTypeScriptProviderDocumentRequestAccess(
+        interactiveModel,
+        document(),
+        defaultLargeSmartDocumentPolicy,
+      ),
+    ).toBe("explicit-interactive");
+    expect(getValue).not.toHaveBeenCalled();
+    expect(
+      javaScriptTypeScriptProviderDocumentRequestAccess(editingOnlyModel, document(), {
+        characterLimit: 10 * 1024 * 1024,
+        lineLimit: 200_000,
+      }),
+    ).toBeNull();
+  });
+
+  it("fails closed when exact O(1) model metrics are unavailable or throw", () => {
+    const missingMetrics = {
+      getVersionId: () => 7,
+    } as unknown as Monaco.editor.ITextModel;
+    const throwingMetrics = model({
+      getLineCount: vi.fn(() => {
+        throw new Error("disposed model");
+      }),
+    });
+
+    expect(
+      javaScriptTypeScriptProviderDocumentRequestAccess(
+        missingMetrics,
+        document(),
+        defaultLargeSmartDocumentPolicy,
+      ),
+    ).toBeNull();
+    expect(
+      javaScriptTypeScriptProviderDocumentRequestAccess(
+        throwingMetrics,
+        document(),
+        defaultLargeSmartDocumentPolicy,
+      ),
+    ).toBeNull();
   });
 });

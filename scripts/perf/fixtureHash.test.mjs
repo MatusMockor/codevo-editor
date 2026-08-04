@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { computeFixtureHashes } from "./fixtureHash.mjs";
+import { computeFixtureHashes, fixtureHashFenceFailure } from "./fixtureHash.mjs";
 
 const perfDirectory = path.dirname(fileURLToPath(import.meta.url));
 const scratchRoot = path.join(perfDirectory, "__testtmp__");
@@ -23,6 +23,20 @@ function sha256Of(contents) {
 beforeEach(() => {
   rootDir = path.join(scratchRoot, `fixtureHash-${randomUUID()}`);
   mkdirSync(rootDir, { recursive: true });
+});
+
+describe("fixtureHashFenceFailure", () => {
+  it("accepts the same hash map independent of key insertion order", () => {
+    expect(fixtureHashFenceFailure({ a: "one", b: "two" }, { b: "two", a: "one" })).toBeNull();
+  });
+
+  it.each([
+    [{ a: "one" }, { a: "changed" }],
+    [{ a: "one" }, { a: "one", b: "two" }],
+    [{ a: "one", b: "two" }, { a: "one" }],
+  ])("fails closed when fixture identity changes during a run", (before, after) => {
+    expect(fixtureHashFenceFailure(before, after)).toMatch(/run is invalid/);
+  });
 });
 
 afterEach(() => {

@@ -356,7 +356,7 @@ describe("editor large-file production chain", () => {
     expect(fixture.rawWorkspaceWrite).not.toHaveBeenCalled();
   });
 
-  it("admits the exact 2 MiB boundary and keeps 100 subsequent edits incremental", async () => {
+  it("admits the exact 2 MiB boundary and keeps 100 same-length edits incremental", async () => {
     fixture = createEditorIncrementalProductionChainHarness(1, {
       initialUtf16Length: LSP_INITIAL_TEXT_LIMIT,
     });
@@ -368,7 +368,7 @@ describe("editor large-file production chain", () => {
     fixture.model.getValue.mockClear();
     fixture.legacyFullPublication.mockClear();
 
-    await emitEdits(fixture, 100);
+    await emitSameLengthEdits(fixture, 100);
     expect(fixture.model.getValue).not.toHaveBeenCalled();
     expect(fixture.legacyFullPublication).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(25);
@@ -396,6 +396,8 @@ describe("editor large-file production chain", () => {
     await vi.advanceTimersByTimeAsync(25);
     await settlePromises();
     expect(fixture.legacyFullPublication).not.toHaveBeenCalled();
+    expect(fixture.gateway.changeRequests).toHaveLength(0);
+    expect(fixture.gateway.closeRequests).toHaveLength(1);
 
     const exactCurrentContent = fixture.model.currentContent();
     const saved = await fixture.attemptSave();
@@ -420,7 +422,7 @@ describe("editor large-file production chain", () => {
     expect(fixture.isDirty()).toBe(false);
   });
 
-  it("reopens a shrunken fresh model, rejects the stale model and resumes incremental edits", async () => {
+  it("reopens a shrunken fresh model, rejects the stale model and resumes same-length incremental edits", async () => {
     fixture = createEditorIncrementalProductionChainHarness(1, {
       initialUtf16Length: 3 * MIB,
     });
@@ -450,7 +452,7 @@ describe("editor large-file production chain", () => {
 
     freshModel.getValue.mockClear();
     fixture.legacyFullPublication.mockClear();
-    await emitEdits(fixture, 1);
+    await emitSameLengthEdits(fixture, 1);
     await vi.advanceTimersByTimeAsync(25);
     await settlePromises();
 
@@ -472,6 +474,17 @@ async function emitEdits(
   await act(async () => {
     for (let index = 0; index < count; index += 1) {
       fixture.editors[0]?.emitInsertion(String(index % 10));
+    }
+  });
+}
+
+async function emitSameLengthEdits(
+  fixture: EditorIncrementalProductionChainHarness,
+  count: number,
+): Promise<void> {
+  await act(async () => {
+    for (let index = 0; index < count; index += 1) {
+      fixture.editors[0]?.emitReplacement(String(index % 10));
     }
   });
 }

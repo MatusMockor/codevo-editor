@@ -290,6 +290,138 @@ fn cancel_request_releases_pending_requests_lock_before_writing_to_stdin() {
 }
 
 #[test]
+fn reader_drops_a_large_late_completion_before_routing_the_following_live_hover() {
+    let registry = Arc::new(LanguageServerRegistry::new_with_label("Test server"));
+    let spawner = FakeSpawner::new(ready_script(), true);
+    let capture = Arc::clone(&spawner.stdin_capture);
+    let held = Arc::clone(&spawner.held_writer);
+    let (sink, _rx) = ChannelSink::new();
+    registry
+        .start(
+            "/tmp/workspace",
+            &command(),
+            &initialize_request(),
+            &spawner,
+            sink,
+            noop_diagnostics_sink(),
+        )
+        .expect("start workspace");
+    let session_id = running_session_id(&registry, "/tmp/workspace");
+
+    let completion_registry = Arc::clone(&registry);
+    let completion = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(completion_registry.send_request_async_with_id(
+            "/tmp/workspace",
+            session_id,
+            41,
+            "textDocument/completion",
+            json!({ "marker": "cancelled completion" }),
+        ))
+    });
+    let completion_wire_id = wait_for_captured_request_id(&capture, "textDocument/completion");
+    registry
+        .cancel_request("/tmp/workspace", session_id, 41)
+        .expect("cancel completion");
+    assert!(completion
+        .join()
+        .expect("completion request thread")
+        .expect_err("completion must be cancelled")
+        .contains("cancelled"));
+
+    let supervisor = registry
+        .existing_supervisor("/tmp/workspace")
+        .expect("workspace supervisor");
+    let (_, _, pending_requests, _) = supervisor
+        .session_request_parts()
+        .expect("session request parts");
+    for offset in 0..super::super::MAX_PENDING_REQUESTS_PER_SESSION as u64 {
+        let wire_request_id = supervisor
+            .allocate_wire_request_id()
+            .expect("allocate retired completion wire id");
+        let client_request_id = 100 + offset;
+        let (sender, receiver) = mpsc::channel();
+        pending_requests
+            .admit(
+                wire_request_id,
+                Some(client_request_id),
+                ResponseBodyBound::for_method("textDocument/completion"),
+                sender,
+            )
+            .expect("admit retired completion");
+        assert!(matches!(
+            pending_requests.cancel(client_request_id),
+            super::super::PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+    }
+
+    let hover_registry = Arc::clone(&registry);
+    let (hover_done_tx, hover_done_rx) = mpsc::channel();
+    let hover = std::thread::spawn(move || {
+        let result = tauri::async_runtime::block_on(hover_registry.send_request_async_with_id(
+            "/tmp/workspace",
+            session_id,
+            1_000,
+            "textDocument/hover",
+            json!({ "marker": "live hover" }),
+        ));
+        let _ = hover_done_tx.send(result.clone());
+        result
+    });
+    let hover_wire_id = wait_for_captured_request_id(&capture, "textDocument/hover");
+
+    let late_items = (0..27_759)
+        .map(|index| json!({ "label": format!("lateCandidate{index}") }))
+        .collect::<Vec<_>>();
+    write_held_message(
+        &held,
+        json!({
+            "jsonrpc": "2.0",
+            "id": completion_wire_id,
+            "result": { "isIncomplete": false, "items": late_items }
+        }),
+    );
+    write_held_message(
+        &held,
+        json!({
+            "jsonrpc": "2.0",
+            "id": completion_wire_id,
+            "method": "workspace/configuration",
+            "params": { "items": [] }
+        }),
+    );
+    write_held_message(
+        &held,
+        json!({
+            "jsonrpc": "2.0",
+            "id": hover_wire_id,
+            "result": { "contents": "live hover" }
+        }),
+    );
+
+    assert_eq!(
+        wait_for_captured_response(&capture, completion_wire_id)["result"],
+        json!([]),
+        "a server request colliding with the tombstone must reach its handler"
+    );
+
+    assert_eq!(
+        hover_done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("reader must route hover after skipped completion")
+            .expect("hover request"),
+        Some(json!({ "contents": "live hover" }))
+    );
+    assert_eq!(
+        hover.join().expect("hover request thread"),
+        Ok(Some(json!({ "contents": "live hover" })))
+    );
+}
+
+#[test]
 fn cancellation_queue_bounds_sixty_four_parked_writes_and_restart_gets_fresh_transport() {
     let registry = Arc::new(LanguageServerRegistry::new_with_label("Test server"));
     let (stdin, _capture, write_parked, stdin_gate) = BlockingCancelWriter::session();

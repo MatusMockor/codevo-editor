@@ -17,6 +17,7 @@ import {
 
 const ROOT = "/workspace";
 const LARGE_PATH = `${ROOT}/notes.md`;
+const LARGE_TYPESCRIPT_PATH = `${ROOT}/large.ts`;
 const SMALL_PATH = `${ROOT}/small.md`;
 const LARGE_BODY = "x".repeat(300 * 1024);
 const SMALL_BODY = "small";
@@ -85,6 +86,33 @@ describe("useWorkbenchController large-document typing", () => {
       typeKeystrokes(getWorkbench, content);
 
       expect(renders.length).toBeGreaterThanOrEqual(KEYSTROKES);
+      expect(contentScan.count()).toBe(0);
+    } finally {
+      contentScan.restore();
+    }
+
+    await settle();
+  });
+
+  it("coalesces a 3 MiB TypeScript document above the hard sync limit under a 10 MiB policy", async () => {
+    const content = "x".repeat(3 * 1024 * 1024);
+    const workspaceSettings: WorkspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      largeFileMode: { characterLimit: 10 * 1024 * 1024, lineLimit: 200_000 },
+    };
+    const { getWorkbench, renders } = await openDocument(
+      LARGE_TYPESCRIPT_PATH,
+      content,
+      undefined,
+      workspaceSettings,
+    );
+    const contentScan = monitorContentScans(content.length);
+
+    try {
+      renders.length = 0;
+      typeKeystrokes(getWorkbench, content);
+
+      expect(renders.length).toBeLessThanOrEqual(2);
       expect(contentScan.count()).toBe(0);
     } finally {
       contentScan.restore();
@@ -217,7 +245,11 @@ describe("useWorkbenchController large-document typing", () => {
       },
       readDirectory: async (directory: string) =>
         directory === ROOT
-          ? [fileEntry(LARGE_PATH, "notes.md"), fileEntry(SMALL_PATH, "small.md")]
+          ? [
+              fileEntry(LARGE_PATH, "notes.md"),
+              fileEntry(LARGE_TYPESCRIPT_PATH, "large.ts"),
+              fileEntry(SMALL_PATH, "small.md"),
+            ]
           : [],
       readTextFile: async (requestedPath: string) =>
         requestedPath === SMALL_PATH ? SMALL_BODY : body,

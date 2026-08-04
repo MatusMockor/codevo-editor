@@ -681,7 +681,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       .mockResolvedValueOnce([{ name: "App.ts", relativePath: "App.ts", kind: "file" }])
       .mockResolvedValueOnce({
         requestGeneration: "gateway-file-search",
-        results: [{ name: "App.ts", relativePath: "App.ts", truncated: false }],
+        results: [{ name: "App.ts", relativePath: "App.ts" }],
         truncated: false,
       })
       .mockResolvedValueOnce({
@@ -874,7 +874,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
   it("surfaces descriptor walk truncation from a closed file-search payload", async () => {
     invoke.mockResolvedValue({
       requestGeneration: "file-request-1",
-      results: [{ name: "App.ts", relativePath: "App.ts", truncated: true }],
+      results: [{ name: "App.ts", relativePath: "App.ts" }],
       truncated: true,
     });
 
@@ -894,7 +894,6 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
         {
           name: "App.ts",
           relativePath: "App.ts",
-          truncated: false,
           unexpected: true,
         },
       ],
@@ -930,6 +929,91 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     await expect(
       gateway.searchFilesWithMetadata("/selected/project", "App", 10, "file-current"),
     ).rejects.toThrow("mismatched request generation");
+  });
+
+  it("keeps an ordinary empty descriptor search distinct from truncated traversal", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "file-empty",
+      results: [],
+      truncated: false,
+    });
+
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "missing", 10, "file-empty"),
+    ).resolves.toEqual({
+      requestGeneration: "file-empty",
+      results: [],
+      truncated: false,
+    });
+  });
+
+  it("rejects malformed descriptor truncation metadata fail-closed", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "file-malformed",
+      results: [{ name: "App.ts", relativePath: "App.ts" }],
+      truncated: "yes",
+    });
+
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "App", 10, "file-malformed"),
+    ).rejects.toThrow("invalid payload");
+  });
+
+  it.each([
+    ["parent traversal", "outside.ts", "../outside.ts"],
+    ["absolute path", "outside.ts", "/outside.ts"],
+    ["backslash", "outside.ts", "dir\\outside.ts"],
+    ["control character", "outside.ts", "dir/\u0000outside.ts"],
+    ["dot segment", "outside.ts", "dir/./outside.ts"],
+    ["inconsistent basename", "other.ts", "dir/outside.ts"],
+  ])("rejects a hostile descriptor result path (%s)", async (_label, name, relativePath) => {
+    invoke.mockResolvedValue({
+      requestGeneration: "file-hostile",
+      results: [{ name, relativePath }],
+      truncated: false,
+    });
+
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "outside", 10, "file-hostile"),
+    ).rejects.toThrow(/invalid result path|inconsistent result name/);
+  });
+
+  it("rejects descriptor result counts beyond the requested bounded limit", async () => {
+    invoke.mockResolvedValue({
+      requestGeneration: "file-overflow",
+      results: Array.from({ length: 11 }, (_, index) => ({
+        name: `file-${index}.ts`,
+        relativePath: `src/file-${index}.ts`,
+      })),
+      truncated: true,
+    });
+
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "file", 10, "file-overflow"),
+    ).rejects.toThrow("too many results");
+  });
+
+  it("rejects descriptor file-search payloads beyond the Rust response-byte cap", async () => {
+    const prefix = Array.from({ length: 15 }, () => "p".repeat(250)).join("/");
+    invoke.mockResolvedValue({
+      requestGeneration: "file-too-large",
+      results: Array.from({ length: 500 }, (_, index) => {
+        const name = `${index.toString().padStart(3, "0")}-${"n".repeat(240)}.ts`;
+        return { name, relativePath: `${prefix}/${name}` };
+      }),
+      truncated: true,
+    });
+
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "file", 500, "file-too-large"),
+    ).rejects.toThrow("byte limit");
+  });
+
+  it("rejects request generations that Rust would reject before invoking IPC", async () => {
+    await expect(
+      trustedGateway().searchFilesWithMetadata("/selected/project", "App", 10, "bad generation"),
+    ).rejects.toThrow("request generation is invalid");
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("keeps the legacy raw-root file-search array isolated", async () => {

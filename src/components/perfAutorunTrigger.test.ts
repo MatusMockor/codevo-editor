@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PERF_AUTORUN_PATHS } from "./perfAutorunEndpoints";
 import {
+  assertStableMeasurementWindow,
+  installMeasurementWindowGuard,
   perfAutorunEnabled,
   runPerfAutorun,
   type PerfAutorunRunnerModule,
@@ -33,6 +35,9 @@ function fakeClock() {
 
       return Promise.resolve();
     },
+    windowMode: "focus-only" as const,
+    preflightMeasurementWindow: () => Promise.resolve(),
+    installMeasurementWindowGuard: () => ({ failure: () => null, dispose: () => {} }),
   };
 }
 
@@ -46,6 +51,10 @@ function collectPosts(posted: PostedPayload[]) {
 
 function recordingWindowControl(events: string[]): PerfAutorunWindowControl {
   return {
+    isAlwaysOnTop: async () => {
+      events.push("isAlwaysOnTop");
+      return false;
+    },
     show: async () => {
       events.push("show");
     },
@@ -62,6 +71,7 @@ function recordingWindowControl(events: string[]): PerfAutorunWindowControl {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   window.localStorage.clear();
   delete window.__codevoQa;
@@ -119,6 +129,39 @@ describe("perfAutorunEnabled", () => {
   });
 });
 
+describe("assertStableMeasurementWindow", () => {
+  it("accepts a visible focused window with stable frame cadence", async () => {
+    let timestamp = performance.now();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      timestamp += 16;
+      queueMicrotask(() => callback(timestamp));
+      return 1;
+    });
+
+    await expect(assertStableMeasurementWindow()).resolves.toBeUndefined();
+  });
+
+  it("rejects hidden, unfocused, and throttled windows", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await expect(assertStableMeasurementWindow()).rejects.toThrow(/visible/);
+
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    await expect(assertStableMeasurementWindow()).rejects.toThrow(/focus/);
+
+    let timestamp = performance.now();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      timestamp += 250;
+      queueMicrotask(() => callback(timestamp));
+      return 1;
+    });
+    await expect(assertStableMeasurementWindow()).rejects.toThrow(/unstable/);
+  });
+});
+
 describe("runPerfAutorun", () => {
   it("runs the served runner with its served options and posts the result", async () => {
     const posted: PostedPayload[] = [];
@@ -140,6 +183,7 @@ describe("runPerfAutorun", () => {
         );
       },
       postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
       ...fakeClock(),
     });
 
@@ -174,6 +218,7 @@ describe("runPerfAutorun", () => {
           }),
         ),
       postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
       ...fakeClock(),
     });
 
@@ -197,6 +242,7 @@ describe("runPerfAutorun", () => {
           }),
         ),
       postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
       ...fakeClock(),
     });
 
@@ -216,6 +262,7 @@ describe("runPerfAutorun", () => {
         importRunner: () =>
           Promise.resolve(runnerModule(() => Promise.reject(new Error("scenario blew up")))),
         postPayload: collectPosts(posted),
+        acquireWindowControl: async () => recordingWindowControl([]),
         ...fakeClock(),
       }),
     ).resolves.toBeUndefined();
@@ -285,7 +332,7 @@ describe("runPerfAutorun", () => {
     expect(JSON.parse(posted[0].body).status).toBe("error");
   });
 
-  it("lifts the app window above other windows before the run and restores it after posting", async () => {
+  it("shows and focuses the app without changing its window level by default", async () => {
     const events: string[] = [];
     const posted: PostedPayload[] = [];
 
@@ -310,18 +357,18 @@ describe("runPerfAutorun", () => {
     });
 
     expect(events).toEqual([
+      "isAlwaysOnTop",
       "show",
       "unminimize",
-      "setAlwaysOnTop:true",
       "setFocus",
       "run",
+      "isAlwaysOnTop",
       "post",
-      "setAlwaysOnTop:false",
     ]);
     expect(posted).toHaveLength(1);
   });
 
-  it("restores the always-on-top flag even when the run aborts", async () => {
+  it("uses and restores always-on-top only in explicit diagnostic mode", async () => {
     const events: string[] = [];
     const posted: PostedPayload[] = [];
 
@@ -332,10 +379,31 @@ describe("runPerfAutorun", () => {
       postPayload: collectPosts(posted),
       acquireWindowControl: async () => recordingWindowControl(events),
       ...fakeClock(),
+      windowMode: "always-on-top-diagnostic",
     });
 
+    expect(events).toContain("setAlwaysOnTop:true");
     expect(events[events.length - 1]).toBe("setAlwaysOnTop:false");
     expect(JSON.parse(posted[0].body).status).toBe("error");
+  });
+
+  it("preserves a pre-existing always-on-top state in diagnostic mode", async () => {
+    const events: string[] = [];
+    const posted: PostedPayload[] = [];
+    const control = recordingWindowControl(events);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({ ...control, isAlwaysOnTop: async () => true }),
+      ...fakeClock(),
+      windowMode: "always-on-top-diagnostic",
+    });
+
+    expect(events.some((event) => event.startsWith("setAlwaysOnTop:"))).toBe(false);
+    expect(JSON.parse(posted[0].body).status).toBe("ok");
   });
 
   it("restores the always-on-top flag even when the relay post fails", async () => {
@@ -350,6 +418,7 @@ describe("runPerfAutorun", () => {
       acquireWindowControl: async () => recordingWindowControl(events),
       logError: (message) => logged.push(message),
       ...fakeClock(),
+      windowMode: "always-on-top-diagnostic",
     });
 
     expect(events[events.length - 1]).toBe("setAlwaysOnTop:false");
@@ -371,7 +440,7 @@ describe("runPerfAutorun", () => {
     expect(acquireWindowControl).not.toHaveBeenCalled();
   });
 
-  it("runs without window control when none is available and logs acquisition failures", async () => {
+  it("fails closed without authoritative window control and logs acquisition failures", async () => {
     const posted: PostedPayload[] = [];
     const logged: string[] = [];
 
@@ -384,7 +453,10 @@ describe("runPerfAutorun", () => {
       ...fakeClock(),
     });
 
-    expect(JSON.parse(posted[0].body).status).toBe("ok");
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/authoritative window control/),
+    });
 
     await runPerfAutorun({
       bridgesReady: () => true,
@@ -397,10 +469,11 @@ describe("runPerfAutorun", () => {
     });
 
     expect(posted).toHaveLength(2);
+    expect(JSON.parse(posted[1].body).status).toBe("error");
     expect(logged.join("\n")).toMatch(/no tauri window/);
   });
 
-  it("continues the run and logs when individual window calls fail", async () => {
+  it("fails closed when a required focus-only window call fails", async () => {
     const posted: PostedPayload[] = [];
     const logged: string[] = [];
     const events: string[] = [];
@@ -413,17 +486,266 @@ describe("runPerfAutorun", () => {
       postPayload: collectPosts(posted),
       acquireWindowControl: async () => ({
         ...control,
-        setAlwaysOnTop: async () => {
-          throw new Error("always-on-top denied");
+        setFocus: async () => {
+          throw new Error("focus denied");
         },
       }),
       logError: (message) => logged.push(message),
       ...fakeClock(),
     });
 
-    expect(JSON.parse(posted[0].body).status).toBe("ok");
-    expect(logged.join("\n")).toMatch(/setAlwaysOnTop\(true\): always-on-top denied/);
-    expect(logged.join("\n")).toMatch(/setAlwaysOnTop\(false\): always-on-top denied/);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/setFocus: focus denied/),
+    });
+    expect(logged).toEqual([]);
+  });
+
+  it("rejects a pre-existing always-on-top window in focus-only mode", async () => {
+    const posted: PostedPayload[] = [];
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({ ...control, isAlwaysOnTop: async () => true }),
+      ...fakeClock(),
+    });
+
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/already always-on-top/),
+    });
+  });
+
+  it("fails the result when diagnostic window restoration fails", async () => {
+    const posted: PostedPayload[] = [];
+    let calls = 0;
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        setAlwaysOnTop: async (enabled) => {
+          calls += 1;
+          if (!enabled) {
+            throw new Error("restore denied");
+          }
+        },
+      }),
+      ...fakeClock(),
+      windowMode: "always-on-top-diagnostic",
+    });
+
+    expect(calls).toBe(2);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/restore denied/),
+    });
+  });
+
+  it("restores the original level after an uncertain diagnostic elevation failure", async () => {
+    const posted: PostedPayload[] = [];
+    const calls: boolean[] = [];
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        setAlwaysOnTop: async (enabled) => {
+          calls.push(enabled);
+          if (enabled) {
+            throw new Error("native settlement uncertain");
+          }
+        },
+      }),
+      ...fakeClock(),
+      windowMode: "always-on-top-diagnostic",
+    });
+
+    expect(calls).toEqual([true, false]);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/native settlement uncertain/),
+    });
+  });
+
+  it("fails closed before running when the visibility and rAF preflight rejects", async () => {
+    const posted: PostedPayload[] = [];
+    let ran = false;
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(() => {
+            ran = true;
+            return Promise.resolve({ bridgeResults: [] });
+          }),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      preflightMeasurementWindow: () => Promise.reject(new Error("rAF preflight is unstable")),
+    });
+
+    expect(ran).toBe(false);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "rAF preflight is unstable",
+    });
+  });
+
+  it("invalidates before the runner when the guard latches during first preflight", async () => {
+    const posted: PostedPayload[] = [];
+    const dispose = vi.fn();
+    let ran = false;
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(() => {
+            ran = true;
+            return Promise.resolve({ bridgeResults: [] });
+          }),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      installMeasurementWindowGuard: () => ({
+        failure: () => "measurement window lost focus during the run",
+        dispose,
+      }),
+    });
+
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(ran).toBe(false);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "measurement window lost focus during the run",
+    });
+  });
+
+  it("invalidates when the guard latches during postflight", async () => {
+    const posted: PostedPayload[] = [];
+    let preflightCalls = 0;
+    let failure: string | null = null;
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      preflightMeasurementWindow: async () => {
+        preflightCalls += 1;
+        if (preflightCalls === 2) {
+          failure = "measurement window blurred during postflight";
+        }
+      },
+      installMeasurementWindowGuard: () => ({ failure: () => failure, dispose: () => {} }),
+    });
+
+    expect(preflightCalls).toBe(2);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "measurement window blurred during postflight",
+    });
+  });
+
+  it("invalidates a native window-level change during a focus-only run", async () => {
+    const posted: PostedPayload[] = [];
+    const control = recordingWindowControl([]);
+    let levelReads = 0;
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        isAlwaysOnTop: async () => {
+          levelReads += 1;
+          return levelReads > 1;
+        },
+      }),
+      ...fakeClock(),
+    });
+
+    expect(levelReads).toBe(2);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/window level changed/),
+    });
+  });
+
+  it("revalidates the guard after the post-run native window query", async () => {
+    const posted: PostedPayload[] = [];
+    const control = recordingWindowControl([]);
+    let levelReads = 0;
+    let failure: string | null = null;
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        isAlwaysOnTop: async () => {
+          levelReads += 1;
+          if (levelReads === 2) {
+            failure = "measurement window blurred during native postflight query";
+          }
+          return false;
+        },
+      }),
+      ...fakeClock(),
+      installMeasurementWindowGuard: () => ({ failure: () => failure, dispose: () => {} }),
+    });
+
+    expect(levelReads).toBe(2);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "measurement window blurred during native postflight query",
+    });
+  });
+
+  it("invalidates a resize event during measurement", async () => {
+    const posted: PostedPayload[] = [];
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(() => {
+            window.dispatchEvent(new Event("resize"));
+            return Promise.resolve({ bridgeResults: [] });
+          }),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      installMeasurementWindowGuard,
+    });
+
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "Perf autorun measurement window was resized during the run.",
+    });
   });
 
   it("logs instead of throwing when the relay itself is unreachable", async () => {

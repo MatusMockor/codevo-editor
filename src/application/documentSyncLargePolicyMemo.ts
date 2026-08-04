@@ -1,4 +1,5 @@
-import { isLargeSmartDocument, type LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
+import { classifyJavaScriptTypeScriptLargeDocumentCapability } from "../domain/javaScriptTypeScriptLargeDocumentCapability";
+import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { EditorDocument } from "../domain/workspace";
 
 export const MAX_DOCUMENT_SYNC_LARGE_POLICY_MEMO_ENTRIES = 1_024;
@@ -85,7 +86,9 @@ export function evaluateDocumentSyncOpenAdmission({
     return { kind: "unchanged" };
   }
 
-  const large = isLargeSmartDocument(document, policy);
+  const large =
+    classifyJavaScriptTypeScriptLargeDocumentCapability(document.content, policy).kind ===
+    "editing-only";
   memo.record(syncKey, policy);
   return {
     kind: large ? "large" : "eligible",

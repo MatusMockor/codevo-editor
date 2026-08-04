@@ -31,11 +31,12 @@ export const QUICK_OPEN_SEARCH_TIMEOUT_MS = 5_000;
 
 interface QuickOpenDispatchRequest {
   generation: number;
+  isEmptyWarmup: boolean;
   run: () => void;
 }
 
 interface QuickOpenDispatchSlot {
-  inFlight: boolean;
+  active: Map<() => void, QuickOpenDispatchRequest>;
   pending: QuickOpenDispatchRequest | null;
 }
 
@@ -83,7 +84,7 @@ export function useWorkbenchQuickOpen(
   const quickOpenRequest = useMemo(() => parseQuickOpenQuery(quickOpenQuery), [quickOpenQuery]);
   const fileQuery = fileQueryForRequest(quickOpenRequest);
   const requestOwnerRef = useRef({ criteria: "", generation: 0 });
-  const dispatchSlotRef = useRef<QuickOpenDispatchSlot>({ inFlight: false, pending: null });
+  const dispatchSlotRef = useRef<QuickOpenDispatchSlot>({ active: new Map(), pending: null });
   const requestCriteria = JSON.stringify([quickOpenOpen, workspaceRoot, quickOpenQuery, fileQuery]);
   if (requestOwnerRef.current.criteria !== requestCriteria) {
     requestOwnerRef.current = {
@@ -236,7 +237,7 @@ export function useWorkbenchQuickOpen(
         const owned = ownsResult();
         abandoned = true;
 
-        if (releaseQuickOpenSlot(slot, requestOwnerRef.current.generation) || !owned) {
+        if (releaseQuickOpenSlot(slot, run, requestOwnerRef.current.generation) || !owned) {
           return;
         }
 
@@ -307,11 +308,15 @@ export function useWorkbenchQuickOpen(
             setQuickOpenLoading(false);
           }
 
-          releaseQuickOpenSlot(slot, requestOwnerRef.current.generation);
+          releaseQuickOpenSlot(slot, run, requestOwnerRef.current.generation);
         });
     };
 
-    submitQuickOpenRequest(slot, { generation: requestedGeneration, run });
+    submitQuickOpenRequest(slot, {
+      generation: requestedGeneration,
+      isEmptyWarmup: fileQuery === "",
+      run,
+    });
 
     return () => {
       active = false;
@@ -345,12 +350,30 @@ function submitQuickOpenRequest(
   slot: QuickOpenDispatchSlot,
   request: QuickOpenDispatchRequest,
 ): void {
-  if (slot.inFlight) {
+  if (!canDispatchQuickOpenRequest(slot, request)) {
     slot.pending = request;
     return;
   }
 
-  slot.inFlight = true;
+  startQuickOpenRequest(slot, request);
+}
+
+function canDispatchQuickOpenRequest(
+  slot: QuickOpenDispatchSlot,
+  request: QuickOpenDispatchRequest,
+): boolean {
+  if (request.isEmptyWarmup) {
+    return slot.active.size === 0;
+  }
+
+  return !Array.from(slot.active.values()).some((active) => !active.isEmptyWarmup);
+}
+
+function startQuickOpenRequest(
+  slot: QuickOpenDispatchSlot,
+  request: QuickOpenDispatchRequest,
+): void {
+  slot.active.set(request.run, request);
   request.run();
 }
 
@@ -362,18 +385,25 @@ function discardQuickOpenRequest(slot: QuickOpenDispatchSlot, run: () => void): 
   slot.pending = null;
 }
 
-function releaseQuickOpenSlot(slot: QuickOpenDispatchSlot, currentGeneration: number): boolean {
-  slot.inFlight = false;
+function releaseQuickOpenSlot(
+  slot: QuickOpenDispatchSlot,
+  run: () => void,
+  currentGeneration: number,
+): boolean {
+  slot.active.delete(run);
   const pending = slot.pending;
-  slot.pending = null;
 
   if (!pending || pending.generation !== currentGeneration) {
+    slot.pending = null;
     return false;
   }
 
-  slot.inFlight = true;
-  pending.run();
+  if (!canDispatchQuickOpenRequest(slot, pending)) {
+    return false;
+  }
 
+  slot.pending = null;
+  startQuickOpenRequest(slot, pending);
   return true;
 }
 

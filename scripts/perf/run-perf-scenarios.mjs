@@ -5,10 +5,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { shapeRunResult, FIXTURE_VERSION } from "./perfScenarios.mjs";
-import { computeFixtureHashes } from "./fixtureHash.mjs";
+import { computeFixtureHashes, fixtureHashFenceFailure } from "./fixtureHash.mjs";
 import {
   buildRunnerOptions,
   buildSnippetExpression,
+  capturedAtForImportedResult,
   environmentWarning,
   evaluateRunOutcome,
   parseManualResult,
@@ -56,7 +57,7 @@ async function main() {
 
   if (args.fromJsonPath) {
     const result = await readManualResultFile(args.fromJsonPath);
-    await finishRun(result, args.smoke);
+    await finishRun(result, args.smoke, null, { importedCapture: true });
     return;
   }
 
@@ -66,15 +67,18 @@ async function main() {
   }
 
   const options = buildRunnerOptions({ smoke: args.smoke, repoRoot });
-  const result = await runWithCdp(args, options);
-  await finishRun(result, args.smoke);
+  const fixtureHashesBefore = fixtureHashesForRun();
+  const outcome = await runWithCdp(args, options);
+  await finishRun(outcome.result, args.smoke, fixtureHashesBefore);
 }
 
 async function runAutorun(args) {
+  const fixtureHashesBefore = fixtureHashesForRun();
   await assertPortFree(DEV_SERVER_PORT);
   console.error(AUTORUN_START_NOTICE);
   const outcome = await runAutorunLane({
     smoke: args.smoke,
+    diagnosticElevation: args.diagnosticElevation,
     timeoutMs: args.autorunTimeoutMs,
     repoRoot,
   });
@@ -85,7 +89,7 @@ async function runAutorun(args) {
     return;
   }
 
-  await finishRun(outcome.result, args.smoke);
+  await finishRun(outcome.result, args.smoke, fixtureHashesBefore, { attachLocalHost: true });
 }
 
 function printSnippetCommand(smoke) {
@@ -143,7 +147,8 @@ function fixtureHashesForRun() {
 }
 
 function withRunMetadata(shaped, { fixtureHashes, environment }) {
-  const withHashes = shaped.fixtureHashes ? shaped : { ...shaped, fixtureHashes };
+  const withHashes =
+    shaped.fixtureHashes || fixtureHashes === null ? shaped : { ...shaped, fixtureHashes };
 
   if (withHashes.environment || environment === null) {
     return withHashes;
@@ -152,10 +157,33 @@ function withRunMetadata(shaped, { fixtureHashes, environment }) {
   return { ...withHashes, environment };
 }
 
-async function finishRun(result, smoke) {
-  const capturedAt = new Date().toISOString();
-  const environment = result.environment ?? null;
-  const fixtureHashes = fixtureHashesForRun();
+async function finishRun(
+  result,
+  smoke,
+  fixtureHashesBefore = null,
+  { attachLocalHost = false, importedCapture = false } = {},
+) {
+  const capturedAt = importedCapture
+    ? capturedAtForImportedResult(result)
+    : new Date().toISOString();
+  const environment = importedCapture
+    ? null
+    : result.environment && attachLocalHost
+      ? {
+          ...result.environment,
+          hostPlatform: process.platform,
+          hostArch: process.arch,
+        }
+      : (result.environment ?? null);
+  const fixtureHashes = importedCapture ? null : fixtureHashesForRun();
+  const fixtureFenceFailure =
+    fixtureHashesBefore === null || fixtureHashes === null
+      ? null
+      : fixtureHashFenceFailure(fixtureHashesBefore, fixtureHashes);
+
+  if (fixtureFenceFailure !== null) {
+    throw new Error(fixtureFenceFailure);
+  }
   const shaped = withRunMetadata(
     shapeRunResult({
       capturedAt,
@@ -166,7 +194,7 @@ async function finishRun(result, smoke) {
       retainedCounts: result.retainedCounts ?? null,
       memorySample: result.memorySample ?? null,
       failedPaths: result.failedPaths ?? [],
-      fixtureVersion: FIXTURE_VERSION,
+      fixtureVersion: importedCapture ? undefined : FIXTURE_VERSION,
       fixtureHashes,
     }),
     { fixtureHashes, environment },
@@ -204,6 +232,7 @@ function parseArgs(args) {
     printSnippet: false,
     fromJsonPath: "",
     autorun: false,
+    diagnosticElevation: false,
     autorunTimeoutMs: DEFAULT_AUTORUN_TIMEOUT_MS,
   };
 
@@ -222,6 +251,11 @@ function parseArgs(args) {
 
     if (arg === "--autorun") {
       options.autorun = true;
+      continue;
+    }
+
+    if (arg === "--diagnostic-elevation") {
+      options.diagnosticElevation = true;
       continue;
     }
 
@@ -255,6 +289,10 @@ function parseArgs(args) {
   const lanes = [options.printSnippet, options.fromJsonPath.length > 0, options.autorun].filter(
     Boolean,
   );
+
+  if (options.diagnosticElevation && !options.autorun) {
+    throw new Error("--diagnostic-elevation requires --autorun.");
+  }
 
   if (lanes.length > 1) {
     throw new Error("Use exactly one of --autorun, --print-snippet, or --from-json.");
@@ -303,7 +341,7 @@ async function runWithCdp(args, options) {
       throw new Error(formatCdpException(response.exceptionDetails));
     }
 
-    return response.result?.value;
+    return { result: response.result?.value };
   } finally {
     client.close();
   }

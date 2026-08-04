@@ -574,8 +574,6 @@ export function createEditorIncrementalProductionChainHarness(
           content: savedDocument.content,
           kind: "sync-saved-javascript-typescript",
         });
-        const lease = production.requestLifecycleLease(savedDocument.path);
-        if (!lease) return;
         await syncPreparedIncrementalDocumentSave({
           document: savedDocument,
           gateway: {
@@ -583,7 +581,6 @@ export function createEditorIncrementalProductionChainHarness(
           } as unknown as LanguageServerDocumentSyncGateway,
           incrementalSync: production,
           isCurrent: () => shouldEmit?.() !== false,
-          lease,
           rootPath,
           sessionId: runtimeAuthority.sessionId,
           version: 1,

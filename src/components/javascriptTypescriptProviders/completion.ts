@@ -146,7 +146,13 @@ export async function provideJavaScriptTypeScriptCompletionItems<
   completionContext?: Monaco.languages.CompletionContext,
   token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.CompletionList> {
-  const request = boundary.createFeatureRequest(context, model, position, "completion");
+  const request = boundary.createFeatureRequest(
+    context,
+    model,
+    position,
+    "completion",
+    completionContext?.triggerKind === 0 ? "explicit" : "automatic",
+  );
   if (!request) {
     return { suggestions: [] };
   }
@@ -248,7 +254,7 @@ export async function resolveJavaScriptTypeScriptCompletionItem<
   }
 
   try {
-    if (!(await boundary.flushStoredPayload(context, backedItem))) {
+    if (!(await boundary.flushStoredPayload(context, backedItem, "completionResolve"))) {
       return item;
     }
     const identifiedRequests = context.featuresGateway.identifiedRequests;
@@ -272,7 +278,7 @@ export async function resolveJavaScriptTypeScriptCompletionItem<
     if (
       javaScriptTypeScriptProviderRequestDidNotComplete(resolved) ||
       token?.isCancellationRequested ||
-      !boundary.isStoredPayloadActive(context, backedItem)
+      !boundary.isStoredPayloadActive(context, backedItem, "completionResolve")
     ) {
       return item;
     }

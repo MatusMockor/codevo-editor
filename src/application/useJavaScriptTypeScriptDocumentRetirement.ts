@@ -7,6 +7,7 @@ import {
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { retireJavaScriptTypeScriptDocument } from "./documentSyncCloseLifecycle";
+import { isMalformedJavaScriptTypeScriptDocumentSyncContent } from "./javaScriptTypeScriptDocumentSyncAdmission";
 
 interface JavaScriptTypeScriptDocumentRetirementOptions {
   readonly currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -32,11 +33,20 @@ interface JavaScriptTypeScriptDocumentRetirementOptions {
   ) => status is Extract<LanguageServerRuntimeStatus, { kind: "running" }>;
   readonly isSessionCurrent: (rootPath: string, sessionId: number) => boolean;
   readonly reportError: (rootPath: string, source: string, error: unknown) => void;
+  readonly changeMailbox: { drop(syncKey: string): void };
 }
 
 interface JavaScriptTypeScriptDocumentRetirement {
   readonly canOpen: (rootPath: string, path: string) => boolean;
   readonly retire: (rootPath: string, path: string, isCurrent?: () => boolean) => Promise<void>;
+  readonly retireMalformed: (
+    rootPath: string,
+    path: string,
+    syncKey: string,
+    content: string,
+    error: unknown,
+    isCurrent: () => boolean,
+  ) => "not-malformed" | "retired-malformed" | "stale-malformed";
 }
 
 export function useJavaScriptTypeScriptDocumentRetirement({
@@ -59,6 +69,7 @@ export function useJavaScriptTypeScriptDocumentRetirement({
   isRunningForWorkspace,
   isSessionCurrent,
   reportError,
+  changeMailbox,
 }: JavaScriptTypeScriptDocumentRetirementOptions): JavaScriptTypeScriptDocumentRetirement {
   const closingLifecycleReceiptsRef = useRef(new Set<string>());
   const uncertainCloseSessionIdsRef = useRef<Record<string, number>>({});
@@ -196,5 +207,24 @@ export function useJavaScriptTypeScriptDocumentRetirement({
     ],
   );
 
-  return { canOpen, retire };
+  const retireMalformed = useCallback(
+    (
+      rootPath: string,
+      path: string,
+      syncKey: string,
+      content: string,
+      error: unknown,
+      isCurrent: () => boolean,
+    ): "not-malformed" | "retired-malformed" | "stale-malformed" => {
+      if (!isMalformedJavaScriptTypeScriptDocumentSyncContent(content)) return "not-malformed";
+      if (!isCurrent()) return "stale-malformed";
+      changeMailbox.drop(syncKey);
+      reportError(rootPath, "JavaScript/TypeScript", error);
+      void retire(rootPath, path);
+      return "retired-malformed";
+    },
+    [changeMailbox, reportError, retire],
+  );
+
+  return { canOpen, retire, retireMalformed };
 }

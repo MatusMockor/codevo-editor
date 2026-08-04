@@ -39,6 +39,9 @@ export type JavaScriptTypeScriptInteractiveFeature =
   | "signatureHelp"
   | "typeDefinition";
 
+export type JavaScriptTypeScriptFeatureRequestIntent = "automatic" | "explicit";
+export type JavaScriptTypeScriptStoredAuthorityConsumer = "completionResolve" | "fullOnly";
+
 export interface JavaScriptTypeScriptFeatureRequest extends JavaScriptTypeScriptDocumentRequestAuthority {
   readonly position: LanguageServerTextDocumentPosition;
   readonly sessionId: number;
@@ -61,6 +64,7 @@ export interface JavaScriptTypeScriptProviderRequestBoundary<Context> {
     model: Monaco.editor.ITextModel,
     position: Monaco.Position,
     feature: JavaScriptTypeScriptInteractiveFeature,
+    intent?: JavaScriptTypeScriptFeatureRequestIntent,
   ): JavaScriptTypeScriptFeatureRequest | null;
   flushActiveRequest(
     context: Context,
@@ -69,11 +73,13 @@ export interface JavaScriptTypeScriptProviderRequestBoundary<Context> {
   flushStoredPayload(
     context: Context,
     payload: JavaScriptTypeScriptStoredProviderPayload,
+    consumer?: JavaScriptTypeScriptStoredAuthorityConsumer,
   ): Promise<boolean>;
   isActiveRequest(context: Context, request: JavaScriptTypeScriptFeatureRequest): boolean;
   isStoredPayloadActive(
     context: Context,
     payload: JavaScriptTypeScriptStoredProviderPayload,
+    consumer?: JavaScriptTypeScriptStoredAuthorityConsumer,
   ): boolean;
   isStoredSessionActive(context: Context, rootPath: string, sessionId: number): boolean;
   reportActiveRequestError(

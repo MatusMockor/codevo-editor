@@ -415,6 +415,14 @@ describe("QuickOpen", () => {
     expect(host.textContent).toContain("Results truncated");
   });
 
+  it("surfaces truncation without inventing a file result when traversal finds no matches", () => {
+    render({ isTruncated: true, results: [] });
+
+    expect(host.textContent).toContain("Results truncated");
+    expect(host.textContent).not.toContain("No files found");
+    expect(host.querySelectorAll(".quick-open-result")).toHaveLength(0);
+  });
+
   it("shows an accessible compact syntax hint", () => {
     render();
 

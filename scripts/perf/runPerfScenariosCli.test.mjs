@@ -10,6 +10,7 @@ import {
   blockedScenarioIds,
   buildRunnerOptions,
   buildSnippetExpression,
+  capturedAtForImportedResult,
   environmentAnomaly,
   environmentWarning,
   evaluateRunOutcome,
@@ -28,11 +29,29 @@ const COMPLETE_ENVIRONMENT = {
   editor: "codevo",
   version: "0.1.0",
   bundleMode: "dev",
+  windowMode: "focus-only",
+  hostPlatform: "darwin",
+  hostArch: "arm64",
   strictMode: false,
   timerQuantizationMs: 1,
   platform: "darwin",
   capturedAt: "2026-08-03T00:00:00.000Z",
 };
+
+describe("capturedAtForImportedResult", () => {
+  it("preserves the timestamp recorded by the measurement", () => {
+    expect(capturedAtForImportedResult({ environment: COMPLETE_ENVIRONMENT })).toBe(
+      COMPLETE_ENVIRONMENT.capturedAt,
+    );
+  });
+
+  it.each([null, {}, { environment: {} }, { environment: { capturedAt: "not-a-date" } }])(
+    "rejects missing or invalid imported capture provenance %#",
+    (result) => {
+      expect(() => capturedAtForImportedResult(result)).toThrow(/ingestion time is not capture/);
+    },
+  );
+});
 
 describe("buildRunnerOptions", () => {
   it("resolves fixture roots to absolute paths under the given repo root", () => {
@@ -575,6 +594,9 @@ describe("environment anomaly gate", () => {
   it.each([
     ["editor", "editor"],
     ["bundleMode", "bundleMode"],
+    ["windowMode", "windowMode"],
+    ["hostPlatform", "hostPlatform"],
+    ["hostArch", "hostArch"],
     ["timerQuantizationMs", "timerQuantizationMs"],
     ["capturedAt", "capturedAt"],
   ])("fails a full run whose environment block is missing %s", (_label, field) => {
@@ -613,7 +635,9 @@ describe("environment anomaly gate", () => {
     expect(missing.warning).toMatch(/records no environment block/);
     expect(missing.warning).toMatch(/Smoke runs are exempt from this gate; a full run is not\./);
     expect(incomplete.failures).toEqual([]);
-    expect(incomplete.warning).toContain("timerQuantizationMs, capturedAt");
+    expect(incomplete.warning).toContain(
+      "windowMode, hostPlatform, hostArch, timerQuantizationMs, capturedAt",
+    );
   });
 
   it("stays silent in smoke mode when the environment block is complete", () => {
@@ -633,6 +657,9 @@ describe("environment metadata pass-through", () => {
       editor: "codevo",
       version: "0.1.0",
       bundleMode: "dev",
+      windowMode: "focus-only",
+      hostPlatform: "darwin",
+      hostArch: "arm64",
       strictMode: false,
       timerQuantizationMs: 1,
       platform: "darwin",

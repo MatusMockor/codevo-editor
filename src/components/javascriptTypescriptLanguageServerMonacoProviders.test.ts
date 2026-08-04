@@ -8511,6 +8511,243 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.formatting).not.toHaveBeenCalled();
   });
 
+  it("admits only the explicit interactive allowlist for an adversarial 20k-line model", async () => {
+    const monaco = createMonaco();
+    const largeContent = "x\n".repeat(20_000);
+    const largeDocument = { ...document(), content: largeContent, savedContent: largeContent };
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "const user: User",
+            documentation: null,
+            insertText: "user",
+            kind: 6,
+            label: "user",
+          },
+        ],
+      },
+      resolvedCompletionItem: {
+        detail: "resolved const user: User",
+        documentation: "User docs",
+        insertText: "user",
+        kind: 6,
+        label: "user",
+      },
+    });
+    const model = {
+      ...stagedTextModel(largeDocument.path, largeContent, 7),
+      getValue: vi.fn(() => {
+        throw new Error("provider admission must not read full policy-large content");
+      }),
+    };
+    const flush = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange: flush,
+        getActiveDocument: () => largeDocument,
+        getActiveModel: () => model as any,
+      }),
+    );
+    const completionProvider = (monaco.languages.registerCompletionItemProvider as any).mock
+      .calls[0][1];
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
+      .calls[0][1];
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock.calls[0][1];
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock.calls[0][1];
+    const signatureProvider = (monaco.languages.registerSignatureHelpProvider as any).mock
+      .calls[0][1];
+    const highlightProvider = (monaco.languages.registerDocumentHighlightProvider as any).mock
+      .calls[0][1];
+    const linkedEditingProvider = (monaco.languages.registerLinkedEditingRangeProvider as any).mock
+      .calls[0][1];
+    const position = { column: 1, lineNumber: 1 };
+
+    await expect(
+      completionProvider.provideCompletionItems(model, position, {
+        triggerCharacter: ".",
+        triggerKind: 1,
+      }),
+    ).resolves.toEqual({ suggestions: [] });
+    await expect(
+      completionProvider.provideCompletionItems(model, position, { triggerKind: 2 }),
+    ).resolves.toEqual({ suggestions: [] });
+    expect(gateway.completion).not.toHaveBeenCalled();
+
+    const completion = await completionProvider.provideCompletionItems(model, position, {
+      triggerKind: 0,
+    });
+    expect(gateway.completion).toHaveBeenCalledOnce();
+    expect(completion.suggestions).toHaveLength(1);
+    await expect(
+      completionProvider.resolveCompletionItem(completion.suggestions[0]),
+    ).resolves.toEqual(expect.objectContaining({ detail: "resolved const user: User" }));
+    expect(gateway.resolveCompletionItem).toHaveBeenCalledOnce();
+
+    await definitionProvider.provideDefinition(model, position);
+    await referencesProvider.provideReferences(model, position, { includeDeclaration: true });
+    await renameProvider.resolveRenameLocation(model, position);
+    await renameProvider.provideRenameEdits(model, position, "account");
+    expect(gateway.definition).toHaveBeenCalledOnce();
+    expect(gateway.references).toHaveBeenCalledOnce();
+    expect(gateway.prepareRename).toHaveBeenCalledOnce();
+    expect(gateway.rename).toHaveBeenCalledOnce();
+
+    await expect(hoverProvider.provideHover(model, position)).resolves.toBeNull();
+    await expect(signatureProvider.provideSignatureHelp(model, position)).resolves.toBeNull();
+    await expect(highlightProvider.provideDocumentHighlights(model, position)).resolves.toBeNull();
+    await expect(
+      linkedEditingProvider.provideLinkedEditingRanges(model, position),
+    ).resolves.toBeNull();
+    expect(gateway.hover).not.toHaveBeenCalled();
+    expect(gateway.signatureHelp).not.toHaveBeenCalled();
+    expect(gateway.documentHighlights).not.toHaveBeenCalled();
+    expect(gateway.linkedEditingRanges).not.toHaveBeenCalled();
+    expect(model.getValue).not.toHaveBeenCalled();
+    expect(flush).toHaveBeenCalledTimes(6);
+  });
+
+  it("denies every provider before flush beyond the 2 Mi UTF-16 sync boundary", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    const flush = vi.fn(async () => undefined);
+    const activeDocument = document();
+    const oversizedModel = {
+      ...textModel(),
+      getLineCount: vi.fn(() => 1),
+      getValueLength: vi.fn(() => 2 * 1024 * 1024 + 1),
+    };
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange: flush,
+        getActiveDocument: () => activeDocument,
+        getLargeSmartDocumentPolicy: () => ({
+          characterLimit: 10 * 1024 * 1024,
+          lineLimit: 200_000,
+        }),
+      }),
+    );
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
+      .calls[0][1];
+    const formattingProvider = (monaco.languages.registerDocumentFormattingEditProvider as any).mock
+      .calls[0][1];
+
+    await expect(
+      definitionProvider.provideDefinition(oversizedModel, { column: 1, lineNumber: 1 }),
+    ).resolves.toBeNull();
+    await expect(
+      formattingProvider.provideDocumentFormattingEdits(oversizedModel, {
+        insertSpaces: true,
+        tabSize: 2,
+      }),
+    ).resolves.toEqual([]);
+    expect(flush).not.toHaveBeenCalled();
+    expect(gateway.definition).not.toHaveBeenCalled();
+    expect(gateway.formatting).not.toHaveBeenCalled();
+  });
+
+  it("fails closed through a registered provider when the model revision accessor throws", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    const flush = vi.fn(async () => undefined);
+    const throwingModel = {
+      ...textModel(),
+      getVersionId: vi.fn(() => {
+        throw new Error("disposed model");
+      }),
+    };
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, flushPendingDocumentChange: flush }),
+    );
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
+      .calls[0][1];
+
+    await expect(
+      definitionProvider.provideDefinition(throwingModel, { column: 1, lineNumber: 1 }),
+    ).resolves.toBeNull();
+    expect(flush).not.toHaveBeenCalled();
+    expect(gateway.definition).not.toHaveBeenCalled();
+  });
+
+  it("reclassifies the exact model revision when large-file policy changes", async () => {
+    const monaco = createMonaco();
+    const content = "x\n".repeat(20_000);
+    const activeDocument = { ...document(), content, savedContent: content };
+    const model = {
+      ...stagedTextModel(activeDocument.path, content, 7),
+      getValue: vi.fn(() => {
+        throw new Error("policy transitions must use cached O(1) metrics");
+      }),
+    };
+    let lineLimit = 50_000;
+    const gateway = featuresGateway();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getActiveDocument: () => activeDocument,
+        getActiveModel: () => model as any,
+        getLargeSmartDocumentPolicy: () => ({
+          characterLimit: 256 * 1024,
+          lineLimit,
+        }),
+      }),
+    );
+    const completionProvider = (monaco.languages.registerCompletionItemProvider as any).mock
+      .calls[0][1];
+    const automaticContext = { triggerCharacter: ".", triggerKind: 1 };
+    const position = { column: 1, lineNumber: 1 };
+
+    await completionProvider.provideCompletionItems(model, position, automaticContext);
+    lineLimit = 5_000;
+    await completionProvider.provideCompletionItems(model, position, automaticContext);
+    await completionProvider.provideCompletionItems(model, position, { triggerKind: 0 });
+    lineLimit = 50_000;
+    await completionProvider.provideCompletionItems(model, position, automaticContext);
+
+    expect(gateway.completion).toHaveBeenCalledTimes(3);
+    expect(model.getValue).not.toHaveBeenCalled();
+  });
+
+  it("cancels an exact pending large-document navigation request", async () => {
+    const monaco = createMonaco();
+    const content = "x\n".repeat(20_000);
+    const activeDocument = { ...document(), content, savedContent: content };
+    const model = stagedTextModel(activeDocument.path, content, 7);
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.definition).mockImplementationOnce(() => pending.promise);
+    const cancelRequest = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        cancelRequest,
+        featuresGateway: gateway,
+        getActiveDocument: () => activeDocument,
+        getActiveModel: () => model as any,
+      }),
+    );
+    const definitionProvider = (monaco.languages.registerDefinitionProvider as any).mock
+      .calls[0][1];
+    const token = cancellableToken();
+    const result = definitionProvider.provideDefinition(model, { column: 1, lineNumber: 1 }, token);
+    await vi.waitFor(() => expect(gateway.definition).toHaveBeenCalledOnce());
+
+    token.fire();
+
+    await expect(result).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 1, pending.promise.requestId);
+    pending.resolve([]);
+  });
+
   it("re-enables providers exactly across normal-large-normal sync transitions", async () => {
     const monaco = createMonaco();
     let activeDocument = document();
@@ -9094,6 +9331,7 @@ function workspaceEditCommandPayload(path: string, model = textModel()) {
       sessionId: 1,
     },
     {
+      access: "full",
       model: model as any,
       modelVersion: model.getVersionId(),
       ownerEpoch: 1,

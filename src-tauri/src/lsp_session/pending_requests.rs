@@ -98,6 +98,10 @@ enum PendingRequestRegistryState {
     Open {
         entries: HashMap<u64, PendingRequestEntry>,
         highest_client_request_id: Option<u64>,
+        // Wire IDs are session-local and monotonic. Every unknown response at or below this
+        // watermark is retired; retaining one scalar keeps arbitrarily old completion replies
+        // bounded without retaining an unbounded set of cancelled request IDs.
+        retired_completion_wire_id_high_watermark: Option<u64>,
         wire_id_by_client_id: HashMap<u64, u64>,
     },
     Closed {
@@ -115,6 +119,7 @@ impl PendingRequestRegistry {
             state: Mutex::new(PendingRequestRegistryState::Open {
                 entries: HashMap::new(),
                 highest_client_request_id: None,
+                retired_completion_wire_id_high_watermark: None,
                 wire_id_by_client_id: HashMap::new(),
             }),
         }
@@ -135,6 +140,7 @@ impl PendingRequestRegistry {
             entries,
             highest_client_request_id,
             wire_id_by_client_id,
+            ..
         } = &mut *state
         else {
             let PendingRequestRegistryState::Closed { message } = &*state else {
@@ -184,23 +190,42 @@ impl PendingRequestRegistry {
 
     fn response_body_bound(&self, wire_request_id: u64) -> Option<ResponseBodyBound> {
         let state = self.state.lock().ok()?;
-        let PendingRequestRegistryState::Open { entries, .. } = &*state else {
+        let PendingRequestRegistryState::Open {
+            entries,
+            retired_completion_wire_id_high_watermark,
+            ..
+        } = &*state
+        else {
             return None;
         };
         entries
             .get(&wire_request_id)
             .map(|entry| entry.response_body_bound)
+            .or_else(|| {
+                retired_completion_wire_id_high_watermark
+                    .is_some_and(|retired| wire_request_id <= retired)
+                    .then(|| ResponseBodyBound::for_method(COMPLETION_REQUEST_METHOD))
+            })
     }
 
     fn pending_capped_response_body_bound(&self) -> Option<ResponseBodyBound> {
         let state = self.state.lock().ok()?;
-        let PendingRequestRegistryState::Open { entries, .. } = &*state else {
+        let PendingRequestRegistryState::Open {
+            entries,
+            retired_completion_wire_id_high_watermark,
+            ..
+        } = &*state
+        else {
             return None;
         };
         entries
             .values()
             .map(|entry| entry.response_body_bound)
             .find(|bound| !matches!(bound, ResponseBodyBound::Full))
+            .or_else(|| {
+                retired_completion_wire_id_high_watermark
+                    .map(|_| ResponseBodyBound::for_method(COMPLETION_REQUEST_METHOD))
+            })
     }
 
     pub(super) fn cancel(&self, client_request_id: u64) -> PendingRequestCancellationReceipt {
@@ -209,6 +234,7 @@ impl PendingRequestRegistry {
         };
         let PendingRequestRegistryState::Open {
             entries,
+            retired_completion_wire_id_high_watermark,
             wire_id_by_client_id,
             ..
         } = &mut *state
@@ -221,6 +247,11 @@ impl PendingRequestRegistry {
         let Some(entry) = entries.remove(&wire_request_id) else {
             return PendingRequestCancellationReceipt::NotPending;
         };
+        retain_retired_capped_response(
+            retired_completion_wire_id_high_watermark,
+            wire_request_id,
+            entry.response_body_bound,
+        );
         drop(entry);
 
         PendingRequestCancellationReceipt::Cancelled { wire_request_id }
@@ -242,6 +273,31 @@ impl PendingRequestRegistry {
             if let Some(client_request_id) = entry.client_request_id {
                 wire_id_by_client_id.remove(&client_request_id);
             }
+        }
+    }
+
+    pub(super) fn retire(&self, wire_request_id: u64) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let PendingRequestRegistryState::Open {
+            entries,
+            retired_completion_wire_id_high_watermark,
+            wire_id_by_client_id,
+            ..
+        } = &mut *state
+        else {
+            return;
+        };
+        if let Some(entry) = entries.remove(&wire_request_id) {
+            if let Some(client_request_id) = entry.client_request_id {
+                wire_id_by_client_id.remove(&client_request_id);
+            }
+            retain_retired_capped_response(
+                retired_completion_wire_id_high_watermark,
+                wire_request_id,
+                entry.response_body_bound,
+            );
         }
     }
 
@@ -270,6 +326,11 @@ impl PendingRequestRegistry {
     }
 
     pub(super) fn route_response(&self, value: &Value) -> PendingResponseReceipt {
+        if value.get("method").is_some()
+            || (value.get("result").is_none() && value.get("error").is_none())
+        {
+            return PendingResponseReceipt::Unmatched;
+        }
         let Some(id) = value.get("id").and_then(Value::as_u64) else {
             return PendingResponseReceipt::Unmatched;
         };
@@ -278,6 +339,7 @@ impl PendingRequestRegistry {
         };
         let PendingRequestRegistryState::Open {
             entries,
+            retired_completion_wire_id_high_watermark,
             wire_id_by_client_id,
             ..
         } = &mut *state
@@ -285,7 +347,12 @@ impl PendingRequestRegistry {
             return PendingResponseReceipt::SessionClosed;
         };
         let Some(entry) = entries.remove(&id) else {
-            return PendingResponseReceipt::Unmatched;
+            return if retired_completion_wire_id_high_watermark.is_some_and(|retired| id <= retired)
+            {
+                PendingResponseReceipt::Routed
+            } else {
+                PendingResponseReceipt::Unmatched
+            };
         };
         if let Some(client_request_id) = entry.client_request_id {
             wire_id_by_client_id.remove(&client_request_id);
@@ -307,9 +374,37 @@ impl PendingRequestRegistry {
     }
 
     #[cfg(test)]
+    fn retired_completion_wire_id_high_watermark(&self) -> Option<u64> {
+        self.state
+            .lock()
+            .map(|state| match &*state {
+                PendingRequestRegistryState::Open {
+                    retired_completion_wire_id_high_watermark,
+                    ..
+                } => *retired_completion_wire_id_high_watermark,
+                PendingRequestRegistryState::Closed { .. } => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
     pub(super) fn lock_is_available(&self) -> bool {
         self.state.try_lock().is_ok()
     }
+}
+
+fn retain_retired_capped_response(
+    retired_completion_wire_id_high_watermark: &mut Option<u64>,
+    wire_request_id: u64,
+    response_body_bound: ResponseBodyBound,
+) {
+    if matches!(response_body_bound, ResponseBodyBound::Full) {
+        return;
+    }
+    *retired_completion_wire_id_high_watermark = Some(
+        (*retired_completion_wire_id_high_watermark)
+            .map_or(wire_request_id, |retired| retired.max(wire_request_id)),
+    );
 }
 
 pub(super) fn reject_pending_requests(pending_requests: &PendingRequests, message: &str) {
@@ -338,23 +433,22 @@ pub(super) fn decode_session_message(
 
 fn bounded_response_value(bytes: &[u8], pending_requests: &PendingRequests) -> Option<Value> {
     let bound = pending_requests.pending_capped_response_body_bound()?;
-    let ResponseBodyBound::CappedArrayField {
-        field,
-        maximum_items,
-    } = bound
-    else {
+    let ResponseBodyBound::CappedArrayField { .. } = bound else {
         return None;
     };
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let decoded = CappedResponseSeed {
-        field,
-        maximum_items,
+        fallback_bound: bound,
+        pending_requests,
     }
     .deserialize(&mut deserializer)
     .ok()?;
     deserializer.end().ok()?;
     let wire_request_id = decoded.id?;
-    if pending_requests.response_body_bound(wire_request_id) != Some(bound) {
+    let exact_bound = pending_requests
+        .response_body_bound(wire_request_id)
+        .unwrap_or(ResponseBodyBound::Full);
+    if decoded.applied_bound != Some(exact_bound) {
         return None;
     }
     let result = decoded.result?;
@@ -367,16 +461,17 @@ fn bounded_response_value(bytes: &[u8], pending_requests: &PendingRequests) -> O
 }
 
 struct CappedResponse {
+    applied_bound: Option<ResponseBodyBound>,
     id: Option<u64>,
     result: Option<Value>,
 }
 
-struct CappedResponseSeed {
-    field: &'static str,
-    maximum_items: usize,
+struct CappedResponseSeed<'a> {
+    fallback_bound: ResponseBodyBound,
+    pending_requests: &'a PendingRequestRegistry,
 }
 
-impl<'de> DeserializeSeed<'de> for CappedResponseSeed {
+impl<'de> DeserializeSeed<'de> for CappedResponseSeed<'_> {
     type Value = CappedResponse;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -387,7 +482,7 @@ impl<'de> DeserializeSeed<'de> for CappedResponseSeed {
     }
 }
 
-impl<'de> Visitor<'de> for CappedResponseSeed {
+impl<'de> Visitor<'de> for CappedResponseSeed<'_> {
     type Value = CappedResponse;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -400,22 +495,45 @@ impl<'de> Visitor<'de> for CappedResponseSeed {
     {
         let mut id = None;
         let mut result = None;
+        let mut applied_bound = None;
         while let Some(key) = entries.next_key::<Cow<'de, str>>()? {
             if key == "id" {
                 id = entries.next_value::<Option<u64>>()?;
                 continue;
             }
             if key == "result" {
-                result = Some(entries.next_value_seed(CappedResultSeed {
-                    field: self.field,
-                    maximum_items: self.maximum_items,
-                })?);
+                let response_body_bound = id
+                    .and_then(|wire_request_id| {
+                        self.pending_requests.response_body_bound(wire_request_id)
+                    })
+                    .unwrap_or_else(|| {
+                        if id.is_some() {
+                            ResponseBodyBound::Full
+                        } else {
+                            self.fallback_bound
+                        }
+                    });
+                result = Some(match response_body_bound {
+                    ResponseBodyBound::Full => entries.next_value::<Value>()?,
+                    ResponseBodyBound::CappedArrayField {
+                        field,
+                        maximum_items,
+                    } => entries.next_value_seed(CappedResultSeed {
+                        field,
+                        maximum_items,
+                    })?,
+                });
+                applied_bound = Some(response_body_bound);
                 continue;
             }
             entries.next_value::<IgnoredAny>()?;
         }
 
-        Ok(CappedResponse { id, result })
+        Ok(CappedResponse {
+            applied_bound,
+            id,
+            result,
+        })
     }
 }
 
@@ -585,19 +703,36 @@ mod tests {
         .expect("serialize completion response")
     }
 
+    fn completion_response_bytes_result_first(wire_request_id: u64, item_count: usize) -> Vec<u8> {
+        let ordinary = completion_response_bytes(wire_request_id, item_count);
+        let decoded: Value = serde_json::from_slice(&ordinary).expect("decode completion fixture");
+        format!(
+            "{{\"result\":{},\"id\":{wire_request_id},\"jsonrpc\":\"2.0\"}}",
+            serde_json::to_string(&decoded["result"]).expect("serialize result-first fixture")
+        )
+        .into_bytes()
+    }
+
     fn registry_with_completion_request(
         wire_request_id: u64,
+    ) -> (PendingRequests, mpsc::Receiver<PendingRequestResult>) {
+        registry_with_identified_request(
+            wire_request_id,
+            None,
+            ResponseBodyBound::for_method("textDocument/completion"),
+        )
+    }
+
+    fn registry_with_identified_request(
+        wire_request_id: u64,
+        client_request_id: Option<u64>,
+        response_body_bound: ResponseBodyBound,
     ) -> (PendingRequests, mpsc::Receiver<PendingRequestResult>) {
         let registry: PendingRequests = Arc::new(PendingRequestRegistry::new());
         let (tx, rx) = mpsc::channel();
         registry
-            .admit(
-                wire_request_id,
-                None,
-                ResponseBodyBound::for_method("textDocument/completion"),
-                tx,
-            )
-            .expect("admit completion request");
+            .admit(wire_request_id, client_request_id, response_body_bound, tx)
+            .expect("admit request");
         (registry, rx)
     }
 
@@ -736,6 +871,58 @@ mod tests {
             decoded["result"].as_array().expect("items array").len(),
             MAX_COMPLETION_RESPONSE_WIRE_ITEMS
         );
+        assert_eq!(
+            route_pending_response(&registry, &decoded),
+            PendingResponseReceipt::Routed
+        );
+    }
+
+    #[test]
+    fn lower_allocated_wire_id_can_admit_after_a_higher_completion_is_retired() {
+        let registry = Arc::new(PendingRequestRegistry::new());
+        let (completion_tx, completion_rx) = mpsc::channel();
+        registry
+            .admit(
+                2,
+                Some(1),
+                ResponseBodyBound::for_method("textDocument/completion"),
+                completion_tx,
+            )
+            .expect("admit completion");
+        assert!(matches!(
+            registry.cancel(1),
+            PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert!(completion_rx.recv().is_err());
+
+        let (live_tx, live_rx) = mpsc::channel();
+        registry
+            .admit(1, Some(2), ResponseBodyBound::Full, live_tx)
+            .expect("a previously allocated lower wire id must still admit");
+
+        let bytes = completion_response_bytes(1, OVERSIZED_COMPLETION_ITEMS);
+        let decoded = decode_session_message(&bytes, &registry).expect("decode exact live bound");
+        assert_eq!(
+            decoded["result"]["items"]
+                .as_array()
+                .expect("full live items")
+                .len(),
+            OVERSIZED_COMPLETION_ITEMS
+        );
+        assert_eq!(
+            route_pending_response(&registry, &decoded),
+            PendingResponseReceipt::Routed
+        );
+        assert_eq!(
+            live_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("live result receipt")
+                .expect("live result")["items"]
+                .as_array()
+                .expect("routed full items")
+                .len(),
+            OVERSIZED_COMPLETION_ITEMS
+        );
     }
 
     #[test]
@@ -765,6 +952,360 @@ mod tests {
         assert_eq!(
             result["items"].as_array().expect("items array").len(),
             MAX_COMPLETION_RESPONSE_WIRE_ITEMS
+        );
+    }
+
+    #[test]
+    fn cancelled_completion_keeps_bounded_decode_and_discards_duplicate_late_responses() {
+        let (registry, cancelled_rx) = registry_with_identified_request(
+            41,
+            Some(401),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        assert_eq!(
+            registry.cancel(401),
+            PendingRequestCancellationReceipt::Cancelled {
+                wire_request_id: 41
+            }
+        );
+        assert!(
+            cancelled_rx.recv().is_err(),
+            "cancel must release the waiter"
+        );
+
+        let bytes = completion_response_bytes(41, OVERSIZED_COMPLETION_ITEMS);
+        for _ in 0..2 {
+            let decoded = decode_session_message(&bytes, &registry).expect("bounded late decode");
+            assert_eq!(
+                decoded["result"]["items"]
+                    .as_array()
+                    .expect("completion items")
+                    .len(),
+                MAX_COMPLETION_RESPONSE_WIRE_ITEMS
+            );
+            assert_eq!(
+                route_pending_response(&registry, &decoded),
+                PendingResponseReceipt::Routed
+            );
+        }
+        assert_eq!(
+            registry.retired_completion_wire_id_high_watermark(),
+            Some(41)
+        );
+    }
+
+    #[test]
+    fn cancelled_completion_is_dropped_before_routing_the_following_live_response() {
+        let (registry, cancelled_rx) = registry_with_identified_request(
+            43,
+            Some(403),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        assert!(matches!(
+            registry.cancel(403),
+            PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert!(cancelled_rx.recv().is_err());
+
+        let late = completion_response_bytes(43, OVERSIZED_COMPLETION_ITEMS);
+        let decoded_late = decode_session_message(&late, &registry).expect("bounded late decode");
+        assert_eq!(
+            route_pending_response(&registry, &decoded_late),
+            PendingResponseReceipt::Routed
+        );
+
+        let (live_tx, live_rx) = mpsc::channel();
+        registry
+            .admit(44, Some(404), ResponseBodyBound::Full, live_tx)
+            .expect("admit live hover");
+        let hover = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": 44,
+            "result": { "contents": "live hover" }
+        }))
+        .expect("serialize hover");
+        let decoded_hover = decode_session_message(&hover, &registry).expect("decode hover");
+        assert_eq!(
+            route_pending_response(&registry, &decoded_hover),
+            PendingResponseReceipt::Routed
+        );
+        assert_eq!(
+            live_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("live response receipt")
+                .expect("live response"),
+            json!({ "contents": "live hover" })
+        );
+    }
+
+    #[test]
+    fn retained_completion_tombstone_does_not_cap_an_unrelated_large_live_response() {
+        let (registry, cancelled_rx) = registry_with_identified_request(
+            45,
+            Some(405),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        assert!(matches!(
+            registry.cancel(405),
+            PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert!(cancelled_rx.recv().is_err());
+
+        let (live_tx, live_rx) = mpsc::channel();
+        registry
+            .admit(46, Some(406), ResponseBodyBound::Full, live_tx)
+            .expect("admit full response request");
+        let bytes = completion_response_bytes(46, OVERSIZED_COMPLETION_ITEMS);
+        let decoded = decode_session_message(&bytes, &registry).expect("decode full live response");
+        assert_eq!(
+            decoded["result"]["items"]
+                .as_array()
+                .expect("full response items")
+                .len(),
+            OVERSIZED_COMPLETION_ITEMS
+        );
+        assert_eq!(
+            route_pending_response(&registry, &decoded),
+            PendingResponseReceipt::Routed
+        );
+        assert_eq!(
+            live_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("full response receipt")
+                .expect("full response")["items"]
+                .as_array()
+                .expect("routed full items")
+                .len(),
+            OVERSIZED_COMPLETION_ITEMS
+        );
+        assert_eq!(
+            registry.retired_completion_wire_id_high_watermark(),
+            Some(45)
+        );
+    }
+
+    #[test]
+    fn result_before_id_keeps_exact_tombstone_and_live_response_semantics() {
+        const LARGE_RESULT_ITEMS: usize = MAX_COMPLETION_RESPONSE_WIRE_ITEMS + 99;
+        let (registry, cancelled_rx) = registry_with_identified_request(
+            47,
+            Some(407),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        assert!(matches!(
+            registry.cancel(407),
+            PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert!(cancelled_rx.recv().is_err());
+
+        let late = completion_response_bytes_result_first(47, LARGE_RESULT_ITEMS);
+        let decoded_late =
+            decode_session_message(&late, &registry).expect("decode late completion");
+        assert_eq!(
+            decoded_late["result"]["items"]
+                .as_array()
+                .expect("bounded completion items")
+                .len(),
+            MAX_COMPLETION_RESPONSE_WIRE_ITEMS
+        );
+        assert_eq!(
+            route_pending_response(&registry, &decoded_late),
+            PendingResponseReceipt::Routed
+        );
+
+        let (live_tx, live_rx) = mpsc::channel();
+        registry
+            .admit(48, Some(408), ResponseBodyBound::Full, live_tx)
+            .expect("admit full live response");
+        let live = completion_response_bytes_result_first(48, LARGE_RESULT_ITEMS);
+        let decoded_live = decode_session_message(&live, &registry).expect("decode full response");
+        assert_eq!(
+            decoded_live["result"]["items"]
+                .as_array()
+                .expect("full items")
+                .len(),
+            LARGE_RESULT_ITEMS
+        );
+        assert_eq!(
+            route_pending_response(&registry, &decoded_live),
+            PendingResponseReceipt::Routed
+        );
+        assert_eq!(
+            live_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("live result receipt")
+                .expect("live result")["items"]
+                .as_array()
+                .expect("routed live items")
+                .len(),
+            LARGE_RESULT_ITEMS
+        );
+    }
+
+    #[test]
+    fn more_than_capacity_retirements_keep_the_oldest_late_completion_bounded() {
+        let registry = Arc::new(PendingRequestRegistry::new());
+        let last_id = MAX_PENDING_REQUESTS_PER_SESSION as u64 + 1;
+        for id in 1..=last_id {
+            let (tx, rx) = mpsc::channel();
+            registry
+                .admit(
+                    id,
+                    Some(id),
+                    ResponseBodyBound::for_method("textDocument/completion"),
+                    tx,
+                )
+                .expect("admit completion");
+            assert!(matches!(
+                registry.cancel(id),
+                PendingRequestCancellationReceipt::Cancelled { .. }
+            ));
+            assert!(rx.recv().is_err());
+        }
+
+        assert_eq!(
+            registry.retired_completion_wire_id_high_watermark(),
+            Some(last_id)
+        );
+
+        let oldest = completion_response_bytes(1, OVERSIZED_COMPLETION_ITEMS);
+        let decoded = decode_session_message(&oldest, &registry)
+            .expect("oldest retired completion remains bounded");
+        assert_eq!(
+            decoded["result"]["items"]
+                .as_array()
+                .expect("bounded completion items")
+                .len(),
+            MAX_COMPLETION_RESPONSE_WIRE_ITEMS
+        );
+        assert_eq!(
+            route_pending_response(&registry, &decoded),
+            PendingResponseReceipt::Routed
+        );
+    }
+
+    #[test]
+    fn cancellation_tombstones_do_not_leak_across_a_b_a_session_replacement() {
+        let (session_a1, session_a1_rx) = registry_with_identified_request(
+            47,
+            Some(407),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        assert!(matches!(
+            session_a1.cancel(407),
+            PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert!(session_a1_rx.recv().is_err());
+
+        let session_b = Arc::new(PendingRequestRegistry::new());
+        assert_eq!(
+            session_a1.retired_completion_wire_id_high_watermark(),
+            Some(47)
+        );
+        assert_eq!(session_b.retired_completion_wire_id_high_watermark(), None);
+
+        session_a1.close_and_reject("replaced");
+        assert_eq!(session_a1.retired_completion_wire_id_high_watermark(), None);
+        assert_eq!(
+            session_a1.cancel(407),
+            PendingRequestCancellationReceipt::SessionClosed
+        );
+
+        let (session_a2, session_a2_rx) = registry_with_identified_request(
+            47,
+            Some(407),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        assert_eq!(session_a2.retired_completion_wire_id_high_watermark(), None);
+        assert_eq!(session_a2_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+        assert!(matches!(
+            session_a2.cancel(407),
+            PendingRequestCancellationReceipt::Cancelled {
+                wire_request_id: 47
+            }
+        ));
+        assert!(session_a2_rx.recv().is_err());
+        assert_eq!(
+            session_a2.retired_completion_wire_id_high_watermark(),
+            Some(47)
+        );
+    }
+
+    #[test]
+    fn cancelling_a_full_response_request_does_not_consume_tombstone_capacity() {
+        let (registry, rx) = registry_with_identified_request(
+            53,
+            Some(503),
+            ResponseBodyBound::for_method("textDocument/hover"),
+        );
+        assert!(matches!(
+            registry.cancel(503),
+            PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert!(rx.recv().is_err());
+        assert_eq!(registry.retired_completion_wire_id_high_watermark(), None);
+    }
+
+    #[test]
+    fn server_request_with_a_retired_wire_id_is_not_misclassified_as_a_response() {
+        let (registry, rx) = registry_with_identified_request(
+            57,
+            Some(507),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        assert!(matches!(
+            registry.cancel(507),
+            PendingRequestCancellationReceipt::Cancelled { .. }
+        ));
+        assert!(rx.recv().is_err());
+
+        assert_eq!(
+            route_pending_response(
+                &registry,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 57,
+                    "method": "workspace/configuration",
+                    "params": { "items": [] }
+                })
+            ),
+            PendingResponseReceipt::Unmatched
+        );
+        assert_eq!(
+            registry.retired_completion_wire_id_high_watermark(),
+            Some(57)
+        );
+    }
+
+    #[test]
+    fn retired_timed_out_completion_keeps_its_late_response_bound() {
+        let (registry, timed_out_rx) = registry_with_identified_request(
+            59,
+            Some(509),
+            ResponseBodyBound::for_method("textDocument/completion"),
+        );
+        registry.retire(59);
+        assert!(
+            timed_out_rx.recv().is_err(),
+            "retire must release the waiter"
+        );
+        assert_eq!(
+            registry.retired_completion_wire_id_high_watermark(),
+            Some(59)
+        );
+
+        let bytes = completion_response_bytes(59, OVERSIZED_COMPLETION_ITEMS);
+        let decoded = decode_session_message(&bytes, &registry).expect("bounded timed-out decode");
+        assert_eq!(
+            decoded["result"]["items"]
+                .as_array()
+                .expect("completion items")
+                .len(),
+            MAX_COMPLETION_RESPONSE_WIRE_ITEMS
+        );
+        assert_eq!(
+            route_pending_response(&registry, &decoded),
+            PendingResponseReceipt::Routed
         );
     }
 

@@ -22,6 +22,13 @@ const QUANTIZATION_MEDIAN_MULTIPLE = 10;
 const MAX_RENDERED_HASH_MISMATCHES = 5;
 const COUNT_SENSITIVE_PREFIXES = ["completion", "references", "file-search-engine"];
 const CODEVO_ONLY_CUT_POINTS = new Set(["quickopen-ui", "typing-frame"]);
+const UI_ENVIRONMENT_SCENARIO_IDS = new Set([
+  "tab-switch-cycle",
+  "typing-large-5k-frame",
+  "typing-large-20k-frame",
+  "typing-large-100k-frame",
+  "quickopen-ui",
+]);
 const COUNT_MISMATCH_REASON_PREFIX = "non-comparable-by-counts";
 
 const REPORTED_STATUSES = new Set([
@@ -95,6 +102,8 @@ export function buildGapReport({
       vscode: readSide(baselineById.get(id) ?? null, baselineQuantizationMs),
       tolerances,
       verification,
+      codevoEnvironment: codevo?.environment,
+      baselineEnvironment: baseline?.environment,
     }),
   );
   const failures = rows.filter((row) => FAILURE_STATUSES.has(row.status));
@@ -241,7 +250,123 @@ function environmentReasons(codevo, baseline) {
     reasons.push("The VS Code baseline records no environment.timerQuantizationMs.");
   }
 
+  reasons.push(
+    ...expectedEditorReasons(codevo, baseline),
+    ...captureIdentityReasons(codevo, baseline),
+    ...bundleModeReasons(codevo, baseline),
+    ...matchingEnvironmentStringReasons(codevo, baseline, "hostPlatform"),
+    ...matchingEnvironmentStringReasons(codevo, baseline, "hostArch"),
+  );
+
   return reasons;
+}
+
+function captureIdentityReasons(codevo, baseline) {
+  const reasons = [];
+
+  for (const [label, run] of [
+    ["Codevo", codevo],
+    ["VS Code", baseline],
+  ]) {
+    const version = run?.environment?.version;
+    const capturedAt = run?.environment?.capturedAt;
+
+    if (!isValidEditorVersion(version)) {
+      reasons.push(`The ${label} run records no valid environment.version.`);
+    }
+
+    if (!isCanonicalCaptureTimestamp(capturedAt)) {
+      reasons.push(`The ${label} run records no valid environment.capturedAt.`);
+    }
+  }
+
+  return reasons;
+}
+
+function isValidEditorVersion(value) {
+  return (
+    typeof value === "string" &&
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value)
+  );
+}
+
+function isCanonicalCaptureTimestamp(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return false;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+function bundleModeReasons(codevo, baseline) {
+  const allowed = new Set(["dev", "production"]);
+  const codevoMode = environmentStringOf(codevo, "bundleMode");
+  const baselineMode = environmentStringOf(baseline, "bundleMode");
+  const reasons = [];
+
+  if (!allowed.has(codevoMode)) {
+    reasons.push(`Codevo environment.bundleMode is invalid: ${JSON.stringify(codevoMode)}.`);
+  }
+
+  if (!allowed.has(baselineMode)) {
+    reasons.push(`VS Code environment.bundleMode is invalid: ${JSON.stringify(baselineMode)}.`);
+  }
+
+  if (reasons.length > 0) {
+    return reasons;
+  }
+
+  return codevoMode === baselineMode
+    ? []
+    : [`environment.bundleMode mismatch: Codevo "${codevoMode}" vs VS Code "${baselineMode}".`];
+}
+
+function expectedEditorReasons(codevo, baseline) {
+  const codevoEditor = environmentStringOf(codevo, "editor");
+  const baselineEditor = environmentStringOf(baseline, "editor");
+  const reasons = [];
+
+  if (codevoEditor !== "codevo") {
+    reasons.push(
+      `Codevo-side environment.editor must be "codevo", got ${JSON.stringify(codevoEditor)}.`,
+    );
+  }
+
+  if (baselineEditor !== "vscode") {
+    reasons.push(
+      `VS Code-side environment.editor must be "vscode", got ${JSON.stringify(baselineEditor)}.`,
+    );
+  }
+
+  return reasons;
+}
+
+function matchingEnvironmentStringReasons(codevo, baseline, field) {
+  const codevoValue = environmentStringOf(codevo, field);
+  const baselineValue = environmentStringOf(baseline, field);
+
+  if (codevoValue === null && baselineValue === null) {
+    return [`Neither side records environment.${field}.`];
+  }
+
+  if (codevoValue === null) {
+    return [`The Codevo run records no environment.${field}.`];
+  }
+
+  if (baselineValue === null) {
+    return [`The VS Code baseline records no environment.${field}.`];
+  }
+
+  return codevoValue === baselineValue
+    ? []
+    : [`environment.${field} mismatch: Codevo "${codevoValue}" vs VS Code "${baselineValue}".`];
+}
+
+function environmentStringOf(run, field) {
+  const value = run?.environment?.[field];
+
+  return nonEmptyString(value);
 }
 
 function timerQuantizationMsOf(run) {
@@ -265,18 +390,43 @@ function hashMapOf(value) {
     return null;
   }
 
-  const entries = Object.entries(value).filter(
-    ([key, hash]) => key !== "" && nonEmptyString(hash) !== null,
-  );
+  const entries = Object.entries(value);
 
-  if (entries.length === 0) {
+  if (
+    entries.length === 0 ||
+    entries.some(
+      ([key, hash]) =>
+        !validFixtureHashKey(key) || typeof hash !== "string" || !/^[a-f\d]{64}$/i.test(hash),
+    )
+  ) {
     return null;
   }
 
   return new Map(entries);
 }
 
-function buildRow({ id, codevo, vscode, tolerances, verification }) {
+function validFixtureHashKey(key) {
+  if (key === "monorepo/") {
+    return true;
+  }
+
+  return (
+    key.startsWith("large-files/") &&
+    key.length > "large-files/".length &&
+    !key.includes("..") &&
+    !key.includes("\\")
+  );
+}
+
+function buildRow({
+  id,
+  codevo,
+  vscode,
+  tolerances,
+  verification,
+  codevoEnvironment,
+  baselineEnvironment,
+}) {
   const quantizationLimited = quantizationLimitedSides(codevo, vscode);
   const ratio = ratioFor(codevo.p95, vscode.p95);
   const capabilityGap = isDeclaredCapabilityGap(id, codevo);
@@ -289,6 +439,8 @@ function buildRow({ id, codevo, vscode, tolerances, verification }) {
     verification,
     quantizationLimited,
     capabilityGap,
+    codevoEnvironment,
+    baselineEnvironment,
   });
 
   return {
@@ -324,6 +476,8 @@ function resolveRow({
   verification,
   quantizationLimited,
   capabilityGap,
+  codevoEnvironment,
+  baselineEnvironment,
 }) {
   const blocking = blockingStatus(codevo, vscode, capabilityGap);
 
@@ -338,6 +492,8 @@ function resolveRow({
     verification,
     quantizationLimited,
     capabilityGap,
+    codevoEnvironment,
+    baselineEnvironment,
   });
 
   if (nonComparableReasons.length > 0) {
@@ -453,6 +609,8 @@ function comparabilityReasons({
   verification,
   quantizationLimited,
   capabilityGap,
+  codevoEnvironment,
+  baselineEnvironment,
 }) {
   const reasons = [];
 
@@ -473,6 +631,10 @@ function comparabilityReasons({
 
   if (vscode.reportedStatus === NON_COMPARABLE_STATUS) {
     reasons.push("the VS Code baseline declared this scenario non-comparable");
+  }
+
+  if (UI_ENVIRONMENT_SCENARIO_IDS.has(id)) {
+    reasons.push(...uiEnvironmentReasons(codevoEnvironment, baselineEnvironment));
   }
 
   if (!vscode.present) {
@@ -497,6 +659,67 @@ function comparabilityReasons({
   }
 
   return reasons;
+}
+
+function uiEnvironmentReasons(codevoEnvironment, baselineEnvironment) {
+  const reasons = [];
+  const codevoMode = nonEmptyString(codevoEnvironment?.windowMode);
+  const baselineMode = nonEmptyString(baselineEnvironment?.windowMode);
+
+  if (codevoMode !== "focus-only") {
+    reasons.push(
+      codevoMode === null
+        ? "missing Codevo focus/elevation metadata"
+        : `Codevo window mode "${codevoMode}" is diagnostic and not parity-comparable`,
+    );
+  }
+
+  if (baselineMode !== "focus-only") {
+    reasons.push(
+      baselineMode === null
+        ? "missing VS Code focus/elevation metadata"
+        : `VS Code window mode "${baselineMode}" is not focus-only`,
+    );
+  }
+
+  const codevoSize = validWindowSize(codevoEnvironment?.windowSize);
+  const baselineSize = validWindowSize(baselineEnvironment?.windowSize);
+
+  if (codevoSize === null) {
+    reasons.push("missing Codevo window-size metadata");
+  }
+
+  if (baselineSize === null) {
+    reasons.push("missing VS Code window-size metadata");
+  }
+
+  if (
+    codevoSize !== null &&
+    baselineSize !== null &&
+    (codevoSize.width !== baselineSize.width || codevoSize.height !== baselineSize.height)
+  ) {
+    reasons.push(
+      `window-size mismatch (Codevo ${codevoSize.width}x${codevoSize.height} vs VS Code ${baselineSize.width}x${baselineSize.height})`,
+    );
+  }
+
+  return reasons;
+}
+
+function validWindowSize(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    !Number.isFinite(value.width) ||
+    value.width <= 0 ||
+    !Number.isFinite(value.height) ||
+    value.height <= 0
+  ) {
+    return null;
+  }
+
+  return { width: value.width, height: value.height };
 }
 
 function cutPointReasons(codevo, vscode) {
@@ -916,7 +1139,7 @@ function dividerFor(header) {
 
 function renderVerificationBanner(verification) {
   if (verification.comparable) {
-    return "Run comparability: fixtureVersion, fixtureHashes, and timer quantization metadata match on both sides.";
+    return "Run comparability: fixture, bundle, platform/architecture, and timer metadata match on both sides.";
   }
 
   return `Run comparability: FAILED - ${verification.reasons.join(" ")} Every row is reported as non-comparable and this pair supports no parity claim.`;
@@ -954,8 +1177,8 @@ function renderNonComparableLegend() {
   return (
     "Non-comparable rows expose their arithmetic ratio for diagnostics only. They carry no budget, " +
     "no pass, and no VS Code parity claim; the Reason column names what failed join-time " +
-    "verification (cut point, warmups, sample counts, targets, result counts, timer quantization, " +
-    "or missing metadata)."
+    "verification (fixture identity, bundle/platform/architecture/window environment, cut point, warmups, sample " +
+    "counts, targets, result counts, timer quantization, or missing metadata)."
   );
 }
 

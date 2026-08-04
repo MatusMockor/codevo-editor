@@ -237,8 +237,28 @@ describe("runAutorunLane", () => {
     expect(launchedWith.env.VITE_CODEVO_PERF_AUTORUN).toBe("1");
     expect(launchedWith.env.VITE_CODEVO_PERF_BRIDGE).toBe("1");
     expect(launchedWith.env.VITE_CODEVO_QA_BRIDGE).toBe("1");
+    expect(launchedWith.env.VITE_CODEVO_PERF_WINDOW_MODE).toBe("focus-only");
     expect(launchedWith.env.CODEVO_PERF_AUTORUN_SMOKE).toBe("1");
     expect(launchedWith.env.CODEVO_PERF_AUTORUN_ENDPOINT).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  it("marks always-on-top as an explicit diagnostic autorun mode", async () => {
+    const trace = {};
+    let launchedWith = null;
+    const launcher = postingLauncher(
+      () => JSON.stringify({ status: "ok", result: validResult() }),
+      trace,
+    );
+
+    await lane(
+      (launchOptions) => {
+        launchedWith = launchOptions;
+        return launcher(launchOptions);
+      },
+      { diagnosticElevation: true },
+    );
+
+    expect(launchedWith.env.VITE_CODEVO_PERF_WINDOW_MODE).toBe("always-on-top-diagnostic");
   });
 
   it("fails closed on a garbage payload and answers the app with HTTP 400", async () => {

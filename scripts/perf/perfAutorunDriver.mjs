@@ -17,6 +17,8 @@ import {
 export const DEFAULT_AUTORUN_TIMEOUT_MS = 20 * 60 * 1000;
 export const MAX_AUTORUN_TIMEOUT_MS = 30 * 60 * 1000;
 export const DEV_SERVER_PORT = 1420;
+export const FOCUS_ONLY_WINDOW_MODE = "focus-only";
+export const DIAGNOSTIC_ELEVATION_WINDOW_MODE = "always-on-top-diagnostic";
 const LOOPBACK_PROBE_HOSTS = ["127.0.0.1", "::1"];
 const RESULT_ROUTE = "/result";
 const PORT_PROBE_TIMEOUT_MS = 500;
@@ -113,6 +115,7 @@ export async function startAutorunResultServer({ host = "127.0.0.1", port = 0, t
 
 export async function runAutorunLane({
   smoke,
+  diagnosticElevation = false,
   timeoutMs = DEFAULT_AUTORUN_TIMEOUT_MS,
   repoRoot,
   launchApp = spawnDebugTauri,
@@ -123,6 +126,9 @@ export async function runAutorunLane({
     [PERF_AUTORUN_FLAG_ENV]: "1",
     VITE_CODEVO_PERF_BRIDGE: "1",
     VITE_CODEVO_QA_BRIDGE: "1",
+    VITE_CODEVO_PERF_WINDOW_MODE: diagnosticElevation
+      ? DIAGNOSTIC_ELEVATION_WINDOW_MODE
+      : FOCUS_ONLY_WINDOW_MODE,
     [PERF_AUTORUN_SMOKE_ENV]: smoke ? "1" : "0",
     [PERF_AUTORUN_ENDPOINT_ENV]: server.endpoint,
     [PERF_AUTORUN_TOKEN_ENV]: token,

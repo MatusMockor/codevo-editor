@@ -77,7 +77,6 @@ pub struct DescriptorFileEntry {
 pub struct DescriptorFileSearchResult {
     pub name: String,
     pub relative_path: String,
-    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize)]

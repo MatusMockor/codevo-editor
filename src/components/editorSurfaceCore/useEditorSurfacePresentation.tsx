@@ -19,6 +19,10 @@ import type {
 } from "../../domain/languageServerFeatures";
 import type { MonacoAppTheme } from "../../domain/settings";
 import type { EditorDocument } from "../../domain/workspace";
+import {
+  LARGE_SMART_DOCUMENT_STATUS_LABEL,
+  type LargeSmartDocumentStatus,
+} from "../../domain/largeDocumentPolicy";
 import { Breadcrumbs } from "../Breadcrumbs";
 import { CursorAwareBreadcrumbs } from "../CursorAwareBreadcrumbs";
 import {
@@ -49,12 +53,14 @@ import type { EditorChangePreviewState } from "./useEditorMouseInteractions";
 import { SurroundWithPicker } from "../SurroundWithPicker";
 import { applySurroundWith, type SurroundWithRequest } from "./editorCommands";
 import { getTabId, getTabPanelId } from "../tabIds";
+import type { LargeSmartDocumentPresentationMode } from "./useLargeSmartDocumentMetricsLifecycle";
 
 interface EditorSurfacePresentationOptions {
   readonly activateEditorGroupFromInteraction: () => void;
   readonly activeDocument: EditorDocument | null;
   readonly activeDocumentContentReady: boolean;
   readonly activeDocumentIsLargeSmart: boolean;
+  readonly activeDocumentLargeSmartMode?: LargeSmartDocumentPresentationMode;
   readonly beforeMountTheme: MonacoAppTheme;
   readonly breakpointActions?: Partial<DebugBreakpointManagement>;
   readonly breakpoints: readonly Breakpoint[];
@@ -138,7 +144,17 @@ export function largeDocumentMonacoOptions(
   };
 }
 
-export function largeDocumentFeatureNotice(minimapEnabled: boolean): string {
+export function largeDocumentFeatureNotice(
+  minimapEnabled: boolean,
+  mode: LargeSmartDocumentPresentationMode = "large-non-javascript-typescript",
+): string {
+  if (mode === "editing-degraded-interactive-lsp") {
+    return "Large file mode: automatic and document-wide JavaScript/TypeScript analysis is reduced to keep editing responsive. Manual completion, definition, references, and rename remain available.";
+  }
+  if (mode === "editing-only") {
+    return "Large file mode: JavaScript/TypeScript language features are unavailable because this document exceeds hard synchronization safety limits. Essential editing remains available.";
+  }
+
   const reducedFeatures = [
     "semantic highlighting",
     "code folding",
@@ -152,6 +168,18 @@ export function largeDocumentFeatureNotice(minimapEnabled: boolean): string {
   return `Large file mode: ${leadingFeatures}, and ${finalFeature} are turned off to keep editing responsive.`;
 }
 
+export function largeDocumentPresentationStatus(
+  minimapEnabled: boolean,
+  mode: LargeSmartDocumentPresentationMode,
+): LargeSmartDocumentStatus | null {
+  return mode === "eligible"
+    ? null
+    : {
+        label: LARGE_SMART_DOCUMENT_STATUS_LABEL,
+        title: largeDocumentFeatureNotice(minimapEnabled, mode),
+      };
+}
+
 /**
  * Builds the stable Monaco presentation and its local overlays without adding
  * rendering concerns back to the lifecycle composition root.
@@ -161,6 +189,9 @@ export function useEditorSurfacePresentation({
   activeDocument,
   activeDocumentContentReady,
   activeDocumentIsLargeSmart,
+  activeDocumentLargeSmartMode = activeDocumentIsLargeSmart
+    ? "large-non-javascript-typescript"
+    : "eligible",
   beforeMountTheme,
   breakpointActions,
   breakpoints,
@@ -310,8 +341,8 @@ export function useEditorSurfacePresentation({
     </div>
   );
   const largeDocumentNotice = useMemo(
-    () => largeDocumentFeatureNotice(minimapEnabled),
-    [minimapEnabled],
+    () => largeDocumentFeatureNotice(minimapEnabled, activeDocumentLargeSmartMode),
+    [activeDocumentLargeSmartMode, minimapEnabled],
   );
 
   return (

@@ -279,6 +279,22 @@ function shapedEnvironment(pageEnvironment, capturedAt) {
     environment.bundleMode = pageEnvironment.bundleMode;
   }
 
+  if (
+    pageEnvironment.windowMode === "focus-only" ||
+    pageEnvironment.windowMode === "always-on-top-diagnostic" ||
+    pageEnvironment.windowMode === "unknown"
+  ) {
+    environment.windowMode = pageEnvironment.windowMode;
+  }
+
+  if (typeof pageEnvironment.hostPlatform === "string" && pageEnvironment.hostPlatform !== "") {
+    environment.hostPlatform = pageEnvironment.hostPlatform;
+  }
+
+  if (typeof pageEnvironment.hostArch === "string" && pageEnvironment.hostArch !== "") {
+    environment.hostArch = pageEnvironment.hostArch;
+  }
+
   if (typeof pageEnvironment.strictMode === "boolean") {
     environment.strictMode = pageEnvironment.strictMode;
   }
@@ -681,7 +697,7 @@ export function inPagePerfRunnerSource() {
       bridgeResults,
       trackerSnapshot: [],
       scenarioStatuses,
-      environment,
+      environment: capturedEnvironment(environment),
       failedPaths,
       retainedCounts: perf.getRetainedCounts(),
       memorySample: perf.getMemorySample(),
@@ -866,7 +882,7 @@ export function inPagePerfRunnerSource() {
     bridgeResults,
     trackerSnapshot: [],
     scenarioStatuses,
-    environment,
+    environment: capturedEnvironment(environment),
     failedPaths,
     retainedCounts: monorepoPerf.getRetainedCounts(),
     memorySample: monorepoPerf.getMemorySample(),
@@ -894,6 +910,13 @@ export function inPagePerfRunnerSource() {
     } catch {
       return null;
     }
+  }
+
+  function capturedEnvironment(sample) {
+    return {
+      ...(sample && typeof sample === "object" ? sample : {}),
+      capturedAt: new Date().toISOString(),
+    };
   }
 
   function readLanguageServerStatusKind(bridge) {

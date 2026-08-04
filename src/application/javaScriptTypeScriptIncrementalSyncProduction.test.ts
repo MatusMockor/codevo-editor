@@ -24,6 +24,10 @@ import {
   type EditorJavaScriptTypeScriptIncrementalSyncSource,
   type JavaScriptTypeScriptIncrementalRuntimeAuthority,
 } from "./javaScriptTypeScriptIncrementalSyncProduction";
+import {
+  recordIncrementalSyncDegradedReopenCheckpoint,
+  type IncrementalSyncDegradedReopenOwner,
+} from "./javaScriptTypeScriptIncrementalSyncProductionBounds";
 
 const ROOT = "/workspace";
 const PATH = "/workspace/src/server.ts";
@@ -78,9 +82,11 @@ describe("JavaScriptTypeScriptIncrementalSyncProductionCoordinator", () => {
       );
       fixture.production.observe(attachment!, insertion(2, 10, "x"));
       const claim = fixture.production.claimLegacyChange(PATH);
+      const save = fixture.production.prepareLatestSave(PATH, "0123456789");
 
       await vi.advanceTimersByTimeAsync(5_000);
       await expect(claim?.suppressLegacy()).resolves.toBe(true);
+      await expect(save).resolves.toBeNull();
       expect(fixture.production.ownsLifecycle(PATH)).toBe(true);
       expect(fixture.gateway.openRequests).toHaveLength(0);
       expect(fixture.legacyOpen).not.toHaveBeenCalled();
@@ -92,6 +98,19 @@ describe("JavaScriptTypeScriptIncrementalSyncProductionCoordinator", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("settles a pending save to null when didOpen never settles", async () => {
+    const gateway = new FakeIncrementalGateway();
+    gateway.open = () => new Promise(() => undefined);
+    const fixture = productionFixture({ gateway, gatewayTimeoutMs: 1 });
+    fixture.production.attach(fixture.authority, fixture.source, () => fixture.current);
+    const save = fixture.production.prepareLatestSave(PATH, "0123456789");
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await expect(save).resolves.toBeNull();
+    expect(fixture.production.currentDocumentSemanticMode(PATH)).toBeNull();
   });
 
   it("retires deterministically when an opening owner exceeds count or UTF-8 budgets", async () => {
@@ -185,6 +204,53 @@ describe("JavaScriptTypeScriptIncrementalSyncProductionCoordinator", () => {
     },
   );
 
+  it("keeps a twenty-thousand-line document on the bounded incremental lifecycle", async () => {
+    const fixture = productionFixture({ initialText: "export {};\n".repeat(20_000) });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+
+    expect(attachment?.semanticMode).toBe("incremental");
+    await settle();
+    expect(fixture.gateway.openRequests).toHaveLength(1);
+    expect(fixture.gateway.openRequests[0]?.text).toHaveLength(fixture.source.utf16Length);
+    expect(fixture.production.currentDocumentSyncVersion(PATH)).toBe(1);
+  });
+
+  it("reports semantic mode only for the exact current owned attachment", async () => {
+    const fixture = productionFixture();
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    expect(fixture.production.currentDocumentSemanticMode(PATH)).toBe("incremental");
+    await settle();
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    expect(fixture.production.currentDocumentSemanticMode(PATH)).toBe("degraded-large-file");
+    await settle();
+
+    fixture.setRuntimeAuthority({
+      ...fixture.runtimeAuthority,
+      syncGeneration: fixture.runtimeAuthority.syncGeneration + 1,
+    });
+    expect(fixture.production.currentDocumentSemanticMode(PATH)).toBeNull();
+
+    const released = productionFixture({ initialText: "x".repeat(3 * 1024 * 1024) });
+    const releasedAttachment = released.production.attach(
+      released.authority,
+      released.source,
+      () => released.current,
+    );
+    expect(released.production.currentDocumentSemanticMode(PATH)).toBe("degraded-large-file");
+    await released.production.release(releasedAttachment!);
+    expect(released.production.currentDocumentSemanticMode(PATH)).toBeNull();
+  });
+
   it("admits the exact LSP boundary and preflights one UTF-16 unit above it", async () => {
     const exact = productionFixture({
       initialText: "a".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS),
@@ -211,6 +277,433 @@ describe("JavaScriptTypeScriptIncrementalSyncProductionCoordinator", () => {
     expect(oversized.source.captureCurrentContent).not.toHaveBeenCalled();
     await settle();
     expect(oversized.gateway.openRequests).toHaveLength(0);
+  });
+
+  it.each(["\ud800", "valid\udc00text"])(
+    "rejects a malformed-Unicode direct attach without didOpen: %j",
+    async (initialText) => {
+      const fixture = productionFixture({ initialText });
+
+      expect(
+        fixture.production.attach(fixture.authority, fixture.source, () => fixture.current),
+      ).toBeNull();
+      await settle();
+      expect(fixture.gateway.openRequests).toHaveLength(0);
+      expect(fixture.legacyClose).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([2, 4])(
+    "moves %i joined panes through hard-limit degradation and exact snapshot reopen",
+    async (paneCount) => {
+      const fixture = productionFixture();
+      const attachments = Array.from({ length: paneCount }, () =>
+        fixture.production.attach(fixture.authority, fixture.source, () => fixture.current),
+      );
+      await settle();
+      expect(fixture.gateway.openRequests).toHaveLength(1);
+
+      fixture.setText(
+        "x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1),
+      );
+      expect(fixture.production.observe(attachments[0]!, insertion(2, 10, "x"))).toEqual({
+        status: "authoritative",
+      });
+      expect(attachments.map((attachment) => attachment?.semanticMode)).toEqual(
+        Array.from({ length: paneCount }, () => "degraded-large-file"),
+      );
+      await settle();
+      expect(fixture.gateway.closeRequests).toHaveLength(1);
+      expect(fixture.gateway.changeRequests).toHaveLength(0);
+      expect(fixture.legacyOpen).not.toHaveBeenCalled();
+      expect(fixture.production.currentDocumentSyncVersion(PATH)).toBeNull();
+
+      fixture.setText("export const reopened = true;\n");
+      expect(fixture.production.observe(attachments[1]!, insertion(3, 0, ""))).toEqual({
+        status: "authoritative",
+      });
+      await settle();
+      expect(fixture.gateway.openRequests).toHaveLength(2);
+      expect(fixture.gateway.openRequests[1]?.text).toBe("export const reopened = true;\n");
+      expect(attachments.map((attachment) => attachment?.semanticMode)).toEqual(
+        Array.from({ length: paneCount }, () => "incremental"),
+      );
+      expect(fixture.production.currentDocumentSyncVersion(PATH)).toBe(1);
+      expect(fixture.legacyOpen).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps degraded ownership when an exact shrink snapshot cannot be captured", async () => {
+    const fixture = productionFixture();
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    await settle();
+
+    fixture.setText("small again");
+    vi.mocked(fixture.source.captureCurrentContent).mockReturnValueOnce(null);
+    expect(fixture.production.observe(attachment!, insertion(3, 0, ""))).toEqual({
+      status: "authoritative",
+    });
+    await settle();
+
+    expect(attachment?.semanticMode).toBe("degraded-large-file");
+    expect(fixture.gateway.openRequests).toHaveLength(1);
+    expect(fixture.legacyOpen).not.toHaveBeenCalled();
+    expect(fixture.production.ownsLifecycle(PATH)).toBe(true);
+  });
+
+  it("retries an eligible degraded reopen on Save without requiring another edit", async () => {
+    const fixture = productionFixture();
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    await settle();
+
+    fixture.setText("eligible save after failed shrink capture");
+    vi.mocked(fixture.source.captureCurrentContent).mockReturnValueOnce(null);
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    await settle();
+    expect(attachment?.semanticMode).toBe("degraded-large-file");
+
+    const save = fixture.production.prepareLatestSave(
+      PATH,
+      "eligible save after failed shrink capture",
+    );
+    await settle();
+    const prepared = await save;
+
+    expect(fixture.gateway.openRequests).toHaveLength(2);
+    expect(fixture.gateway.openRequests[1]?.text).toBe("eligible save after failed shrink capture");
+    expect(prepared?.content).toBe("eligible save after failed shrink capture");
+    expect(prepared && fixture.production.confirmSave(prepared.permit)).toBe(true);
+    expect(attachment?.semanticMode).toBe("incremental");
+  });
+
+  it("settles Save to null when degraded state has no exact reopen checkpoint", async () => {
+    const fixture = productionFixture({ initialText: "x".repeat(3 * 1024 * 1024) });
+    fixture.production.attach(fixture.authority, fixture.source, () => fixture.current);
+    fixture.setText("changed without an observed editor revision");
+
+    await expect(
+      fixture.production.prepareLatestSave(PATH, "changed without an observed editor revision"),
+    ).resolves.toBeNull();
+    expect(fixture.gateway.openRequests).toHaveLength(0);
+  });
+
+  it("keeps degraded ownership when a shrink snapshot contains malformed Unicode", async () => {
+    const fixture = productionFixture({
+      initialText: "x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1),
+    });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    fixture.setText("bad\ud800shrink");
+    fixture.production.observe(attachment!, insertion(2, 0, ""));
+    await settle();
+
+    expect(attachment?.semanticMode).toBe("degraded-large-file");
+    expect(fixture.gateway.openRequests).toHaveLength(0);
+    expect(fixture.production.ownsLifecycle(PATH)).toBe(true);
+  });
+
+  it("reopens from the latest shrink generation after edits race the exact close", async () => {
+    const gateway = new FakeIncrementalGateway();
+    const close = deferred<BoundedLanguageServerDocumentSyncReceipt>();
+    gateway.close = () => close.promise;
+    const fixture = productionFixture({ gateway });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    fixture.setText("first shrink");
+    fixture.production.observe(attachment!, insertion(10, 0, ""));
+    fixture.setText("newer shrink");
+    fixture.production.observe(attachment!, insertion(11, 0, ""));
+    fixture.setText("latest exact shrink");
+    fixture.production.observe(attachment!, insertion(12, 0, ""));
+    expect(fixture.gateway.openRequests).toHaveLength(1);
+
+    close.resolve({ kind: "admitted" });
+    await settle();
+
+    expect(fixture.gateway.openRequests).toHaveLength(2);
+    expect(fixture.gateway.openRequests[1]?.text).toBe("latest exact shrink");
+    expect(attachment?.semanticMode).toBe("incremental");
+  });
+
+  it("coalesces thousands of degraded edits into one reopen attempt after close", async () => {
+    const gateway = new FakeIncrementalGateway();
+    const close = deferred<BoundedLanguageServerDocumentSyncReceipt>();
+    gateway.close = () => close.promise;
+    const fixture = productionFixture({ gateway });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    fixture.setText("eligible but unavailable snapshot");
+    vi.mocked(fixture.source.captureCurrentContent).mockReturnValue(null);
+    for (let versionId = 3; versionId < 1_003; versionId += 1) {
+      fixture.production.observe(attachment!, insertion(versionId, 0, ""));
+    }
+
+    close.resolve({ kind: "admitted" });
+    await settle();
+
+    expect(fixture.source.captureCurrentContent).toHaveBeenCalledTimes(2);
+    expect(fixture.gateway.openRequests).toHaveLength(1);
+    expect(attachment?.semanticMode).toBe("degraded-large-file");
+  });
+
+  it("rejects duplicate and reordered reopen authority across degradation cycles", async () => {
+    const fixture = productionFixture();
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    await settle();
+    fixture.setText("first exact reopen");
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    await settle();
+    expect(fixture.gateway.openRequests).toHaveLength(2);
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(4, 10, "x"));
+    await settle();
+    fixture.setText("stale shrink must not reopen");
+    fixture.production.observe(attachment!, insertion(4, 0, ""));
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    await expect(
+      fixture.production.prepareLatestSave(PATH, "stale shrink must not reopen"),
+    ).resolves.toBeNull();
+    expect(fixture.gateway.openRequests).toHaveLength(2);
+
+    fixture.setText("second exact reopen");
+    fixture.production.observe(attachment!, insertion(5, 0, ""));
+    await settle();
+    expect(fixture.gateway.openRequests).toHaveLength(3);
+    expect(fixture.gateway.openRequests[2]?.text).toBe("second exact reopen");
+    expect(attachment?.semanticMode).toBe("incremental");
+  });
+
+  it("retains only a bounded immutable checkpoint from a multi-MiB degraded event", () => {
+    const event = insertion(12, 0, "x".repeat(3 * 1024 * 1024));
+    const owner: IncrementalSyncDegradedReopenOwner = {
+      degradedRevisionFloor: 1,
+      lastObservedRevision: 1,
+      latestDegradedCheckpoint: null,
+    };
+    expect(recordIncrementalSyncDegradedReopenCheckpoint(owner, event, true)).toBe(true);
+    const checkpoint = owner.latestDegradedCheckpoint;
+    if (!checkpoint) throw new Error("Expected a compact degraded reopen checkpoint.");
+
+    expect(Reflect.ownKeys(checkpoint)).toEqual(["alternativeVersionId", "versionId"]);
+    expect(checkpoint).toEqual({ alternativeVersionId: 12, versionId: 12 });
+    expect(Object.isFrozen(checkpoint)).toBe(true);
+
+    Object.assign(event, { alternativeVersionId: 99, versionId: 99 });
+    event.changes[0]!.text = "mutated after checkpoint";
+    expect(checkpoint).toEqual({ alternativeVersionId: 12, versionId: 12 });
+    expect(
+      recordIncrementalSyncDegradedReopenCheckpoint(owner, insertion(12, 0, "late"), true),
+    ).toBe(false);
+    expect(
+      recordIncrementalSyncDegradedReopenCheckpoint(owner, insertion(11, 0, "old"), true),
+    ).toBe(false);
+    expect(owner.latestDegradedCheckpoint).toBe(checkpoint);
+  });
+
+  it("preserves only the latest exact save intent across a deferred shrink reopen", async () => {
+    const gateway = new FakeIncrementalGateway();
+    const close = deferred<BoundedLanguageServerDocumentSyncReceipt>();
+    gateway.close = () => close.promise;
+    const fixture = productionFixture({ gateway });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+
+    fixture.setText("first eligible save");
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    const firstSave = fixture.production.prepareLatestSave(PATH, "first eligible save");
+    fixture.setText("latest eligible save");
+    fixture.production.observe(attachment!, insertion(4, 0, ""));
+    const latestSave = fixture.production.prepareLatestSave(PATH, "latest eligible save");
+    await expect(firstSave).resolves.toBeNull();
+
+    close.resolve({ kind: "admitted" });
+    await settle();
+    const prepared = await latestSave;
+
+    expect(prepared?.content).toBe("latest eligible save");
+    expect(prepared && fixture.production.confirmSave(prepared.permit)).toBe(true);
+    expect(gateway.openRequests[1]?.text).toBe("latest eligible save");
+  });
+
+  it("drops a deferred save intent when its exact attachment is released", async () => {
+    const gateway = new FakeIncrementalGateway();
+    const close = deferred<BoundedLanguageServerDocumentSyncReceipt>();
+    gateway.close = () => close.promise;
+    const fixture = productionFixture({ gateway });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    fixture.setText("eligible but released");
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    const save = fixture.production.prepareLatestSave(PATH, "eligible but released");
+
+    void fixture.production.release(attachment!);
+    await expect(save).resolves.toBeNull();
+    close.resolve({ kind: "admitted" });
+    await settle();
+    expect(gateway.openRequests).toHaveLength(1);
+  });
+
+  it("drops a deferred save intent across an A-B-new-A runtime generation", async () => {
+    const gateway = new FakeIncrementalGateway();
+    const close = deferred<BoundedLanguageServerDocumentSyncReceipt>();
+    gateway.close = () => close.promise;
+    const fixture = productionFixture({ gateway });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    fixture.setText("stale saved shrink");
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    const save = fixture.production.prepareLatestSave(PATH, "stale saved shrink");
+    fixture.setRuntimeAuthority({
+      ...fixture.runtimeAuthority,
+      syncGeneration: fixture.runtimeAuthority.syncGeneration + 1,
+    });
+
+    close.resolve({ kind: "admitted" });
+    await expect(save).resolves.toBeNull();
+    await settle();
+    expect(gateway.openRequests).toHaveLength(1);
+  });
+
+  it("invalidates a binding-null initial establish before an immediate shrink reopen", async () => {
+    const legacyClose = deferred<void>();
+    const fixture = productionFixture({ closeLegacy: () => legacyClose.promise });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    expect(fixture.gateway.openRequests).toHaveLength(0);
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    fixture.setText("latest shrink before initial open");
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    legacyClose.resolve();
+    await settle();
+
+    expect(fixture.gateway.openRequests).toHaveLength(1);
+    expect(fixture.gateway.openRequests[0]?.text).toBe("latest shrink before initial open");
+    expect(attachment?.semanticMode).toBe("incremental");
+    expect(fixture.production.currentDocumentSyncVersion(PATH)).toBe(1);
+  });
+
+  it("compensates a stale pending didOpen before reopening the latest shrink snapshot", async () => {
+    const gateway = new FakeIncrementalGateway();
+    const initialOpen = deferred<BoundedLanguageServerDidOpenReceipt>();
+    let openCount = 0;
+    gateway.open = async () => {
+      openCount += 1;
+      return openCount === 1
+        ? initialOpen.promise
+        : { kind: "admitted", lifecycleToken: "lifecycle-2" };
+    };
+    const fixture = productionFixture({ gateway });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+    expect(gateway.openRequests).toHaveLength(1);
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    fixture.setText("latest shrink after pending open");
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    initialOpen.resolve({ kind: "admitted", lifecycleToken: "stale-lifecycle" });
+    await settle();
+    await settle();
+
+    expect(gateway.openRequests).toHaveLength(2);
+    expect(gateway.openRequests[1]?.text).toBe("latest shrink after pending open");
+    expect(attachment?.semanticMode).toBe("incremental");
+    expect(fixture.production.currentDocumentSyncVersion(PATH)).toBe(1);
+  });
+
+  it("drops a deferred shrink reopen after an A-B-new-A generation replacement", async () => {
+    const gateway = new FakeIncrementalGateway();
+    const close = deferred<BoundedLanguageServerDocumentSyncReceipt>();
+    gateway.close = () => close.promise;
+    const fixture = productionFixture({ gateway });
+    const attachment = fixture.production.attach(
+      fixture.authority,
+      fixture.source,
+      () => fixture.current,
+    );
+    await settle();
+
+    fixture.setText("x".repeat(MAX_JAVASCRIPT_TYPESCRIPT_INCREMENTAL_LSP_INITIAL_UTF16_UNITS + 1));
+    fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    fixture.setText("stale shrink");
+    fixture.production.observe(attachment!, insertion(3, 0, ""));
+    fixture.setRuntimeAuthority({
+      ...fixture.runtimeAuthority,
+      syncGeneration: fixture.runtimeAuthority.syncGeneration + 1,
+    });
+
+    close.resolve({ kind: "admitted" });
+    await settle();
+
+    expect(fixture.gateway.openRequests).toHaveLength(1);
+    expect(fixture.production.currentDocumentSyncVersion(PATH)).toBeNull();
   });
 
   it("invalidates the issuing pane lease when a joined peer survives its release", async () => {
@@ -269,11 +762,14 @@ describe("JavaScriptTypeScriptIncrementalSyncProductionCoordinator", () => {
       () => fixture.current,
     );
     await settle();
+    expect(fixture.production.currentDocumentSyncVersion(PATH)).toBe(1);
     fixture.production.observe(attachment!, insertion(2, 10, "x"));
+    expect(fixture.production.currentDocumentSyncVersion(PATH)).toBeNull();
     const claim = fixture.production.claimLegacyChange(PATH);
 
     const saveLease = lifecycleLease(fixture.production);
     expect(await fixture.production.drainBeforeSave(saveLease)).toBe(true);
+    expect(fixture.production.currentDocumentSyncVersion(PATH)).toBe(2);
     await expect(claim?.suppressLegacy()).resolves.toBe(true);
     expect(await fixture.production.drainBeforeSave(saveLease)).toBe(true);
     expect(fixture.gateway.changeRequests).toHaveLength(1);
@@ -849,6 +1345,13 @@ class FakeIncrementalGateway implements IncrementalLanguageServerDocumentSyncGat
   readonly closeRequests: BoundedLanguageServerDidCloseRequest[] = [];
   readonly openRequests: BoundedLanguageServerDidOpenRequest[] = [];
   readonly openResults: BoundedLanguageServerDidOpenReceipt[] = [];
+  open: (
+    request: BoundedLanguageServerDidOpenRequest,
+  ) => Promise<BoundedLanguageServerDidOpenReceipt> = async () =>
+    this.openResults.shift() ?? {
+      kind: "admitted",
+      lifecycleToken: "lifecycle-1",
+    };
   close: (
     request: BoundedLanguageServerDidCloseRequest,
   ) => Promise<BoundedLanguageServerDocumentSyncReceipt> = async () => ({
@@ -878,12 +1381,7 @@ class FakeIncrementalGateway implements IncrementalLanguageServerDocumentSyncGat
     request: BoundedLanguageServerDidOpenRequest,
   ): Promise<BoundedLanguageServerDidOpenReceipt> {
     this.openRequests.push(request);
-    return (
-      this.openResults.shift() ?? {
-        kind: "admitted",
-        lifecycleToken: "lifecycle-1",
-      }
-    );
+    return this.open(request);
   }
 }
 

@@ -8,6 +8,7 @@ use std::{
 
 pub(super) struct DirectoryEntry {
     pub(super) name: String,
+    pub(super) name_is_utf8: bool,
     pub(super) is_directory: bool,
 }
 
@@ -114,6 +115,23 @@ fn classify_by_stat(directory: &File, name: &CStr) -> io::Result<DirectoryStream
 fn entry(name: &CStr, is_directory: bool) -> DirectoryStreamEntry {
     DirectoryStreamEntry::Entry(DirectoryEntry {
         name: String::from_utf8_lossy(name.to_bytes()).into_owned(),
+        name_is_utf8: std::str::from_utf8(name.to_bytes()).is_ok(),
         is_directory,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lossy_directory_name_retains_its_non_utf8_authority() {
+        let name = c"n\x80.ts";
+        let DirectoryStreamEntry::Entry(entry) = entry(name, false) else {
+            panic!("expected a directory entry");
+        };
+
+        assert!(!entry.name_is_utf8);
+        assert!(entry.name.contains('\u{fffd}'));
+    }
 }

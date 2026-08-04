@@ -89,18 +89,12 @@ const PROPERTY_QUERIES: &[&str] = &[
     "b h",
 ];
 
-type SearchProjection = Vec<(String, String, bool)>;
+type SearchProjection = Vec<(String, String)>;
 
 fn project(results: &[DescriptorFileSearchResult]) -> SearchProjection {
     results
         .iter()
-        .map(|result| {
-            (
-                result.name.clone(),
-                result.relative_path.clone(),
-                result.truncated,
-            )
-        })
+        .map(|result| (result.name.clone(), result.relative_path.clone()))
         .collect()
 }
 
@@ -117,7 +111,7 @@ fn search(
         .unwrap()
         .execute(&|| true)
         .unwrap();
-    project(&results)
+    project(&results.results)
 }
 
 fn crawled(
@@ -194,7 +188,7 @@ fn index_served_queries_match_a_fresh_crawl_for_non_ascii_paths_and_queries() {
     let ascii_query_over_non_ascii_path = search(&registry, &cache, &id, Path::new(""), "caf", 80);
     assert!(ascii_query_over_non_ascii_path
         .iter()
-        .any(|(name, _, _)| name.starts_with("caf")));
+        .any(|(name, _)| name.starts_with("caf")));
     assert_eq!(cache.crawl_count(), 1);
     fs::remove_dir_all(root).unwrap();
 }
@@ -243,13 +237,13 @@ fn the_path_byte_bound_charges_lowered_ascii_bytes_at_an_exact_boundary() {
     let mut accepted =
         WorkspaceFileIndexBuilder::new(indexing_bounds().with_path_bytes(ascii_cost));
     accepted.record_file(Path::new("ab.ts"), "ab.ts");
-    assert!(accepted.finish(false).is_ok());
+    assert!(accepted.finish(false, false).is_ok());
 
     let mut rejected =
         WorkspaceFileIndexBuilder::new(indexing_bounds().with_path_bytes(ascii_cost - 1));
     rejected.record_file(Path::new("ab.ts"), "ab.ts");
     assert_eq!(
-        rejected.finish(false).err(),
+        rejected.finish(false, false).err(),
         Some(IndexRejection::PathByteLimit)
     );
 
@@ -257,13 +251,13 @@ fn the_path_byte_bound_charges_lowered_ascii_bytes_at_an_exact_boundary() {
     let mut without_lowered =
         WorkspaceFileIndexBuilder::new(indexing_bounds().with_path_bytes(non_ascii_cost));
     without_lowered.record_file(Path::new("é.ts"), "é.ts");
-    assert!(without_lowered.finish(false).is_ok());
+    assert!(without_lowered.finish(false, false).is_ok());
 
     let mut non_ascii_rejected =
         WorkspaceFileIndexBuilder::new(indexing_bounds().with_path_bytes(non_ascii_cost - 1));
     non_ascii_rejected.record_file(Path::new("é.ts"), "é.ts");
     assert_eq!(
-        non_ascii_rejected.finish(false).err(),
+        non_ascii_rejected.finish(false, false).err(),
         Some(IndexRejection::PathByteLimit)
     );
 }
@@ -285,7 +279,7 @@ fn a_superseded_parallel_rank_scan_fails_closed_at_every_check_boundary() {
         .prepare_file_search(&cache, &id, Path::new(""), "file", 80)
         .unwrap()
         .execute(&|| true);
-    assert_eq!(unrestricted.unwrap().len(), 80);
+    assert_eq!(unrestricted.unwrap().results.len(), 80);
 
     for deny_after in 0..6usize {
         let checks = AtomicUsize::new(0);
@@ -326,7 +320,7 @@ fn index_serving_matches_the_raw_ranked_crawl_order() {
     assert_eq!(
         served
             .iter()
-            .map(|(_, relative_path, _)| relative_path.clone())
+            .map(|(_, relative_path)| relative_path.clone())
             .collect::<Vec<_>>(),
         expected
             .iter()
@@ -349,7 +343,7 @@ fn a_scoped_search_never_reuses_the_workspace_root_index() {
     assert_eq!(cache.retained_index_count(), 2);
     assert!(scoped
         .iter()
-        .all(|(_, relative_path, _)| !relative_path.contains("readme")));
+        .all(|(_, relative_path)| !relative_path.contains("readme")));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -491,22 +485,17 @@ fn a_truncated_walk_is_never_retained_as_an_index() {
     let (registry, id, root) = indexed_fixture("truncated-walk");
     write_monorepo_tree(&root);
     let cache = indexing_cache();
-    let root_file = registry.clone_root(&id).unwrap();
-    let display_root = registry.descriptor(&id).unwrap().canonical_root_path;
-
-    let (_, truncated) = collect_ranked_files_with_truncation(
-        &root_file,
-        Path::new(""),
-        "",
-        80,
-        1,
-        &display_root,
-        &|| true,
-    )
-    .unwrap();
-
-    assert!(truncated);
+    for expected_crawls in 1..=2 {
+        let execution = WorkspaceFileRepository::new(&registry)
+            .prepare_file_search(&cache, &id, Path::new(""), "", 80)
+            .unwrap()
+            .execute_with_visited_limit(1, &|| true)
+            .unwrap();
+        assert!(execution.truncated);
+        assert_eq!(cache.crawl_count(), expected_crawls);
+    }
     assert_eq!(cache.retained_index_count(), 0);
+    assert_eq!(cache.last_rejection(), Some(IndexRejection::WalkTruncated));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -635,7 +624,7 @@ fn a_directory_that_changed_while_it_was_enumerated_is_never_retained() {
         .unwrap();
 
     assert_eq!(
-        builder.finish(false).err(),
+        builder.finish(false, false).err(),
         Some(IndexRejection::UnstableDirectory)
     );
     fs::remove_dir_all(root).unwrap();
@@ -664,7 +653,7 @@ fn a_directory_stamped_inside_the_mtime_settle_window_is_never_retained() {
             .unwrap();
 
         assert_eq!(
-            builder.finish(false).err(),
+            builder.finish(false, false).err(),
             Some(IndexRejection::UnstableDirectory),
             "a sub-second nanosecond field must not buy trust inside the settle window"
         );
@@ -893,11 +882,206 @@ fn matching_result_limit_is_truthfully_truncated() {
     let (registry, id, root) = fixture("matching-limit");
     fs::write(root.join("match-a.ts"), "").unwrap();
     fs::write(root.join("match-b.ts"), "").unwrap();
-    let results = WorkspaceFileRepository::new(&registry)
-        .search_files(&id, Path::new(""), "match", 1)
+    let execution = WorkspaceFileRepository::new(&registry)
+        .prepare_file_search(
+            &WorkspaceFileIndexCache::new(),
+            &id,
+            Path::new(""),
+            "match",
+            1,
+        )
+        .unwrap()
+        .execute(&|| true)
         .unwrap();
 
-    assert_eq!(results.len(), 1);
-    assert!(results[0].truncated);
+    assert_eq!(execution.results.len(), 1);
+    assert!(execution.truncated);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn traversal_cap_with_no_matches_returns_truthful_metadata_without_a_sentinel() {
+    let (registry, id, root) = fixture("no-match-traversal-cap");
+    fs::write(root.join("first.ts"), "").unwrap();
+    fs::write(root.join("second.ts"), "").unwrap();
+
+    let execution = WorkspaceFileRepository::new(&registry)
+        .prepare_file_search(
+            &WorkspaceFileIndexCache::new(),
+            &id,
+            Path::new(""),
+            "does-not-match",
+            20,
+        )
+        .unwrap()
+        .execute_with_visited_limit(1, &|| true)
+        .unwrap();
+
+    assert!(execution.results.is_empty());
+    assert!(execution.truncated);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn scoped_drive_prefixed_projection_is_skipped_truthfully() {
+    let (registry, id, root) = fixture("scoped-drive-prefix");
+    fs::create_dir_all(root.join("src/C:")).unwrap();
+    fs::write(root.join("src/C:/file.ts"), "").unwrap();
+
+    let execution = WorkspaceFileRepository::new(&registry)
+        .prepare_file_search(
+            &WorkspaceFileIndexCache::new(),
+            &id,
+            Path::new("src"),
+            "file",
+            20,
+        )
+        .unwrap()
+        .execute(&|| true)
+        .unwrap();
+
+    assert!(execution.results.is_empty());
+    assert!(execution.truncated);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ordinary_empty_search_is_not_truncated() {
+    let (registry, id, root) = fixture("ordinary-empty");
+    fs::write(root.join("ordinary.ts"), "").unwrap();
+
+    let execution = WorkspaceFileRepository::new(&registry)
+        .prepare_file_search(
+            &WorkspaceFileIndexCache::new(),
+            &id,
+            Path::new(""),
+            "does-not-match",
+            20,
+        )
+        .unwrap()
+        .execute(&|| true)
+        .unwrap();
+
+    assert!(execution.results.is_empty());
+    assert!(!execution.truncated);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn descriptor_projection_limits_match_the_gateway_contract() {
+    let exact_name = format!(
+        "{}.ts",
+        "n".repeat(workspace_file_search::DESCRIPTOR_FILE_SEARCH_NAME_BYTE_LIMIT - 3)
+    );
+    assert!(workspace_file_search::is_descriptor_file_search_path(
+        Path::new(&exact_name)
+    ));
+    assert!(!workspace_file_search::is_descriptor_file_search_path(
+        Path::new(&format!(
+            "{}.ts",
+            "n".repeat(workspace_file_search::DESCRIPTOR_FILE_SEARCH_NAME_BYTE_LIMIT - 2)
+        ))
+    ));
+    assert!(!workspace_file_search::is_descriptor_file_search_path(
+        Path::new(&format!(
+            "src/{}",
+            "p".repeat(workspace_file_search::DESCRIPTOR_FILE_SEARCH_RELATIVE_PATH_BYTE_LIMIT)
+        ))
+    ));
+    assert!(!workspace_file_search::is_descriptor_file_search_path(
+        Path::new("src/control\u{0001}.ts")
+    ));
+    assert!(!workspace_file_search::is_descriptor_file_search_path(
+        Path::new("src/back\\slash.ts")
+    ));
+    assert!(!workspace_file_search::is_descriptor_file_search_path(
+        Path::new("C:/file.ts")
+    ));
+}
+
+#[test]
+fn unrepresentable_file_names_are_skipped_and_mark_the_envelope_truncated() {
+    let (registry, id, root) = fixture("unrepresentable-name");
+    fs::write(root.join("control\u{0001}.ts"), "").unwrap();
+    fs::write(root.join("back\\slash.ts"), "").unwrap();
+    fs::create_dir(root.join("C:")).unwrap();
+    fs::write(root.join("C:/file.ts"), "").unwrap();
+
+    let execution = WorkspaceFileRepository::new(&registry)
+        .prepare_file_search(&WorkspaceFileIndexCache::new(), &id, Path::new(""), "", 20)
+        .unwrap()
+        .execute(&|| true)
+        .unwrap();
+
+    assert!(execution.results.is_empty());
+    assert!(execution.truncated);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn projection_truncation_is_sticky_on_a_reused_representable_subset_index() {
+    let (registry, id, root) = indexed_fixture("projection-truncation-cache");
+    for index in 0..1_100 {
+        fs::write(root.join(format!("filler-{index:04}.ts")), "").unwrap();
+    }
+    fs::write(root.join("unique-target-needle.ts"), "").unwrap();
+    fs::write(root.join("control\u{0001}.ts"), "").unwrap();
+    fs::write(root.join("back\\slash.ts"), "").unwrap();
+    fs::create_dir(root.join("control\u{0001}-directory")).unwrap();
+    fs::write(root.join("control\u{0001}-directory/first.ts"), "").unwrap();
+    fs::create_dir(root.join("C:")).unwrap();
+    fs::write(root.join("C:/file.ts"), "").unwrap();
+    let cache = indexing_cache();
+
+    for expected_hits in 0..=1 {
+        let execution = WorkspaceFileRepository::new(&registry)
+            .prepare_file_search(&cache, &id, Path::new(""), "unique-target-needle", 20)
+            .unwrap()
+            .execute(&|| true)
+            .unwrap();
+        assert_eq!(
+            execution
+                .results
+                .iter()
+                .map(|result| result.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["unique-target-needle.ts"]
+        );
+        assert!(execution.truncated);
+        assert_eq!(cache.index_hit_count(), expected_hits);
+    }
+
+    assert_eq!(cache.crawl_count(), 1);
+    assert_eq!(cache.retained_index_count(), 1);
+    assert_eq!(cache.last_rejection(), None);
+
+    fs::write(root.join("control\u{0001}-directory/second.ts"), "").unwrap();
+    let rebuilt = WorkspaceFileRepository::new(&registry)
+        .prepare_file_search(&cache, &id, Path::new(""), "unique-target-needle", 20)
+        .unwrap()
+        .execute(&|| true)
+        .unwrap();
+    assert_eq!(rebuilt.results.len(), 1);
+    assert!(rebuilt.truncated);
+    assert_eq!(cache.crawl_count(), 2);
+    assert_eq!(cache.index_hit_count(), 1);
+    assert_eq!(cache.retained_index_count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn text_search_visitor_marks_unrepresentable_directory_entries_truncated() {
+    let mut projection_truncated = false;
+    let mut visit = |_relative: PathBuf| Ok(true);
+    let mut visitor = workspace_file_search::FileVisitor {
+        visit: &mut visit,
+        projection_truncated: &mut projection_truncated,
+    };
+
+    workspace_file_search::WorkspaceWalkSink::projection_omitted(&mut visitor);
+
+    assert!(projection_truncated);
 }

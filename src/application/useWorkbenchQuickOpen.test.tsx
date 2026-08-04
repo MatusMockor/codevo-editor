@@ -464,6 +464,56 @@ describe("useWorkbenchQuickOpen", () => {
     harness.unmount();
   });
 
+  it("dispatches a typed query immediately over an in-flight empty warm search", async () => {
+    const gateway = deferredSearchGateway();
+    const deps = makeDeps({ fileSearch: gateway.fileSearch });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+    });
+    expect(gateway.calls.map((call) => call.query)).toEqual([""]);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenQuery("needle");
+    });
+
+    expect(gateway.calls.map((call) => call.query)).toEqual(["", "needle"]);
+    expect(gateway.calls[1]?.requestGeneration).not.toBe(gateway.calls[0]?.requestGeneration);
+    expect(harness.quickOpen().quickOpenLoading).toBe(true);
+
+    await act(async () => {
+      gateway.calls[1]?.resolve({
+        requestGeneration: gateway.calls[1].requestGeneration,
+        results: [file("/workspace/src/needle.ts")],
+        truncated: false,
+      });
+    });
+    await settleSearch();
+
+    expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
+      "/workspace/src/needle.ts",
+    ]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+
+    await act(async () => {
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
+        results: [file("/workspace/src/stale-empty.ts")],
+        truncated: false,
+      });
+    });
+    await settleSearch();
+
+    expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
+      "/workspace/src/needle.ts",
+    ]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+    expect(gateway.calls).toHaveLength(2);
+
+    harness.unmount();
+  });
+
   it("publishes only the final query of a keystroke storm", async () => {
     const gateway = deferredSearchGateway();
     const deps = makeDeps({ fileSearch: gateway.fileSearch });
