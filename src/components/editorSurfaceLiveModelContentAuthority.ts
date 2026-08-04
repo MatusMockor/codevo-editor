@@ -31,7 +31,7 @@ export function exactLiveEditorOwnsContent(
 export function editorSurfaceControlledValue(
   runtime: EditorRuntimeContextValue | null,
   groupId: string,
-  editor: Monaco.editor.IStandaloneCodeEditor | null,
+  model: Monaco.editor.ITextModel | null,
   document: EditorDocument | null,
   ready: boolean,
   opening: boolean,
@@ -39,9 +39,22 @@ export function editorSurfaceControlledValue(
   return document &&
     ready &&
     !opening &&
-    !exactLiveEditorOwnsContent(runtime, groupId, document.path, editor)
+    !exactLiveModelOwnsContentForPath(runtime, groupId, document.path, model)
     ? document.content
     : undefined;
+}
+
+function exactLiveModelOwnsContentForPath(
+  runtime: EditorRuntimeContextValue | null,
+  groupId: string,
+  path: string,
+  model: Monaco.editor.ITextModel | null,
+): boolean {
+  if (!model || model.isDisposed?.()) {
+    return false;
+  }
+
+  return exactLiveModelOwnsContent(runtime, groupId, path, model);
 }
 
 export function currentEditorModelForPath(

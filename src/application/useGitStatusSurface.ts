@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCommitBailoutState } from "./useCommitBailoutState";
 import {
   emptyGitStatus,
   type GitChangedFile,
@@ -25,6 +26,61 @@ import type { GitOperationCurrency } from "./useGitOperationCurrency";
 export interface GitRepositoryTarget {
   repositoryRoot: string;
   relativePath: string;
+}
+
+const MAX_EDITOR_GIT_BASELINE_CACHE_ENTRIES = 64;
+
+interface EditorGitBaselineCacheEntry {
+  baseline: string | null;
+  savedContent: string | null;
+}
+
+export function editorGitBaselineCacheKey(repoRoot: string, path: string): string {
+  return `${repoRoot}\0${path}`;
+}
+
+export function gitStatusesEqual(left: GitStatus, right: GitStatus): boolean {
+  if (
+    left.branch !== right.branch ||
+    left.isRepository !== right.isRepository ||
+    left.rootPath !== right.rootPath ||
+    left.changes.length !== right.changes.length
+  ) {
+    return false;
+  }
+
+  if (!gitUpstreamTrackingEqual(left.upstream, right.upstream)) {
+    return false;
+  }
+
+  return left.changes.every((change, index) => gitChangedFilesEqual(change, right.changes[index]));
+}
+
+function gitUpstreamTrackingEqual(
+  left: GitStatus["upstream"],
+  right: GitStatus["upstream"],
+): boolean {
+  if (!left || !right) {
+    return !left && !right;
+  }
+
+  return left.ahead === right.ahead && left.behind === right.behind && left.branch === right.branch;
+}
+
+function gitChangedFilesEqual(left: GitChangedFile, right: GitChangedFile | undefined): boolean {
+  if (!right) {
+    return false;
+  }
+
+  return (
+    left.isStaged === right.isStaged &&
+    left.isUnversioned === right.isUnversioned &&
+    left.oldPath === right.oldPath &&
+    left.oldRelativePath === right.oldRelativePath &&
+    left.path === right.path &&
+    left.relativePath === right.relativePath &&
+    left.status === right.status
+  );
 }
 
 export interface GitStatusSurfaceDependencies {
@@ -73,18 +129,65 @@ export function useGitStatusSurface({
   const [gitRepositoryStatuses, setGitRepositoryStatuses] = useState<GitRepositoryStatus[]>([]);
   const [gitLoading, setGitLoading] = useState(false);
   const gitStatusRequestGenerationRef = useRef(0);
-  const [editorGitBaselinesByPath, setEditorGitBaselinesByPath] = useState<
+  const [editorGitBaselinesByPath, setEditorGitBaselinesByPath] = useCommitBailoutState<
     Record<string, string | null>
   >({});
+  const editorGitBaselineCacheRef = useRef(new Map<string, EditorGitBaselineCacheEntry>());
+  const editorGitBaselineCacheGenerationRef = useRef(0);
 
-  const resetGitStatusSurface = useCallback((rootPath?: string) => {
-    gitStatusRequestGenerationRef.current += 1;
-    setGitStatus(rootPath ? emptyGitStatus(rootPath) : emptyGitStatus());
-    setGitRepositoryStatuses([]);
-    setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
-    setGitLoading(false);
-    setEditorGitBaselinesByPath({});
+  const invalidateEditorGitBaselineCache = useCallback(() => {
+    editorGitBaselineCacheGenerationRef.current += 1;
+    editorGitBaselineCacheRef.current.clear();
   }, []);
+
+  const rememberEditorGitBaseline = useCallback(
+    (key: string, generation: number, entry: EditorGitBaselineCacheEntry) => {
+      if (generation !== editorGitBaselineCacheGenerationRef.current) {
+        return;
+      }
+
+      const cache = editorGitBaselineCacheRef.current;
+      cache.delete(key);
+      cache.set(key, entry);
+
+      while (cache.size > MAX_EDITOR_GIT_BASELINE_CACHE_ENTRIES) {
+        const oldestKey = cache.keys().next().value;
+
+        if (oldestKey === undefined) {
+          return;
+        }
+
+        cache.delete(oldestKey);
+      }
+    },
+    [],
+  );
+
+  const publishGitStatus = useCallback((next: GitStatus) => {
+    setGitStatus((current) => (gitStatusesEqual(current, next) ? current : next));
+  }, []);
+
+  const publishEditorGitBaseline = useCallback(
+    (path: string, baseline: string | null) => {
+      setEditorGitBaselinesByPath((current) =>
+        path in current && current[path] === baseline ? current : { ...current, [path]: baseline },
+      );
+    },
+    [setEditorGitBaselinesByPath],
+  );
+
+  const resetGitStatusSurface = useCallback(
+    (rootPath?: string) => {
+      gitStatusRequestGenerationRef.current += 1;
+      invalidateEditorGitBaselineCache();
+      setGitStatus(rootPath ? emptyGitStatus(rootPath) : emptyGitStatus());
+      setGitRepositoryStatuses([]);
+      setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
+      setGitLoading(false);
+      setEditorGitBaselinesByPath({});
+    },
+    [invalidateEditorGitBaselineCache, setEditorGitBaselinesByPath],
+  );
 
   // Discover nested git repositories (PhpStorm-style directory mappings) for
   // `rootPath` from its settings and publish the effective mappings so every git
@@ -174,9 +277,10 @@ export function useGitStatusSurface({
   const refreshGitStatus = useCallback(async () => {
     const requestGeneration = gitStatusRequestGenerationRef.current + 1;
     gitStatusRequestGenerationRef.current = requestGeneration;
+    invalidateEditorGitBaselineCache();
 
     if (!workspaceRoot) {
-      setGitStatus(emptyGitStatus());
+      publishGitStatus(emptyGitStatus());
       setGitRepositoryStatuses([]);
       setGitLoading(false);
       return;
@@ -223,7 +327,7 @@ export function useGitStatusSurface({
         workspaceRootKeysEqual(entry.root, requestedRoot),
       );
       if (primaryStatus) {
-        setGitStatus(primaryGitStatus(currentStatuses, requestedRoot));
+        publishGitStatus(primaryGitStatus(currentStatuses, requestedRoot));
       }
       const selectedDiffDocument = getSelectedGitDiffDocument();
       const selectedRepositoryStatus = selectedDiffDocument
@@ -249,7 +353,7 @@ export function useGitStatusSurface({
         return;
       }
 
-      setGitStatus(emptyGitStatus(requestedRoot));
+      publishGitStatus(emptyGitStatus(requestedRoot));
       setGitRepositoryStatuses([]);
       reportError("Git", error);
     } finally {
@@ -263,6 +367,8 @@ export function useGitStatusSurface({
     gitOperationCurrency,
     gitRepositoryMappings,
     getSelectedGitDiffDocument,
+    invalidateEditorGitBaselineCache,
+    publishGitStatus,
     reportError,
     reconcileSelectedGitDiffPreviewForRepository,
     setMessage,
@@ -286,6 +392,19 @@ export function useGitStatusSurface({
     const baselineTarget = resolveGitRepositoryTarget(requestedPath);
     const baselineRepoRoot = baselineTarget ? baselineTarget.repositoryRoot : requestedRoot;
     const isPrimaryRepo = workspaceRootKeysEqual(baselineRepoRoot, requestedRoot);
+    // A warm switch back to a document whose baseline was already resolved under
+    // the current git-status generation reuses the cached value instead of
+    // paying another status round-trip. Every refresh, git mutation and surface
+    // reset bumps the generation, so a real change always reloads.
+    const cacheKey = editorGitBaselineCacheKey(baselineRepoRoot, requestedPath);
+    const cacheGeneration = editorGitBaselineCacheGenerationRef.current;
+    const cached = editorGitBaselineCacheRef.current.get(cacheKey);
+
+    if (cached && cached.savedContent === activeDocumentSavedContent) {
+      publishEditorGitBaseline(requestedPath, cached.baseline);
+      return;
+    }
+
     const token = (editorGitBaselineRequestTokenRef.current += 1);
     const publication = gitOperationCurrency.reservePublication([baselineRepoRoot]);
     let active = true;
@@ -304,7 +423,7 @@ export function useGitStatusSurface({
         }
 
         if (isPrimaryRepo) {
-          setGitStatus(status);
+          publishGitStatus(status);
         }
 
         const change = status.changes.find(
@@ -312,10 +431,11 @@ export function useGitStatusSurface({
         );
 
         if (!status.isRepository || !change) {
-          setEditorGitBaselinesByPath((current) => ({
-            ...current,
-            [requestedPath]: null,
-          }));
+          rememberEditorGitBaseline(cacheKey, cacheGeneration, {
+            baseline: null,
+            savedContent: activeDocumentSavedContent,
+          });
+          publishEditorGitBaseline(requestedPath, null);
           return;
         }
 
@@ -330,10 +450,11 @@ export function useGitStatusSurface({
           return;
         }
 
-        setEditorGitBaselinesByPath((current) => ({
-          ...current,
-          [requestedPath]: diff.originalContent,
-        }));
+        rememberEditorGitBaseline(cacheKey, cacheGeneration, {
+          baseline: diff.originalContent,
+          savedContent: activeDocumentSavedContent,
+        });
+        publishEditorGitBaseline(requestedPath, diff.originalContent);
       } catch {
         if (
           !active ||
@@ -344,10 +465,7 @@ export function useGitStatusSurface({
           return;
         }
 
-        setEditorGitBaselinesByPath((current) => ({
-          ...current,
-          [requestedPath]: null,
-        }));
+        publishEditorGitBaseline(requestedPath, null);
       }
     };
 
@@ -363,6 +481,9 @@ export function useGitStatusSurface({
     editorGitBaselineRequestTokenRef,
     gitGateway,
     gitOperationCurrency,
+    publishEditorGitBaseline,
+    publishGitStatus,
+    rememberEditorGitBaseline,
     resolveGitRepositoryTarget,
     workspaceRoot,
   ]);
@@ -379,10 +500,11 @@ export function useGitStatusSurface({
         return;
       }
 
+      invalidateEditorGitBaselineCache();
       const primary = statuses.find((entry) => workspaceRootKeysEqual(entry.root, requestedRoot));
 
       if (primary && !primary.failed) {
-        setGitStatus(primary.status);
+        publishGitStatus(primary.status);
       }
 
       setGitRepositoryStatuses((current) => mergeGitRepositoryStatuses(current, statuses));
@@ -409,6 +531,8 @@ export function useGitStatusSurface({
     [
       currentWorkspaceRootRef,
       getSelectedGitDiffDocument,
+      invalidateEditorGitBaselineCache,
+      publishGitStatus,
       reconcileSelectedGitDiffPreviewForRepository,
       workspaceRoot,
     ],

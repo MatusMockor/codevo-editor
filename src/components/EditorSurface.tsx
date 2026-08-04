@@ -66,7 +66,7 @@ import { requestRegisteredCommand, runRegisteredCommand } from "../application/c
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 import {
   defaultLargeSmartDocumentPolicy,
-  isLargeSmartDocumentContent,
+  type LargeSmartDocumentMetrics,
   type LargeSmartDocumentPolicy,
 } from "../domain/largeDocumentPolicy";
 import { useEditorCursorPublication } from "./useEditorCursorPublication";
@@ -190,6 +190,7 @@ import {
   type EditorChangePreviewState,
   useEditorMouseInteractions,
 } from "./editorSurfaceCore/useEditorMouseInteractions";
+import { useLargeSmartDocumentMetricsLifecycle } from "./editorSurfaceCore/useLargeSmartDocumentMetricsLifecycle";
 import { useEditorSurfacePresentation } from "./editorSurfaceCore/useEditorSurfacePresentation";
 import {
   useChangePreviewEscapeLifecycle,
@@ -322,7 +323,7 @@ export interface EditorSurfaceProps extends EditorSurfaceCoverageProps {
   onOpenWorkspaceFile?(path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean>;
   onOpenWorkspaceRoot?(path: string): Promise<boolean>;
   onOpenFileStructure(): void;
-  onChange(content: string, path?: string): boolean | void;
+  onChange(content: string, path?: string, metrics?: LargeSmartDocumentMetrics): boolean | void;
   onLanguageServerError(error: unknown): void;
   onOpenPhpChangeSignature?(
     request: NonNullable<PhpCodeActionDescriptor["interaction"]>,
@@ -862,20 +863,14 @@ function EditorSurfaceComponent({
   // open. It is scoped to this editor surface and cleared as soon as a template
   // is chosen or the picker is dismissed, so nothing leaks across tabs.
   const [surroundWithRequest, setSurroundWithRequest] = useState<SurroundWithRequest | null>(null);
-  const activeDocumentIsLargeSmart = useMemo(
-    () =>
-      activeDocumentContent === undefined
-        ? false
-        : isLargeSmartDocumentContent(activeDocumentContent, {
-            characterLimit: largeSmartDocumentPolicy.characterLimit,
-            lineLimit: largeSmartDocumentPolicy.lineLimit,
-          }),
-    [
-      activeDocumentContent,
-      largeSmartDocumentPolicy.characterLimit,
-      largeSmartDocumentPolicy.lineLimit,
-    ],
-  );
+  const { activeDocumentIsLargeSmart, onModelContentChange } =
+    useLargeSmartDocumentMetricsLifecycle({
+      content: activeDocumentContent,
+      onChangeRef,
+      path: activeDocumentPath,
+      policy: largeSmartDocumentPolicy,
+      workspaceRoot: workspaceRoot ?? null,
+    });
 
   // A document switch must never apply a wrap meant for the previous file, so
   // any pending Surround With request is dropped when the active document
@@ -1160,7 +1155,7 @@ function EditorSurfaceComponent({
     groupId,
     monacoApi,
     onMarkerUrisChanged: recoverVisibleLocalPhpDiagnostics,
-    onModelContentChange: (content, path) => onChangeRef.current(content, path),
+    onModelContentChange,
     providerDependencies: {
       coordinatePhpDocumentSymbols: runtime?.coordinatePhpDocumentSymbols,
       featuresGateway: languageServerFeaturesGateway,
@@ -1326,7 +1321,6 @@ function EditorSurfaceComponent({
     phpFrameworkDefinitionRef,
     phpPresenterLinkDefinitionRef,
     templateLanguageProvidersRef,
-    workspaceRoot,
   ]);
 
   const handleMount: OnMount = useCallback((_editor, monaco) => {
@@ -2451,6 +2445,7 @@ function EditorSurfaceComponent({
     activateEditorGroupFromInteraction,
     activeDocument,
     activeDocumentContentReady,
+    activeDocumentIsLargeSmart,
     beforeMountTheme: monacoTheme,
     breakpointActions,
     breakpoints,

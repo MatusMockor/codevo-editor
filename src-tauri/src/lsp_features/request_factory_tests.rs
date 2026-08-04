@@ -178,12 +178,23 @@ fn document_link_resolve_request_serializes_link_data() {
 }
 
 #[test]
-fn references_request_includes_declarations() {
+fn references_request_includes_declarations_when_requested() {
     let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.references(&position());
+    let request = factory.references(&position(), true);
 
     assert_eq!(request.method, "textDocument/references");
     assert_eq!(request.params["context"]["includeDeclaration"], true);
+    assert_eq!(request.params["position"]["line"], 10);
+    assert_eq!(request.params["position"]["character"], 4);
+}
+
+#[test]
+fn references_request_excludes_declarations_when_requested() {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.references(&position(), false);
+
+    assert_eq!(request.method, "textDocument/references");
+    assert_eq!(request.params["context"]["includeDeclaration"], false);
     assert_eq!(request.params["position"]["line"], 10);
     assert_eq!(request.params["position"]["character"], 4);
 }

@@ -13,6 +13,7 @@ import {
   type UserSnippet,
 } from "../../domain/snippets";
 import type { ExecuteCodeActionCommandPayload } from "../javascriptTypescriptCodeActionAuthority";
+import { recordPerfProviderSample } from "../perfScenarioBridge";
 import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
   runBoundedJavaScriptTypeScriptProviderRequest,
@@ -176,8 +177,6 @@ export async function provideJavaScriptTypeScriptCompletionItems<
     ) {
       return { suggestions: [] };
     }
-    context.recordLatency?.("completion", performance.now() - startedAt, request.rootPath);
-
     const word = model.getWordUntilPosition(position);
     const range = {
       endColumn: word.endColumn,
@@ -209,9 +208,13 @@ export async function provideJavaScriptTypeScriptCompletionItems<
       range,
       context.getActiveDocument()?.language,
     );
+    const suggestions = dedupeJavaScriptTypeScriptCompletionItems([...lspSuggestions, ...snippets]);
+    const durationMs = performance.now() - startedAt;
+    context.recordLatency?.("completion", durationMs, request.rootPath);
+    recordPerfProviderSample("completion", { ms: durationMs, resultCount: suggestions.length });
     return {
       ...(completion.isIncomplete ? { incomplete: true } : {}),
-      suggestions: dedupeJavaScriptTypeScriptCompletionItems([...lspSuggestions, ...snippets]),
+      suggestions,
     };
   } catch (error) {
     if (!token?.isCancellationRequested) {

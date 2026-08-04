@@ -7,6 +7,7 @@ import { createInitialEditorGroupsState, editorGroupsReducer } from "../domain/e
 import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import type { EditorDocument, ImageTab } from "../domain/workspace";
+import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { EditorSurfaceSnapshot } from "../domain/workspaceSessionSnapshot";
 import { createRegisteredDocumentSaveIdentity } from "./documentSaveIdentity";
 import { useEditorSessionState, type EditorSessionState } from "./useEditorSessionState";
@@ -72,18 +73,20 @@ const FOREIGN_PREVIEW: MarkdownPreviewTab = {
 
 interface Harness {
   renderCount: () => number;
+  rerender: (policy?: LargeSmartDocumentPolicy) => void;
   session: () => EditorSessionState;
   unmount: () => void;
 }
 
-function renderEditorSessionState(): Harness {
+function renderEditorSessionState(initialPolicy?: LargeSmartDocumentPolicy): Harness {
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: { current: EditorSessionState | null } = { current: null };
   let renderCount = 0;
+  let policy = initialPolicy;
   function Probe() {
     renderCount += 1;
-    captured.current = useEditorSessionState();
+    captured.current = useEditorSessionState(policy);
     return null;
   }
 
@@ -93,6 +96,10 @@ function renderEditorSessionState(): Harness {
 
   return {
     renderCount: () => renderCount,
+    rerender: (nextPolicy) => {
+      policy = nextPolicy;
+      act(() => root.render(<Probe />));
+    },
     session: () => {
       if (!captured.current) {
         throw new Error("hook not mounted");
@@ -1855,6 +1862,128 @@ describe("useEditorSessionState", () => {
       previewPath: null,
     });
     expect(restored.activeDocumentRef.current).toEqual(DOCUMENT_A);
+
+    harness.unmount();
+  });
+
+  it("updates a policy-large document through one private pending snapshot per commit window", () => {
+    const harness = renderEditorSessionState();
+    const savedContent = "x".repeat(300 * 1024);
+    const document = {
+      ...DOCUMENT_A,
+      content: `${savedContent}a`,
+      savedContent,
+    };
+
+    act(() => {
+      harness.session().setDocuments({ [document.path]: document });
+    });
+    const published = harness.session().documents;
+
+    act(() => {
+      expect(
+        harness.session().updateDocumentContent(document.path, `${savedContent}ab`, {
+          lineCount: 1,
+          utf16Length: savedContent.length + 2,
+        }),
+      ).toBe(true);
+    });
+    const pending = harness.session().documentsRef.current;
+
+    act(() => {
+      expect(
+        harness.session().updateDocumentContent(document.path, `${savedContent}abc`, {
+          lineCount: 1,
+          utf16Length: savedContent.length + 3,
+        }),
+      ).toBe(true);
+    });
+
+    expect(harness.session().documents).toBe(published);
+    expect(harness.session().documentsRef.current).toBe(pending);
+    expect(harness.session().documentsRef.current[document.path].content).toBe(
+      `${savedContent}abc`,
+    );
+    expect(published[document.path].content).toBe(`${savedContent}a`);
+
+    harness.unmount();
+  });
+
+  it("never reuses a pending snapshot after tab activation publishes it", () => {
+    const harness = renderEditorSessionState();
+    const savedContent = "x".repeat(300 * 1024);
+    const large = {
+      ...DOCUMENT_A,
+      content: `${savedContent}a`,
+      savedContent,
+    };
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({ [large.path]: large, [DOCUMENT_B.path]: DOCUMENT_B });
+      session.updateEditorGroups(() =>
+        createInitialEditorGroupsState("editor-main", {
+          activePath: large.path,
+          openPaths: [large.path, DOCUMENT_B.path],
+          previewPath: null,
+        }),
+      );
+      session.updateDocumentContent(large.path, `${savedContent}ab`, {
+        lineCount: 1,
+        utf16Length: savedContent.length + 2,
+      });
+      session.documentTabSession.activate(DOCUMENT_B.path);
+      session.documentTabSession.activate(large.path);
+    });
+    const published = harness.session().documents;
+
+    act(() => {
+      harness.session().updateDocumentContent(large.path, `${savedContent}abc`, {
+        lineCount: 1,
+        utf16Length: savedContent.length + 3,
+      });
+    });
+
+    expect(harness.session().documents).toBe(published);
+    expect(harness.session().documentsRef.current).not.toBe(published);
+    expect(published[large.path].content).toBe(`${savedContent}ab`);
+    expect(harness.session().documentsRef.current[large.path].content).toBe(`${savedContent}abc`);
+
+    harness.unmount();
+  });
+
+  it("settles pending content immediately when the large-file policy becomes eligible", () => {
+    const harness = renderEditorSessionState({ characterLimit: 256 * 1024, lineLimit: 5_000 });
+    const savedContent = "x".repeat(300 * 1024);
+    const document = {
+      ...DOCUMENT_A,
+      content: `${savedContent}a`,
+      savedContent,
+    };
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({ [document.path]: document });
+      session.updateDocumentContent(document.path, `${savedContent}ab`, {
+        lineCount: 1,
+        utf16Length: savedContent.length + 2,
+      });
+    });
+
+    harness.rerender({ characterLimit: 10 * 1024 * 1024, lineLimit: 200_000 });
+
+    expect(harness.session().documents[document.path].content).toBe(`${savedContent}ab`);
+    expect(harness.session().documents).toBe(harness.session().documentsRef.current);
+
+    act(() => {
+      harness.session().updateDocumentContent(document.path, `${savedContent}ac`, {
+        lineCount: 1,
+        utf16Length: savedContent.length + 2,
+      });
+    });
+
+    expect(harness.session().documents[document.path].content).toBe(`${savedContent}ac`);
+    expect(harness.session().documents).toBe(harness.session().documentsRef.current);
 
     harness.unmount();
   });

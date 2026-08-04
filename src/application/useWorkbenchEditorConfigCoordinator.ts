@@ -154,6 +154,21 @@ export async function resolveWorkbenchEditorConfigForFile(
     : {};
 }
 
+function resolvedEditorConfigsEqual(
+  left: ResolvedEditorConfig,
+  right: ResolvedEditorConfig,
+): boolean {
+  return (
+    left.charset === right.charset &&
+    left.endOfLine === right.endOfLine &&
+    left.indentSize === right.indentSize &&
+    left.indentStyle === right.indentStyle &&
+    left.insertFinalNewline === right.insertFinalNewline &&
+    left.tabWidth === right.tabWidth &&
+    left.trimTrailingWhitespace === right.trimTrailingWhitespace
+  );
+}
+
 export function useWorkbenchEditorConfigCoordinator(
   options: UseWorkbenchEditorConfigCoordinatorOptions,
 ): WorkbenchEditorConfigCoordinator {
@@ -260,11 +275,22 @@ export function useWorkbenchEditorConfigCoordinator(
         return;
       }
 
-      setResolvedActiveConfig({
-        path: requestedPath,
-        refreshVersion,
-        rootPath: requestedRoot,
-        value: resolved,
+      setResolvedActiveConfig((current) => {
+        if (
+          current?.path === requestedPath &&
+          current.refreshVersion === refreshVersion &&
+          workspaceRootKeysEqual(current.rootPath, requestedRoot) &&
+          resolvedEditorConfigsEqual(current.value, resolved)
+        ) {
+          return current;
+        }
+
+        return {
+          path: requestedPath,
+          refreshVersion,
+          rootPath: requestedRoot,
+          value: resolved,
+        };
       });
     });
 

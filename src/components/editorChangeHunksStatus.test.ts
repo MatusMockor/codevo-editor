@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { editorChangeHunksStatus } from "./editorChangeHunksStatus";
+import {
+  editorChangeHunksStatus,
+  SEMANTIC_HIGHLIGHTING_DISABLED_REASON,
+} from "./editorChangeHunksStatus";
 
 describe("editorChangeHunksStatus", () => {
   it("keeps the active large-document status authoritative", () => {
@@ -14,7 +17,32 @@ describe("editorChangeHunksStatus", () => {
         message: "worker failed",
         status: "error",
       }),
-    ).toBe(largeDocumentStatus);
+    ).toEqual({
+      label: "Large file mode",
+      title: `Smart analysis is limited. ${SEMANTIC_HIGHLIGHTING_DISABLED_REASON}`,
+    });
+  });
+
+  it("reports the disabled semantic highlighting of a large document", () => {
+    const largeDocumentStatus = {
+      label: "Large file mode",
+      title: "Smart analysis is limited.",
+    };
+
+    const status = editorChangeHunksStatus(largeDocumentStatus, { hunks: [], status: "ready" });
+
+    expect(status?.title).toContain("Semantic highlighting is disabled");
+  });
+
+  it("keeps the reported large-document status referentially stable", () => {
+    const largeDocumentStatus = {
+      label: "Large file mode",
+      title: "Smart analysis is limited.",
+    };
+
+    expect(editorChangeHunksStatus(largeDocumentStatus, { hunks: [], status: "ready" })).toBe(
+      editorChangeHunksStatus(largeDocumentStatus, { hunks: [], status: "ready" }),
+    );
   });
 
   it("presents degraded and failed change-marker computation", () => {

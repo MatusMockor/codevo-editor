@@ -73,6 +73,50 @@ describe("TauriWorkspaceIdentityGateway", () => {
     expect(gateway.descriptorForPath("/real/project/src/App.ts")?.workspaceId).toBe("ws-path");
   });
 
+  it("reuses path matches until workspace identity routing changes", async () => {
+    invoke
+      .mockResolvedValueOnce(
+        registration({
+          workspaceId: "ws-cached",
+          selectedRootPath: "/Selected/Project",
+          canonicalRootPath: "/Real/Project",
+          caseSensitive: false,
+          unicodeNormalizationPolicy: "preserved",
+        }),
+      )
+      .mockResolvedValueOnce(
+        registration({
+          workspaceId: "ws-cached",
+          selectedRootPath: "/Another/Project",
+          canonicalRootPath: "/Real/Project",
+          caseSensitive: false,
+          unicodeNormalizationPolicy: "preserved",
+        }),
+      );
+    const gateway = new TauriWorkspaceIdentityGateway();
+    await gateway.openPath("/Selected/Project");
+    const foldCase = vi.spyOn(String.prototype, "toLocaleLowerCase");
+
+    try {
+      const first = gateway.matchForPath("/selected/project/src/App.ts", "ws-cached");
+      const callsAfterFirstMatch = foldCase.mock.calls.length;
+      const second = gateway.matchForPath("/selected/project/src/App.ts", "ws-cached");
+
+      expect(first).toMatchObject({ relativePath: "src/App.ts" });
+      expect(second).toBe(first);
+      expect(callsAfterFirstMatch).toBeGreaterThan(0);
+      expect(foldCase).toHaveBeenCalledTimes(callsAfterFirstMatch);
+
+      await gateway.openPath("/Another/Project");
+      expect(gateway.matchForPath("/selected/project/src/App.ts", "ws-cached")).toMatchObject({
+        relativePath: "src/App.ts",
+      });
+      expect(foldCase.mock.calls.length).toBeGreaterThan(callsAfterFirstMatch);
+    } finally {
+      foldCase.mockRestore();
+    }
+  });
+
   it("uses canonical lexical identity for a selected path containing parent segments", async () => {
     invoke.mockResolvedValueOnce(
       registration({

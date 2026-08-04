@@ -54,6 +54,7 @@ import {
   useManagedLanguageServerInstallSubscriptions,
 } from "./workbenchController/useManagedLanguageServerInstallLifecycle";
 import { useWorkspaceOpenRequestLifecycle } from "./workbenchController/useWorkspaceOpenRequestLifecycle";
+import { useWorkbenchWorkspaceFileChangeSubscription } from "./workbenchController/useWorkspaceFileChangeSubscription";
 import { useManagedWorkspaceIdentityOwnership } from "./workbenchController/useManagedWorkspaceIdentityOwnership";
 import { loadCompleteWorkspaceDirectoryEntries } from "./workbenchController/useWorkspaceDirectoryLoader";
 import { useWorkspaceDirectoryExplorer } from "./workbenchController/useWorkspaceDirectoryExplorer";
@@ -64,10 +65,6 @@ import {
   boundedPendingWorkspaceSettingsLoadsFor,
   PendingWorkspaceSettingsLoadCapacityError,
 } from "./workbenchController/boundedPendingWorkspaceSettingsLoads";
-import {
-  beginReportedWorkspaceFileTombstoneEvent,
-  reconcileExternallyRemovedDocumentEvent,
-} from "./workbenchController/externallyRemovedDocumentTombstones";
 import { useExternallyRemovedDocumentTombstones } from "./workbenchController/useExternallyRemovedDocumentTombstones";
 import {
   clearClosedWorkspaceEditorRetainedState,
@@ -137,17 +134,12 @@ import { useWorkbenchWorkspacePackageGraph } from "./useWorkbenchWorkspacePackag
 import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
 import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
+import { useWorkbenchActiveDocumentEditing } from "./useWorkbenchActiveDocumentEditing";
 import { useWorkbenchEditorConfigCoordinator } from "./useWorkbenchEditorConfigCoordinator";
-import {
-  refreshEditorConfigAfterDocumentSave,
-  refreshEditorConfigForFileChange,
-} from "./editorConfigInvalidation";
+import { refreshEditorConfigAfterDocumentSave } from "./editorConfigInvalidation";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
-import {
-  createPhpFrameworkBindingFileChangeInvalidator,
-  phpFrameworkBindingEditorChangeRequiresInvalidation,
-} from "./phpFrameworkBindingInvalidation";
+import { createPhpFrameworkBindingFileChangeInvalidator } from "./phpFrameworkBindingInvalidation";
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
 import { usePhpFrameworkModelNavigationTargets } from "./usePhpFrameworkModelNavigationTargets";
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
@@ -251,6 +243,14 @@ import {
 } from "./useJavaScriptTypeScriptIncrementalSyncComposition";
 import { usePhpLanguageServerIndexWarmup } from "./usePhpLanguageServerIndexWarmup";
 import { configureReplacedGitDiffDocumentClose } from "./configureReplacedGitDiffDocumentClose";
+import { useCommitBailoutState } from "./useCommitBailoutState";
+import {
+  EMPTY_EDITOR_VIEW_STATES,
+  EMPTY_EDITOR_VIEW_STATES_BY_GROUP,
+  EMPTY_ESLINT_DIAGNOSTICS,
+  EMPTY_ESLINT_FIXES,
+  EMPTY_PHPSTAN_DIAGNOSTICS,
+} from "./workbenchEmptyProjections";
 import { useDiagnostics } from "./useDiagnostics";
 import {
   createWorkspaceSettingsByRootSnapshot,
@@ -314,7 +314,6 @@ import {
   reclassifyPhpDiagnosticsForOwner,
 } from "./phpDiagnosticsReclassificationCoordinator";
 
-import { localPhpDiagnosticsFromSource } from "./diagnosticNotices";
 import { useReplaceJavaScriptTestProblemNotices } from "./useWorkbenchNoticeStore";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
@@ -389,7 +388,6 @@ import {
   createLegacyEditorSessionOwnerKey,
   type EditorSessionOwnerKey,
 } from "../domain/editorSessionOwnerKey";
-import type { WorkspaceFileChangeUnsubscribeFn } from "../domain/workspaceFileChange";
 import {
   normalizedWorkspaceRootKey,
   workspaceDisplayName,
@@ -619,10 +617,10 @@ export function useWorkbenchController(
   >({});
   const [javaScriptTypeScriptDiagnosticsByPath, setJavaScriptTypeScriptDiagnosticsByPath] =
     useState<Record<string, LanguageServerDiagnostic[]>>({});
-  const [frameworkDiagnosticsByPath, setFrameworkDiagnosticsByPath] = useState<
+  const [frameworkDiagnosticsByPath, setFrameworkDiagnosticsByPath] = useCommitBailoutState<
     Record<string, LanguageServerDiagnostic[]>
   >({});
-  const [phpLocalDiagnosticsByPath, setPhpLocalDiagnosticsByPath] = useState<
+  const [phpLocalDiagnosticsByPath, setPhpLocalDiagnosticsByPath] = useCommitBailoutState<
     Record<string, LanguageServerDiagnostic[]>
   >({});
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
@@ -665,11 +663,13 @@ export function useWorkbenchController(
     new Set(),
   );
   const [entriesByDirectory, setEntriesByDirectory] = useState<Record<string, FileEntry[]>>({});
-  const [expandedDirectories, setExpandedDirectories] = useState(new Set<string>());
+  const [expandedDirectories, setExpandedDirectories] = useCommitBailoutState(new Set<string>());
   const [manuallyCollapsedDirectories, setManuallyCollapsedDirectories] = useState<Set<string>>(
     new Set(),
   );
   const [loadingDirectories, setLoadingDirectories] = useState(new Set<string>());
+  const [workspaceSettings, setWorkspaceSettings] =
+    useState<WorkspaceSettings>(defaultWorkspaceSettings);
   const {
     activateDocumentSessionAuthority,
     attachEditorGroupLiveDocument,
@@ -712,8 +712,9 @@ export function useWorkbenchController(
     setPreviewPath,
     snapshotEditorSurface,
     subscribeChangedDocuments,
+    updateDocumentContent,
     updateEditorGroups,
-  } = useEditorSessionState();
+  } = useEditorSessionState(workspaceSettings.largeFileMode);
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const {
     commandPaletteInitialQuery,
@@ -735,17 +736,20 @@ export function useWorkbenchController(
   const { implementationChooser, setImplementationChooser } =
     useWorkbenchImplementationChooserState();
   const [message, setMessage] = useState<string | null>(null);
-  const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
+  const [notices, setNotices] = useCommitBailoutState<WorkbenchNotice[]>([]);
   const replaceJavaScriptTestProblemNotices = useReplaceJavaScriptTestProblemNotices(setNotices);
-  const reportError = useCallback((source: string, error: unknown) => {
-    if (isBenignError(error)) {
-      return;
-    }
+  const reportError = useCallback(
+    (source: string, error: unknown) => {
+      if (isBenignError(error)) {
+        return;
+      }
 
-    const nextMessage = String(error);
-    setMessage(nextMessage);
-    setNotices((current) => [createWorkbenchNotice("error", source, nextMessage), ...current]);
-  }, []);
+      const nextMessage = String(error);
+      setMessage(nextMessage);
+      setNotices((current) => [createWorkbenchNotice("error", source, nextMessage), ...current]);
+    },
+    [setNotices],
+  );
   const eslintAnalysisInFlightRef = useRef(false);
   const [eslintAnalysisRunning, setEslintAnalysisRunning] = useState(false);
   const [eslintFixesByRoot, setEslintFixesByRoot] = useState<
@@ -763,8 +767,6 @@ export function useWorkbenchController(
   const [appSettings, setAppSettings] = useState<AppSettings>(defaultAppSettings);
   const phpstanWorkspaceTabsRef = useRef<string[]>([]);
   const eslintWorkspaceTabsRef = useRef<string[]>([]);
-  const [workspaceSettings, setWorkspaceSettings] =
-    useState<WorkspaceSettings>(defaultWorkspaceSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection>("general");
   const [fileStructureOpen, setFileStructureOpen] = useState(false);
@@ -1157,7 +1159,6 @@ export function useWorkbenchController(
   const workspaceCloseOwnershipByKeyRef = useRef<Record<string, number>>({});
   const clearExternalFileConflictsForRootRef = useRef<(root: string) => void>(() => {});
   const workspaceHasExternalFileConflictsRef = useRef<(root: string) => boolean>(() => false);
-  const workspaceFileChangeSubscriptionGenerationRef = useRef(0);
   const readEditorConfigTextFile = useCallback(
     (path: string) => workspaceFiles.readTextFile(path),
     [workspaceFiles],
@@ -1813,12 +1814,12 @@ export function useWorkbenchController(
 
   const activeEslintFixes =
     workspaceRoot && activeDocument
-      ? (eslintFixesByRoot[workspaceRoot]?.[activeDocument.path] ?? [])
-      : [];
+      ? (eslintFixesByRoot[workspaceRoot]?.[activeDocument.path] ?? EMPTY_ESLINT_FIXES)
+      : EMPTY_ESLINT_FIXES;
   const activeEslintDiagnostics =
     workspaceRoot && activeDocument
-      ? (eslintDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ?? [])
-      : [];
+      ? (eslintDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ?? EMPTY_ESLINT_DIAGNOSTICS)
+      : EMPTY_ESLINT_DIAGNOSTICS;
   const activeEslintBufferClean = isCleanWritableDocument(activeDocument);
   const disableEslintRuleAtCursor = useCallback(() => {
     const requestedRoot = workspaceRoot;
@@ -1956,8 +1957,9 @@ export function useWorkbenchController(
 
   const activePhpstanDiagnostics =
     workspaceRoot && activeDocument
-      ? (phpstanDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ?? [])
-      : [];
+      ? (phpstanDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ??
+        EMPTY_PHPSTAN_DIAGNOSTICS)
+      : EMPTY_PHPSTAN_DIAGNOSTICS;
   const activePhpstanBufferClean = isCleanWritableDocument(activeDocument);
   const { hasEslintDiagnosticAtCursor, hasPhpstanDiagnosticAtCursor } =
     useCursorCommandAvailability({
@@ -2642,9 +2644,12 @@ export function useWorkbenchController(
       resetGitStatusSurface,
       resetSearchEverywhere,
       resetJavaScriptTypeScriptFileStructure,
+      resetDirectoryExplorerLifecycle,
       resetWorkspaceTodosRef,
       resetEditorConfigCache,
       resetTextSearchState,
+      setExpandedDirectories,
+      setNotices,
       setPaletteOpen,
       stopProjectRuntimes,
       setCallHierarchyView,
@@ -3436,6 +3441,7 @@ export function useWorkbenchController(
     },
     [
       applyWorkspaceSettings,
+      adoptCachedDirectoryProjection,
       cacheCurrentWorkspaceState,
       canonicalDocumentSaveRoot,
       closeBookmarksPanelRef,
@@ -3444,6 +3450,8 @@ export function useWorkbenchController(
       loadPackageScripts,
       persistAppSettings,
       persistCurrentWorkspaceSession,
+      primeCachedDirectoryEntries,
+      refreshCachedExpandedDirectories,
       runPhpWorkspaceProbe,
       reportError,
       reportErrorForActiveWorkspaceRoot,
@@ -3460,6 +3468,7 @@ export function useWorkbenchController(
       runGitRepositoryDiscovery,
       clearIndexWorkspaceState,
       resetActiveEditorPosition,
+      resetDirectoryExplorerLifecycle,
       resetEditorSurfaceState,
       resetFilePrefetchState,
       resetGitDiffWorkspaceState,
@@ -3498,7 +3507,9 @@ export function useWorkbenchController(
       setClassOpenQuery,
       setClassOpenResults,
       setEditorRevealTarget,
+      setExpandedDirectories,
       setImplementationChooser,
+      setNotices,
       setQuickOpenOpen,
       setRecentFiles,
       setRecentFilesSwitcherOpen,
@@ -3542,6 +3553,10 @@ export function useWorkbenchController(
 
   useEffect(() => {
     workbenchMountedRef.current = true;
+    const pendingWorkspaceIdentityRequestTokens = pendingWorkspaceIdentityRequestTokensRef.current;
+    const ownedWorkspaceIdentityIds = ownedWorkspaceIdentityIdsRef.current;
+    const workspaceRuntimeOwnerClaims = workspaceRuntimeOwnerClaimsRef.current;
+    const externallyRemovedDocumentRootByPath = externallyRemovedDocumentRootByPathRef.current;
 
     return () => {
       documentSessionAuthorityLifecycle.deactivate();
@@ -3550,20 +3565,17 @@ export function useWorkbenchController(
       openWorkspaceRequestPathRef.current = null;
       openWorkspaceRequestInFlightTokenRef.current = null;
       openFileRequestTokenRef.current += 1;
-      pendingWorkspaceIdentityRequestTokensRef.current.retire();
+      pendingWorkspaceIdentityRequestTokens.retire();
       const workspaceIds = ownedAndPendingWorkspaceIdentityIds(
-        ownedWorkspaceIdentityIdsRef.current,
+        ownedWorkspaceIdentityIds,
         pendingWorkspaceIdentityAdmissionsRef.current,
       );
       pendingWorkspaceIdentityAdmissionsRef.current = {};
       workspaceIdentityByRootRef.current = {};
       workspaceRuntimeRootByTabRef.current = {};
       workspaceRuntimeOwnerByTabRef.current = {};
-      workspaceRuntimeOwnerClaimsRef.current.clear();
-      disposeWorkspaceFileChanges(
-        workspaceFileChangeGateway,
-        externallyRemovedDocumentRootByPathRef.current,
-      );
+      workspaceRuntimeOwnerClaims.clear();
+      disposeWorkspaceFileChanges(workspaceFileChangeGateway, externallyRemovedDocumentRootByPath);
       for (const workspaceId of workspaceIds) {
         void releaseOwnedWorkspaceIdentity(workspaceId).catch(() => undefined);
       }
@@ -3689,6 +3701,7 @@ export function useWorkbenchController(
       cachedDirectoryNeedsRefresh,
       loadDirectory,
       loadingDirectories,
+      setExpandedDirectories,
       manuallyCollapsedDirectories,
       workspaceRoot,
     ],
@@ -4131,6 +4144,14 @@ export function useWorkbenchController(
       workspaceStateCacheRef,
     ],
   );
+  const captureDirtyCloseTargets = useCallback(
+    (rootPath: string | null) => ownerDocumentSaveAdapters.capture(rootPath),
+    [ownerDocumentSaveAdapters],
+  );
+  const isWorkspaceRuntimeOwnerCurrent = useCallback(
+    (owner: WorkspaceRuntimeOwner) => ownerDocumentSaveAdapters.isOwnerCurrent(owner),
+    [ownerDocumentSaveAdapters],
+  );
   const ownerResolvingDocumentSaveService = useMemo(
     () =>
       new OwnerResolvingDocumentSaveService({
@@ -4445,8 +4466,8 @@ export function useWorkbenchController(
     editorGitBaselineRequestTokenRef,
     prompter,
     dirtyCloseDecisionPort: options.dirtyCloseDecisionPort ?? fallbackDirtyCloseDecisionPort,
-    captureDirtyCloseTargets: (rootPath) => ownerDocumentSaveAdapters.capture(rootPath),
-    isWorkspaceRuntimeOwnerCurrent: (owner) => ownerDocumentSaveAdapters.isOwnerCurrent(owner),
+    captureDirtyCloseTargets,
+    isWorkspaceRuntimeOwnerCurrent,
     ownerDocumentSaveRepository: ownerDocumentSaveAdapters.repository,
     ownerResolvingDocumentSaveService,
     requestOwnerDocumentSave,
@@ -5041,47 +5062,20 @@ export function useWorkbenchController(
     ],
   );
 
-  const updateActiveDocument = useCallback(
-    (content: string) => {
-      if (!activeDocument || activeDocument.readOnly || content === activeDocument.content) {
-        return;
-      }
-      pinDocument(activeDocument.path);
-      if (activeDocument.language === "php") {
-        if (
-          phpFrameworkRuntimeContext.supports("containerBindingsFromSource") &&
-          phpFrameworkBindingEditorChangeRequiresInvalidation(
-            activeDocument.path,
-            activeDocument.content,
-            content,
-            activePhpFrameworkProviders,
-            (path) => isPhpFrameworkBindingDependencyPathRef.current(path),
-          )
-        ) {
-          invalidatePhpFrameworkBindingCacheRef.current();
-        }
-        resetPhpFrameworkMorphMapModelTypeCacheRef.current();
-        updateLocalPhpDiagnostics(activeDocument.path, localPhpDiagnosticsFromSource(content, []));
-      }
-      setDocuments((current) => {
-        const currentDocument = current[activeDocument.path] ?? activeDocument;
-        return {
-          ...current,
-          [activeDocument.path]: { ...currentDocument, content },
-        };
-      });
-      reportChangedDocuments([activeDocument.path]);
-    },
-    [
-      activeDocument,
-      activePhpFrameworkProviders,
-      phpFrameworkRuntimeContext,
-      pinDocument,
-      reportChangedDocuments,
-      setDocuments,
-      updateLocalPhpDiagnostics,
-    ],
-  );
+  const updateActiveDocument = useWorkbenchActiveDocumentEditing({
+    activeDocument,
+    activeDocumentRef,
+    activePhpFrameworkProviders,
+    invalidatePhpFrameworkBindingCacheRef,
+    isPhpFrameworkBindingDependencyPathRef,
+    phpFrameworkRuntimeContext,
+    pinDocument,
+    reportChangedDocuments,
+    resetPhpFrameworkMorphMapModelTypeCacheRef,
+    setDocuments,
+    updateDocumentContent,
+    updateLocalPhpDiagnostics,
+  });
 
   const openMarkdownPreview = useCallback(async () => {
     const source = activeDocumentRef.current;
@@ -5357,6 +5351,7 @@ export function useWorkbenchController(
   }, [
     activeDocumentRef,
     notifyJavaScriptTypeScriptWatchedFilesChanged,
+    setExpandedDirectories,
     openFile,
     readTestFileIfExists,
     refreshDirectory,
@@ -6277,6 +6272,7 @@ export function useWorkbenchController(
       activePhpFrameworkProviders,
       currentPhpFrameworkSourceContext,
       documentsRef,
+      setNotices,
       resolveWorkspaceRuntimeOwner,
     ],
   );
@@ -7557,104 +7553,19 @@ export function useWorkbenchController(
     };
   }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
 
-  useEffect(() => {
-    let active = true;
-    let unsubscribe: WorkspaceFileChangeUnsubscribeFn | null = null;
-    const subscriptionRoot = workspaceRoot;
-    const generation = workspaceFileChangeSubscriptionGenerationRef.current + 1;
-    workspaceFileChangeSubscriptionGenerationRef.current = generation;
-    const isCurrentSubscription = () =>
-      active &&
-      workspaceFileChangeSubscriptionGenerationRef.current === generation &&
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, subscriptionRoot);
-
-    if (!subscriptionRoot) {
-      return () => {
-        active = false;
-      };
-    }
-
-    void workspaceFileChangeGateway.startWatching(subscriptionRoot).catch((error) => {
-      if (!isCurrentSubscription()) {
-        return;
-      }
-
-      reportError("Workspace", error);
-    });
-
-    workspaceFileChangeGateway
-      .subscribeFileChanges((event) => {
-        if (!isCurrentSubscription() || !workspaceRootKeysEqual(event.rootPath, subscriptionRoot)) {
-          return;
-        }
-
-        const removedEventToken = beginReportedWorkspaceFileTombstoneEvent(
-          externallyRemovedDocumentRootByPathRef.current,
-          event,
-          setMessage,
-        );
-
-        handleWorkspaceDiscoveryFileChange(event);
-
-        refreshEditorConfigForFileChange(event, refreshEditorConfigRoot);
-
-        void handleExternalFileChange(event).then((consumed) => {
-          const removalStillCurrent =
-            !removedEventToken ||
-            reconcileExternallyRemovedDocumentEvent(
-              externallyRemovedDocumentRootByPathRef.current,
-              removedEventToken,
-            );
-          if (!isCurrentSubscription()) {
-            return;
-          }
-          if (
-            consumed &&
-            removalStillCurrent &&
-            (event.kind === "deleted" || event.kind === "renamed")
-          ) {
-            const removedPath = event.kind === "renamed" ? event.previousPath : event.path;
-            if (removedPath) {
-              markExternallyRemovedDocumentPath(event.rootPath, removedPath);
-            }
-          }
-          if (!consumed) {
-            handleWorkspaceFileChange(event);
-          }
-        });
-      })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unsubscribe = dispose;
-      })
-      .catch((error) => {
-        if (!isCurrentSubscription()) {
-          return;
-        }
-
-        reportError("Workspace", error);
-      });
-
-    return () => {
-      active = false;
-      workspaceFileChangeSubscriptionGenerationRef.current += 1;
-      unsubscribe?.();
-    };
-  }, [
-    handleWorkspaceFileChange,
+  useWorkbenchWorkspaceFileChangeSubscription({
+    currentWorkspaceRootRef,
+    externallyRemovedDocumentRootByPathRef,
+    gateway: workspaceFileChangeGateway,
     handleExternalFileChange,
     handleWorkspaceDiscoveryFileChange,
+    handleWorkspaceFileChange,
     markExternallyRemovedDocumentPath,
     refreshEditorConfigRoot,
     reportError,
-    externallyRemovedDocumentRootByPathRef,
-    workspaceFileChangeGateway,
+    setMessage,
     workspaceRoot,
-  ]);
+  });
 
   useManagedLanguageServerInstallSubscriptions({
     handleManagedPhpactorInstallCompletion,
@@ -7838,6 +7749,50 @@ export function useWorkbenchController(
     (error: unknown) => reportErrorForActiveWorkspaceRoot(workspaceRoot, "Command", error),
     [reportErrorForActiveWorkspaceRoot, workspaceRoot],
   );
+  const restoredEditorViewStatesByGroup = workspaceRoot
+    ? (workspaceEditorViewStatesRef.current[editorSessionOwnerKeyForRoot(workspaceRoot)] ??
+      EMPTY_EDITOR_VIEW_STATES_BY_GROUP)
+    : EMPTY_EDITOR_VIEW_STATES_BY_GROUP;
+  const restoredEditorViewStates =
+    restoredEditorViewStatesByGroup[activeGroupId] ?? EMPTY_EDITOR_VIEW_STATES;
+  const recentFilesSwitcherEntries = useMemo(
+    () => recentFilesForSwitcher(recentFiles, activePath),
+    [activePath, recentFiles],
+  );
+  const sortedBookmarks = useMemo(() => sortBookmarks(bookmarks), [bookmarks]);
+  const closeImplementationChooser = useCallback(
+    () => setImplementationChooser(null),
+    [setImplementationChooser],
+  );
+  const closeCallHierarchy = useCallback(() => setCallHierarchyView(null), [setCallHierarchyView]);
+  const closeTypeHierarchy = useCallback(() => setTypeHierarchyView(null), [setTypeHierarchyView]);
+  const closeReferencesPanel = useCallback(() => setReferencesView(null), [setReferencesView]);
+  const focusNextEditorGroup = useCallback(
+    () => focusAdjacentEditorGroup(1),
+    [focusAdjacentEditorGroup],
+  );
+  const focusPreviousEditorGroup = useCallback(
+    () => focusAdjacentEditorGroup(-1),
+    [focusAdjacentEditorGroup],
+  );
+  const moveActiveTabToNextGroup = useCallback(
+    () => moveActiveTabToAdjacentGroup(1),
+    [moveActiveTabToAdjacentGroup],
+  );
+  const moveActiveTabToPreviousGroup = useCallback(
+    () => moveActiveTabToAdjacentGroup(-1),
+    [moveActiveTabToAdjacentGroup],
+  );
+  const clearNotices = useCallback(() => setNotices([]), [setNotices]);
+  const clearLanguageServerDiagnosticsForActivePath = useCallback(
+    (path: string) =>
+      clearLanguageServerDiagnosticsForPath(
+        workspaceRoot,
+        path,
+        workspaceRuntimeOwner ?? undefined,
+      ),
+    [clearLanguageServerDiagnosticsForPath, workspaceRoot, workspaceRuntimeOwner],
+  );
 
   return {
     activeDocument,
@@ -7882,17 +7837,17 @@ export function useWorkbenchController(
     activateSearchEverywhereItem,
     setSearchEverywhereOpen,
     setSearchEverywhereQuery,
-    closeImplementationChooser: () => setImplementationChooser(null),
-    closeCallHierarchy: () => setCallHierarchyView(null),
-    closeTypeHierarchy: () => setTypeHierarchyView(null),
-    closeReferencesPanel: () => setReferencesView(null),
+    closeImplementationChooser,
+    closeCallHierarchy,
+    closeTypeHierarchy,
+    closeReferencesPanel,
     closeDocument,
     closeDocumentInEditorGroup,
     closeActiveEditorGroup,
-    focusNextEditorGroup: () => focusAdjacentEditorGroup(1),
-    focusPreviousEditorGroup: () => focusAdjacentEditorGroup(-1),
-    moveActiveTabToNextGroup: () => moveActiveTabToAdjacentGroup(1),
-    moveActiveTabToPreviousGroup: () => moveActiveTabToAdjacentGroup(-1),
+    focusNextEditorGroup,
+    focusPreviousEditorGroup,
+    moveActiveTabToNextGroup,
+    moveActiveTabToPreviousGroup,
     activateEditorGroup,
     activateEditorGroupTab,
     splitActiveEditorGroup,
@@ -8044,12 +7999,7 @@ export function useWorkbenchController(
     openEntryInTerminal,
     revealEntry,
     renameEntry,
-    clearLanguageServerDiagnosticsForPath: (path: string) =>
-      clearLanguageServerDiagnosticsForPath(
-        workspaceRoot,
-        path,
-        workspaceRuntimeOwner ?? undefined,
-      ),
+    clearLanguageServerDiagnosticsForPath: clearLanguageServerDiagnosticsForActivePath,
     updateLocalPhpDiagnostics,
     previewFile,
     previewPath,
@@ -8078,7 +8028,7 @@ export function useWorkbenchController(
     quickOpenResults,
     quickOpenTruncated,
     recentFiles,
-    recentFilesSwitcherEntries: recentFilesForSwitcher(recentFiles, activePath),
+    recentFilesSwitcherEntries,
     recentFilesSwitcherOpen,
     openRecentFile,
     openRecentFilesSwitcher,
@@ -8090,7 +8040,7 @@ export function useWorkbenchController(
     openRecentLocationsPanel,
     setRecentLocationsPanelOpen,
     bookmarks,
-    sortedBookmarks: sortBookmarks(bookmarks),
+    sortedBookmarks,
     bookmarksPanelOpen,
     isActiveDocumentGitBlameEnabled: activeDocument
       ? gitBlameEnabledPaths.has(activeDocument.path)
@@ -8155,7 +8105,7 @@ export function useWorkbenchController(
     selectLocalHistoryVersion,
     revertLocalHistoryVersion,
     closeLocalHistory,
-    clearNotices: () => setNotices([]),
+    clearNotices,
     notices: effectiveNotices,
     replaceJavaScriptTestProblemNotices,
     ...nodeLaunchConfigurationsSurface,
@@ -8241,14 +8191,8 @@ export function useWorkbenchController(
     workspaceIdentityDescriptor,
     workspaceIdentityStatus: workspaceIdentityDescriptor ? "trusted" : "legacyCompatibility",
     workspaceRoot,
-    restoredEditorViewStates: workspaceRoot
-      ? (workspaceEditorViewStatesRef.current[editorSessionOwnerKeyForRoot(workspaceRoot)]?.[
-          activeGroupId
-        ] ?? {})
-      : {},
-    restoredEditorViewStatesByGroup: workspaceRoot
-      ? (workspaceEditorViewStatesRef.current[editorSessionOwnerKeyForRoot(workspaceRoot)] ?? {})
-      : {},
+    restoredEditorViewStates,
+    restoredEditorViewStatesByGroup,
     restoredEditorViewStateRevision,
     workspaceTabs: appSettings.workspaceTabs,
     workspaceSettings,

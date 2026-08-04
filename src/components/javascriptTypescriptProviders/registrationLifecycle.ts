@@ -1,6 +1,11 @@
 import type * as Monaco from "monaco-editor";
+import {
+  defaultLargeSmartDocumentPolicy,
+  largeSmartDocumentStatusFromMetrics,
+} from "../../domain/largeDocumentPolicy";
 import type { JavaScriptTypeScriptMonacoProviderBindings } from "../javascriptTypescriptMonacoProviderRegistration";
 import type { ProviderRegistrationAuthority } from "../javascriptTypescriptCodeActionAuthority";
+import { registerPerfMeasuredProviders } from "../perfScenarioBridge";
 
 type Disposable = Monaco.IDisposable;
 type ProviderRegistry = Partial<typeof Monaco.languages>;
@@ -121,6 +126,16 @@ export function registerJavaScriptTypeScriptMonacoProvidersTransactionally(
     for (const language of LANGUAGE_IDS) {
       registerLanguageProviders(registry, acquired, language, providers);
     }
+
+    const unregisterMeasuredProviders = registerPerfMeasuredProviders({
+      references: providers.references,
+      rename: providers.rename,
+    });
+
+    if (unregisterMeasuredProviders) {
+      acquired.push({ dispose: unregisterMeasuredProviders });
+    }
+
     return acquired;
   } catch (error) {
     const rollbackErrors = disposeJavaScriptTypeScriptProviderDisposables(acquired);
@@ -220,7 +235,7 @@ function registerLanguageProviders(
     registry,
     acquired,
     language,
-    providers.documentSymbol,
+    policyGatedJavaScriptTypeScriptDocumentSymbolProvider(providers.documentSymbol),
   );
   register(registry.registerLinkProvider, registry, acquired, language, providers.links);
   register(
@@ -258,6 +273,30 @@ function registerLanguageProviders(
     language,
     providers.documentRangeSemanticTokens,
   );
+}
+
+export function policyGatedJavaScriptTypeScriptDocumentSymbolProvider(
+  provider: Monaco.languages.DocumentSymbolProvider,
+): Monaco.languages.DocumentSymbolProvider {
+  return {
+    ...provider,
+    provideDocumentSymbols: (model, token) => {
+      if (!largeSmartDocumentModelEligible(model)) {
+        return null;
+      }
+
+      return provider.provideDocumentSymbols(model, token);
+    },
+  };
+}
+
+function largeSmartDocumentModelEligible(model: Monaco.editor.ITextModel): boolean {
+  const status = largeSmartDocumentStatusFromMetrics(
+    { lineCount: model.getLineCount(), utf16Length: model.getValueLength() },
+    defaultLargeSmartDocumentPolicy,
+  );
+
+  return status.kind === "eligible";
 }
 
 function register<Provider>(

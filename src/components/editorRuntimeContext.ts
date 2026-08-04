@@ -16,6 +16,7 @@ import type {
 import type { JavaScriptTypeScriptLanguageServerProviderContext } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import type { TypescriptJavascriptDefaultsOptions } from "./typescriptJavascriptDefaults";
 import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
+import type { LargeSmartDocumentMetrics } from "../domain/largeDocumentPolicy";
 
 export interface LocalPhpValidationSnapshot<TSyntax, TInspection> {
   inspectionDiagnostics: TInspection[];
@@ -35,7 +36,11 @@ export interface EditorRuntimeSurfaceRegistration {
   editor: Monaco.editor.IStandaloneCodeEditor | null;
   groupId: string;
   monacoApi: typeof Monaco | null;
-  onModelContentChange(content: string, path?: string): boolean | void;
+  onModelContentChange(
+    content: string,
+    path?: string,
+    metrics?: LargeSmartDocumentMetrics,
+  ): boolean | void;
   onMarkerUrisChanged?(uris: readonly Monaco.Uri[]): void;
   providerDependencies: EditorSurfaceLanguageProviderRegistrationDependencies;
   retainPaths: readonly string[];

@@ -105,6 +105,7 @@ pub fn run() {
         .manage(terminal_task_admission)
         .manage(WorkspaceRegistry::new())
         .manage(workspace_commands::WorkspaceFileSearchLifecycle::default())
+        .manage(workspace_file_commands::WorkspaceFileIndexCache::new())
         .manage(
             project_commands::project_symbol_search_lifecycle::ProjectSymbolSearchLifecycle::default(),
         )

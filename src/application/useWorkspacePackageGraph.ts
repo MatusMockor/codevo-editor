@@ -138,17 +138,12 @@ export function useWorkspacePackageGraph({
         return;
       }
 
-      const pnpmWorkspaceRead = readPnpmWorkspaceSource(gateway, rootPath, isCurrent, signal);
-      const manifestRead = await readPackageManifests(
-        gateway,
-        rootPath,
-        candidates,
-        isCurrent,
-        signal,
-      );
-      if (!manifestRead || !isCurrent()) return;
-      const pnpmWorkspace = await pnpmWorkspaceRead;
+      const [manifestRead, pnpmWorkspace] = await Promise.all([
+        readPackageManifests(gateway, rootPath, candidates, isCurrent, signal),
+        readPnpmWorkspaceSource(gateway, rootPath, isCurrent, signal),
+      ]);
       if (!pnpmWorkspace || !isCurrent()) return;
+      if (!manifestRead) return;
 
       const authorityComplete = !manifestRead.bounded && !pnpmWorkspace.bounded;
       const processing = await processWorkspacePackageGraph(

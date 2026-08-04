@@ -981,6 +981,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           line: 1,
           path: "/project/src/user.ts",
         },
+        true,
         1,
       );
     }
@@ -2451,6 +2452,37 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/user.ts");
   });
 
+  it("never requests document symbols for a policy-large TypeScript model", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({ documentSymbols: [] });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+
+    const symbolProvider = (monaco.languages.registerDocumentSymbolProvider as any).mock
+      .calls[0][1];
+    const largeByLines = { ...textModel(), getLineCount: vi.fn(() => 20_001) };
+    const largeByCharacters = { ...textModel(), getValueLength: vi.fn(() => 3_000_000) };
+
+    expect(await symbolProvider.provideDocumentSymbols(largeByLines)).toBeNull();
+    expect(await symbolProvider.provideDocumentSymbols(largeByCharacters)).toBeNull();
+    expect(gateway.documentSymbols).not.toHaveBeenCalled();
+    expect(context.flushPendingDocumentChange).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the TypeScript model exposes no document metrics", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({ documentSymbols: [] });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+
+    const symbolProvider = (monaco.languages.registerDocumentSymbolProvider as any).mock
+      .calls[0][1];
+    const brokenMetrics = { ...textModel(), getLineCount: vi.fn(() => Number.NaN) };
+
+    expect(await symbolProvider.provideDocumentSymbols(brokenMetrics)).toBeNull();
+    expect(gateway.documentSymbols).not.toHaveBeenCalled();
+  });
+
   it("maps TypeScript workspace symbols through the active project root", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
@@ -3343,7 +3375,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const provider = (monaco.languages.registerCodeLensProvider as any).mock.calls[0][1];
     const provided = await provider.provideCodeLenses(model);
 
-    expect(gateway.codeLenses).toHaveBeenCalledWith("/project", "/project/src/user.ts");
+    expect(gateway.codeLenses).toHaveBeenCalledWith("/project", "/project/src/user.ts", 1);
     expect(provided.lenses).toHaveLength(1);
     expect(provided.lenses[0]).toEqual(
       expect.objectContaining({
@@ -3363,6 +3395,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       expect.objectContaining({
         data: { kind: "references" },
       }),
+      1,
     );
     expect(resolved.command).toEqual({
       arguments: [
@@ -3383,6 +3416,220 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       id: "editor.action.showReferences",
       title: "1 reference",
     });
+  });
+
+  it("cancels pending CodeLens and inlay provide requests with their exact captured authority", async () => {
+    const monaco = createMonaco();
+    const pendingLenses =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["codeLenses"]>>>();
+    const pendingHints =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>>();
+    const gateway = featuresGateway();
+    const cancelRequest = vi.fn(async () => undefined);
+    vi.mocked(gateway.codeLenses).mockImplementationOnce(() => pendingLenses.promise);
+    vi.mocked(gateway.inlayHints).mockImplementationOnce(() => pendingHints.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const model = textModel();
+    const codeLensProvider = (monaco.languages.registerCodeLensProvider as any).mock.calls[0][1];
+    const inlayProvider = (monaco.languages.registerInlayHintsProvider as any).mock.calls[0][1];
+    const codeLensToken = cancellableToken();
+    const inlayToken = cancellableToken();
+
+    const lenses = codeLensProvider.provideCodeLenses(model, codeLensToken);
+    const hints = inlayProvider.provideInlayHints(model, new monaco.Range(1, 1, 1, 20), inlayToken);
+    await vi.waitFor(() => {
+      expect(gateway.codeLenses).toHaveBeenCalledOnce();
+      expect(gateway.inlayHints).toHaveBeenCalledOnce();
+    });
+    codeLensToken.fire();
+    inlayToken.fire();
+
+    await expect(lenses).resolves.toEqual({ dispose: expect.any(Function), lenses: [] });
+    await expect(hints).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    expect(cancelRequest).toHaveBeenCalledWith("/project", 1, pendingLenses.promise.requestId);
+    expect(cancelRequest).toHaveBeenCalledWith("/project", 1, pendingHints.promise.requestId);
+    expect(cancelRequest).toHaveBeenCalledTimes(2);
+
+    pendingLenses.resolve([]);
+    pendingHints.resolve([]);
+  });
+
+  it("cancels pending CodeLens and inlay resolves without publishing their late values", async () => {
+    const monaco = createMonaco();
+    const sourceLens = { command: null, data: { id: 1 }, range: range(0, 0, 0, 1) };
+    const sourceHint = {
+      data: { id: 2 },
+      kind: 1,
+      label: "User",
+      paddingLeft: false,
+      paddingRight: false,
+      position: { character: 0, line: 0 },
+      tooltip: null,
+    };
+    const pendingLens =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeLens"]>>>();
+    const pendingHint =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["resolveInlayHint"]>>>();
+    const gateway = featuresGateway({ codeLenses: [sourceLens], inlayHints: [sourceHint] });
+    const cancelRequest = vi.fn(async () => undefined);
+    vi.mocked(gateway.resolveCodeLens).mockImplementationOnce(() => pendingLens.promise);
+    vi.mocked(gateway.resolveInlayHint).mockImplementationOnce(() => pendingHint.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const model = textModel();
+    const codeLensProvider = (monaco.languages.registerCodeLensProvider as any).mock.calls[0][1];
+    const inlayProvider = (monaco.languages.registerInlayHintsProvider as any).mock.calls[0][1];
+    const lenses = await codeLensProvider.provideCodeLenses(model, cancellableToken());
+    const hints = await inlayProvider.provideInlayHints(
+      model,
+      new monaco.Range(1, 1, 1, 2),
+      cancellableToken(),
+    );
+    const codeLensToken = cancellableToken();
+    const inlayToken = cancellableToken();
+
+    const resolvedLens = codeLensProvider.resolveCodeLens(model, lenses.lenses[0], codeLensToken);
+    const resolvedHint = inlayProvider.resolveInlayHint(hints.hints[0], inlayToken);
+    await vi.waitFor(() => {
+      expect(gateway.resolveCodeLens).toHaveBeenCalledOnce();
+      expect(gateway.resolveInlayHint).toHaveBeenCalledOnce();
+    });
+    codeLensToken.fire();
+    inlayToken.fire();
+
+    await expect(resolvedLens).resolves.toBe(lenses.lenses[0]);
+    await expect(resolvedHint).resolves.toBe(hints.hints[0]);
+    expect(cancelRequest).toHaveBeenCalledWith("/project", 1, pendingLens.promise.requestId);
+    expect(cancelRequest).toHaveBeenCalledWith("/project", 1, pendingHint.promise.requestId);
+    expect(cancelRequest).toHaveBeenCalledTimes(2);
+
+    pendingLens.resolve({
+      ...sourceLens,
+      command: { arguments: [], command: "late", title: "Late" },
+    });
+    pendingHint.resolve({ ...sourceHint, tooltip: "Late" });
+  });
+
+  it("does not flush or dispatch any decorative request for an already-cancelled token", async () => {
+    const monaco = createMonaco();
+    const sourceLens = { command: null, data: { id: 1 }, range: range(0, 0, 0, 1) };
+    const sourceHint = {
+      data: { id: 2 },
+      kind: 1,
+      label: "User",
+      paddingLeft: false,
+      paddingRight: false,
+      position: { character: 0, line: 0 },
+      tooltip: null,
+    };
+    const gateway = featuresGateway({ codeLenses: [sourceLens], inlayHints: [sourceHint] });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, flushPendingDocumentChange }),
+    );
+    const model = textModel();
+    const codeLensProvider = (monaco.languages.registerCodeLensProvider as any).mock.calls[0][1];
+    const inlayProvider = (monaco.languages.registerInlayHintsProvider as any).mock.calls[0][1];
+    const lenses = await codeLensProvider.provideCodeLenses(model, cancellableToken());
+    const hints = await inlayProvider.provideInlayHints(
+      model,
+      new monaco.Range(1, 1, 1, 2),
+      cancellableToken(),
+    );
+    flushPendingDocumentChange.mockClear();
+    vi.mocked(gateway.codeLenses).mockClear();
+    vi.mocked(gateway.inlayHints).mockClear();
+    vi.mocked(gateway.resolveCodeLens).mockClear();
+    vi.mocked(gateway.resolveInlayHint).mockClear();
+    const cancelledToken = cancellableToken();
+    cancelledToken.fire();
+
+    await expect(codeLensProvider.provideCodeLenses(model, cancelledToken)).resolves.toEqual({
+      dispose: expect.any(Function),
+      lenses: [],
+    });
+    await expect(
+      inlayProvider.provideInlayHints(model, new monaco.Range(1, 1, 1, 2), cancelledToken),
+    ).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    await expect(
+      codeLensProvider.resolveCodeLens(model, lenses.lenses[0], cancelledToken),
+    ).resolves.toBe(lenses.lenses[0]);
+    await expect(inlayProvider.resolveInlayHint(hints.hints[0], cancelledToken)).resolves.toBe(
+      hints.hints[0],
+    );
+
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.codeLenses).not.toHaveBeenCalled();
+    expect(gateway.inlayHints).not.toHaveBeenCalled();
+    expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
+    expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch decorative requests cancelled while their document flush is pending", async () => {
+    const monaco = createMonaco();
+    const sourceLens = { command: null, data: { id: 1 }, range: range(0, 0, 0, 1) };
+    const sourceHint = {
+      data: { id: 2 },
+      kind: 1,
+      label: "User",
+      paddingLeft: false,
+      paddingRight: false,
+      position: { character: 0, line: 0 },
+      tooltip: null,
+    };
+    const gateway = featuresGateway({ codeLenses: [sourceLens], inlayHints: [sourceHint] });
+    let tokenToCancel: ReturnType<typeof cancellableToken> | null = null;
+    const flushPendingDocumentChange = vi.fn(async () => {
+      tokenToCancel?.fire();
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway, flushPendingDocumentChange }),
+    );
+    const model = textModel();
+    const codeLensProvider = (monaco.languages.registerCodeLensProvider as any).mock.calls[0][1];
+    const inlayProvider = (monaco.languages.registerInlayHintsProvider as any).mock.calls[0][1];
+    const lenses = await codeLensProvider.provideCodeLenses(model, cancellableToken());
+    const hints = await inlayProvider.provideInlayHints(
+      model,
+      new monaco.Range(1, 1, 1, 2),
+      cancellableToken(),
+    );
+    flushPendingDocumentChange.mockClear();
+    vi.mocked(gateway.codeLenses).mockClear();
+    vi.mocked(gateway.inlayHints).mockClear();
+    vi.mocked(gateway.resolveCodeLens).mockClear();
+    vi.mocked(gateway.resolveInlayHint).mockClear();
+
+    tokenToCancel = cancellableToken();
+    await expect(codeLensProvider.provideCodeLenses(model, tokenToCancel)).resolves.toEqual({
+      dispose: expect.any(Function),
+      lenses: [],
+    });
+    tokenToCancel = cancellableToken();
+    await expect(
+      inlayProvider.provideInlayHints(model, new monaco.Range(1, 1, 1, 2), tokenToCancel),
+    ).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    tokenToCancel = cancellableToken();
+    await expect(
+      codeLensProvider.resolveCodeLens(model, lenses.lenses[0], tokenToCancel),
+    ).resolves.toBe(lenses.lenses[0]);
+    tokenToCancel = cancellableToken();
+    await expect(inlayProvider.resolveInlayHint(hints.hints[0], tokenToCancel)).resolves.toBe(
+      hints.hints[0],
+    );
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledTimes(4);
+    expect(gateway.codeLenses).not.toHaveBeenCalled();
+    expect(gateway.inlayHints).not.toHaveBeenCalled();
+    expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
+    expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
   });
 
   it("maps TypeScript folding ranges through the language server", async () => {
@@ -4095,6 +4342,215 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("excludes the declaration when Monaco reference context requests references only", async () => {
+    const monaco = createMonaco();
+    const declaration = {
+      range: range(0, 1, 0, 5),
+      uri: "file:///project/src/user.ts",
+    };
+    const usage = {
+      range: range(4, 2, 4, 6),
+      uri: "file:///project/src/user.ts",
+    };
+    const gateway = featuresGateway({
+      references: [declaration, usage],
+    });
+    vi.mocked(gateway.references).mockImplementationOnce(
+      (_rootPath, _position, includeDeclaration, sessionId) =>
+        identifiedResponse(includeDeclaration ? [declaration, usage] : [usage], sessionId),
+    );
+    vi.mocked(gateway.declaration).mockRejectedValueOnce(new Error("must not be requested"));
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => runningStatus({ declaration: false }),
+      }),
+    );
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+
+    const references = await referencesProvider.provideReferences(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      { includeDeclaration: false },
+    );
+
+    expect(gateway.references).toHaveBeenCalledExactlyOnceWith(
+      "/project",
+      {
+        character: 3,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      false,
+      1,
+    );
+    expect(gateway.declaration).not.toHaveBeenCalled();
+    expect(references).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 7,
+          endLineNumber: 5,
+          startColumn: 3,
+          startLineNumber: 5,
+        }),
+        uri: { fsPath: "/project/src/user.ts", path: "/project/src/user.ts" },
+      },
+    ]);
+  });
+
+  it("preserves the declaration without an extra request when Monaco includes it", async () => {
+    const monaco = createMonaco();
+    const declaration = {
+      range: range(0, 1, 0, 5),
+      uri: "file:///project/src/user.ts",
+    };
+    const usage = {
+      range: range(4, 2, 4, 6),
+      uri: "file:///project/src/user.ts",
+    };
+    const gateway = featuresGateway({ references: [declaration, usage] });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+
+    const references = await referencesProvider.provideReferences(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      { includeDeclaration: true },
+    );
+
+    expect(references).toHaveLength(2);
+    expect(gateway.references).toHaveBeenCalledExactlyOnceWith(
+      "/project",
+      {
+        character: 3,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      true,
+      1,
+    );
+    expect(gateway.declaration).not.toHaveBeenCalled();
+  });
+
+  it("keeps references isolated to exact locations in the active workspace", async () => {
+    const monaco = createMonaco();
+    const sharedRange = range(3, 2, 3, 6);
+    const gateway = featuresGateway({
+      references: [
+        {
+          range: sharedRange,
+          uri: "file:///project/src/user.ts",
+        },
+        {
+          range: sharedRange,
+          uri: "file:///other/src/user.ts",
+        },
+      ],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+
+    const references = await referencesProvider.provideReferences(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      { includeDeclaration: false },
+    );
+
+    expect(gateway.references).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({ path: "/project/src/user.ts" }),
+      false,
+      1,
+    );
+    expect(references).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 7,
+          endLineNumber: 4,
+          startColumn: 3,
+          startLineNumber: 4,
+        }),
+        uri: { fsPath: "/project/src/user.ts", path: "/project/src/user.ts" },
+      },
+    ]);
+  });
+
+  it("drops references-only results after an active workspace A-B-A replacement", async () => {
+    const monaco = createMonaco();
+    const references =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.references).mockImplementationOnce(() => references.promise);
+    let activeRoot = "/project";
+    let ownerEpoch = 1;
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getActiveJavaScriptTypeScriptOwnerEpoch: () => ownerEpoch,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+
+    const result = referencesProvider.provideReferences(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      { includeDeclaration: false },
+    );
+    await Promise.resolve();
+    activeRoot = "/other";
+    ownerEpoch = 2;
+    activeRoot = "/project";
+    ownerEpoch = 3;
+    references.resolve([
+      {
+        range: range(4, 2, 4, 6),
+        uri: "file:///project/src/user.ts",
+      },
+    ]);
+
+    await expect(result).resolves.toBeNull();
+  });
+
+  it("cancels a references-only request through the captured workspace session", async () => {
+    const monaco = createMonaco();
+    const references =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>>();
+    const gateway = featuresGateway();
+    const cancelRequest = vi.fn(async () => undefined);
+    vi.mocked(gateway.references).mockImplementationOnce(() => references.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const referencesProvider = (monaco.languages.registerReferenceProvider as any).mock.calls[0][1];
+    const token = cancellableToken();
+
+    const result = referencesProvider.provideReferences(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      { includeDeclaration: false },
+      token,
+    );
+    await vi.waitFor(() => expect(gateway.references).toHaveBeenCalledOnce());
+    token.fire();
+
+    await expect(result).resolves.toBeNull();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith(
+      "/project",
+      1,
+      references.promise.requestId,
+    );
+  });
+
   it("maps references, rename edits, code actions, commands and formatting through the gateway", async () => {
     const monaco = createMonaco();
     const commandOnlyAction = {
@@ -4275,6 +4731,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         line: 0,
         path: "/project/src/user.ts",
       },
+      true,
       1,
     );
     expect(references).toEqual([
@@ -4535,6 +4992,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       "/project",
       "/project/src/user.ts",
       range(0, 0, 0, 19),
+      1,
     );
     expect(hints).toEqual({
       dispose: expect.any(Function),
@@ -4616,6 +5074,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         data: { hintId: 1 },
         label: ": Account",
       }),
+      1,
     );
     expect(resolvedHint).toEqual(
       expect.objectContaining({
@@ -7168,6 +7627,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
           "/project",
           expect.objectContaining({ data: { hintId: 1 } }),
+          1,
         );
         expect(resolvedHint).not.toBe(originalHint);
       } else {
@@ -7474,9 +7934,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.executeCommand).not.toHaveBeenCalled();
   });
 
-  it("ignores stale TypeScript lazy resolves after same-root session restart", async () => {
+  it("ignores stale TypeScript lazy resolves after a same-root session A-B-A replacement", async () => {
     const monaco = createMonaco();
     let activeSessionId = 1;
+    let ownerEpoch = 1;
     const codeAction = {
       command: {
         arguments: [{ tsActionId: "unusedIdentifier" }],
@@ -7544,6 +8005,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
     const context = providerContext({
       featuresGateway: gateway,
+      getActiveJavaScriptTypeScriptOwnerEpoch: () => ownerEpoch,
       getRuntimeStatus: () => ({
         ...runningStatus(),
         rootPath: "/project",
@@ -7574,7 +8036,18 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const lenses = await codeLensProvider.provideCodeLenses(model);
     const hints = await inlayHintsProvider.provideInlayHints(model, new monaco.Range(1, 1, 1, 20));
 
+    expect(gateway.codeLenses).toHaveBeenCalledWith("/project", "/project/src/user.ts", 1);
+    expect(gateway.inlayHints).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      range(0, 0, 0, 19),
+      1,
+    );
+
     activeSessionId = 2;
+    ownerEpoch = 2;
+    activeSessionId = 1;
+    ownerEpoch = 3;
 
     await completionProvider.resolveCompletionItem(completion.suggestions[0]);
     await linkProvider.resolveLink(links.links[0]);
@@ -8022,12 +8495,13 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const hoverProvider = (monaco.languages.registerHoverProvider as any).mock.calls[0][1];
     const formattingProvider = (monaco.languages.registerDocumentFormattingEditProvider as any).mock
       .calls[0][1];
+    const largeModel = () => stagedTextModel("/project/src/user.ts", largeDocument.content, 7);
 
     await expect(
-      hoverProvider.provideHover(textModel(), { column: 1, lineNumber: 1 }),
+      hoverProvider.provideHover(largeModel(), { column: 1, lineNumber: 1 }),
     ).resolves.toBeNull();
     await expect(
-      formattingProvider.provideDocumentFormattingEdits(textModel(), {
+      formattingProvider.provideDocumentFormattingEdits(largeModel(), {
         insertSpaces: true,
         tabSize: 2,
       }),
@@ -8305,7 +8779,9 @@ function featuresGateway(
     codeActions: vi.fn((_rootPath, _path, _range, _context, sessionId) =>
       identifiedResponse(responses.codeActions ?? [], sessionId),
     ),
-    codeLenses: vi.fn(async () => responses.codeLenses ?? []),
+    codeLenses: vi.fn((_rootPath, _path, sessionId) =>
+      identifiedResponse(responses.codeLenses ?? [], sessionId),
+    ),
     completion: vi.fn((_rootPath, _position, _context, sessionId) =>
       identifiedResponse(
         responses.completion ?? {
@@ -8342,7 +8818,9 @@ function featuresGateway(
     implementation: vi.fn((_rootPath, _position, sessionId) =>
       identifiedResponse(responses.implementation ?? [], sessionId),
     ),
-    inlayHints: vi.fn(async () => responses.inlayHints ?? []),
+    inlayHints: vi.fn((_rootPath, _path, _range, sessionId) =>
+      identifiedResponse(responses.inlayHints ?? [], sessionId),
+    ),
     linkedEditingRanges: vi.fn((_rootPath, _position, sessionId) =>
       identifiedResponse(responses.linkedEditingRanges ?? null, sessionId),
     ),
@@ -8355,7 +8833,7 @@ function featuresGateway(
     rangeSemanticTokens: vi.fn((_rootPath, _path, _range, sessionId) =>
       identifiedResponse(responses.rangeSemanticTokens ?? null, sessionId),
     ),
-    references: vi.fn((_rootPath, _position, sessionId) =>
+    references: vi.fn((_rootPath, _position, _includeDeclaration, sessionId) =>
       identifiedResponse(responses.references ?? [], sessionId),
     ),
     rename,
@@ -8416,9 +8894,13 @@ function featuresGateway(
     resolveCodeAction: vi.fn((_rootPath, action, sessionId) =>
       identifiedResponse(responses.resolvedCodeAction ?? action, sessionId),
     ),
-    resolveCodeLens: vi.fn(async (_rootPath, lens) => responses.resolvedCodeLens ?? lens),
+    resolveCodeLens: vi.fn((_rootPath, lens, sessionId) =>
+      identifiedResponse(responses.resolvedCodeLens ?? lens, sessionId),
+    ),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => responses.resolvedDocumentLink ?? link),
-    resolveInlayHint: vi.fn(async (_rootPath, hint) => responses.resolvedInlayHint ?? hint),
+    resolveInlayHint: vi.fn((_rootPath, hint, sessionId) =>
+      identifiedResponse(responses.resolvedInlayHint ?? hint, sessionId),
+    ),
   };
 }
 
@@ -8540,6 +9022,8 @@ function textModel() {
 
   return {
     getValue: vi.fn(() => value),
+    getLineCount: vi.fn(() => value.split("\n").length),
+    getValueLength: vi.fn(() => value.length),
     getVersionId: vi.fn(() => 7),
     isValidRange: vi.fn(() => true),
     getValueInRange: vi.fn(() => "user"),
@@ -8569,6 +9053,8 @@ function stagedTextModel(path: string, initialContent: string, initialVersion: n
   return {
     ...textModel(),
     getValue: vi.fn(() => content),
+    getLineCount: vi.fn(() => content.split("\n").length),
+    getValueLength: vi.fn(() => content.length),
     getVersionId: vi.fn(() => versionId),
     pushEditOperations: vi.fn(),
     setSnapshot(nextContent: string, nextVersion: number) {

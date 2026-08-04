@@ -56,6 +56,8 @@ const DEFAULT_MAX_PENDING_IDENTITY_OPERATIONS = 16;
 const DEFAULT_MAX_ALIASES_PER_WORKSPACE = 16;
 const DEFAULT_MAX_MANAGED_WORKSPACES = 16;
 const DEFAULT_IDENTITY_OPERATION_TIMEOUT_MS = 15_000;
+const MAX_CACHED_IDENTITY_PATH_CHARACTERS = 4_096;
+const MAX_IDENTITY_PATH_MATCH_CACHE_ENTRIES = 512;
 const MAX_WORKSPACE_ID_UTF8_BYTES = 1_024;
 const MAX_WORKSPACE_ROOT_UTF8_BYTES = 32_768;
 const identityUtf8Encoder = new TextEncoder();
@@ -65,6 +67,7 @@ export class TauriWorkspaceIdentityGateway
 {
   private readonly descriptors = new Map<string, WorkspaceIdentityDescriptor>();
   private readonly aliases = new Map<string, readonly string[]>();
+  private readonly pathMatches = new Map<string, WorkspaceIdentityPathMatch | null>();
   private readonly unregisterSequences = new Map<string, number>();
   private readonly operationAdmissions = new Set<OperationAdmission>();
   private readonly maxAliasesPerWorkspace: number;
@@ -174,6 +177,11 @@ export class TauriWorkspaceIdentityGateway
   }
 
   matchForPath(path: string, workspaceId?: string): WorkspaceIdentityPathMatch | null {
+    const cacheKey = identityPathMatchCacheKey(path, workspaceId);
+    if (cacheKey !== null && this.pathMatches.has(cacheKey)) {
+      return this.pathMatches.get(cacheKey) ?? null;
+    }
+
     let best: WorkspaceIdentityPathMatch | null = null;
     let bestSpecificity: WorkspaceRootSpecificity | null = null;
     for (const [candidateWorkspaceId, aliases] of this.aliases) {
@@ -202,6 +210,9 @@ export class TauriWorkspaceIdentityGateway
       }
     }
 
+    if (cacheKey !== null) {
+      this.cachePathMatch(cacheKey, best);
+    }
     return best;
   }
 
@@ -246,6 +257,7 @@ export class TauriWorkspaceIdentityGateway
     this.trimUnregisterSequences();
     this.descriptors.delete(workspaceId);
     this.aliases.delete(workspaceId);
+    this.invalidatePathMatches();
     return this.serialize(async (admission) => {
       this.assertActive(admission);
       this.descriptors.delete(workspaceId);
@@ -262,6 +274,7 @@ export class TauriWorkspaceIdentityGateway
     this.disposed = true;
     this.descriptors.clear();
     this.aliases.clear();
+    this.invalidatePathMatches();
     this.unregisterSequences.clear();
     const error = new Error("Workspace identity gateway was disposed.");
     for (const admission of this.operationAdmissions) {
@@ -302,7 +315,23 @@ export class TauriWorkspaceIdentityGateway
 
     this.descriptors.set(descriptor.workspaceId, descriptor);
     this.aliases.set(descriptor.workspaceId, aliases);
+    this.invalidatePathMatches();
     return descriptor;
+  }
+
+  private cachePathMatch(cacheKey: string, match: WorkspaceIdentityPathMatch | null): void {
+    this.pathMatches.set(cacheKey, match);
+    while (this.pathMatches.size > MAX_IDENTITY_PATH_MATCH_CACHE_ENTRIES) {
+      const oldestKey = this.pathMatches.keys().next().value;
+      if (oldestKey === undefined) {
+        return;
+      }
+      this.pathMatches.delete(oldestKey);
+    }
+  }
+
+  private invalidatePathMatches(): void {
+    this.pathMatches.clear();
   }
 
   private async admitDescriptor(
@@ -462,6 +491,16 @@ export class TauriWorkspaceIdentityGateway
 
 function positiveInteger(value: number | undefined, fallback: number): number {
   return Number.isSafeInteger(value) && (value ?? 0) > 0 ? (value as number) : fallback;
+}
+
+function identityPathMatchCacheKey(path: string, workspaceId: string | undefined): string | null {
+  if (
+    path.length > MAX_CACHED_IDENTITY_PATH_CHARACTERS ||
+    (workspaceId !== undefined && workspaceId.length > MAX_WORKSPACE_ID_UTF8_BYTES)
+  ) {
+    return null;
+  }
+  return JSON.stringify([workspaceId ?? null, path]);
 }
 
 function parseNativeWorkspaceOpenResult(value: unknown): NativeWorkspaceOpenResult {

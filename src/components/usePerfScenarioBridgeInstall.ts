@@ -1,11 +1,14 @@
 import { useEffect, useRef } from "react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import type { LatencySnapshotEntry } from "../domain/latencyTracker";
+import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { installPerfScenarioBridge, perfScenarioBridgeEnabled } from "./perfScenarioBridge";
+import { usePerfAutorunInstall } from "./usePerfAutorunInstall";
 
 export interface PerfScenarioBridgeHost {
   readonly getLatencySnapshot: () => LatencySnapshotEntry[];
   readonly clearLatencyMetrics: () => void;
+  readonly javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   readonly setActivePath: (path: string) => void;
   readonly quickOpenLoading: boolean;
   readonly setQuickOpenOpen: (isOpen: boolean) => void;
@@ -30,6 +33,8 @@ export function usePerfScenarioBridgeInstall(
   loadEditorApi: PerfMonacoEditorApiLoader = loadMonacoEditorApi,
 ): void {
   const hostRef = useRef(host);
+
+  usePerfAutorunInstall();
 
   useEffect(() => {
     hostRef.current = host;
@@ -63,6 +68,8 @@ export function usePerfScenarioBridgeInstall(
           hostRef.current.setQuickOpenQuery(query);
         },
         isQuickOpenLoading: () => hostRef.current.quickOpenLoading,
+        getLanguageServerRuntimeStatus: () =>
+          hostRef.current.javaScriptTypeScriptLanguageServerRuntimeStatus,
         getActiveEditor: () => {
           const editors = monaco.editor.getEditors();
 

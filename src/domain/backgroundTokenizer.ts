@@ -78,10 +78,19 @@ export interface BackgroundTokenizerOptions {
    * Monaco's own on-demand + default background tokenizer take over.
    */
   maxLines?: number;
+  /**
+   * Files above this line count are not warmed at all. Token warming is an
+   * optional latency optimization, and forcing TextMate tokenization for a
+   * borderline-large file can monopolize WebKit's main thread for much longer
+   * than the navigation pause it is intended to avoid.
+   */
+  eligibleLineLimit?: number;
 }
 
 const DEFAULT_CHUNK_SIZE = 200;
 const DEFAULT_MAX_LINES = 20000;
+const DEFAULT_ELIGIBLE_LINE_LIMIT = 2000;
+const FALLBACK_IDLE_DELAY_MS = 16;
 
 /** True when `model` exposes the full surface this warmer drives at runtime. */
 function isTokenizable(model: BackgroundTokenizableModel): boolean {
@@ -93,15 +102,15 @@ function isTokenizable(model: BackgroundTokenizableModel): boolean {
 }
 
 /**
- * Default scheduler: one slice per `requestIdleCallback`, with a `setTimeout(0)`
+ * Default scheduler: one slice per `requestIdleCallback`, with a delayed timer
  * fallback for environments without it (and for jsdom in tests that don't inject
- * a manual scheduler). Keeping the host-capability branch here means the React
- * layer never has to branch on it.
+ * a manual scheduler). A zero-delay timer is deliberately avoided: WKWebView
+ * does not consistently expose idle callbacks, and an immediate re-arming loop
+ * can starve input and rendering while Monaco tokenizes a costly model.
  */
 export function idleCallbackScheduler(): IdleScheduler {
   const hasIdleCallback =
-    typeof requestIdleCallback === "function" &&
-    typeof cancelIdleCallback === "function";
+    typeof requestIdleCallback === "function" && typeof cancelIdleCallback === "function";
 
   if (hasIdleCallback) {
     return {
@@ -112,7 +121,7 @@ export function idleCallbackScheduler(): IdleScheduler {
 
   return {
     cancel: (handle) => clearTimeout(handle),
-    schedule: (slice) => setTimeout(slice, 0) as unknown as number,
+    schedule: (slice) => setTimeout(slice, FALLBACK_IDLE_DELAY_MS) as unknown as number,
   };
 }
 
@@ -124,6 +133,7 @@ export function idleCallbackScheduler(): IdleScheduler {
 export class BackgroundTokenizer {
   private readonly chunkSize: number;
   private readonly maxLines: number;
+  private readonly eligibleLineLimit: number;
   private model: BackgroundTokenizableModel | null = null;
   private nextLine = 0;
   private handle: number | null = null;
@@ -135,6 +145,7 @@ export class BackgroundTokenizer {
   ) {
     this.chunkSize = Math.max(1, options.chunkSize ?? DEFAULT_CHUNK_SIZE);
     this.maxLines = Math.max(1, options.maxLines ?? DEFAULT_MAX_LINES);
+    this.eligibleLineLimit = Math.max(1, options.eligibleLineLimit ?? DEFAULT_ELIGIBLE_LINE_LIMIT);
   }
 
   /**
@@ -148,6 +159,13 @@ export class BackgroundTokenizer {
     }
 
     this.cancelPending();
+
+    if (!isTokenizable(model) || model.getLineCount() > this.eligibleLineLimit) {
+      this.model = null;
+      this.nextLine = 0;
+      return;
+    }
+
     this.model = model;
     this.nextLine = 0;
     this.arm();

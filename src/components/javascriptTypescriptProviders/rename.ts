@@ -4,6 +4,7 @@ import type {
   LanguageServerWorkspaceEdit,
 } from "../../domain/languageServerFeatures";
 import type { LatencyOperationKind } from "../../domain/latencyTracker";
+import { perfRenameApplySuppressed, recordPerfProviderSample } from "../perfScenarioBridge";
 import type { JavaScriptTypeScriptProviderRequestBoundary } from "./requestBoundary";
 import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
@@ -77,9 +78,18 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
     ) {
       return null;
     }
-    context.recordLatency?.("rename", performance.now() - startedAt, request.rootPath);
+    const converted = dependencies.toWorkspaceEdit(monaco, model, edit, request.rootPath);
+    const durationMs = performance.now() - startedAt;
+    context.recordLatency?.("rename", durationMs, request.rootPath);
+    recordPerfProviderSample("rename", {
+      ms: durationMs,
+      resultCount: workspaceEditResourceCount(converted),
+    });
     if (!dependencies.editIsFullyInRoot(edit, request.rootPath)) {
       return null;
+    }
+    if (perfRenameApplySuppressed()) {
+      return { edits: [] };
     }
     if (context.applyWorkspaceEdit) {
       const applied = await dependencies.applyWorkspaceEdit(
@@ -95,13 +105,27 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
         ? { edits: [] }
         : null;
     }
-    return dependencies.toWorkspaceEdit(monaco, model, edit, request.rootPath);
+    return converted;
   } catch (error) {
     if (!token?.isCancellationRequested) {
       boundary.reportActiveRequestError(context, request, error);
     }
     return null;
   }
+}
+
+function workspaceEditResourceCount(edit: Monaco.languages.WorkspaceEdit): number {
+  const resources = new Set<string>();
+
+  for (const entry of edit.edits) {
+    const resource = (entry as { resource?: { toString(): string } }).resource;
+
+    if (resource) {
+      resources.add(resource.toString());
+    }
+  }
+
+  return resources.size;
 }
 
 export async function resolveJavaScriptTypeScriptRenameLocation<Context extends RenameContext>(

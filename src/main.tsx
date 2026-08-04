@@ -81,6 +81,7 @@ async function bootstrap(): Promise<void> {
     { ErrorBoundary },
     monacoEnvironment,
     { installGlobalErrorSafetyNet },
+    { strictModeEnabled },
   ] = await Promise.all([
     import("react"),
     import("react-dom/client"),
@@ -88,23 +89,28 @@ async function bootstrap(): Promise<void> {
     import("./components/ErrorBoundary"),
     import("./infrastructure/monacoEnvironment"),
     import("./infrastructure/globalErrorSafetyNet"),
+    import("./perfLaneRenderMode"),
   ]);
 
   monacoEnvironment.configureMonacoEnvironment();
   appRoot.replaceChildren();
-  ReactDOM.createRoot(appRoot).render(
-    React.createElement(
-      React.StrictMode,
-      null,
-      // Root-level boundary: ANY render/lifecycle crash anywhere in the app
-      // (not just inside the git diff view) now renders a recoverable fallback
-      // instead of unmounting the whole tree to a blank screen.
-      React.createElement(ErrorBoundary, {
-        title: "Codevo Editor hit an unexpected error",
-        children: React.createElement(App),
-      }),
-    ),
-  );
+  // Root-level boundary: ANY render/lifecycle crash anywhere in the app
+  // (not just inside the git diff view) now renders a recoverable fallback
+  // instead of unmounting the whole tree to a blank screen.
+  const appTree = React.createElement(ErrorBoundary, {
+    title: "Codevo Editor hit an unexpected error",
+    children: React.createElement(App),
+  });
+
+  const rootTree = () => {
+    if (!strictModeEnabled()) {
+      return appTree;
+    }
+
+    return React.createElement(React.StrictMode, null, appTree);
+  };
+
+  ReactDOM.createRoot(appRoot).render(rootTree());
   startupComplete = true;
   // From here on, async/event crashes that escape React are caught globally and
   // shown as a dismissible notice rather than silently swallowed.

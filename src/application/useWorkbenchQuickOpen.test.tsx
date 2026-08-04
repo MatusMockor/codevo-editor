@@ -2,10 +2,11 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLatencyTracker } from "../domain/latencyTracker";
 import type { FileSearchResponse, FileSearchResult } from "../domain/workspace";
 import {
+  QUICK_OPEN_SEARCH_TIMEOUT_MS,
   useWorkbenchQuickOpen,
   type WorkbenchQuickOpen,
   type WorkbenchQuickOpenDependencies,
@@ -74,6 +75,10 @@ function renderQuickOpen(deps: WorkbenchQuickOpenDependencies): Harness {
 }
 
 describe("useWorkbenchQuickOpen", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("clears transient workbench messages when Quick Open closes", () => {
     const deps = makeDeps();
     const harness = renderQuickOpen(deps);
@@ -94,7 +99,6 @@ describe("useWorkbenchQuickOpen", () => {
   });
 
   it("updates merged results when a document is activated", async () => {
-    vi.useFakeTimers();
     const backendResult: FileSearchResult = {
       name: "UserModel.ts",
       path: "/workspace/src/UserModel.ts",
@@ -111,9 +115,7 @@ describe("useWorkbenchQuickOpen", () => {
       harness.quickOpen().setQuickOpenOpen(true);
       harness.quickOpen().setQuickOpenQuery("user");
     });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
-    });
+    await settleSearch();
 
     harness.rerender({
       ...deps,
@@ -130,11 +132,9 @@ describe("useWorkbenchQuickOpen", () => {
     ]);
 
     harness.unmount();
-    vi.useRealTimers();
   });
 
   it("does not leak workspace A MRU entries into workspace B", async () => {
-    vi.useFakeTimers();
     const depsA = makeDeps({
       activePath: "/workspace-a/src/Active.ts",
       recentFiles: [
@@ -148,9 +148,7 @@ describe("useWorkbenchQuickOpen", () => {
     act(() => {
       harness.quickOpen().setQuickOpenOpen(true);
     });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
-    });
+    await settleSearch();
 
     const depsB = makeDeps({
       activePath: "/workspace-b/src/Active.ts",
@@ -161,9 +159,7 @@ describe("useWorkbenchQuickOpen", () => {
       workspaceRoot: "/workspace-b",
     });
     harness.rerender(depsB);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
-    });
+    await settleSearch();
 
     expect(harness.quickOpen().quickOpenResults.map((entry) => entry.path)).toEqual([
       "/workspace-b/src/OnlyB.ts",
@@ -173,11 +169,9 @@ describe("useWorkbenchQuickOpen", () => {
     );
 
     harness.unmount();
-    vi.useRealTimers();
   });
 
   it("drops MRU results when the workspace is closed", async () => {
-    vi.useFakeTimers();
     const deps = makeDeps({
       activePath: "/workspace/src/Active.ts",
       recentFiles: [
@@ -190,9 +184,7 @@ describe("useWorkbenchQuickOpen", () => {
     act(() => {
       harness.quickOpen().setQuickOpenOpen(true);
     });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
-    });
+    await settleSearch();
     expect(harness.quickOpen().quickOpenResults).toHaveLength(1);
 
     harness.rerender({
@@ -205,11 +197,9 @@ describe("useWorkbenchQuickOpen", () => {
     expect(harness.quickOpen().quickOpenResults).toEqual([]);
 
     harness.unmount();
-    vi.useRealTimers();
   });
 
   it("searches a path location by its path and retains the parsed position", async () => {
-    vi.useFakeTimers();
     const searchFiles = vi.fn(async () => []);
     const deps = makeDeps({ fileSearch: { searchFiles } });
     const harness = renderQuickOpen(deps);
@@ -218,9 +208,7 @@ describe("useWorkbenchQuickOpen", () => {
       harness.quickOpen().setQuickOpenOpen(true);
       harness.quickOpen().setQuickOpenQuery("src/foo.ts:42:7");
     });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
-    });
+    await settleSearch();
 
     expect(searchFiles).toHaveBeenLastCalledWith("/workspace", "src/foo.ts", 80);
     expect(harness.quickOpen().quickOpenRequest).toEqual({
@@ -231,7 +219,6 @@ describe("useWorkbenchQuickOpen", () => {
     });
 
     harness.unmount();
-    vi.useRealTimers();
   });
 
   it.each([
@@ -287,7 +274,6 @@ describe("useWorkbenchQuickOpen", () => {
   });
 
   it("surfaces backend walk truncation independently of the result count", async () => {
-    vi.useFakeTimers();
     const deps = makeDeps({
       fileSearch: {
         searchFiles: vi.fn(async () => []),
@@ -304,81 +290,76 @@ describe("useWorkbenchQuickOpen", () => {
       harness.quickOpen().setQuickOpenOpen(true);
       harness.quickOpen().setQuickOpenQuery("needle");
     });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
-    });
+    await settleSearch();
 
     expect(harness.quickOpen().quickOpenTruncated).toBe(true);
 
     harness.unmount();
-    vi.useRealTimers();
   });
 
   it("treats A-B-A searches as distinct generations and drops late responses", async () => {
-    vi.useFakeTimers();
-    const searchA1 = deferred<FileSearchResponse>();
-    const searchB = deferred<FileSearchResponse>();
-    const searchA2 = deferred<FileSearchResponse>();
-    const searchFilesWithMetadata = vi
-      .fn()
-      .mockImplementationOnce(() => searchA1.promise)
-      .mockImplementationOnce(() => searchB.promise)
-      .mockImplementationOnce(() => searchA2.promise);
-    const depsA = makeDeps({
-      fileSearch: { searchFiles: vi.fn(async () => []), searchFilesWithMetadata },
-      workspaceRoot: "/workspace-a",
-    });
+    const gateway = deferredSearchGateway();
+    const depsA = makeDeps({ fileSearch: gateway.fileSearch, workspaceRoot: "/workspace-a" });
     const harness = renderQuickOpen(depsA);
     act(() => {
       harness.quickOpen().setQuickOpenOpen(true);
       harness.quickOpen().setQuickOpenQuery("needle");
     });
-    await act(async () => vi.advanceTimersByTimeAsync(120));
-    const generationA1 = searchFilesWithMetadata.mock.calls[0]?.[3] as string;
+    await settleSearch();
+    expect(gateway.calls).toHaveLength(1);
+    expect(gateway.calls[0]?.root).toBe("/workspace-a");
 
-    const depsB = { ...depsA, workspaceRoot: "/workspace-b" };
-    harness.rerender(depsB);
-    await act(async () => vi.advanceTimersByTimeAsync(120));
-    const generationB = searchFilesWithMetadata.mock.calls[1]?.[3] as string;
-
-    harness.rerender(depsA);
-    await act(async () => vi.advanceTimersByTimeAsync(120));
-    const generationA2 = searchFilesWithMetadata.mock.calls[2]?.[3] as string;
-    expect(new Set([generationA1, generationB, generationA2]).size).toBe(3);
+    harness.rerender({ ...depsA, workspaceRoot: "/workspace-b" });
+    await settleSearch();
+    expect(gateway.calls).toHaveLength(1);
+    expect(harness.quickOpen().quickOpenLoading).toBe(true);
 
     await act(async () => {
-      searchA1.resolve({
-        requestGeneration: generationA1,
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
         results: [file("/workspace-a/stale-a.ts")],
         truncated: false,
       });
-      searchB.resolve({
-        requestGeneration: generationB,
+    });
+    await settleSearch();
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+    expect(gateway.calls).toHaveLength(2);
+    expect(gateway.calls[1]?.root).toBe("/workspace-b");
+
+    harness.rerender(depsA);
+    await settleSearch();
+    expect(gateway.calls).toHaveLength(2);
+
+    await act(async () => {
+      gateway.calls[1]?.resolve({
+        requestGeneration: gateway.calls[1].requestGeneration,
         results: [file("/workspace-b/stale-b.ts")],
         truncated: false,
       });
-      await Promise.resolve();
     });
+    await settleSearch();
     expect(harness.quickOpen().quickOpenResults).toEqual([]);
+    expect(gateway.calls).toHaveLength(3);
+    expect(gateway.calls[2]?.root).toBe("/workspace-a");
 
     await act(async () => {
-      searchA2.resolve({
-        requestGeneration: generationA2,
+      gateway.calls[2]?.resolve({
+        requestGeneration: gateway.calls[2].requestGeneration,
         results: [file("/workspace-a/fresh.ts")],
         truncated: false,
       });
-      await Promise.resolve();
     });
+    await settleSearch();
     expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
       "/workspace-a/fresh.ts",
     ]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+    expect(new Set(gateway.calls.map((call) => call.requestGeneration)).size).toBe(3);
 
     harness.unmount();
-    vi.useRealTimers();
   });
 
   it("rejects a current response with a foreign request generation", async () => {
-    vi.useFakeTimers();
     const reportError = vi.fn();
     const deps = makeDeps({
       fileSearch: {
@@ -396,7 +377,7 @@ describe("useWorkbenchQuickOpen", () => {
       harness.quickOpen().setQuickOpenOpen(true);
       harness.quickOpen().setQuickOpenQuery("stale");
     });
-    await act(async () => vi.advanceTimersByTimeAsync(120));
+    await settleSearch();
 
     expect(harness.quickOpen().quickOpenResults).toEqual([]);
     expect(harness.quickOpen().quickOpenTruncated).toBe(false);
@@ -406,9 +387,367 @@ describe("useWorkbenchQuickOpen", () => {
     );
 
     harness.unmount();
+  });
+
+  it("records a file-search engine probe sample with the query and result count", async () => {
+    const record = vi.fn();
+    window.__codevoPerfProbe = { record, renameApplySuppressed: () => false };
+    const deps = makeDeps({
+      fileSearch: {
+        searchFiles: vi.fn(async () => [
+          file("/workspace/src/moduleA.ts"),
+          file("/workspace/src/moduleA.test.ts"),
+        ]),
+      },
+    });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("moduleA");
+    });
+    await settleSearch();
+
+    expect(record).toHaveBeenCalledTimes(1);
+    const [kind, sample] = record.mock.calls[0];
+    expect(kind).toBe("fileSearchEngine");
+    expect(sample.target).toBe("moduleA");
+    expect(sample.resultCount).toBe(2);
+    expect(Number.isFinite(sample.ms)).toBe(true);
+    expect(sample.ms).toBeGreaterThanOrEqual(0);
+
+    harness.unmount();
+    delete window.__codevoPerfProbe;
+  });
+
+  it("records no engine probe sample when no probe is installed", async () => {
+    const deps = makeDeps({
+      fileSearch: {
+        searchFiles: vi.fn(async () => [file("/workspace/src/moduleA.ts")]),
+      },
+    });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("moduleA");
+    });
+    await settleSearch();
+
+    expect(harness.quickOpen().quickOpenResults.length).toBeGreaterThan(0);
+
+    harness.unmount();
+  });
+
+  it("dispatches the first keystroke without waiting for a debounce timer", async () => {
+    vi.useFakeTimers();
+    const searchFiles = vi.fn(async () => []);
+    const deps = makeDeps({ fileSearch: { searchFiles } });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("needle");
+    });
+
+    expect(searchFiles).toHaveBeenCalledTimes(1);
+    expect(searchFiles).toHaveBeenLastCalledWith("/workspace", "needle", 80);
+    expect(harness.quickOpen().quickOpenLoading).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(240);
+    });
+
+    expect(searchFiles).toHaveBeenCalledTimes(1);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+
+    harness.unmount();
+  });
+
+  it("publishes only the final query of a keystroke storm", async () => {
+    const gateway = deferredSearchGateway();
+    const deps = makeDeps({ fileSearch: gateway.fileSearch });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("m");
+    });
+    expect(gateway.calls.map((call) => call.query)).toEqual(["m"]);
+
+    for (const keystroke of ["mo", "mod", "modu", "module"]) {
+      act(() => {
+        harness.quickOpen().setQuickOpenQuery(keystroke);
+      });
+      expect(gateway.calls).toHaveLength(1);
+      expect(harness.quickOpen().quickOpenLoading).toBe(true);
+    }
+
+    await act(async () => {
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
+        results: [file("/workspace/src/m.ts")],
+        truncated: false,
+      });
+    });
+    await settleSearch();
+
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(true);
+    expect(gateway.calls.map((call) => call.query)).toEqual(["m", "module"]);
+
+    await act(async () => {
+      gateway.calls[1]?.resolve({
+        requestGeneration: gateway.calls[1].requestGeneration,
+        results: [file("/workspace/src/module.ts")],
+        truncated: false,
+      });
+    });
+    await settleSearch();
+
+    expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
+      "/workspace/src/module.ts",
+    ]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+    expect(gateway.calls).toHaveLength(2);
+
+    harness.unmount();
+  });
+
+  it("drops a queued query when Quick Open closes before the in-flight search settles", async () => {
+    const gateway = deferredSearchGateway();
+    const deps = makeDeps({ fileSearch: gateway.fileSearch });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("first");
+    });
+    act(() => {
+      harness.quickOpen().setQuickOpenQuery("second");
+    });
+    expect(gateway.calls).toHaveLength(1);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(false);
+    });
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+
+    await act(async () => {
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
+        results: [file("/workspace/src/first.ts")],
+        truncated: false,
+      });
+    });
+    await settleSearch();
+
+    expect(gateway.calls).toHaveLength(1);
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+
+    harness.unmount();
+  });
+
+  it("drops a queued query when the hook unmounts before the in-flight search settles", async () => {
+    const gateway = deferredSearchGateway();
+    const deps = makeDeps({ fileSearch: gateway.fileSearch });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("first");
+    });
+    act(() => {
+      harness.quickOpen().setQuickOpenQuery("second");
+    });
+    expect(gateway.calls).toHaveLength(1);
+
+    harness.unmount();
+
+    await act(async () => {
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
+        results: [file("/workspace/src/first.ts")],
+        truncated: false,
+      });
+    });
+    await settleSearch();
+
+    expect(gateway.calls).toHaveLength(1);
+    expect(deps.setMessage).not.toHaveBeenCalledWith(null);
+  });
+
+  it("releases the dispatch slot to the queued query when a search never settles", async () => {
+    vi.useFakeTimers();
+    const gateway = deferredSearchGateway();
+    const deps = makeDeps({ fileSearch: gateway.fileSearch });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("hung");
+    });
+    act(() => {
+      harness.quickOpen().setQuickOpenQuery("next");
+    });
+    expect(gateway.calls.map((call) => call.query)).toEqual(["hung"]);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUICK_OPEN_SEARCH_TIMEOUT_MS);
+    });
+
+    expect(gateway.calls.map((call) => call.query)).toEqual(["hung", "next"]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(true);
+
+    await act(async () => {
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
+        results: [file("/workspace/src/hung.ts")],
+        truncated: false,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+
+    await act(async () => {
+      gateway.calls[1]?.resolve({
+        requestGeneration: gateway.calls[1].requestGeneration,
+        results: [file("/workspace/src/next.ts")],
+        truncated: false,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
+      "/workspace/src/next.ts",
+    ]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+    expect(gateway.calls).toHaveLength(2);
+
+    harness.unmount();
     vi.useRealTimers();
   });
+
+  it("reports a timed-out search and accepts a later query instead of its late payload", async () => {
+    vi.useFakeTimers();
+    const reportError = vi.fn();
+    const gateway = deferredSearchGateway();
+    const deps = makeDeps({ fileSearch: gateway.fileSearch, reportError });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+      harness.quickOpen().setQuickOpenQuery("hung");
+    });
+    expect(harness.quickOpen().quickOpenLoading).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUICK_OPEN_SEARCH_TIMEOUT_MS);
+    });
+
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+    expect(reportError).toHaveBeenCalledWith(
+      "Quick Open",
+      expect.objectContaining({ message: "File search timed out." }),
+    );
+    expect(gateway.calls).toHaveLength(1);
+
+    await act(async () => {
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
+        results: [file("/workspace/src/hung.ts")],
+        truncated: false,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(harness.quickOpen().quickOpenResults).toEqual([]);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenQuery("after");
+    });
+    expect(gateway.calls.map((call) => call.query)).toEqual(["hung", "after"]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(true);
+
+    await act(async () => {
+      gateway.calls[1]?.resolve({
+        requestGeneration: gateway.calls[1].requestGeneration,
+        results: [file("/workspace/src/after.ts")],
+        truncated: false,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
+      "/workspace/src/after.ts",
+    ]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+
+    harness.unmount();
+    vi.useRealTimers();
+  });
+
+  it("dispatches a single empty-query search when Quick Open opens", async () => {
+    const gateway = deferredSearchGateway();
+    const deps = makeDeps({ fileSearch: gateway.fileSearch });
+    const harness = renderQuickOpen(deps);
+
+    act(() => {
+      harness.quickOpen().setQuickOpenOpen(true);
+    });
+
+    expect(gateway.calls.map((call) => call.query)).toEqual([""]);
+
+    await act(async () => {
+      gateway.calls[0]?.resolve({
+        requestGeneration: gateway.calls[0].requestGeneration,
+        results: [file("/workspace/src/recent.ts")],
+        truncated: false,
+      });
+    });
+    await settleSearch();
+
+    expect(harness.quickOpen().quickOpenResults.map((result) => result.path)).toEqual([
+      "/workspace/src/recent.ts",
+    ]);
+    expect(harness.quickOpen().quickOpenLoading).toBe(false);
+    expect(gateway.calls).toHaveLength(1);
+
+    harness.unmount();
+  });
 });
+
+async function settleSearch(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+}
+
+interface DeferredSearchCall {
+  query: string;
+  requestGeneration: string;
+  resolve: (value: FileSearchResponse) => void;
+  root: string;
+}
+
+function deferredSearchGateway() {
+  const calls: DeferredSearchCall[] = [];
+  const searchFilesWithMetadata = vi.fn(
+    (root: string, query: string, _limit: number, requestGeneration = "") => {
+      const pending = deferred<FileSearchResponse>();
+      calls.push({ query, requestGeneration, resolve: pending.resolve, root });
+      return pending.promise;
+    },
+  );
+
+  return {
+    calls,
+    fileSearch: { searchFiles: vi.fn(async () => []), searchFilesWithMetadata },
+  };
+}
 
 function file(path: string): FileSearchResult {
   return {

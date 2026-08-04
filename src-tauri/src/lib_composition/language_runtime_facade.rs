@@ -920,7 +920,7 @@ pub(crate) async fn text_document_references(
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.references(&position);
+    let request = factory.references(&position, true);
     let Some(result) = send_php_request_with_optional_id(
         &registry,
         &root_path,
@@ -1133,6 +1133,8 @@ pub(crate) async fn text_document_code_lenses(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_code_lenses(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCodeLens>, String> {
@@ -1141,7 +1143,13 @@ pub(crate) async fn javascript_typescript_text_document_code_lenses(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_lenses(&path);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(Vec::new());
@@ -1179,6 +1187,8 @@ pub(crate) async fn text_document_code_lens_resolve(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_code_lens_resolve(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     lens: LanguageServerCodeLens,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeLens, String> {
@@ -1187,7 +1197,13 @@ pub(crate) async fn javascript_typescript_text_document_code_lens_resolve(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_lens(&lens);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(lens);

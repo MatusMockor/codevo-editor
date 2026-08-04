@@ -710,6 +710,32 @@ mod tests {
     }
 
     #[test]
+    fn a_single_item_over_the_bound_is_enough_to_stay_truthfully_incomplete() {
+        let within_bound = Value::Array(
+            (0..MAX_COMPLETION_ITEMS)
+                .map(|index| json!({ "label": format!("item-{index:04}") }))
+                .collect(),
+        );
+        let one_over_bound = Value::Array(
+            (0..=MAX_COMPLETION_ITEMS)
+                .map(|index| json!({ "label": format!("item-{index:04}") }))
+                .collect(),
+        );
+
+        let (within, within_work) =
+            project_completion_result_with_work(&within_bound).expect("bounded projection");
+        let (over, over_work) =
+            project_completion_result_with_work(&one_over_bound).expect("bounded projection");
+
+        assert_eq!(within.items.len(), MAX_COMPLETION_ITEMS);
+        assert!(!within.is_incomplete);
+        assert_eq!(within_work.visited_items, MAX_COMPLETION_ITEMS);
+        assert_eq!(over.items.len(), MAX_COMPLETION_ITEMS);
+        assert!(over.is_incomplete);
+        assert_eq!(over_work.visited_items, MAX_COMPLETION_ITEMS);
+    }
+
+    #[test]
     fn oversized_utf8_and_nested_entries_are_omitted_truthfully() {
         let oversized = "😀".repeat(MAX_COMPLETION_FIELD_UTF8_BYTES / 4 + 1);
         let response = json!({

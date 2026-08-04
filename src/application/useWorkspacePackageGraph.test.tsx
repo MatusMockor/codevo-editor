@@ -298,6 +298,56 @@ describe("useWorkspacePackageGraph", () => {
     });
   });
 
+  it("observes both concurrent discovery branches when an owner switch cancels them", async () => {
+    const pendingReads = new Map<string, (value: BoundedWorkspaceSourceRead) => void>();
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    const gateway = packageGateway();
+    const enumeratePackageJsonFiles = gateway.enumeratePackageJsonFiles;
+    expect(enumeratePackageJsonFiles).toBeDefined();
+    vi.mocked(enumeratePackageJsonFiles!).mockImplementation(async (rootPath) => ({
+      files: ["package.json"],
+      truncated: false,
+      visited: rootPath === "/a" ? 1 : 2,
+    }));
+    vi.mocked(gateway.readSourceTextBounded).mockImplementation((rootPath, relativePath) => {
+      if (rootPath === "/b") {
+        return Promise.resolve(
+          relativePath === "package.json"
+            ? { status: "ok", content: '{"name":"b"}' }
+            : { status: "notFound" },
+        );
+      }
+
+      return new Promise<BoundedWorkspaceSourceRead>((resolve) => {
+        pendingReads.set(relativePath, resolve);
+      });
+    });
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const harness = renderDiscovery(root, gateway, "/a", "a");
+      await waitForReact(() => {
+        expect([...pendingReads.keys()].sort()).toEqual(["package.json", "pnpm-workspace.yaml"]);
+      });
+
+      harness.set("/b", "b");
+      await waitForReact(() => expect(harness.current().ownerKey).toBe("b\u0000/b"));
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+      expect(unhandledRejections).toEqual([]);
+      await waitForReact(() => expect(harness.current().rootPackageJson).toEqual({ name: "b" }));
+      expect(harness.current().packages).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      pendingReads.get("package.json")?.({ status: "ok", content: '{"name":"stale-a"}' });
+      pendingReads.get("pnpm-workspace.yaml")?.({ status: "notFound" });
+      await Promise.resolve();
+    }
+  });
+
   it("does not let a discarded concurrent owner render invalidate committed discovery", async () => {
     let releaseEnumeration: () => void = () => undefined;
     const enumeration = new Promise<void>((resolve) => {

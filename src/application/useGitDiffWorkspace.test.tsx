@@ -1,12 +1,9 @@
 // @vitest-environment jsdom
 
-import { act, useMemo, useState } from "react";
+import { act, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import {
-  createInitialEditorGroupsState,
-  editorGroupsReducer,
-} from "../domain/editorGroups";
+import { createInitialEditorGroupsState, editorGroupsReducer } from "../domain/editorGroups";
 import type { GitChangedFile, GitFileDiff, GitGateway } from "../domain/git";
 import type { EditorDocument } from "../domain/workspace";
 import {
@@ -21,10 +18,7 @@ import {
   useGitDiffPreviewCloseLifecycle,
   type GitDiffPreviewCloseLifecycle,
 } from "./useGitDiffPreviewCloseLifecycle";
-import {
-  useEditorSessionState,
-  type EditorSessionState,
-} from "./useEditorSessionState";
+import { useEditorSessionState, type EditorSessionState } from "./useEditorSessionState";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -46,6 +40,8 @@ interface Harness {
   reportError: ReturnType<typeof vi.fn>;
   session: () => EditorSessionState;
   message: () => string | null;
+  publishMessage: (value: string | null) => void;
+  renderCount: () => number;
   unmount: () => void;
 }
 
@@ -84,11 +80,7 @@ function diff(change: GitChangedFile): GitFileDiff {
   };
 }
 
-function document(
-  path: string,
-  content = "saved",
-  savedContent = content,
-): EditorDocument {
+function document(path: string, content = "saved", savedContent = content): EditorDocument {
   const pathSegments = path.split("/");
 
   return {
@@ -106,9 +98,7 @@ function createFakeGitGateway(
   return { getDiff } as unknown as GitGateway;
 }
 
-function renderGitDiffWorkspace(
-  overrides: Partial<GitDiffWorkspaceDependencies> = {},
-): Harness {
+function renderGitDiffWorkspace(overrides: Partial<GitDiffWorkspaceDependencies> = {}): Harness {
   const container = window.document.createElement("div");
   const root = createRoot(container);
   const currentWorkspaceRootRef = { current: ROOT };
@@ -121,12 +111,23 @@ function renderGitDiffWorkspace(
     git: GitDiffWorkspace | null;
     lifecycle: GitDiffPreviewCloseLifecycle | null;
     message: string | null;
+    publishMessage: Dispatch<SetStateAction<string | null>> | null;
+    renderCount: number;
     session: EditorSessionState | null;
-  } = { git: null, lifecycle: null, message: null, session: null };
+  } = {
+    git: null,
+    lifecycle: null,
+    message: null,
+    publishMessage: null,
+    renderCount: 0,
+    session: null,
+  };
 
   function HarnessComponent() {
     const session = useEditorSessionState();
     const [message, setMessage] = useState<string | null>(null);
+    captured.renderCount += 1;
+    captured.publishMessage = setMessage;
     const documentTabSession = useMemo(
       () => ({
         ...session.documentTabSession,
@@ -185,6 +186,12 @@ function renderGitDiffWorkspace(
     reportError,
     session: () => required(captured.session, "session"),
     message: () => captured.message,
+    publishMessage: (value: string | null) => {
+      act(() => {
+        required(captured.publishMessage, "publishMessage")(value);
+      });
+    },
+    renderCount: () => captured.renderCount,
     unmount: () => {
       act(() => root.unmount());
     },
@@ -212,9 +219,7 @@ describe("git diff workspace helpers", () => {
     expect(gitDiffDocumentPath(worktreeChange)).toBe(
       "mockor-git-diff:worktree:/workspace/src/App.tsx",
     );
-    expect(gitDiffDocumentPath(stagedChange)).toBe(
-      "mockor-git-diff:staged:/workspace/src/App.tsx",
-    );
+    expect(gitDiffDocumentPath(stagedChange)).toBe("mockor-git-diff:staged:/workspace/src/App.tsx");
     expect(
       gitChangeForDiffDocumentPath(gitDiffDocumentPath(stagedChange), [
         worktreeChange,
@@ -361,9 +366,7 @@ describe("useGitDiffWorkspace", () => {
     });
 
     expect(harness.session().documents[firstPath]).toBe(firstDocument);
-    expect(
-      harness.session().documents[gitDiffDocumentPath(secondChange)],
-    ).toBeDefined();
+    expect(harness.session().documents[gitDiffDocumentPath(secondChange)]).toBeDefined();
     expect(harness.onDocumentReplaced).not.toHaveBeenCalled();
 
     harness.unmount();
@@ -395,9 +398,7 @@ describe("useGitDiffWorkspace", () => {
     const removedChange = changedFile("src/Removed.ts");
     const firstPath = gitDiffDocumentPath(firstChange);
     const removedPath = gitDiffDocumentPath(removedChange);
-    const getDiff = vi.fn<GitGateway["getDiff"]>(async (_root, change) =>
-      diff(change),
-    );
+    const getDiff = vi.fn<GitGateway["getDiff"]>(async (_root, change) => diff(change));
     const harness = renderGitDiffWorkspace({
       gitGateway: createFakeGitGateway(getDiff),
     });
@@ -411,10 +412,7 @@ describe("useGitDiffWorkspace", () => {
     getDiff.mockClear();
 
     await act(async () => {
-      harness.lifecycle().reconcileSelectedGitDiffPreviewForRepository(
-        ROOT,
-        [firstChange],
-      );
+      harness.lifecycle().reconcileSelectedGitDiffPreviewForRepository(ROOT, [firstChange]);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -482,9 +480,7 @@ describe("useGitDiffWorkspace", () => {
       path: `${repositoryRoot}/src/App.ts`,
       relativePath: "src/App.ts",
     });
-    const getDiff = vi.fn<GitGateway["getDiff"]>(async (_root, selected) =>
-      diff(selected),
-    );
+    const getDiff = vi.fn<GitGateway["getDiff"]>(async (_root, selected) => diff(selected));
     const harness = renderGitDiffWorkspace({
       gitGateway: createFakeGitGateway(getDiff),
     });
@@ -527,22 +523,64 @@ describe("useGitDiffWorkspace", () => {
     });
 
     expect(harness.git().selectedGitChange).toBeNull();
-    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff)
-      .toEqual(diff(firstChange));
-    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff)
-      .toEqual(diff(secondChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff).toEqual(
+      diff(firstChange),
+    );
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff).toEqual(
+      diff(secondChange),
+    );
 
     await act(async () => {
-      harness.git().loadGitDiffDocument(
-        gitDiffDocumentPath(firstChange),
-        firstChange,
-      );
+      harness.git().loadGitDiffDocument(gitDiffDocumentPath(firstChange), firstChange);
     });
 
     expect(harness.git().gitDiffPreview).toEqual(diff(firstChange));
-    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff)
-      .toEqual(diff(secondChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff).toEqual(
+      diff(secondChange),
+    );
 
+    harness.unmount();
+  });
+
+  it("does not render again when an inactive diff preview is cleared", () => {
+    const harness = renderGitDiffWorkspace();
+    const rendersBefore = harness.renderCount();
+
+    act(() => {
+      harness.git().clearGitDiffPreviewState();
+    });
+
+    expect(harness.renderCount()).toBe(rendersBefore);
+    expect(harness.message()).toBeNull();
+    harness.unmount();
+  });
+
+  it("clears an unrelated workbench message when no diff preview is active", () => {
+    const harness = renderGitDiffWorkspace();
+    harness.publishMessage("Indexing workspace.");
+
+    act(() => {
+      harness.git().clearGitDiffPreviewState();
+    });
+
+    expect(harness.message()).toBeNull();
+    harness.unmount();
+  });
+
+  it("clears the diff message when an active diff preview is cleared", async () => {
+    const change = changedFile("src/App.tsx");
+    const harness = renderGitDiffWorkspace();
+
+    await act(async () => {
+      await harness.git().openGitChange(change);
+    });
+    expect(harness.message()).toBe("Diff src/App.tsx");
+
+    act(() => {
+      harness.git().clearGitDiffPreviewState();
+    });
+
+    expect(harness.message()).toBeNull();
     harness.unmount();
   });
 
@@ -605,9 +643,9 @@ describe("useGitDiffWorkspace", () => {
     expect(harness.git().selectedGitChange).toBe(secondChange);
     expect(harness.git().gitDiffPreview).toEqual(diff(secondChange));
     expect(harness.message()).toBe("Diff src/Second.ts");
-    expect(
-      harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff,
-    ).toEqual(diff(firstChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff).toEqual(
+      diff(firstChange),
+    );
 
     harness.unmount();
   });
@@ -673,9 +711,7 @@ describe("useGitDiffWorkspace", () => {
       currentOpen = harness.git().openGitChange(currentChange);
     });
 
-    expect(harness.git().gitDiffRequestTokenRef.current).toBeGreaterThan(
-      firstOwnerGeneration,
-    );
+    expect(harness.git().gitDiffRequestTokenRef.current).toBeGreaterThan(firstOwnerGeneration);
 
     await act(async () => {
       currentRequest.resolve(diff(currentChange));
@@ -686,9 +722,9 @@ describe("useGitDiffWorkspace", () => {
 
     expect(harness.git().selectedGitChange).toBe(currentChange);
     expect(harness.git().gitDiffPreview).toEqual(diff(currentChange));
-    expect(
-      harness.git().gitDiffDocuments[gitDiffDocumentPath(currentChange)]?.change,
-    ).toBe(currentChange);
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(currentChange)]?.change).toBe(
+      currentChange,
+    );
     harness.unmount();
   });
 
@@ -720,12 +756,10 @@ describe("useGitDiffWorkspace", () => {
       await firstOpen;
     });
 
-    expect(
-      harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)],
-    ).toBeUndefined();
-    expect(
-      harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff,
-    ).toEqual(diff(secondChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]).toBeUndefined();
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff).toEqual(
+      diff(secondChange),
+    );
     expect(harness.git().gitDiffLoading).toBe(false);
     harness.unmount();
   });
@@ -759,10 +793,12 @@ describe("useGitDiffWorkspace", () => {
 
     expect(harness.git().selectedGitChange).toBeNull();
     expect(harness.git().gitDiffPreview).toBeNull();
-    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff)
-      .toEqual(diff(firstChange));
-    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff)
-      .toEqual(diff(secondChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff).toEqual(
+      diff(firstChange),
+    );
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff).toEqual(
+      diff(secondChange),
+    );
     harness.unmount();
   });
 });

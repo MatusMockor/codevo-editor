@@ -1,3 +1,4 @@
+use super::super::pending_requests::ResponseBodyBound;
 use super::super::{
     ExactSessionNotificationOutcome, ProjectResyncRequestOutcome, SharedProcessKiller,
 };
@@ -316,7 +317,12 @@ fn cancellation_queue_bounds_sixty_four_parked_writes_and_restart_gets_fresh_tra
     for offset in 0..super::super::MAX_PENDING_REQUESTS_PER_SESSION as u64 {
         let (sender, receiver) = mpsc::channel();
         pending
-            .admit(1_000 + offset, Some(offset + 1), sender)
+            .admit(
+                1_000 + offset,
+                Some(offset + 1),
+                ResponseBodyBound::Full,
+                sender,
+            )
             .expect("pending cancellation owner");
         receivers.push(receiver);
     }
@@ -549,7 +555,7 @@ fn hung_cancellation_write_times_out_and_reaps_only_its_exact_transport() {
         .expect("session request parts");
     let (sender, receiver) = mpsc::channel();
     pending
-        .admit(1_000, Some(1), sender)
+        .admit(1_000, Some(1), ResponseBodyBound::Full, sender)
         .expect("pending cancellation owner");
 
     registry
@@ -739,14 +745,14 @@ fn pending_request_capacity_rejects_the_next_request_without_evicting_an_owner()
     let mut receivers = Vec::new();
     let (zero_sender, _zero_receiver) = mpsc::channel();
     assert_eq!(
-        pending.admit(9_999, Some(0), zero_sender),
+        pending.admit(9_999, Some(0), ResponseBodyBound::Full, zero_sender),
         Err(super::super::PendingRequestAdmissionError::InvalidRequestId)
     );
 
     for request_id in 0..super::super::MAX_PENDING_REQUESTS_PER_SESSION as u64 {
         let (sender, receiver) = mpsc::channel();
         pending
-            .admit(request_id, None, sender)
+            .admit(request_id, None, ResponseBodyBound::Full, sender)
             .expect("request below the cap must be admitted");
         receivers.push(receiver);
     }
@@ -756,6 +762,7 @@ fn pending_request_capacity_rejects_the_next_request_without_evicting_an_owner()
         pending.admit(
             super::super::MAX_PENDING_REQUESTS_PER_SESSION as u64,
             None,
+            ResponseBodyBound::Full,
             overflow_sender
         ),
         Err(
@@ -800,7 +807,7 @@ fn full_pending_request_registry_rejects_before_writing_or_waiting_for_the_serve
     for request_id in 0..super::super::MAX_PENDING_REQUESTS_PER_SESSION as u64 {
         let (sender, receiver) = mpsc::channel();
         pending
-            .admit(10_000 + request_id, None, sender)
+            .admit(10_000 + request_id, None, ResponseBodyBound::Full, sender)
             .expect("request below the cap must be admitted");
         receivers.push(receiver);
     }
@@ -838,7 +845,7 @@ fn cancelled_request_late_response_is_unmatched_and_cannot_revive_it() {
     let pending = Arc::new(super::super::PendingRequestRegistry::new());
     let (sender, receiver) = mpsc::channel();
     pending
-        .admit(10, Some(41), sender)
+        .admit(10, Some(41), ResponseBodyBound::Full, sender)
         .expect("request must be admitted");
 
     assert_eq!(
@@ -863,7 +870,7 @@ fn cancelled_request_late_response_is_unmatched_and_cannot_revive_it() {
 
     let (reused_sender, _reused_receiver) = mpsc::channel();
     assert_eq!(
-        pending.admit(11, Some(41), reused_sender),
+        pending.admit(11, Some(41), ResponseBodyBound::Full, reused_sender),
         Err(
             super::super::PendingRequestAdmissionError::RequestIdNotMonotonic {
                 previous: 41,
@@ -874,7 +881,7 @@ fn cancelled_request_late_response_is_unmatched_and_cannot_revive_it() {
 
     let (new_sender, new_receiver) = mpsc::channel();
     pending
-        .admit(12, Some(42), new_sender)
+        .admit(12, Some(42), ResponseBodyBound::Full, new_sender)
         .expect("newer client authority must be admitted");
     assert_eq!(
         pending.cancel(41),
@@ -893,7 +900,7 @@ fn cancellation_receipt_is_scoped_to_the_exact_session_registry() {
     let pending_b = super::super::PendingRequestRegistry::new();
     let (sender, receiver) = mpsc::channel();
     pending_a
-        .admit(10, Some(41), sender)
+        .admit(10, Some(41), ResponseBodyBound::Full, sender)
         .expect("workspace A request must be admitted");
 
     assert_eq!(
@@ -914,7 +921,7 @@ fn closed_old_session_registry_rejects_a_request_parked_before_replacement() {
     let parked = std::thread::spawn(move || {
         release_rx.recv().expect("release parked admission");
         let (sender, _receiver) = mpsc::channel();
-        let _ = result_tx.send(parked_pending.admit(10, Some(41), sender));
+        let _ = result_tx.send(parked_pending.admit(10, Some(41), ResponseBodyBound::Full, sender));
     });
 
     old_pending.close_and_reject("old session closed");
@@ -932,7 +939,7 @@ fn closed_old_session_registry_rejects_a_request_parked_before_replacement() {
     let replacement_pending = super::super::PendingRequestRegistry::new();
     let (sender, receiver) = mpsc::channel();
     replacement_pending
-        .admit(11, Some(41), sender)
+        .admit(11, Some(41), ResponseBodyBound::Full, sender)
         .expect("replacement session has independent authority");
     assert_eq!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty));
 }
@@ -1015,6 +1022,115 @@ fn stale_session_cancel_cannot_target_replacement_after_root_a_b_a() {
         .join()
         .expect("replacement request thread")
         .expect("replacement request must remain active");
+}
+
+#[test]
+fn stale_decorative_requests_cannot_dispatch_into_a_replacement_session() {
+    let registry = Arc::new(LanguageServerRegistry::new_with_label("Test server"));
+    let old_spawner = FakeSpawner::new(ready_script(), true);
+    let (old_sink, _old_rx) = ChannelSink::new();
+    registry
+        .start(
+            "/tmp/workspace",
+            &command(),
+            &initialize_request(),
+            &old_spawner,
+            old_sink,
+            noop_diagnostics_sink(),
+        )
+        .expect("start old workspace session");
+    let old_session = running_session_id(&registry, "/tmp/workspace");
+
+    registry.stop("/tmp/workspace");
+
+    let replacement_spawner = FakeSpawner::new(ready_script(), true);
+    let replacement_capture = Arc::clone(&replacement_spawner.stdin_capture);
+    let replacement_held_writer = Arc::clone(&replacement_spawner.held_writer);
+    let (replacement_sink, _replacement_rx) = ChannelSink::new();
+    registry
+        .start(
+            "/tmp/workspace",
+            &command(),
+            &initialize_request(),
+            &replacement_spawner,
+            replacement_sink,
+            noop_diagnostics_sink(),
+        )
+        .expect("start replacement workspace session");
+    let replacement_session = running_session_id(&registry, "/tmp/workspace");
+    assert_ne!(old_session, replacement_session);
+
+    for (request_id, method) in [
+        (41, "textDocument/codeLens"),
+        (42, "codeLens/resolve"),
+        (43, "textDocument/inlayHint"),
+        (44, "inlayHint/resolve"),
+    ] {
+        let error = tauri::async_runtime::block_on(registry.send_request_async_with_id(
+            "/tmp/workspace",
+            old_session,
+            request_id,
+            method,
+            json!({ "marker": "stale" }),
+        ))
+        .expect_err("stale decorative request authority must fail closed");
+        assert!(error.contains("session is no longer active"), "{error}");
+    }
+
+    assert!(captured_messages(&replacement_capture)
+        .iter()
+        .all(|message| {
+            !matches!(
+                message["method"].as_str(),
+                Some(
+                    "textDocument/codeLens"
+                        | "codeLens/resolve"
+                        | "textDocument/inlayHint"
+                        | "inlayHint/resolve"
+                )
+            )
+        }));
+
+    let request_registry = Arc::clone(&registry);
+    let request = std::thread::spawn(move || {
+        tauri::async_runtime::block_on(request_registry.send_request_async_with_id(
+            "/tmp/workspace",
+            replacement_session,
+            45,
+            "textDocument/codeLens",
+            json!({ "marker": "current" }),
+        ))
+    });
+    let wire_request_id =
+        wait_for_captured_request_id(&replacement_capture, "textDocument/codeLens");
+    assert_ne!(wire_request_id, 45, "wire ids must remain backend-owned");
+
+    registry
+        .cancel_request("/tmp/workspace", replacement_session, 45)
+        .expect("cancel current decorative request");
+    wait_for_captured_method(&replacement_capture, "$/cancelRequest");
+    let cancellations = captured_messages(&replacement_capture)
+        .into_iter()
+        .filter(|message| message["method"] == "$/cancelRequest")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        cancellations,
+        vec![json!({
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": { "id": wire_request_id },
+        })]
+    );
+    assert!(request
+        .join()
+        .expect("decorative request thread")
+        .expect_err("cancelled decorative request must fail closed")
+        .contains("cancelled"));
+
+    write_held_message(
+        &replacement_held_writer,
+        json!({ "jsonrpc": "2.0", "id": wire_request_id, "result": null }),
+    );
 }
 
 #[test]

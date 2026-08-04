@@ -237,6 +237,35 @@ describe("workbench EditorConfig coordinator", () => {
     expect(readTextFile).toHaveBeenCalledTimes(3);
     await act(async () => root.unmount());
   });
+
+  it("does not republish an equivalent config when a dependency identity changes", async () => {
+    const activeDocumentRef = { current: { path: "/workspace/file.ts" } };
+    const currentWorkspaceRootRef = { current: "/workspace" };
+    const readTextFile = vi.fn(async () => {
+      throw new Error("missing");
+    });
+    const root = createRoot(document.createElement("div"));
+    let renderCount = 0;
+
+    function Harness() {
+      renderCount += 1;
+      useWorkbenchEditorConfigCoordinator({
+        activeDocumentPath: activeDocumentRef.current.path,
+        activeDocumentRef,
+        currentWorkspaceRootRef,
+        readTextFile,
+        resolveWorkspaceRuntimeOwner: () => null,
+        workspaceRoot: "/workspace",
+      });
+      return null;
+    }
+
+    await act(async () => root.render(createElement(Harness)));
+    await act(async () => undefined);
+
+    expect(renderCount).toBeLessThanOrEqual(3);
+    await act(async () => root.unmount());
+  });
 });
 
 function deferredEditorConfigReads() {

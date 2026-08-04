@@ -1,17 +1,11 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import type { VscodeProcessTaskDiagnostic } from "../domain/vscodeProcessTasks";
 import type { VscodeProcessTasksGateway } from "../domain/vscodeProcessTasksGateway";
 import {
   VSCODE_TASKS_EMPTY_CONFIG_REVISION,
   type VscodeProcessTasksConfigurationAction,
 } from "./configureVscodeProcessTasks";
+import { useCommitBailoutState } from "./useCommitBailoutState";
 import { useNodePackageTaskProblemNoticeComposition } from "./useNodePackageTaskProblemNoticeComposition";
 import { useVscodeProcessTasks } from "./useVscodeProcessTasks";
 import type { WorkbenchNotice } from "./workbenchNotice";
@@ -79,7 +73,7 @@ export function useWorkbenchVscodeProcessTasks({
     ownerKey: configurationOwnerKey,
     trusted: workspaceTrusted,
   };
-  const [configurationOperation, setConfigurationOperation] = useState<{
+  const [configurationOperation, setConfigurationOperation] = useCommitBailoutState<{
     readonly activation: number;
     readonly error: string | null;
     readonly pending: boolean;
@@ -177,12 +171,13 @@ export function useWorkbenchVscodeProcessTasks({
     configureTasks,
     discover,
     occupied,
+    setConfigurationOperation,
     workspaceTrusted,
   ]);
 
   useEffect(() => {
     setConfigurationOperation(null);
-  }, [configurationActivation]);
+  }, [configurationActivation, setConfigurationOperation]);
 
   useEffect(() => {
     configurationMountedRef.current = true;

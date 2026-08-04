@@ -27,7 +27,34 @@ describe("EditorModelContentSyncCoordinator", () => {
     expect(fixture.onDidChangeModelContent).toHaveBeenCalledTimes(1);
     fixture.edit("after");
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith("after");
+    expect(onChange).toHaveBeenCalledWith("after", { lineCount: 1, utf16Length: 5 });
+  });
+
+  it("drops an outer stale publication when a metric getter changes the model reentrantly", () => {
+    const fixture = contentSyncFixture("/workspace/shared.ts", "");
+    const onChange = vi.fn();
+    const coordinator = new EditorModelContentSyncCoordinator();
+    coordinator.update(
+      [
+        {
+          activePath: "/workspace/shared.ts",
+          editor: fixture.editor(),
+          getModel: () => fixture.model,
+          groupId: "left",
+          onChange,
+        },
+      ],
+      "left",
+    );
+    fixture.getLineCount.mockImplementationOnce(() => {
+      fixture.append("b");
+      return 1;
+    });
+
+    fixture.append("a");
+
+    expect(onChange).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith("ab", { lineCount: 1, utf16Length: 2 });
   });
 
   it("keeps the latest callback and disposes once across unmount and remount", () => {
@@ -188,7 +215,7 @@ describe("EditorModelContentSyncCoordinator", () => {
       "left",
     );
     second.edit("after update");
-    expect(onChange).toHaveBeenCalledWith("after update");
+    expect(onChange).toHaveBeenCalledWith("after update", { lineCount: 1, utf16Length: 12 });
 
     onChange.mockClear();
     editor.setModel(first.model);
@@ -224,7 +251,7 @@ describe("EditorModelContentSyncCoordinator", () => {
       "left",
     );
     first.edit("after A rebound");
-    expect(onChange).toHaveBeenCalledWith("after A rebound");
+    expect(onChange).toHaveBeenCalledWith("after A rebound", { lineCount: 1, utf16Length: 15 });
   });
 
   it("ignores a stale model-change callback after editor disposal", () => {
@@ -293,7 +320,10 @@ describe("EditorModelContentSyncCoordinator", () => {
     );
     first.edit("after coalesced return");
 
-    expect(onChange).toHaveBeenCalledWith("after coalesced return");
+    expect(onChange).toHaveBeenCalledWith("after coalesced return", {
+      lineCount: 1,
+      utf16Length: 22,
+    });
   });
 
   it("promotes the remaining editor listener when the canonical pane is removed", () => {
@@ -340,7 +370,7 @@ describe("EditorModelContentSyncCoordinator", () => {
     expect(fixture.onDidChangeModelContent).toHaveBeenCalledTimes(2);
     expect(fixture.modelDispose).toHaveBeenCalledOnce();
     expect(firstChange).not.toHaveBeenCalled();
-    expect(secondChange).toHaveBeenCalledWith("after");
+    expect(secondChange).toHaveBeenCalledWith("after", { lineCount: 1, utf16Length: 5 });
   });
 
   it.each([1, 2, 4])(
@@ -417,7 +447,7 @@ describe("EditorModelContentSyncCoordinator", () => {
 
     expect(ingress.recordChange).toHaveBeenCalledOnce();
     expect(fixture.getValue).toHaveBeenCalledOnce();
-    expect(onChange).toHaveBeenCalledWith("ab");
+    expect(onChange).toHaveBeenCalledWith("ab", { lineCount: 1, utf16Length: 2 });
   });
 
   it("contains throwing compact revision inspection after a committed delta", () => {
@@ -447,7 +477,7 @@ describe("EditorModelContentSyncCoordinator", () => {
     expect(() => fixture.edit("ab")).not.toThrow();
     expect(ingress.recordChange).toHaveBeenCalledOnce();
     expect(fixture.getValue).toHaveBeenCalledOnce();
-    expect(onChange).toHaveBeenCalledWith("ab");
+    expect(onChange).toHaveBeenCalledWith("ab", { lineCount: 1, utf16Length: 2 });
     expect(onLiveRevision).not.toHaveBeenCalled();
   });
 
@@ -639,7 +669,7 @@ describe("EditorModelContentSyncCoordinator", () => {
 
     expect(ingress.recordChange).toHaveBeenCalledTimes(100);
     expect(fixture.getValue).toHaveBeenCalledTimes(100);
-    expect(fixture.getValueLength).toHaveBeenCalledTimes(100);
+    expect(fixture.getValueLength).toHaveBeenCalledTimes(200);
   });
 
   it("keeps nested model changes in synchronous delivery order", () => {
@@ -703,9 +733,11 @@ function contentSyncFixture(path: string, initialValue: string) {
   const modelDispose = vi.fn();
   const onDidChangeModelContent = vi.fn();
   const getValue = vi.fn(() => value);
+  const getLineCount = vi.fn(() => value.split("\n").length);
   const getValueLength = vi.fn(() => value.length);
   const model = {
     getAlternativeVersionId: vi.fn(() => version),
+    getLineCount,
     getValue,
     getValueLength,
     getVersionId: vi.fn(() => version),
@@ -778,6 +810,7 @@ function contentSyncFixture(path: string, initialValue: string) {
       emitModelContent(model, event);
     },
     editor: switchableEditor,
+    getLineCount,
     getValue,
     getValueLength,
     model,

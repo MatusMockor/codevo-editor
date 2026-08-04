@@ -290,11 +290,12 @@ describe("useWorkbenchSymbolPanels PHP document lease", () => {
 
 describe("useWorkbenchSymbolPanels JavaScript/TypeScript reference request ownership", () => {
   it("passes the captured session id to the identified request", async () => {
-    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) =>
-      Object.assign(Promise.resolve([]), {
-        requestId: 19,
-        sessionId,
-      }),
+    const references = vi.fn(
+      (_rootPath: string, _position: unknown, _includeDeclaration: boolean, sessionId: number) =>
+        Object.assign(Promise.resolve([]), {
+          requestId: 19,
+          sessionId,
+        }),
     );
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
@@ -309,7 +310,7 @@ describe("useWorkbenchSymbolPanels JavaScript/TypeScript reference request owner
       await harness.api().openReferencesPanel();
     });
 
-    expect(references).toHaveBeenCalledWith(ROOT, expect.any(Object), 7);
+    expect(references).toHaveBeenCalledWith(ROOT, expect.any(Object), true, 7);
     harness.root.unmount();
   });
 
@@ -323,11 +324,12 @@ describe("useWorkbenchSymbolPanels JavaScript/TypeScript reference request owner
         resolveReferences = resolve;
       },
     );
-    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) =>
-      Object.assign(pendingReferences, {
-        requestId: 23,
-        sessionId,
-      }),
+    const references = vi.fn(
+      (_rootPath: string, _position: unknown, _includeDeclaration: boolean, sessionId: number) =>
+        Object.assign(pendingReferences, {
+          requestId: 23,
+          sessionId,
+        }),
     );
     const cancelRequest = vi.fn(async () => undefined);
     const harness = renderPanels({
@@ -425,7 +427,7 @@ describe.each([
       activeDocumentRef: { current: panelDocument(language) },
       activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
       javaScriptTypeScriptLanguageServerFeaturesGateway: javaScriptTypeScriptSymbolPanelGateway(
-        (rootPath, position, sessionId) =>
+        (rootPath, position, _includeDeclaration, sessionId) =>
           Object.assign(gateway.references(rootPath, position), {
             requestId: 1,
             sessionId,
@@ -460,17 +462,19 @@ describe("useWorkbenchSymbolPanels reference request generation", () => {
       resolveFirst = resolve;
     });
     let requestNumber = 0;
-    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) => {
-      requestNumber += 1;
-      const result =
-        requestNumber === 1
-          ? firstResult
-          : Promise.resolve([referenceRow(`${ROOT}/src/Newest.ts`).location]);
-      return Object.assign(result, {
-        requestId: requestNumber === 1 ? 31 : 32,
-        sessionId,
-      });
-    });
+    const references = vi.fn(
+      (_rootPath: string, _position: unknown, _includeDeclaration: boolean, sessionId: number) => {
+        requestNumber += 1;
+        const result =
+          requestNumber === 1
+            ? firstResult
+            : Promise.resolve([referenceRow(`${ROOT}/src/Newest.ts`).location]);
+        return Object.assign(result, {
+          requestId: requestNumber === 1 ? 31 : 32,
+          sessionId,
+        });
+      },
+    );
     const cancelRequest = vi.fn(async () => undefined);
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
@@ -514,8 +518,9 @@ describe("useWorkbenchSymbolPanels reference request generation", () => {
     const pendingResult = new Promise<ReturnType<typeof referenceRow>["location"][]>((resolve) => {
       resolveReferences = resolve;
     });
-    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) =>
-      Object.assign(pendingResult, { requestId: 33, sessionId }),
+    const references = vi.fn(
+      (_rootPath: string, _position: unknown, _includeDeclaration: boolean, sessionId: number) =>
+        Object.assign(pendingResult, { requestId: 33, sessionId }),
     );
     const cancelRequest = vi.fn(async () => undefined);
     const harness = renderPanels({
@@ -548,16 +553,18 @@ describe("useWorkbenchSymbolPanels reference request generation", () => {
   it("keeps a supersession storm to one active exact backend request", async () => {
     const rejectByRequestId = new Map<number, (reason: unknown) => void>();
     let nextRequestId = 100;
-    const references = vi.fn((_rootPath: string, _position: unknown, sessionId: number) => {
-      const requestId = nextRequestId;
-      nextRequestId += 1;
-      const result = new Promise<ReturnType<typeof referenceRow>["location"][]>(
-        (_resolve, reject) => {
-          rejectByRequestId.set(requestId, reject);
-        },
-      );
-      return Object.assign(result, { requestId, sessionId });
-    });
+    const references = vi.fn(
+      (_rootPath: string, _position: unknown, _includeDeclaration: boolean, sessionId: number) => {
+        const requestId = nextRequestId;
+        nextRequestId += 1;
+        const result = new Promise<ReturnType<typeof referenceRow>["location"][]>(
+          (_resolve, reject) => {
+            rejectByRequestId.set(requestId, reject);
+          },
+        );
+        return Object.assign(result, { requestId, sessionId });
+      },
+    );
     const cancelRequest = vi.fn(
       async (_rootPath: string, _sessionId: number, requestId: number) => {
         rejectByRequestId.get(requestId)?.(new Error("cancelled"));
@@ -612,8 +619,9 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
       javaScriptTypeScriptLanguageServerFeaturesGateway: {
-        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
-          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ...javaScriptTypeScriptSymbolPanelGateway(
+          (_rootPath, _position, _includeDeclaration, sessionId) =>
+            Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
         ),
         executeCommandLocations,
       },
@@ -662,8 +670,9 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
       activeDocumentRef: { current: panelDocument("typescript") },
       cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
       javaScriptTypeScriptLanguageServerFeaturesGateway: {
-        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
-          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ...javaScriptTypeScriptSymbolPanelGateway(
+          (_rootPath, _position, _includeDeclaration, sessionId) =>
+            Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
         ),
         executeCommandLocations,
       },
@@ -715,8 +724,9 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
       activeDocumentRef: { current: panelDocument("typescript") },
       cancelJavaScriptTypeScriptLanguageServerRequest: cancelRequest,
       javaScriptTypeScriptLanguageServerFeaturesGateway: {
-        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
-          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ...javaScriptTypeScriptSymbolPanelGateway(
+          (_rootPath, _position, _includeDeclaration, sessionId) =>
+            Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
         ),
         executeCommandLocations,
       },
@@ -766,8 +776,9 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
     const harness = renderPanels({
       activeDocumentRef: { current: panelDocument("typescript") },
       javaScriptTypeScriptLanguageServerFeaturesGateway: {
-        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
-          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ...javaScriptTypeScriptSymbolPanelGateway(
+          (_rootPath, _position, _includeDeclaration, sessionId) =>
+            Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
         ),
         executeCommandLocations,
       },
@@ -808,8 +819,9 @@ describe("useWorkbenchSymbolPanels file references owner fence", () => {
       activeDocumentRef: { current: panelDocument("typescript") },
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: isSessionActive,
       javaScriptTypeScriptLanguageServerFeaturesGateway: {
-        ...javaScriptTypeScriptSymbolPanelGateway((_rootPath, _position, sessionId) =>
-          Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
+        ...javaScriptTypeScriptSymbolPanelGateway(
+          (_rootPath, _position, _includeDeclaration, sessionId) =>
+            Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
         ),
         executeCommandLocations,
       },

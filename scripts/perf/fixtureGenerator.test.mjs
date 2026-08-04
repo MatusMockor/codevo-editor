@@ -6,6 +6,7 @@ import {
   generateLargeTsFileContent,
   generateMinifiedTsFileContent,
   writeLargeFileFixtures,
+  LARGE_FILE_SPECS,
 } from "./fixtureGenerator.mjs";
 
 function memFs() {
@@ -49,6 +50,7 @@ describe("generateLargeTsFileContent", () => {
   });
 
   it.each([
+    { lines: 2000, seed: 2 },
     { lines: 5000, seed: 5 },
     { lines: 20000, seed: 20 },
     { lines: 100000, seed: 100 },
@@ -97,8 +99,35 @@ describe("writeLargeFileFixtures", () => {
     const { volume, fs } = memFs();
     writeLargeFileFixtures({ rootDir: "/fx", fs });
 
-    for (const name of ["large-5k.ts", "large-20k.ts", "large-100k.ts", "minified.ts", "huge-union.ts"]) {
+    for (const name of [
+      "large-5k.ts",
+      "large-20k.ts",
+      "large-100k.ts",
+      "minified.ts",
+      "huge-union.ts",
+    ]) {
       expect(volume.readFileSync(`/fx/large-files/${name}`, "utf8").length).toBeGreaterThan(0);
     }
+  });
+
+  it("writes the smart-capable medium-2k.ts fixture the LSP scenarios target", () => {
+    const { volume, fs } = memFs();
+    writeLargeFileFixtures({ rootDir: "/fx", fs });
+
+    const content = volume.readFileSync("/fx/large-files/medium-2k.ts", "utf8");
+    expect(content.split("\n").length).toBe(2000);
+    expect(content).toContain("export interface ");
+  });
+});
+
+describe("LARGE_FILE_SPECS", () => {
+  it("declares medium-2k.ts as a seeded 2000-line spec", () => {
+    const spec = LARGE_FILE_SPECS.find(({ name }) => name === "medium-2k.ts");
+    expect(spec).toEqual({ name: "medium-2k.ts", lines: 2000, seed: 2 });
+  });
+
+  it("has unique fixture names", () => {
+    const names = LARGE_FILE_SPECS.map(({ name }) => name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });

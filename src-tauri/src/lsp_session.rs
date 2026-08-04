@@ -49,13 +49,14 @@ pub use event_sinks::{
     AppHandleEventSink, DiagnosticsSink, LanguageServerRefreshEvent, LanguageServerRefreshFeature,
     LanguageServerWorkspaceEditEvent, RefreshSink, StatusSink, WorkspaceEditSink,
 };
+use pending_requests::{
+    decode_session_message, reject_pending_requests, route_pending_response,
+    PendingRequestCancellationReceipt, PendingRequestRegistry, PendingRequests,
+    PendingResponseReceipt,
+};
 #[cfg(test)]
 use pending_requests::{
     parse_response_result, PendingRequestAdmissionError, MAX_PENDING_REQUESTS_PER_SESSION,
-};
-use pending_requests::{
-    reject_pending_requests, route_pending_response, PendingRequestCancellationReceipt,
-    PendingRequestRegistry, PendingRequests, PendingResponseReceipt,
 };
 use request_dispatch::{
     prepare_cancel_pending_request, send_request_with_timeout, CancellationTransport,
@@ -280,7 +281,7 @@ fn spawn_reader(
                         continue;
                     }
 
-                    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+                    let Ok(value) = decode_session_message(&bytes, &pending_requests) else {
                         continue;
                     };
 

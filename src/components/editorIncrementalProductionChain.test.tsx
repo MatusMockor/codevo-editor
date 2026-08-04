@@ -103,7 +103,7 @@ describe("editor incremental production chain", () => {
       expect(fixture.gateway.changeRequests).toHaveLength(1);
       const envelope = fixture.gateway.changeRequests[0]?.change;
       expect(envelope?.kind).toBe("incremental");
-      if (envelope?.kind !== "incremental") throw new Error("Expected incremental batch");
+      if (envelope?.kind !== "incremental") return;
       expect(envelope.changes).toHaveLength(100);
       expect(envelope.changes.map(({ text }) => text)).toEqual(
         Array.from({ length: 100 }, (_, index) => String(index % 10)),
@@ -189,6 +189,10 @@ describe("editor incremental production chain", () => {
     expect(fixture.legacyFullPublication).toHaveBeenCalledWith(
       `${fixture.initialContent}x`,
       fixture.path,
+      {
+        lineCount: 1,
+        utf16Length: fixture.initialContent.length + 1,
+      },
     );
     expect(fixture.legacyDidChange).toHaveBeenCalledOnce();
   });
@@ -222,7 +226,7 @@ describe("editor incremental production chain", () => {
       editorSurfaceControlledValue(
         fixture.runtimeContext.current,
         "pane-1",
-        fixture.editors[0]!,
+        fixture.model,
         reloadedDocument,
         true,
         false,
@@ -252,7 +256,7 @@ describe("editor incremental production chain", () => {
       editorSurfaceControlledValue(
         fixture.runtimeContext.current,
         "pane-1",
-        fixture.editors[0]!,
+        fixture.model,
         reloadedDocument,
         true,
         false,
@@ -299,5 +303,6 @@ async function waitForExactOwnership(
     }
     await act(async () => Promise.resolve());
   }
-  throw new Error("Expected exact production-chain live ownership to settle");
+  const context = fixture.runtimeContext.current;
+  expect(context?.ownsExactLiveModelContent?.("pane-1", fixture.path, fixture.model)).toBe(true);
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createMonotonicLanguageServerRequestIdAllocator,
+  DECORATIVE_LANGUAGE_SERVER_FEATURES,
+  INTERACTIVE_LANGUAGE_SERVER_FEATURES,
   JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+  languageServerRequestPriority,
   TauriLanguageServerFeaturesGateway,
 } from "./tauriLanguageServerFeaturesGateway";
 import type {
@@ -1126,7 +1129,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       },
       {
         command: "javascript_typescript_text_document_references",
-        request: gateway.references("/project", requestPosition, sessionId),
+        request: gateway.references("/project", requestPosition, true, sessionId),
       },
       {
         command: "javascript_typescript_text_document_document_highlights",
@@ -1140,17 +1143,68 @@ describe("TauriLanguageServerFeaturesGateway", () => {
 
     expect(new Set(requests.map(({ request }) => request.requestId)).size).toBe(requests.length);
     await Promise.all(
-      requests.map(({ command, request }) => {
-        expect(invokeCommand).toHaveBeenCalledWith(command, {
-          position: requestPosition,
-          requestId: request.requestId,
-          rootPath: "/project",
-          sessionId,
-        });
+      requests.map(({ request }) => {
         expect(request.sessionId).toBe(sessionId);
         return expect(request).resolves.toEqual(definition);
       }),
     );
+    for (const { command, request } of requests) {
+      if (languageServerRequestPriority(command) === "decorative") {
+        continue;
+      }
+      expect(invokeCommand).toHaveBeenCalledWith(command, {
+        ...(command.endsWith("_references") ? { includeDeclaration: true } : {}),
+        position: requestPosition,
+        requestId: request.requestId,
+        rootPath: "/project",
+        sessionId,
+      });
+    }
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_document_highlights",
+      {
+        position: requestPosition,
+        requestId: expect.any(Number),
+        rootPath: "/project",
+        sessionId,
+      },
+    );
+  });
+
+  it("forwards the exact JavaScript and TypeScript reference declaration context", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => ({
+      isIncomplete: false,
+      locations: [],
+      totalCount: 0,
+    }));
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+    const requestPosition = position();
+
+    const excludingDeclarations = gateway.references("/project", requestPosition, false, 41);
+    await expect(excludingDeclarations).resolves.toEqual([]);
+    expect(excludingDeclarations.sessionId).toBe(41);
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_text_document_references", {
+      includeDeclaration: false,
+      position: requestPosition,
+      requestId: excludingDeclarations.requestId,
+      rootPath: "/project",
+      sessionId: 41,
+    });
+
+    const includingDeclarations = gateway.references("/project", requestPosition, true, 42);
+    await expect(includingDeclarations).resolves.toEqual([]);
+    expect(includingDeclarations.sessionId).toBe(42);
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_text_document_references", {
+      includeDeclaration: true,
+      position: requestPosition,
+      requestId: includingDeclarations.requestId,
+      rootPath: "/project",
+      sessionId: 42,
+    });
   });
 
   it("identifies cancellable JavaScript and TypeScript code-action provide and resolve requests", async () => {
@@ -1527,6 +1581,285 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       rootPath: "/project",
     });
   });
+
+  it("classifies every prioritised feature for both language servers", () => {
+    for (const feature of INTERACTIVE_LANGUAGE_SERVER_FEATURES) {
+      expect(languageServerRequestPriority(JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS[feature])).toBe(
+        "interactive",
+      );
+      expect(DECORATIVE_LANGUAGE_SERVER_FEATURES).not.toContain(feature);
+    }
+    for (const feature of DECORATIVE_LANGUAGE_SERVER_FEATURES) {
+      expect(languageServerRequestPriority(JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS[feature])).toBe(
+        "decorative",
+      );
+    }
+    expect(languageServerRequestPriority("cancel_lsp_request")).toBe("cancellation");
+    expect(languageServerRequestPriority(JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS.formatting)).toBe(
+      "immediate",
+    );
+    expect(languageServerRequestPriority("text_document_completion")).toBe("interactive");
+    expect(languageServerRequestPriority("text_document_document_highlights")).toBe("decorative");
+  });
+
+  it("defers decorative traffic behind an in-flight interactive request", async () => {
+    const settleDefinition: Array<() => void> = [];
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (!command.endsWith("_definition")) {
+        return [];
+      }
+      await new Promise<void>((resolve) => settleDefinition.push(resolve));
+      return [];
+    });
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+
+    const definition = gateway.definition("/project", position(), 21);
+    const highlights = gateway.documentHighlights("/project", position(), 21);
+    await Promise.resolve();
+
+    expect(invokeCommand).toHaveBeenCalledTimes(1);
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_definition",
+      expect.anything(),
+    );
+
+    settleDefinition.forEach((settle) => settle());
+    await Promise.all([definition, highlights]);
+    expect(invokeCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends exact JS/TS session and scheduler request authority for decorative IPC", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async () => []);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "javascriptTypeScript",
+    );
+    const requests = [
+      {
+        args: { path: "/project/src/User.ts", rootPath: "/project" },
+        command: JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS.codeLenses,
+        request: () => gateway.codeLenses("/project", "/project/src/User.ts", 41),
+      },
+      {
+        args: { lens: codeLens(), rootPath: "/project" },
+        command: JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS.codeLensResolve,
+        request: () => gateway.resolveCodeLens("/project", codeLens(), 41),
+      },
+      {
+        args: { path: "/project/src/User.ts", range: range(), rootPath: "/project" },
+        command: JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS.inlayHints,
+        request: () => gateway.inlayHints("/project", "/project/src/User.ts", range(), 41),
+      },
+      {
+        args: { hint: inlayHint(), rootPath: "/project" },
+        command: JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS.inlayHintResolve,
+        request: () => gateway.resolveInlayHint("/project", inlayHint(), 41),
+      },
+    ];
+
+    for (const { args, command, request: createRequest } of requests) {
+      const request = createRequest();
+      await request;
+      expect(request.sessionId).toBe(41);
+      expect(invokeCommand).toHaveBeenCalledWith(command, {
+        ...args,
+        requestId: request.requestId,
+        sessionId: 41,
+      });
+    }
+  });
+
+  it("cancels a deferred decorative request without reaching the language server", async () => {
+    const settleDefinition: Array<() => void> = [];
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (!command.endsWith("_definition")) {
+        return [];
+      }
+      await new Promise<void>((resolve) => settleDefinition.push(resolve));
+      return [];
+    });
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "javascriptTypeScript",
+    );
+
+    const definition = gateway.definition("/project", position(), 21);
+    const highlights = gateway.documentHighlights("/project", position(), 21);
+    await gateway.cancelRequest("/project", 21, highlights.requestId);
+
+    await expect(highlights).resolves.toEqual([]);
+    expect(invokeCommand).not.toHaveBeenCalledWith("cancel_lsp_request", expect.anything());
+    expect(invokeCommand).not.toHaveBeenCalledWith(
+      "javascript_typescript_text_document_document_highlights",
+      expect.anything(),
+    );
+
+    settleDefinition.forEach((settle) => settle());
+    await definition;
+    expect(invokeCommand).not.toHaveBeenCalledWith(
+      "javascript_typescript_text_document_document_highlights",
+      expect.anything(),
+    );
+  });
+
+  it("cancels a released decorative request through its dispatched wire identifier", async () => {
+    const settleDefinition: Array<() => void> = [];
+    const settleHighlights: Array<() => void> = [];
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (command.endsWith("_definition")) {
+        await new Promise<void>((resolve) => settleDefinition.push(resolve));
+        return [];
+      }
+      if (command.endsWith("_document_highlights")) {
+        await new Promise<void>((resolve) => settleHighlights.push(resolve));
+        return [];
+      }
+      return [];
+    });
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "javascriptTypeScript",
+    );
+
+    const definition = gateway.definition("/project", position(), 21);
+    const highlights = gateway.documentHighlights("/project", position(), 21);
+    settleDefinition.forEach((settle) => settle());
+    await definition;
+    await Promise.resolve();
+
+    const dispatched = invokeCommand.mock.calls.find(([command]) =>
+      command.endsWith("_document_highlights"),
+    );
+    const dispatchedRequestId = (dispatched?.[1] as { requestId: number }).requestId;
+    expect(dispatchedRequestId).not.toBe(highlights.requestId);
+
+    await gateway.cancelRequest("/project", 21, highlights.requestId);
+    expect(invokeCommand).toHaveBeenCalledWith("cancel_lsp_request", {
+      requestId: dispatchedRequestId,
+      rootPath: "/project",
+      serverKind: "javascriptTypeScript",
+      sessionId: 21,
+    });
+
+    settleHighlights.forEach((settle) => settle());
+    await highlights;
+  });
+
+  it("isolates same-root scheduler and cancellation authority across session generations", async () => {
+    const settleOldDefinition: Array<() => void> = [];
+    const invokeCommand = vi.fn<InvokeCommand>(async (command, args) => {
+      if (command.endsWith("_definition") && args?.sessionId === 21) {
+        await new Promise<void>((resolve) => settleOldDefinition.push(resolve));
+      }
+      return [];
+    });
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "javascriptTypeScript",
+    );
+
+    const oldDefinition = gateway.definition("/project", position(), 21);
+    const oldHighlights = gateway.documentHighlights("/project", position(), 21);
+    const oldInlayHints = gateway.inlayHints("/project", "/project/src/User.ts", range(), 21);
+    await gateway.cancelRequest("/project", 22, oldHighlights.requestId);
+    expect(invokeCommand).not.toHaveBeenCalledWith("cancel_lsp_request", expect.anything());
+
+    const replacementHighlights = gateway.documentHighlights("/project", position(), 22);
+    const replacementInlayHints = gateway.inlayHints(
+      "/project",
+      "/project/src/User.ts",
+      range(),
+      22,
+    );
+    await Promise.all([replacementHighlights, replacementInlayHints]);
+    const returnedHighlights = gateway.documentHighlights("/project", position(), 23);
+    await returnedHighlights;
+
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_document_highlights",
+      expect.objectContaining({ rootPath: "/project", sessionId: 22 }),
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_document_highlights",
+      expect.objectContaining({ rootPath: "/project", sessionId: 23 }),
+    );
+    expect(invokeCommand).not.toHaveBeenCalledWith(
+      "javascript_typescript_text_document_document_highlights",
+      expect.objectContaining({ sessionId: 21 }),
+    );
+    expect(
+      invokeCommand.mock.calls.filter(([command]) =>
+        command.endsWith("_text_document_inlay_hints"),
+      ),
+    ).toHaveLength(1);
+
+    await expect(oldHighlights).resolves.toEqual([]);
+
+    settleOldDefinition.forEach((settle) => settle());
+    await oldDefinition;
+    await oldInlayHints;
+    expect(
+      invokeCommand.mock.calls.filter(([command]) =>
+        command.endsWith("_text_document_inlay_hints"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("preserves live dispatched cancellation while ordinary immediate traffic is saturated", async () => {
+    const definitionOwner = deferredPromise();
+    const highlightsOwner = deferredPromise();
+    const immediateOwner = deferredPromise();
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (command.endsWith("_definition")) await definitionOwner.promise;
+      if (command.endsWith("_document_highlights")) await highlightsOwner.promise;
+      if (command.endsWith("_document_symbols")) await immediateOwner.promise;
+      return [];
+    });
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+      "javascriptTypeScript",
+    );
+
+    const definition = gateway.definition("/project", position(), 31);
+    const highlights = gateway.documentHighlights("/project", position(), 31);
+    definitionOwner.resolve();
+    await definition;
+    await Promise.resolve();
+    const dispatched = invokeCommand.mock.calls.find(([command]) =>
+      command.endsWith("_document_highlights"),
+    );
+    const wireRequestId = (dispatched?.[1] as { requestId: number }).requestId;
+    expect(wireRequestId).not.toBe(highlights.requestId);
+
+    const immediate = Array.from({ length: 64 }, (_, index) =>
+      gateway.documentSymbols("/project", `/project/src/file-${index}.ts`),
+    );
+    await gateway.cancelRequest("/project", 31, highlights.requestId);
+    expect(invokeCommand).toHaveBeenCalledWith("cancel_lsp_request", {
+      requestId: wireRequestId,
+      rootPath: "/project",
+      serverKind: "javascriptTypeScript",
+      sessionId: 31,
+    });
+
+    highlightsOwner.resolve();
+    immediateOwner.resolve();
+    await Promise.all([highlights, ...immediate]);
+  });
 });
 
 function position(): LanguageServerTextDocumentPosition {
@@ -1542,6 +1875,14 @@ function range() {
     end: { character: 8, line: 10 },
     start: { character: 4, line: 10 },
   };
+}
+
+function deferredPromise() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }
 
 function codeAction() {

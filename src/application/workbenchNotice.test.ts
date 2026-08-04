@@ -13,14 +13,27 @@ describe("replaceWorkbenchNoticeGroup", () => {
       createWorkbenchNotice("error", "phpactor", "old", "diagnostics:a"),
       createWorkbenchNotice("warning", "phpactor", "other", "diagnostics:b"),
     ];
-    const replacement = [
-      createWorkbenchNotice("info", "phpactor", "new", "diagnostics:a"),
-    ];
+    const replacement = [createWorkbenchNotice("info", "phpactor", "new", "diagnostics:a")];
 
     expect(replaceWorkbenchNoticeGroup(current, "diagnostics:a", replacement)).toEqual([
       replacement[0],
       current[1],
     ]);
+  });
+
+  it("keeps the current list identity when clearing a group that holds no notices", () => {
+    const current = [createWorkbenchNotice("warning", "phpactor", "other", "diagnostics:b")];
+
+    expect(replaceWorkbenchNoticeGroup(current, "diagnostics:a", [])).toBe(current);
+  });
+
+  it("still removes the notices of a cleared group", () => {
+    const current = [
+      createWorkbenchNotice("error", "phpactor", "old", "diagnostics:a"),
+      createWorkbenchNotice("warning", "phpactor", "other", "diagnostics:b"),
+    ];
+
+    expect(replaceWorkbenchNoticeGroup(current, "diagnostics:a", [])).toEqual([current[1]]);
   });
 });
 
@@ -68,12 +81,7 @@ describe("capDiagnosticNotices", () => {
 
   it("keeps the first `limit` notices and appends an overflow indicator", () => {
     const notices = Array.from({ length: 300 }, (_, index) =>
-      createWorkbenchNotice(
-        "error",
-        "phpactor",
-        `diagnostic ${index}`,
-        "diagnostics:a",
-      ),
+      createWorkbenchNotice("error", "phpactor", `diagnostic ${index}`, "diagnostics:a"),
     );
 
     const capped = capDiagnosticNotices(notices, 100, overflowNotice);
@@ -89,9 +97,7 @@ describe("capDiagnosticNotices", () => {
   });
 
   it("does not append an overflow indicator when nothing is hidden", () => {
-    const notices = [
-      createWorkbenchNotice("error", "phpactor", "a", "diagnostics:a"),
-    ];
+    const notices = [createWorkbenchNotice("error", "phpactor", "a", "diagnostics:a")];
 
     expect(capDiagnosticNotices(notices, 1, overflowNotice)).toBe(notices);
   });

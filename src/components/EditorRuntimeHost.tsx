@@ -10,6 +10,7 @@ import {
 } from "react";
 import type * as Monaco from "monaco-editor";
 import type { EditorDocument } from "../domain/workspace";
+import type { LargeSmartDocumentMetrics } from "../domain/largeDocumentPolicy";
 import type { DebugHoverEvaluationPort } from "../application/useDebugHoverEvaluation";
 import type { EditorGroupFocusRunner } from "../application/editorGroupFocusPort";
 import type { LiveDocumentRuntime } from "../application/liveDocumentRuntime";
@@ -650,6 +651,7 @@ export function EditorRuntimeHost({
                   const current = registrationsRef.current.get(id);
                   const currentDocument = current?.routing.activeDocumentRef.current ?? null;
                   if (!current || !currentDocument) return false;
+                  const metrics = largeSmartDocumentMetricsForModel(model);
                   return publishGuardedLegacyProjection(
                     guardedLegacyProjectionRef.current,
                     id,
@@ -659,7 +661,11 @@ export function EditorRuntimeHost({
                     currentDocument,
                     content,
                     () =>
-                      current.onModelContentChange(content, registration.activePath ?? undefined),
+                      current.onModelContentChange(
+                        content,
+                        registration.activePath ?? undefined,
+                        metrics,
+                      ),
                   );
                 },
                 utf16Length: safeNonNegativeModelValue(() => model.getValueLength()),
@@ -792,7 +798,7 @@ export function EditorRuntimeHost({
               ? AUTHORITATIVE_EDITOR_LIVE_EDIT
               : LEGACY_REQUIRED_EDITOR_LIVE_EDIT;
           },
-          onChange: (content: string) => {
+          onChange: (content: string, metrics?: LargeSmartDocumentMetrics) => {
             const current = registrationsRef.current.get(registrationId);
             const currentAuthority =
               javaScriptTypeScriptOwnerIdentityByRegistrationRef.current.get(registrationId) ??
@@ -812,7 +818,11 @@ export function EditorRuntimeHost({
               return;
             }
             if (!liveIngress || !boundModel) {
-              return current.onModelContentChange(content, registration.activePath ?? undefined);
+              return current.onModelContentChange(
+                content,
+                registration.activePath ?? undefined,
+                metrics,
+              );
             }
             const currentDocument = current.routing.activeDocumentRef.current;
             if (!currentDocument) return false;
@@ -835,7 +845,12 @@ export function EditorRuntimeHost({
               },
               currentDocument,
               content,
-              () => current.onModelContentChange(content, registration.activePath ?? undefined),
+              () =>
+                current.onModelContentChange(
+                  content,
+                  registration.activePath ?? undefined,
+                  metrics,
+                ),
             );
           },
         };
@@ -1789,6 +1804,19 @@ function safeNonNegativeModelValue(read: () => number): number {
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   } catch {
     return 0;
+  }
+}
+
+function largeSmartDocumentMetricsForModel(
+  model: Monaco.editor.ITextModel,
+): LargeSmartDocumentMetrics | undefined {
+  try {
+    return Object.freeze({
+      lineCount: model.getLineCount(),
+      utf16Length: model.getValueLength(),
+    });
+  } catch {
+    return undefined;
   }
 }
 

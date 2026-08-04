@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BackgroundTokenizer,
+  idleCallbackScheduler,
   type BackgroundTokenizableModel,
   type IdleScheduler,
 } from "./backgroundTokenizer";
@@ -88,7 +89,25 @@ describe("BackgroundTokenizer", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("delays fallback slices when requestIdleCallback is unavailable", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestIdleCallback", undefined);
+    vi.stubGlobal("cancelIdleCallback", undefined);
+    const slice = vi.fn();
+
+    idleCallbackScheduler().schedule(slice);
+
+    vi.advanceTimersByTime(0);
+    expect(slice).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(15);
+    expect(slice).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(slice).toHaveBeenCalledOnce();
   });
 
   it("does not tokenize synchronously on start (only schedules the first slice)", () => {
@@ -214,6 +233,7 @@ describe("BackgroundTokenizer", () => {
     const model = fakeModel(100000);
     const tokenizer = new BackgroundTokenizer(scheduler, {
       chunkSize: 5000,
+      eligibleLineLimit: 100000,
       maxLines: 20000,
     });
 
@@ -224,6 +244,17 @@ describe("BackgroundTokenizer", () => {
     expect(scheduler.pending).toBe(0);
     // Never tokenizes past the cap even though the model has far more lines.
     expect(Math.max(...model.forcedLines)).toBe(20000);
+  });
+
+  it("does not warm a borderline-large 5k-line model", () => {
+    const model = fakeModel(5000);
+    const tokenizer = new BackgroundTokenizer(scheduler);
+
+    tokenizer.start(model);
+    scheduler.runAll();
+
+    expect(model.forceTokenization).not.toHaveBeenCalled();
+    expect(scheduler.pending).toBe(0);
   });
 
   it("does nothing for an empty/zero-line model", () => {

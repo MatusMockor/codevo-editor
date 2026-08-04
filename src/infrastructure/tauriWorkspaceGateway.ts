@@ -473,12 +473,15 @@ export class TauriWorkspaceGateway
   }
 
   private optionalTrustedTarget(path: string, workspaceId?: string): TrustedWorkspaceTarget | null {
-    const match = this.workspaceIdentities?.matchForPath?.(path, workspaceId);
-    if (match) {
-      return {
-        workspaceId: match.descriptor.workspaceId,
-        relativePath: match.relativePath,
-      };
+    const matchForPath = this.workspaceIdentities?.matchForPath;
+    if (matchForPath) {
+      const match = matchForPath.call(this.workspaceIdentities, path, workspaceId);
+      return match
+        ? {
+            workspaceId: match.descriptor.workspaceId,
+            relativePath: match.relativePath,
+          }
+        : null;
     }
 
     const descriptor = this.workspaceIdentities?.descriptorForPath(path) ?? null;

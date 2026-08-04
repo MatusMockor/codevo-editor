@@ -1,3 +1,4 @@
+use super::pending_requests::ResponseBodyBound;
 use super::session_writer::SessionMessageWriter;
 use super::{
     write_with_session_stdin, JavaScriptTypeScriptLanguageServerRegistry, JsonRpcNotification,
@@ -98,7 +99,12 @@ pub(super) fn send_request_with_timeout(
     let (tx, rx) = mpsc::channel();
 
     pending_requests
-        .admit(wire_request_id, client_request_id, tx)
+        .admit(
+            wire_request_id,
+            client_request_id,
+            ResponseBodyBound::for_method(method),
+            tx,
+        )
         .map_err(|error| LanguageServerRequestError::from(error.to_string()))?;
 
     let started_at = Instant::now();

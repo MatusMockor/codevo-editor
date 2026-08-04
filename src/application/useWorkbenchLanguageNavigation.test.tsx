@@ -139,6 +139,7 @@ function javaScriptTypeScriptLanguageServerGateway(): JavaScriptTypeScriptLangua
     codeActions: vi.fn((_rootPath, _path, _range, _context, sessionId) =>
       identifiedRequest([], sessionId),
     ),
+    codeLenses: vi.fn((_rootPath, _path, sessionId) => identifiedRequest([], sessionId)),
     workspaceSymbols: vi.fn((_rootPath, _query, sessionId) => identifiedRequest([], sessionId)),
     completion: vi.fn((_rootPath, _position, sessionId) =>
       identifiedRequest({ isIncomplete: false, items: [] }, sessionId),
@@ -153,16 +154,21 @@ function javaScriptTypeScriptLanguageServerGateway(): JavaScriptTypeScriptLangua
     ),
     hover: vi.fn((_rootPath, _position, sessionId) => identifiedRequest(null, sessionId)),
     implementation: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    inlayHints: vi.fn((_rootPath, _path, _range, sessionId) => identifiedRequest([], sessionId)),
     linkedEditingRanges: vi.fn((_rootPath, _position, sessionId) =>
       identifiedRequest(null, sessionId),
     ),
     rangeSemanticTokens: vi.fn((_rootPath, _path, _range, sessionId) =>
       identifiedRequest(null, sessionId),
     ),
-    references: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),
+    references: vi.fn((_rootPath, _position, _includeDeclaration, sessionId) =>
+      identifiedRequest([], sessionId),
+    ),
     resolveCodeAction: vi.fn((_rootPath, action, sessionId) =>
       identifiedRequest(action, sessionId),
     ),
+    resolveCodeLens: vi.fn((_rootPath, lens, sessionId) => identifiedRequest(lens, sessionId)),
+    resolveInlayHint: vi.fn((_rootPath, hint, sessionId) => identifiedRequest(hint, sessionId)),
     semanticTokens: vi.fn((_rootPath, _path, sessionId) => identifiedRequest(null, sessionId)),
     signatureHelp: vi.fn((_rootPath, _position, sessionId) => identifiedRequest(null, sessionId)),
     sourceDefinition: vi.fn((_rootPath, _position, sessionId) => identifiedRequest([], sessionId)),

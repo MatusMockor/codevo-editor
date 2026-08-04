@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -17,7 +18,14 @@ import {
   type EditorLayout,
   type EditorGroupsState,
 } from "../domain/editorGroups";
+import {
+  DEFAULT_DOCUMENT_CONTENT_COMMIT_COALESCING_POLICY,
+  isCoalescableLargeContentCommit,
+  isDocumentContentCommitPolicyLarge,
+  type DocumentContentCommitCoalescingPolicy,
+} from "../domain/documentContentCommitCoalescing";
 import { isPersistableEditorDocumentPath } from "../domain/editorDocumentSchemes";
+import type { LargeSmartDocumentMetrics } from "../domain/largeDocumentPolicy";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import {
   buildEditorSurfaceSnapshot,
@@ -29,6 +37,7 @@ import type { EditorDocument, ImageTab } from "../domain/workspace";
 import { isSessionPathInWorkspace } from "./documentSessionState";
 import { DocumentSessionStore } from "./documentSessionStore";
 import type { DocumentSessionOwnerInput } from "./documentSessionStorePort";
+import { CoalescedCommitScheduler } from "./coalescedCommitScheduler";
 import type { ResolveDocumentSaveOwnership } from "./documentSaveIdentity";
 import {
   EditorSessionDocumentAuthoritySidecar,
@@ -113,6 +122,7 @@ export interface EditorSessionState {
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
   snapshotEditorSurface: (rootPath: string) => EditorSurfaceSnapshot;
   subscribeChangedDocuments: (listener: (paths: readonly string[]) => void) => () => void;
+  updateDocumentContent(path: string, content: string, metrics: LargeSmartDocumentMetrics): boolean;
   updateEditorGroups: (update: (current: EditorGroupsState) => EditorGroupsState) => void;
 }
 
@@ -126,7 +136,11 @@ export interface DocumentSessionAuthorityRevision {
 
 const MAX_DOCUMENT_SESSION_AUTHORITY_REVISION_SEQUENCE = Number.MAX_SAFE_INTEGER;
 
-export function useEditorSessionState(): EditorSessionState {
+export function useEditorSessionState(
+  documentContentCommitCoalescingPolicy?: DocumentContentCommitCoalescingPolicy,
+): EditorSessionState {
+  const effectiveDocumentContentCommitCoalescingPolicy =
+    documentContentCommitCoalescingPolicy ?? DEFAULT_DOCUMENT_CONTENT_COMMIT_COALESCING_POLICY;
   const [documents, setDocumentsState] = useState<Documents>({});
   const [imageTabs, setImageTabsState] = useState<ImageTabs>({});
   const [markdownPreviewTabs, setMarkdownPreviewTabsState] = useState<MarkdownPreviewTabs>({});
@@ -164,6 +178,18 @@ export function useEditorSessionState(): EditorSessionState {
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
   const changedDocumentListenersRef = useRef(new Set<(paths: readonly string[]) => void>());
+  const largeDocumentClassificationByPathRef = useRef(
+    new Map<
+      string,
+      {
+        readonly characterLimit: number;
+        readonly large: boolean;
+        readonly lineCount: number;
+        readonly lineLimit: number;
+        readonly utf16Length: number;
+      }
+    >(),
+  );
 
   const advanceDocumentSessionAuthorityRevision = useCallback(() => {
     const current = documentSessionAuthorityRevisionRef.current;
@@ -221,14 +247,100 @@ export function useEditorSessionState(): EditorSessionState {
     }
   }, []);
 
+  const pendingCoalescedDocumentsRef = useRef<Documents | null>(null);
+  const documentsCommitSchedulerRef = useRef<CoalescedCommitScheduler | null>(null);
+  if (!documentsCommitSchedulerRef.current) {
+    documentsCommitSchedulerRef.current = new CoalescedCommitScheduler(() => {
+      pendingCoalescedDocumentsRef.current = null;
+      setDocumentsState(documentsRef.current);
+    });
+  }
+  const documentsCommitScheduler = documentsCommitSchedulerRef.current;
+  useEffect(() => {
+    documentsCommitScheduler.arm();
+
+    return () => {
+      documentsCommitScheduler.dispose();
+    };
+  }, [documentsCommitScheduler]);
+  useEffect(() => {
+    if (pendingCoalescedDocumentsRef.current === null) {
+      return;
+    }
+    pendingCoalescedDocumentsRef.current = null;
+    documentsCommitScheduler.commitNow();
+  }, [
+    documentsCommitScheduler,
+    effectiveDocumentContentCommitCoalescingPolicy.characterLimit,
+    effectiveDocumentContentCommitCoalescingPolicy.lineLimit,
+  ]);
+
   const setDocuments = useCallback<Dispatch<SetStateAction<Documents>>>(
     (update) => {
       const next = resolveStateUpdate(documentsRef.current, update);
       documentsRef.current = next;
+      pendingCoalescedDocumentsRef.current = null;
+      largeDocumentClassificationByPathRef.current.clear();
       synchronizeActiveGroupRefs(editorGroupsRef.current);
-      setDocumentsState(next);
+      documentsCommitScheduler.commitNow();
     },
-    [synchronizeActiveGroupRefs],
+    [documentsCommitScheduler, synchronizeActiveGroupRefs],
+  );
+  const updateDocumentContent = useCallback(
+    (path: string, content: string, metrics: LargeSmartDocumentMetrics): boolean => {
+      const current = documentsRef.current;
+      const before = current[path];
+      if (!before || before.readOnly || before.content === content) {
+        return false;
+      }
+
+      const after = { ...before, content };
+      const cachedClassification = largeDocumentClassificationByPathRef.current.get(path);
+      const policyLarge =
+        cachedClassification?.characterLimit ===
+          effectiveDocumentContentCommitCoalescingPolicy.characterLimit &&
+        cachedClassification.lineLimit ===
+          effectiveDocumentContentCommitCoalescingPolicy.lineLimit &&
+        cachedClassification.lineCount === metrics.lineCount &&
+        cachedClassification.utf16Length === metrics.utf16Length
+          ? cachedClassification.large
+          : isDocumentContentCommitPolicyLarge(
+              metrics,
+              effectiveDocumentContentCommitCoalescingPolicy,
+            );
+      const coalescable = isCoalescableLargeContentCommit(before, after, policyLarge);
+      largeDocumentClassificationByPathRef.current.set(path, {
+        characterLimit: effectiveDocumentContentCommitCoalescingPolicy.characterLimit,
+        large: policyLarge,
+        lineCount: metrics.lineCount,
+        lineLimit: effectiveDocumentContentCommitCoalescingPolicy.lineLimit,
+        utf16Length: metrics.utf16Length,
+      });
+
+      let next: Documents;
+      if (coalescable && pendingCoalescedDocumentsRef.current === current) {
+        current[path] = after;
+        next = current;
+      } else {
+        next = { ...current, [path]: after };
+      }
+      documentsRef.current = next;
+      synchronizeActiveGroupRefs(editorGroupsRef.current);
+
+      if (coalescable) {
+        pendingCoalescedDocumentsRef.current = next;
+        documentsCommitScheduler.commitCoalesced();
+      } else {
+        pendingCoalescedDocumentsRef.current = null;
+        documentsCommitScheduler.commitNow();
+      }
+      return true;
+    },
+    [
+      documentsCommitScheduler,
+      effectiveDocumentContentCommitCoalescingPolicy,
+      synchronizeActiveGroupRefs,
+    ],
   );
   const reconcileDocumentSessionTopology = useCallback(
     (update: SetStateAction<Documents>): boolean => {
@@ -517,11 +629,17 @@ export function useEditorSessionState(): EditorSessionState {
       advanceDocumentSessionAuthorityRevision();
     }
     synchronizeActiveGroupRefs(nextEditorGroups);
-    setDocumentsState({});
+    pendingCoalescedDocumentsRef.current = null;
+    largeDocumentClassificationByPathRef.current.clear();
+    documentsCommitScheduler.commitNow();
     setImageTabsState({});
     setMarkdownPreviewTabsState({});
     setEditorGroupsState(nextEditorGroups);
-  }, [advanceDocumentSessionAuthorityRevision, synchronizeActiveGroupRefs]);
+  }, [
+    advanceDocumentSessionAuthorityRevision,
+    documentsCommitScheduler,
+    synchronizeActiveGroupRefs,
+  ]);
 
   const liveDocumentTabSnapshot = useCallback(
     (): DocumentTabSessionSnapshot =>
@@ -575,10 +693,12 @@ export function useEditorSessionState(): EditorSessionState {
       }
       invalidateChangedGroupSelections(snapshot.editorGroups);
       documentsRef.current = snapshot.documents;
+      pendingCoalescedDocumentsRef.current = null;
+      largeDocumentClassificationByPathRef.current.clear();
       imageTabsRef.current = snapshot.imageTabs;
       editorGroupsRef.current = snapshot.editorGroups;
       synchronizeActiveGroupRefs(snapshot.editorGroups);
-      setDocumentsState(snapshot.documents);
+      documentsCommitScheduler.commitNow();
       setImageTabsState(snapshot.imageTabs);
       setEditorGroupsState(snapshot.editorGroups);
       if (
@@ -590,6 +710,7 @@ export function useEditorSessionState(): EditorSessionState {
     },
     [
       advanceDocumentSessionAuthorityRevision,
+      documentsCommitScheduler,
       invalidateChangedGroupSelections,
       invalidateReplacedDocumentSelections,
       liveDocumentTabSnapshot,
@@ -765,6 +886,7 @@ export function useEditorSessionState(): EditorSessionState {
     setPreviewPath,
     snapshotEditorSurface,
     subscribeChangedDocuments,
+    updateDocumentContent,
     updateEditorGroups,
   };
 }

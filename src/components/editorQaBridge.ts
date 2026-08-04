@@ -15,6 +15,8 @@ import { modelPath } from "./phpMonacoDocumentContext";
 
 type MonacoEditor = Monaco.editor.IStandaloneCodeEditor;
 type MonacoPosition = Monaco.Position;
+const MAX_WORKSPACE_FILE_OPEN_SETTLE_FRAMES = 600;
+const MAX_WORKSPACE_ROOT_OPEN_SETTLE_FRAMES = 3_600;
 
 export interface EditorQaCompletionItem {
   detail?: string;
@@ -43,6 +45,7 @@ export interface EditorQaBridge {
   triggerCompletion(): boolean;
   triggerDefinition(): Promise<boolean>;
   triggerImplementation(): boolean;
+  triggerReferences(): boolean;
 }
 
 export interface EditorQaDefinitionRequest {
@@ -58,38 +61,26 @@ interface EditorQaBridgeDependencies {
   editor(): MonacoEditor | null;
   getActiveDocument(): EditorDocument | null;
   getWorkspaceRoot(): string | null;
-  openWorkspaceFile?(
-    path: string,
-    request: EditorQaOpenWorkspaceFileRequest,
-  ): Promise<boolean>;
+  openWorkspaceFile?(path: string, request: EditorQaOpenWorkspaceFileRequest): Promise<boolean>;
   openWorkspaceRoot?(path: string): Promise<boolean>;
   provideBladeDefinition(
     source: string,
     offset: number,
     request: EditorQaDefinitionRequest,
   ): Promise<boolean>;
-  provideBladeCompletions(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<BladeCompletion[]>;
+  provideBladeCompletions(source: string, position: MonacoPosition): Promise<BladeCompletion[]>;
   provideLatteDefinition(
     source: string,
     offset: number,
     request: EditorQaDefinitionRequest,
   ): Promise<boolean>;
-  provideLatteCompletions(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<LatteCompletion[]>;
+  provideLatteCompletions(source: string, position: MonacoPosition): Promise<LatteCompletion[]>;
   provideNeonDefinition(
     source: string,
     offset: number,
     request: EditorQaDefinitionRequest,
   ): Promise<boolean>;
-  provideNeonCompletions(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<NeonCompletion[]>;
+  provideNeonCompletions(source: string, position: MonacoPosition): Promise<NeonCompletion[]>;
   providePhpFrameworkDefinition(
     source: string,
     offset: number,
@@ -138,9 +129,7 @@ export function editorQaBridgeEnabled(
   }
 }
 
-export function installEditorQaBridge(
-  dependencies: EditorQaBridgeDependencies,
-): () => void {
+export function installEditorQaBridge(dependencies: EditorQaBridgeDependencies): () => void {
   const bridge = createEditorQaBridge(dependencies);
   window.__codevoQa = bridge;
 
@@ -151,9 +140,7 @@ export function installEditorQaBridge(
   };
 }
 
-function createEditorQaBridge(
-  dependencies: EditorQaBridgeDependencies,
-): EditorQaBridge {
+function createEditorQaBridge(dependencies: EditorQaBridgeDependencies): EditorQaBridge {
   return {
     getActiveFile: () => currentPath(dependencies),
     getCompletionItems: () => providerCompletionItems(dependencies),
@@ -165,15 +152,12 @@ function createEditorQaBridge(
     openWorkspaceFile: (path) => openWorkspaceFile(dependencies, path),
     openWorkspaceRoot: (path) => openWorkspaceRoot(dependencies, path),
     setCursor: (position) => setCursor(dependencies, position),
-    triggerCompletion: () =>
-      triggerEditorAction(dependencies, "codevo.qa", "editor.action.triggerSuggest"),
+    triggerCompletion: () => triggerCompletion(dependencies),
     triggerDefinition: () => triggerDefinition(dependencies),
     triggerImplementation: () =>
-      triggerEditorAction(
-        dependencies,
-        "codevo.qa",
-        "editor.action.goToImplementation",
-      ),
+      triggerEditorAction(dependencies, "codevo.qa", "editor.action.goToImplementation"),
+    triggerReferences: () =>
+      triggerEditorAction(dependencies, "codevo.qa", "editor.action.goToReferences"),
   };
 }
 
@@ -208,15 +192,21 @@ async function openWorkspaceFile(
 
   const opened = await dependencies.openWorkspaceFile(requestedPath, request);
 
-  if (
-    !opened ||
-    requestStale ||
-    !workspaceRootKeysStillEqual(dependencies, root)
-  ) {
+  if (!opened || requestStale || !workspaceRootKeysStillEqual(dependencies, root)) {
     return false;
   }
 
-  return currentPath(dependencies) === requestedPath;
+  for (let frame = 0; frame < MAX_WORKSPACE_FILE_OPEN_SETTLE_FRAMES; frame += 1) {
+    if (requestStale || !workspaceRootKeysStillEqual(dependencies, root)) return false;
+    if (currentPath(dependencies) === requestedPath) return true;
+    await nextAnimationFrame();
+  }
+
+  return false;
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 async function openWorkspaceRoot(
@@ -229,9 +219,34 @@ async function openWorkspaceRoot(
     return false;
   }
 
-  await dependencies.openWorkspaceRoot(requestedPath);
+  let requestSettled = false;
+  let requestAccepted = false;
+  void dependencies.openWorkspaceRoot(requestedPath).then(
+    (accepted) => {
+      requestAccepted = accepted;
+      requestSettled = true;
+    },
+    () => {
+      requestSettled = true;
+    },
+  );
 
-  return workspaceRootKeysStillEqual(dependencies, requestedPath);
+  // Opening a workspace also hydrates trust, discovery, session and git state.
+  // Those follow-up tasks are not part of the QA bridge's observable contract:
+  // once the requested root is committed, file-level QA can safely continue.
+  // Waiting for the full controller promise made a stalled optional hydrator
+  // leave performance runs pending forever even though the root was usable.
+  for (let frame = 0; frame < MAX_WORKSPACE_ROOT_OPEN_SETTLE_FRAMES; frame += 1) {
+    if (workspaceRootKeysStillEqual(dependencies, requestedPath)) {
+      return true;
+    }
+    if (requestSettled) {
+      return requestAccepted && workspaceRootKeysStillEqual(dependencies, requestedPath);
+    }
+    await nextAnimationFrame();
+  }
+
+  return false;
 }
 
 async function providerCompletionItems(
@@ -249,25 +264,17 @@ async function providerCompletionItems(
   const source = model.getValue();
 
   if (document.language === "php") {
-    const completions = await dependencies.providePhpMethodCompletions(
-      source,
-      position,
-    );
+    const completions = await dependencies.providePhpMethodCompletions(source, position);
 
     if (!isSnapshotCurrent(dependencies, snapshot)) {
       return [];
     }
 
-    return orderPhpMemberCompletionsByCategory(completions).map(
-      phpCompletionItem,
-    );
+    return orderPhpMemberCompletionsByCategory(completions).map(phpCompletionItem);
   }
 
   if (document.language === "blade") {
-    const completions = await dependencies.provideBladeCompletions(
-      source,
-      position,
-    );
+    const completions = await dependencies.provideBladeCompletions(source, position);
 
     if (!isSnapshotCurrent(dependencies, snapshot)) {
       return [];
@@ -277,10 +284,7 @@ async function providerCompletionItems(
   }
 
   if (document.language === "latte") {
-    const completions = await dependencies.provideLatteCompletions(
-      source,
-      position,
-    );
+    const completions = await dependencies.provideLatteCompletions(source, position);
 
     if (!isSnapshotCurrent(dependencies, snapshot)) {
       return [];
@@ -290,10 +294,7 @@ async function providerCompletionItems(
   }
 
   if (document.language === "neon") {
-    const completions = await dependencies.provideNeonCompletions(
-      source,
-      position,
-    );
+    const completions = await dependencies.provideNeonCompletions(source, position);
 
     if (!isSnapshotCurrent(dependencies, snapshot)) {
       return [];
@@ -305,9 +306,7 @@ async function providerCompletionItems(
   return [];
 }
 
-async function triggerDefinition(
-  dependencies: EditorQaBridgeDependencies,
-): Promise<boolean> {
+async function triggerDefinition(dependencies: EditorQaBridgeDependencies): Promise<boolean> {
   const snapshot = currentSnapshot(dependencies);
   const document = snapshot?.document ?? null;
   const model = currentModel(dependencies);
@@ -333,12 +332,11 @@ async function triggerDefinition(
   };
 
   if (document.language === "php") {
-    const presenterHandled =
-      await dependencies.providePhpPresenterLinkDefinition(
-        source,
-        offset,
-        request,
-      );
+    const presenterHandled = await dependencies.providePhpPresenterLinkDefinition(
+      source,
+      offset,
+      request,
+    );
 
     if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
@@ -364,11 +362,7 @@ async function triggerDefinition(
   }
 
   if (document.language === "blade") {
-    const handled = await dependencies.provideBladeDefinition(
-      source,
-      offset,
-      request,
-    );
+    const handled = await dependencies.provideBladeDefinition(source, offset, request);
 
     if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
@@ -380,11 +374,7 @@ async function triggerDefinition(
   }
 
   if (document.language === "latte") {
-    const handled = await dependencies.provideLatteDefinition(
-      source,
-      offset,
-      request,
-    );
+    const handled = await dependencies.provideLatteDefinition(source, offset, request);
 
     if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
@@ -396,11 +386,7 @@ async function triggerDefinition(
   }
 
   if (document.language === "neon") {
-    const handled = await dependencies.provideNeonDefinition(
-      source,
-      offset,
-      request,
-    );
+    const handled = await dependencies.provideNeonDefinition(source, offset, request);
 
     if (requestStale || !isSnapshotCurrent(dependencies, snapshot)) {
       return false;
@@ -415,17 +401,10 @@ async function triggerDefinition(
     return false;
   }
 
-  return triggerEditorAction(
-    dependencies,
-    "codevo.qa",
-    "editor.action.revealDefinition",
-  );
+  return triggerEditorAction(dependencies, "codevo.qa", "editor.action.revealDefinition");
 }
 
-function setCursor(
-  dependencies: EditorQaBridgeDependencies,
-  position: EditorPosition,
-): boolean {
+function setCursor(dependencies: EditorQaBridgeDependencies, position: EditorPosition): boolean {
   const editor = dependencies.editor();
   const model = currentModel(dependencies);
 
@@ -457,9 +436,23 @@ function triggerEditorAction(
   return true;
 }
 
-function diagnostics(
-  dependencies: EditorQaBridgeDependencies,
-): LanguageServerDiagnostic[] {
+function triggerCompletion(dependencies: EditorQaBridgeDependencies): boolean {
+  const editor = dependencies.editor();
+
+  if (!editor?.getModel()) {
+    return false;
+  }
+
+  editor.focus();
+  // A visible suggestion widget makes Monaco's triggerSuggest action a no-op.
+  // Reset it first so every QA/performance probe reaches the provider.
+  editor.trigger("codevo.qa", "hideSuggestWidget", {});
+  editor.trigger("codevo.qa", "editor.action.triggerSuggest", {});
+
+  return true;
+}
+
+function diagnostics(dependencies: EditorQaBridgeDependencies): LanguageServerDiagnostic[] {
   const path = currentPath(dependencies);
 
   if (!path) {
@@ -469,10 +462,7 @@ function diagnostics(
   return dependencies.diagnosticsByPath()[path] ?? [];
 }
 
-function workspacePathInRoot(
-  path: string,
-  workspaceRoot: string | null,
-): string | null {
+function workspacePathInRoot(path: string, workspaceRoot: string | null): string | null {
   if (!workspaceRoot) {
     return null;
   }
@@ -488,9 +478,7 @@ function workspacePathInRoot(
     return normalizedPath;
   }
 
-  const rootPrefix = normalizedRoot.endsWith("/")
-    ? normalizedRoot
-    : `${normalizedRoot}/`;
+  const rootPrefix = normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`;
 
   if (!normalizedPath.startsWith(rootPrefix)) {
     return null;
@@ -506,10 +494,7 @@ function normalizeWorkspacePath(path: string): string | null {
     return null;
   }
 
-  const normalizedPath = trimmedPath
-    .split("\\")
-    .join("/")
-    .replace(/\/+/g, "/");
+  const normalizedPath = trimmedPath.split("\\").join("/").replace(/\/+/g, "/");
   const segments: string[] = [];
 
   for (const segment of normalizedPath.split("/")) {
@@ -547,20 +532,15 @@ function workspaceRootKeysStillEqual(
   root: string,
 ): boolean {
   return (
-    normalizeWorkspacePath(dependencies.getWorkspaceRoot() ?? "") ===
-    normalizeWorkspacePath(root)
+    normalizeWorkspacePath(dependencies.getWorkspaceRoot() ?? "") === normalizeWorkspacePath(root)
   );
 }
 
-function currentPosition(
-  dependencies: EditorQaBridgeDependencies,
-): MonacoPosition | null {
+function currentPosition(dependencies: EditorQaBridgeDependencies): MonacoPosition | null {
   return dependencies.editor()?.getPosition() ?? null;
 }
 
-function currentModel(
-  dependencies: EditorQaBridgeDependencies,
-): Monaco.editor.ITextModel | null {
+function currentModel(dependencies: EditorQaBridgeDependencies): Monaco.editor.ITextModel | null {
   const document = dependencies.getActiveDocument();
   const model = dependencies.editor()?.getModel() ?? null;
 
@@ -589,9 +569,7 @@ interface EditorQaSnapshot {
 
 interface EditorQaOpenWorkspaceSnapshot {
   documentPath: string | null;
-  model: Monaco.editor.ITextModel | null;
   root: string;
-  version: number | null;
 }
 
 function currentOpenWorkspaceSnapshot(
@@ -611,15 +589,11 @@ function currentOpenWorkspaceSnapshot(
 
   return {
     documentPath: document?.path ?? null,
-    model,
     root,
-    version: model ? modelVersion(model) : null,
   };
 }
 
-function currentSnapshot(
-  dependencies: EditorQaBridgeDependencies,
-): EditorQaSnapshot | null {
+function currentSnapshot(dependencies: EditorQaBridgeDependencies): EditorQaSnapshot | null {
   const document = dependencies.getActiveDocument();
   const model = currentModel(dependencies);
 
@@ -667,25 +641,11 @@ function isOpenWorkspaceSnapshotCurrent(
   snapshot: EditorQaOpenWorkspaceSnapshot,
 ): boolean {
   const document = dependencies.getActiveDocument();
-  const model = dependencies.editor()?.getModel() ?? null;
-
   if (!workspaceRootKeysStillEqual(dependencies, snapshot.root)) {
     return false;
   }
 
-  if ((document?.path ?? null) !== snapshot.documentPath) {
-    return false;
-  }
-
-  if (document && (!model || modelPath(model) !== document.path)) {
-    return false;
-  }
-
-  if (model !== snapshot.model) {
-    return false;
-  }
-
-  return (model ? modelVersion(model) : null) === snapshot.version;
+  return (document?.path ?? null) === snapshot.documentPath;
 }
 
 function modelVersion(model: Monaco.editor.ITextModel): number | null {
@@ -695,7 +655,7 @@ function modelVersion(model: Monaco.editor.ITextModel): number | null {
     }
   ).getVersionId;
 
-  return versionProvider?.() ?? null;
+  return versionProvider?.call(model) ?? null;
 }
 
 function offsetAtPosition(
@@ -710,15 +670,12 @@ function offsetAtPosition(
   ).getOffsetAt;
 
   if (offsetProvider) {
-    return offsetProvider(position);
+    return offsetProvider.call(model, position);
   }
 
   const lines = source.split("\n");
   const previousLines = lines.slice(0, Math.max(0, position.lineNumber - 1));
-  const previousLength = previousLines.reduce(
-    (length, line) => length + line.length + 1,
-    0,
-  );
+  const previousLength = previousLines.reduce((length, line) => length + line.length + 1, 0);
 
   return previousLength + Math.max(0, position.column - 1);
 }

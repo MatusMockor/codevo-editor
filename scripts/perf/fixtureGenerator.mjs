@@ -98,6 +98,7 @@ export function generateHugeUnionTsFileContent({ members }) {
 }
 
 export const LARGE_FILE_SPECS = [
+  { name: "medium-2k.ts", lines: 2000, seed: 2 },
   { name: "large-5k.ts", lines: 5000, seed: 5 },
   { name: "large-20k.ts", lines: 20000, seed: 20 },
   { name: "large-100k.ts", lines: 100000, seed: 100 },

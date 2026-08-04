@@ -230,6 +230,8 @@ function stubJavaScriptTypeScriptFeaturesGateway(): JavaScriptTypeScriptLanguage
     ...gateway,
     codeActions: (rootPath, path, range, context, sessionId) =>
       identifiedRequest(gateway.codeActions(rootPath, path, range, context), sessionId),
+    codeLenses: (rootPath, path, sessionId) =>
+      identifiedRequest(gateway.codeLenses(rootPath, path), sessionId),
     completion: (rootPath, position, context, sessionId) =>
       identifiedRequest(gateway.completion(rootPath, position, context), sessionId),
     declaration: (rootPath, position, sessionId) =>
@@ -242,16 +244,22 @@ function stubJavaScriptTypeScriptFeaturesGateway(): JavaScriptTypeScriptLanguage
       identifiedRequest(gateway.hover(rootPath, position), sessionId),
     implementation: (rootPath, position, sessionId) =>
       identifiedRequest(gateway.implementation(rootPath, position), sessionId),
+    inlayHints: (rootPath, path, range, sessionId) =>
+      identifiedRequest(gateway.inlayHints(rootPath, path, range), sessionId),
     linkedEditingRanges: (rootPath, position, sessionId) =>
       identifiedRequest(gateway.linkedEditingRanges(rootPath, position), sessionId),
     rangeSemanticTokens: (rootPath, path, range, sessionId) =>
       identifiedRequest(gateway.rangeSemanticTokens(rootPath, path, range), sessionId),
-    references: (rootPath, position, sessionId) =>
+    references: (rootPath, position, _includeDeclaration, sessionId) =>
       identifiedRequest(gateway.references(rootPath, position), sessionId),
     executeCommandLocations: (rootPath, command, sessionId) =>
       identifiedRequest(gateway.executeCommandLocations(rootPath, command), sessionId),
     resolveCodeAction: (rootPath, action, sessionId) =>
       identifiedRequest(gateway.resolveCodeAction(rootPath, action), sessionId),
+    resolveCodeLens: (rootPath, lens, sessionId) =>
+      identifiedRequest(gateway.resolveCodeLens(rootPath, lens), sessionId),
+    resolveInlayHint: (rootPath, hint, sessionId) =>
+      identifiedRequest(gateway.resolveInlayHint(rootPath, hint), sessionId),
     semanticTokens: (rootPath, path, sessionId) =>
       identifiedRequest(gateway.semanticTokens(rootPath, path), sessionId),
     signatureHelp: (rootPath, position, context, sessionId) =>

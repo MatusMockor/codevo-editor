@@ -49,55 +49,71 @@ impl DirectoryStream {
     }
 
     pub(super) fn next_entry(&mut self, directory: &File) -> io::Result<DirectoryStreamEntry> {
-        loop {
-            clear_errno();
-            let raw = unsafe { libc::readdir(self.0) };
-            if raw.is_null() {
-                let error = io::Error::last_os_error();
-                return if error.raw_os_error() == Some(0) {
-                    Ok(DirectoryStreamEntry::End)
-                } else {
-                    Err(error)
-                };
-            }
-            let name = unsafe { CStr::from_ptr((*raw).d_name.as_ptr()) };
-            if name.to_bytes() == b"." || name.to_bytes() == b".." {
-                continue;
-            }
-            run_test_hook(
-                "directory-entries-before-stat",
-                directory.as_raw_fd(),
-                name,
-                name,
-            );
-            let stat = stat_at(directory.as_raw_fd(), name)?;
-            let kind = stat.st_mode & libc::S_IFMT;
-            if kind != libc::S_IFDIR && kind != libc::S_IFREG {
-                return Ok(DirectoryStreamEntry::Skipped);
-            }
-            return Ok(DirectoryStreamEntry::Entry(DirectoryEntry {
-                name: String::from_utf8_lossy(name.to_bytes()).into_owned(),
-                is_directory: kind == libc::S_IFDIR,
-            }));
+        let Some(raw) = self.next_named_dirent()? else {
+            return Ok(DirectoryStreamEntry::End);
+        };
+        let name = unsafe { CStr::from_ptr((*raw).d_name.as_ptr()) };
+        classify_by_stat(directory, name)
+    }
+
+    pub(super) fn next_search_entry(
+        &mut self,
+        directory: &File,
+    ) -> io::Result<DirectoryStreamEntry> {
+        let Some(raw) = self.next_named_dirent()? else {
+            return Ok(DirectoryStreamEntry::End);
+        };
+        let name = unsafe { CStr::from_ptr((*raw).d_name.as_ptr()) };
+        match unsafe { (*raw).d_type } {
+            libc::DT_REG => Ok(entry(name, false)),
+            libc::DT_DIR => Ok(entry(name, true)),
+            libc::DT_UNKNOWN => classify_by_stat(directory, name),
+            _ => Ok(DirectoryStreamEntry::Skipped),
         }
     }
 
     pub(super) fn has_unexamined_entry(&mut self) -> io::Result<bool> {
+        Ok(self.next_named_dirent()?.is_some())
+    }
+
+    fn next_named_dirent(&mut self) -> io::Result<Option<*const libc::dirent>> {
         loop {
             clear_errno();
             let raw = unsafe { libc::readdir(self.0) };
             if raw.is_null() {
                 let error = io::Error::last_os_error();
                 return if error.raw_os_error() == Some(0) {
-                    Ok(false)
+                    Ok(None)
                 } else {
                     Err(error)
                 };
             }
             let name = unsafe { CStr::from_ptr((*raw).d_name.as_ptr()) };
             if name.to_bytes() != b"." && name.to_bytes() != b".." {
-                return Ok(true);
+                return Ok(Some(raw));
             }
         }
     }
+}
+
+fn classify_by_stat(directory: &File, name: &CStr) -> io::Result<DirectoryStreamEntry> {
+    run_test_hook(
+        "directory-entries-before-stat",
+        directory.as_raw_fd(),
+        name,
+        name,
+    );
+    let stat = stat_at(directory.as_raw_fd(), name)?;
+    let kind = stat.st_mode & libc::S_IFMT;
+    if kind != libc::S_IFDIR && kind != libc::S_IFREG {
+        return Ok(DirectoryStreamEntry::Skipped);
+    }
+    Ok(entry(name, kind == libc::S_IFDIR))
+}
+
+fn entry(name: &CStr, is_directory: bool) -> DirectoryStreamEntry {
+    DirectoryStreamEntry::Entry(DirectoryEntry {
+        name: String::from_utf8_lossy(name.to_bytes()).into_owned(),
+        is_directory,
+    })
 }

@@ -5,6 +5,11 @@ import {
   type LanguageServerDocumentSymbol,
 } from "../domain/languageServerFeatures";
 import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
+import {
+  defaultLargeSmartDocumentPolicy,
+  largeSmartDocumentStatus,
+  type LargeSmartDocumentPolicy,
+} from "../domain/largeDocumentPolicy";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import {
   emptyPhpFileOutline,
@@ -24,6 +29,7 @@ export interface JavaScriptTypeScriptFileStructureDependencies {
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   languageServerRuntimeStatusRoot: string | null;
   isLanguageServerSessionActiveForRoot: (rootPath: string, sessionId: number) => boolean;
+  largeSmartDocumentPolicy?: LargeSmartDocumentPolicy;
   reportError: (source: string, error: unknown) => void;
   setMessage: (message: string | null) => void;
   setFileStructureOpen: (open: boolean) => void;
@@ -52,6 +58,7 @@ export function useJavaScriptTypeScriptFileStructure(
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
     isLanguageServerSessionActiveForRoot,
+    largeSmartDocumentPolicy = defaultLargeSmartDocumentPolicy,
     reportError,
     setMessage,
     setFileStructureOpen,
@@ -140,6 +147,13 @@ export function useJavaScriptTypeScriptFileStructure(
         return false;
       }
 
+      const largeDocumentStatus = largeSmartDocumentStatus(document, largeSmartDocumentPolicy);
+
+      if (largeDocumentStatus) {
+        setMessage(`${largeDocumentStatus.title} File structure is disabled for this file.`);
+        return true;
+      }
+
       if (
         !workspaceRoot ||
         !isRunningLanguageServerForWorkspace(
@@ -173,6 +187,7 @@ export function useJavaScriptTypeScriptFileStructure(
     },
     [
       javaScriptTypeScriptFileOutlinesByPath,
+      largeSmartDocumentPolicy,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
       loadJavaScriptTypeScriptFileOutline,

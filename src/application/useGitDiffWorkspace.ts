@@ -7,10 +7,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import {
-  buildGitDiffDocumentPath,
-  isGitDiffDocumentPath,
-} from "../domain/editorDocumentSchemes";
+import { buildGitDiffDocumentPath, isGitDiffDocumentPath } from "../domain/editorDocumentSchemes";
 import type { GitChangedFile, GitFileDiff, GitGateway } from "../domain/git";
 import { getFileName, type EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -59,23 +56,12 @@ export interface GitDiffWorkspace {
   getSelectedGitDiffDocument: () => GitDiffDocumentState | null;
   loadGitDiffDocument: (path: string, gitChange?: GitChangedFile) => void;
   reloadGitDiffDocument: (path: string) => void;
-  reconcileGitDiffDocument: (
-    path: string,
-    gitChange: GitChangedFile,
-  ) => void;
-  previewGitChange: (
-    change: GitChangedFile,
-    options?: OpenGitChangeOptions,
-  ) => Promise<void>;
-  openGitChange: (
-    change: GitChangedFile,
-    repositoryRoot?: string,
-  ) => Promise<void>;
+  reconcileGitDiffDocument: (path: string, gitChange: GitChangedFile) => void;
+  previewGitChange: (change: GitChangedFile, options?: OpenGitChangeOptions) => Promise<void>;
+  openGitChange: (change: GitChangedFile, repositoryRoot?: string) => Promise<void>;
 }
 
-export function useGitDiffWorkspace(
-  dependencies: GitDiffWorkspaceDependencies,
-): GitDiffWorkspace {
+export function useGitDiffWorkspace(dependencies: GitDiffWorkspaceDependencies): GitDiffWorkspace {
   const {
     workspaceRoot,
     gitGateway,
@@ -88,14 +74,11 @@ export function useGitDiffWorkspace(
   } = dependencies;
 
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
-  const [selectedGitChange, setSelectedGitChange] =
-    useState<GitChangedFile | null>(null);
-  const [gitDiffPreview, setGitDiffPreview] = useState<GitFileDiff | null>(
-    null,
+  const [selectedGitChange, setSelectedGitChange] = useState<GitChangedFile | null>(null);
+  const [gitDiffPreview, setGitDiffPreview] = useState<GitFileDiff | null>(null);
+  const [gitDiffDocuments, setGitDiffDocuments] = useState<Record<string, GitDiffDocumentState>>(
+    {},
   );
-  const [gitDiffDocuments, setGitDiffDocuments] = useState<
-    Record<string, GitDiffDocumentState>
-  >({});
   const gitDiffDocumentsRef = useRef<Record<string, GitDiffDocumentState>>({});
   const gitDiffRequestTokenRef = useRef(0);
   const requestTokenByDocumentPathRef = useRef<Record<string, number>>({});
@@ -123,7 +106,7 @@ export function useGitDiffWorkspace(
     selectedGitDiffDocumentPathRef.current = null;
     setSelectedGitChange(null);
     setGitDiffPreview(null);
-    setMessage(null);
+    setMessage((current) => (current === null ? current : null));
   }, [setMessage]);
 
   const updateGitDiffDocuments = useCallback(
@@ -209,15 +192,17 @@ export function useGitDiffWorkspace(
       }
 
       const retained = gitDiffDocumentsRef.current[path];
-      const existing = retained ?? (gitChange
-        ? {
-            change: gitChange,
-            diff: null,
-            documentPath: path,
-            isLoading: false,
-            repositoryRoot: workspaceRoot,
-          }
-        : null);
+      const existing =
+        retained ??
+        (gitChange
+          ? {
+              change: gitChange,
+              diff: null,
+              documentPath: path,
+              isLoading: false,
+              repositoryRoot: workspaceRoot,
+            }
+          : null);
       const retainedChange = existing?.change;
 
       if (!existing || !retainedChange) {
@@ -256,10 +241,7 @@ export function useGitDiffWorkspace(
         .getDiff(requestedRoot, retainedChange)
         .then((diff) => {
           if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              owningWorkspaceRoot,
-            ) ||
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, owningWorkspaceRoot) ||
             gitDiffRequestTokenRef.current !== workspaceRequestToken ||
             requestTokenByDocumentPathRef.current[path] !== requestToken
           ) {
@@ -283,10 +265,7 @@ export function useGitDiffWorkspace(
         })
         .catch((error) => {
           if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              owningWorkspaceRoot,
-            ) ||
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, owningWorkspaceRoot) ||
             gitDiffRequestTokenRef.current !== workspaceRequestToken ||
             requestTokenByDocumentPathRef.current[path] !== requestToken
           ) {
@@ -310,10 +289,7 @@ export function useGitDiffWorkspace(
         })
         .finally(() => {
           if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              owningWorkspaceRoot,
-            ) ||
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, owningWorkspaceRoot) ||
             gitDiffRequestTokenRef.current !== workspaceRequestToken ||
             requestTokenByDocumentPathRef.current[path] !== requestToken
           ) {
@@ -357,9 +333,7 @@ export function useGitDiffWorkspace(
         return;
       }
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
         return;
       }
 
@@ -367,14 +341,10 @@ export function useGitDiffWorkspace(
       const owningWorkspaceRoot = workspaceRoot;
       const document = gitDiffDocument(change);
       const workspaceRequestToken = gitDiffRequestTokenRef.current;
-      const requestToken =
-        (requestTokenByDocumentPathRef.current[document.path] ?? 0) + 1;
+      const requestToken = (requestTokenByDocumentPathRef.current[document.path] ?? 0) + 1;
       requestTokenByDocumentPathRef.current[document.path] = requestToken;
       recordCurrentNavigationLocation();
-      const commit = documentTabSession.openReadOnlyDocument(
-        document,
-        options.pin === true,
-      );
+      const commit = documentTabSession.openReadOnlyDocument(document, options.pin === true);
       if (commit.replacedDocument) {
         if (isGitDiffDocumentPath(commit.replacedDocument.path)) {
           cancelGitDiffDocument(commit.replacedDocument.path);
@@ -401,10 +371,7 @@ export function useGitDiffWorkspace(
         const diff = await gitGateway.getDiff(requestedRoot, change);
 
         if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            owningWorkspaceRoot,
-          ) ||
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, owningWorkspaceRoot) ||
           gitDiffRequestTokenRef.current !== workspaceRequestToken ||
           requestTokenByDocumentPathRef.current[document.path] !== requestToken
         ) {
@@ -427,10 +394,7 @@ export function useGitDiffWorkspace(
         }
       } catch (error) {
         if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            owningWorkspaceRoot,
-          ) ||
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, owningWorkspaceRoot) ||
           gitDiffRequestTokenRef.current !== workspaceRequestToken ||
           requestTokenByDocumentPathRef.current[document.path] !== requestToken
         ) {
@@ -516,8 +480,7 @@ export function gitChangesReferToSameDiff(
 ): boolean {
   return (
     gitDiffDocumentPath(change) === gitDiffDocumentPath(selectedChange) &&
-    (change.path === selectedChange.path ||
-      change.oldPath === selectedChange.path)
+    (change.path === selectedChange.path || change.oldPath === selectedChange.path)
   );
 }
 

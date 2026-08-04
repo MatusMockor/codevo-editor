@@ -40,7 +40,13 @@ export function replaceWorkbenchNoticeGroup(
   groupKey: string,
   replacements: WorkbenchNotice[],
 ): WorkbenchNotice[] {
-  return [...replacements, ...current.filter((notice) => notice.groupKey !== groupKey)];
+  const retained = current.filter((notice) => notice.groupKey !== groupKey);
+
+  if (replacements.length === 0 && retained.length === current.length) {
+    return current;
+  }
+
+  return [...replacements, ...retained];
 }
 
 export function replaceNodePackageTaskProblemNotices(

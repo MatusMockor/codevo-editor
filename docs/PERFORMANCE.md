@@ -5,16 +5,98 @@ Codevo's performance measurement setup (C7) is built from four pieces: fixtures 
 synthetic monorepo, seeded and reproducible via `npm run perf:fixtures`); an in-app, dev-only perf
 tracker/bridge gated on `import.meta.env.DEV` plus `VITE_CODEVO_PERF_BRIDGE=1` (or the
 `codevo.perfBridge` localStorage flag) - `npm run debug:qa` builds a production bundle where `DEV` is
-false, so the bridge never installs there; a CDP-based runner, `scripts/perf/run-perf-scenarios.mjs`
-(`npm run perf:run` / `npm run perf:smoke`), that attaches to a running app over the Chrome DevTools
-Protocol and drives each Codevo scenario end to end, though on macOS WKWebView exposes no CDP listener
-today (CDP works against WebView2 on Windows); and a committed VS Code baseline, `perf/baselines/vscode.json`,
+false, so the bridge never installs there; a runner, `scripts/perf/run-perf-scenarios.mjs`, that drives
+each Codevo scenario end to end through one of three lanes - the autorun lane (`npm run perf:autorun` /
+`npm run perf:autorun:smoke`, the primary lane and the only fully automated one on macOS), the manual
+paste lane (`--print-snippet` / `--from-json`), and the CDP lane (`npm run perf:run` /
+`npm run perf:smoke`, which needs a CDP listener macOS WKWebView does not expose today; CDP works against
+WebView2 on Windows); and a committed VS Code baseline, `perf/baselines/vscode.json`,
 captured by scripting VS Code directly through the closest available API per scenario (documented per
 entry via `method`, see `perf/baselines/README.md` for the full capture methodology and its honesty
 notes).
 
-The currently working measurement lane on macOS is manual, and `run-perf-scenarios.mjs` has a dedicated
-lane for it: run
+## Autorun lane (primary lane on macOS)
+
+`npm run perf:autorun` (add `:smoke` for the shorter subset) is the lane to use. It needs no DevTools,
+no console paste, and no second terminal:
+
+```bash
+npm run perf:autorun:smoke   # typing-large-5k + tab-switch-cycle only
+npm run perf:autorun         # every scenario
+```
+
+The driver (`scripts/perf/perfAutorunDriver.mjs`) starts a localhost result server on an ephemeral port,
+launches the app itself as a child process
+(`VITE_CODEVO_QA_BRIDGE=1 VITE_CODEVO_PERF_BRIDGE=1 VITE_CODEVO_PERF_AUTORUN=1 npm run debug:tauri`,
+with `CODEVO_PERF_AUTORUN_ENDPOINT` pointing at that server), waits for the app to post its raw in-page
+result, then shapes, persists, and summarizes it exactly like the other lanes - same
+`perf/results/codevo-<timestamp>.json`, same table, same exit-1 rules - and shuts the app (and its whole
+process group) down. `--autorun-timeout-ms <n>` tunes the wait; the default is 20 minutes and the ceiling
+is 30 minutes, which covers a cold `cargo` build.
+
+The lane owns the app lifecycle, so it refuses to start when port 1420 is already taken (both loopback
+families are probed, because vite dev binds `[::1]`): stop the running Codevo dev session first. A
+truncated, malformed, or otherwise unvalidatable payload fails closed (HTTP 400 to the app, exit 1, no
+result file); a payload over the 8 MiB cap, an app crash before the post, a failed launch, and a timeout
+all stop the app and exit 1 with the real reason.
+
+Run token and what it actually protects. The driver mints a per-run token
+(`CODEVO_PERF_AUTORUN_TOKEN`) and passes it to the dev server, which bakes it into the same-origin
+runner module it serves to the page (`export const perfAutorunRunToken`). The page sends it back as
+`x-codevo-perf-run-token` on its result post, and **both** hops require it: the vite relay rejects an
+unauthenticated or wrong-token post with 403 and never attaches the genuine token to a post it did not
+authenticate, and the driver's result server rejects the forwarded post the same way. Both hops also
+require `content-type: application/json`, compare the token in constant time, match their routes
+exactly (`/__codevo-perf/result`, not `/__codevo-perf/result/anything`), and cap the payload at 8 MiB.
+The honest residual: the runner module is served unauthenticated on the page's own origin, because the
+page has to be able to import it, so any local process that can GET `/__codevo-perf/runner.js` while a
+run is armed can read that run's token and then forge or abort the result. Localhost here is
+best-effort isolation against accidental interference by another local process, not a trust boundary.
+The lane exists only on a dev box that is already running the app with the flag, the endpoint, and the
+token set.
+
+How the app receives the scenarios (relay choice): `scripts/perf` stays the single owner of the scenario
+logic. A dev-server plugin, `scripts/perf/perfAutorunVitePlugin.mjs` (registered in `vite.config.ts`, and
+only when `VITE_CODEVO_PERF_AUTORUN=1` and the driver endpoint are both present), serves the shared
+`inPagePerfRunnerSource()` plus `buildRunnerOptions()` and this run's token as an ES module at
+`/__codevo-perf/runner.js` and accepts the result at `/__codevo-perf/result`, forwarding it to the
+driver with the token the page supplied. Both endpoints are on the
+page's own origin deliberately: the app CSP is `script-src 'self'; connect-src 'self' ipc: …`
+(`src-tauri/tauri.conf.json`), which permits neither `eval`/`new Function` of a fetched snippet nor a
+fetch to a different localhost port, so the in-app side does a same-origin dynamic `import()` and a
+same-origin `fetch`, and no CSP or Tauri/Rust change is needed.
+
+The in-app side is a thin dev-only trigger: `src/components/perfAutorunTrigger.ts` plus the
+`usePerfAutorunInstall` hook (armed from `usePerfScenarioBridgeInstall`, the existing perf composition
+point). It is triple-gated on `import.meta.env.DEV`, `VITE_CODEVO_PERF_AUTORUN === "1"`, and both bridges
+being enabled; it starts at most once per page (`window.__codevoPerfAutorunStartedAt`), imports the
+served runner module (which carries the options and the run token), waits for `window.__codevoQa` and
+`window.__codevoPerf`, and never throws into the app - every failure after that import is posted back
+as an authenticated `{"status":"error","message":…}`, so the window stays usable for follow-up
+debugging. The one failure the app cannot report is a failure to load the runner module itself: without
+it there is no run token, so the trigger logs to the console and the driver ends the run on its
+timeout.
+
+### StrictMode is skipped in the perf lane
+
+Both perf lanes drive a DEV build, and in dev React StrictMode double-invokes render. That tax is a
+measurement artifact - the shipped production build never pays it - so the bootstrap omits the
+StrictMode wrapper when, and only when, a perf lane is active: `import.meta.env.DEV` is true AND
+`VITE_CODEVO_PERF_AUTORUN=1` or `VITE_CODEVO_PERF_BRIDGE=1` (`src/perfLaneRenderMode.ts`, every case
+pinned by `src/perfLaneRenderMode.test.ts`). The gate is env-only and fails closed toward the safe dev
+default: a plain `npm run dev` or `npm run debug:tauri` session without perf flags, any other flag
+value, and every production build keep StrictMode on.
+
+The measured evidence is an autorun-lane A/B on the tab-switch cycle over the same tree (run
+`18-51-35` with StrictMode off against `18-50-05` with it on): per-pair React render medians halved
+exactly (12/18/17/32/15 -> 9/11/10/17/9 ms), cycle p50 moved 55 -> 46 and settled p95 61 -> 41. This is
+measurement honesty, not a product speedup - nothing users run got faster; the lane simply stopped
+overstating Codevo's React render cost by roughly 2x.
+
+## Manual paste lane (fallback)
+
+The manual lane remains available when the autorun lane cannot be used (for example when you want to
+drive an app instance you already have open, or to iterate on a snippet by hand):
 
 ```bash
 node scripts/perf/run-perf-scenarios.mjs --print-snippet | pbcopy
@@ -34,9 +116,243 @@ result exactly like the CDP lane - same `perf/results/codevo-<timestamp>.json` o
 table, same exit-1 rules. This mirrors the self-contained snippet approach `docs/DEV_QA.md` documents for
 `qa-project-scenarios.mjs`. A CDP transport for macOS remains an open decision for a future slice.
 
+## Scenario lanes and what each one measures
+
+The `large-files@v3` fixtures contain a seeded 2,000-line `medium-2k.ts` (59,354 chars) alongside the
+existing `large-5k.ts`, `large-20k.ts`, `large-100k.ts`, `minified.ts`, and `huge-union.ts`. The lanes
+target them deliberately:
+
+- Typing (`typing-large-5k` / `-20k` / `-100k`) and `tab-switch-cycle` run on the large files, because
+  editing and tab switching must stay responsive exactly there.
+- The four JS/TS latency scenarios (`completion-medium-2k`, `definition-medium-2k`,
+  `references-medium-2k`, `rename-medium-2k`) run on `medium-2k.ts`. It is the only realistic
+  multi-construct fixture comfortably inside both large-smart-document limits (5,000 lines / 256 KiB,
+  `src/domain/largeDocumentPolicy.ts`), so these are the only files where the product actually issues
+  completion, definition, references, and rename requests.
+- `completion-large-20k`, `definition-large-20k`, `references-large-20k`, and `rename-large-20k` are
+  **capability rows, not latency measurements**. `large-20k.ts` exceeds both policy limits, so
+  `featureRequestContext` fails closed and Codevo never issues those requests by design. A run reports
+  them with status `policy-disabled` and the reason
+  `large-document policy (5000 lines / 256 KiB) disables JS/TS features on this file`, sourced from a
+  real per-run check (`__codevoPerf.getLargeSmartDocumentStatus()` against the opened model) rather
+  than assumed. VS Code measures the same four scenarios on the same file, so the committed baseline is
+  the evidence for the capability gap; the gap report prints a one-line `Capability gap:` note per row
+  instead of a pass/fail verdict. `scripts/perf/lspScenarioPolicy.test.mjs` pins the fixture-versus-policy
+  relationship, so raising the policy limits above the 20k fixture fails the suite and forces the
+  scenario to be re-enabled as a real measurement.
+
+Before triggering any JS/TS scenario, the in-page runner waits (bounded to 60 s, retrying the trigger
+about every 2 s) until a real completion round-trip has recorded a latency sample for `medium-2k.ts`.
+That proves the managed typescript-language-server is running for the fixture root. If it never
+records one, the four scenarios are reported as `not-run` with that exact reason; no run ever
+fabricates samples. Rename is measured through a committed rename: the perf bridge launches
+`editor.action.rename`, writes the new name into Monaco's rename input, and accepts it with the real
+`acceptRenameInput` command, so `provideRenameEdits` actually issues an LSP rename request.
+
 ## C7 gap reports
 
 Gap reports compare a Codevo perf run against the committed VS Code baseline and are produced with
 `npm run perf:report` (`scripts/perf/gap-report.mjs`), which reads the newest `perf/results/codevo-*.json`
 file. Paste the generated markdown table here, with the capture date and fixture version, after running
 a real Codevo perf run - no fabricated data belongs in this section.
+
+### C7.2 diagnostic capture (Codevo 2026-08-02, `large-files@v3`, autorun lane, StrictMode-off perf mode)
+
+Medians of three clean runs (2026-08-02T21:14-21:15Z), with a separate post-hardening follow-up at
+2026-08-02T21:57Z; VS Code baseline captured at 2026-08-02T19:35:09.580Z. Every input records
+`large-files@v3:medium-2k+seed2/5/20/100, monorepo@50pkg` exactly. The table preserves the arithmetic
+reported during the wave, but it is a diagnostic comparison, **not** evidence of VS Code parity: only
+the tab-switch row retains the harness-enforced raw-budget verdict, with its differing window called
+out below.
+
+| Scenario             | Codevo p95 (median) | VS Code p95 | Historical ratio      | Budget | Interpretation                    |
+| -------------------- | ------------------- | ----------- | --------------------- | ------ | --------------------------------- |
+| typing-large-5k      | 22 ms               | 8.2 ms      | 2.7                   | 1.25   | n/a: different measurement window |
+| typing-large-20k     | 34 ms               | 3.2 ms      | 10.6                  | 1.25   | n/a: different measurement window |
+| typing-large-100k    | 15 ms               | 4.3 ms      | 3.5                   | 1.25   | n/a: different measurement window |
+| tab-switch-cycle     | 152 ms              | 33.4 ms     | 4.55 (3.6 floor-adj.) | 1.25   | fail on raw ratio                 |
+| completion-medium-2k | 305 ms              | 261.2 ms    | 1.17                  | 1.25   | n/a: output cardinality differs   |
+| definition-medium-2k | 7 ms                | 4.6 ms      | 1.51                  | 1.25   | n/a: target sequence differs      |
+| references-medium-2k | 7 ms                | 2.9 ms      | 2.38                  | 1.50   | n/a: target/count differs         |
+| rename-medium-2k     | 2 ms                | 6.5 ms      | 0.31                  | 1.50   | n/a: workflow/count differs       |
+| quickopen-monorepo   | 75 ms               | 17.7 ms     | 4.24                  | 1.25   | n/a: VS Code value is a proxy     |
+
+Wave improvements against the wave-start armed baseline: typing-large-100k p95 111 -> 15 ms
+(per-keystroke whole-workbench commits eliminated via coalesced content publication),
+completion p95 405 -> 305 ms (the wire parser admits at most 2,001 items to detect overflow, while
+the projected response retains at most exactly 2,000 items), references p95 23 -> 7 ms and
+definition 26 -> 7 ms (interactive-over-decorative request priority), tab-switch p95 ~162 -> 152 ms
+(no-op commit elimination; residual is Monaco first-frame rendering of large targets plus the
+33 ms two-frame window floor the VS Code baseline does not include).
+
+Measurement boundaries and non-comparability:
+
+- Codevo typing measures `editor.trigger("type")` through the next animation frame. The coalesced
+  content-publication commit may run after that frame, so this window does not prove end-to-end edit
+  settlement. VS Code measures only completion of its `type` command. The historical ratios therefore
+  compare two partial, different windows and cannot produce a parity verdict.
+- Codevo completion retains at most 2,000 projected items while this VS Code capture returned 27,759
+  items per repetition. Codevo definition repeats one target ten times, references repeats one target
+  five times, and rename performs one committed widget workflow; VS Code uses ten spread `*Kind`
+  targets/repetitions and invokes providers directly. Their ratios are useful trend signals within
+  each harness, not cross-editor pass/fail evidence.
+- The Codevo Quick Open number in this table recorded only the backend `searchFilesWithMetadata` call
+  inside the input debounce window; it did not include ranking or rendering. The VS Code harness used
+  `workspace.findFiles("**/file-0*.ts", ..., 200)`, which neither opens Quick Open nor measures its
+  ranking/rendering path. The displayed ratio compares two different partial windows, not a product
+  parity result.
+- The tab-switch raw ratio is the enforced result. The 33 ms subtraction models Codevo's declared
+  two-frame settle floor and is informational only; it must never rescue or change the raw status.
+- The 21:57Z post-hardening run was not a confirming replication of the table: it recorded 24 ms for
+  typing-large-100k, 344 ms for completion, 161 ms for tab switching, and skipped rename because no
+  tracker sample was captured. It is retained as adverse follow-up evidence, not folded into the
+  three-run medians or described as confirmation.
+
+Typing-large-20k also carries a two-frame residual from bounded commits of a 584 KiB document in the
+dev bundle. Quick Open p95 spikes (41 -> 75-78 ms across back-to-back runs) reproduce consistently and
+remain a useful optimization lead despite the invalid VS Code ratio. The four large-20k LSP rows remain
+policy-disabled capability gaps (VS Code measures 316/135/4.6/4.5 ms on the same file).
+
+### C7.3 symmetric-protocol capture (Codevo + VS Code 2026-08-03, `large-files@v3`)
+
+This wave replaced the asymmetric C7.2 harness with a contract both editors execute identically:
+identical fixtures with sha256 hashes verified at join time, identical target discovery (the first
+ten `*Kind` declarations that have a usage), 2 warm-ups plus 10 measured samples per LSP scenario
+(one per rotated target, fixed order), an identical 60-keystroke typing sequence (first 10
+discarded), a canonical scenario order, per-scenario cut points, per-sample result counts, and
+environment metadata including measured timer quantization. The gap report fails closed on any
+asymmetry: cut-point mismatch, warm-up or sample-count mismatch, target-order mismatch, result-count
+divergence beyond 10 percent, fixture-hash mismatch, missing metadata, or a median below ten timer
+ticks (WKWebView quantizes `performance.now()` to about 1 ms; VS Code resolves microseconds).
+Protocol: three clean runs plus one confirmation run per side, all on 2026-08-03 on the same
+machine. Values below are medians of the three clean runs; the confirmation run was consistent
+unless noted.
+
+What was methodically invalid before this wave: the VS Code quick-open number was a `findFiles`
+proxy; Codevo LSP scenarios repeated one cached symbol while VS Code rotated ten; completion
+compared a 2,000-item bounded projection against 27,759 processed items with no count recording;
+typing stopped before any frame on both sides with different windows; rename could report a
+tracker snapshot over a failure status; result JSONs carried no fixture hash, counts, window size,
+or bundle mode; and the 1 ms WKWebView clock quantization was undocumented.
+
+Comparable rows (same cut point, warm-ups, targets, and verified work scope):
+
+| Scenario           | Codevo p50/p95 | VS Code p50/p95 | Ratio (p95 medians) | Budget | Verdict                                  |
+| ------------------ | -------------- | --------------- | ------------------- | ------ | ---------------------------------------- |
+| file-search-engine | 18 / 24 ms     | 6.6 / 9.0 ms    | 2.67                | 1.25   | over budget; see baseline variance below |
+
+The harness-printed report joins the newest run pair and there shows 24.0 vs 21.4 ms (ratio 1.12,
+pass); the 21.4 ms comes from the confirmation baseline capture. The three clean baseline captures
+measured p95 8.1, 25.8, and 9.0 ms - a clean run, not the confirmation, is the extreme - so VS
+Code's own run-to-run band (8.1-25.8 ms) exceeds the budget band. This row is therefore reported
+against the median and is not claimed as parity in either direction. It is the top remaining
+comparable gap. Result counts matched exactly per target on both sides (cap 80, query `large`
+returning 0 on both sides).
+
+Quantization-limited rows (identical protocol and cut points, but the Codevo median sits under ten
+1 ms timer ticks, so no ratio is scoreable; informational only):
+
+| Scenario             | Codevo p50/p95 | VS Code p50/p95 | Note                                                                                  |
+| -------------------- | -------------- | --------------- | ------------------------------------------------------------------------------------- |
+| typing-large-5k      | 0 / 1 ms       | 0.9 / 3.7 ms    | dispatch cut point; Codevo faster than its own clock resolves                         |
+| typing-large-20k     | 0 / 1 ms       | 0.3 / 2.8 ms    | dispatch cut point                                                                    |
+| typing-large-100k    | 0 / 0 ms       | 0.8 / 3.3 ms    | dispatch cut point; p95 0 fails closed as unscoreable                                 |
+| definition-medium-2k | 7 / 9 ms       | 0.7 / 5.4 ms    | VS Code p95 ranged 0.6-126.3 ms across captures (tsserver cold spikes); Codevo stable |
+| references-medium-2k | 3 / 3 ms       | 0.7 / 0.8 ms    | per-target result counts matched exactly (2/3/5/...) on both sides                    |
+| rename-medium-2k     | 2 / 2 ms       | 2.9 / 3.6 ms    | Codevo faster; edit computed and converted, never applied, both sides                 |
+
+Non-comparable rows (different cut point or work scope, disclosed and enforced by the report):
+
+| Scenario             | Codevo p50/p95   | VS Code p50/p95  | Reason                                                                                                                                                         |
+| -------------------- | ---------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tab-switch-cycle     | 44 / 70 ms       | 19.2 / 33.1 ms   | Codevo waits for the rendered frame with the target model asserted active; VS Code awaits `vscode.open` resolution only (info ratio 2.32, floor-adjusted 1.26) |
+| completion-bounded   | 4 / 6 ms         | 2.4 / 5.5 ms     | result counts 2 vs 4 at the identical member position (VS Code adds non-member entries); also quantization-limited                                             |
+| completion-unbounded | 291 / 313 ms     | 254.2 / 276.2 ms | 2,000-item bounded projection vs 27,759 processed items, by design                                                                                             |
+| typing-*-frame       | 12-20 / 16-22 ms | n/a              | Codevo-only painted-frame budget rows; an extension host cannot observe paint                                                                                  |
+| quickopen-ui         | 49 / 56 ms       | n/a              | Codevo-only full UI path (overlay to ranked results rendered); VS Code's Quick Open UI is not scriptable, so no UI-vs-UI row exists                            |
+| *-large-20k LSP rows | policy-disabled  | 0.4-250 ms       | declared large-file capability gap: Codevo disables JS/TS semantic features at 5,000 lines / 256 KiB; VS Code serves them                                      |
+
+Real optimizations shipped this wave (product code, measured on the same protocol before and
+after): the Quick Open input debounce (120 ms) was replaced by immediate dispatch with a
+one-in-flight plus one-queued-latest supersede slot and a 5 s liveness watchdog; the Rust file
+search gained a generation-keyed bounded in-memory index (50k files / 20k dirs / 4 MiB / 4-index
+LRU, two-stamp settled-mtime validity with a 2 s settle window, gitignore-aware, fail-closed to the
+crawl) plus d_type-based directory walking. Effect: quickopen-ui p50 184 to 49 ms and p95 192 to
+56 ms; file-search-engine p50 36 to 18 ms and p95 46 to 24 ms (the implementer's deleted
+microbenchmark reported warm in-process engine time dropping from 13.6 to 0.7-0.9 ms; that figure
+is self-reported, not harness-captured). One honest caveat: the first post-fix clean run recorded a
+single 214 ms quickopen-ui sample (its p95), the same spike class C7.2 tracked at 75-78 ms; the
+other three runs held 55-59 ms, so the spike class is reduced but not eliminated. Everything else
+in the tables moved by measurement methodology, not by product change: earlier
+definition/references/rename/completion numbers compared different work.
+
+Remaining gaps after this wave, in user-impact order: file-search-engine 18/24 ms vs 6.6/9.0 ms
+median (about 2x residual, IPC and gateway dominated); the recurring quickopen-ui p95 spike class
+(one 214 ms sample in four runs); tab-switch-cycle 44/70 ms vs 19.2/33.1 ms
+under a stricter Codevo window (floor-adjusted info ratio 1.26; Monaco first-frame rendering of
+large models is the residual); completion-unbounded 313 vs 276 ms p95 on ten times fewer items;
+the large-20k capability gap (policy design decision, not a latency bug); and the dev-bundle vs
+production-build asymmetry, which disadvantages Codevo in every row above and remains open until a
+production perf lane exists.
+
+### C7.4 wave capture (Codevo 2026-08-04, `large-files@v3`, same symmetric protocol as C7.3)
+
+Scope: the two biggest proven user-visible differences from C7.3, no new measurement
+infrastructure. Values are medians of three clean runs (2026-08-04T08:37-08:57Z) plus a consistent
+confirmation run, against the unchanged 2026-08-03 VS Code baseline. One intermediate run was
+discarded fail-closed (completion-unbounded: one attempt exceeded its 3 s budget after 2 of 10
+samples - a tsserver pause on the 27,759-item list; the discarded run is retained on disk, not
+folded into medians).
+
+Optimizations shipped and measured:
+
+| Scenario           | C7.3 (p50/p95) | C7.4 (p50/p95) | VS Code p95 | Note                                       |
+| ------------------ | -------------- | -------------- | ----------- | ------------------------------------------ |
+| file-search-engine | 18 / 24 ms     | 7 / 11 ms      | 9.0 ms      | now quantization-limited; at VS Code level |
+| quickopen-ui       | 49 / 56 ms     | 55 / 66 ms     | n/a         | see frame-alignment note below             |
+| tab-switch-cycle   | 44 / 70 ms     | 47 / 85 ms     | 33.1 ms     | floor-adjusted info ratio 1.26 -> 1.23     |
+
+1. Rust file search: the per-query cost was NOT IPC (measured: index scan 13.3-21.2 ms of the
+   ~17 ms residual; IPC 1.5-2.5 ms) but the fuzzy scorer scanning all 3,253 cached paths per
+   query. Fix: ASCII-lowercased path bytes stored at index build with a byte-subsequence prefilter
+   (non-ASCII conservatively bypasses), plus bounded parallel ranking above 1,024 files (<=8 scoped
+   threads, deterministic merge, per-512-entry cancellation stride, cap accounting for the lowered
+   bytes with a pinned boundary test). Engine time 13.8-21.8 -> 0.32-3.5 ms; the lane-visible
+   p95 dropped 24 -> 11 ms. The one 114 ms p95 sample in the first run is the known cold-index
+   rebuild after the 2 s settle window - correct-by-design, deliberately not masked.
+2. Tab-switch controlled-value skip: switching to an already-acknowledged document no longer
+   passes the full multi-MB content as Monaco's controlled value (ownership = exact live model
+   instance + URI + not disposed + current session authority, fail-closed to passing content when
+   unprovable; regression-tested through the real runtime host in both directions, including a
+   foreign-model-instance rejection). Honest outcome: the mechanism is proven live by tests, but
+   measured tab-switch medians did not move materially (the earlier -13 ms per-pair estimate came
+   from contaminated-era samples and overstated the win). The residual remains Monaco first-frame
+   rendering plus the frame-alignment effect below.
+
+Frame-alignment observation (open): all typing-*-frame rows and quickopen-ui shifted by roughly
+one frame between the C7.3 finals and every later series (typing-frame ~12-20 ms -> exactly the
+~33 ms two-frame floor; quickopen-ui p50 49 -> 55 ms). The shift coincides exactly with the perf
+window becoming always-on-top during runs (occlusion robustness added the same evening) and
+predates the tab-switch mechanism going live, so the suspected cause is different WindowServer
+compositing for floating windows - a measurement-environment effect, not a product change.
+Typing dispatch latency is unchanged (0-1 ms, quantization-limited). Unverified; follow-up
+candidate: re-measure with elevation off on an idle desktop.
+
+Also fixed in this wave (user-visible correctness, not performance): the mislabeled "PHP IDE
+request failed" toast now derives its title from the actual server (generic when unknown); JS/TS
+document-symbol requests are policy-gated at every live entry point (Monaco provider, outline
+hook, breadcrumbs), so policy-large files no longer trigger the 2,000-root bound error toast - an
+instrumented full run captured exactly 5 documentSymbols calls, none for a policy-large document,
+and a workbench-level regression test with a positive control pins the gate. The perf window
+lifts itself (show/unminimize/setFocus/setAlwaysOnTop with restore) so autorun runs survive an
+occluded desktop; four core:window permissions were added to the Tauri capability for this.
+
+Memory/stability over the long switching runs: retained counts stayed exactly at 8 models /
+1 editor across all full runs of both waves (each cycles all five large fixtures repeatedly);
+WKWebView exposes no JS heap bytes, recorded truthfully as unavailable.
+
+Remaining after C7.4, in user-impact order: the frame-alignment observation above; the cold-index
+rebuild spike class (one ~114-156 ms p95 sample per first run after a rebuild); tab-switch
+residual (Monaco first-frame rendering; floor-adjusted 1.23 info); completion-unbounded 314 vs
+276 ms p95 on ten times fewer items plus an occasional tsserver pause exceeding the 3 s attempt
+budget; the large-20k capability policy gap; and the dev-bundle vs production-build asymmetry.

@@ -459,7 +459,7 @@ describe("editor large-file production chain", () => {
     expect(fixture.gateway.changeRequests).toHaveLength(1);
     const change = fixture.gateway.changeRequests[0]?.change;
     expect(change?.kind).toBe("incremental");
-    if (change?.kind !== "incremental") throw new Error("Expected incremental recovery");
+    if (change?.kind !== "incremental") return;
     expect(change.changes).toHaveLength(1);
     expect(change.changes[0]?.text).toBe("0");
   });
@@ -503,7 +503,13 @@ async function waitForExactOwnership(
     }
     await act(async () => Promise.resolve());
   }
-  throw new Error("Expected exact production-chain live ownership to settle");
+  expect(
+    fixture.runtimeContext.current?.ownsExactLiveModelContent?.(
+      "pane-1",
+      fixture.path,
+      fixture.currentModel(),
+    ),
+  ).toBe(true);
 }
 
 async function settlePromises(): Promise<void> {

@@ -1,6 +1,9 @@
+use super::file_index::{
+    VisitedDirectory, WorkspaceFileIndexBuilder, WorkspaceFileIndexCache, WorkspaceFileIndexKey,
+};
 use super::search_policy::{load_directory_gitignore, FileMask};
 use super::{
-    is_skippable_text_search_candidate_error, open_directory_path, open_regular,
+    fstat, is_skippable_text_search_candidate_error, open_directory_path, open_regular,
     DescriptorFileSearchResult, DescriptorTextSearchResponse, DescriptorTextSearchResult,
     DirectoryStream, DirectoryStreamEntry, WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
     WORKSPACE_TEXT_SEARCH_FILE_SIZE_LIMIT, WORKSPACE_TEXT_SEARCH_PREVIEW_BYTE_LIMIT,
@@ -10,6 +13,7 @@ use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatch
 use crate::workspace_registry::ManagedWorkspaceDescriptor;
 use regex::Regex;
 use std::{
+    cmp::Ordering,
     fs::File,
     io::{self, Read},
     os::fd::AsRawFd,
@@ -46,6 +50,7 @@ pub(super) fn collect_ranked_files(
     .map(|(ranked, _)| ranked)
 }
 
+#[cfg(test)]
 pub(super) fn collect_ranked_files_with_truncation(
     root: &File,
     scope: &Path,
@@ -55,23 +60,67 @@ pub(super) fn collect_ranked_files_with_truncation(
     display_root: &Path,
     is_current: &dyn Fn() -> bool,
 ) -> io::Result<(Vec<(PathBuf, FileMatchRank)>, bool)> {
-    let mut ranked = Vec::with_capacity(limit);
-    let mut result_truncated = false;
-    let truncated = visit_workspace_files(
+    let mut sink = RankingWalkSink::new(query, limit, None);
+    let walk_truncated = visit_workspace_files(
         root,
         scope,
         visited_limit,
         display_root,
         is_current,
-        &mut |path| {
-            let Some(rank) = file_score(&path.to_string_lossy(), query) else {
-                return Ok(true);
-            };
-            result_truncated |= insert_ranked_path(&mut ranked, path, rank, limit);
-            Ok(true)
-        },
+        &mut sink,
     )?;
-    Ok((ranked, truncated || result_truncated))
+    let (ranked, result_truncated) = sink.ranked.finish();
+    Ok((ranked, walk_truncated || result_truncated))
+}
+
+pub(super) trait WorkspaceWalkSink {
+    fn visit_file(&mut self, relative: PathBuf) -> io::Result<bool>;
+
+    fn directory_completed(&mut self, _visited: &VisitedDirectory<'_>) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(super) struct FileVisitor<'a>(pub(super) &'a mut dyn FnMut(PathBuf) -> io::Result<bool>);
+
+impl WorkspaceWalkSink for FileVisitor<'_> {
+    fn visit_file(&mut self, relative: PathBuf) -> io::Result<bool> {
+        (self.0)(relative)
+    }
+}
+
+struct RankingWalkSink<'a> {
+    query: &'a str,
+    ranked: RankedPaths,
+    index: Option<WorkspaceFileIndexBuilder>,
+}
+
+impl<'a> RankingWalkSink<'a> {
+    fn new(query: &'a str, limit: usize, index: Option<WorkspaceFileIndexBuilder>) -> Self {
+        Self {
+            query,
+            ranked: RankedPaths::new(limit),
+            index,
+        }
+    }
+}
+
+impl WorkspaceWalkSink for RankingWalkSink<'_> {
+    fn visit_file(&mut self, relative: PathBuf) -> io::Result<bool> {
+        let display = relative.to_string_lossy();
+        self.ranked.offer(&relative, display.as_ref(), self.query);
+        if let Some(index) = self.index.as_mut() {
+            index.record_file(&relative, display.as_ref());
+        }
+        Ok(true)
+    }
+
+    fn directory_completed(&mut self, visited: &VisitedDirectory<'_>) -> io::Result<()> {
+        let Some(index) = self.index.as_mut() else {
+            return Ok(());
+        };
+        index.record_directory(visited)
+    }
 }
 
 pub(super) fn visit_workspace_files(
@@ -80,15 +129,20 @@ pub(super) fn visit_workspace_files(
     visited_limit: usize,
     display_root: &Path,
     is_current: &dyn Fn() -> bool,
-    visit_file: &mut dyn FnMut(PathBuf) -> io::Result<bool>,
+    sink: &mut dyn WorkspaceWalkSink,
 ) -> io::Result<bool> {
     let mut stack = vec![(scope.to_path_buf(), None::<Arc<IgnoreScope>>)];
     let mut visited = 0usize;
     while let Some((relative, inherited_ignores)) = stack.pop() {
         ensure_current(is_current)?;
         let directory = open_directory_path(root.as_raw_fd(), &relative)?;
+        let before = fstat(directory.as_raw_fd())?;
         let mut ignores = inherited_ignores;
-        if let Some(local) = load_directory_gitignore(&directory, &display_root.join(&relative))? {
+        let mut gitignore_stamp = None;
+        if let Some((local, stamp)) =
+            load_directory_gitignore(&directory, &display_root.join(&relative))?
+        {
+            gitignore_stamp = Some(stamp);
             ignores = Some(Arc::new(IgnoreScope {
                 matcher: local,
                 parent: ignores,
@@ -106,7 +160,7 @@ pub(super) fn visit_workspace_files(
 
             // Charge the raw directory-entry budget before readdir can stat or allocate a name.
             visited += 1;
-            let entry = match entries.next_entry(&directory)? {
+            let entry = match entries.next_search_entry(&directory)? {
                 DirectoryStreamEntry::Entry(entry) => entry,
                 DirectoryStreamEntry::Skipped => continue,
                 DirectoryStreamEntry::End => {
@@ -124,15 +178,21 @@ pub(super) fn visit_workspace_files(
                 stack.push((path, ignores.clone()));
                 continue;
             }
-            if !visit_file(path)? {
+            if !sink.visit_file(path)? {
                 return Ok(true);
             }
         }
+        sink.directory_completed(&VisitedDirectory {
+            relative: &relative,
+            before,
+            after: fstat(directory.as_raw_fd())?,
+            gitignore: gitignore_stamp,
+        })?;
     }
     Ok(false)
 }
 
-fn ensure_current(is_current: &dyn Fn() -> bool) -> io::Result<()> {
+pub(super) fn ensure_current(is_current: &dyn Fn() -> bool) -> io::Result<()> {
     if is_current() {
         Ok(())
     } else {
@@ -143,26 +203,85 @@ fn ensure_current(is_current: &dyn Fn() -> bool) -> io::Result<()> {
     }
 }
 
-fn insert_ranked_path(
-    ranked: &mut Vec<(PathBuf, FileMatchRank)>,
+struct RankedEntry {
     path: PathBuf,
+    display: String,
     rank: FileMatchRank,
+}
+
+pub(super) struct RankedPaths {
+    entries: Vec<RankedEntry>,
     limit: usize,
-) -> bool {
-    let discarded = ranked.len() >= limit;
-    let index = ranked
-        .binary_search_by(|(existing_path, existing_rank)| {
-            compare_ranked_paths(
-                &existing_path.to_string_lossy(),
-                *existing_rank,
-                &path.to_string_lossy(),
-                rank,
-            )
-        })
-        .unwrap_or_else(|index| index);
-    ranked.insert(index, (path, rank));
-    ranked.truncate(limit);
-    discarded
+    truncated: bool,
+}
+
+impl RankedPaths {
+    pub(super) fn new(limit: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(limit.min(1024)),
+            limit,
+            truncated: false,
+        }
+    }
+
+    pub(super) fn offer(&mut self, path: &Path, display: &str, query: &str) {
+        let Some(rank) = file_score(display, query) else {
+            return;
+        };
+        if self.entries.len() >= self.limit {
+            self.truncated = true;
+            let Some(last) = self.entries.last() else {
+                return;
+            };
+            if compare_ranked_paths(&last.display, last.rank, display, rank) != Ordering::Greater {
+                return;
+            }
+        }
+        self.insert_ranked(RankedEntry {
+            path: path.to_path_buf(),
+            display: display.to_owned(),
+            rank,
+        });
+    }
+
+    pub(super) fn absorb(&mut self, other: RankedPaths) {
+        self.truncated |= other.truncated;
+        for entry in other.entries {
+            self.insert_ranked(entry);
+        }
+    }
+
+    fn insert_ranked(&mut self, entry: RankedEntry) {
+        if self.entries.len() >= self.limit {
+            self.truncated = true;
+            let Some(last) = self.entries.last() else {
+                return;
+            };
+            if compare_ranked_paths(&last.display, last.rank, &entry.display, entry.rank)
+                != Ordering::Greater
+            {
+                return;
+            }
+        }
+        let index = self
+            .entries
+            .binary_search_by(|existing| {
+                compare_ranked_paths(&existing.display, existing.rank, &entry.display, entry.rank)
+            })
+            .unwrap_or_else(|index| index);
+        self.entries.insert(index, entry);
+        self.entries.truncate(self.limit);
+    }
+
+    pub(super) fn finish(self) -> (Vec<(PathBuf, FileMatchRank)>, bool) {
+        (
+            self.entries
+                .into_iter()
+                .map(|entry| (entry.path, entry.rank))
+                .collect(),
+            self.truncated,
+        )
+    }
 }
 
 pub(super) fn file_score(path: &str, query: &str) -> Option<FileMatchRank> {
@@ -197,6 +316,7 @@ pub(crate) struct PreparedDescriptorFileSearch {
     pub(super) scope: PathBuf,
     pub(super) query: String,
     pub(super) limit: usize,
+    pub(super) file_index: WorkspaceFileIndexCache,
 }
 
 impl PreparedDescriptorFileSearch {
@@ -204,19 +324,45 @@ impl PreparedDescriptorFileSearch {
         &self.descriptor
     }
 
-    pub(crate) fn execute(
-        self,
-        is_current: &dyn Fn() -> bool,
-    ) -> io::Result<Vec<DescriptorFileSearchResult>> {
-        let (files, walk_truncated) = collect_ranked_files_with_truncation(
-            &self.root,
-            &self.scope,
+    fn ranked_paths(
+        &self,
+        is_current: &(dyn Fn() -> bool + Sync),
+    ) -> io::Result<(Vec<(PathBuf, FileMatchRank)>, bool)> {
+        let key =
+            WorkspaceFileIndexKey::of(&self.descriptor.workspace_id, &self.root, &self.scope)?;
+        if let Some(index) = self.file_index.resolve(&key, &self.root, is_current)? {
+            return index.ranked(&self.query, self.limit, is_current);
+        }
+        self.file_index.record_crawl();
+        let mut sink = RankingWalkSink::new(
             &self.query,
             self.limit,
+            Some(WorkspaceFileIndexBuilder::new(self.file_index.bounds())),
+        );
+        let walk_truncated = visit_workspace_files(
+            &self.root,
+            &self.scope,
             WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
             &self.descriptor.canonical_root_path,
             is_current,
+            &mut sink,
         )?;
+        let RankingWalkSink { ranked, index, .. } = sink;
+        if let Some(builder) = index {
+            match builder.finish(walk_truncated) {
+                Ok(index) => self.file_index.store(key, index),
+                Err(rejection) => self.file_index.record_rejection(rejection),
+            }
+        }
+        let (ranked, result_truncated) = ranked.finish();
+        Ok((ranked, walk_truncated || result_truncated))
+    }
+
+    pub(crate) fn execute(
+        self,
+        is_current: &(dyn Fn() -> bool + Sync),
+    ) -> io::Result<Vec<DescriptorFileSearchResult>> {
+        let (files, walk_truncated) = self.ranked_paths(is_current)?;
         let mut results = Vec::new();
         let mut response_bytes = SEARCH_RESPONSE_ENVELOPE_RESERVE_BYTES;
         let mut output_truncated = false;
@@ -298,7 +444,7 @@ impl PreparedDescriptorTextSearch {
             WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
             &self.descriptor.canonical_root_path,
             is_current,
-            &mut |relative| {
+            &mut FileVisitor(&mut |relative| {
                 if let Some(mask) = &masks {
                     let matched = mask.matcher.matched(&relative, false);
                     if matched.is_ignore() || (mask.has_positive && !matched.is_whitelist()) {
@@ -378,7 +524,7 @@ impl PreparedDescriptorTextSearch {
                     }
                 }
                 Ok(true)
-            },
+            }),
         )?;
         ensure_search_current(is_current)?;
         Ok(DescriptorTextSearchResponse {

@@ -27,6 +27,18 @@ export interface WorkbenchQuickOpenDependencies {
   openWorkspaceSymbols?: (query: string) => void;
 }
 
+export const QUICK_OPEN_SEARCH_TIMEOUT_MS = 5_000;
+
+interface QuickOpenDispatchRequest {
+  generation: number;
+  run: () => void;
+}
+
+interface QuickOpenDispatchSlot {
+  inFlight: boolean;
+  pending: QuickOpenDispatchRequest | null;
+}
+
 export interface WorkbenchQuickOpen {
   quickOpenOpen: boolean;
   quickOpenQuery: string;
@@ -71,6 +83,7 @@ export function useWorkbenchQuickOpen(
   const quickOpenRequest = useMemo(() => parseQuickOpenQuery(quickOpenQuery), [quickOpenQuery]);
   const fileQuery = fileQueryForRequest(quickOpenRequest);
   const requestOwnerRef = useRef({ criteria: "", generation: 0 });
+  const dispatchSlotRef = useRef<QuickOpenDispatchSlot>({ inFlight: false, pending: null });
   const requestCriteria = JSON.stringify([quickOpenOpen, workspaceRoot, quickOpenQuery, fileQuery]);
   if (requestOwnerRef.current.criteria !== requestCriteria) {
     requestOwnerRef.current = {
@@ -196,7 +209,10 @@ export function useWorkbenchQuickOpen(
   ]);
 
   useEffect(() => {
+    const slot = dispatchSlotRef.current;
+
     if (!quickOpenOpen || !workspaceRoot || fileQuery === null) {
+      slot.pending = null;
       setBackendResultSet({
         generation: 0,
         query: "",
@@ -208,22 +224,51 @@ export function useWorkbenchQuickOpen(
     }
 
     let active = true;
+    let abandoned = false;
     const requestedGeneration = activeGeneration;
     const requestGeneration = `quick-open-${requestedGeneration}`;
+    const ownsResult = () =>
+      active && !abandoned && requestOwnerRef.current.generation === requestedGeneration;
     setQuickOpenLoading(true);
 
-    const timeout = window.setTimeout(() => {
-      measureLatency(latencyTrackerForRoot(workspaceRoot), "quickOpen", () =>
-        searchFilesWithMetadata(
+    const run = () => {
+      const abandonRequest = () => {
+        const owned = ownsResult();
+        abandoned = true;
+
+        if (releaseQuickOpenSlot(slot, requestOwnerRef.current.generation) || !owned) {
+          return;
+        }
+
+        setBackendResultSet({
+          generation: requestedGeneration,
+          query: quickOpenQuery,
+          response: { requestGeneration, results: [], truncated: false },
+          rootPath: workspaceRoot,
+        });
+        setQuickOpenLoading(false);
+        reportError("Quick Open", new Error("File search timed out."));
+      };
+      const watchdog = window.setTimeout(abandonRequest, QUICK_OPEN_SEARCH_TIMEOUT_MS);
+
+      measureLatency(latencyTrackerForRoot(workspaceRoot), "quickOpen", async () => {
+        const engineStartedAt = performance.now();
+        const response = await searchFilesWithMetadata(
           fileSearch,
           workspaceRoot,
           fileQuery,
           QUICK_OPEN_RESULT_LIMIT,
           requestGeneration,
-        ),
-      )
+        );
+        window.__codevoPerfProbe?.record("fileSearchEngine", {
+          ms: performance.now() - engineStartedAt,
+          resultCount: response.results.length,
+          target: fileQuery,
+        });
+        return response;
+      })
         .then((response) => {
-          if (!active || requestOwnerRef.current.generation !== requestedGeneration) {
+          if (!ownsResult()) {
             return;
           }
           if (response.requestGeneration !== requestGeneration) {
@@ -239,7 +284,7 @@ export function useWorkbenchQuickOpen(
           setMessage(null);
         })
         .catch((error) => {
-          if (!active || requestOwnerRef.current.generation !== requestedGeneration) {
+          if (!ownsResult()) {
             return;
           }
 
@@ -252,17 +297,25 @@ export function useWorkbenchQuickOpen(
           reportError("Quick Open", error);
         })
         .finally(() => {
-          if (!active || requestOwnerRef.current.generation !== requestedGeneration) {
+          if (abandoned) {
             return;
           }
 
-          setQuickOpenLoading(false);
+          window.clearTimeout(watchdog);
+
+          if (ownsResult()) {
+            setQuickOpenLoading(false);
+          }
+
+          releaseQuickOpenSlot(slot, requestOwnerRef.current.generation);
         });
-    }, 120);
+    };
+
+    submitQuickOpenRequest(slot, { generation: requestedGeneration, run });
 
     return () => {
       active = false;
-      window.clearTimeout(timeout);
+      discardQuickOpenRequest(slot, run);
     };
   }, [
     fileSearch,
@@ -286,6 +339,42 @@ export function useWorkbenchQuickOpen(
     setQuickOpenOpen,
     setQuickOpenQuery,
   };
+}
+
+function submitQuickOpenRequest(
+  slot: QuickOpenDispatchSlot,
+  request: QuickOpenDispatchRequest,
+): void {
+  if (slot.inFlight) {
+    slot.pending = request;
+    return;
+  }
+
+  slot.inFlight = true;
+  request.run();
+}
+
+function discardQuickOpenRequest(slot: QuickOpenDispatchSlot, run: () => void): void {
+  if (slot.pending?.run !== run) {
+    return;
+  }
+
+  slot.pending = null;
+}
+
+function releaseQuickOpenSlot(slot: QuickOpenDispatchSlot, currentGeneration: number): boolean {
+  slot.inFlight = false;
+  const pending = slot.pending;
+  slot.pending = null;
+
+  if (!pending || pending.generation !== currentGeneration) {
+    return false;
+  }
+
+  slot.inFlight = true;
+  pending.run();
+
+  return true;
 }
 
 function searchFilesWithMetadata(

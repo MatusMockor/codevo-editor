@@ -146,6 +146,20 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
   });
 
+  it("treats an available path matcher miss as authoritative without legacy re-resolution", async () => {
+    const matchForPath = vi.fn(() => null);
+    const descriptorForPath = vi.fn(() => descriptor);
+    invoke.mockResolvedValue("legacy content");
+    const gateway = new TauriWorkspaceGateway({ descriptorForPath, matchForPath });
+
+    await expect(gateway.readTextFile("/outside/file.ts")).resolves.toBe("legacy content");
+
+    expect(matchForPath).toHaveBeenCalledTimes(1);
+    expect(matchForPath).toHaveBeenCalledWith("/outside/file.ts", undefined);
+    expect(descriptorForPath).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith("read_text_file", { path: "/outside/file.ts" });
+  });
+
   it("drops skipped open documents outside the trusted workspace", async () => {
     invoke.mockResolvedValue({
       status: "success",

@@ -5,10 +5,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorkbenchNotice } from "../application/workbenchNotice";
 import {
+  GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE,
   languageServerCrashNoticeGroupKey,
   languageServerCrashNoticeToastRenderer,
   languageServerRequestErrorNoticeGroupKey,
   languageServerRequestErrorNoticeToastRenderer,
+  languageServerRequestErrorToastTitle,
 } from "./LanguageServerCrashNotice";
 
 describe("languageServerCrashNoticeGroupKey", () => {
@@ -74,16 +76,14 @@ describe("languageServerCrashNoticeToastRenderer", () => {
     expect(host.textContent).toContain("phpactor exited with code 1");
     expect(host.textContent).toContain("PHP IDE engine crashed");
 
-    const openButton = Array.from(
-      host.querySelectorAll("button"),
-    ).find((button) => button.textContent === "Open Runtime panel");
+    const openButton = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "Open Runtime panel",
+    );
 
     expect(openButton).not.toBeUndefined();
 
     await act(async () => {
-      openButton?.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, cancelable: true }),
-      );
+      openButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
 
     expect(onOpenRuntimePanel).toHaveBeenCalledTimes(1);
@@ -98,9 +98,7 @@ describe("languageServerCrashNoticeToastRenderer", () => {
 
     expect(entry).not.toBeNull();
     const [groupKey, renderer] = entry!;
-    expect(groupKey).toBe(
-      languageServerRequestErrorNoticeGroupKey("/workspace"),
-    );
+    expect(groupKey).toBe(languageServerRequestErrorNoticeGroupKey("/workspace"));
     expect(groupKey).not.toBe(languageServerCrashNoticeGroupKey("/workspace"));
 
     const notice = createWorkbenchNotice(
@@ -114,8 +112,74 @@ describe("languageServerCrashNoticeToastRenderer", () => {
       root.render(<>{renderer(notice, { dismiss })}</>);
     });
 
-    expect(host.textContent).toContain("PHP IDE request failed");
+    expect(host.textContent).toContain(GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE);
+    expect(host.textContent).not.toContain("PHP IDE request failed");
     expect(host.textContent).not.toContain("PHP IDE engine crashed");
     expect(host.textContent).not.toContain("Open Runtime panel");
+  });
+
+  it("names the JavaScript/TypeScript server when the notice payload identifies it", async () => {
+    const dismiss = vi.fn();
+    const [groupKey, renderer] = languageServerRequestErrorNoticeToastRenderer({
+      workspaceRoot: "/workspace",
+    })!;
+
+    const notice = createWorkbenchNotice(
+      "error",
+      "JavaScript/TypeScript",
+      "Language server returned too many document symbol roots (maximum 2000).",
+      groupKey,
+    );
+
+    await act(async () => {
+      root.render(<>{renderer(notice, { dismiss })}</>);
+    });
+
+    expect(host.textContent).toContain("TypeScript IDE request failed");
+    expect(host.textContent).not.toContain("PHP");
+  });
+
+  it("names the PHP server when the notice payload identifies it", async () => {
+    const dismiss = vi.fn();
+    const [groupKey, renderer] = languageServerRequestErrorNoticeToastRenderer({
+      workspaceRoot: "/workspace",
+    })!;
+
+    const notice = createWorkbenchNotice("error", "PHP", "phpactor request failed", groupKey);
+
+    await act(async () => {
+      root.render(<>{renderer(notice, { dismiss })}</>);
+    });
+
+    expect(host.textContent).toContain("PHP IDE request failed");
+    expect(host.textContent).not.toContain("TypeScript");
+  });
+});
+
+describe("languageServerRequestErrorToastTitle", () => {
+  it("fails closed to a neutral title for sources shared by every language server", () => {
+    expect(languageServerRequestErrorToastTitle("Language Server")).toBe(
+      GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE,
+    );
+    expect(languageServerRequestErrorToastTitle("Something else")).toBe(
+      GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE,
+    );
+    expect(languageServerRequestErrorToastTitle(null)).toBe(
+      GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE,
+    );
+    expect(languageServerRequestErrorToastTitle("")).toBe(
+      GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE,
+    );
+  });
+
+  it("derives the server name from an identifying source", () => {
+    expect(languageServerRequestErrorToastTitle("JavaScript/TypeScript")).toBe(
+      "TypeScript IDE request failed",
+    );
+    expect(languageServerRequestErrorToastTitle("TypeScript")).toBe(
+      "TypeScript IDE request failed",
+    );
+    expect(languageServerRequestErrorToastTitle("PHP")).toBe("PHP IDE request failed");
+    expect(languageServerRequestErrorToastTitle("phpactor")).toBe("PHP IDE request failed");
   });
 });

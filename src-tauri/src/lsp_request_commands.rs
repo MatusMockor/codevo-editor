@@ -1,6 +1,7 @@
 use super::*;
 use crate::lsp_features::{
     parse_bounded_reference_locations_result, BoundedLanguageServerLocations,
+    LanguageServerFeatureRequest,
 };
 use serde::Deserialize;
 
@@ -399,10 +400,11 @@ pub(super) async fn javascript_typescript_text_document_references(
     session_id: u64,
     request_id: u64,
     position: TextDocumentPosition,
+    include_declaration: bool,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<BoundedLanguageServerLocations, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
-    let request = LspTextDocumentFeatureRequestFactory.references(&position);
+    let request = javascript_typescript_references_request(&position, include_declaration);
     let Some(result) = registry
         .send_request_async_with_id(
             &root_path,
@@ -419,4 +421,40 @@ pub(super) async fn javascript_typescript_text_document_references(
         &root_path,
         parse_bounded_reference_locations_result(&result)?,
     )
+}
+
+fn javascript_typescript_references_request(
+    position: &TextDocumentPosition,
+    include_declaration: bool,
+) -> LanguageServerFeatureRequest {
+    LspTextDocumentFeatureRequestFactory.references(position, include_declaration)
+}
+
+#[cfg(test)]
+mod references_command_tests {
+    use super::*;
+
+    fn position() -> TextDocumentPosition {
+        TextDocumentPosition {
+            path: "/tmp/User.ts".to_string(),
+            line: 7,
+            character: 11,
+        }
+    }
+
+    #[test]
+    fn references_command_forwards_include_declaration_true() {
+        let request = javascript_typescript_references_request(&position(), true);
+
+        assert_eq!(request.method, "textDocument/references");
+        assert_eq!(request.params["context"]["includeDeclaration"], true);
+    }
+
+    #[test]
+    fn references_command_forwards_include_declaration_false() {
+        let request = javascript_typescript_references_request(&position(), false);
+
+        assert_eq!(request.method, "textDocument/references");
+        assert_eq!(request.params["context"]["includeDeclaration"], false);
+    }
 }

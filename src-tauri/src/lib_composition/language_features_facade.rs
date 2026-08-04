@@ -780,6 +780,8 @@ pub(crate) async fn text_document_inlay_hint_resolve(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_inlay_hints(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     path: String,
     range: LanguageServerRange,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -789,7 +791,13 @@ pub(crate) async fn javascript_typescript_text_document_inlay_hints(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.inlay_hints(&TextDocumentInlayHintRange { path, range });
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(Vec::new());
@@ -804,19 +812,39 @@ pub(crate) async fn javascript_typescript_text_document_inlay_hints(
 #[tauri::command]
 pub(crate) async fn javascript_typescript_text_document_inlay_hint_resolve(
     root_path: String,
+    session_id: u64,
+    request_id: u64,
     hint: LanguageServerInlayHint,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerInlayHint, String> {
     ensure_lsp_inlay_hint_payload_in_workspace(&root_path, &hint)?;
 
-    if !lsp_status_supports_inlay_hint_resolve(&registry.status(&root_path)) {
+    let status = registry.status(&root_path);
+    if matches!(
+        status,
+        crate::lsp_session::LanguageServerRuntimeStatus::Starting {
+            session_id: active_session_id,
+        } | crate::lsp_session::LanguageServerRuntimeStatus::Running {
+            session_id: active_session_id,
+            ..
+        } if active_session_id != session_id
+    ) {
+        return Err("Language server request session is no longer active.".to_string());
+    }
+    if !lsp_status_supports_inlay_hint_resolve(&status) {
         return Ok(hint);
     }
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_inlay_hint(&hint);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(
+            &root_path,
+            session_id,
+            request_id,
+            &request.method,
+            request.params,
+        )
         .await?
     else {
         return Ok(hint);

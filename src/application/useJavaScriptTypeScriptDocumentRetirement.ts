@@ -31,7 +31,7 @@ interface JavaScriptTypeScriptDocumentRetirementOptions {
     workspaceRoot: string | null | undefined,
   ) => status is Extract<LanguageServerRuntimeStatus, { kind: "running" }>;
   readonly isSessionCurrent: (rootPath: string, sessionId: number) => boolean;
-  readonly reportError: (rootPath: string, error: unknown) => void;
+  readonly reportError: (rootPath: string, source: string, error: unknown) => void;
 }
 
 interface JavaScriptTypeScriptDocumentRetirement {
@@ -169,7 +169,8 @@ export function useJavaScriptTypeScriptDocumentRetirement({
           workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
           sessionId !== null &&
           isSessionCurrent(rootPath, sessionId),
-        reportError,
+        reportError: (requestedRoot: string, error: unknown) =>
+          reportError(requestedRoot, "JavaScript/TypeScript", error),
       });
     },
     [

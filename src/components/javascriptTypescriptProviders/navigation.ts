@@ -8,6 +8,7 @@ import type {
   JavaScriptTypeScriptNavigationFeature,
   JavaScriptTypeScriptPreparedNavigationTarget,
 } from "../javascriptTypescriptMonacoProviderRegistration";
+import { recordPerfProviderSample } from "../perfScenarioBridge";
 import {
   javaScriptTypeScriptProviderRequestDidNotComplete,
   prepareJavaScriptTypeScriptProviderNavigationModels,
@@ -60,6 +61,7 @@ async function provideNavigation<Context extends NavigationContext>(
   feature: NavigationFeature,
   token?: Monaco.CancellationToken,
   preserveTargetRange = true,
+  includeDeclaration = true,
 ): Promise<Monaco.languages.Definition | null> {
   const request = boundary.createFeatureRequest(context, model, position, feature);
   if (!request) {
@@ -70,9 +72,43 @@ async function provideNavigation<Context extends NavigationContext>(
       return null;
     }
     const startedAt = performance.now();
-    const requestMethod = context.featuresGateway[feature].bind(context.featuresGateway);
+    const locationsRequest = (() => {
+      switch (feature) {
+        case "declaration":
+          return context.featuresGateway.declaration(
+            request.rootPath,
+            request.position,
+            request.sessionId,
+          );
+        case "definition":
+          return context.featuresGateway.definition(
+            request.rootPath,
+            request.position,
+            request.sessionId,
+          );
+        case "implementation":
+          return context.featuresGateway.implementation(
+            request.rootPath,
+            request.position,
+            request.sessionId,
+          );
+        case "references":
+          return context.featuresGateway.references(
+            request.rootPath,
+            request.position,
+            includeDeclaration,
+            request.sessionId,
+          );
+        case "typeDefinition":
+          return context.featuresGateway.typeDefinition(
+            request.rootPath,
+            request.position,
+            request.sessionId,
+          );
+      }
+    })();
     const locations = await runBoundedJavaScriptTypeScriptProviderRequest(
-      requestMethod(request.rootPath, request.position, request.sessionId),
+      locationsRequest,
       request.sessionId,
       token,
       request.rootPath,
@@ -86,24 +122,43 @@ async function provideNavigation<Context extends NavigationContext>(
     ) {
       return null;
     }
-    if (feature === "definition" || feature === "references") {
-      context.recordLatency?.(feature, performance.now() - startedAt, request.rootPath);
-    }
     const prepared = await prepareTargets(context, boundary, request, locations, feature, token);
-    return prepared
-      ? preparedJavaScriptTypeScriptNavigationTargetsToMonacoLocations(
-          monaco,
-          prepared,
-          request.rootPath,
-          preserveTargetRange,
-        )
-      : null;
+    if (!prepared) {
+      return null;
+    }
+    const converted = preparedJavaScriptTypeScriptNavigationTargetsToMonacoLocations(
+      monaco,
+      prepared,
+      request.rootPath,
+      preserveTargetRange,
+    );
+    if (feature === "definition" || feature === "references") {
+      const durationMs = performance.now() - startedAt;
+      context.recordLatency?.(feature, durationMs, request.rootPath);
+      recordPerfProviderSample(feature, {
+        ms: durationMs,
+        resultCount: navigationResultCount(converted),
+      });
+    }
+    return converted;
   } catch (error) {
     if (!token?.isCancellationRequested) {
       boundary.reportActiveRequestError(context, request, error);
     }
     return null;
   }
+}
+
+function navigationResultCount(converted: Monaco.languages.Definition | null): number {
+  if (!converted) {
+    return 0;
+  }
+
+  if (Array.isArray(converted)) {
+    return converted.length;
+  }
+
+  return 1;
 }
 
 export const provideJavaScriptTypeScriptDefinition = <Context extends NavigationContext>(
@@ -148,6 +203,7 @@ export const provideJavaScriptTypeScriptReferences = async <Context extends Navi
   boundary: JavaScriptTypeScriptProviderRequestBoundary<Context>,
   model: Monaco.editor.ITextModel,
   position: Monaco.Position,
+  includeDeclaration: boolean,
   token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.Location[] | null> =>
   (await provideNavigation(
@@ -159,4 +215,5 @@ export const provideJavaScriptTypeScriptReferences = async <Context extends Navi
     "references",
     token,
     false,
+    includeDeclaration,
   )) as Monaco.languages.Location[] | null;

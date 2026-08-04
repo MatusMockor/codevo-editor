@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { computeFixtureHashes } from "../../scripts/perf/fixtureHash.mjs";
 import { FIXTURE_VERSION } from "../../scripts/perf/perfScenarios.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -11,15 +13,20 @@ const extensionDir = path.join(repoRoot, "tools/vscode-baseline");
 const largeFilesRoot = path.join(repoRoot, "perf/fixtures/large-files");
 const monorepoRoot = path.join(repoRoot, "perf/fixtures/monorepo");
 const EXPECTED_SCENARIO_IDS = [
+  "tab-switch-cycle",
   "typing-large-5k",
   "typing-large-20k",
   "typing-large-100k",
-  "tab-switch-cycle",
+  "completion-bounded",
+  "completion-unbounded",
+  "definition-medium-2k",
+  "references-medium-2k",
+  "rename-medium-2k",
   "completion-large-20k",
   "definition-large-20k",
   "references-large-20k",
   "rename-large-20k",
-  "quickopen-monorepo",
+  "file-search-engine",
 ];
 
 function findMissingScenarioIds(scenarios) {
@@ -70,36 +77,127 @@ function ipcSafeTmpDir() {
   return "/tmp";
 }
 
-async function captureRoot(label, fixtureRoot, allScenarios, failures) {
+function aggregateDigest(hashes) {
+  const digest = createHash("sha256");
+  for (const relativePath of Object.keys(hashes).sort()) {
+    digest.update(relativePath + ":" + hashes[relativePath] + "\n");
+  }
+  return digest.digest("hex");
+}
+
+function collectFixtureHashes() {
+  const hashes = {};
+  const largeFileHashes = computeFixtureHashes(largeFilesRoot);
+  for (const relativePath of Object.keys(largeFileHashes).sort()) {
+    hashes["large-files/" + relativePath] = largeFileHashes[relativePath];
+  }
+  hashes["monorepo/"] = aggregateDigest(computeFixtureHashes(monorepoRoot));
+  return hashes;
+}
+
+function readVscodeRelease() {
+  const lines = spawnSync("code", ["--version"], { encoding: "utf8" }).stdout.trim().split("\n");
+  return { version: lines[0] ?? "", commit: lines[1] ?? "", arch: lines[2] ?? "" };
+}
+
+function mergeEnvironments(fragments, release, capturedAt) {
+  const first = fragments[0];
+  for (const fragment of fragments) {
+    if (fragment.editor !== first.editor || fragment.platform !== first.platform) {
+      throw new Error(
+        "capture windows disagree on environment: " +
+          JSON.stringify(first) +
+          " vs " +
+          JSON.stringify(fragment),
+      );
+    }
+    if (fragment.version !== release.version) {
+      throw new Error(
+        "extension host reported VS Code " +
+          fragment.version +
+          " but the code CLI reported " +
+          release.version,
+      );
+    }
+  }
+  const timerQuantizationMs = fragments.reduce(
+    (worst, fragment) => Math.max(worst, fragment.timerQuantizationMs),
+    0,
+  );
+  return {
+    editor: first.editor,
+    version: release.version,
+    commit: release.commit,
+    arch: release.arch,
+    bundleMode: first.bundleMode,
+    timerQuantizationMs,
+    platform: first.platform,
+    capturedAt,
+  };
+}
+
+async function captureRoot(label, fixtureRoot, allScenarios, environments, failures) {
   const runId = label + "-" + Date.now();
   const tmpDir = ipcSafeTmpDir();
   const outPath = path.join(tmpDir, "codevo-vscode-baseline-out-" + runId + ".json");
   const userDataDir = path.join(tmpDir, "codevo-vscode-baseline-user-data-" + runId);
   const extensionsDir = path.join(tmpDir, "codevo-vscode-baseline-extensions-" + runId);
   seedIsolatedProfile(userDataDir);
-  const result = spawnSync("code", [
-    "--new-window",
-    "--disable-extensions",
-    `--user-data-dir=${userDataDir}`,
-    `--extensions-dir=${extensionsDir}`,
-    `--extensionDevelopmentPath=${extensionDir}`,
-    fixtureRoot,
-  ], { env: { ...process.env, CODEVO_BASELINE_OUT: outPath }, stdio: "inherit", timeout: 600000, killSignal: "SIGKILL" });
-  const outputExists = await waitForOutput(outPath, 600000);
+  const result = spawnSync(
+    "code",
+    [
+      "--new-window",
+      "--disable-extensions",
+      `--user-data-dir=${userDataDir}`,
+      `--extensions-dir=${extensionsDir}`,
+      `--extensionDevelopmentPath=${extensionDir}`,
+      fixtureRoot,
+    ],
+    {
+      env: { ...process.env, CODEVO_BASELINE_OUT: outPath },
+      stdio: "inherit",
+      timeout: 900000,
+      killSignal: "SIGKILL",
+    },
+  );
+  const outputExists = await waitForOutput(outPath, 900000);
   killIsolatedProfileProcesses(userDataDir);
   if (!outputExists) {
     failures.push({
       id: label + "-root",
-      error: "no output file produced by VS Code process (spawnSync status=" + result.status + ", signal=" + result.signal + ")",
+      error:
+        "no output file produced by VS Code process (spawnSync status=" +
+        result.status +
+        ", signal=" +
+        result.signal +
+        ")",
     });
     return;
   }
   try {
     const captured = JSON.parse(fs.readFileSync(outPath, "utf8"));
+    if (!captured.environment) {
+      failures.push({ id: label + "-root", error: "captured output carries no environment block" });
+      return;
+    }
+    environments.push(captured.environment);
     allScenarios.push(...captured.scenarios);
   } catch (error) {
-    failures.push({ id: label + "-root", error: String(error && error.message || error) });
+    failures.push({ id: label + "-root", error: String((error && error.message) || error) });
   }
+}
+
+function describeScenarioFailure(scenario) {
+  if (Object.prototype.hasOwnProperty.call(scenario, "error")) {
+    return String(scenario.status ?? "invalid") + ": " + scenario.error;
+  }
+  return "status is " + String(scenario.status ?? "missing") + " instead of ok";
+}
+
+function collectScenarioFailures(scenarios) {
+  return scenarios
+    .filter((scenario) => scenario.status !== "ok")
+    .map((scenario) => ({ id: scenario.id, error: describeScenarioFailure(scenario) }));
 }
 
 async function main() {
@@ -109,13 +207,26 @@ async function main() {
   }
 
   const allScenarios = [];
+  const environments = [];
   const failures = [];
-  await captureRoot("large-files", largeFilesRoot, allScenarios, failures);
-  await captureRoot("monorepo", monorepoRoot, allScenarios, failures);
+  await captureRoot("large-files", largeFilesRoot, allScenarios, environments, failures);
+  await captureRoot("monorepo", monorepoRoot, allScenarios, environments, failures);
 
-  const vscodeVersion = spawnSync("code", ["--version"], { encoding: "utf8" }).stdout.trim().split("\n")[0];
+  if (environments.length === 0) {
+    for (const failure of failures) {
+      console.error(failure.id + ": " + failure.error);
+    }
+    console.error("no capture window produced an environment block; nothing was written.");
+    process.exit(1);
+  }
+
   const capturedAt = new Date().toISOString();
-  const merged = { capturedAt, vscodeVersion, fixtureVersion: FIXTURE_VERSION, scenarios: allScenarios };
+  const merged = {
+    fixtureVersion: FIXTURE_VERSION,
+    fixtureHashes: collectFixtureHashes(),
+    environment: mergeEnvironments(environments, readVscodeRelease(), capturedAt),
+    scenarios: allScenarios,
+  };
   const baselinesDir = path.join(repoRoot, "perf/baselines");
   const finalPath = path.join(baselinesDir, "vscode.json");
   const tempPath = finalPath + ".tmp-" + process.pid;
@@ -124,7 +235,7 @@ async function main() {
 
   const missingIds = findMissingScenarioIds(allScenarios);
   const failedEntries = [
-    ...allScenarios.filter((scenario) => Object.prototype.hasOwnProperty.call(scenario, "error")),
+    ...collectScenarioFailures(allScenarios),
     ...failures,
     ...missingIds.map((id) => ({ id, error: "scenario missing from captured output" })),
   ];
@@ -145,6 +256,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(String(error && error.message || error));
+  console.error(String((error && error.message) || error));
   process.exit(1);
 });

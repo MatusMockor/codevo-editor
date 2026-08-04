@@ -1,3 +1,4 @@
+use super::super::pending_requests::ResponseBodyBound;
 use super::*;
 
 #[test]
@@ -39,7 +40,7 @@ fn poisoned_supervisor_drop_terminates_session_and_rejects_waiters() {
     };
     let (request_tx, request_rx) = mpsc::channel();
     pending_requests
-        .admit(91, None, request_tx)
+        .admit(91, None, ResponseBodyBound::Full, request_tx)
         .expect("admit pending request");
     let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _guard = supervisor.session.lock().expect("session");

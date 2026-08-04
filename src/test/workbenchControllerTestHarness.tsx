@@ -1,4 +1,4 @@
-import { act, StrictMode } from "react";
+import { act, Profiler, StrictMode, type ProfilerOnRenderCallback } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
@@ -83,6 +83,8 @@ export interface ControllerDependencies {
   workspaceTrustGateway: WorkspaceTrustGateway;
 }
 
+export type WorkbenchCommitPhase = Parameters<ProfilerOnRenderCallback>[1];
+
 export interface RenderControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
   appSettings?: ReturnType<typeof defaultAppSettings>;
@@ -92,6 +94,7 @@ export interface RenderControllerOptions {
   editorGroupFocusRunner?: WorkbenchControllerOptions["editorGroupFocusRunner"];
   gitGateway?: GitGateway;
   localHistoryGateway?: LocalHistoryGateway;
+  onWorkbenchCommit?: (phase: WorkbenchCommitPhase) => void;
   onWorkbenchRender?: (workbench: WorkbenchController) => void;
   markdownPreviewRenderer?: WorkbenchControllerOptions["markdownPreviewRenderer"];
   indexProgressGateway?: IndexProgressGateway;
@@ -196,6 +199,7 @@ export function setupWorkbenchControllerTestHarness() {
     editorGroupFocusRunner,
     gitGateway,
     localHistoryGateway,
+    onWorkbenchCommit,
     onWorkbenchRender,
     markdownPreviewRenderer,
     javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
@@ -315,8 +319,16 @@ export function setupWorkbenchControllerTestHarness() {
       />
     );
 
+    const profiled = onWorkbenchCommit ? (
+      <Profiler id="workbench" onRender={(_id, phase) => onWorkbenchCommit(phase)}>
+        {harness}
+      </Profiler>
+    ) : (
+      harness
+    );
+
     act(() => {
-      mountedRoot.render(strictMode ? <StrictMode>{harness}</StrictMode> : harness);
+      mountedRoot.render(strictMode ? <StrictMode>{profiled}</StrictMode> : profiled);
     });
 
     return { dependencies, getWorkbench };
@@ -437,6 +449,8 @@ function javaScriptTypeScriptFeaturesGateway(
     identifiedRequests,
     codeActions: (rootPath, path, range, context, sessionId) =>
       identify(gateway.codeActions(rootPath, path, range, context), sessionId),
+    codeLenses: (rootPath, path, sessionId) =>
+      identify(gateway.codeLenses(rootPath, path), sessionId),
     workspaceSymbols: (rootPath, query, sessionId) =>
       identify(gateway.workspaceSymbols(rootPath, query), sessionId),
     completion: (rootPath, position, context, sessionId) =>
@@ -451,16 +465,22 @@ function javaScriptTypeScriptFeaturesGateway(
       identify(gateway.hover(rootPath, position), sessionId),
     implementation: (rootPath, position, sessionId) =>
       identify(gateway.implementation(rootPath, position), sessionId),
+    inlayHints: (rootPath, path, range, sessionId) =>
+      identify(gateway.inlayHints(rootPath, path, range), sessionId),
     linkedEditingRanges: (rootPath, position, sessionId) =>
       identify(gateway.linkedEditingRanges(rootPath, position), sessionId),
     rangeSemanticTokens: (rootPath, path, range, sessionId) =>
       identify(gateway.rangeSemanticTokens(rootPath, path, range), sessionId),
-    references: (rootPath, position, sessionId) =>
+    references: (rootPath, position, _includeDeclaration, sessionId) =>
       identify(gateway.references(rootPath, position), sessionId),
     executeCommandLocations: (rootPath, command, sessionId) =>
       identify(gateway.executeCommandLocations(rootPath, command), sessionId),
     resolveCodeAction: (rootPath, action, sessionId) =>
       identify(gateway.resolveCodeAction(rootPath, action), sessionId),
+    resolveCodeLens: (rootPath, lens, sessionId) =>
+      identify(gateway.resolveCodeLens(rootPath, lens), sessionId),
+    resolveInlayHint: (rootPath, hint, sessionId) =>
+      identify(gateway.resolveInlayHint(rootPath, hint), sessionId),
     semanticTokens: (rootPath, path, sessionId) =>
       identify(gateway.semanticTokens(rootPath, path), sessionId),
     signatureHelp: (rootPath, position, context, sessionId) =>

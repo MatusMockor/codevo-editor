@@ -22,10 +22,7 @@ export interface LanguageServerCrashNoticeToastContext {
   workspaceRoot: string | null;
 }
 
-export type LanguageServerCrashNoticeToastRendererFactoryResult = [
-  string,
-  NoticeToastRenderer,
-];
+export type LanguageServerCrashNoticeToastRendererFactoryResult = [string, NoticeToastRenderer];
 
 export function languageServerCrashNoticeToastRenderer(
   context: LanguageServerCrashNoticeToastContext,
@@ -51,12 +48,31 @@ export function languageServerCrashNoticeToastRenderer(
   ];
 }
 
+export const GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE = "Language server request failed";
+
+const LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLES_BY_SOURCE: ReadonlyMap<string, string> = new Map([
+  ["JavaScript/TypeScript", "TypeScript IDE request failed"],
+  ["PHP", "PHP IDE request failed"],
+  ["TypeScript", "TypeScript IDE request failed"],
+  ["phpactor", "PHP IDE request failed"],
+  ["tsserver", "TypeScript IDE request failed"],
+]);
+
+export function languageServerRequestErrorToastTitle(source: string | null | undefined): string {
+  if (!source) {
+    return GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE;
+  }
+
+  return (
+    LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLES_BY_SOURCE.get(source) ??
+    GENERIC_LANGUAGE_SERVER_REQUEST_ERROR_TOAST_TITLE
+  );
+}
+
 export function languageServerRequestErrorNoticeToastRenderer(
   context: Pick<LanguageServerCrashNoticeToastContext, "workspaceRoot">,
 ): LanguageServerCrashNoticeToastRendererFactoryResult | null {
-  const groupKey = languageServerRequestErrorNoticeGroupKey(
-    context.workspaceRoot,
-  );
+  const groupKey = languageServerRequestErrorNoticeGroupKey(context.workspaceRoot);
 
   if (!groupKey) {
     return null;
@@ -69,13 +85,10 @@ export function languageServerRequestErrorNoticeToastRenderer(
         description={notice.message}
         onClose={actions.dismiss}
         template="error"
-        title="PHP IDE request failed"
+        title={languageServerRequestErrorToastTitle(notice.source)}
       />
     ),
   ];
 }
 
-export {
-  languageServerCrashNoticeGroupKey,
-  languageServerRequestErrorNoticeGroupKey,
-};
+export { languageServerCrashNoticeGroupKey, languageServerRequestErrorNoticeGroupKey };

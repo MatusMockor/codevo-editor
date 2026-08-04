@@ -379,6 +379,7 @@ export function useWorkbenchSymbolPanels(
           const request = javaScriptTypeScriptLanguageServerFeaturesGateway.references(
             rootPath,
             position,
+            true,
             requestedSessionId,
           );
           return runBoundedJavaScriptTypeScriptReferencesRequest(

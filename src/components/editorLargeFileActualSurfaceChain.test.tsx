@@ -33,8 +33,9 @@ vi.mock("@monaco-editor/react", async () => {
       const mounted = React.useRef(false);
       React.useEffect(() => {
         const editor = actualSurfaceMocks.editor;
+        expect(editor && actualSurfaceMocks.monaco).toBeTruthy();
         if (!editor || !actualSurfaceMocks.monaco) {
-          throw new Error("Actual EditorSurface Monaco mocks were not prepared");
+          return;
         }
         if (!mounted.current) {
           mounted.current = true;
@@ -275,7 +276,13 @@ async function renderAndSettle(
     }
     await act(async () => Promise.resolve());
   }
-  throw new Error("Expected actual EditorSurface live ownership to settle");
+  expect(
+    fixture.runtimeContext.current?.ownsExactLiveModelContent?.(
+      "pane-1",
+      fixture.path,
+      fixture.model,
+    ),
+  ).toBe(true);
 }
 
 async function settlePromises(): Promise<void> {

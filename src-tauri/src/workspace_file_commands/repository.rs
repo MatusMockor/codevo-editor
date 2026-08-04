@@ -4,8 +4,8 @@ use super::{
     replace_text, revision, same_snapshot, text_matcher, CommandFailure, DescriptorFileEntry,
     DescriptorTextSearchResponse, FileCommandResult, FileRevision, LocalHistorySnapshotSink,
     MutationFailure, MutationResult, PreparedDescriptorFileSearch, PreparedDescriptorTextSearch,
-    ReplaceFileFailure, ReplaceFileResult, WorkspaceFileRepository, WorkspaceReplaceResult,
-    WorkspaceTextFile,
+    ReplaceFileFailure, ReplaceFileResult, WorkspaceFileIndexCache, WorkspaceFileRepository,
+    WorkspaceReplaceResult, WorkspaceTextFile,
 };
 #[cfg(test)]
 use super::{
@@ -103,12 +103,13 @@ impl<'a> WorkspaceFileRepository<'a> {
         query: &str,
         limit: usize,
     ) -> io::Result<Vec<DescriptorFileSearchResult>> {
-        self.prepare_file_search(id, scope, query, limit)?
+        self.prepare_file_search(&WorkspaceFileIndexCache::new(), id, scope, query, limit)?
             .execute(&|| true)
     }
 
     pub(crate) fn prepare_file_search(
         &self,
+        file_index: &WorkspaceFileIndexCache,
         id: &WorkspaceId,
         scope: &Path,
         query: &str,
@@ -125,6 +126,7 @@ impl<'a> WorkspaceFileRepository<'a> {
             scope: scope.to_path_buf(),
             query: query.trim().to_lowercase(),
             limit: limit.clamp(1, 500),
+            file_index: file_index.clone(),
         })
     }
 

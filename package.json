@@ -22,6 +22,8 @@
     "perf:report": "node ./scripts/perf/gap-report.mjs",
     "perf:run": "node ./scripts/perf/run-perf-scenarios.mjs",
     "perf:smoke": "node ./scripts/perf/run-perf-scenarios.mjs --smoke",
+    "perf:autorun": "node ./scripts/perf/run-perf-scenarios.mjs --autorun",
+    "perf:autorun:smoke": "node ./scripts/perf/run-perf-scenarios.mjs --autorun --smoke",
     "preview": "vite preview",
     "tauri": "tauri",
     "debug": "node ./scripts/debug-tauri.mjs",

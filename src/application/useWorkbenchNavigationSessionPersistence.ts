@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type MutableRefObject } from "react";
+import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { EditorGroupId, EditorGroupsState } from "../domain/editorGroups";
 import type {
@@ -13,6 +13,10 @@ import {
   workspaceSessionsEqual,
 } from "./documentSessionState";
 import type { SidebarView } from "./useWorkbenchController";
+import {
+  isActivationOnlyWorkspaceSessionChange,
+  mergeActivationOnlyWorkspaceSession,
+} from "./workspaceSessionActivationChange";
 import type { WorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
 
 interface NavigationSessionPersistenceDependencies {
@@ -147,6 +151,8 @@ export function usePersistWorkspaceNavigationSession({
   workspaceSettingsRef,
   workspaceSettingsSaveCoordinator,
 }: NavigationSessionChangeDependencies): void {
+  const navigationSaveGenerationByRootRef = useRef(new Map<string, number>());
+
   useEffect(() => {
     if (!workspaceRoot) {
       return;
@@ -174,7 +180,17 @@ export function usePersistWorkspaceNavigationSession({
     }
 
     const requestedRoot = workspaceRoot;
-    if (!workspaceSessionsEqual(workspaceSettingsRef.current.session, session)) {
+    const navigationSaveGeneration =
+      (navigationSaveGenerationByRootRef.current.get(requestedRoot) ?? 0) + 1;
+    navigationSaveGenerationByRootRef.current.set(requestedRoot, navigationSaveGeneration);
+    const isCurrentNavigationSave = () =>
+      navigationSaveGenerationByRootRef.current.get(requestedRoot) === navigationSaveGeneration;
+    const committedSession = workspaceSettingsRef.current.session;
+    const isDeferrableSessionChange =
+      workspaceSessionsEqual(committedSession, session) ||
+      isActivationOnlyWorkspaceSessionChange(committedSession, session);
+
+    if (!isDeferrableSessionChange) {
       workspaceSettingsSaveCoordinator.cancelNavigationSave(requestedRoot);
       void persistWorkspaceSettings(requestedRoot, {
         ...workspaceSettingsRef.current,
@@ -183,14 +199,44 @@ export function usePersistWorkspaceNavigationSession({
       return;
     }
 
+    const scheduledSettings = workspaceSettingsRef.current;
+
     workspaceSettingsSaveCoordinator.scheduleNavigationSave(requestedRoot, async () => {
       try {
+        let pendingSettingsSave = workspaceSettingsSaveCoordinator.waitForIdle(requestedRoot);
+        while (pendingSettingsSave) {
+          await pendingSettingsSave;
+          if (!isCurrentNavigationSave()) {
+            return;
+          }
+          pendingSettingsSave = workspaceSettingsSaveCoordinator.waitForIdle(requestedRoot);
+        }
+
+        if (!isCurrentNavigationSave()) {
+          return;
+        }
+
+        const latestSettingsForRequestedRoot =
+          workspaceSettingsSaveCoordinator.committed(requestedRoot) ?? scheduledSettings;
+        if (
+          !isActivationOnlyWorkspaceSessionChange(
+            latestSettingsForRequestedRoot.session,
+            session,
+          ) &&
+          !workspaceSessionsEqual(latestSettingsForRequestedRoot.session, session)
+        ) {
+          return;
+        }
+
+        if (!isCurrentNavigationSave()) {
+          return;
+        }
         await persistWorkspaceSettings(requestedRoot, {
-          ...workspaceSettingsRef.current,
-          session: {
-            ...workspaceSettingsRef.current.session,
-            navigation: session.navigation,
-          },
+          ...latestSettingsForRequestedRoot,
+          session: mergeActivationOnlyWorkspaceSession(
+            latestSettingsForRequestedRoot.session,
+            session,
+          ),
         });
       } catch (error) {
         reportErrorForActiveWorkspaceRoot(requestedRoot, "Session", error);
@@ -211,6 +257,27 @@ export function usePersistWorkspaceNavigationSession({
     workspaceSettingsSaveCoordinator,
     workspaceRoot,
   ]);
+
+  useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    const navigationSaveGenerationByRoot = navigationSaveGenerationByRootRef.current;
+    const cleanupGeneration = navigationSaveGenerationByRoot.get(requestedRoot);
+
+    return () => {
+      void workspaceSettingsSaveCoordinator
+        .flushNavigationSave(requestedRoot)
+        .catch((error) => reportErrorForActiveWorkspaceRoot(requestedRoot, "Session", error))
+        .finally(() => {
+          if (navigationSaveGenerationByRoot.get(requestedRoot) === cleanupGeneration) {
+            navigationSaveGenerationByRoot.delete(requestedRoot);
+          }
+        });
+    };
+  }, [reportErrorForActiveWorkspaceRoot, workspaceRoot, workspaceSettingsSaveCoordinator]);
 }
 
 export function useFlushWorkspaceNavigationSessionOnBlur(

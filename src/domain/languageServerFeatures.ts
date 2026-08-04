@@ -480,10 +480,12 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     path: string,
     range: LanguageServerRange,
+    sessionId?: number,
   ): Promise<LanguageServerInlayHint[]>;
   resolveInlayHint(
     rootPath: string,
     hint: LanguageServerInlayHint,
+    sessionId?: number,
   ): Promise<LanguageServerInlayHint>;
   documentSymbols(rootPath: string, path: string): Promise<LanguageServerDocumentSymbol[]>;
   documentHighlights(
@@ -540,8 +542,12 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     action: LanguageServerCodeAction,
   ): Promise<LanguageServerCodeAction>;
-  codeLenses(rootPath: string, path: string): Promise<LanguageServerCodeLens[]>;
-  resolveCodeLens(rootPath: string, lens: LanguageServerCodeLens): Promise<LanguageServerCodeLens>;
+  codeLenses(rootPath: string, path: string, sessionId?: number): Promise<LanguageServerCodeLens[]>;
+  resolveCodeLens(
+    rootPath: string,
+    lens: LanguageServerCodeLens,
+    sessionId?: number,
+  ): Promise<LanguageServerCodeLens>;
   prepareCallHierarchy(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -614,6 +620,7 @@ export interface LanguageServerFeaturesGateway {
 
 type IdentifiedJavaScriptTypeScriptFeature =
   | "codeActions"
+  | "codeLenses"
   | "completion"
   | "declaration"
   | "definition"
@@ -625,10 +632,13 @@ type IdentifiedJavaScriptTypeScriptFeature =
   | "rangeSemanticTokens"
   | "references"
   | "resolveCodeAction"
+  | "resolveCodeLens"
+  | "resolveInlayHint"
   | "semanticTokens"
   | "signatureHelp"
   | "sourceDefinition"
   | "typeDefinition"
+  | "inlayHints"
   | "workspaceSymbols";
 
 export type JavaScriptTypeScriptLanguageServerFeaturesGateway = Omit<
@@ -647,6 +657,27 @@ export type JavaScriptTypeScriptLanguageServerFeaturesGateway = Omit<
     action: LanguageServerCodeAction,
     sessionId: number,
   ): IdentifiedLanguageServerRequest<LanguageServerCodeAction>;
+  codeLenses(
+    rootPath: string,
+    path: string,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCodeLens[]>;
+  resolveCodeLens(
+    rootPath: string,
+    lens: LanguageServerCodeLens,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerCodeLens>;
+  inlayHints(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerInlayHint[]>;
+  resolveInlayHint(
+    rootPath: string,
+    hint: LanguageServerInlayHint,
+    sessionId: number,
+  ): IdentifiedLanguageServerRequest<LanguageServerInlayHint>;
   hover(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -696,6 +727,7 @@ export type JavaScriptTypeScriptLanguageServerFeaturesGateway = Omit<
   references(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
+    includeDeclaration: boolean,
     sessionId: number,
   ): IdentifiedLanguageServerRequest<LanguageServerLocationList>;
   executeCommandLocations(

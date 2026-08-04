@@ -2,8 +2,8 @@ use crate::search::TextSearchOptions;
 use crate::workspace_file_commands::{
     read_image_from_root, DescriptorFileEntry, DescriptorFileSearchResponse,
     DescriptorTextSearchResponse, FileCommandResult, FileRevision, MutationResult,
-    WorkspaceFileRepository, WorkspaceImageFile, WorkspaceImageReadError, WorkspaceReplaceResult,
-    WorkspaceTextFile,
+    WorkspaceFileIndexCache, WorkspaceFileRepository, WorkspaceImageFile, WorkspaceImageReadError,
+    WorkspaceReplaceResult, WorkspaceTextFile,
 };
 use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
 use std::{
@@ -291,9 +291,11 @@ pub(crate) fn workspace_read_directory(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn workspace_search_files(
     registry: State<'_, WorkspaceRegistry>,
     lifecycle: State<'_, WorkspaceFileSearchLifecycle>,
+    file_index: State<'_, WorkspaceFileIndexCache>,
     workspace_id: WorkspaceId,
     relative_path: String,
     query: String,
@@ -321,6 +323,7 @@ pub(crate) async fn workspace_search_files(
         return Err(error);
     }
     let prepared = match WorkspaceFileRepository::new(&registry).prepare_file_search(
+        &file_index,
         &workspace_id,
         Path::new(&relative_path),
         &query,

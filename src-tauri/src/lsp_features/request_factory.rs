@@ -20,7 +20,11 @@ pub trait TextDocumentFeatureRequestFactory {
     fn workspace_symbols(&self, query: &str) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn type_definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
-    fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn references(
+        &self,
+        position: &TextDocumentPosition,
+        include_declaration: bool,
+    ) -> LanguageServerFeatureRequest;
     fn selection_ranges(&self, range: &TextDocumentSelectionRange) -> LanguageServerFeatureRequest;
     fn linked_editing_ranges(
         &self,
@@ -200,9 +204,13 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         request("textDocument/typeDefinition", position)
     }
 
-    fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
+    fn references(
+        &self,
+        position: &TextDocumentPosition,
+        include_declaration: bool,
+    ) -> LanguageServerFeatureRequest {
         let mut request = request("textDocument/references", position);
-        request.params["context"] = json!({ "includeDeclaration": true });
+        request.params["context"] = json!({ "includeDeclaration": include_declaration });
         request
     }
 

@@ -53,8 +53,12 @@ describe("desktop window chrome config", () => {
     expect(windowPermissions).toEqual([
       "core:window:allow-close",
       "core:window:allow-minimize",
+      "core:window:allow-set-always-on-top",
+      "core:window:allow-set-focus",
+      "core:window:allow-show",
       "core:window:allow-start-dragging",
       "core:window:allow-toggle-maximize",
+      "core:window:allow-unminimize",
     ]);
   });
 });

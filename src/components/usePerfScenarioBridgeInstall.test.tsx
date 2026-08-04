@@ -68,6 +68,7 @@ function quickOpenHost(trace: QuickOpenTrace, loadingFrames: number): PerfScenar
   return {
     getLatencySnapshot: () => [],
     clearLatencyMetrics: () => {},
+    javaScriptTypeScriptLanguageServerRuntimeStatus: null,
     setActivePath: () => {},
     get quickOpenLoading() {
       if (remainingLoadingReads <= 0) {
@@ -120,6 +121,7 @@ function silentHost(): PerfScenarioBridgeHost {
   return {
     getLatencySnapshot: () => [],
     clearLatencyMetrics: () => {},
+    javaScriptTypeScriptLanguageServerRuntimeStatus: null,
     setActivePath: () => {},
     quickOpenLoading: false,
     setQuickOpenOpen: () => {},
@@ -169,6 +171,7 @@ describe("usePerfScenarioBridgeInstall", () => {
         { kind: "completion", stats: { count: 1, last: 4, min: 4, max: 4, median: 4, p95: 4 } },
       ],
       clearLatencyMetrics,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: null,
       setActivePath,
       quickOpenLoading: false,
       setQuickOpenOpen: () => {},
@@ -230,6 +233,27 @@ describe("usePerfScenarioBridgeInstall", () => {
     renderHostProbe({ ...silentHost(), getLatencySnapshot: () => renamedSnapshot });
 
     expect(window.__codevoPerf!.getLatencySnapshot()).toEqual(renamedSnapshot);
+  }, 20000);
+
+  it("reports the workbench JS/TS language server runtime status live", async () => {
+    window.localStorage.setItem("codevo.perfBridge", "1");
+    const renderHostProbe = mountHostProbe(silentHost());
+    await waitForBridge();
+
+    expect(window.__codevoPerf!.getLanguageServerRuntimeStatus()).toEqual({
+      kind: "none",
+      running: false,
+    });
+
+    renderHostProbe({
+      ...silentHost(),
+      javaScriptTypeScriptLanguageServerRuntimeStatus: { kind: "starting", sessionId: 3 },
+    });
+
+    expect(window.__codevoPerf!.getLanguageServerRuntimeStatus()).toEqual({
+      kind: "starting",
+      running: false,
+    });
   }, 20000);
 
   it("removes the bridge on unmount", async () => {

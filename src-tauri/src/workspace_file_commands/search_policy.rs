@@ -1,4 +1,4 @@
-use super::{directory_entries, open_directory_at, open_directory_path, open_regular_at};
+use super::{directory_entries, fstat, open_directory_at, open_directory_path, open_regular_at};
 use crate::search::TextSearchOptions;
 use crate::workspace::FileEntryKind;
 use ignore::{gitignore::GitignoreBuilder, overrides::OverrideBuilder, Match};
@@ -30,7 +30,9 @@ pub(super) fn collect_files(
     let mut materialized = 0usize;
     while let Some((relative, directory, inherited_ignores)) = stack.pop() {
         let mut ignores = inherited_ignores;
-        if let Some(local) = load_directory_gitignore(&directory, &display_root.join(&relative))? {
+        if let Some((local, _)) =
+            load_directory_gitignore(&directory, &display_root.join(&relative))?
+        {
             ignores.push(Arc::new(local));
         }
         for entry in directory_entries(&directory)? {
@@ -64,12 +66,13 @@ pub(super) fn collect_files(
 pub(super) fn load_directory_gitignore(
     directory: &File,
     display_directory: &Path,
-) -> io::Result<Option<ignore::gitignore::Gitignore>> {
+) -> io::Result<Option<(ignore::gitignore::Gitignore, libc::stat)>> {
     let file = match open_regular_at(directory.as_raw_fd(), c".gitignore", libc::O_RDONLY) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
+    let stamp = fstat(file.as_raw_fd())?;
     let mut bytes = Vec::new();
     file.take(WORKSPACE_GITIGNORE_BYTE_LIMIT + 1)
         .read_to_end(&mut bytes)?;
@@ -85,7 +88,10 @@ pub(super) fn load_directory_gitignore(
     for line in content.lines() {
         builder.add_line(None, line).map_err(io::Error::other)?;
     }
-    builder.build().map(Some).map_err(io::Error::other)
+    builder
+        .build()
+        .map(|matcher| Some((matcher, stamp)))
+        .map_err(io::Error::other)
 }
 
 fn gitignore_stack_ignores(

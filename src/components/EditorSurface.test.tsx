@@ -1872,9 +1872,15 @@ describe("EditorSurface", () => {
       source: "phpactor",
     };
     const model: FakeModel = {
-      getOffsetAt: vi.fn(() => 16),
+      getOffsetAt: vi.fn(function (this: FakeModel) {
+        expect(this).toBe(model);
+        return 16;
+      }),
       getValue: vi.fn(() => activeDocument.content),
-      getVersionId: vi.fn(() => 1),
+      getVersionId: vi.fn(function (this: FakeModel) {
+        expect(this).toBe(model);
+        return 1;
+      }),
       uri: {
         fsPath: activeDocument.path,
         path: activeDocument.path,
@@ -1884,6 +1890,7 @@ describe("EditorSurface", () => {
     editorSurfaceMocks.monaco = createMonaco(model);
     const providePhpFrameworkDefinition = vi.fn(async () => true);
     const providePhpPresenterLinkDefinition = vi.fn(async () => false);
+    const qaBridgeEditor = editorSurfaceMocks.editor;
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "App\\Models\\Invoice",
@@ -1966,6 +1973,17 @@ describe("EditorSurface", () => {
       },
     ]);
     await expect(bridge?.triggerDefinition()).resolves.toBe(true);
+    expect(bridge?.triggerCompletion()).toBe(true);
+    expect(
+      qaBridgeEditor.trigger.mock.calls.filter(
+        ([source, action]) =>
+          source === "codevo.qa" &&
+          (action === "hideSuggestWidget" || action === "editor.action.triggerSuggest"),
+      ),
+    ).toEqual([
+      ["codevo.qa", "hideSuggestWidget", {}],
+      ["codevo.qa", "editor.action.triggerSuggest", {}],
+    ]);
 
     expect(providePhpMethodCompletions).toHaveBeenCalledWith(activeDocument.content, {
       column: 11,
@@ -2128,7 +2146,9 @@ describe("EditorSurface", () => {
           return false;
         }
 
-        await renderWith(targetDocument, onOpenWorkspaceFile);
+        queueMicrotask(() => {
+          void renderWith(targetDocument, onOpenWorkspaceFile);
+        });
         return true;
       },
     );
@@ -2146,7 +2166,7 @@ describe("EditorSurface", () => {
     expect(window.__codevoQa?.getActiveFile()).toBe(targetDocument.path);
   });
 
-  it("opens a workspace root through the dev QA bridge", async () => {
+  it("opens a committed workspace root without waiting for optional hydration", async () => {
     const localStorage = memoryLocalStorage();
     vi.stubGlobal("localStorage", localStorage);
     Object.defineProperty(window, "localStorage", {
@@ -2214,12 +2234,14 @@ describe("EditorSurface", () => {
         await Promise.resolve();
       });
     };
+    const hydrationNeverSettles = new Promise<boolean>(() => undefined);
     const onOpenWorkspaceRoot = vi.fn(async (path: string) => {
       await renderWith(path, onOpenWorkspaceRoot);
-      return true;
+      return hydrationNeverSettles;
     });
 
     await renderWith("/workspace", onOpenWorkspaceRoot);
+    const bridge = window.__codevoQa;
 
     await expect(window.__codevoQa?.openWorkspaceRoot("   ")).resolves.toBe(false);
     await expect(window.__codevoQa?.openWorkspaceRoot("/invalid\0workspace")).resolves.toBe(false);
@@ -2228,6 +2250,7 @@ describe("EditorSurface", () => {
     await expect(window.__codevoQa?.openWorkspaceRoot("/next-workspace/")).resolves.toBe(true);
 
     expect(onOpenWorkspaceRoot).toHaveBeenCalledWith("/next-workspace");
+    expect(window.__codevoQa).toBe(bridge);
     expect(window.__codevoQa?.getWorkspaceRoot()).toBe("/next-workspace");
   });
 
@@ -16318,7 +16341,127 @@ class Foo
     });
 
     expect(firstOnChange).not.toHaveBeenCalled();
-    expect(secondOnChange).toHaveBeenCalledWith("next", activeDocument.path);
+    expect(secondOnChange).toHaveBeenCalledWith("next", activeDocument.path, {
+      lineCount: 1,
+      utf16Length: 4,
+    });
+  });
+
+  it("reuses exact Monaco metrics instead of rescanning a custom-policy 10 MiB edit", async () => {
+    const characterLimit = 10 * 1024 * 1024;
+    const initialContent = "x".repeat(characterLimit - 1);
+    const nextContent = `${initialContent}x`;
+    const activeDocument: EditorDocument = {
+      content: initialContent,
+      language: "typescript",
+      name: "large.ts",
+      path: "/workspace/src/large.ts",
+      savedContent: initialContent,
+    };
+    let modelContent = initialContent;
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 1),
+      getValue: vi.fn(() => modelContent),
+      getValueLength: vi.fn(() => modelContent.length),
+      setValue: vi.fn((content: string) => {
+        modelContent = content;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const onChange = vi.fn();
+    const props = {
+      ...memoGuardProps(activeDocument),
+      largeSmartDocumentPolicy: { characterLimit, lineLimit: 5_000 },
+      onChange,
+    };
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, props));
+      await Promise.resolve();
+    });
+    const contentScan = monitorLargeContentCharCodeScans(initialContent.length);
+
+    try {
+      await act(async () => {
+        (model.setValue as (value: string) => void)(nextContent);
+        editorSurfaceMocks.editor?.modelContentChangeHandler?.({ changes: [] });
+        root.render(
+          createElement(EditorSurface, {
+            ...props,
+            activeDocument: { ...activeDocument, content: nextContent },
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      expect(onChange).toHaveBeenCalledWith(nextContent, activeDocument.path, {
+        lineCount: 1,
+        utf16Length: characterLimit,
+      });
+      expect(contentScan.count()).toBe(0);
+    } finally {
+      contentScan.restore();
+    }
+  });
+
+  it("releases unconsumed model-content metrics when the active document closes", async () => {
+    const initialContent = "const value = 1;";
+    const nextContent = Array.from({ length: 501 }, () => "x").join("\n");
+    const activeDocument: EditorDocument = {
+      content: initialContent,
+      language: "typescript",
+      name: "large.ts",
+      path: "/workspace/src/large.ts",
+      savedContent: initialContent,
+    };
+    let modelContent = initialContent;
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => modelContent.split("\n").length),
+      getValue: vi.fn(() => modelContent),
+      getValueLength: vi.fn(() => modelContent.length),
+      setValue: vi.fn((content: string) => {
+        modelContent = content;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const props = {
+      ...memoGuardProps(activeDocument),
+      largeSmartDocumentPolicy: { characterLimit: 16 * 1024, lineLimit: 500 },
+    };
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, props));
+      await Promise.resolve();
+    });
+    act(() => {
+      (model.setValue as (value: string) => void)(nextContent);
+      editorSurfaceMocks.editor?.modelContentChangeHandler?.({ changes: [] });
+    });
+    await act(async () => {
+      root.render(createElement(EditorSurface, { ...props, activeDocument: null }));
+      await Promise.resolve();
+    });
+
+    const contentScan = monitorLargeContentCharCodeScans(nextContent.length);
+    try {
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...props,
+            activeDocument: { ...activeDocument, content: nextContent },
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      expect(contentScan.count()).toBeGreaterThan(0);
+    } finally {
+      contentScan.restore();
+    }
   });
 
   it("does not update tracked cursor state when the cursor fires with an unchanged position", async () => {
@@ -16584,7 +16727,7 @@ class Foo
       path: "/workspace/src/example.ts",
       savedContent: "",
     };
-    const model = tokenizableModel(activeDocument.path, 5000);
+    const model = tokenizableModel(activeDocument.path, 1200);
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = createMonaco(model);
 
@@ -17980,7 +18123,7 @@ function languageServerFeaturesGateway() {
     codeActions: vi.fn((_rootPath, _path, _range, _context, sessionId?: number) =>
       identified([], sessionId),
     ),
-    codeLenses: vi.fn(async () => []),
+    codeLenses: vi.fn((_rootPath, _path, sessionId?: number) => identified([], sessionId)),
     completion: vi.fn((_rootPath, _position, _context?: unknown, sessionId?: number) =>
       identified({ isIncomplete: false, items: [] }, sessionId),
     ),
@@ -18011,8 +18154,8 @@ function languageServerFeaturesGateway() {
     implementation: vi.fn((_rootPath, _position, sessionId?: number) =>
       identified<LanguageServerLocation[]>([], sessionId),
     ),
-    inlayHints: vi.fn(async () => []),
-    resolveInlayHint: vi.fn(async (_rootPath, hint) => hint),
+    inlayHints: vi.fn((_rootPath, _path, _range, sessionId?: number) => identified([], sessionId)),
+    resolveInlayHint: vi.fn((_rootPath, hint, sessionId?: number) => identified(hint, sessionId)),
     linkedEditingRanges: vi.fn((_rootPath, _position, sessionId?: number) =>
       identified(null, sessionId),
     ),
@@ -18025,7 +18168,7 @@ function languageServerFeaturesGateway() {
     rangeSemanticTokens: vi.fn((_rootPath, _path, _range, sessionId?: number) =>
       identified(null, sessionId),
     ),
-    references: vi.fn((_rootPath, _position, sessionId?: number) =>
+    references: vi.fn((_rootPath, _position, _includeDeclaration?: boolean, sessionId?: number) =>
       identified<LanguageServerLocation[]>([], sessionId),
     ),
     rename: vi.fn(async () => null),
@@ -18035,7 +18178,7 @@ function languageServerFeaturesGateway() {
     resolveCodeAction: vi.fn((_rootPath, action, sessionId?: number) =>
       identified(action, sessionId),
     ),
-    resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
+    resolveCodeLens: vi.fn((_rootPath, lens, sessionId?: number) => identified(lens, sessionId)),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
     signatureHelp: vi.fn((_rootPath, _position, _context?: unknown, sessionId?: number) =>
       identified(null, sessionId),
@@ -18054,5 +18197,26 @@ function languageServerFeaturesGateway() {
     workspaceSymbols: vi.fn((_rootPath, _query, sessionId = 1) =>
       Object.assign(Promise.resolve([]), { requestId: 1, sessionId }),
     ),
+  };
+}
+
+function monitorLargeContentCharCodeScans(minimumLength: number): {
+  count(): number;
+  restore(): void;
+} {
+  const original = String.prototype.charCodeAt;
+  let count = 0;
+  const spy = vi.spyOn(String.prototype, "charCodeAt").mockImplementation(function (
+    this: string,
+    index: number,
+  ) {
+    if (this.length >= minimumLength) {
+      count += 1;
+    }
+    return original.call(this, index);
+  });
+  return {
+    count: () => count,
+    restore: () => spy.mockRestore(),
   };
 }

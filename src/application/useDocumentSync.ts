@@ -152,8 +152,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
     gateway: javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     isRunningForWorkspace: isRunningLanguageServerForWorkspace,
     isSessionCurrent: isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-    reportError: (rootPath, error) =>
-      reportErrorForActiveWorkspaceRoot(rootPath, "JavaScript/TypeScript", error),
+    reportError: reportErrorForActiveWorkspaceRoot,
   });
 
   const syncOpenDocument = useCallback(

@@ -5,6 +5,7 @@ import type {
 } from "../application/liveModelIngressCoordinator";
 import type { IncrementalDocumentContentEvent } from "../domain/incrementalDocumentSync";
 import type { LiveDocumentContentChangeEvent } from "../domain/liveDocumentContentAuthority";
+import type { LargeSmartDocumentMetrics } from "../domain/largeDocumentPolicy";
 import {
   AUTHORITATIVE_EDITOR_LIVE_EDIT,
   LEGACY_REQUIRED_EDITOR_LIVE_EDIT,
@@ -30,7 +31,7 @@ export interface EditorModelContentSyncRegistration {
   groupId: string;
   liveIngress?: LiveModelSourceHandle | null;
   modelBindingAuthority?: object | null;
-  onChange(content: string): boolean | void;
+  onChange(content: string, metrics?: LargeSmartDocumentMetrics): boolean | void;
   onLiveRevision?(revision: EditorModelLiveRevision): EditorModelContentSyncReceipt;
 }
 
@@ -335,7 +336,11 @@ export class EditorModelContentSyncCoordinator {
       if (!this.isExactLegacyTarget(model, target, versionId, alternativeVersionId)) {
         return;
       }
-      target.onChange(content);
+      const metrics = largeSmartDocumentMetricsForModel(model);
+      if (!this.isExactLegacyTarget(model, target, versionId, alternativeVersionId)) {
+        return;
+      }
+      target.onChange(content, metrics?.utf16Length === content.length ? metrics : undefined);
     } catch {
       // A failed or reentrant full read is stale; never retry the hot path.
     }
@@ -356,6 +361,19 @@ export class EditorModelContentSyncCoordinator {
       model.getVersionId() === versionId &&
       model.getAlternativeVersionId() === alternativeVersionId
     );
+  }
+}
+
+function largeSmartDocumentMetricsForModel(
+  model: Monaco.editor.ITextModel,
+): LargeSmartDocumentMetrics | undefined {
+  try {
+    return Object.freeze({
+      lineCount: model.getLineCount(),
+      utf16Length: model.getValueLength(),
+    });
+  } catch {
+    return undefined;
   }
 }
 

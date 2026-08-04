@@ -30,6 +30,7 @@ import {
   editorSurfaceControlledValue,
   editorSurfaceModelPath,
 } from "../editorSurfaceLiveModelContentAuthority";
+import { modelForPath } from "../editorSurfaceModelIdentity";
 import {
   changePreviewText,
   editorChangeKindLabel,
@@ -53,6 +54,7 @@ interface EditorSurfacePresentationOptions {
   readonly activateEditorGroupFromInteraction: () => void;
   readonly activeDocument: EditorDocument | null;
   readonly activeDocumentContentReady: boolean;
+  readonly activeDocumentIsLargeSmart: boolean;
   readonly beforeMountTheme: MonacoAppTheme;
   readonly breakpointActions?: Partial<DebugBreakpointManagement>;
   readonly breakpoints: readonly Breakpoint[];
@@ -92,6 +94,64 @@ interface EditorSurfacePresentationOptions {
   readonly workspaceRoot: string | null;
 }
 
+type LargeDocumentMonacoOptions = Pick<
+  Monaco.editor.IStandaloneEditorConstructionOptions,
+  | "autoIndent"
+  | "bracketPairColorization"
+  | "codeLens"
+  | "folding"
+  | "minimap"
+  | "occurrencesHighlight"
+  | "parameterHints"
+  | "quickSuggestions"
+  | "selectionHighlight"
+  | "semanticHighlighting.enabled"
+  | "stickyScroll"
+  | "suggestOnTriggerCharacters"
+  | "wordBasedSuggestions"
+>;
+
+/**
+ * Keeps Monaco's structural work aligned with Codevo's lower large-document
+ * threshold. Monaco's built-in large-file cutoff is intentionally independent
+ * and can leave expensive editor features enabled for files that Codevo has
+ * already placed in degraded mode.
+ */
+export function largeDocumentMonacoOptions(
+  large: boolean,
+  minimapEnabled: boolean,
+): LargeDocumentMonacoOptions {
+  return {
+    autoIndent: large ? "keep" : "full",
+    bracketPairColorization: { enabled: !large },
+    codeLens: !large,
+    folding: !large,
+    minimap: { enabled: !large && minimapEnabled },
+    occurrencesHighlight: large ? "off" : "singleFile",
+    parameterHints: { enabled: !large, cycle: true },
+    quickSuggestions: large ? false : { other: true, comments: false, strings: true },
+    selectionHighlight: !large,
+    "semanticHighlighting.enabled": !large,
+    stickyScroll: { enabled: !large },
+    suggestOnTriggerCharacters: !large,
+    wordBasedSuggestions: large ? "off" : "matchingDocuments",
+  };
+}
+
+export function largeDocumentFeatureNotice(minimapEnabled: boolean): string {
+  const reducedFeatures = [
+    "semantic highlighting",
+    "code folding",
+    ...(minimapEnabled ? ["the minimap"] : []),
+    "CodeLens",
+    "automatic suggestions",
+  ];
+  const finalFeature = reducedFeatures[reducedFeatures.length - 1];
+  const leadingFeatures = reducedFeatures.slice(0, -1).join(", ");
+
+  return `Large file mode: ${leadingFeatures}, and ${finalFeature} are turned off to keep editing responsive.`;
+}
+
 /**
  * Builds the stable Monaco presentation and its local overlays without adding
  * rendering concerns back to the lifecycle composition root.
@@ -100,6 +160,7 @@ export function useEditorSurfacePresentation({
   activateEditorGroupFromInteraction,
   activeDocument,
   activeDocumentContentReady,
+  activeDocumentIsLargeSmart,
   beforeMountTheme,
   breakpointActions,
   breakpoints,
@@ -205,9 +266,8 @@ export function useEditorSurfacePresentation({
   );
   const editorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(
     () => ({
-      autoIndent: "full",
       automaticLayout: true,
-      bracketPairColorization: { enabled: true },
+      ...largeDocumentMonacoOptions(activeDocumentIsLargeSmart, minimapEnabled),
       detectIndentation: true,
       domReadOnly: isReadOnly,
       formatOnPaste,
@@ -219,23 +279,18 @@ export function useEditorSurfacePresentation({
       largeFileOptimizations: true,
       lineHeight: 0,
       maxTokenizationLineLength: 2000,
-      minimap: { enabled: minimapEnabled },
       wordWrap: wordWrapEnabled ? "on" : "off",
       multiCursorModifier: "alt",
       padding: { top: 14, bottom: 14 },
-      parameterHints: { enabled: true, cycle: true },
-      quickSuggestions: { other: true, comments: false, strings: true },
       quickSuggestionsDelay: 10,
       readOnly: isReadOnly,
       scrollBeyondLastLine: false,
-      "semanticHighlighting.enabled": true,
       smoothScrolling: false,
-      stickyScroll: { enabled: true },
       stopRenderingLineAfter: 10000,
-      suggestOnTriggerCharacters: true,
       tabSize: 2,
     }),
     [
+      activeDocumentIsLargeSmart,
       editorFontFamily,
       editorFontSize,
       formatOnPaste,
@@ -253,6 +308,10 @@ export function useEditorSurfacePresentation({
     <div className="editor-empty-overlay" data-testid="editor-empty">
       <p>Open a file to start editing.</p>
     </div>
+  );
+  const largeDocumentNotice = useMemo(
+    () => largeDocumentFeatureNotice(minimapEnabled),
+    [minimapEnabled],
   );
 
   return (
@@ -291,6 +350,17 @@ export function useEditorSurfacePresentation({
           />
         )
       ) : null}
+      {activeDocument && activeDocumentIsLargeSmart ? (
+        <div
+          aria-live="polite"
+          className="breadcrumbs editor-large-file-notice"
+          data-testid="editor-large-file-notice"
+          role="status"
+          title={largeDocumentNotice}
+        >
+          {largeDocumentNotice}
+        </div>
+      ) : null}
       <Editor
         beforeMount={handleBeforeMount}
         height="100%"
@@ -304,7 +374,9 @@ export function useEditorSurfacePresentation({
         value={editorSurfaceControlledValue(
           runtime,
           groupId,
-          editor,
+          activeDocument && monaco
+            ? modelForPath(monaco, workspaceRoot, activeDocument.path)
+            : null,
           activeDocument,
           activeDocumentContentReady,
           isOpeningFile,
