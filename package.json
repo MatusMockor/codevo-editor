@@ -24,6 +24,8 @@
     "perf:smoke": "node ./scripts/perf/run-perf-scenarios.mjs --smoke",
     "perf:autorun": "node ./scripts/perf/run-perf-scenarios.mjs --autorun",
     "perf:autorun:smoke": "node ./scripts/perf/run-perf-scenarios.mjs --autorun --smoke",
+    "perf:production": "node ./scripts/perf/run-perf-scenarios.mjs --production",
+    "perf:production:smoke": "node ./scripts/perf/run-perf-scenarios.mjs --production --smoke",
     "preview": "vite preview",
     "tauri": "tauri",
     "debug": "node ./scripts/debug-tauri.mjs",

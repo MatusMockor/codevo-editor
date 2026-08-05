@@ -9,6 +9,11 @@ import {
   renderGapReportMarkdown,
 } from "./gapReport.mjs";
 import { PERF_SCENARIOS } from "./perfScenarios.mjs";
+import {
+  PERF_CAPTURE_CONTRACT,
+  PERF_CAPTURE_CONTRACT_METADATA,
+  captureScenarioContract,
+} from "./perfCaptureContract.mjs";
 
 const FIXTURE_VERSION = "large-files@v4:medium-2k";
 const FIXTURE_HASHES = {
@@ -36,12 +41,20 @@ function scenarioOf(overrides = {}) {
     ...rest
   } = overrides;
 
+  const samples = rest.samples ?? samplesOf({ ms, count, resultCount });
+  const values = samples.map((sample) => sample.ms).sort((left, right) => left - right);
+  const middle = Math.floor(values.length / 2);
+  const p50 = values.length % 2 === 0 ? (values[middle - 1] + values[middle]) / 2 : values[middle];
+  const p95 = values[Math.ceil(values.length * 0.95) - 1];
+
   return {
     id,
     cutPoint,
     warmups,
     targets,
-    samples: samplesOf({ ms, count, resultCount }),
+    samples,
+    p50,
+    p95,
     status: "ok",
     ...rest,
   };
@@ -58,16 +71,24 @@ function runOf(overrides = {}) {
   } = overrides;
 
   return {
+    captureContract: PERF_CAPTURE_CONTRACT_METADATA,
     fixtureVersion,
     fixtureHashes,
     environment:
       environment === undefined
         ? {
             bundleMode: "production",
+            captureFlavor: "production-instrumented",
             version: "1.0.0",
+            sourceRevision: "a".repeat(40),
+            artifactSha256: "b".repeat(64),
+            bundleManifestSha256: "c".repeat(64),
             capturedAt: "2026-08-03T00:00:00.000Z",
             hostPlatform: "darwin",
             hostArch: "arm64",
+            osRelease: "25.0.0",
+            launchState: "cold-fresh-profile",
+            workspaceState: "fixture-clean",
             timerQuantizationMs,
           }
         : environment,
@@ -97,6 +118,7 @@ function reportOf({
     ),
     tolerances,
     requiredScenarioIds,
+    enforceCaptureContract: false,
   });
 }
 
@@ -113,7 +135,90 @@ function comparablePair(overrides = {}) {
   };
 }
 
+function canonicalScenarioOf(editor, id, overrides = {}) {
+  const contract = captureScenarioContract(id);
+  return scenarioOf({
+    id,
+    cutPoint: contract.cutPointByEditor[editor],
+    comparisonKind: contract.comparisonKind,
+    cacheState: contract.cacheState,
+    workScope: contract.workScope,
+    ...overrides,
+  });
+}
+
+function canonicalRunOf(editor, scenarios) {
+  const seen = new Set(scenarios.map((scenario) => scenario.id));
+  const missing = PERF_CAPTURE_CONTRACT.scenarios
+    .filter((contract) => contract.cutPointByEditor[editor] !== null && !seen.has(contract.id))
+    .map((contract) => ({
+      id: contract.id,
+      status: "not-run",
+      reason: "not measured in this focused contract test",
+      cutPoint: contract.cutPointByEditor[editor],
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+    }));
+  const run = runOf({ scenarios: [...scenarios, ...missing] });
+  return { ...run, environment: { ...run.environment, editor } };
+}
+
 describe("run-level fixture verification", () => {
+  it("scores only a canonical cross-editor production scenario", () => {
+    const id = "file-search-engine";
+    const report = buildGapReport({
+      codevo: canonicalRunOf("codevo", [canonicalScenarioOf("codevo", id, { resultCount: 10 })]),
+      baseline: canonicalRunOf("vscode", [
+        canonicalScenarioOf("vscode", id, { ms: 90, resultCount: 10 }),
+      ]),
+      tolerances: DEFAULT_TOLERANCES,
+    });
+
+    expect(report.verification).toMatchObject({
+      comparable: true,
+      canonicalContractRequired: true,
+    });
+    expect(rowOf(report, id).status).toBe("pass");
+  });
+
+  it("fails the whole run closed for duplicate or unknown scenario ids", () => {
+    const fileSearch = canonicalScenarioOf("codevo", "file-search-engine", { resultCount: 10 });
+    const duplicate = buildGapReport({
+      codevo: canonicalRunOf("codevo", [fileSearch, fileSearch]),
+      baseline: canonicalRunOf("vscode", [
+        canonicalScenarioOf("vscode", "file-search-engine", { resultCount: 10 }),
+      ]),
+      tolerances: DEFAULT_TOLERANCES,
+    });
+    expect(duplicate.verification.reasons.join(" ")).toContain("duplicate scenario id");
+    expect(rowOf(duplicate, "file-search-engine").status).toBe("non-comparable");
+
+    const unknown = buildGapReport({
+      codevo: canonicalRunOf("codevo", [{ ...fileSearch, id: "unknown-scenario" }]),
+      baseline: canonicalRunOf("vscode", []),
+      tolerances: DEFAULT_TOLERANCES,
+    });
+    expect(unknown.verification.reasons.join(" ")).toContain("unknown scenario id");
+    expect(unknown.failures[0]).toMatchObject({ id: "run-comparability", status: "invalid" });
+  });
+
+  it("keeps a truthfully asymmetric canonical cut point informational", () => {
+    const id = "tab-switch-cycle";
+    const report = buildGapReport({
+      codevo: canonicalRunOf("codevo", [canonicalScenarioOf("codevo", id)]),
+      baseline: canonicalRunOf("vscode", [canonicalScenarioOf("vscode", id, { ms: 90 })]),
+      tolerances: DEFAULT_TOLERANCES,
+    });
+    const row = rowOf(report, id);
+
+    expect(report.verification.comparable).toBe(true);
+    expect(row.status).toBe("non-comparable");
+    expect(row.nonComparableReasons).toContain(
+      'capture contract declares comparisonKind "informational-asymmetric"',
+    );
+  });
+
   it("accepts a pair whose fixtureVersion, fixtureHashes, and timer metadata agree", () => {
     const report = reportOf(comparablePair({ ms: 100, baseline: { ms: 90 } }));
 
@@ -620,12 +725,8 @@ describe("count-sensitive scenarios", () => {
       { ms: 70, resultCount: 80 },
     ];
     const report = reportOf({
-      codevoScenarios: [
-        { ...scenarioOf({ id: "file-search-engine" }), samples: emptyQuerySamples },
-      ],
-      baselineScenarios: [
-        { ...scenarioOf({ id: "file-search-engine" }), samples: emptyQuerySamples },
-      ],
+      codevoScenarios: [scenarioOf({ id: "file-search-engine", samples: emptyQuerySamples })],
+      baselineScenarios: [scenarioOf({ id: "file-search-engine", samples: emptyQuerySamples })],
     });
     const row = rowOf(report, "file-search-engine");
 
@@ -660,8 +761,9 @@ describe("count-sensitive scenarios", () => {
 
 describe("timer quantization", () => {
   it("flags a median pinned at zero by a 1 ms clock instead of printing a green pass", () => {
-    const quantizedTyping = {
-      ...scenarioOf({ id: "typing-large-5k", cutPoint: "typing-dispatch" }),
+    const quantizedTyping = scenarioOf({
+      id: "typing-large-5k",
+      cutPoint: "typing-dispatch",
       samples: [
         { ms: 0 },
         { ms: 0 },
@@ -674,15 +776,16 @@ describe("timer quantization", () => {
         { ms: 1 },
         { ms: 1 },
       ],
-    };
+    });
     const report = reportOf({
       codevo: runOf({ scenarios: [quantizedTyping], timerQuantizationMs: 1 }),
       baseline: runOf({
         scenarios: [
-          {
-            ...scenarioOf({ id: "typing-large-5k", cutPoint: "typing-dispatch" }),
+          scenarioOf({
+            id: "typing-large-5k",
+            cutPoint: "typing-dispatch",
             samples: Array.from({ length: 10 }, (_, index) => ({ ms: 3 + index * 0.05 })),
-          },
+          }),
         ],
         timerQuantizationMs: 0.0001,
       }),
@@ -710,11 +813,11 @@ describe("timer quantization", () => {
   it("flags a zero median on the VS Code side too", () => {
     const report = reportOf({
       codevo: runOf({
-        scenarios: [{ ...scenarioOf({}), samples: [{ ms: 400 }, { ms: 400 }, { ms: 400 }] }],
+        scenarios: [scenarioOf({ samples: [{ ms: 400 }, { ms: 400 }, { ms: 400 }] })],
         timerQuantizationMs: 1,
       }),
       baseline: runOf({
-        scenarios: [{ ...scenarioOf({}), samples: [{ ms: 0 }, { ms: 0 }, { ms: 2 }] }],
+        scenarios: [scenarioOf({ samples: [{ ms: 0 }, { ms: 0 }, { ms: 2 }] })],
         timerQuantizationMs: 1,
       }),
     });
@@ -729,11 +832,11 @@ describe("timer quantization", () => {
   it("does not flag a zero median when the side reports a perfect clock", () => {
     const report = reportOf({
       codevo: runOf({
-        scenarios: [{ ...scenarioOf({}), samples: [{ ms: 0 }, { ms: 0 }, { ms: 90 }] }],
+        scenarios: [scenarioOf({ samples: [{ ms: 0 }, { ms: 0 }, { ms: 90 }] })],
         timerQuantizationMs: 0,
       }),
       baseline: runOf({
-        scenarios: [{ ...scenarioOf({}), samples: [{ ms: 0 }, { ms: 0 }, { ms: 90 }] }],
+        scenarios: [scenarioOf({ samples: [{ ms: 0 }, { ms: 0 }, { ms: 90 }] })],
         timerQuantizationMs: 0,
       }),
     });
@@ -854,8 +957,19 @@ describe("reported scenario statuses", () => {
   });
 
   it("treats a declared non-comparable scenario as informational, not a failure", () => {
+    const contract = captureScenarioContract("quickopen-ui");
     const report = reportOf({
-      codevoScenarios: [scenarioOf({ id: "quickopen-ui", status: "non-comparable" })],
+      codevoScenarios: [
+        {
+          id: contract.id,
+          status: "non-comparable",
+          reason: "not comparable in this lane",
+          cutPoint: contract.cutPointByEditor.codevo,
+          comparisonKind: contract.comparisonKind,
+          cacheState: contract.cacheState,
+          workScope: contract.workScope,
+        },
+      ],
       baselineScenarios: [],
     });
     const row = rowOf(report, "quickopen-ui");
@@ -980,7 +1094,7 @@ describe("renderGapReportMarkdown", () => {
       codevoScenarios: [
         scenarioOf({ id: "definition", ms: 100 }),
         scenarioOf({ id: "tab-switch", cutPoint: "tab-switch-rendered" }),
-        scenarioOf({ id: "rename", status: "skipped", reason: "no rename data" }),
+        { id: "rename", status: "skipped", reason: "no rename data" },
       ],
       baselineScenarios: [
         scenarioOf({ id: "definition", ms: 90 }),

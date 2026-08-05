@@ -725,7 +725,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
             const requestedLifecycleIdentity =
               javaScriptTypeScriptDocumentLifecycleIdentitiesRef.current[syncKey];
 
-            if (requestedLifecycleIdentity === undefined) {
+            if (!requestedLifecycleIdentity) {
               return;
             }
 
@@ -849,10 +849,10 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       isJavaScriptTypeScriptDocumentSyncableForRoot,
       isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
       isRunningLanguageServerForWorkspace,
-      largeSmartDocumentPolicy,
       javaScriptTypeScriptDocumentChangeTimersRef,
       javaScriptTypeScriptDocumentChangeMailbox,
       javaScriptTypeScriptDocumentSyncGenerationRef,
+      javaScriptTypeScriptIncrementalSyncRef,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRef,
@@ -863,6 +863,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       javaScriptTypeScriptSyncedDocumentPathsRef,
       issueJavaScriptTypeScriptDocumentVersion,
       reportErrorForActiveWorkspaceRoot,
+      retireMalformedJavaScriptTypeScriptDocument,
       retireJavaScriptTypeScriptDocument,
       syncOpenJavaScriptTypeScriptDocument,
     ],
@@ -1145,7 +1146,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
           const requestedLifecycleIdentity =
             javaScriptTypeScriptDocumentLifecycleIdentitiesRef.current[syncKey];
 
-          if (requestedLifecycleIdentity === undefined) {
+          if (!requestedLifecycleIdentity) {
             return;
           }
 
@@ -1233,7 +1234,6 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
       isRunningLanguageServerForWorkspace,
       isSessionPathInWorkspace,
-      largeSmartDocumentPolicy,
       javaScriptTypeScriptDocumentSyncGenerationRef,
       javaScriptTypeScriptDocumentChangeMailbox,
       javaScriptTypeScriptDocumentSyncQueuesRef,
@@ -1244,6 +1244,7 @@ export function useDocumentSync(dependencies: DocumentSyncDependencies): Documen
       javaScriptTypeScriptSyncedDocumentContentRef,
       javaScriptTypeScriptSyncedDocumentPathsRef,
       issueJavaScriptTypeScriptDocumentVersion,
+      retireMalformedJavaScriptTypeScriptDocument,
       retireJavaScriptTypeScriptDocument,
       syncOpenJavaScriptTypeScriptDocument,
     ],

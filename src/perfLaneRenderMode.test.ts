@@ -34,6 +34,10 @@ describe("strictModeEnabled", () => {
     ).toBe(true);
   });
 
+  it("keeps production render semantics in the instrumented capture build", () => {
+    expect(strictModeEnabled({ DEV: false, VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "1" })).toBe(true);
+  });
+
   it("keeps StrictMode when DEV is absent even with perf flags set", () => {
     expect(strictModeEnabled({ VITE_CODEVO_PERF_AUTORUN: "1", VITE_CODEVO_PERF_BRIDGE: "1" })).toBe(
       true,

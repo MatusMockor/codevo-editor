@@ -203,6 +203,18 @@ describe("perfScenarioBridgeEnabled", () => {
     );
   });
 
+  it("is enabled in production only for the exact baked capture flag", () => {
+    expect(
+      perfScenarioBridgeEnabled({ DEV: false, VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "1" }, null),
+    ).toBe(true);
+    expect(
+      perfScenarioBridgeEnabled(
+        { DEV: false, VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "true" },
+        { getItem: () => "1" },
+      ),
+    ).toBe(false);
+  });
+
   it("is enabled with DEV and the env flag", () => {
     expect(perfScenarioBridgeEnabled({ DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" }, null)).toBe(true);
   });

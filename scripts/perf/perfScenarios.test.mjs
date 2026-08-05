@@ -79,6 +79,7 @@ function expectedTypingKeystrokes() {
 
 function createHarness({ source = buildLspSource(), completionResultCount = 2000 } = {}) {
   const probe = new Map();
+  const events = [];
   const record = (kind, sample) => {
     const list = probe.get(kind) ?? [];
     list.push(sample);
@@ -90,10 +91,14 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
     openWorkspaceRoot: async (root) => {
       workspaceRoot = root;
     },
-    openWorkspaceFile: async () => true,
+    openWorkspaceFile: async (path) => {
+      events.push(`open:${path}`);
+      return true;
+    },
     getValue: () => source,
     setCursor: () => {},
     triggerCompletion: () => {
+      events.push("completion");
       record("completion", { ms: 1, resultCount: completionResultCount });
     },
     triggerDefinition: async () => {
@@ -130,13 +135,16 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
       durationsMs: paths.map(() => 1),
       assertionFailures: [],
     }),
-    runTypingScenario: async (text) => ({
-      dispatchMs: Array.from(text, () => 0.5),
-      frameMs: Array.from(text, () => 2),
-      typedCharacters: Array.from(text),
-      missedDispatches: 0,
-      restored: true,
-    }),
+    runTypingScenario: async (text) => {
+      events.push("typing");
+      return {
+        dispatchMs: Array.from(text, () => 0.5),
+        frameMs: Array.from(text, () => 2),
+        typedCharacters: Array.from(text),
+        missedDispatches: 0,
+        restored: true,
+      };
+    },
     runReferencesProbe: async () => {
       record("references", { ms: 1, resultCount: 3 });
       return true;
@@ -154,7 +162,7 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
     getMemorySample: () => ({ usedJsHeapBytes: 1 }),
   };
 
-  return { qa, perf, probe, record };
+  return { qa, perf, probe, record, events };
 }
 
 async function runScenarios(harness, options = {}) {
@@ -331,6 +339,11 @@ describe("shapeRunResult", () => {
     expect(memory).toEqual({
       id: "memory-sample",
       unit: "count-bytes",
+      status: "ok",
+      cutPoint: "post-run-snapshot",
+      comparisonKind: "codevo-absolute",
+      cacheState: "post-run",
+      workScope: "retained-editor-state",
       retainedCounts: { models: 12, editors: 2 },
       memorySample: { usedJsHeapBytes: 4096 },
     });
@@ -381,6 +394,7 @@ describe("shapeRunResult", () => {
       capturedAt: "2026-08-03T00:00:00.000Z",
       environment: {
         bundleMode: "dev",
+        bundleManifestSha256: "c".repeat(64),
         windowMode: "focus-only",
         hostPlatform: "darwin",
         hostArch: "arm64",
@@ -395,6 +409,7 @@ describe("shapeRunResult", () => {
     expect(typeof result.environment.version).toBe("string");
     expect(result.environment.version.length).toBeGreaterThan(0);
     expect(result.environment.bundleMode).toBe("dev");
+    expect(result.environment.bundleManifestSha256).toBe("c".repeat(64));
     expect(result.environment.windowMode).toBe("focus-only");
     expect(result.environment.hostPlatform).toBe("darwin");
     expect(result.environment.hostArch).toBe("arm64");
@@ -408,6 +423,117 @@ describe("shapeRunResult", () => {
   it("omits the environment block fail-closed when the page never reported one", () => {
     expect(shapeRunResult({ capturedAt: "x" }).environment).toBeUndefined();
     expect(shapeRunResult({ capturedAt: "x", environment: "dev" }).environment).toBeUndefined();
+  });
+
+  it("preserves only bounded diagnostic window recovery metadata", () => {
+    const result = shapeRunResult({
+      capturedAt: "2026-08-03T00:00:00.000Z",
+      environment: {
+        appActivationTransitions: 1,
+        diagnosticSpaceLease: true,
+        domWindowSignalCount: 1,
+        keyTransitions: 2,
+        minimizeTransitions: 0,
+        occlusionTransitions: 2,
+        onActiveSpaceAtRelease: false,
+        transitionOverflow: false,
+        windowMode: "always-on-top-diagnostic",
+        windowInterruptionCount: 1,
+        windowInterruptionStages: ["typing"],
+        windowRecoveryInterventionCount: 2,
+        windowStability: "recovered-diagnostic",
+        windowStabilityEpoch: 5,
+      },
+    });
+
+    expect(result.environment).toMatchObject({
+      appActivationTransitions: 1,
+      diagnosticSpaceLease: true,
+      domWindowSignalCount: 1,
+      keyTransitions: 2,
+      minimizeTransitions: 0,
+      occlusionTransitions: 2,
+      onActiveSpaceAtRelease: false,
+      transitionOverflow: false,
+      windowInterruptionCount: 1,
+      windowInterruptionStages: ["typing"],
+      windowRecoveryInterventionCount: 2,
+      windowStability: "recovered-diagnostic",
+      windowStabilityEpoch: 5,
+    });
+
+    for (const invalid of [
+      {
+        windowInterruptionCount: 0,
+        windowInterruptionStages: [],
+        windowStability: "recovered-diagnostic",
+      },
+      {
+        windowInterruptionCount: 4,
+        windowInterruptionStages: ["a", "b", "c", "d"],
+        windowStability: "recovered-diagnostic",
+      },
+      {
+        windowInterruptionCount: 1,
+        windowInterruptionStages: ["typing"],
+        windowStability: "stable",
+      },
+    ]) {
+      expect(() =>
+        shapeRunResult({
+          capturedAt: "2026-08-03T00:00:00.000Z",
+          environment: {
+            appActivationTransitions: 0,
+            diagnosticSpaceLease: true,
+            domWindowSignalCount: 1,
+            keyTransitions: 0,
+            minimizeTransitions: 0,
+            occlusionTransitions: 0,
+            onActiveSpaceAtRelease: true,
+            transitionOverflow: false,
+            windowMode: "always-on-top-diagnostic",
+            windowRecoveryInterventionCount: 1,
+            windowStabilityEpoch: 0,
+            ...invalid,
+          },
+        }),
+      ).toThrow(/diagnostic window metadata/);
+    }
+  });
+
+  it("rejects incomplete, overflowed, or arithmetically inconsistent native transitions", () => {
+    const validEnvironment = {
+      appActivationTransitions: 1,
+      diagnosticSpaceLease: true,
+      domWindowSignalCount: 0,
+      keyTransitions: 2,
+      minimizeTransitions: 3,
+      occlusionTransitions: 4,
+      onActiveSpaceAtRelease: true,
+      transitionOverflow: false,
+      windowMode: "always-on-top-diagnostic",
+      windowInterruptionCount: 0,
+      windowInterruptionStages: [],
+      windowRecoveryInterventionCount: 0,
+      windowStability: "diagnostic-space-lease",
+      windowStabilityEpoch: 10,
+    };
+    const invalidEnvironments = [
+      Object.fromEntries(
+        Object.entries(validEnvironment).filter(([field]) => field !== "appActivationTransitions"),
+      ),
+      { ...validEnvironment, transitionOverflow: true },
+      { ...validEnvironment, windowStabilityEpoch: 9 },
+    ];
+
+    for (const environment of invalidEnvironments) {
+      expect(() =>
+        shapeRunResult({
+          capturedAt: "2026-08-03T00:00:00.000Z",
+          environment,
+        }),
+      ).toThrow(/diagnostic window metadata/);
+    }
   });
 
   it("normalizes fixture hashes into the large-files/* plus aggregate monorepo/ key scheme", () => {
@@ -607,6 +733,41 @@ describe("inPagePerfRunnerSource", () => {
     expect(fileSearch.samples).toHaveLength(10);
   });
 
+  it("proves the JS/TS provider ready on the medium fixture before smoke typing", async () => {
+    const harness = createHarness();
+    const result = await runScenarios(harness, { smoke: true });
+
+    const readinessOpen = harness.events.indexOf("open:/perf/large-files/medium-2k.ts");
+    const readinessProbe = harness.events.indexOf("completion");
+    const typing = harness.events.indexOf("typing");
+
+    expect(readinessOpen).toBeGreaterThanOrEqual(0);
+    expect(readinessProbe).toBeGreaterThan(readinessOpen);
+    expect(typing).toBeGreaterThan(readinessProbe);
+    expect(entryOf(result, "typing-large-5k").languageServerStatus).toBe("running");
+  });
+
+  it("does not manufacture smoke typing samples when provider readiness is unproven", async () => {
+    const harness = createHarness({ completionResultCount: 999 });
+    vi.useFakeTimers();
+
+    try {
+      const pending = runScenarios(harness, { smoke: true, intervalMs: 100 });
+      await vi.advanceTimersByTimeAsync(70_000);
+      const result = await pending;
+
+      expect(harness.events).not.toContain("typing");
+      expect(entryOf(result, "typing-large-5k")).toBeUndefined();
+      for (const id of ["typing-large-5k", "typing-large-5k-frame"]) {
+        const status = result.scenarioStatuses.find((entry) => entry.id === id);
+        expect(status.status).toBe("not-run");
+        expect(status.reason).toContain("unproven language-server state");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports a rename batch whose widget never commits as not-run without fabricating samples", async () => {
     const harness = createHarness();
     harness.perf.runRenameProbe = async () => false;
@@ -675,7 +836,7 @@ describe("inPagePerfRunnerSource", () => {
     }
   });
 
-  it("marks typing on a policy-eligible fixture invalid when the language server is not running", async () => {
+  it("does not measure typing on a policy-eligible fixture when the language server is not running", async () => {
     const harness = createHarness();
     harness.perf.getLargeSmartDocumentStatus = () => ({
       degraded: false,
@@ -693,12 +854,14 @@ describe("inPagePerfRunnerSource", () => {
       await vi.advanceTimersByTimeAsync(70_000);
       const result = await pending;
 
-      expect(entryOf(result, "typing-large-5k").languageServerStatus).toBe("stopped");
+      expect(entryOf(result, "typing-large-5k")).toBeUndefined();
+      expect(harness.events).not.toContain("typing");
 
       for (const id of ["typing-large-5k", "typing-large-5k-frame"]) {
         const status = result.scenarioStatuses.find((entry) => entry.id === id);
-        expect(status.status).toBe("invalid");
+        expect(status.status).toBe("not-run");
         expect(status.reason).toContain("policy-eligible");
+        expect(status.reason).toContain("did not reach running");
       }
     } finally {
       vi.useRealTimers();

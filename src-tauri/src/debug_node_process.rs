@@ -109,6 +109,10 @@ fn spawn_node_inspector_with_workspace_directory(
             }
         }
         command.env("LC_ALL", "C").envs(&launch.environment);
+        #[cfg(feature = "perf-capture")]
+        if let Ok(owner) = std::env::var("CODEVO_PERF_CAPTURE_PROCESS_OWNER") {
+            command.env("CODEVO_PERF_CAPTURE_PROCESS_OWNER", owner);
+        }
     }
     if launch.inspect_via_environment {
         command.env("NODE_OPTIONS", INSPECT_FLAG);

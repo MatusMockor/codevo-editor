@@ -623,6 +623,10 @@ pub(crate) fn spawn_process_task(plan: &ProcessTaskExecutionPlan) -> Result<Chil
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(feature = "perf-capture")]
+    if let Ok(owner) = std::env::var("CODEVO_PERF_CAPTURE_PROCESS_OWNER") {
+        command.env("CODEVO_PERF_CAPTURE_PROCESS_OWNER", owner);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

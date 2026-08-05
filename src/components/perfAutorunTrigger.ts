@@ -1,22 +1,64 @@
-import { editorQaBridgeEnabled } from "./editorQaBridge";
 import { PERF_AUTORUN_PATHS, PERF_AUTORUN_TOKEN_HEADER } from "./perfAutorunEndpoints";
-import { perfScenarioBridgeEnabled } from "./perfScenarioBridge";
+import type { PerfAutorunEnvironment } from "./perfAutorunGate";
+import {
+  annotateDiagnosticWindowInterruptions,
+  annotateReleasedNativeWindowState,
+  createDiagnosticActivationLease,
+  installMeasurementWindowGuard,
+  throwIfDiagnosticActivationFailed,
+  verifyDiagnosticWindowTransaction,
+  type DiagnosticActivationLease,
+  type PerfAutorunWindowGuard,
+  type PerfAutorunWindowGuardOptions,
+} from "./perfAutorunDiagnosticWindow";
+import {
+  assertNativeWindowTransitionEvidence,
+  nativeWindowReady,
+  nativeWindowTransitionCount,
+  nativeWindowTransitionEvidenceValid,
+  type PerfCaptureNativeWindowState,
+} from "./perfCaptureNativeWindowState";
+import {
+  acquireWindowControlSafely,
+  assertStableMeasurementWindow,
+  prepareMeasurementWindow,
+  restoreMeasurementWindow,
+  verifyMeasurementWindow,
+  type PerfAutorunWindowControl,
+  type PerfAutorunWindowLease,
+  type PerfAutorunWindowMode,
+} from "./perfAutorunMeasurementWindow";
+import { perfProductionCaptureEnabled } from "./perfProductionCapture";
+import {
+  activateProductionCaptureWindow,
+  DIAGNOSTIC_PRODUCTION_CAPTURE_ACTIVATION_LIMITS,
+  releaseProductionCaptureWindowLease,
+  resetProductionCaptureWindowLeaseBaseline,
+  snapshotProductionCaptureWindowLease,
+} from "./perfProductionCaptureActivation";
 
 const BRIDGE_WAIT_TIMEOUT_MS = 120_000;
 const BRIDGE_POLL_MS = 100;
-const PREFLIGHT_FRAME_COUNT = 12;
-const PREFLIGHT_TIMEOUT_MS = 2_000;
-const PREFLIGHT_MAX_FRAME_GAP_MS = 100;
+const PERF_PRODUCTION_CAPTURE_RUNNER_MODULE = "virtual:codevo-perf-production-runner";
+const PERF_PRODUCTION_CAPTURE_PREPARE_FIXTURES_COMMAND = "perf_capture_prepare_fixture_trust";
+const PERF_PRODUCTION_CAPTURE_SUBMIT_COMMAND = "perf_capture_submit";
+const PRODUCTION_CAPTURE_BAKED =
+  import.meta.env.DEV === false && import.meta.env.VITE_CODEVO_PERF_PRODUCTION_CAPTURE === "1";
+const PRODUCTION_CAPTURE_RUN_TOKEN = PRODUCTION_CAPTURE_BAKED
+  ? __CODEVO_PERF_CAPTURE_RUN_TOKEN__
+  : "";
 
-export type PerfAutorunWindowMode = "focus-only" | "always-on-top-diagnostic";
+export type {
+  PerfAutorunWindowControl,
+  PerfAutorunWindowMode,
+} from "./perfAutorunMeasurementWindow";
+export { assertStableMeasurementWindow } from "./perfAutorunMeasurementWindow";
+export {
+  installMeasurementWindowGuard,
+  type PerfAutorunWindowGuard,
+} from "./perfAutorunDiagnosticWindow";
 
-export interface PerfAutorunEnvironment {
-  DEV?: boolean;
-  VITE_CODEVO_PERF_AUTORUN?: string;
-  VITE_CODEVO_PERF_BRIDGE?: string;
-  VITE_CODEVO_QA_BRIDGE?: string;
-  VITE_CODEVO_PERF_WINDOW_MODE?: string;
-}
+export { perfAutorunEnabled, type PerfAutorunEnvironment } from "./perfAutorunGate";
 
 export interface PerfAutorunRunnerModule {
   readonly perfAutorunOptions: unknown;
@@ -24,55 +66,42 @@ export interface PerfAutorunRunnerModule {
   readonly default: (options: unknown) => Promise<unknown>;
 }
 
-export interface PerfAutorunWindowControl {
-  show(): Promise<void>;
-  unminimize(): Promise<void>;
-  setFocus(): Promise<void>;
-  isAlwaysOnTop(): Promise<boolean>;
-  setAlwaysOnTop(alwaysOnTop: boolean): Promise<void>;
-}
-
-interface PerfAutorunWindowLease {
-  readonly control: PerfAutorunWindowControl;
-  readonly originalAlwaysOnTop: boolean;
-  changedAlwaysOnTop: boolean;
-}
-
-export interface PerfAutorunWindowGuard {
-  failure(): string | null;
-  dispose(): void;
-}
-
 export interface PerfAutorunDependencies {
+  readonly abortProductionCapture: () => Promise<void>;
+  readonly activateProductionCaptureWindow: (
+    runToken: string,
+  ) => Promise<PerfCaptureNativeWindowState>;
+  readonly prepareProductionCaptureFixtures: (runToken: string) => Promise<void>;
+  readonly reactivateDiagnosticProductionCaptureWindow: (
+    runToken: string,
+    leaseId: string,
+  ) => Promise<PerfCaptureNativeWindowState>;
+  readonly releaseDiagnosticProductionCaptureWindow: (
+    runToken: string,
+    leaseId: string,
+  ) => Promise<PerfCaptureNativeWindowState>;
+  readonly resetProductionCaptureWindowLeaseBaseline: (
+    runToken: string,
+    leaseId: string,
+  ) => Promise<PerfCaptureNativeWindowState>;
+  readonly snapshotProductionCaptureWindowLease: (
+    runToken: string,
+    leaseId: string,
+  ) => Promise<PerfCaptureNativeWindowState>;
   readonly bridgesReady: () => boolean;
   readonly importRunner: (modulePath: string) => Promise<unknown>;
+  readonly productionCaptureRunToken: string;
+  readonly runnerModulePath: string;
   readonly postPayload: (resultPath: string, body: string, runToken: string) => Promise<void>;
   readonly acquireWindowControl: () => Promise<PerfAutorunWindowControl | null>;
   readonly windowMode: PerfAutorunWindowMode;
   readonly preflightMeasurementWindow: () => Promise<void>;
-  readonly installMeasurementWindowGuard: () => PerfAutorunWindowGuard;
+  readonly installMeasurementWindowGuard: (
+    options?: PerfAutorunWindowGuardOptions,
+  ) => PerfAutorunWindowGuard;
   readonly now: () => number;
   readonly sleep: (ms: number) => Promise<void>;
   readonly logError: (message: string) => void;
-}
-
-export function perfAutorunEnabled(
-  environment: PerfAutorunEnvironment = import.meta.env,
-  storage: Pick<Storage, "getItem"> | null | undefined = window.localStorage,
-): boolean {
-  if (!environment.DEV) {
-    return false;
-  }
-
-  if (environment.VITE_CODEVO_PERF_AUTORUN !== "1") {
-    return false;
-  }
-
-  if (!perfScenarioBridgeEnabled(environment, storage)) {
-    return false;
-  }
-
-  return editorQaBridgeEnabled(environment, storage);
 }
 
 export async function runPerfAutorun(
@@ -82,30 +111,173 @@ export async function runPerfAutorun(
   const runner = await loadRunner(dependencies);
 
   if (!runner) {
+    if (dependencies.productionCaptureRunToken.length > 0) {
+      const reported = await reportPayload(
+        dependencies,
+        errorPayload("Perf production capture could not load its bundled scenario runner."),
+        dependencies.productionCaptureRunToken,
+      );
+      await abortUnreportedProductionCapture(dependencies, reported);
+    }
     return;
   }
 
   const windowControl = await acquireWindowControlSafely(dependencies);
   let lease: PerfAutorunWindowLease | null = null;
   let guard: PerfAutorunWindowGuard | null = null;
-  let payload: string;
+  let diagnosticLease: DiagnosticActivationLease | null = null;
+  const diagnosticSmoke = diagnosticSmokeEnabled(dependencies, runner);
+  let nativeWindowLeaseRequested = false;
+  let nativeWindowLeaseId = "";
+  let initialDiagnosticSpaceLeaseObserved = false;
+  let payload = errorPayload("Perf autorun did not produce a result.");
 
   try {
-    lease = await prepareMeasurementWindow(dependencies, windowControl);
-    guard = dependencies.installMeasurementWindowGuard();
+    lease = await prepareMeasurementWindow(
+      {
+        windowMode: dependencies.windowMode,
+        activationBoundary:
+          dependencies.productionCaptureRunToken.length > 0
+            ? "authenticated-native"
+            : "generic-window-control",
+      },
+      windowControl,
+    );
+    const measurementLease = lease;
+    if (dependencies.productionCaptureRunToken.length > 0) {
+      await dependencies.prepareProductionCaptureFixtures(dependencies.productionCaptureRunToken);
+      const nativeState = await dependencies.activateProductionCaptureWindow(
+        dependencies.productionCaptureRunToken,
+      );
+      if (!nativeState) {
+        throw new Error(
+          "Perf production capture did not acquire its native window observer lease.",
+        );
+      }
+      nativeWindowLeaseRequested = true;
+      nativeWindowLeaseId = nativeState.leaseId;
+      if (diagnosticSmoke && !nativeState.diagnosticSpaceLease) {
+        throw new Error("Perf diagnostic capture could not acquire its native window lease.");
+      }
+      if (!diagnosticSmoke && nativeState.diagnosticSpaceLease) {
+        throw new Error("Perf focus-only capture unexpectedly acquired a diagnostic window lease.");
+      }
+      initialDiagnosticSpaceLeaseObserved = nativeState.diagnosticSpaceLease;
+
+      await dependencies.preflightMeasurementWindow();
+      const baseline = await dependencies.resetProductionCaptureWindowLeaseBaseline(
+        dependencies.productionCaptureRunToken,
+        nativeWindowLeaseId,
+      );
+      if (
+        !baseline ||
+        baseline.leaseId !== nativeWindowLeaseId ||
+        !nativeWindowReady(baseline) ||
+        baseline.diagnosticSpaceLease !== diagnosticSmoke ||
+        nativeWindowTransitionCount(baseline) !== 0
+      ) {
+        throw new Error("Perf production capture native window baseline reset was not observed.");
+      }
+    }
+    if (diagnosticSmoke) {
+      diagnosticLease = createDiagnosticActivationLease(
+        dependencies,
+        dependencies.productionCaptureRunToken,
+        nativeWindowLeaseId,
+        initialDiagnosticSpaceLeaseObserved,
+      );
+    }
+    guard = dependencies.installMeasurementWindowGuard(
+      diagnosticLease
+        ? { recordDiagnosticInterruption: diagnosticLease.recordInterruption }
+        : undefined,
+    );
     await dependencies.preflightMeasurementWindow();
+    await diagnosticLease?.settle();
+    throwIfDiagnosticActivationFailed(diagnosticLease);
     throwIfMeasurementWindowFailed(guard);
+    if (nativeWindowLeaseRequested) {
+      const baselineSnapshot = await dependencies.snapshotProductionCaptureWindowLease(
+        dependencies.productionCaptureRunToken,
+        nativeWindowLeaseId,
+      );
+      if (
+        !baselineSnapshot ||
+        baselineSnapshot.leaseId !== nativeWindowLeaseId ||
+        !nativeWindowReady(baselineSnapshot) ||
+        baselineSnapshot.diagnosticSpaceLease !== diagnosticSmoke ||
+        nativeWindowTransitionCount(baselineSnapshot) !== 0
+      ) {
+        throw new Error("Perf production capture native window was unstable before samples.");
+      }
+      assertNativeWindowTransitionEvidence(baselineSnapshot);
+    }
     payload = await collectPayload(dependencies, runner);
+    await diagnosticLease?.settle();
+    throwIfDiagnosticActivationFailed(diagnosticLease);
     throwIfMeasurementWindowFailed(guard);
 
-    await dependencies.preflightMeasurementWindow();
+    if (diagnosticLease) {
+      await verifyDiagnosticWindowTransaction(
+        dependencies,
+        diagnosticLease,
+        () => verifyMeasurementWindow(dependencies.windowMode, measurementLease),
+        () => snapshotRequiredNativeWindow(dependencies, nativeWindowLeaseId, true),
+      );
+    } else {
+      await verifyStrictProductionWindowTransaction(
+        dependencies,
+        measurementLease,
+        guard,
+        nativeWindowLeaseRequested ? nativeWindowLeaseId : null,
+      );
+    }
     throwIfMeasurementWindowFailed(guard);
-    await verifyMeasurementWindow(dependencies, lease);
-    throwIfMeasurementWindowFailed(guard);
+    if (diagnosticLease) {
+      payload = annotateDiagnosticWindowInterruptions(payload, diagnosticLease);
+    }
   } catch (error) {
     payload = errorPayload(errorMessage(error));
   } finally {
     guard?.dispose();
+    try {
+      await diagnosticLease?.close();
+      throwIfDiagnosticActivationFailed(diagnosticLease);
+      if (guard) {
+        throwIfMeasurementWindowFailed(guard);
+      }
+    } catch (error) {
+      payload = errorPayload(errorMessage(error));
+    }
+    diagnosticLease?.dispose();
+    if (nativeWindowLeaseRequested) {
+      try {
+        const releasedState = await dependencies.releaseDiagnosticProductionCaptureWindow(
+          dependencies.productionCaptureRunToken,
+          nativeWindowLeaseId,
+        );
+        if (
+          !releasedState ||
+          releasedState.leaseId !== nativeWindowLeaseId ||
+          releasedState.diagnosticSpaceLease ||
+          !nativeWindowTransitionEvidenceValid(releasedState)
+        ) {
+          payload = errorPayload(
+            "Perf production capture could not release its native window observer lease.",
+          );
+        } else if (diagnosticSmoke) {
+          payload = annotateReleasedNativeWindowState(payload, releasedState);
+        } else if (nativeWindowTransitionCount(releasedState) !== 0) {
+          payload = errorPayload(
+            "Perf focus-only capture observed a native window transition during the run.",
+          );
+        }
+      } catch {
+        payload = errorPayload(
+          "Perf production capture could not release its native window observer lease.",
+        );
+      }
+    }
   }
 
   try {
@@ -114,7 +286,8 @@ export async function runPerfAutorun(
     payload = errorPayload(errorMessage(error));
   }
 
-  await reportPayload(dependencies, payload, runner.perfAutorunRunToken);
+  const reported = await reportPayload(dependencies, payload, runner.perfAutorunRunToken);
+  await abortUnreportedProductionCapture(dependencies, reported);
 }
 
 function throwIfMeasurementWindowFailed(guard: PerfAutorunWindowGuard): void {
@@ -125,9 +298,82 @@ function throwIfMeasurementWindowFailed(guard: PerfAutorunWindowGuard): void {
   }
 }
 
+async function snapshotRequiredNativeWindow(
+  dependencies: PerfAutorunDependencies,
+  leaseId: string,
+  diagnosticSpaceLeaseExpected: boolean,
+): Promise<PerfCaptureNativeWindowState> {
+  const state = await dependencies.snapshotProductionCaptureWindowLease(
+    dependencies.productionCaptureRunToken,
+    leaseId,
+  );
+  if (!state || state.leaseId !== leaseId) {
+    throw new Error("Perf production capture native window observer lease identity was invalid.");
+  }
+  assertNativeWindowTransitionEvidence(state);
+  if (!nativeWindowReady(state) || state.diagnosticSpaceLease !== diagnosticSpaceLeaseExpected) {
+    throw new Error("Perf production capture native window snapshot was not ready.");
+  }
+  return state;
+}
+
+async function verifyStrictProductionWindowTransaction(
+  dependencies: PerfAutorunDependencies,
+  lease: PerfAutorunWindowLease,
+  guard: PerfAutorunWindowGuard,
+  nativeLeaseId: string | null,
+): Promise<void> {
+  const nativeBefore = nativeLeaseId
+    ? await snapshotRequiredNativeWindow(dependencies, nativeLeaseId, false)
+    : null;
+  if (nativeBefore && nativeWindowTransitionCount(nativeBefore) !== 0) {
+    throw new Error("Perf focus-only capture observed a native window transition during the run.");
+  }
+
+  await dependencies.preflightMeasurementWindow();
+  throwIfMeasurementWindowFailed(guard);
+  await verifyMeasurementWindow(dependencies.windowMode, lease);
+  throwIfMeasurementWindowFailed(guard);
+
+  if (nativeLeaseId) {
+    const nativeAfter = await snapshotRequiredNativeWindow(dependencies, nativeLeaseId, false);
+    if (
+      nativeAfter.windowStabilityEpoch !== nativeBefore?.windowStabilityEpoch ||
+      nativeWindowTransitionCount(nativeAfter) !== 0
+    ) {
+      throw new Error(
+        "Perf focus-only capture observed a native window transition during the run.",
+      );
+    }
+  }
+}
+
 const defaultDependencies: PerfAutorunDependencies = {
+  abortProductionCapture: quitProductionCaptureApp,
+  activateProductionCaptureWindow,
+  prepareProductionCaptureFixtures: prepareProductionCaptureFixtures,
+  reactivateDiagnosticProductionCaptureWindow: async (runToken, leaseId) => {
+    const state = await activateProductionCaptureWindow(
+      runToken,
+      {},
+      DIAGNOSTIC_PRODUCTION_CAPTURE_ACTIVATION_LIMITS,
+      leaseId,
+    );
+    if (!state.diagnosticSpaceLease) {
+      throw new Error(
+        "Production capture window did not converge; native.diagnosticSpaceLease=false.",
+      );
+    }
+    return state;
+  },
+  releaseDiagnosticProductionCaptureWindow: (runToken, leaseId) =>
+    releaseProductionCaptureWindowLease(runToken, leaseId),
+  resetProductionCaptureWindowLeaseBaseline,
+  snapshotProductionCaptureWindowLease,
   bridgesReady: () => Boolean(window.__codevoQa && window.__codevoPerf),
   importRunner: importRunnerModule,
+  productionCaptureRunToken: PRODUCTION_CAPTURE_RUN_TOKEN,
+  runnerModulePath: perfAutorunRunnerModulePath(),
   postPayload: postAutorunPayload,
   acquireWindowControl: acquireTauriWindowControl,
   windowMode: perfAutorunWindowMode(),
@@ -139,6 +385,33 @@ const defaultDependencies: PerfAutorunDependencies = {
     console.error(message);
   },
 };
+
+async function prepareProductionCaptureFixtures(runToken: string): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke(PERF_PRODUCTION_CAPTURE_PREPARE_FIXTURES_COMMAND, { runToken });
+}
+
+async function quitProductionCaptureApp(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("quit_application");
+}
+
+async function abortUnreportedProductionCapture(
+  dependencies: PerfAutorunDependencies,
+  reported: boolean,
+): Promise<void> {
+  if (reported || dependencies.productionCaptureRunToken.length === 0) {
+    return;
+  }
+
+  try {
+    await dependencies.abortProductionCapture();
+  } catch (error) {
+    dependencies.logError(
+      `Perf production capture could not terminate after report failure: ${errorMessage(error)}`,
+    );
+  }
+}
 
 async function acquireTauriWindowControl(): Promise<PerfAutorunWindowControl | null> {
   const { isTauri } = await import("@tauri-apps/api/core");
@@ -152,60 +425,24 @@ async function acquireTauriWindowControl(): Promise<PerfAutorunWindowControl | n
   return getCurrentWindow();
 }
 
-export function installMeasurementWindowGuard(): PerfAutorunWindowGuard {
-  let failure: string | null = null;
-  const recordBlur = () => {
-    failure ??= "Perf autorun measurement window lost focus during the run.";
-  };
-  const recordVisibility = () => {
-    if (document.visibilityState !== "visible") {
-      failure ??= `Perf autorun measurement window became ${document.visibilityState} during the run.`;
-    }
-  };
-  const recordResize = () => {
-    failure ??= "Perf autorun measurement window was resized during the run.";
-  };
-
-  window.addEventListener("blur", recordBlur);
-  window.addEventListener("resize", recordResize);
-  document.addEventListener("visibilitychange", recordVisibility);
-
-  return {
-    failure: () => failure,
-    dispose: () => {
-      window.removeEventListener("blur", recordBlur);
-      window.removeEventListener("resize", recordResize);
-      document.removeEventListener("visibilitychange", recordVisibility);
-    },
-  };
+function diagnosticSmokeEnabled(
+  dependencies: PerfAutorunDependencies,
+  runner: PerfAutorunRunnerModule,
+): boolean {
+  return (
+    dependencies.productionCaptureRunToken.length > 0 &&
+    dependencies.windowMode === "always-on-top-diagnostic" &&
+    isSmokeOptions(runner.perfAutorunOptions)
+  );
 }
 
-async function verifyMeasurementWindow(
-  dependencies: PerfAutorunDependencies,
-  lease: PerfAutorunWindowLease,
-): Promise<void> {
-  const expectedAlwaysOnTop = dependencies.windowMode === "always-on-top-diagnostic";
-  const actualAlwaysOnTop = await lease.control.isAlwaysOnTop();
-
-  if (actualAlwaysOnTop !== expectedAlwaysOnTop) {
-    throw new Error(
-      `Perf autorun window level changed during the run; expected always-on-top=${String(expectedAlwaysOnTop)}, got ${String(actualAlwaysOnTop)}.`,
-    );
-  }
-}
-
-async function acquireWindowControlSafely(
-  dependencies: PerfAutorunDependencies,
-): Promise<PerfAutorunWindowControl | null> {
-  try {
-    return await dependencies.acquireWindowControl();
-  } catch (error) {
-    dependencies.logError(
-      `Perf autorun could not acquire authoritative native window state: ${errorMessage(error)}`,
-    );
-
-    return null;
-  }
+function isSmokeOptions(value: unknown): boolean {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as { readonly smoke?: unknown }).smoke === true,
+  );
 }
 
 function perfAutorunWindowMode(
@@ -216,152 +453,16 @@ function perfAutorunWindowMode(
     : "focus-only";
 }
 
-async function prepareMeasurementWindow(
-  dependencies: PerfAutorunDependencies,
-  windowControl: PerfAutorunWindowControl | null,
-): Promise<PerfAutorunWindowLease> {
-  if (!windowControl) {
-    throw new Error("Perf autorun could not acquire authoritative window control.");
-  }
-
-  const originalAlwaysOnTop = await windowControl.isAlwaysOnTop();
-  const lease: PerfAutorunWindowLease = {
-    control: windowControl,
-    originalAlwaysOnTop,
-    changedAlwaysOnTop: false,
-  };
-
-  if (dependencies.windowMode === "focus-only" && originalAlwaysOnTop) {
-    throw new Error(
-      "Perf autorun focus-only mode found an already always-on-top window; the run is invalid.",
-    );
-  }
-
-  const failures = [
-    ...(await windowCallFailure("show", () => windowControl.show())),
-    ...(await windowCallFailure("unminimize", () => windowControl.unminimize())),
-    ...(dependencies.windowMode === "always-on-top-diagnostic" && !originalAlwaysOnTop
-      ? await windowCallFailure("setAlwaysOnTop(true)", async () => {
-          lease.changedAlwaysOnTop = true;
-          await windowControl.setAlwaysOnTop(true);
-        })
-      : []),
-    ...(await windowCallFailure("setFocus", () => windowControl.setFocus())),
-  ];
-
-  if (failures.length === 0) {
-    return lease;
-  }
-
-  await restoreMeasurementWindow(lease);
-  throw new Error(
-    `Perf autorun could not prepare the measurement window (${failures.join("; ")}).`,
-  );
-}
-
-async function restoreMeasurementWindow(lease: PerfAutorunWindowLease | null): Promise<void> {
-  if (!lease || !lease.changedAlwaysOnTop) {
-    return;
-  }
-
-  const failures = await windowCallFailure(
-    `setAlwaysOnTop(${String(lease.originalAlwaysOnTop)})`,
-    () => lease.control.setAlwaysOnTop(lease.originalAlwaysOnTop),
-  );
-
-  if (failures.length === 0) {
-    return;
-  }
-
-  throw new Error(
-    `Perf autorun could not restore the measurement window after the run (${failures.join("; ")}).`,
-  );
-}
-
-export async function assertStableMeasurementWindow(): Promise<void> {
-  if (document.visibilityState !== "visible") {
-    throw new Error(
-      `Perf autorun requires a visible measurement window; visibility is ${document.visibilityState}.`,
-    );
-  }
-
-  if (typeof document.hasFocus !== "function" || !document.hasFocus()) {
-    throw new Error("Perf autorun requires the measurement window to have focus.");
-  }
-
-  const startedAt = performance.now();
-  const frameTimes: number[] = [];
-
-  await withPreflightTimeout(collectAnimationFrames(frameTimes, PREFLIGHT_FRAME_COUNT));
-
-  const timestamps = [startedAt, ...frameTimes];
-  const gaps = timestamps.slice(1).map((timestamp, index) => timestamp - timestamps[index]);
-  const largestGap = Math.max(...gaps);
-
-  if (!Number.isFinite(largestGap) || largestGap > PREFLIGHT_MAX_FRAME_GAP_MS) {
-    throw new Error(
-      `Perf autorun rAF preflight is unstable: largest frame gap ${String(largestGap)} ms exceeds ${PREFLIGHT_MAX_FRAME_GAP_MS} ms.`,
-    );
-  }
-}
-
-async function withPreflightTimeout(measurement: Promise<void>): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-
-  try {
-    await Promise.race([
-      measurement,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () =>
-            reject(new Error(`Perf autorun rAF preflight exceeded ${PREFLIGHT_TIMEOUT_MS} ms.`)),
-          PREFLIGHT_TIMEOUT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-    }
-  }
-}
-
-function collectAnimationFrames(samples: number[], remaining: number): Promise<void> {
-  if (remaining === 0) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    requestAnimationFrame((timestamp) => {
-      samples.push(timestamp);
-      void collectAnimationFrames(samples, remaining - 1).then(resolve);
-    });
-  });
-}
-
-async function windowCallFailure(
-  label: string,
-  action: () => Promise<void>,
-): Promise<readonly string[]> {
-  try {
-    await action();
-
-    return [];
-  } catch (error) {
-    return [`${label}: ${errorMessage(error)}`];
-  }
-}
-
 async function loadRunner(
   dependencies: PerfAutorunDependencies,
 ): Promise<PerfAutorunRunnerModule | null> {
   try {
-    const loaded = await dependencies.importRunner(PERF_AUTORUN_PATHS.runner);
+    const loaded = await dependencies.importRunner(dependencies.runnerModulePath);
 
-    return asRunnerModule(loaded, PERF_AUTORUN_PATHS.runner);
+    return asRunnerModule(loaded, dependencies.runnerModulePath);
   } catch (error) {
     dependencies.logError(
-      `Perf autorun could not load ${PERF_AUTORUN_PATHS.runner}, so it holds no run token and can report nothing to the driver: ${errorMessage(error)}`,
+      `Perf autorun could not load ${dependencies.runnerModulePath}, so it holds no run token and can report nothing to the driver: ${errorMessage(error)}`,
     );
 
     return null;
@@ -393,13 +494,15 @@ async function reportPayload(
   dependencies: PerfAutorunDependencies,
   payload: string,
   runToken: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await dependencies.postPayload(PERF_AUTORUN_PATHS.result, payload, runToken);
+    return true;
   } catch (error) {
     dependencies.logError(
       `Perf autorun could not report its result to ${PERF_AUTORUN_PATHS.result}: ${errorMessage(error)}`,
     );
+    return false;
   }
 }
 
@@ -418,7 +521,19 @@ async function waitForBridges(dependencies: PerfAutorunDependencies): Promise<bo
 }
 
 async function importRunnerModule(modulePath: string): Promise<unknown> {
+  if (PRODUCTION_CAPTURE_BAKED && modulePath === PERF_PRODUCTION_CAPTURE_RUNNER_MODULE) {
+    return await import("virtual:codevo-perf-production-runner");
+  }
+
   return await import(/* @vite-ignore */ modulePath);
+}
+
+export function perfAutorunRunnerModulePath(
+  environment: PerfAutorunEnvironment = import.meta.env,
+): string {
+  return perfProductionCaptureEnabled(environment)
+    ? PERF_PRODUCTION_CAPTURE_RUNNER_MODULE
+    : PERF_AUTORUN_PATHS.runner;
 }
 
 function asRunnerModule(loaded: unknown, modulePath: string): PerfAutorunRunnerModule {
@@ -443,12 +558,27 @@ function asRunnerModule(loaded: unknown, modulePath: string): PerfAutorunRunnerM
   };
 }
 
-async function postAutorunPayload(
+export interface PerfAutorunPayloadTransport {
+  readonly fetch: typeof fetch;
+  readonly invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>;
+}
+
+export async function postAutorunPayload(
   resultPath: string,
   body: string,
   runToken: string,
+  environment: PerfAutorunEnvironment = import.meta.env,
+  transport: PerfAutorunPayloadTransport = defaultPayloadTransport,
 ): Promise<void> {
-  const response = await fetch(resultPath, {
+  if (perfProductionCaptureEnabled(environment)) {
+    await transport.invoke(PERF_PRODUCTION_CAPTURE_SUBMIT_COMMAND, {
+      payload: body,
+      runToken,
+    });
+    return;
+  }
+
+  const response = await transport.fetch(resultPath, {
     method: "POST",
     headers: { "content-type": "application/json", [PERF_AUTORUN_TOKEN_HEADER]: runToken },
     body,
@@ -460,6 +590,14 @@ async function postAutorunPayload(
 
   throw new Error(`the relay answered HTTP ${response.status}`);
 }
+
+const defaultPayloadTransport: PerfAutorunPayloadTransport = {
+  fetch: (...args) => fetch(...args),
+  invoke: async (command, args) => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke(command, args);
+  },
+};
 
 function errorPayload(message: string): string {
   return JSON.stringify({ status: "error", message });

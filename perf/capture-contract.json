@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "version": "c7.6-production-v1",
+  "requiredEnvironment": {
+    "bundleMode": "production",
+    "captureFlavor": "production-instrumented",
+    "launchState": "cold-fresh-profile",
+    "workspaceState": "fixture-clean"
+  },
+  "limits": {
+    "maxCaptureJsonBytes": 8388608,
+    "maxScenarios": 32,
+    "maxSamplesPerScenario": 100,
+    "maxTargetsPerScenario": 100,
+    "maxMetadataStringBytes": 512
+  },
+  "scenarios": [
+    {
+      "id": "tab-switch-cycle",
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "tab-switch-rendered", "vscode": "tab-switch-open-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-tab-activation",
+      "minSamples": 1,
+      "maxSamples": 60
+    },
+    {
+      "id": "typing-large-5k",
+      "comparisonKind": "cross-editor",
+      "cutPointByEditor": { "codevo": "typing-dispatch", "vscode": "typing-dispatch" },
+      "cacheState": "warm-explicit",
+      "workScope": "document-change-dispatch",
+      "minSamples": 1,
+      "maxSamples": 100
+    },
+    {
+      "id": "typing-large-5k-frame",
+      "comparisonKind": "codevo-absolute",
+      "cutPointByEditor": { "codevo": "typing-frame", "vscode": null },
+      "cacheState": "warm-explicit",
+      "workScope": "second-animation-frame",
+      "minSamples": 1,
+      "maxSamples": 100
+    },
+    {
+      "id": "typing-large-20k",
+      "comparisonKind": "cross-editor",
+      "cutPointByEditor": { "codevo": "typing-dispatch", "vscode": "typing-dispatch" },
+      "cacheState": "warm-explicit",
+      "workScope": "document-change-dispatch",
+      "minSamples": 1,
+      "maxSamples": 100
+    },
+    {
+      "id": "typing-large-20k-frame",
+      "comparisonKind": "codevo-absolute",
+      "cutPointByEditor": { "codevo": "typing-frame", "vscode": null },
+      "cacheState": "warm-explicit",
+      "workScope": "second-animation-frame",
+      "minSamples": 1,
+      "maxSamples": 100
+    },
+    {
+      "id": "typing-large-100k",
+      "comparisonKind": "cross-editor",
+      "cutPointByEditor": { "codevo": "typing-dispatch", "vscode": "typing-dispatch" },
+      "cacheState": "warm-explicit",
+      "workScope": "document-change-dispatch",
+      "minSamples": 1,
+      "maxSamples": 100
+    },
+    {
+      "id": "typing-large-100k-frame",
+      "comparisonKind": "codevo-absolute",
+      "cutPointByEditor": { "codevo": "typing-frame", "vscode": null },
+      "cacheState": "warm-explicit",
+      "workScope": "second-animation-frame",
+      "minSamples": 1,
+      "maxSamples": 100
+    },
+    {
+      "id": "completion-bounded",
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-provider-result",
+      "minSamples": 1,
+      "maxSamples": 20
+    },
+    {
+      "id": "completion-unbounded",
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-unbounded-projection",
+      "minSamples": 1,
+      "maxSamples": 20
+    },
+    {
+      "id": "definition-medium-2k",
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-provider-result",
+      "minSamples": 1,
+      "maxSamples": 20
+    },
+    {
+      "id": "references-medium-2k",
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-provider-result",
+      "minSamples": 1,
+      "maxSamples": 20
+    },
+    {
+      "id": "rename-medium-2k",
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "computed-edit-not-applied",
+      "minSamples": 1,
+      "maxSamples": 20
+    },
+    {
+      "id": "completion-large-20k",
+      "comparisonKind": "capability",
+      "cutPointByEditor": {
+        "codevo": "capability-observation",
+        "vscode": "capability-observation"
+      },
+      "cacheState": "policy-observation",
+      "workScope": "large-document-capability",
+      "minSamples": 0,
+      "maxSamples": 0
+    },
+    {
+      "id": "definition-large-20k",
+      "comparisonKind": "capability",
+      "cutPointByEditor": {
+        "codevo": "capability-observation",
+        "vscode": "capability-observation"
+      },
+      "cacheState": "policy-observation",
+      "workScope": "large-document-capability",
+      "minSamples": 0,
+      "maxSamples": 0
+    },
+    {
+      "id": "references-large-20k",
+      "comparisonKind": "capability",
+      "cutPointByEditor": {
+        "codevo": "capability-observation",
+        "vscode": "capability-observation"
+      },
+      "cacheState": "policy-observation",
+      "workScope": "large-document-capability",
+      "minSamples": 0,
+      "maxSamples": 0
+    },
+    {
+      "id": "rename-large-20k",
+      "comparisonKind": "capability",
+      "cutPointByEditor": {
+        "codevo": "capability-observation",
+        "vscode": "capability-observation"
+      },
+      "cacheState": "policy-observation",
+      "workScope": "large-document-capability",
+      "minSamples": 0,
+      "maxSamples": 0
+    },
+    {
+      "id": "file-search-engine",
+      "comparisonKind": "cross-editor",
+      "cutPointByEditor": { "codevo": "file-search-engine", "vscode": "file-search-engine" },
+      "cacheState": "warm-explicit",
+      "workScope": "bounded-engine-results",
+      "minSamples": 1,
+      "maxSamples": 20
+    },
+    {
+      "id": "quickopen-ui",
+      "comparisonKind": "codevo-absolute",
+      "cutPointByEditor": { "codevo": "quickopen-ui", "vscode": null },
+      "cacheState": "warm-explicit",
+      "workScope": "overlay-to-rendered-results",
+      "minSamples": 1,
+      "maxSamples": 20
+    },
+    {
+      "id": "memory-sample",
+      "comparisonKind": "codevo-absolute",
+      "cutPointByEditor": { "codevo": "post-run-snapshot", "vscode": null },
+      "cacheState": "post-run",
+      "workScope": "retained-editor-state",
+      "minSamples": 0,
+      "maxSamples": 0
+    }
+  ]
+}

@@ -1,4 +1,3 @@
-#[path = "application_commands.rs"]
 mod application_commands;
 mod application_menu;
 mod artisan;
@@ -68,6 +67,7 @@ mod node_package_tasks;
 mod node_run_tasks;
 mod package_commands;
 mod package_tool_context;
+mod perf_capture;
 pub mod php_file_outline;
 pub mod php_parser;
 pub mod php_symbols;

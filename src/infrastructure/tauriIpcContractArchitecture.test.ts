@@ -55,6 +55,59 @@ describe("Tauri IPC contract architecture (static command literals and named map
     );
   });
 
+  it("parses cfg-gated handlers without accepting unknown or malformed attributes", () => {
+    expect(
+      parseRegisteredTauriCommands(`
+        tauri::generate_handler![
+          #[cfg(feature = "perf-capture")]
+          perf_capture::perf_capture_activate_window,
+          #[cfg(all(feature = "perf-capture", target_os = "macos"))]
+          perf_capture::perf_capture_snapshot_window_lease,
+          open_file,
+        ]
+      `),
+    ).toEqual(["perf_capture_activate_window", "perf_capture_snapshot_window_lease", "open_file"]);
+
+    expect(() =>
+      parseRegisteredTauriCommands("tauri::generate_handler![#[allow(dead_code)] open_file]"),
+    ).toThrow("Unsupported generate_handler entry");
+    expect(() =>
+      parseRegisteredTauriCommands("tauri::generate_handler![#[cfg()] open_file]"),
+    ).toThrow("Unsupported generate_handler entry");
+    expect(() =>
+      parseRegisteredTauriCommands('tauri::generate_handler![#[cfg(feature = "x")] ]'),
+    ).toThrow("Unsupported generate_handler entry");
+    expect(() =>
+      parseRegisteredTauriCommands('tauri::generate_handler![#[cfg(feature = "x") open_file]'),
+    ).toThrow("tauri::generate_handler");
+    expect(() =>
+      parseRegisteredTauriCommands("tauri::generate_handler![#[cfg(feature = )] open_file]"),
+    ).toThrow("Unsupported generate_handler entry");
+    expect(() =>
+      parseRegisteredTauriCommands("tauri::generate_handler![#[cfg(foo bar)] open_file]"),
+    ).toThrow("Unsupported generate_handler entry");
+    expect(() =>
+      parseRegisteredTauriCommands(
+        "tauri::generate_handler![#[cfg(not(unix, windows))] open_file]",
+      ),
+    ).toThrow("Unsupported generate_handler entry");
+  });
+
+  it("rejects empty handler entries while allowing one trailing comma", () => {
+    expect(parseRegisteredTauriCommands("tauri::generate_handler![open_file,]")).toEqual([
+      "open_file",
+    ]);
+    expect(() => parseRegisteredTauriCommands("tauri::generate_handler![,open_file]")).toThrow(
+      "Malformed tauri::generate_handler",
+    );
+    expect(() =>
+      parseRegisteredTauriCommands("tauri::generate_handler![open_file,,close_file]"),
+    ).toThrow("Malformed tauri::generate_handler");
+    expect(() => parseRegisteredTauriCommands("tauri::generate_handler![open_file,,]")).toThrow(
+      "Malformed tauri::generate_handler",
+    );
+  });
+
   it("ignores unrelated literals while recognizing supported frontend shapes", () => {
     const references = parseFrontendTauriCommandReferences(
       `

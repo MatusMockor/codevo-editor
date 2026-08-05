@@ -589,6 +589,10 @@ fn spawn_run_process(plan: &NodeLaunchPlan) -> Result<Child, String> {
             }
         }
         command.envs(&plan.environment);
+        #[cfg(feature = "perf-capture")]
+        if let Ok(owner) = std::env::var("CODEVO_PERF_CAPTURE_PROCESS_OWNER") {
+            command.env("CODEVO_PERF_CAPTURE_PROCESS_OWNER", owner);
+        }
     }
     command.env("LC_ALL", "C").env_remove("NODE_OPTIONS");
     #[cfg(unix)]

@@ -1,12 +1,15 @@
 import path from "node:path";
+import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import {
+  DIAGNOSTIC_SMOKE_EVIDENCE,
   shapeRunResult,
   CAPABILITY_SCENARIO_IDS,
   POLICY_DISABLED_REASON,
 } from "./perfScenarios.mjs";
 import {
   CAPABILITY_GAP_SCENARIO_IDS,
+  SMOKE_SCENARIO_IDS,
   blockedScenarioIds,
   buildRunnerOptions,
   buildSnippetExpression,
@@ -24,6 +27,13 @@ import {
   scenarioSummary,
   smokeValidationFailure,
 } from "./runPerfScenariosCli.mjs";
+import {
+  createProductionAbortAuthority,
+  normalizeCdpResult,
+  parseRunPerfArgs,
+  readManualResultFile,
+} from "./run-perf-scenarios.mjs";
+import { MAX_CAPTURE_JSON_BYTES } from "./perfCaptureContract.mjs";
 
 const COMPLETE_ENVIRONMENT = {
   editor: "codevo",
@@ -37,6 +47,104 @@ const COMPLETE_ENVIRONMENT = {
   platform: "darwin",
   capturedAt: "2026-08-03T00:00:00.000Z",
 };
+
+describe("production lane CLI", () => {
+  it("selects the isolated production smoke lane", () => {
+    expect(parseRunPerfArgs(["--production", "--smoke"])).toMatchObject({
+      production: true,
+      smoke: true,
+      autorun: false,
+      productionRunTimeoutMs: 120000,
+    });
+  });
+
+  it("keeps production mutually exclusive with every other owned lane", () => {
+    expect(() => parseRunPerfArgs(["--production", "--autorun"])).toThrow(/exactly one/);
+    expect(() => parseRunPerfArgs(["--production", "--from-json", "capture.json"])).toThrow(
+      /exactly one/,
+    );
+  });
+
+  it("bounds production build and run timeouts and scopes them to production", () => {
+    expect(
+      parseRunPerfArgs([
+        "--production",
+        "--production-build-timeout-ms",
+        "120000",
+        "--production-run-timeout-ms",
+        "60000",
+      ]),
+    ).toMatchObject({ productionBuildTimeoutMs: 120000, productionRunTimeoutMs: 60000 });
+    expect(() => parseRunPerfArgs(["--production-run-timeout-ms", "60000"])).toThrow(
+      /require --production/,
+    );
+    expect(() => parseRunPerfArgs(["--production-build-timeout-ms", "1800000"])).toThrow(
+      /require --production/,
+    );
+  });
+
+  it("does not permit diagnostic elevation in the production lane", () => {
+    expect(() => parseRunPerfArgs(["--production", "--diagnostic-elevation"])).toThrow(
+      /requires --autorun/,
+    );
+  });
+
+  it.each([
+    ["--autorun-timeout-ms", "1200000"],
+    ["--cdp-url", "http://127.0.0.1:9222"],
+    ["--target-url", "localhost"],
+  ])("rejects irrelevant production flag %s", (flag, value) => {
+    expect(() => parseRunPerfArgs(["--production", flag, value])).toThrow(/not valid/);
+  });
+
+  it.each([
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ])("turns %s into bounded cancellation with exit code %s", (signal, exitCode) => {
+    const processTarget = new EventEmitter();
+    processTarget.exitCode = undefined;
+    const authority = createProductionAbortAuthority(processTarget);
+    processTarget.emit(signal);
+    expect(authority.signal.aborted).toBe(true);
+    expect(processTarget.exitCode).toBe(exitCode);
+    authority.dispose();
+    expect(processTarget.listenerCount("SIGINT") + processTarget.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  it("immediately interrupts every exact process group already owned by the production lane", () => {
+    const processTarget = new EventEmitter();
+    processTarget.exitCode = undefined;
+    const interrupted = [];
+    const authority = createProductionAbortAuthority(processTarget);
+    authority.ownProcess({ interrupt: () => interrupted.push("frontend") });
+    authority.ownProcess({ interrupt: () => interrupted.push("tauri") });
+
+    processTarget.emit("SIGINT");
+
+    expect(interrupted).toEqual(["frontend", "tauri"]);
+    expect(authority.signal.aborted).toBe(true);
+    expect(processTarget.exitCode).toBe(130);
+    authority.dispose();
+  });
+
+  it("keeps owning repeated termination signals until asynchronous cleanup finishes", () => {
+    const processTarget = new EventEmitter();
+    processTarget.exitCode = undefined;
+    let interruptions = 0;
+    const authority = createProductionAbortAuthority(processTarget);
+    authority.ownProcess({ interrupt: () => (interruptions += 1) });
+
+    processTarget.emit("SIGINT");
+    processTarget.emit("SIGINT");
+    processTarget.emit("SIGTERM");
+
+    expect(interruptions).toBe(1);
+    expect(processTarget.listenerCount("SIGINT")).toBe(1);
+    expect(processTarget.listenerCount("SIGTERM")).toBe(1);
+    authority.dispose();
+    expect(processTarget.listenerCount("SIGINT") + processTarget.listenerCount("SIGTERM")).toBe(0);
+  });
+});
 
 describe("capturedAtForImportedResult", () => {
   it("preserves the timestamp recorded by the measurement", () => {
@@ -126,8 +234,216 @@ describe("parseManualResult", () => {
     expect(parsed.memorySample).toBeNull();
   });
 
+  it.each([
+    ["string", { models: 1, editors: "1" }],
+    ["fraction", { models: 1, editors: 1.5 }],
+    ["negative", { models: -1, editors: 1 }],
+    ["unsafe integer", { models: 1, editors: Number.MAX_SAFE_INTEGER + 1 }],
+    ["over-limit integer", { models: 1_000_001, editors: 1 }],
+    ["unknown field", { models: 1, editors: 1, windows: 1 }],
+    ["missing field", { editors: 1 }],
+  ])("rejects retainedCounts carrying a %s", (_label, retainedCounts) => {
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        retainedCounts,
+        failedPaths: [],
+      }),
+    ).toThrow(/retainedCounts/);
+  });
+
+  it.each([
+    ["string", { usedJsHeapBytes: "100" }],
+    ["fraction", { usedJsHeapBytes: 1.5 }],
+    ["negative", { usedJsHeapBytes: -1 }],
+    ["unsafe integer", { usedJsHeapBytes: Number.MAX_SAFE_INTEGER + 1 }],
+    ["over-limit integer", { usedJsHeapBytes: 2 ** 50 + 1 }],
+    ["unknown field", { usedJsHeapBytes: 100, totalJsHeapBytes: 200 }],
+  ])("rejects memorySample carrying a %s", (_label, memorySample) => {
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        memorySample,
+        failedPaths: [],
+      }),
+    ).toThrow(/memorySample/);
+  });
+
+  it("accepts bounded retained counts and explicit unavailable heap measurement", () => {
+    const parsed = normalizeRunnerResult({
+      bridgeResults: [],
+      trackerSnapshot: [],
+      retainedCounts: { models: 1_000_000, editors: 1 },
+      memorySample: { usedJsHeapBytes: null },
+      failedPaths: [],
+    });
+
+    expect(parsed.retainedCounts).toEqual({ models: 1_000_000, editors: 1 });
+    expect(parsed.memorySample).toEqual({ usedJsHeapBytes: null });
+  });
+
   it("rejects non-JSON input with a clear error", () => {
-    expect(() => parseManualResult("not json")).toThrow(/not valid JSON/);
+    expect(() => parseManualResult("not json")).toThrow(/JSON/);
+  });
+
+  it("rejects duplicate raw JSON object keys before normalization", () => {
+    expect(() =>
+      parseManualResult(
+        '{"bridgeResults":[],"bridgeResults":[],"trackerSnapshot":[],"failedPaths":[]}',
+      ),
+    ).toThrow(/duplicate object key/);
+  });
+
+  it("rejects unknown top-level and environment fields", () => {
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        failedPaths: [],
+        hiddenPayload: "discard me",
+      }),
+    ).toThrow(/unknown top-level/);
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        failedPaths: [],
+        environment: { bundleMode: "dev", hiddenPayload: "discard me" },
+      }),
+    ).toThrow(/environment.*unknown field/);
+  });
+
+  it.each([
+    ["editor", "vscode"],
+    ["bundleMode", "preview"],
+    ["captureFlavor", "ordinary-release"],
+    ["artifactSha256", "a".repeat(63)],
+    ["bundleManifestSha256", "not-a-digest"],
+    ["windowMode", "always-on-top"],
+    ["strictMode", "false"],
+    ["timerQuantizationMs", 1_001],
+    ["windowSize", { width: 800, height: 600, scale: 2 }],
+    ["capturedAt", "not-a-date"],
+    ["platform", "x".repeat(513)],
+    ["domWindowSignalCount", 65],
+    ["windowInterruptionCount", 4],
+    ["windowStabilityEpoch", 1_025],
+    ["windowInterruptionStages", ["x".repeat(65)]],
+    ["windowStability", "unstable"],
+  ])("rejects invalid bounded environment field %s", (field, value) => {
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        failedPaths: [],
+        environment: { [field]: value },
+      }),
+    ).toThrow(new RegExp(`environment\\.${field}`));
+  });
+
+  it("rejects an over-limit raw JSON payload before unknown padding can be stripped", () => {
+    const raw = JSON.stringify({
+      bridgeResults: [],
+      trackerSnapshot: [],
+      failedPaths: [],
+      padding: "x".repeat(MAX_CAPTURE_JSON_BYTES),
+    });
+
+    expect(() => parseManualResult(raw)).toThrow(/above the .* byte bound/);
+  });
+
+  it("bounds --from-json by descriptor size and closes the descriptor", async () => {
+    let closed = false;
+    const descriptor = {
+      async stat() {
+        return { size: MAX_CAPTURE_JSON_BYTES + 1 };
+      },
+      async close() {
+        closed = true;
+      },
+    };
+
+    await expect(readManualResultFile("oversized.json", async () => descriptor)).rejects.toThrow(
+      /above the .* byte bound/,
+    );
+    expect(closed).toBe(true);
+  });
+
+  it("normalizes the CDP value through the same duplicate and retained-state boundary", () => {
+    expect(() =>
+      normalizeCdpResult({
+        bridgeResults: [
+          { id: "typing-large-5k", samples: [1] },
+          { id: "typing-large-5k", samples: [999] },
+        ],
+        trackerSnapshot: [],
+        retainedCounts: { models: -1, editors: "1", extra: true },
+        memorySample: { usedJsHeapBytes: Number.POSITIVE_INFINITY, extra: true },
+        failedPaths: [],
+      }),
+    ).toThrow(/bridgeResults|retainedCounts|memorySample/);
+  });
+
+  it("rejects sparse and over-limit CDP scenario data before shaping", () => {
+    expect(() =>
+      normalizeCdpResult({
+        bridgeResults: [{ id: "typing-large-5k", samples: new Array(1) }],
+        trackerSnapshot: [],
+        failedPaths: [],
+      }),
+    ).toThrow(/bridgeResults/);
+    expect(() =>
+      normalizeCdpResult({
+        bridgeResults: [{ id: "typing-large-5k", samples: Array(101).fill(1) }],
+        trackerSnapshot: [],
+        failedPaths: [],
+      }),
+    ).toThrow(/bridgeResults/);
+  });
+
+  it.each([
+    ["unknown field", { arbitraryPayload: "not part of the closed schema" }],
+    ["unsafe warmups", { warmups: 1e100 }],
+    ["negative warmups", { warmups: -1 }],
+    ["huge frame floor", { frameSettleFloorMs: 1e308 }],
+    ["non-string switch path", { switchPaths: [42] }],
+    ["over-bound switch path", { switchPaths: ["x".repeat(513)] }],
+    ["over-bound previous path", { previousSwitchPath: "x".repeat(513) }],
+    ["unknown language server status", { languageServerStatus: "warming-up" }],
+    ["malformed language server status", { languageServerStatus: { kind: "running" } }],
+    ["mismatched targets", { targets: ["one", "two"] }],
+  ])("rejects a bridge result with %s", (_label, override) => {
+    expect(() =>
+      normalizeCdpResult({
+        bridgeResults: [{ id: "tab-switch-cycle", samples: [1], ...override }],
+        trackerSnapshot: [],
+        failedPaths: [],
+      }),
+    ).toThrow(/bridgeResults/);
+  });
+
+  it("accepts the complete bounded tab-switch bridge schema", () => {
+    expect(
+      normalizeCdpResult({
+        bridgeResults: [
+          {
+            id: "tab-switch-cycle",
+            cutPoint: "tab-switch-rendered",
+            warmups: 1,
+            targets: ["large-5k.ts"],
+            windowNote: "bounded",
+            frameSettleFloorMs: 33,
+            switchPaths: ["/fixture/large-5k.ts"],
+            previousSwitchPath: "/fixture/large-20k.ts",
+            samples: [34],
+          },
+        ],
+        trackerSnapshot: [],
+        failedPaths: [],
+      }).bridgeResults[0],
+    ).toMatchObject({ warmups: 1, frameSettleFloorMs: 33 });
   });
 
   it("rejects a JSON array at the top level", () => {
@@ -202,6 +518,120 @@ describe("parseManualResult", () => {
       }),
     ).toThrow(/trackerSnapshot/);
   });
+
+  it.each([
+    ["required smoke id", "typing-large-5k"],
+    ["non-smoke id", "completion-bounded"],
+  ])("rejects duplicate bridgeResults for a %s", (_label, id) => {
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [
+          { id, samples: [1] },
+          { id, samples: [2] },
+        ],
+        trackerSnapshot: [],
+        failedPaths: [],
+      }),
+    ).toThrow(/bridgeResults/);
+  });
+
+  it("rejects duplicate tracker kinds and duplicate scenario status ids", () => {
+    const tracker = {
+      kind: "completion",
+      stats: { count: 1, last: 1, min: 1, max: 1, median: 1, p95: 1 },
+    };
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [tracker, tracker],
+        failedPaths: [],
+      }),
+    ).toThrow(/trackerSnapshot/);
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        scenarioStatuses: [
+          { id: "completion-bounded", status: "not-run", reason: "one" },
+          { id: "completion-bounded", status: "not-run", reason: "two" },
+        ],
+        failedPaths: [],
+      }),
+    ).toThrow(/scenarioStatuses/);
+  });
+
+  it.each([
+    ["bridge id", { bridgeResults: [{ id: "x".repeat(513), samples: [1] }] }],
+    [
+      "window note",
+      { bridgeResults: [{ id: "typing-large-5k", samples: [1], windowNote: "x".repeat(513) }] },
+    ],
+    [
+      "target",
+      { bridgeResults: [{ id: "typing-large-5k", samples: [1], targets: ["x".repeat(513)] }] },
+    ],
+    [
+      "status reason",
+      {
+        scenarioStatuses: [
+          { id: "typing-large-5k", status: "non-comparable", reason: "x".repeat(513) },
+        ],
+      },
+    ],
+  ])("rejects over-bound %s metadata", (_label, override) => {
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        failedPaths: [],
+        ...override,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects sparse target and scenario-status arrays", () => {
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [{ id: "typing-large-5k", samples: [1], targets: new Array(1) }],
+        trackerSnapshot: [],
+        failedPaths: [],
+      }),
+    ).toThrow(/bridgeResults/);
+    expect(() =>
+      normalizeRunnerResult({
+        bridgeResults: [],
+        trackerSnapshot: [],
+        scenarioStatuses: new Array(1),
+        failedPaths: [],
+      }),
+    ).toThrow(/scenarioStatuses/);
+  });
+
+  it.each(["bridgeResults", "trackerSnapshot", "scenarioStatuses", "failedPaths"])(
+    "rejects an over-limit %s array",
+    (field) => {
+      const tracker = {
+        kind: "completion",
+        stats: { count: 1, last: 1, min: 1, max: 1, median: 1, p95: 1 },
+      };
+      const entries = Array.from({ length: 33 }, (_, index) => {
+        if (field === "bridgeResults") return { id: `bridge-${index}`, samples: [1] };
+        if (field === "trackerSnapshot") return { ...tracker, kind: `tracker-${index}` };
+        if (field === "scenarioStatuses") {
+          return { id: `scenario-${index}`, status: "not-run", reason: "bounded reason" };
+        }
+        return `/bounded-${index}.ts`;
+      });
+      expect(() =>
+        normalizeRunnerResult({
+          bridgeResults: [],
+          trackerSnapshot: [],
+          failedPaths: [],
+          [field]: entries,
+        }),
+      ).toThrow(/bound/);
+    },
+  );
 
   it("rejects malformed trackerSnapshot entries", () => {
     const raw = JSON.stringify({
@@ -324,7 +754,7 @@ describe("smokeValidationFailure", () => {
         { id: "typing-large-5k", samples: [1] },
         { id: "tab-switch-cycle", samples: [1] },
       ],
-      retainedCounts: { editors: 1 },
+      retainedCounts: { models: 1, editors: 1 },
     };
     expect(smokeValidationFailure(result)).toBeNull();
   });
@@ -335,7 +765,7 @@ describe("smokeValidationFailure", () => {
         { id: "typing-large-5k", samples: [] },
         { id: "tab-switch-cycle", samples: [1] },
       ],
-      retainedCounts: { editors: 1 },
+      retainedCounts: { models: 1, editors: 1 },
     };
     expect(smokeValidationFailure(result)).toMatch(/Performance smoke failed/);
   });
@@ -346,9 +776,26 @@ describe("smokeValidationFailure", () => {
         { id: "typing-large-5k", samples: [1] },
         { id: "tab-switch-cycle", samples: [1] },
       ],
-      retainedCounts: { editors: 0 },
+      retainedCounts: { models: 1, editors: 0 },
     };
     expect(smokeValidationFailure(result)).toMatch(/Performance smoke failed/);
+  });
+
+  it.each([
+    { models: 1, editors: "1" },
+    { models: 1, editors: 1.5 },
+    { models: 1, editors: Number.MAX_SAFE_INTEGER },
+    { editors: 1 },
+  ])("fails closed on malformed retained-count smoke authority %#", (retainedCounts) => {
+    expect(
+      smokeValidationFailure({
+        bridgeResults: [
+          { id: "typing-large-5k", samples: [1] },
+          { id: "tab-switch-cycle", samples: [1] },
+        ],
+        retainedCounts,
+      }),
+    ).toMatch(/Performance smoke failed/);
   });
 });
 
@@ -527,7 +974,7 @@ describe("evaluateRunOutcome", () => {
         { id: "tab-switch-cycle", samples: [] },
       ],
       trackerSnapshot: [],
-      retainedCounts: { editors: 0 },
+      retainedCounts: { models: 1, editors: 0 },
       failedPaths: ["/missing.ts"],
     };
     const shaped = shapeRunResult({
@@ -545,6 +992,148 @@ describe("evaluateRunOutcome", () => {
     expect(failures[1]).toMatch(/fixture path\(s\) could not be opened/);
     expect(failures[2]).toMatch(/produced no usable measurement/);
   });
+
+  it("accepts diagnostic smoke non-comparable statuses only with valid required bridge evidence", () => {
+    const result = {
+      bridgeResults: [
+        { id: "typing-large-5k", samples: [1] },
+        { id: "tab-switch-cycle", samples: [2] },
+      ],
+      trackerSnapshot: [],
+      retainedCounts: { models: 1, editors: 1 },
+      failedPaths: [],
+    };
+    const shaped = shapeRunResult({
+      capturedAt: "2026-08-05T00:00:00.000Z",
+      ...result,
+      environment: {
+        ...COMPLETE_ENVIRONMENT,
+        windowMode: "always-on-top-diagnostic",
+      },
+      scenarioStatuses: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        status: "non-comparable",
+        reason: "Diagnostic window protection was active.",
+      })),
+      diagnosticSmoke: true,
+    });
+
+    expect(evaluateRunOutcome({ result, shaped, smoke: true })).toEqual([]);
+    for (const id of SMOKE_SCENARIO_IDS) {
+      expect(shaped.scenarios.find((scenario) => scenario.id === id)).toMatchObject({
+        status: "non-comparable",
+        diagnosticEvidence: DIAGNOSTIC_SMOKE_EVIDENCE,
+        samples: [{ ms: id === "typing-large-5k" ? 1 : 2 }],
+      });
+    }
+  });
+
+  it.each([
+    ["focus-only smoke", "focus-only", [1], [2]],
+    ["missing tab evidence", "always-on-top-diagnostic", [1], null],
+    ["empty typing evidence", "always-on-top-diagnostic", [], [2]],
+    ["non-finite typing evidence", "always-on-top-diagnostic", [Number.NaN], [2]],
+    ["over-limit typing evidence", "always-on-top-diagnostic", Array(101).fill(1), [2]],
+  ])("keeps non-comparable statuses blocking for %s", (_label, windowMode, typing, tab) => {
+    const bridgeResults = [
+      { id: "typing-large-5k", samples: typing },
+      ...(tab === null ? [] : [{ id: "tab-switch-cycle", samples: tab }]),
+    ];
+    const result = {
+      bridgeResults,
+      trackerSnapshot: [],
+      retainedCounts: { models: 1, editors: 1 },
+      failedPaths: [],
+    };
+    const shaped = shapeRunResult({
+      capturedAt: "2026-08-05T00:00:00.000Z",
+      ...result,
+      environment: { ...COMPLETE_ENVIRONMENT, windowMode },
+      scenarioStatuses: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        status: "non-comparable",
+        reason: "Diagnostic window protection was active.",
+      })),
+      diagnosticSmoke: windowMode === "always-on-top-diagnostic",
+    });
+
+    if (windowMode === "always-on-top-diagnostic") {
+      expect(
+        shaped.scenarios.some((scenario) => Object.hasOwn(scenario, "diagnosticEvidence")),
+      ).toBe(false);
+    }
+
+    expect(evaluateRunOutcome({ result, shaped, smoke: true }).join("\n")).toMatch(
+      /Performance (smoke|run) failed/,
+    );
+  });
+
+  it("keeps diagnostic non-comparable statuses blocking in the full parity lane", () => {
+    const result = {
+      bridgeResults: [
+        { id: "typing-large-5k", samples: [1] },
+        { id: "tab-switch-cycle", samples: [2] },
+      ],
+      trackerSnapshot: [],
+      retainedCounts: { models: 1, editors: 1 },
+      failedPaths: [],
+    };
+    const shaped = shapeRunResult({
+      capturedAt: "2026-08-05T00:00:00.000Z",
+      ...result,
+      environment: {
+        ...COMPLETE_ENVIRONMENT,
+        windowMode: "always-on-top-diagnostic",
+      },
+      scenarioStatuses: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        status: "non-comparable",
+        reason: "Diagnostic window protection was active.",
+      })),
+      diagnosticSmoke: false,
+    });
+
+    expect(evaluateRunOutcome({ result, shaped, smoke: false }).join("\n")).toContain(
+      "produced no usable measurement",
+    );
+    expect(shaped.scenarios.some((scenario) => Object.hasOwn(scenario, "diagnosticEvidence"))).toBe(
+      false,
+    );
+  });
+
+  it("rejects duplicate required bridge evidence in diagnostic smoke", () => {
+    const result = {
+      bridgeResults: [
+        { id: "typing-large-5k", samples: [1] },
+        { id: "typing-large-5k", samples: [2] },
+        { id: "tab-switch-cycle", samples: [3] },
+      ],
+      trackerSnapshot: [],
+      retainedCounts: { models: 1, editors: 1 },
+      failedPaths: [],
+    };
+    const shaped = shapeRunResult({
+      capturedAt: "2026-08-05T00:00:00.000Z",
+      ...result,
+      environment: {
+        ...COMPLETE_ENVIRONMENT,
+        windowMode: "always-on-top-diagnostic",
+      },
+      scenarioStatuses: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        status: "non-comparable",
+        reason: "Diagnostic window protection was active.",
+      })),
+      diagnosticSmoke: true,
+    });
+
+    expect(evaluateRunOutcome({ result, shaped, smoke: true }).join("\n")).toMatch(
+      /Performance (smoke|run) failed/,
+    );
+    expect(shaped.scenarios.some((scenario) => Object.hasOwn(scenario, "diagnosticEvidence"))).toBe(
+      false,
+    );
+  });
 });
 
 describe("environment anomaly gate", () => {
@@ -559,7 +1148,7 @@ describe("environment anomaly gate", () => {
         { id: "tab-switch-cycle", samples: [1] },
       ],
       trackerSnapshot: [],
-      retainedCounts: { editors: 1 },
+      retainedCounts: { models: 1, editors: 1 },
       failedPaths: [],
     };
 

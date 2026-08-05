@@ -12,6 +12,7 @@ import type {
   NeonCompletion,
 } from "./templateLanguageMonacoTypes";
 import { modelPath } from "./phpMonacoDocumentContext";
+import { perfProductionCaptureEnabled } from "./perfProductionCapture";
 
 type MonacoEditor = Monaco.editor.IStandaloneCodeEditor;
 type MonacoPosition = Monaco.Position;
@@ -106,12 +107,17 @@ declare global {
 interface EditorQaBridgeEnvironment {
   DEV?: boolean;
   VITE_CODEVO_QA_BRIDGE?: string;
+  VITE_CODEVO_PERF_PRODUCTION_CAPTURE?: string;
 }
 
 export function editorQaBridgeEnabled(
   environment: EditorQaBridgeEnvironment = import.meta.env,
   storage: Pick<Storage, "getItem"> | null | undefined = window.localStorage,
 ): boolean {
+  if (perfProductionCaptureEnabled(environment)) {
+    return true;
+  }
+
   // The localStorage escape hatch is intentionally DEV-only. Production builds
   // must never expose window.__codevoQa even if a user has the key set.
   if (!environment.DEV) {

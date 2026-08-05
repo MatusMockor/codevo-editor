@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Codevo Editor is a Fleet-like PHP-focused desktop code editor"
 authors = ["Matus Mockor"]
 edition = "2021"
+default-run = "codevo-editor"
+autobins = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -13,6 +15,20 @@ edition = "2021"
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "editor_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "codevo-editor"
+path = "src/main.rs"
+
+[[example]]
+name = "codevo-perf-capture-launcher"
+path = "src/perf_capture_launcher_tool/main.rs"
+required-features = ["perf-capture-launcher"]
+
+[features]
+default = []
+perf-capture = ["dep:block2", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+perf-capture-launcher = ["perf-capture"]
 
 [build-dependencies]
 cc = "1"
@@ -43,8 +59,15 @@ sourcemap = "9"
 unicode-ident = "1"
 unicode-id-start = "1.4"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = { version = "=0.6.2", optional = true }
+objc2 = { version = "=0.6.4", optional = true }
+objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["libc", "NSApplication", "NSRunningApplication", "NSWindow"] }
+objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["NSDate", "NSNotification", "NSOperation", "NSRunLoop", "NSString", "NSURL", "block2"] }
+
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }
 
 [dev-dependencies]
 anyhow = "1"
+tauri = { version = "2", features = ["test"] }

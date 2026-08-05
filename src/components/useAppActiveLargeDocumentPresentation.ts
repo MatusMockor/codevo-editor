@@ -86,7 +86,10 @@ export function useAppActiveLargeDocumentPresentation({
       activePath,
       isJavaScriptTypeScript,
       onChange,
-      policy: normalizedPolicy,
+      policy: {
+        characterLimit: normalizedPolicy.characterLimit,
+        lineLimit: normalizedPolicy.lineLimit,
+      },
       workspaceRoot,
     };
   }, [

@@ -4,6 +4,7 @@ export interface PerfLaneRenderEnvironment {
   readonly DEV?: boolean;
   readonly VITE_CODEVO_PERF_AUTORUN?: string;
   readonly VITE_CODEVO_PERF_BRIDGE?: string;
+  readonly VITE_CODEVO_PERF_PRODUCTION_CAPTURE?: string;
 }
 
 export function strictModeEnabled(

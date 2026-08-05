@@ -1846,6 +1846,21 @@ describe("EditorSurface", () => {
     expect(editorQaBridgeEnabled({ DEV: true }, localStorage)).toBe(true);
   });
 
+  it("enables the production QA bridge only for the exact baked capture flag", () => {
+    const localStorage = memoryLocalStorage();
+    localStorage.setItem("codevo.qaBridge", "1");
+
+    expect(
+      editorQaBridgeEnabled({ DEV: false, VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "1" }, localStorage),
+    ).toBe(true);
+    expect(
+      editorQaBridgeEnabled(
+        { DEV: false, VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "true" },
+        localStorage,
+      ),
+    ).toBe(false);
+  });
+
   it("installs a dev-only editor QA bridge for deterministic cursor, diagnostic, completion, and definition probes", async () => {
     const localStorage = memoryLocalStorage();
     vi.stubGlobal("localStorage", localStorage);

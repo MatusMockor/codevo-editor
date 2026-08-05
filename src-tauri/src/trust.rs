@@ -104,6 +104,50 @@ impl WorkspaceTrustService {
         Ok(self.get(&normalized_path))
     }
 
+    #[cfg(feature = "perf-capture")]
+    pub(crate) fn grant_ephemeral_canonical_roots(
+        &mut self,
+        roots: [&str; 2],
+    ) -> io::Result<[WorkspaceTrustState; 2]> {
+        if roots[0] == roots[1]
+            || roots.iter().any(|root| {
+                root.is_empty()
+                    || root.len() > 4 * 1024
+                    || root.chars().any(char::is_control)
+                    || !Path::new(root).is_absolute()
+                    || normalize_path_string(root) != *root
+                    || Path::new(root).components().any(|component| {
+                        matches!(
+                            component,
+                            std::path::Component::CurDir | std::path::Component::ParentDir
+                        )
+                    })
+            })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ephemeral workspace trust roots must be canonical and distinct",
+            ));
+        }
+        if roots.iter().all(|root| self.trusted_roots.contains(*root)) {
+            return Ok(roots.map(|root_path| WorkspaceTrustState {
+                root_path: root_path.to_owned(),
+                trusted: true,
+            }));
+        }
+
+        let next_generation = self.generation.checked_add(1).ok_or_else(|| {
+            io::Error::other("workspace trust generation capacity has been exhausted")
+        })?;
+        self.trusted_roots
+            .extend(roots.iter().map(|root| (*root).to_owned()));
+        self.generation = next_generation;
+        Ok(roots.map(|root_path| WorkspaceTrustState {
+            root_path: root_path.to_owned(),
+            trusted: true,
+        }))
+    }
+
     fn save(&self) -> io::Result<()> {
         if let Some(parent) = self.storage_path.parent() {
             fs::create_dir_all(parent)?;
@@ -219,6 +263,43 @@ mod tests {
             service.snapshot("/project").generation,
             committed_generation
         );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "perf-capture")]
+    #[test]
+    fn ephemeral_canonical_roots_commit_once_without_persisting_and_are_idempotent() {
+        let root = create_temp_dir("trust-exact-pair");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage.clone()).expect("load trust service");
+
+        let states = service
+            .grant_ephemeral_canonical_roots(["/fixture/a", "/fixture/b"])
+            .expect("commit pair");
+        assert!(states.iter().all(|state| state.trusted));
+        let generation = service.snapshot("/fixture/a").generation;
+        assert!(!storage.exists());
+
+        service
+            .grant_ephemeral_canonical_roots(["/fixture/a", "/fixture/b"])
+            .expect("idempotent pair");
+        assert_eq!(service.snapshot("/fixture/a").generation, generation);
+        assert!(!storage.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(feature = "perf-capture")]
+    #[test]
+    fn ephemeral_canonical_roots_reject_duplicates_without_mutation() {
+        let root = create_temp_dir("trust-pair-duplicate");
+        let storage = root.join("trust.json");
+        let mut service = WorkspaceTrustService::load(storage.clone()).expect("load trust service");
+
+        assert!(service
+            .grant_ephemeral_canonical_roots(["/fixture/a", "/fixture/a/"])
+            .is_err());
+        assert!(!storage.exists());
+        assert!(!service.get("/fixture/a").trusted);
         fs::remove_dir_all(root).expect("cleanup");
     }
 

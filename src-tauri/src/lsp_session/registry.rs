@@ -27,6 +27,18 @@ fn runtime_status_session_id(status: &LanguageServerRuntimeStatus) -> Option<u64
     }
 }
 
+fn aggregate_stop_status(
+    aggregate: LanguageServerRuntimeStatus,
+    next: LanguageServerRuntimeStatus,
+) -> LanguageServerRuntimeStatus {
+    match (&aggregate, &next) {
+        (LanguageServerRuntimeStatus::Crashed { .. }, _) => aggregate,
+        (_, LanguageServerRuntimeStatus::Crashed { .. }) => next,
+        (LanguageServerRuntimeStatus::Stopped, _) => next,
+        _ => aggregate,
+    }
+}
+
 struct RestartToken<'a> {
     tokens: &'a Mutex<HashMap<String, u64>>,
     runtime_id: String,
@@ -960,12 +972,11 @@ impl LanguageServerRegistry {
 
     pub fn stop_all(&self) -> LanguageServerRuntimeStatus {
         let supervisors = self.drain_supervisors();
-
+        let mut status = LanguageServerRuntimeStatus::Stopped;
         for supervisor in supervisors {
-            supervisor.stop();
+            status = aggregate_stop_status(status, supervisor.stop());
         }
-
-        LanguageServerRuntimeStatus::Stopped
+        status
     }
 
     pub fn send_notification(
@@ -1273,10 +1284,15 @@ impl LanguageServerRegistry {
     }
 
     fn drain_supervisors(&self) -> Vec<Arc<LanguageServerSupervisor>> {
-        self.supervisors
+        let mut supervisors = self
+            .supervisors
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .drain()
+            .collect::<Vec<_>>();
+        supervisors.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        supervisors
+            .into_iter()
             .map(|(_, supervisor)| supervisor)
             .collect()
     }
@@ -1390,6 +1406,42 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(spawn_count.load(Ordering::SeqCst), 1);
         assert!(token.finish());
+    }
+
+    #[test]
+    fn stop_all_status_reports_a_cleanup_failure_after_successes() {
+        let failure = LanguageServerRuntimeStatus::Crashed {
+            message: "Language server cleanup is still pending.".to_string(),
+        };
+
+        let status = [
+            LanguageServerRuntimeStatus::Stopped,
+            LanguageServerRuntimeStatus::Stopped,
+            failure.clone(),
+        ]
+        .into_iter()
+        .fold(LanguageServerRuntimeStatus::Stopped, aggregate_stop_status);
+
+        assert_eq!(status, failure);
+    }
+
+    #[test]
+    fn stop_all_status_preserves_the_first_exact_cleanup_failure() {
+        let first_failure = LanguageServerRuntimeStatus::Crashed {
+            message: "first exact cleanup failure".to_string(),
+        };
+
+        let status = [
+            first_failure.clone(),
+            LanguageServerRuntimeStatus::Stopped,
+            LanguageServerRuntimeStatus::Crashed {
+                message: "later cleanup failure".to_string(),
+            },
+        ]
+        .into_iter()
+        .fold(LanguageServerRuntimeStatus::Stopped, aggregate_stop_status);
+
+        assert_eq!(status, first_failure);
     }
 
     #[test]

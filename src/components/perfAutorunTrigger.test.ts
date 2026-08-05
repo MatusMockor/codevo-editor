@@ -6,6 +6,8 @@ import {
   assertStableMeasurementWindow,
   installMeasurementWindowGuard,
   perfAutorunEnabled,
+  perfAutorunRunnerModulePath,
+  postAutorunPayload,
   runPerfAutorun,
   type PerfAutorunRunnerModule,
   type PerfAutorunWindowControl,
@@ -16,6 +18,29 @@ interface PostedPayload {
   readonly body: string;
   readonly token: string;
 }
+
+const NATIVE_WINDOW_READY = Object.freeze({
+  active: true,
+  appActivationTransitions: 0,
+  diagnosticSpaceLease: true,
+  hidden: false,
+  key: true,
+  keyTransitions: 0,
+  leaseId: "lease-1",
+  minimized: false,
+  minimizeTransitions: 0,
+  occluded: false,
+  occlusionTransitions: 0,
+  occlusionVisible: true,
+  onActiveSpace: true,
+  transitionOverflow: false,
+  visible: true,
+  windowStabilityEpoch: 0,
+});
+const NATIVE_FOCUS_READY = Object.freeze({
+  ...NATIVE_WINDOW_READY,
+  diagnosticSpaceLease: false,
+});
 
 function runnerModule(
   run: (options: unknown) => Promise<unknown>,
@@ -35,6 +60,12 @@ function fakeClock() {
 
       return Promise.resolve();
     },
+    activateProductionCaptureWindow: () => Promise.resolve(NATIVE_WINDOW_READY),
+    prepareProductionCaptureFixtures: () => Promise.resolve(),
+    releaseDiagnosticProductionCaptureWindow: () =>
+      Promise.resolve({ ...NATIVE_WINDOW_READY, diagnosticSpaceLease: false }),
+    resetProductionCaptureWindowLeaseBaseline: () => Promise.resolve(NATIVE_WINDOW_READY),
+    snapshotProductionCaptureWindowLease: () => Promise.resolve(NATIVE_WINDOW_READY),
     windowMode: "focus-only" as const,
     preflightMeasurementWindow: () => Promise.resolve(),
     installMeasurementWindowGuard: () => ({ failure: () => null, dispose: () => {} }),
@@ -76,6 +107,7 @@ afterEach(() => {
   window.localStorage.clear();
   delete window.__codevoQa;
   delete window.__codevoPerf;
+  delete (window as unknown as { __codevoPerfProgress?: unknown }).__codevoPerfProgress;
 });
 
 describe("perfAutorunEnabled", () => {
@@ -126,6 +158,84 @@ describe("perfAutorunEnabled", () => {
         VITE_CODEVO_QA_BRIDGE: "1",
       }),
     ).toBe(true);
+  });
+
+  it("enables production autorun only for the exact baked capture flag", () => {
+    expect(
+      perfAutorunEnabled({
+        DEV: false,
+        VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "1",
+      }),
+    ).toBe(true);
+    expect(
+      perfAutorunEnabled({
+        DEV: false,
+        VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "true",
+        VITE_CODEVO_PERF_AUTORUN: "1",
+        VITE_CODEVO_PERF_BRIDGE: "1",
+        VITE_CODEVO_QA_BRIDGE: "1",
+      }),
+    ).toBe(false);
+    expect(
+      perfAutorunEnabled({
+        DEV: true,
+        VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "1",
+      }),
+    ).toBe(false);
+  });
+
+  it("selects the bundled virtual runner only for production capture", () => {
+    expect(
+      perfAutorunRunnerModulePath({
+        DEV: false,
+        VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "1",
+      }),
+    ).toBe("virtual:codevo-perf-production-runner");
+    expect(perfAutorunRunnerModulePath({ DEV: false })).toBe(PERF_AUTORUN_PATHS.runner);
+    expect(perfAutorunRunnerModulePath({ DEV: true, VITE_CODEVO_PERF_AUTORUN: "1" })).toBe(
+      PERF_AUTORUN_PATHS.runner,
+    );
+  });
+});
+
+describe("postAutorunPayload", () => {
+  it("submits production captures through the typed Tauri command", async () => {
+    const invoke = vi.fn(async () => undefined);
+    const fetchRequest = vi.fn();
+
+    await postAutorunPayload(
+      PERF_AUTORUN_PATHS.result,
+      '{"status":"ok"}',
+      "one-run-token",
+      { DEV: false, VITE_CODEVO_PERF_PRODUCTION_CAPTURE: "1" },
+      { fetch: fetchRequest as unknown as typeof fetch, invoke },
+    );
+
+    expect(invoke).toHaveBeenCalledWith("perf_capture_submit", {
+      payload: '{"status":"ok"}',
+      runToken: "one-run-token",
+    });
+    expect(fetchRequest).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing same-origin fetch transport for DEV", async () => {
+    const invoke = vi.fn();
+    const fetchRequest = vi.fn(async () => ({ ok: true, status: 204 }));
+
+    await postAutorunPayload(
+      PERF_AUTORUN_PATHS.result,
+      '{"status":"ok"}',
+      "dev-token",
+      { DEV: true, VITE_CODEVO_PERF_AUTORUN: "1" },
+      { fetch: fetchRequest as unknown as typeof fetch, invoke },
+    );
+
+    expect(fetchRequest).toHaveBeenCalledWith(PERF_AUTORUN_PATHS.result, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-codevo-perf-run-token": "dev-token" },
+      body: '{"status":"ok"}',
+    });
+    expect(invoke).not.toHaveBeenCalled();
   });
 });
 
@@ -272,7 +382,7 @@ describe("runPerfAutorun", () => {
     expect(payload.message).toMatch(/scenario blew up/);
   });
 
-  it("logs and posts nothing when the runner module cannot be fetched, because it carries the run token", async () => {
+  it("keeps the DEV load failure behavior when only the served runner carries the token", async () => {
     const posted: PostedPayload[] = [];
     const logged: string[] = [];
 
@@ -287,6 +397,708 @@ describe("runPerfAutorun", () => {
     expect(posted).toHaveLength(0);
     expect(logged.join("\n")).toMatch(/404 runner module/);
     expect(logged.join("\n")).toMatch(/run token/i);
+  });
+
+  it("reports a production runner-load failure with the eager capture token", async () => {
+    const posted: PostedPayload[] = [];
+    const abortProductionCapture = vi.fn(async () => undefined);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () => Promise.reject(new Error("missing production runner chunk")),
+      postPayload: collectPosts(posted),
+      productionCaptureRunToken: "0123456789abcdef0123456789abcdef",
+      abortProductionCapture,
+      logError: () => {},
+      ...fakeClock(),
+    });
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0].token).toBe("0123456789abcdef0123456789abcdef");
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/bundled scenario runner/),
+    });
+    expect(abortProductionCapture).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["focus-only", NATIVE_FOCUS_READY, ["isAlwaysOnTop", "show", "unminimize"]],
+    [
+      "always-on-top-diagnostic",
+      NATIVE_WINDOW_READY,
+      ["isAlwaysOnTop", "show", "unminimize", "setAlwaysOnTop:true"],
+    ],
+  ] as const)(
+    "prepares %s fixture trust before sole native activation, strict guard, and runner",
+    async (windowMode, nativeState, expectedPreparationEvents) => {
+      const events: string[] = [];
+      const runToken = "0123456789abcdef0123456789abcdef";
+      const windowControl = recordingWindowControl(events);
+      const genericSetFocus = vi.fn(async () => {
+        throw new Error("deprecated generic activation must not run");
+      });
+
+      await runPerfAutorun({
+        bridgesReady: () => true,
+        importRunner: () =>
+          Promise.resolve(
+            runnerModule(
+              () => {
+                events.push("run");
+                return Promise.resolve({ bridgeResults: [] });
+              },
+              { smoke: true },
+              runToken,
+            ),
+          ),
+        postPayload: async () => {},
+        acquireWindowControl: async () => ({ ...windowControl, setFocus: genericSetFocus }),
+        ...fakeClock(),
+        productionCaptureRunToken: runToken,
+        windowMode,
+        prepareProductionCaptureFixtures: async (candidateToken) => {
+          events.push(`trust:${candidateToken}`);
+        },
+        activateProductionCaptureWindow: async (candidateToken) => {
+          events.push(`activate:${candidateToken}`);
+          return nativeState;
+        },
+        resetProductionCaptureWindowLeaseBaseline: async () => nativeState,
+        snapshotProductionCaptureWindowLease: async () => nativeState,
+        installMeasurementWindowGuard: () => {
+          events.push("guard");
+          return { failure: () => null, dispose: () => events.push("dispose") };
+        },
+        preflightMeasurementWindow: async () => {
+          events.push("preflight");
+        },
+      });
+
+      expect(genericSetFocus).not.toHaveBeenCalled();
+      expect(events.slice(0, expectedPreparationEvents.length)).toEqual(expectedPreparationEvents);
+      expect(events).not.toContain("setFocus");
+      expect(
+        events.indexOf(expectedPreparationEvents[expectedPreparationEvents.length - 1]),
+      ).toBeLessThan(events.indexOf(`trust:${runToken}`));
+      expect(events.indexOf(`trust:${runToken}`)).toBeLessThan(
+        events.indexOf(`activate:${runToken}`),
+      );
+      expect(events.indexOf(`activate:${runToken}`)).toBeLessThan(events.indexOf("guard"));
+      expect(events.indexOf("preflight")).toBeLessThan(events.indexOf("guard"));
+      expect(events.indexOf("guard")).toBeLessThan(events.indexOf("run"));
+    },
+  );
+
+  it("fails closed before activation when exact fixture trust cannot be prepared", async () => {
+    const posted: PostedPayload[] = [];
+    const run = vi.fn(async () => ({ bridgeResults: [] }));
+    const activateProductionCaptureWindow = vi.fn(async () => NATIVE_FOCUS_READY);
+    const runToken = "0123456789abcdef0123456789abcdef";
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () => Promise.resolve(runnerModule(run, { smoke: true }, runToken)),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      prepareProductionCaptureFixtures: () =>
+        Promise.reject(new Error("Fixture trust preparation failed.")),
+      activateProductionCaptureWindow,
+    });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(activateProductionCaptureWindow).not.toHaveBeenCalled();
+    expect(JSON.parse(posted[0].body)).toEqual({
+      status: "error",
+      message: "Fixture trust preparation failed.",
+    });
+  });
+
+  it("never invokes native capture activation for the DEV autorun path", async () => {
+    const activateProductionCaptureWindow = vi.fn(async () => NATIVE_WINDOW_READY);
+    const prepareProductionCaptureFixtures = vi.fn(async () => undefined);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(runnerModule(() => Promise.resolve({ bridgeResults: [] }))),
+      postPayload: async () => {},
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      productionCaptureRunToken: "",
+      activateProductionCaptureWindow,
+      prepareProductionCaptureFixtures,
+    });
+
+    expect(activateProductionCaptureWindow).not.toHaveBeenCalled();
+    expect(prepareProductionCaptureFixtures).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with an authenticated payload when native activation rejects", async () => {
+    const posted: PostedPayload[] = [];
+    const run = vi.fn(async () => ({ bridgeResults: [] }));
+    const installMeasurementWindowGuard = vi.fn(() => ({
+      failure: () => null,
+      dispose: () => {},
+    }));
+    const runToken = "0123456789abcdef0123456789abcdef";
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () => Promise.resolve(runnerModule(run, { smoke: true }, runToken)),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      activateProductionCaptureWindow: () =>
+        Promise.reject(new Error("Native production capture window activation failed.")),
+      installMeasurementWindowGuard,
+    });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(installMeasurementWindowGuard).not.toHaveBeenCalled();
+    expect(posted).toHaveLength(1);
+    expect(posted[0].token).toBe(runToken);
+    expect(JSON.parse(posted[0].body)).toEqual({
+      status: "error",
+      message: "Native production capture window activation failed.",
+    });
+  });
+
+  it.each([
+    ["not ready", { ...NATIVE_WINDOW_READY, hidden: true, visible: false }],
+    ["missing diagnostic lease", { ...NATIVE_WINDOW_READY, diagnosticSpaceLease: false }],
+  ] as const)("rejects a %s final native snapshot", async (_label, invalidSnapshot) => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const run = vi.fn(async () => ({ bridgeResults: [] }));
+    let snapshotCount = 0;
+    let alwaysOnTop = false;
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () => Promise.resolve(runnerModule(run, { smoke: true }, runToken)),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        isAlwaysOnTop: async () => alwaysOnTop,
+        setAlwaysOnTop: async (enabled) => {
+          alwaysOnTop = enabled;
+        },
+      }),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      snapshotProductionCaptureWindowLease: async () => {
+        snapshotCount += 1;
+        return snapshotCount === 1 ? NATIVE_WINDOW_READY : invalidSnapshot;
+      },
+      installMeasurementWindowGuard,
+    });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "Perf production capture native window snapshot was not ready.",
+    });
+  });
+
+  it("releases an acquired native observer when baseline reset fails", async () => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const run = vi.fn(async () => ({ bridgeResults: [] }));
+    const release = vi.fn(async () => NATIVE_FOCUS_READY);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () => Promise.resolve(runnerModule(run, { smoke: false }, runToken)),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      activateProductionCaptureWindow: async () => NATIVE_FOCUS_READY,
+      resetProductionCaptureWindowLeaseBaseline: () =>
+        Promise.reject(new Error("native reset detail")),
+      releaseDiagnosticProductionCaptureWindow: release,
+    });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledWith(runToken, NATIVE_FOCUS_READY.leaseId);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "native reset detail",
+    });
+  });
+
+  it("fails a focus-only capture on any native transition and releases before submit", async () => {
+    const posted: PostedPayload[] = [];
+    const events: string[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const transitioned = {
+      ...NATIVE_FOCUS_READY,
+      keyTransitions: 1,
+      windowStabilityEpoch: 1,
+    };
+    let snapshotCount = 0;
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(async () => ({ bridgeResults: [] }), { smoke: false }, runToken),
+        ),
+      postPayload: async (path, body, token) => {
+        events.push("submit");
+        posted.push({ path, body, token });
+      },
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      activateProductionCaptureWindow: async () => NATIVE_FOCUS_READY,
+      resetProductionCaptureWindowLeaseBaseline: async () => NATIVE_FOCUS_READY,
+      snapshotProductionCaptureWindowLease: async () => {
+        snapshotCount += 1;
+        return snapshotCount === 1 ? NATIVE_FOCUS_READY : transitioned;
+      },
+      releaseDiagnosticProductionCaptureWindow: async () => {
+        events.push("release");
+        return transitioned;
+      },
+    });
+
+    expect(events).toEqual(["release", "submit"]);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: "Perf focus-only capture observed a native window transition during the run.",
+    });
+  });
+
+  it("coalesces a diagnostic blur/hidden storm and marks recovered smoke samples non-comparable", async () => {
+    const posted: PostedPayload[] = [];
+    const clock = fakeClock();
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const reactivateDiagnosticProductionCaptureWindow = vi.fn(async () => NATIVE_WINDOW_READY);
+    const releaseDiagnosticProductionCaptureWindow = vi.fn(async () => ({
+      ...NATIVE_WINDOW_READY,
+      diagnosticSpaceLease: false,
+    }));
+    let alwaysOnTop = false;
+    const windowControl = recordingWindowControl([]);
+    let visibility: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(
+            async () => {
+              window.dispatchEvent(new Event("blur"));
+              await Promise.resolve();
+              await Promise.resolve();
+              visibility = "hidden";
+              document.dispatchEvent(new Event("visibilitychange"));
+              visibility = "visible";
+              return {
+                bridgeResults: [
+                  { id: "typing-large-5k", samples: [1] },
+                  { id: "tab-switch-cycle", samples: [2] },
+                ],
+                scenarioStatuses: [],
+                environment: { windowMode: "always-on-top-diagnostic" },
+              };
+            },
+            { smoke: true },
+            runToken,
+          ),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...windowControl,
+        isAlwaysOnTop: async () => alwaysOnTop,
+        setAlwaysOnTop: async (enabled) => {
+          alwaysOnTop = enabled;
+        },
+      }),
+      ...clock,
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      reactivateDiagnosticProductionCaptureWindow,
+      releaseDiagnosticProductionCaptureWindow,
+      installMeasurementWindowGuard,
+    });
+
+    expect(reactivateDiagnosticProductionCaptureWindow).toHaveBeenCalledTimes(3);
+    expect(releaseDiagnosticProductionCaptureWindow).toHaveBeenCalledOnce();
+    expect(reactivateDiagnosticProductionCaptureWindow).toHaveBeenCalledWith(
+      runToken,
+      NATIVE_WINDOW_READY.leaseId,
+    );
+    const payload = JSON.parse(posted[0].body);
+    expect(payload.status).toBe("ok");
+    expect(payload.result.environment).toMatchObject({
+      windowInterruptionCount: 1,
+      windowInterruptionStages: ["before-scenarios"],
+      windowStability: "recovered-diagnostic",
+    });
+    expect(payload.result.scenarioStatuses).toEqual([
+      expect.objectContaining({ id: "typing-large-5k", status: "non-comparable" }),
+      expect.objectContaining({ id: "tab-switch-cycle", status: "non-comparable" }),
+    ]);
+  });
+
+  it.each([
+    ["missing production token", "", { smoke: true }, "always-on-top-diagnostic"],
+    [
+      "non-smoke options",
+      "0123456789abcdef0123456789abcdef",
+      { smoke: false },
+      "always-on-top-diagnostic",
+    ],
+    [
+      "missing runner options",
+      "0123456789abcdef0123456789abcdef",
+      null,
+      "always-on-top-diagnostic",
+    ],
+    ["focus-only mode", "0123456789abcdef0123456789abcdef", { smoke: true }, "focus-only"],
+  ] as const)(
+    "keeps strict window failure behavior for %s",
+    async (_label, token, options, mode) => {
+      const posted: PostedPayload[] = [];
+      const reactivateDiagnosticProductionCaptureWindow = vi.fn(async () => NATIVE_WINDOW_READY);
+      const releaseDiagnosticProductionCaptureWindow = vi.fn(async () => ({
+        ...NATIVE_WINDOW_READY,
+        diagnosticSpaceLease: false,
+      }));
+
+      await runPerfAutorun({
+        bridgesReady: () => true,
+        importRunner: () =>
+          Promise.resolve(
+            runnerModule(
+              async () => {
+                window.dispatchEvent(new Event("blur"));
+                return { bridgeResults: [] };
+              },
+              options,
+              token || "dev-run-token",
+            ),
+          ),
+        postPayload: collectPosts(posted),
+        acquireWindowControl: async () => recordingWindowControl([]),
+        ...fakeClock(),
+        productionCaptureRunToken: token,
+        windowMode: mode,
+        activateProductionCaptureWindow: () => Promise.resolve(NATIVE_FOCUS_READY),
+        resetProductionCaptureWindowLeaseBaseline: () => Promise.resolve(NATIVE_FOCUS_READY),
+        snapshotProductionCaptureWindowLease: () => Promise.resolve(NATIVE_FOCUS_READY),
+        reactivateDiagnosticProductionCaptureWindow,
+        releaseDiagnosticProductionCaptureWindow,
+        installMeasurementWindowGuard,
+      });
+
+      expect(reactivateDiagnosticProductionCaptureWindow).not.toHaveBeenCalled();
+      if (token) {
+        expect(releaseDiagnosticProductionCaptureWindow).toHaveBeenCalledOnce();
+      } else {
+        expect(releaseDiagnosticProductionCaptureWindow).not.toHaveBeenCalled();
+      }
+      expect(JSON.parse(posted[0].body)).toMatchObject({
+        status: "error",
+        message: expect.stringMatching(/lost focus/),
+      });
+    },
+  );
+
+  it("fails a diagnostic smoke when bounded recovery rejects", async () => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const run = vi.fn(async () => {
+      window.dispatchEvent(new Event("blur"));
+      return { bridgeResults: [] };
+    });
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () => Promise.resolve(runnerModule(run, { smoke: true }, runToken)),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      reactivateDiagnosticProductionCaptureWindow: () => Promise.reject(new Error("native detail")),
+      installMeasurementWindowGuard,
+    });
+
+    expect(JSON.parse(posted[0].body)).toEqual({
+      status: "error",
+      message: "Perf diagnostic capture could not recover its measurement window.",
+    });
+    expect(posted[0].body).not.toContain("native detail");
+  });
+
+  it("reports native diagnostic lease release failure with the authenticated token", async () => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    let alwaysOnTop = false;
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(async () => ({ bridgeResults: [] }), { smoke: true }, runToken),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        isAlwaysOnTop: async () => alwaysOnTop,
+        setAlwaysOnTop: async (enabled) => {
+          alwaysOnTop = enabled;
+        },
+      }),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      releaseDiagnosticProductionCaptureWindow: () => Promise.reject(new Error("native detail")),
+    });
+
+    expect(posted[0].token).toBe(runToken);
+    expect(JSON.parse(posted[0].body)).toEqual({
+      status: "error",
+      message: "Perf production capture could not release its native window observer lease.",
+    });
+    expect(posted[0].body).not.toContain("native detail");
+  });
+
+  it("blocks a prequeued blur from starting recovery during diagnostic cleanup", async () => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const reactivate = vi.fn(async () => NATIVE_WINDOW_READY);
+    const release = vi.fn(async () => ({
+      ...NATIVE_WINDOW_READY,
+      diagnosticSpaceLease: false,
+    }));
+    let alwaysOnTop = false;
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(async () => ({ bridgeResults: [] }), { smoke: true }, runToken),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        isAlwaysOnTop: async () => alwaysOnTop,
+        setAlwaysOnTop: async (enabled) => {
+          alwaysOnTop = enabled;
+        },
+      }),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      reactivateDiagnosticProductionCaptureWindow: reactivate,
+      releaseDiagnosticProductionCaptureWindow: release,
+      installMeasurementWindowGuard: (options) => {
+        const guard = installMeasurementWindowGuard(options);
+        return {
+          failure: guard.failure,
+          dispose: () => {
+            guard.dispose();
+            queueMicrotask(() => window.dispatchEvent(new Event("blur")));
+          },
+        };
+      },
+    });
+
+    expect(reactivate).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(JSON.parse(posted[0].body)).toMatchObject({ status: "ok" });
+  });
+
+  it("keeps resize fatal in diagnostic smoke without requesting recovery", async () => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const reactivateDiagnosticProductionCaptureWindow = vi.fn(async () => NATIVE_WINDOW_READY);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(
+            async () => {
+              window.dispatchEvent(new Event("resize"));
+              return { bridgeResults: [] };
+            },
+            { smoke: true },
+            runToken,
+          ),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => recordingWindowControl([]),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      reactivateDiagnosticProductionCaptureWindow,
+      installMeasurementWindowGuard,
+    });
+
+    expect(reactivateDiagnosticProductionCaptureWindow).not.toHaveBeenCalled();
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "error",
+      message: expect.stringMatching(/was resized/),
+    });
+  });
+
+  it("repeats the complete final diagnostic cycle when interruption starts during preflight", async () => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const reactivateDiagnosticProductionCaptureWindow = vi.fn(async () => NATIVE_WINDOW_READY);
+    let preflightCalls = 0;
+    let alwaysOnTop = false;
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(
+            async () => ({
+              bridgeResults: [{ id: "typing-large-5k", samples: [1] }],
+              scenarioStatuses: [],
+              environment: { windowMode: "always-on-top-diagnostic" },
+            }),
+            { smoke: true },
+            runToken,
+          ),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        isAlwaysOnTop: async () => alwaysOnTop,
+        setAlwaysOnTop: async (enabled) => {
+          alwaysOnTop = enabled;
+        },
+      }),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      reactivateDiagnosticProductionCaptureWindow,
+      installMeasurementWindowGuard,
+      preflightMeasurementWindow: async () => {
+        preflightCalls += 1;
+        if (preflightCalls === 2) {
+          window.dispatchEvent(new Event("blur"));
+        }
+      },
+    });
+
+    expect(preflightCalls).toBe(3);
+    expect(reactivateDiagnosticProductionCaptureWindow).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "ok",
+      result: {
+        environment: {
+          windowInterruptionCount: 1,
+          windowStability: "recovered-diagnostic",
+        },
+      },
+    });
+  });
+
+  it("awaits recovery and repeats preflight when interruption starts during native verification", async () => {
+    const posted: PostedPayload[] = [];
+    const runToken = "0123456789abcdef0123456789abcdef";
+    const reactivateDiagnosticProductionCaptureWindow = vi.fn(async () => NATIVE_WINDOW_READY);
+    let preflightCalls = 0;
+    let levelReads = 0;
+    let alwaysOnTop = false;
+    const control = recordingWindowControl([]);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(
+            async () => {
+              window.dispatchEvent(new Event("blur"));
+              return {
+                bridgeResults: [{ id: "typing-large-5k", samples: [1] }],
+                scenarioStatuses: [],
+                environment: { windowMode: "always-on-top-diagnostic" },
+              };
+            },
+            { smoke: true },
+            runToken,
+          ),
+        ),
+      postPayload: collectPosts(posted),
+      acquireWindowControl: async () => ({
+        ...control,
+        isAlwaysOnTop: async () => {
+          levelReads += 1;
+          if (levelReads === 2) {
+            window.dispatchEvent(new Event("blur"));
+          }
+          return alwaysOnTop;
+        },
+        setAlwaysOnTop: async (enabled) => {
+          alwaysOnTop = enabled;
+        },
+      }),
+      ...fakeClock(),
+      productionCaptureRunToken: runToken,
+      windowMode: "always-on-top-diagnostic",
+      reactivateDiagnosticProductionCaptureWindow,
+      installMeasurementWindowGuard,
+      preflightMeasurementWindow: async () => {
+        preflightCalls += 1;
+      },
+    });
+
+    expect(preflightCalls).toBe(4);
+    expect(levelReads).toBe(3);
+    expect(reactivateDiagnosticProductionCaptureWindow).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(posted[0].body)).toMatchObject({
+      status: "ok",
+      result: {
+        environment: {
+          windowInterruptionCount: 2,
+          windowStability: "recovered-diagnostic",
+        },
+      },
+    });
+  });
+
+  it("terminates a production capture when its IPC result cannot be submitted", async () => {
+    const abortProductionCapture = vi.fn(async () => undefined);
+
+    await runPerfAutorun({
+      bridgesReady: () => true,
+      importRunner: () =>
+        Promise.resolve(
+          runnerModule(
+            () => Promise.resolve({ bridgeResults: [] }),
+            { smoke: true },
+            "0123456789abcdef0123456789abcdef",
+          ),
+        ),
+      postPayload: () => Promise.reject(new Error("capture command unavailable")),
+      productionCaptureRunToken: "0123456789abcdef0123456789abcdef",
+      abortProductionCapture,
+      acquireWindowControl: async () => recordingWindowControl([]),
+      logError: () => {},
+      ...fakeClock(),
+    });
+
+    expect(abortProductionCapture).toHaveBeenCalledOnce();
   });
 
   it("refuses to run a served module that carries no run token", async () => {

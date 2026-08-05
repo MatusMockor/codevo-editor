@@ -6,6 +6,9 @@ use crate::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(all(feature = "perf-capture", target_os = "macos"))]
+    perf_capture::claim_process_group().unwrap_or_else(|message| panic!("{message}"));
+
     let terminal_task_admission =
         Arc::new(terminal_task_admission::TerminalTaskAdmissionRegistry::new());
     let js_test_batch_registry = Arc::new(JsTestBatchRegistry::new());
@@ -131,6 +134,18 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(feature = "perf-capture")]
+            perf_capture::perf_capture_activate_window,
+            #[cfg(feature = "perf-capture")]
+            perf_capture::perf_capture_reset_window_lease_baseline,
+            #[cfg(feature = "perf-capture")]
+            perf_capture::perf_capture_snapshot_window_lease,
+            #[cfg(feature = "perf-capture")]
+            perf_capture::perf_capture_release_window_lease,
+            #[cfg(feature = "perf-capture")]
+            perf_capture::perf_capture_submit,
+            #[cfg(feature = "perf-capture")]
+            perf_capture::perf_capture_prepare_fixture_trust,
             amend_git_commit,
             reword_git_commit,
             clear_workspace_index,
@@ -425,6 +440,11 @@ pub fn run() {
         .run(move |app, event| {
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
                 shutdown_runtime_processes(app, &js_test_batch_registry_for_run);
+            }
+            #[cfg(feature = "perf-capture")]
+            if matches!(event, RunEvent::Exit) {
+                perf_capture::publish_shutdown_proof()
+                    .unwrap_or_else(|message| panic!("{message}"));
             }
         });
 }

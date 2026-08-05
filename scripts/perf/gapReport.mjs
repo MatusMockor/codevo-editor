@@ -1,4 +1,5 @@
 import { PERF_SCENARIOS } from "./perfScenarios.mjs";
+import { captureScenarioContract, validateCaptureRun } from "./perfCaptureContract.mjs";
 
 export const DEFAULT_TOLERANCES = [
   { pattern: /^(references|rename)/, budget: 1.5 },
@@ -89,8 +90,10 @@ export function buildGapReport({
   baseline,
   tolerances,
   requiredScenarioIds = REGISTERED_SCENARIO_IDS,
+  enforceCaptureContract = true,
 }) {
-  const verification = verifyRunMetadata(codevo, baseline);
+  const canonicalContractRequired = enforceCaptureContract;
+  const verification = verifyRunMetadata(codevo, baseline, canonicalContractRequired);
   const codevoQuantizationMs = timerQuantizationMsOf(codevo);
   const baselineQuantizationMs = timerQuantizationMsOf(baseline);
   const codevoById = scenariosById(codevo);
@@ -157,14 +160,31 @@ function joinedScenarioIds(codevoById, baselineById, requiredScenarioIds) {
   return ids;
 }
 
-function verifyRunMetadata(codevo, baseline) {
+function verifyRunMetadata(codevo, baseline, canonicalContractRequired) {
   const reasons = [
+    ...captureContractReasons(codevo, baseline, canonicalContractRequired),
     ...fixtureVersionReasons(codevo, baseline),
     ...fixtureHashReasons(codevo, baseline),
     ...environmentReasons(codevo, baseline),
   ];
 
-  return { comparable: reasons.length === 0, reasons };
+  return { comparable: reasons.length === 0, reasons, canonicalContractRequired };
+}
+
+function captureContractReasons(codevo, baseline, canonicalContractRequired) {
+  const options = {
+    enforceCanonicalScenarios: canonicalContractRequired,
+    enforceCanonicalMetadata: canonicalContractRequired,
+  };
+
+  return [
+    ...validateCaptureRun(codevo, { ...options, expectedEditor: "codevo" }).map(
+      (reason) => `Codevo capture contract: ${reason}`,
+    ),
+    ...validateCaptureRun(baseline, { ...options, expectedEditor: "vscode" }).map(
+      (reason) => `VS Code capture contract: ${reason}`,
+    ),
+  ];
 }
 
 function fixtureVersionReasons(codevo, baseline) {
@@ -256,6 +276,7 @@ function environmentReasons(codevo, baseline) {
     ...bundleModeReasons(codevo, baseline),
     ...matchingEnvironmentStringReasons(codevo, baseline, "hostPlatform"),
     ...matchingEnvironmentStringReasons(codevo, baseline, "hostArch"),
+    ...matchingEnvironmentStringReasons(codevo, baseline, "osRelease"),
   );
 
   return reasons;
@@ -647,6 +668,7 @@ function comparabilityReasons({
   }
 
   reasons.push(
+    ...captureScenarioComparabilityReasons(id, codevo, vscode, verification),
     ...cutPointReasons(codevo, vscode),
     ...warmupReasons(codevo, vscode),
     ...sampleCountReasons(codevo, vscode),
@@ -658,6 +680,38 @@ function comparabilityReasons({
     reasons.push(`quantization-limited on the ${quantizationLimited.join(" and ")} side`);
   }
 
+  return reasons;
+}
+
+function captureScenarioComparabilityReasons(id, codevo, vscode, verification) {
+  if (!verification.canonicalContractRequired) {
+    return [];
+  }
+
+  const contract = captureScenarioContract(id);
+  if (contract === null) {
+    return [`scenario "${id}" is absent from the canonical capture contract`];
+  }
+
+  const reasons = [];
+  if (contract.comparisonKind !== "cross-editor") {
+    reasons.push(`capture contract declares comparisonKind "${contract.comparisonKind}"`);
+  }
+  if (codevo.comparisonKind !== vscode.comparisonKind) {
+    reasons.push(
+      `comparison-kind mismatch (Codevo ${JSON.stringify(codevo.comparisonKind)} vs VS Code ${JSON.stringify(vscode.comparisonKind)})`,
+    );
+  }
+  if (codevo.cacheState !== vscode.cacheState) {
+    reasons.push(
+      `cache-state mismatch (Codevo ${JSON.stringify(codevo.cacheState)} vs VS Code ${JSON.stringify(vscode.cacheState)})`,
+    );
+  }
+  if (codevo.workScope !== vscode.workScope) {
+    reasons.push(
+      `work-scope mismatch (Codevo ${JSON.stringify(codevo.workScope)} vs VS Code ${JSON.stringify(vscode.workScope)})`,
+    );
+  }
   return reasons;
 }
 
@@ -873,6 +927,9 @@ function readSide(scenario, timerQuantizationMs) {
     reportedStatus: scenario.status === undefined ? OK_STATUS : scenario.status,
     statusKnown: scenario.status === undefined || REPORTED_STATUSES.has(scenario.status),
     cutPoint: nonEmptyString(scenario.cutPoint),
+    comparisonKind: nonEmptyString(scenario.comparisonKind),
+    cacheState: nonEmptyString(scenario.cacheState),
+    workScope: nonEmptyString(scenario.workScope),
     warmups: nonNegativeInteger(scenario.warmups),
     targets: readTargets(scenario),
     samples,
@@ -892,6 +949,9 @@ function emptySide() {
     reportedStatus: null,
     statusKnown: true,
     cutPoint: null,
+    comparisonKind: null,
+    cacheState: null,
+    workScope: null,
     warmups: null,
     targets: null,
     samples: null,

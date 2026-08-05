@@ -1,9 +1,39 @@
 const vscode = require("vscode");
+const { createHash, randomUUID } = require("crypto");
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
-const CUT_POINT_PROVIDER = "provider-ui-ready";
+const CAPTURE_CONTRACT_PATH = path.resolve(__dirname, "../../perf/capture-contract.json");
+const CAPTURE_CONTRACT = JSON.parse(fs.readFileSync(CAPTURE_CONTRACT_PATH, "utf8"));
+const MAX_CAPTURE_OUTPUT_BYTES = CAPTURE_CONTRACT.limits.maxCaptureJsonBytes;
+const MAX_METADATA_STRING_BYTES = CAPTURE_CONTRACT.limits.maxMetadataStringBytes;
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return "[" + value.map(canonicalJson).join(",") + "]";
+  }
+  if (value && typeof value === "object") {
+    return (
+      "{" +
+      Object.keys(value)
+        .sort()
+        .map((key) => JSON.stringify(key) + ":" + canonicalJson(value[key]))
+        .join(",") +
+      "}"
+    );
+  }
+  return JSON.stringify(value);
+}
+
+const CAPTURE_CONTRACT_METADATA = Object.freeze({
+  version: CAPTURE_CONTRACT.version,
+  sha256: createHash("sha256").update(canonicalJson(CAPTURE_CONTRACT)).digest("hex"),
+});
+const CAPTURE_SCENARIO_BY_ID = new Map(
+  CAPTURE_CONTRACT.scenarios.map((scenario) => [scenario.id, scenario]),
+);
+
 const CUT_POINT_TYPING = "typing-dispatch";
 const CUT_POINT_TAB_SWITCH = "tab-switch-open-resolved";
 const CUT_POINT_FILE_SEARCH = "file-search-engine";
@@ -108,10 +138,23 @@ function percentilesFromSamples(samples) {
 }
 
 function scenarioResult(fields) {
+  const contract = scenarioContract(fields.id);
+  if (fields.cutPoint !== contract.cutPointByEditor.vscode) {
+    throw new Error(
+      fields.id +
+        " cut point drifted from the capture contract: " +
+        fields.cutPoint +
+        " vs " +
+        contract.cutPointByEditor.vscode,
+    );
+  }
   const { p50, p95 } = percentilesFromSamples(fields.samples.map((sample) => sample.ms));
   const base = {
     id: fields.id,
     cutPoint: fields.cutPoint,
+    comparisonKind: contract.comparisonKind,
+    cacheState: contract.cacheState,
+    workScope: contract.workScope,
     warmups: fields.warmups,
     targets: fields.targets,
     unit: "ms",
@@ -131,12 +174,70 @@ function scenarioResult(fields) {
   return { ...withLanguageServer, windowNote: fields.windowNote };
 }
 
+function scenarioContract(id) {
+  const contract = CAPTURE_SCENARIO_BY_ID.get(id);
+  if (!contract || contract.cutPointByEditor.vscode === null) {
+    throw new Error("No VS Code capture contract exists for scenario " + id);
+  }
+  return contract;
+}
+
+function capabilityResult(id, method, resultCount, languageServerStatus) {
+  const contract = scenarioContract(id);
+  return {
+    id,
+    cutPoint: contract.cutPointByEditor.vscode,
+    comparisonKind: contract.comparisonKind,
+    cacheState: contract.cacheState,
+    workScope: contract.workScope,
+    unit: "observation",
+    samples: [],
+    targets: [],
+    warmups: 0,
+    method,
+    resultCount,
+    languageServerStatus,
+    status: "ok",
+  };
+}
+
 function failureResult(id, status, message) {
-  return { id, status, error: message };
+  const contract = CAPTURE_SCENARIO_BY_ID.get(id);
+  const metadata =
+    contract && contract.cutPointByEditor.vscode !== null
+      ? {
+          cutPoint: contract.cutPointByEditor.vscode,
+          comparisonKind: contract.comparisonKind,
+          cacheState: contract.cacheState,
+          workScope: contract.workScope,
+        }
+      : {};
+  return { id, ...metadata, status, error: boundedMetadataString(message) };
 }
 
 function errorMessage(error) {
-  return String((error && error.message) || error);
+  return boundedMetadataString(String((error && error.message) || error));
+}
+
+function boundedMetadataString(value) {
+  const text = String(value);
+  if (Buffer.byteLength(text, "utf8") <= MAX_METADATA_STRING_BYTES) {
+    return text;
+  }
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidateEnd =
+      middle > 0 && /[\uD800-\uDBFF]/.test(text[middle - 1]) ? middle - 1 : middle;
+    if (Buffer.byteLength(text.slice(0, candidateEnd), "utf8") <= MAX_METADATA_STRING_BYTES) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  const safeEnd = low > 0 && /[\uD800-\uDBFF]/.test(text[low - 1]) ? low - 1 : low;
+  return text.slice(0, safeEnd);
 }
 
 function completionCount(list) {
@@ -189,6 +290,15 @@ async function captureScenario(results, id, operation) {
 
 async function captureProviderScenario(results, spec) {
   await captureScenario(results, spec.id, async () => {
+    const contract = scenarioContract(spec.id);
+    if (contract.comparisonKind === "capability") {
+      const outcome = await spec.invoke(0);
+      const resultCount = spec.countOf(outcome);
+      if (resultCount <= 0) {
+        return failureResult(spec.id, "no-result", "provider capability returned no result");
+      }
+      return capabilityResult(spec.id, spec.method, resultCount, spec.languageServerStatus);
+    }
     for (let index = 0; index < LSP_WARMUP_COUNT; index += 1) {
       await spec.invoke(index);
     }
@@ -213,7 +323,7 @@ async function captureProviderScenario(results, spec) {
     }
     return scenarioResult({
       id: spec.id,
-      cutPoint: CUT_POINT_PROVIDER,
+      cutPoint: contract.cutPointByEditor.vscode,
       warmups: LSP_WARMUP_COUNT,
       targets: spec.targets,
       samples,
@@ -609,11 +719,21 @@ function buildEnvironment(timerQuantizationMs) {
     editor: "vscode",
     version: vscode.version,
     bundleMode: "production",
+    captureFlavor: "production-instrumented",
     // The extension host cannot prove native window focus/level or viewport geometry.
     // Keep UI rows fail-closed until a UI-observable baseline lane exists.
     windowMode: "unknown",
     hostPlatform: process.platform,
     hostArch: process.arch,
+    osRelease: os.release(),
+    launchState: "cold-fresh-profile",
+    workspaceState: "fixture-clean",
+    sourceRevision: boundedMetadataString(process.env.CODEVO_BASELINE_SOURCE_REVISION || ""),
+    artifactSha256: boundedMetadataString(process.env.CODEVO_BASELINE_ARTIFACT_SHA256 || ""),
+    artifactIdentity: boundedMetadataString(process.env.CODEVO_BASELINE_ARTIFACT_IDENTITY || ""),
+    executableIdentity: boundedMetadataString(
+      process.env.CODEVO_BASELINE_EXECUTABLE_IDENTITY || "",
+    ),
     timerQuantizationMs,
     platform: process.platform + "-" + process.arch + "-" + os.release(),
     capturedAt: new Date().toISOString(),
@@ -634,11 +754,68 @@ function activate(context) {
       const outPath = process.env.CODEVO_BASELINE_OUT;
       if (outPath) {
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, JSON.stringify({ environment, scenarios }, null, 2) + "\n");
+        writeCaptureOutputAtomic(outPath, environment, scenarios);
       }
       await vscode.commands.executeCommand("workbench.action.closeWindow");
     }
   })();
 }
 
-module.exports = { activate };
+function writeCaptureOutputAtomic(
+  outPath,
+  environment,
+  scenarios,
+  { fileSystem = fs, temporarySuffix = process.pid + "-" + randomUUID() } = {},
+) {
+  const temporaryOutPath = outPath + ".writing-" + temporarySuffix;
+  try {
+    fileSystem.writeFileSync(temporaryOutPath, serializeCaptureOutput(environment, scenarios), {
+      flag: "wx",
+    });
+    fileSystem.renameSync(temporaryOutPath, outPath);
+  } finally {
+    fileSystem.rmSync(temporaryOutPath, { force: true });
+  }
+}
+
+function serializeCaptureOutput(environment, scenarios) {
+  const serialized =
+    JSON.stringify(
+      { captureContract: CAPTURE_CONTRACT_METADATA, environment, scenarios },
+      null,
+      2,
+    ) + "\n";
+  if (Buffer.byteLength(serialized, "utf8") <= MAX_CAPTURE_OUTPUT_BYTES) {
+    return serialized;
+  }
+  return (
+    JSON.stringify(
+      {
+        captureContract: CAPTURE_CONTRACT_METADATA,
+        environment,
+        scenarios: [
+          failureResult(
+            "harness",
+            "invalid",
+            "capture output exceeded the canonical byte bound before publication",
+          ),
+        ],
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+
+module.exports = {
+  activate,
+  __test: {
+    CAPTURE_CONTRACT_METADATA,
+    buildEnvironment,
+    capabilityResult,
+    failureResult,
+    scenarioResult,
+    serializeCaptureOutput,
+    writeCaptureOutputAtomic,
+  },
+};

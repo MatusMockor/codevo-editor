@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { perfAutorunEnabled, runPerfAutorun } from "./perfAutorunTrigger";
+import { perfAutorunEnabled } from "./perfAutorunGate";
 
 declare global {
   interface Window {
@@ -9,7 +9,16 @@ declare global {
 
 export type PerfAutorunStarter = () => Promise<void>;
 
-export function usePerfAutorunInstall(start: PerfAutorunStarter = runPerfAutorun): void {
+async function startBakedPerfAutorun(): Promise<void> {
+  if (!__CODEVO_PERF_AUTORUN_BAKED__) {
+    return;
+  }
+
+  const { runPerfAutorun } = await import("./perfAutorunTrigger");
+  await runPerfAutorun();
+}
+
+export function usePerfAutorunInstall(start: PerfAutorunStarter = startBakedPerfAutorun): void {
   useEffect(() => {
     if (!perfAutorunEnabled()) {
       return;

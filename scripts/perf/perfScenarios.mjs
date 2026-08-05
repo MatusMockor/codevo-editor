@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { PERF_CAPTURE_CONTRACT_METADATA, captureScenarioContract } from "./perfCaptureContract.mjs";
 
 export const FIXTURE_VERSION = "large-files@v3:medium-2k+seed2/5/20/100, monorepo@50pkg";
 
@@ -13,6 +14,9 @@ export const SCENARIO_STATUS = Object.freeze({
   NO_RESULT: "no-result",
   NON_COMPARABLE: "non-comparable",
 });
+
+export const PERF_SMOKE_SCENARIO_IDS = Object.freeze(["typing-large-5k", "tab-switch-cycle"]);
+export const DIAGNOSTIC_SMOKE_EVIDENCE = "diagnostic-smoke-raw-bridge-samples-v1";
 
 const CLOSED_SCENARIO_STATUSES = new Set(Object.values(SCENARIO_STATUS));
 
@@ -279,6 +283,23 @@ function shapedEnvironment(pageEnvironment, capturedAt) {
     environment.bundleMode = pageEnvironment.bundleMode;
   }
 
+  if (pageEnvironment.captureFlavor === "production-instrumented") {
+    environment.captureFlavor = pageEnvironment.captureFlavor;
+  }
+
+  for (const field of [
+    "sourceRevision",
+    "artifactSha256",
+    "bundleManifestSha256",
+    "osRelease",
+    "launchState",
+    "workspaceState",
+  ]) {
+    if (typeof pageEnvironment[field] === "string" && pageEnvironment[field] !== "") {
+      environment[field] = pageEnvironment[field];
+    }
+  }
+
   if (
     pageEnvironment.windowMode === "focus-only" ||
     pageEnvironment.windowMode === "always-on-top-diagnostic" ||
@@ -318,6 +339,80 @@ function shapedEnvironment(pageEnvironment, capturedAt) {
     environment.platform = pageEnvironment.platform;
   }
 
+  const hasDiagnosticWindowMetadata = [
+    "appActivationTransitions",
+    "diagnosticSpaceLease",
+    "domWindowSignalCount",
+    "keyTransitions",
+    "minimizeTransitions",
+    "occlusionTransitions",
+    "onActiveSpaceAtRelease",
+    "transitionOverflow",
+    "windowInterruptionCount",
+    "windowInterruptionStages",
+    "windowRecoveryInterventionCount",
+    "windowStability",
+    "windowStabilityEpoch",
+  ].some((field) => Object.hasOwn(pageEnvironment, field));
+  if (hasDiagnosticWindowMetadata) {
+    const count = pageEnvironment.windowInterruptionCount;
+    const stages = pageEnvironment.windowInterruptionStages;
+    const transitionFields = [
+      "appActivationTransitions",
+      "keyTransitions",
+      "minimizeTransitions",
+      "occlusionTransitions",
+      "windowStabilityEpoch",
+    ];
+    if (
+      pageEnvironment.windowMode !== "always-on-top-diagnostic" ||
+      pageEnvironment.diagnosticSpaceLease !== true ||
+      pageEnvironment.transitionOverflow !== false ||
+      typeof pageEnvironment.onActiveSpaceAtRelease !== "boolean" ||
+      !Number.isInteger(pageEnvironment.domWindowSignalCount) ||
+      pageEnvironment.domWindowSignalCount < 0 ||
+      pageEnvironment.domWindowSignalCount > 64 ||
+      !Number.isInteger(count) ||
+      count < 0 ||
+      count > 3 ||
+      !Number.isInteger(pageEnvironment.windowRecoveryInterventionCount) ||
+      pageEnvironment.windowRecoveryInterventionCount < 0 ||
+      pageEnvironment.windowRecoveryInterventionCount > 3 ||
+      !transitionFields.every(
+        (field) =>
+          Number.isInteger(pageEnvironment[field]) &&
+          pageEnvironment[field] >= 0 &&
+          pageEnvironment[field] <= 1_024,
+      ) ||
+      pageEnvironment.windowStabilityEpoch !==
+        pageEnvironment.appActivationTransitions +
+          pageEnvironment.keyTransitions +
+          pageEnvironment.minimizeTransitions +
+          pageEnvironment.occlusionTransitions ||
+      (count === 0
+        ? pageEnvironment.windowStability !== "diagnostic-space-lease"
+        : pageEnvironment.windowStability !== "recovered-diagnostic") ||
+      !Array.isArray(stages) ||
+      stages.length !== count ||
+      !stages.every((stage) => typeof stage === "string" && stage.length > 0 && stage.length <= 64)
+    ) {
+      throw new Error("Performance environment diagnostic window metadata is invalid.");
+    }
+    environment.appActivationTransitions = pageEnvironment.appActivationTransitions;
+    environment.diagnosticSpaceLease = pageEnvironment.diagnosticSpaceLease;
+    environment.domWindowSignalCount = pageEnvironment.domWindowSignalCount;
+    environment.keyTransitions = pageEnvironment.keyTransitions;
+    environment.minimizeTransitions = pageEnvironment.minimizeTransitions;
+    environment.occlusionTransitions = pageEnvironment.occlusionTransitions;
+    environment.onActiveSpaceAtRelease = pageEnvironment.onActiveSpaceAtRelease;
+    environment.transitionOverflow = pageEnvironment.transitionOverflow;
+    environment.windowInterruptionCount = count;
+    environment.windowInterruptionStages = [...stages];
+    environment.windowRecoveryInterventionCount = pageEnvironment.windowRecoveryInterventionCount;
+    environment.windowStability = pageEnvironment.windowStability;
+    environment.windowStabilityEpoch = pageEnvironment.windowStabilityEpoch;
+  }
+
   environment.capturedAt = capturedAt;
 
   return environment;
@@ -334,19 +429,27 @@ export function shapeRunResult({
   failedPaths = [],
   fixtureVersion,
   fixtureHashes = null,
+  diagnosticSmoke = false,
 }) {
   void trackerSnapshot;
+  const shapedEnv = shapedEnvironment(environment, capturedAt);
   const reportedStatusById = new Map(scenarioStatuses.map((entry) => [entry.id, entry]));
   const bridgeResultById = new Map(
     bridgeResults
       .filter((entry) => entry && typeof entry.id === "string")
       .map((entry) => [entry.id, entry]),
   );
+  const diagnosticEvidenceById = diagnosticSmokeBridgeEvidence({
+    bridgeResults,
+    diagnosticSmoke,
+    shapedEnvironment: shapedEnv,
+  });
   const scenarios = PERF_SCENARIOS.map((scenario) => {
     if (scenario.kind === "memory") {
       return {
         id: scenario.id,
         unit: "count-bytes",
+        status: SCENARIO_STATUS.OK,
         retainedCounts,
         memorySample,
       };
@@ -356,13 +459,18 @@ export function shapeRunResult({
       return shapeCapabilityScenario(scenario, reportedStatusById);
     }
 
-    return shapeBridgeScenario(scenario, bridgeResultById, reportedStatusById);
-  });
+    return shapeBridgeScenario(
+      scenario,
+      bridgeResultById,
+      reportedStatusById,
+      diagnosticEvidenceById,
+    );
+  }).map(withCaptureScenarioContract);
   const normalizedHashes = normalizeFixtureHashKeys(fixtureHashes);
-  const shapedEnv = shapedEnvironment(environment, capturedAt);
 
   return {
     capturedAt,
+    captureContract: PERF_CAPTURE_CONTRACT_METADATA,
     fixtureVersion,
     ...(normalizedHashes ? { fixtureHashes: normalizedHashes } : {}),
     ...(shapedEnv ? { environment: shapedEnv } : {}),
@@ -371,7 +479,38 @@ export function shapeRunResult({
   };
 }
 
-function failureStatusRow(scenario, reported) {
+function withCaptureScenarioContract(scenario) {
+  const contract = captureScenarioContract(scenario.id);
+
+  if (contract === null) {
+    return scenario;
+  }
+
+  return {
+    ...scenario,
+    cutPoint: scenario.cutPoint ?? contract.cutPointByEditor.codevo,
+    comparisonKind: contract.comparisonKind,
+    cacheState: contract.cacheState,
+    workScope: contract.workScope,
+  };
+}
+
+function failureStatusRow(scenario, reported, diagnosticEntry = null) {
+  if (diagnosticEntry !== null && reported.status === SCENARIO_STATUS.NON_COMPARABLE) {
+    const samples = shapedSamples(diagnosticEntry);
+    return {
+      id: scenario.id,
+      unit: "ms",
+      cutPoint:
+        typeof diagnosticEntry.cutPoint === "string" ? diagnosticEntry.cutPoint : scenario.cutPoint,
+      status: reported.status,
+      reason: reported.reason,
+      diagnosticEvidence: DIAGNOSTIC_SMOKE_EVIDENCE,
+      samples,
+      ...percentilesFromSamples(samples.map((sample) => sample.ms)),
+    };
+  }
+
   return {
     id: scenario.id,
     unit: "ms",
@@ -381,11 +520,16 @@ function failureStatusRow(scenario, reported) {
   };
 }
 
-function shapeBridgeScenario(scenario, bridgeResultById, reportedStatusById) {
+function shapeBridgeScenario(
+  scenario,
+  bridgeResultById,
+  reportedStatusById,
+  diagnosticEvidenceById,
+) {
   const reported = reportedStatusById.get(scenario.id);
 
   if (reported && reported.status !== SCENARIO_STATUS.OK) {
-    return failureStatusRow(scenario, reported);
+    return failureStatusRow(scenario, reported, diagnosticEvidenceById.get(scenario.id) ?? null);
   }
 
   const entry = bridgeResultById.get(scenario.id);
@@ -428,6 +572,50 @@ function shapeBridgeScenario(scenario, bridgeResultById, reportedStatusById) {
       entry.previousSwitchPath,
     ),
   };
+}
+
+function diagnosticSmokeBridgeEvidence({ bridgeResults, diagnosticSmoke, shapedEnvironment }) {
+  const evidence = new Map();
+  if (
+    diagnosticSmoke !== true ||
+    shapedEnvironment?.windowMode !== "always-on-top-diagnostic" ||
+    !Array.isArray(bridgeResults)
+  ) {
+    return evidence;
+  }
+
+  for (let index = 0; index < bridgeResults.length; index += 1) {
+    if (!Object.hasOwn(bridgeResults, index)) {
+      return new Map();
+    }
+    const entry = bridgeResults[index];
+    if (!entry || typeof entry !== "object" || !PERF_SMOKE_SCENARIO_IDS.includes(entry.id)) {
+      continue;
+    }
+    const contract = captureScenarioContract(entry.id);
+    if (
+      evidence.has(entry.id) ||
+      contract === null ||
+      !Array.isArray(entry.samples) ||
+      entry.samples.length < contract.minSamples ||
+      entry.samples.length > contract.maxSamples ||
+      !denseArrayEvery(entry.samples, isFiniteNonnegativeNumber)
+    ) {
+      return new Map();
+    }
+    evidence.set(entry.id, entry);
+  }
+
+  return PERF_SMOKE_SCENARIO_IDS.every((id) => evidence.has(id)) ? evidence : new Map();
+}
+
+function denseArrayEvery(value, predicate) {
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index) || !predicate(value[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function defaultMissingBridgeScenario(scenario) {
@@ -614,6 +802,18 @@ export function inPagePerfRunnerSource() {
     });
   }
 
+  let smokeLanguageServerReady = true;
+
+  if (options.smoke) {
+    const smokeLspFixturePath = joinPath(options.largeFilesRoot, LSP_FIXTURE_FILE);
+    reportProgress("prepare JS/TS language server for smoke typing");
+    const smokeLspFixtureOpened = await openFile(qa, smokeLspFixturePath);
+    const smokeLspSource = smokeLspFixtureOpened ? (qa.getValue() || "") : "";
+    reportProgress("wait for JS/TS language server before smoke typing");
+    smokeLanguageServerReady =
+      smokeLspFixtureOpened && (await waitForLanguageServerReadiness(smokeLspSource));
+  }
+
   const typingScenarios = [
     { id: "typing-large-5k", path: largeFilePaths[0] },
     { id: "typing-large-20k", path: largeFilePaths[1] },
@@ -623,6 +823,21 @@ export function inPagePerfRunnerSource() {
   const typingKeystrokes = buildTypingKeystrokes();
 
   for (const scenario of selectedTypingScenarios) {
+    const frameId = scenario.id + "-frame";
+
+    if (!smokeLanguageServerReady) {
+      pushTypingFailure(
+        scenario.id,
+        frameId,
+        "not-run",
+        "The JS/TS provider did not produce a completion list of at least " +
+          READINESS_MIN_COMPLETION_ITEMS + " UI-ready items for " + LSP_FIXTURE_FILE +
+          " within " + READINESS_TIMEOUT_MS +
+          " ms, so smoke typing was not measured against an unproven language-server state.",
+      );
+      continue;
+    }
+
     reportProgress("typing " + scenario.path.split("/").pop());
     await openFile(qa, scenario.path);
     const largeStatus = perf.getLargeSmartDocumentStatus();
@@ -631,7 +846,19 @@ export function inPagePerfRunnerSource() {
 
     if (policyEligible) {
       reportProgress("wait for JS/TS language server before typing " + scenario.path.split("/").pop());
-      await waitForRunningLanguageServer(TYPING_LS_READY_TIMEOUT_MS);
+      const running = await waitForRunningLanguageServer(TYPING_LS_READY_TIMEOUT_MS);
+
+      if (!running) {
+        pushTypingFailure(
+          scenario.id,
+          frameId,
+          "not-run",
+          scenario.path.split("/").pop() + " is policy-eligible for semantic features, but the " +
+            "JS/TS language server did not reach running within " + TYPING_LS_READY_TIMEOUT_MS +
+            " ms, so typing was not measured against an unproven semantic-editing state.",
+        );
+        continue;
+      }
     }
 
     const languageServerStatus = readLanguageServerStatusKind(perf);
@@ -641,7 +868,6 @@ export function inPagePerfRunnerSource() {
       BRIDGE_OPERATION_TIMEOUT_MS,
       "typing " + scenario.path,
     );
-    const frameId = scenario.id + "-frame";
 
     if (!typing) {
       pushTypingFailure(scenario.id, frameId, "invalid",
@@ -714,7 +940,7 @@ export function inPagePerfRunnerSource() {
   const globalOffset = globalCompletionOffset(lspSource);
   const kindTargets = discoverKindTargets(lspSource);
   reportProgress("wait for JS/TS language server");
-  const ready = lspFixtureOpened ? await waitForLanguageServerReadiness() : false;
+  const ready = lspFixtureOpened ? await waitForLanguageServerReadiness(lspSource) : false;
 
   if (!ready) {
     for (const id of LSP_SCENARIO_IDS) {
@@ -971,13 +1197,13 @@ export function inPagePerfRunnerSource() {
     }
   }
 
-  async function waitForLanguageServerReadiness() {
+  async function waitForLanguageServerReadiness(source) {
     const startedAt = Date.now();
-    const endOfFileOffset = lspSource.length;
+    const endOfFileOffset = source.length;
 
     while (Date.now() - startedAt < READINESS_TIMEOUT_MS) {
       perf.clearProviderProbeSamples();
-      qa.setCursor(positionAtOffset(lspSource, endOfFileOffset));
+      qa.setCursor(positionAtOffset(source, endOfFileOffset));
       qa.triggerCompletion();
       const sample = await waitForProbeSample("completion", 0, READINESS_ATTEMPT_MS);
 

@@ -12,6 +12,7 @@ import {
 } from "../domain/largeDocumentPolicy";
 import { strictModeEnabled } from "../perfLaneRenderMode";
 import { modelPath } from "./phpMonacoDocumentContext";
+import { perfProductionCaptureEnabled } from "./perfProductionCapture";
 
 const MAX_TYPED_CHARACTERS = 2000;
 const MAX_TAB_SWITCHES = 200;
@@ -139,12 +140,17 @@ interface PerfScenarioBridgeEnvironment {
   DEV?: boolean;
   VITE_CODEVO_PERF_BRIDGE?: string;
   VITE_CODEVO_PERF_WINDOW_MODE?: string;
+  VITE_CODEVO_PERF_PRODUCTION_CAPTURE?: string;
 }
 
 export function perfScenarioBridgeEnabled(
   environment: PerfScenarioBridgeEnvironment = import.meta.env,
   storage: Pick<Storage, "getItem"> | null | undefined = window.localStorage,
 ): boolean {
+  if (perfProductionCaptureEnabled(environment)) {
+    return true;
+  }
+
   if (!environment.DEV) {
     return false;
   }

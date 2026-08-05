@@ -1,10 +1,18 @@
 import path from "node:path";
+import { Buffer } from "node:buffer";
 import {
   FIXTURE_VERSION,
+  LANGUAGE_SERVER_STATUS_KINDS,
+  PERF_SMOKE_SCENARIO_IDS,
   PERF_SCENARIOS,
   inPagePerfRunnerSource,
   isKnownScenarioStatus,
 } from "./perfScenarios.mjs";
+import {
+  PERF_CAPTURE_CONTRACT,
+  assertBoundedCaptureJson,
+  captureScenarioContract,
+} from "./perfCaptureContract.mjs";
 
 const DEFAULT_WAIT_MS = 10000;
 const DEFAULT_INTERVAL_MS = 100;
@@ -22,9 +30,70 @@ const REQUIRED_ENVIRONMENT_FIELDS = [
 const MEMORY_SAMPLE_ID = "memory-sample";
 const OK_SCENARIO_STATUS = "ok";
 const POLICY_DISABLED_STATUS = "policy-disabled";
+const NON_COMPARABLE_STATUS = "non-comparable";
+const DIAGNOSTIC_WINDOW_MODE = "always-on-top-diagnostic";
 const CAPABILITY_SCENARIO_KIND = "capability";
+const MAX_RETAINED_EDITOR_OBJECTS = 1_000_000;
+const MAX_REPORTED_HEAP_BYTES = 2 ** 50;
+const MAX_FRAME_SETTLE_FLOOR_MS = 1_000;
+const SHA256 = /^[a-f0-9]{64}$/;
+const RUNNER_RESULT_KEYS = [
+  "bridgeResults",
+  "environment",
+  "failedPaths",
+  "memorySample",
+  "retainedCounts",
+  "scenarioStatuses",
+  "trackerSnapshot",
+];
+const ENVIRONMENT_KEYS = new Set([
+  "appActivationTransitions",
+  "artifactSha256",
+  "bundleManifestSha256",
+  "bundleMode",
+  "captureFlavor",
+  "capturedAt",
+  "diagnosticSpaceLease",
+  "domWindowSignalCount",
+  "editor",
+  "hostArch",
+  "hostPlatform",
+  "keyTransitions",
+  "launchState",
+  "minimizeTransitions",
+  "occlusionTransitions",
+  "onActiveSpaceAtRelease",
+  "osRelease",
+  "platform",
+  "sourceRevision",
+  "strictMode",
+  "timerQuantizationMs",
+  "transitionOverflow",
+  "version",
+  "windowInterruptionCount",
+  "windowInterruptionStages",
+  "windowMode",
+  "windowRecoveryInterventionCount",
+  "windowSize",
+  "windowStability",
+  "windowStabilityEpoch",
+  "workspaceState",
+]);
+const BRIDGE_RESULT_KEYS = new Set([
+  "cutPoint",
+  "frameSettleFloorMs",
+  "id",
+  "languageServerStatus",
+  "previousSwitchPath",
+  "resultCounts",
+  "samples",
+  "switchPaths",
+  "targets",
+  "warmups",
+  "windowNote",
+]);
 
-export const SMOKE_SCENARIO_IDS = ["typing-large-5k", "tab-switch-cycle"];
+export const SMOKE_SCENARIO_IDS = PERF_SMOKE_SCENARIO_IDS;
 export const CAPABILITY_GAP_SCENARIO_IDS = capabilityGapScenarioIds();
 
 const CAPABILITY_GAP_SCENARIO_ID_SET = new Set(CAPABILITY_GAP_SCENARIO_IDS);
@@ -61,6 +130,7 @@ export function buildSnippetExpression(options) {
 }
 
 export function parseManualResult(raw) {
+  assertBoundedCaptureJson(raw);
   return normalizeRunnerResult(parseJson(raw), MANUAL_RESULT_LABEL);
 }
 
@@ -84,12 +154,17 @@ export function normalizeRunnerResult(parsed, label = MANUAL_RESULT_LABEL) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`${label} must contain a JSON object.`);
   }
+  if (!Object.keys(parsed).every((key) => RUNNER_RESULT_KEYS.includes(key))) {
+    throw new Error(`${label} contains an unknown top-level result field.`);
+  }
 
   assertBridgeResults(parsed.bridgeResults, label);
   assertTrackerSnapshot(parsed.trackerSnapshot, label);
   assertScenarioStatuses(parsed.scenarioStatuses, label);
   assertEnvironment(parsed.environment, label);
   assertFailedPaths(parsed.failedPaths, label);
+  assertRetainedCounts(parsed.retainedCounts, label);
+  assertMemorySample(parsed.memorySample, label);
 
   return {
     bridgeResults: parsed.bridgeResults,
@@ -111,15 +186,78 @@ function assertEnvironment(value, label) {
     throw new Error(`${label} "environment" must be an object when present.`);
   }
 
-  const quantization = value.timerQuantizationMs;
-
-  if (quantization === undefined || isFiniteNonnegativeNumber(quantization)) {
-    return;
+  if (!Object.keys(value).every((key) => ENVIRONMENT_KEYS.has(key))) {
+    throw new Error(`${label} "environment" contains an unknown field.`);
   }
 
-  throw new Error(
-    `${label} "environment.timerQuantizationMs" must be a finite nonnegative number when present.`,
-  );
+  for (const [field, fieldValue] of Object.entries(value)) {
+    if (!validEnvironmentField(field, fieldValue)) {
+      throw new Error(`${label} "environment.${field}" is invalid or exceeds its bound.`);
+    }
+  }
+}
+
+function validEnvironmentField(field, value) {
+  if (field === "editor") return value === "codevo";
+  if (field === "bundleMode") return value === "dev" || value === "production";
+  if (field === "captureFlavor") return value === "production-instrumented";
+  if (field === "artifactSha256" || field === "bundleManifestSha256") {
+    return typeof value === "string" && SHA256.test(value);
+  }
+  if (field === "windowMode") {
+    return value === "focus-only" || value === "always-on-top-diagnostic" || value === "unknown";
+  }
+  if (field === "windowStability") {
+    return value === "diagnostic-space-lease" || value === "recovered-diagnostic";
+  }
+  if (
+    field === "strictMode" ||
+    field === "diagnosticSpaceLease" ||
+    field === "onActiveSpaceAtRelease" ||
+    field === "transitionOverflow"
+  ) {
+    return typeof value === "boolean";
+  }
+  if (field === "timerQuantizationMs") {
+    return isFiniteNonnegativeNumber(value) && value <= MAX_FRAME_SETTLE_FLOOR_MS;
+  }
+  if (field === "windowSize") {
+    return (
+      exactObjectKeys(value, ["height", "width"]) &&
+      isBoundedNonnegativeSafeInteger(value.width, 100_000) &&
+      isBoundedNonnegativeSafeInteger(value.height, 100_000)
+    );
+  }
+  if (field === "windowInterruptionStages") {
+    return (
+      Array.isArray(value) &&
+      value.length <= 3 &&
+      everyOwnArrayEntry(
+        value,
+        (stage) =>
+          typeof stage === "string" && stage.length > 0 && Buffer.byteLength(stage, "utf8") <= 64,
+      )
+    );
+  }
+  if (field === "domWindowSignalCount") {
+    return isBoundedNonnegativeSafeInteger(value, 64);
+  }
+  if (field === "windowInterruptionCount" || field === "windowRecoveryInterventionCount") {
+    return isBoundedNonnegativeSafeInteger(value, 3);
+  }
+  if (
+    field === "appActivationTransitions" ||
+    field === "keyTransitions" ||
+    field === "minimizeTransitions" ||
+    field === "occlusionTransitions" ||
+    field === "windowStabilityEpoch"
+  ) {
+    return isBoundedNonnegativeSafeInteger(value, 1_024);
+  }
+  if (field === "capturedAt") {
+    return boundedMetadataString(value) && Number.isFinite(Date.parse(value));
+  }
+  return boundedMetadataString(value);
 }
 
 function parseJson(raw) {
@@ -136,22 +274,46 @@ function assertBridgeResults(value, label) {
     throw new Error(`${label} is missing a "bridgeResults" array.`);
   }
 
-  const isValid = everyOwnArrayEntry(
-    value,
-    (entry) =>
-      entry &&
-      typeof entry === "object" &&
-      typeof entry.id === "string" &&
-      Array.isArray(entry.samples) &&
-      everyOwnArrayEntry(entry.samples, isFiniteNonnegativeNumber),
-  );
+  if (value.length > PERF_CAPTURE_CONTRACT.limits.maxScenarios) {
+    throw new Error(`${label} "bridgeResults" exceeds the scenario count bound.`);
+  }
+
+  const ids = new Set();
+
+  const isValid = everyOwnArrayEntry(value, (entry) => {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      !Object.keys(entry).every((key) => BRIDGE_RESULT_KEYS.has(key)) ||
+      !boundedMetadataString(entry.id) ||
+      ids.has(entry.id) ||
+      !Array.isArray(entry.samples) ||
+      entry.samples.length > PERF_CAPTURE_CONTRACT.limits.maxSamplesPerScenario ||
+      !everyOwnArrayEntry(entry.samples, isFiniteNonnegativeNumber) ||
+      !validOptionalResultCounts(entry.resultCounts, entry.samples.length) ||
+      !validOptionalBoundedStringArray(entry.targets) ||
+      !validOptionalBoundedString(entry.windowNote) ||
+      !validOptionalBoundedString(entry.cutPoint) ||
+      !validOptionalWarmups(entry.warmups) ||
+      !validOptionalFrameSettleFloor(entry.frameSettleFloorMs) ||
+      !validOptionalSwitchPaths(entry.switchPaths, entry.samples.length) ||
+      !validOptionalBoundedString(entry.previousSwitchPath) ||
+      !validOptionalLanguageServerStatus(entry.languageServerStatus) ||
+      (entry.targets !== undefined && entry.targets.length !== entry.samples.length)
+    ) {
+      return false;
+    }
+    ids.add(entry.id);
+    return true;
+  });
 
   if (isValid) {
     return;
   }
 
   throw new Error(
-    `${label} "bridgeResults" entries must each have a string id and finite nonnegative numeric samples.`,
+    `${label} "bridgeResults" entries must have unique bounded ids, dense bounded finite ` +
+      "nonnegative numeric samples, and bounded targets/window metadata.",
   );
 }
 
@@ -160,17 +322,30 @@ function assertTrackerSnapshot(value, label) {
     throw new Error(`${label} is missing a "trackerSnapshot" array.`);
   }
 
-  const isValid = everyOwnArrayEntry(
-    value,
-    (entry) =>
+  if (value.length > PERF_CAPTURE_CONTRACT.limits.maxScenarios) {
+    throw new Error(`${label} "trackerSnapshot" exceeds the tracker count bound.`);
+  }
+
+  const kinds = new Set();
+
+  const isValid = everyOwnArrayEntry(value, (entry) => {
+    if (!(
       entry &&
       typeof entry === "object" &&
-      typeof entry.kind === "string" &&
+      exactObjectKeys(entry, ["kind", "stats"]) &&
+      boundedMetadataString(entry.kind) &&
+      !kinds.has(entry.kind) &&
       entry.stats &&
       typeof entry.stats === "object" &&
       !Array.isArray(entry.stats) &&
-      REQUIRED_TRACKER_STATS.every((stat) => isFiniteNonnegativeNumber(entry.stats[stat])),
-  );
+      exactObjectKeys(entry.stats, REQUIRED_TRACKER_STATS) &&
+      REQUIRED_TRACKER_STATS.every((stat) => isFiniteNonnegativeNumber(entry.stats[stat]))
+    )) {
+      return false;
+    }
+    kinds.add(entry.kind);
+    return true;
+  });
 
   if (isValid) {
     return;
@@ -183,6 +358,83 @@ function assertTrackerSnapshot(value, label) {
 
 function isFiniteNonnegativeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isBoundedNonnegativeSafeInteger(value, maximum) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= maximum;
+}
+
+function boundedMetadataString(value) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= PERF_CAPTURE_CONTRACT.limits.maxMetadataStringBytes
+  );
+}
+
+function validOptionalBoundedString(value) {
+  return value === undefined || boundedMetadataString(value);
+}
+
+function validOptionalBoundedStringArray(value) {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= PERF_CAPTURE_CONTRACT.limits.maxTargetsPerScenario &&
+      everyOwnArrayEntry(value, boundedMetadataString))
+  );
+}
+
+function validOptionalResultCounts(value, sampleCount) {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length === sampleCount &&
+      everyOwnArrayEntry(value, (count) =>
+        isBoundedNonnegativeSafeInteger(count, Number.MAX_SAFE_INTEGER),
+      ))
+  );
+}
+
+function validOptionalWarmups(value) {
+  return (
+    value === undefined ||
+    isBoundedNonnegativeSafeInteger(value, PERF_CAPTURE_CONTRACT.limits.maxSamplesPerScenario)
+  );
+}
+
+function validOptionalFrameSettleFloor(value) {
+  return (
+    value === undefined ||
+    (typeof value === "number" &&
+      Number.isFinite(value) &&
+      value > 0 &&
+      value <= MAX_FRAME_SETTLE_FLOOR_MS)
+  );
+}
+
+function validOptionalSwitchPaths(value, sampleCount) {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length === sampleCount &&
+      value.length <= PERF_CAPTURE_CONTRACT.limits.maxTargetsPerScenario &&
+      everyOwnArrayEntry(value, boundedMetadataString))
+  );
+}
+
+function validOptionalLanguageServerStatus(value) {
+  if (value === undefined) {
+    return true;
+  }
+  if (typeof value === "string") {
+    return LANGUAGE_SERVER_STATUS_KINDS.has(value);
+  }
+  return (
+    exactObjectKeys(value, ["kind", "running"]) &&
+    LANGUAGE_SERVER_STATUS_KINDS.has(value.kind) &&
+    typeof value.running === "boolean"
+  );
 }
 
 function everyOwnArrayEntry(value, predicate) {
@@ -204,16 +456,28 @@ function assertScenarioStatuses(value, label) {
     throw new Error(`${label} "scenarioStatuses" must be an array when present.`);
   }
 
-  const isValid = everyOwnArrayEntry(
-    value,
-    (entry) =>
+  if (value.length > PERF_CAPTURE_CONTRACT.limits.maxScenarios) {
+    throw new Error(`${label} "scenarioStatuses" exceeds the scenario count bound.`);
+  }
+
+  const ids = new Set();
+
+  const isValid = everyOwnArrayEntry(value, (entry) => {
+    if (!(
       entry &&
       typeof entry === "object" &&
-      typeof entry.id === "string" &&
+      exactObjectKeys(entry, ["id", "reason", "status"]) &&
+      boundedMetadataString(entry.id) &&
+      !ids.has(entry.id) &&
       typeof entry.status === "string" &&
       isKnownScenarioStatus(entry.status) &&
-      typeof entry.reason === "string",
-  );
+      boundedMetadataString(entry.reason)
+    )) {
+      return false;
+    }
+    ids.add(entry.id);
+    return true;
+  });
 
   if (isValid) {
     return;
@@ -229,21 +493,69 @@ function assertFailedPaths(value, label) {
     throw new Error(`${label} is missing a "failedPaths" array.`);
   }
 
-  const isValid = everyOwnArrayEntry(value, (entry) => typeof entry === "string");
+  const isValid =
+    value.length <= PERF_CAPTURE_CONTRACT.limits.maxScenarios &&
+    everyOwnArrayEntry(value, boundedMetadataString);
 
   if (isValid) {
     return;
   }
 
-  throw new Error(`${label} "failedPaths" entries must each be a string.`);
+  throw new Error(`${label} "failedPaths" must contain only dense bounded strings.`);
+}
+
+function assertRetainedCounts(value, label) {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (!validRetainedCounts(value)) {
+    throw new Error(
+      `${label} "retainedCounts" must be exactly {editors, models} with nonnegative safe ` +
+        `integers at or below ${MAX_RETAINED_EDITOR_OBJECTS}.`,
+    );
+  }
+}
+
+function validRetainedCounts(value) {
+  return (
+    exactObjectKeys(value, ["editors", "models"]) &&
+    isBoundedNonnegativeSafeInteger(value.editors, MAX_RETAINED_EDITOR_OBJECTS) &&
+    isBoundedNonnegativeSafeInteger(value.models, MAX_RETAINED_EDITOR_OBJECTS)
+  );
+}
+
+function assertMemorySample(value, label) {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (
+    !exactObjectKeys(value, ["usedJsHeapBytes"]) ||
+    (value.usedJsHeapBytes !== null &&
+      !isBoundedNonnegativeSafeInteger(value.usedJsHeapBytes, MAX_REPORTED_HEAP_BYTES))
+  ) {
+    throw new Error(
+      `${label} "memorySample" must be exactly {usedJsHeapBytes}, with null for unavailable ` +
+        `or a nonnegative safe integer at or below ${MAX_REPORTED_HEAP_BYTES}.`,
+    );
+  }
+}
+
+function exactObjectKeys(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  );
 }
 
 export function smokeValidationFailure(result) {
-  const [typingId, tabSwitchId] = SMOKE_SCENARIO_IDS;
-  const typing = result.bridgeResults.find(({ id }) => id === typingId);
-  const tabSwitch = result.bridgeResults.find(({ id }) => id === tabSwitchId);
-  const hasBridgeSamples = typing?.samples.length >= 1 && tabSwitch?.samples.length >= 1;
-  const hasEditor = result.retainedCounts?.editors >= 1;
+  const hasBridgeSamples = validatedSmokeBridgeEvidence(result?.bridgeResults) !== null;
+  const hasEditor =
+    validRetainedCounts(result?.retainedCounts) && result.retainedCounts.editors >= 1;
 
   if (hasBridgeSamples && hasEditor) {
     return null;
@@ -298,12 +610,23 @@ export function isBlockingStatus(status) {
 }
 
 export function blockedScenarioIds(shaped, trackerSnapshot, smoke) {
+  return blockedScenarioIdsWithEvidence(shaped, trackerSnapshot, smoke, []);
+}
+
+function blockedScenarioIdsWithEvidence(shaped, trackerSnapshot, smoke, bridgeResults) {
+  const diagnosticSmokeEvidence =
+    smoke && shaped?.environment?.windowMode === DIAGNOSTIC_WINDOW_MODE
+      ? validatedSmokeBridgeEvidence(bridgeResults)
+      : null;
+
   return shaped.scenarios
-    .filter((scenario) => isBlockedScenario(scenario, trackerSnapshot, smoke))
+    .filter((scenario) =>
+      isBlockedScenario(scenario, trackerSnapshot, smoke, diagnosticSmokeEvidence),
+    )
     .map((scenario) => scenario.id);
 }
 
-function isBlockedScenario(scenario, trackerSnapshot, smoke) {
+function isBlockedScenario(scenario, trackerSnapshot, smoke, diagnosticSmokeEvidence) {
   if (scenario.id === MEMORY_SAMPLE_ID) {
     return false;
   }
@@ -316,6 +639,10 @@ function isBlockedScenario(scenario, trackerSnapshot, smoke) {
     return false;
   }
 
+  if (scenario.status === NON_COMPARABLE_STATUS && diagnosticSmokeEvidence?.has(scenario.id)) {
+    return false;
+  }
+
   if (isBlockingStatus(scenario.status)) {
     return true;
   }
@@ -325,6 +652,40 @@ function isBlockedScenario(scenario, trackerSnapshot, smoke) {
 
 export function hasBlockingScenario(shaped, trackerSnapshot, smoke) {
   return blockedScenarioIds(shaped, trackerSnapshot, smoke).length > 0;
+}
+
+function validatedSmokeBridgeEvidence(bridgeResults) {
+  if (!Array.isArray(bridgeResults)) {
+    return null;
+  }
+
+  const evidence = new Map();
+  for (let index = 0; index < bridgeResults.length; index += 1) {
+    if (!Object.hasOwn(bridgeResults, index)) {
+      return null;
+    }
+    const entry = bridgeResults[index];
+    if (!entry || typeof entry !== "object" || !SMOKE_SCENARIO_IDS.includes(entry.id)) {
+      continue;
+    }
+    if (evidence.has(entry.id) || !validSmokeSamples(entry.id, entry.samples)) {
+      return null;
+    }
+    evidence.set(entry.id, entry.samples);
+  }
+
+  return SMOKE_SCENARIO_IDS.every((id) => evidence.has(id)) ? evidence : null;
+}
+
+function validSmokeSamples(id, samples) {
+  const contract = captureScenarioContract(id);
+  if (contract === null || !Array.isArray(samples)) {
+    return false;
+  }
+  if (samples.length < contract.minSamples || samples.length > contract.maxSamples) {
+    return false;
+  }
+  return everyOwnArrayEntry(samples, isFiniteNonnegativeNumber);
 }
 
 export function environmentAnomaly(shaped) {
@@ -374,15 +735,21 @@ export function evaluateRunOutcome({ result, shaped, smoke }) {
     failures.push(pathsFailure);
   }
 
-  const blocked = blockedScenarioIds(shaped, result.trackerSnapshot, smoke);
+  const blocked = blockedScenarioIdsWithEvidence(
+    shaped,
+    result.trackerSnapshot,
+    smoke,
+    result.bridgeResults,
+  );
 
   if (blocked.length > 0) {
     failures.push(
       "Performance run failed: " +
         `${blocked.length} scenario(s) produced no usable measurement (${blocked.join(", ")}). ` +
-        "invalid, not-run, skipped, no-result, and non-comparable are failures in the run lane, " +
-        "exactly as in the gap-report lane. policy-disabled is exempt only on the declared " +
-        "large-file capability scenarios.",
+        "invalid, not-run, skipped, no-result, and non-comparable are normally failures in the " +
+        "run lane. The only non-comparable exception is bounded diagnostic smoke evidence; the " +
+        "gap-report lane remains strict. policy-disabled is exempt only on the declared large-file " +
+        "capability scenarios.",
     );
   }
 
