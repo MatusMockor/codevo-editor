@@ -128,6 +128,8 @@ export function registerJavaScriptTypeScriptMonacoProvidersTransactionally(
     }
 
     const unregisterMeasuredProviders = registerPerfMeasuredProviders({
+      completion: providers.completion,
+      definition: providers.definition,
       references: providers.references,
       rename: providers.rename,
     });

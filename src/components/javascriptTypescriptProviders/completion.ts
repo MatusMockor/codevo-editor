@@ -217,7 +217,11 @@ export async function provideJavaScriptTypeScriptCompletionItems<
     const suggestions = dedupeJavaScriptTypeScriptCompletionItems([...lspSuggestions, ...snippets]);
     const durationMs = performance.now() - startedAt;
     context.recordLatency?.("completion", durationMs, request.rootPath);
-    recordPerfProviderSample("completion", { ms: durationMs, resultCount: suggestions.length });
+    recordPerfProviderSample(
+      "completion",
+      { ms: durationMs, resultCount: suggestions.length },
+      token,
+    );
     return {
       ...(completion.isIncomplete ? { incomplete: true } : {}),
       suggestions,

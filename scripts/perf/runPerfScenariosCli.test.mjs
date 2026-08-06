@@ -33,7 +33,7 @@ import {
   parseRunPerfArgs,
   readManualResultFile,
 } from "./run-perf-scenarios.mjs";
-import { MAX_CAPTURE_JSON_BYTES } from "./perfCaptureContract.mjs";
+import { MAX_CAPTURE_JSON_BYTES, parseCaptureRunJson } from "./perfCaptureContract.mjs";
 
 const COMPLETE_ENVIRONMENT = {
   editor: "codevo",
@@ -407,7 +407,7 @@ describe("parseManualResult", () => {
     ["unknown field", { arbitraryPayload: "not part of the closed schema" }],
     ["unsafe warmups", { warmups: 1e100 }],
     ["negative warmups", { warmups: -1 }],
-    ["huge frame floor", { frameSettleFloorMs: 1e308 }],
+    ["removed legacy frame floor", { frameSettleFloorMs: 33 }],
     ["non-string switch path", { switchPaths: [42] }],
     ["over-bound switch path", { switchPaths: ["x".repeat(513)] }],
     ["over-bound previous path", { previousSwitchPath: "x".repeat(513) }],
@@ -425,25 +425,25 @@ describe("parseManualResult", () => {
   });
 
   it("accepts the complete bounded tab-switch bridge schema", () => {
-    expect(
-      normalizeCdpResult({
-        bridgeResults: [
-          {
-            id: "tab-switch-cycle",
-            cutPoint: "tab-switch-rendered",
-            warmups: 1,
-            targets: ["large-5k.ts"],
-            windowNote: "bounded",
-            frameSettleFloorMs: 33,
-            switchPaths: ["/fixture/large-5k.ts"],
-            previousSwitchPath: "/fixture/large-20k.ts",
-            samples: [34],
-          },
-        ],
-        trackerSnapshot: [],
-        failedPaths: [],
-      }).bridgeResults[0],
-    ).toMatchObject({ warmups: 1, frameSettleFloorMs: 33 });
+    const tabSwitch = normalizeCdpResult({
+      bridgeResults: [
+        {
+          id: "tab-switch-cycle",
+          cutPoint: "tab-switch-rendered",
+          warmups: 1,
+          targets: ["large-5k.ts"],
+          windowNote: "bounded",
+          switchPaths: ["/fixture/large-5k.ts"],
+          previousSwitchPath: "/fixture/large-20k.ts",
+          samples: [34],
+        },
+      ],
+      trackerSnapshot: [],
+      failedPaths: [],
+    }).bridgeResults[0];
+
+    expect(tabSwitch).toMatchObject({ warmups: 1 });
+    expect(tabSwitch).not.toHaveProperty("frameSettleFloorMs");
   });
 
   it("rejects a JSON array at the top level", () => {
@@ -701,7 +701,7 @@ describe("parseManualResult", () => {
 
   it("keeps the run's capability and readiness statuses", () => {
     const scenarioStatuses = [
-      { id: "completion-large-20k", status: "policy-disabled", reason: POLICY_DISABLED_REASON },
+      { id: "completion-large-100k", status: "policy-disabled", reason: POLICY_DISABLED_REASON },
     ];
     const raw = JSON.stringify({
       bridgeResults: [],
@@ -723,7 +723,7 @@ describe("parseManualResult", () => {
     const raw = JSON.stringify({
       bridgeResults: [],
       trackerSnapshot: [],
-      scenarioStatuses: [{ id: "completion-large-20k", status: "policy-disabled" }],
+      scenarioStatuses: [{ id: "completion-large-100k", status: "policy-disabled" }],
       failedPaths: [],
     });
     expect(() => parseManualResult(raw)).toThrow(/scenarioStatuses/);
@@ -735,7 +735,7 @@ describe("parseManualResult", () => {
       trackerSnapshot: [],
       scenarioStatuses: [
         {
-          id: "completion-large-20k",
+          id: "completion-large-100k",
           status: "totally-unrecognized-status",
           reason: "hand-carried JSON from an ad-hoc manual run",
         },
@@ -748,7 +748,7 @@ describe("parseManualResult", () => {
 });
 
 describe("smokeValidationFailure", () => {
-  it("passes when both bridge scenarios have samples and an editor is retained", () => {
+  it("keeps the diagnostic smoke minimum at one sample independently of canonical counts", () => {
     const result = {
       bridgeResults: [
         { id: "typing-large-5k", samples: [1] },
@@ -757,6 +757,48 @@ describe("smokeValidationFailure", () => {
       retainedCounts: { models: 1, editors: 1 },
     };
     expect(smokeValidationFailure(result)).toBeNull();
+  });
+
+  it("accepts bounded partial diagnostic evidence below the exact 50/30 success counts", () => {
+    const result = {
+      bridgeResults: [
+        { id: "typing-large-5k", samples: Array(49).fill(1) },
+        { id: "tab-switch-cycle", samples: Array(29).fill(2) },
+      ],
+      retainedCounts: { models: 1, editors: 1 },
+    };
+
+    expect(smokeValidationFailure(result)).toBeNull();
+  });
+
+  it("does not weaken the canonical parser's exact successful sample count", () => {
+    const shaped = shapeRunResult({
+      capturedAt: "2026-08-06T00:00:00.000Z",
+      bridgeResults: [
+        {
+          id: "typing-large-5k",
+          warmups: 10,
+          samples: [1],
+          targets: Array.from({ length: 50 }, (_, index) => `target-${index}`),
+        },
+      ],
+      environment: {
+        ...COMPLETE_ENVIRONMENT,
+        bundleMode: "production",
+        captureFlavor: "production-instrumented",
+        launchState: "cold-fresh-profile",
+        workspaceState: "fixture-clean",
+        sourceRevision: "1".repeat(40),
+        artifactSha256: "2".repeat(64),
+        bundleManifestSha256: "3".repeat(64),
+        osRelease: "25.6.0",
+        strictMode: true,
+      },
+    });
+
+    expect(() => parseCaptureRunJson(JSON.stringify(shaped), { expectedEditor: "codevo" })).toThrow(
+      /typing-large-5k.*exactly 50 samples for its completed protocol observation, got 1/,
+    );
   });
 
   it("fails when typing-large-5k has no samples", () => {
@@ -907,13 +949,13 @@ describe("hasBlockingScenario / scenarioSummary", () => {
       capturedAt: "2026-07-31T00:00:00.000Z",
       scenarioStatuses: [
         {
-          id: "completion-large-20k",
+          id: "completion-large-100k",
           status: "policy-disabled",
           reason: POLICY_DISABLED_REASON,
         },
       ],
     });
-    const capability = shaped.scenarios.find((s) => s.id === "completion-large-20k");
+    const capability = shaped.scenarios.find((s) => s.id === "completion-large-100k");
 
     expect(hasBlockingScenario({ scenarios: [capability] }, [], false)).toBe(false);
     expect(scenarioSummary(capability, [])).toBe(`policy-disabled: ${POLICY_DISABLED_REASON}`);
@@ -964,7 +1006,8 @@ describe("evaluateRunOutcome", () => {
 
     expect(failure).toMatch(/produced no usable measurement/);
     expect(failure).toContain("rename-medium-2k");
-    expect(failure).not.toContain("completion-large-20k");
+    expect(failure).toContain("completion-large-20k");
+    expect(failure).not.toContain("completion-large-100k");
   });
 
   it("collects the smoke failure, failed-path failure, and empty-scenario failure together", () => {
@@ -1002,6 +1045,12 @@ describe("evaluateRunOutcome", () => {
       trackerSnapshot: [],
       retainedCounts: { models: 1, editors: 1 },
       failedPaths: [],
+      environment: { ...COMPLETE_ENVIRONMENT, windowMode: "always-on-top-diagnostic" },
+      scenarioStatuses: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        status: "non-comparable",
+        reason: "Diagnostic window protection was active.",
+      })),
     };
     const shaped = shapeRunResult({
       capturedAt: "2026-08-05T00:00:00.000Z",
@@ -1026,6 +1075,75 @@ describe("evaluateRunOutcome", () => {
         samples: [{ ms: id === "typing-large-5k" ? 1 : 2 }],
       });
     }
+  });
+
+  it("keeps a forged shaped marker blocking without raw diagnostic authority", () => {
+    const result = {
+      bridgeResults: [
+        { id: "typing-large-5k", samples: [1] },
+        { id: "tab-switch-cycle", samples: [2] },
+      ],
+      trackerSnapshot: [],
+      retainedCounts: { models: 1, editors: 1 },
+      failedPaths: [],
+    };
+    const shaped = {
+      failedPaths: [],
+      environment: { ...COMPLETE_ENVIRONMENT, windowMode: "always-on-top-diagnostic" },
+      scenarios: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        unit: "ms",
+        status: "non-comparable",
+        reason: "Untrusted diagnostic claim.",
+        diagnosticEvidence: DIAGNOSTIC_SMOKE_EVIDENCE,
+        samples: [{ ms: 1 }],
+      })),
+    };
+
+    expect(evaluateRunOutcome({ result, shaped, smoke: true }).join("\n")).toContain(
+      "produced no usable measurement",
+    );
+  });
+
+  it.each([
+    ["missing shaped samples", undefined],
+    ["mismatched shaped samples", [{ ms: 999 }]],
+  ])("keeps authenticated raw evidence blocking with %s", (_label, samples) => {
+    const diagnosticEnvironment = {
+      ...COMPLETE_ENVIRONMENT,
+      windowMode: "always-on-top-diagnostic",
+    };
+    const result = {
+      bridgeResults: [
+        { id: "typing-large-5k", samples: [1] },
+        { id: "tab-switch-cycle", samples: [2] },
+      ],
+      trackerSnapshot: [],
+      retainedCounts: { models: 1, editors: 1 },
+      failedPaths: [],
+      environment: diagnosticEnvironment,
+      scenarioStatuses: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        status: "non-comparable",
+        reason: "Diagnostic window protection was active.",
+      })),
+    };
+    const shaped = {
+      failedPaths: [],
+      environment: diagnosticEnvironment,
+      scenarios: SMOKE_SCENARIO_IDS.map((id) => ({
+        id,
+        unit: "ms",
+        status: "non-comparable",
+        reason: "Diagnostic window protection was active.",
+        diagnosticEvidence: DIAGNOSTIC_SMOKE_EVIDENCE,
+        ...(samples === undefined ? {} : { samples }),
+      })),
+    };
+
+    expect(evaluateRunOutcome({ result, shaped, smoke: true }).join("\n")).toContain(
+      "produced no usable measurement",
+    );
   });
 
   it.each([

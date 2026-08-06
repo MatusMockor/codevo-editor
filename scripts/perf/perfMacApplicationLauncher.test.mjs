@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import process from "node:process";
 import { describe, expect, it, vi } from "vitest";
 import { spawnDirectApplicationSupervisor } from "./perfMacApplicationLauncher.mjs";
 
@@ -26,10 +28,15 @@ function createFakeChild(pid = 4312) {
   const child = new EventEmitter();
   child.pid = pid;
   child.stdout = new EventEmitter();
+  child.stdout.destroy = vi.fn();
   child.stderr = new EventEmitter();
+  child.stderr.destroy = vi.fn();
   child.stdin = new EventEmitter();
   child.stdin.end = vi.fn();
+  child.kill = vi.fn(() => true);
   child.unref = vi.fn();
+  child.stdout.unref = vi.fn();
+  child.stderr.unref = vi.fn();
   return child;
 }
 
@@ -120,32 +127,31 @@ describe("spawnDirectApplicationSupervisor", () => {
 
   it("never interrupts a recycled helper group after exit while stdout is draining", async () => {
     const { child, launched } = createHarness();
-    const kill = vi.fn();
     publish(child, readyMessage());
     await launched.ready;
 
     child.emit("exit", 0, null);
-    launched.interrupt({ kill });
+    const stopping = launched.interrupt();
     publish(child, terminalMessage());
     child.emit("close", 0, null);
 
-    expect(kill).not.toHaveBeenCalled();
+    await expect(stopping).resolves.toBeUndefined();
+    expect(child.kill).not.toHaveBeenCalled();
     await expect(launched.exited).resolves.toEqual({ code: 0, signal: null, error: null });
   });
 
   it("stop drains terminal proof after exit without signalling a recycled group", async () => {
     const { child, launched } = createHarness();
-    const kill = vi.fn();
     publish(child, readyMessage());
     await launched.ready;
 
     child.emit("exit", 0, null);
-    const stopping = launched.stop({ kill });
+    const stopping = launched.stop();
     publish(child, terminalMessage());
     child.emit("close", 0, null);
 
     await expect(stopping).resolves.toBeUndefined();
-    expect(kill).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it("treats stdin EPIPE as an expected cleanup race", async () => {
@@ -319,76 +325,203 @@ describe("spawnDirectApplicationSupervisor", () => {
     });
   });
 
-  it("preserves an unsettled supervisor instead of deleting roots with unproven cleanup", async () => {
+  it("refuses to SIGKILL the sole cleanup authority without terminal proof", async () => {
     const { child, launched } = createHarness();
-    const kill = vi.fn(() => {
-      throw Object.assign(new Error("foreign group"), { code: "EPERM" });
-    });
     let clock = 10_000;
 
     await expect(
       launched.stop({
-        kill,
         now: () => clock,
         timeoutMs: 100,
         delay: async (ms) => {
           clock += ms;
         },
       }),
-    ).rejects.toThrow(/unsettled application.*owned roots must be preserved/);
+    ).rejects.toThrow(/refusing to SIGKILL.*owned roots must be preserved/);
 
     expect(child.stdin.end).toHaveBeenCalledOnce();
-    expect(kill).not.toHaveBeenCalled();
-    expect(child.unref).toHaveBeenCalledOnce();
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
+    expect(child.unref).not.toHaveBeenCalled();
+    expect(child.stdout.unref).not.toHaveBeenCalled();
+    expect(child.stderr.unref).not.toHaveBeenCalled();
   });
 
   it("interrupts before ready using stdin EOF without signalling a process group", async () => {
     const { child, launched } = createHarness();
-    const kill = vi.fn(() => {
-      throw Object.assign(new Error("reused group"), { code: "EPERM" });
-    });
     const readyRejection = expect(launched.ready).rejects.toThrow(
       /exited before publishing ownership/,
     );
 
-    launched.interrupt({ kill });
-    launched.interrupt({ kill });
+    const firstInterrupt = launched.interrupt();
+    const secondInterrupt = launched.interrupt();
     child.emit("close", null, "SIGTERM");
 
     await readyRejection;
+    await expect(firstInterrupt).rejects.toThrow(/cleanup was not proven/);
+    await expect(secondInterrupt).rejects.toThrow(/cleanup was not proven/);
     expect(child.stdin.end).toHaveBeenCalledOnce();
-    expect(kill).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it("never signals a recycled helper group after close", async () => {
     const { child, launched } = createHarness();
-    const kill = vi.fn();
     publish(child, readyMessage());
     await launched.ready;
     publish(child, terminalMessage());
     child.emit("close", 0, null);
     await launched.exited;
 
-    launched.interrupt({ kill });
+    await expect(launched.interrupt()).resolves.toBeUndefined();
 
-    expect(kill).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("reaps after TERM escalation and never reaches KILL", async () => {
+    const { child, launched } = createHarness();
+    let clock = 1_000;
+    publish(child, readyMessage());
+    await launched.ready;
+    child.kill.mockImplementation((signal) => {
+      if (signal === "SIGTERM") {
+        publish(child, terminalMessage({ graceful: false }));
+        child.emit("exit", null, signal);
+        child.emit("close", null, signal);
+      }
+      return true;
+    });
+
+    await expect(
+      launched.stop({
+        now: () => clock,
+        timeoutMs: 100,
+        delay: async (ms) => {
+          clock += ms;
+        },
+      }),
+    ).rejects.toThrow(/cleanup was not proven.*force termination/);
+
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
+    await expect(launched.exited).resolves.toMatchObject({ signal: "SIGTERM" });
+  });
+
+  it("reaps after KILL escalation without signalling again", async () => {
+    const { child, launched } = createHarness();
+    let clock = 2_000;
+    publish(child, readyMessage());
+    await launched.ready;
+    publish(child, terminalMessage());
+    child.kill.mockImplementation((signal) => {
+      if (signal === "SIGKILL") {
+        child.emit("exit", null, signal);
+        child.emit("close", null, signal);
+      }
+      return true;
+    });
+
+    const firstStop = launched.stop({
+      now: () => clock,
+      timeoutMs: 100,
+      delay: async (ms) => {
+        clock += ms;
+      },
+    });
+    const repeatedStop = launched.stop();
+
+    expect(repeatedStop).toBe(firstStop);
+    await expect(firstStop).rejects.toThrow(/cleanup was not proven.*SIGKILL/);
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+    launched.interrupt();
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+  });
+
+  it("treats repeated stop after an already-exited child as idempotent", async () => {
+    const { child, launched } = createHarness();
+    publish(child, readyMessage());
+    await launched.ready;
+    publish(child, terminalMessage());
+    child.emit("exit", 0, null);
+    child.emit("close", 0, null);
+
+    const firstStop = launched.stop();
+    const repeatedStop = launched.stop();
+
+    expect(repeatedStop).toBe(firstStop);
+    await expect(firstStop).resolves.toBeUndefined();
+    expect(child.stdin.end).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("settles exited after reaping even when inherited stdout never closes", async () => {
+    const { child, launched } = createHarness();
+    let clock = 3_000;
+    publish(child, readyMessage());
+    await launched.ready;
+    publish(child, terminalMessage());
+    child.emit("exit", 0, null);
+
+    await expect(
+      launched.stop({
+        now: () => clock,
+        timeoutMs: 100,
+        delay: async (ms) => {
+          clock += ms;
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(child.stdout.destroy).toHaveBeenCalledOnce();
+    expect(child.stderr.destroy).toHaveBeenCalledOnce();
+    await expect(launched.exited).resolves.toEqual({ code: 0, signal: null, error: null });
+  });
+
+  it("does not leave the real exact launcher child alive after stop escalation", async () => {
+    const script = [
+      `const ready = ${JSON.stringify(readyMessage())};`,
+      "ready.pid = process.pid;",
+      "ready.pgid = process.pid;",
+      "process.stdout.write(JSON.stringify(ready) + '\\n');",
+      "process.stdin.resume();",
+      "process.stdin.on('end', () => {});",
+      "setInterval(() => {}, 1000);",
+    ].join("");
+    let realChild;
+    const launched = spawnDirectApplicationSupervisor(
+      {
+        ...launchPlan(),
+        command: process.execPath,
+        args: ["-e", script],
+        cwd: process.cwd(),
+        env: process.env,
+      },
+      (...args) => {
+        realChild = spawn(...args);
+        return realChild;
+      },
+    );
+    const ready = await launched.ready;
+
+    await expect(launched.stop({ timeoutMs: 250 })).rejects.toThrow(
+      /cleanup was not proven.*without terminal proof/,
+    );
+    await expect(launched.exited).resolves.toMatchObject({ signal: "SIGTERM" });
+    expect(() => process.kill(ready.pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    expect(realChild.exitCode === null && realChild.signalCode === null).toBe(false);
   });
 
   it("rejects terminal proof published before valid ready ownership", async () => {
     const { child, launched } = createHarness();
-    const kill = vi.fn();
     const readyRejection = expect(launched.ready).rejects.toThrow(
       /invalid or duplicate terminal ownership state/,
     );
 
-    const stopping = launched.stop({ kill });
+    const stopping = launched.stop();
     publish(child, terminalMessage());
     child.emit("close", 0, null);
 
     await expect(stopping).rejects.toThrow(/cleanup was not proven/);
     await readyRejection;
     expect(child.stdin.end).toHaveBeenCalledOnce();
-    expect(kill).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it.each([

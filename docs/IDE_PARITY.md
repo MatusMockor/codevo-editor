@@ -32,6 +32,39 @@ workflow and require automated acceptance evidence.
 | P2        | Remote and platform runtimes   | Design remote/container and Windows ownership separately.                                                       |
 | Strategic | Extension platform             | Decide a stable plugin API and security model before marketplace work.                                          |
 
+## Current performance evidence boundary
+
+The current measurement contract is `c7.7-production-v5`. Codevo now has an isolated
+instrumented-production capture lane, so the historical statement that Codevo performance could be
+measured only in a development bundle no longer describes new captures. This capability is a way to
+collect evidence, not a broad claim that Codevo matches VS Code.
+
+The contract is deliberately strict about unequal work:
+
+- file search is informational and asymmetric: Codevo completes fuzzy-subsequence ranking, while VS
+  Code resolves a `workspace.findFiles` glob/substring query;
+- the four 20k completion/definition/references/rename rows execute real explicit-interactive
+  provider requests, but their editor-specific cut points prevent a parity ratio;
+- the corresponding 100k rows use neutral shared capability metadata and zero latency samples.
+  Codevo proves its
+  `editing-only` / `full-sync-utf16-limit` tier without invoking semantic providers; VS Code performs
+  one bounded capability probe per provider. This documents the capability contrast, not latency;
+- three clean captures plus one later confirmation are required per editor. The confirmation is
+  reported separately, not folded into the clean median;
+- Codevo must prove a focus-only window, while VS Code truthfully retains unknown native-focus state;
+  focus/render-dependent rows remain informational. Timer-quantization-limited rows are retained but
+  unscoreable;
+- two sequential animation-frame callbacks in Codevo's rendered tab-switch window are
+  phase-dependent render opportunities, not a fixed 33 ms floor. Their time is never subtracted to
+  create an adjusted parity ratio;
+- canonical rows require their exact declared warm-up, sample, and target counts; shortened evidence
+  cannot become a multirun result.
+
+The committed VS Code baseline must be recaptured whenever its embedded contract is older than
+`c7.7-production-v5`. Until a fresh compatible eight-run cohort exists, there are no new C7.7 parity
+numbers to publish. The exact capture and aggregation sequence is documented in
+`docs/PERFORMANCE.md` and `perf/baselines/README.md`.
+
 ## Delivery rules
 
 1. Implement small end-to-end slices with domain tests, workspace/session stale-result guards and UI acceptance tests.

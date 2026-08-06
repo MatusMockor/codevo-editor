@@ -8,6 +8,7 @@ const CAPTURE_CONTRACT_PATH = path.resolve(__dirname, "../../perf/capture-contra
 const CAPTURE_CONTRACT = JSON.parse(fs.readFileSync(CAPTURE_CONTRACT_PATH, "utf8"));
 const MAX_CAPTURE_OUTPUT_BYTES = CAPTURE_CONTRACT.limits.maxCaptureJsonBytes;
 const MAX_METADATA_STRING_BYTES = CAPTURE_CONTRACT.limits.maxMetadataStringBytes;
+const MAX_TIMER_QUANTIZATION_MS = CAPTURE_CONTRACT.limits.maxTimerQuantizationMs;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) {
@@ -36,7 +37,7 @@ const CAPTURE_SCENARIO_BY_ID = new Map(
 
 const CUT_POINT_TYPING = "typing-dispatch";
 const CUT_POINT_TAB_SWITCH = "tab-switch-open-resolved";
-const CUT_POINT_FILE_SEARCH = "file-search-engine";
+const CUT_POINT_FILE_SEARCH = "workspace-find-files-resolved";
 
 const LSP_WARMUP_COUNT = 2;
 const LSP_SAMPLE_COUNT = 10;
@@ -44,6 +45,9 @@ const KIND_TARGET_COUNT = 10;
 const LSP_READINESS_TIMEOUT_MS = 60000;
 const LSP_READINESS_INTERVAL_MS = 500;
 const LSP_READINESS_MIN_COMPLETION_ITEMS = 1000;
+const PROVIDER_CAPABILITY_TIMEOUT_MS = 60000;
+const CAPABILITY_ANCHOR_SCAN_LINE_LIMIT = 256;
+const CAPABILITY_ANCHOR_MAX_LINE_UTF16 = 4096;
 
 const TYPING_WARMUP_KEYSTROKES = 10;
 const TYPING_SAMPLE_KEYSTROKES = 50;
@@ -75,8 +79,9 @@ const TYPING_WINDOW_NOTE =
   "the extension host cannot observe layout, rendering or paint, so no frame cost is included; " +
   "the TypeScript service was proven ready on this document before the first keystroke";
 const FILE_SEARCH_WINDOW_NOTE =
-  "vscode.workspace.findFiles engine query capped at 80 results; this is the file-search engine " +
-  "only and is never the Quick Open picker, its fuzzy ranking, or its list rendering";
+  "vscode.workspace.findFiles glob-substring query capped at 80 results; this measures command " +
+  "resolution only and is informationally asymmetric with Codevo fuzzy-ranked search; it is " +
+  "never the Quick Open picker or its list rendering";
 const COMPLETION_UNBOUNDED_WINDOW_NOTE =
   "global unfiltered completion; VS Code converts the whole ambient symbol table while Codevo " +
   "caps its projection, so this row is permanently non-comparable by result counts";
@@ -97,7 +102,7 @@ const CANONICAL_SCENARIO_IDS = {
   rename: "rename-medium-2k",
 };
 
-const CAPABILITY_SCENARIO_IDS = {
+const LARGE_20K_SCENARIO_IDS = {
   completionBounded: null,
   completionUnbounded: "completion-large-20k",
   definition: "definition-large-20k",
@@ -105,25 +110,43 @@ const CAPABILITY_SCENARIO_IDS = {
   rename: "rename-large-20k",
 };
 
+const LARGE_100K_CAPABILITY_SCENARIO_IDS = {
+  completionBounded: null,
+  completionUnbounded: "completion-large-100k",
+  definition: "definition-large-100k",
+  references: "references-large-100k",
+  rename: "rename-large-100k",
+};
+
 function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function measureTimerQuantizationMs(sampleCount) {
+function assertTimerQuantizationMs(value) {
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_TIMER_QUANTIZATION_MS) {
+    throw new Error(
+      "VS Code timer quantization calibration must produce a finite, strictly positive value " +
+        "of at most " +
+        MAX_TIMER_QUANTIZATION_MS +
+        " ms; observed " +
+        String(value),
+    );
+  }
+  return value;
+}
+
+function measureTimerQuantizationMs(sampleCount, now = () => performance.now()) {
   let minimum = Number.POSITIVE_INFINITY;
-  let previous = performance.now();
+  let previous = now();
   for (let index = 0; index < sampleCount; index += 1) {
-    const current = performance.now();
+    const current = now();
     const delta = current - previous;
     previous = current;
     if (delta > 0 && delta < minimum) {
       minimum = delta;
     }
   }
-  if (minimum === Number.POSITIVE_INFINITY) {
-    return 0;
-  }
-  return minimum;
+  return assertTimerQuantizationMs(minimum);
 }
 
 function percentilesFromSamples(samples) {
@@ -198,6 +221,15 @@ function capabilityResult(id, method, resultCount, languageServerStatus) {
     resultCount,
     languageServerStatus,
     status: "ok",
+  };
+}
+
+function capabilityNoResult(id, message) {
+  return {
+    ...failureResult(id, "no-result", message),
+    warmups: 0,
+    samples: [],
+    targets: [],
   };
 }
 
@@ -295,7 +327,7 @@ async function captureProviderScenario(results, spec) {
       const outcome = await spec.invoke(0);
       const resultCount = spec.countOf(outcome);
       if (resultCount <= 0) {
-        return failureResult(spec.id, "no-result", "provider capability returned no result");
+        return capabilityNoResult(spec.id, "provider capability returned no result");
       }
       return capabilityResult(spec.id, spec.method, resultCount, spec.languageServerStatus);
     }
@@ -511,6 +543,168 @@ function scenarioIdList(ids) {
   ].filter((id) => id !== null);
 }
 
+function scenarioSetIsCapability(ids) {
+  return scenarioIdList(ids).every((id) => scenarioContract(id).comparisonKind === "capability");
+}
+
+async function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function discoverBoundedCapabilityAnchors(document) {
+  const declarations = new Map();
+  let completionPosition = null;
+  let semanticTarget = null;
+  const lineCount = Math.min(document.lineCount, CAPABILITY_ANCHOR_SCAN_LINE_LIMIT);
+  for (let lineNumber = 0; lineNumber < lineCount; lineNumber += 1) {
+    const line = document.lineAt(lineNumber);
+    const lineLength = line.range.end.character;
+    if (completionPosition === null && lineLength === 0) {
+      completionPosition = line.range.start;
+    }
+    if (lineLength > CAPABILITY_ANCHOR_MAX_LINE_UTF16) {
+      continue;
+    }
+    const text = line.text;
+    const declaration = /\bexport type (\w+Kind)\b/.exec(text);
+    if (declaration) {
+      declarations.set(declaration[1], {
+        name: declaration[1],
+        declPosition: new vscode.Position(
+          lineNumber,
+          declaration.index + declaration[0].lastIndexOf(declaration[1]),
+        ),
+      });
+    }
+    if (semanticTarget !== null) {
+      continue;
+    }
+    const reference = /:\s*(\w+Kind)\s*;/.exec(text);
+    const declared = reference ? declarations.get(reference[1]) : null;
+    if (reference && declared) {
+      semanticTarget = {
+        ...declared,
+        refPosition: new vscode.Position(
+          lineNumber,
+          reference.index + reference[0].indexOf(reference[1]),
+        ),
+      };
+    }
+    if (completionPosition !== null && semanticTarget !== null) {
+      break;
+    }
+  }
+  return { completionPosition, semanticTarget };
+}
+
+function invokeBoundedCapabilityProvider(id, operation) {
+  return withTimeout(
+    Promise.resolve().then(operation),
+    PROVIDER_CAPABILITY_TIMEOUT_MS,
+    id + " provider capability observation exceeded " + PROVIDER_CAPABILITY_TIMEOUT_MS + " ms",
+  );
+}
+
+async function captureCapabilityLspScenarios(results, document, uri, filename, ids) {
+  const { completionPosition, semanticTarget } = discoverBoundedCapabilityAnchors(document);
+  const languageServerStatus = "running";
+  if (completionPosition === null) {
+    results.push(
+      capabilityNoResult(
+        ids.completionUnbounded,
+        filename + " contains no bounded blank-line anchor for completion capability",
+      ),
+    );
+  } else {
+    await captureProviderScenario(results, {
+      id: ids.completionUnbounded,
+      method: "executeCompletionItemProvider",
+      languageServerStatus,
+      targets: [positionLabel("global:blank-line", completionPosition)],
+      countOf: completionCount,
+      invoke: async () =>
+        invokeBoundedCapabilityProvider(ids.completionUnbounded, () =>
+          vscode.commands.executeCommand(
+            "vscode.executeCompletionItemProvider",
+            uri,
+            completionPosition,
+          ),
+        ),
+    });
+  }
+
+  if (semanticTarget === null) {
+    for (const id of [ids.definition, ids.references, ids.rename]) {
+      results.push(
+        capabilityNoResult(
+          id,
+          filename +
+            " contains no `*Kind` declaration and field usage within the bounded anchor scan",
+        ),
+      );
+    }
+    return;
+  }
+
+  const target = [semanticTarget.name];
+  await captureProviderScenario(results, {
+    id: ids.definition,
+    method: "executeDefinitionProvider",
+    languageServerStatus,
+    targets: target,
+    countOf: locationsCount,
+    invoke: async () =>
+      invokeBoundedCapabilityProvider(ids.definition, () =>
+        vscode.commands.executeCommand(
+          "vscode.executeDefinitionProvider",
+          uri,
+          semanticTarget.refPosition,
+        ),
+      ),
+  });
+  await captureProviderScenario(results, {
+    id: ids.references,
+    method: "executeReferenceProvider",
+    languageServerStatus,
+    targets: target,
+    countOf: locationsCount,
+    invoke: async () =>
+      invokeBoundedCapabilityProvider(ids.references, () =>
+        vscode.commands.executeCommand(
+          "vscode.executeReferenceProvider",
+          uri,
+          semanticTarget.declPosition,
+        ),
+      ),
+  });
+  await captureProviderScenario(results, {
+    id: ids.rename,
+    method: "executeDocumentRenameProvider",
+    languageServerStatus,
+    targets: target,
+    countOf: renameEditCount,
+    invoke: async () =>
+      invokeBoundedCapabilityProvider(ids.rename, () =>
+        vscode.commands.executeCommand(
+          "vscode.executeDocumentRenameProvider",
+          uri,
+          semanticTarget.declPosition,
+          semanticTarget.name + "Renamed",
+        ),
+      ),
+  });
+}
+
 async function captureLspScenarios(results, root, filename, ids) {
   const uri = vscode.Uri.file(path.join(root, filename));
   let document;
@@ -520,6 +714,12 @@ async function captureLspScenarios(results, root, filename, ids) {
     for (const id of scenarioIdList(ids)) {
       results.push(failureResult(id, "invalid", errorMessage(error)));
     }
+    return;
+  }
+
+  const capabilityOnly = scenarioSetIsCapability(ids);
+  if (capabilityOnly) {
+    await captureCapabilityLspScenarios(results, document, uri, filename, ids);
     return;
   }
 
@@ -639,7 +839,8 @@ async function runLargeFilesScenarios(root) {
   await captureTypingScenario(results, root, "typing-large-20k", "large-20k.ts");
   await captureTypingScenario(results, root, "typing-large-100k", "large-100k.ts");
   await captureLspScenarios(results, root, "medium-2k.ts", CANONICAL_SCENARIO_IDS);
-  await captureLspScenarios(results, root, "large-20k.ts", CAPABILITY_SCENARIO_IDS);
+  await captureLspScenarios(results, root, "large-20k.ts", LARGE_20K_SCENARIO_IDS);
+  await captureLspScenarios(results, root, "large-100k.ts", LARGE_100K_CAPABILITY_SCENARIO_IDS);
   return results;
 }
 
@@ -715,6 +916,7 @@ async function runScenarios() {
 }
 
 function buildEnvironment(timerQuantizationMs) {
+  const validatedTimerQuantizationMs = assertTimerQuantizationMs(timerQuantizationMs);
   return {
     editor: "vscode",
     version: vscode.version,
@@ -734,7 +936,7 @@ function buildEnvironment(timerQuantizationMs) {
     executableIdentity: boundedMetadataString(
       process.env.CODEVO_BASELINE_EXECUTABLE_IDENTITY || "",
     ),
-    timerQuantizationMs,
+    timerQuantizationMs: validatedTimerQuantizationMs,
     platform: process.platform + "-" + process.arch + "-" + os.release(),
     capturedAt: new Date().toISOString(),
   };
@@ -742,23 +944,29 @@ function buildEnvironment(timerQuantizationMs) {
 
 function activate(context) {
   void context;
-  (async () => {
-    const timerQuantizationMs = measureTimerQuantizationMs(TIMER_QUANTIZATION_SAMPLE_COUNT);
-    const environment = buildEnvironment(timerQuantizationMs);
-    let scenarios = [];
+  void (async () => {
     try {
-      scenarios = await runScenarios();
-    } catch (error) {
-      scenarios = [failureResult("harness", "invalid", errorMessage(error))];
-    } finally {
+      const timerQuantizationMs = measureTimerQuantizationMs(TIMER_QUANTIZATION_SAMPLE_COUNT);
+      const environment = buildEnvironment(timerQuantizationMs);
+      let scenarios = [];
+      try {
+        scenarios = await runScenarios();
+      } catch (error) {
+        scenarios = [failureResult("harness", "invalid", errorMessage(error))];
+      }
       const outPath = process.env.CODEVO_BASELINE_OUT;
       if (outPath) {
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
         writeCaptureOutputAtomic(outPath, environment, scenarios);
       }
+    } catch (error) {
+      console.error("VS Code baseline capture failed before publication: " + errorMessage(error));
+    } finally {
       await vscode.commands.executeCommand("workbench.action.closeWindow");
     }
-  })();
+  })().catch((error) => {
+    console.error("VS Code baseline capture shutdown failed: " + errorMessage(error));
+  });
 }
 
 function writeCaptureOutputAtomic(
@@ -811,11 +1019,18 @@ module.exports = {
   activate,
   __test: {
     CAPTURE_CONTRACT_METADATA,
+    activate,
+    assertTimerQuantizationMs,
     buildEnvironment,
     capabilityResult,
+    capabilityNoResult,
+    captureLspScenarios,
+    captureProviderScenario,
     failureResult,
+    measureTimerQuantizationMs,
     scenarioResult,
     serializeCaptureOutput,
+    withTimeout,
     writeCaptureOutputAtomic,
   },
 };

@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { PERF_CAPTURE_CONTRACT_METADATA, captureScenarioContract } from "./perfCaptureContract.mjs";
+import { fileURLToPath, URL } from "node:url";
+import {
+  PERF_CAPTURE_CONTRACT,
+  PERF_CAPTURE_CONTRACT_METADATA,
+  captureScenarioContract,
+} from "./perfCaptureContract.mjs";
 
 export const FIXTURE_VERSION = "large-files@v3:medium-2k+seed2/5/20/100, monorepo@50pkg";
 
@@ -29,15 +33,15 @@ export const CUT_POINTS = Object.freeze({
   TYPING_FRAME: "typing-frame",
   TAB_SWITCH_RENDERED: "tab-switch-rendered",
   PROVIDER_UI_READY: "provider-ui-ready",
-  FILE_SEARCH_ENGINE: "file-search-engine",
+  FILE_SEARCH_ENGINE: "fuzzy-subsequence-ranking-complete",
   QUICKOPEN_UI: "quickopen-ui",
 });
 
 export const LSP_TRACKER_FIXTURE_FILE = "medium-2k.ts";
-export const POLICY_DISABLED_FIXTURE_FILE = "large-20k.ts";
-export const POLICY_DISABLED_REASON =
-  "large-document policy (5000 lines / 256 KiB) disables JS/TS features on this file";
-const CAPABILITY_NOT_CHECKED_REASON = `This run never inspected whether the large-document policy disables JS/TS features on ${POLICY_DISABLED_FIXTURE_FILE}.`;
+export const EXPLICIT_INTERACTIVE_FIXTURE_FILE = "large-20k.ts";
+export const POLICY_DISABLED_FIXTURE_FILE = "large-100k.ts";
+export const POLICY_DISABLED_REASON = "effective JS/TS tier editing-only: full-sync-utf16-limit";
+const CAPABILITY_NOT_CHECKED_REASON = `This run never inspected the effective JS/TS capability tier on ${POLICY_DISABLED_FIXTURE_FILE}.`;
 
 export const LANGUAGE_SERVER_STATUS_KINDS = new Set([
   "crashed",
@@ -47,12 +51,10 @@ export const LANGUAGE_SERVER_STATUS_KINDS = new Set([
   "stopped",
 ]);
 
-export const TAB_SWITCH_FRAME_SETTLE_FLOOR_MS = 33;
-
 export const TAB_SWITCH_WINDOW_NOTE =
-  "activation plus two requestAnimationFrame ticks with the target model asserted active; " +
-  "includes frame production, so the window " +
-  `cannot report below ~${TAB_SWITCH_FRAME_SETTLE_FLOOR_MS} ms at 60 Hz`;
+  "activation through two nested requestAnimationFrame callbacks with the target model " +
+  "asserted active after each callback; provides two render opportunities, but callback " +
+  "phase and timing are scheduler-dependent and imply no fixed latency floor or guaranteed paint";
 
 export const VSCODE_TAB_SWITCH_WINDOW_NOTE =
   "awaits vscode.open resolution only; no frame settlement";
@@ -109,11 +111,18 @@ export const LSP_TRACKER_SCENARIO_IDS = [
   "rename-medium-2k",
 ];
 
-export const CAPABILITY_SCENARIO_IDS = [
+export const EXPLICIT_INTERACTIVE_SCENARIO_IDS = [
   "completion-large-20k",
   "definition-large-20k",
   "references-large-20k",
   "rename-large-20k",
+];
+
+export const CAPABILITY_SCENARIO_IDS = [
+  "completion-large-100k",
+  "definition-large-100k",
+  "references-large-100k",
+  "rename-large-100k",
 ];
 
 export const PERF_SCENARIOS = [
@@ -129,10 +138,14 @@ export const PERF_SCENARIOS = [
   { id: "definition-medium-2k", kind: "bridge", cutPoint: CUT_POINTS.PROVIDER_UI_READY },
   { id: "references-medium-2k", kind: "bridge", cutPoint: CUT_POINTS.PROVIDER_UI_READY },
   { id: "rename-medium-2k", kind: "bridge", cutPoint: CUT_POINTS.PROVIDER_UI_READY },
-  { id: "completion-large-20k", kind: "capability", run: "completion" },
-  { id: "definition-large-20k", kind: "capability", run: "definition" },
-  { id: "references-large-20k", kind: "capability", run: "references" },
-  { id: "rename-large-20k", kind: "capability", run: "rename" },
+  { id: "completion-large-20k", kind: "bridge", cutPoint: CUT_POINTS.PROVIDER_UI_READY },
+  { id: "definition-large-20k", kind: "bridge", cutPoint: CUT_POINTS.PROVIDER_UI_READY },
+  { id: "references-large-20k", kind: "bridge", cutPoint: CUT_POINTS.PROVIDER_UI_READY },
+  { id: "rename-large-20k", kind: "bridge", cutPoint: CUT_POINTS.PROVIDER_UI_READY },
+  { id: "completion-large-100k", kind: "capability", run: "completion" },
+  { id: "definition-large-100k", kind: "capability", run: "definition" },
+  { id: "references-large-100k", kind: "capability", run: "references" },
+  { id: "rename-large-100k", kind: "capability", run: "rename" },
   { id: "file-search-engine", kind: "bridge", cutPoint: CUT_POINTS.FILE_SEARCH_ENGINE },
   { id: "quickopen-ui", kind: "bridge", cutPoint: CUT_POINTS.QUICKOPEN_UI },
   { id: "memory-sample", kind: "memory" },
@@ -555,17 +568,12 @@ function shapeBridgeScenario(
     typeof entry.windowNote === "string"
       ? { ...withStatus, windowNote: entry.windowNote }
       : withStatus;
-  const withFloor =
-    Number.isFinite(entry.frameSettleFloorMs) && entry.frameSettleFloorMs > 0
-      ? { ...withNote, frameSettleFloorMs: entry.frameSettleFloorMs }
-      : withNote;
-
   if (!Array.isArray(entry.switchPaths)) {
-    return withFloor;
+    return withNote;
   }
 
   return {
-    ...withFloor,
+    ...withNote,
     pairs: summarizeTabSwitchPairs(
       entry.switchPaths,
       samples.map((sample) => sample.ms),
@@ -592,13 +600,11 @@ function diagnosticSmokeBridgeEvidence({ bridgeResults, diagnosticSmoke, shapedE
     if (!entry || typeof entry !== "object" || !PERF_SMOKE_SCENARIO_IDS.includes(entry.id)) {
       continue;
     }
-    const contract = captureScenarioContract(entry.id);
     if (
       evidence.has(entry.id) ||
-      contract === null ||
       !Array.isArray(entry.samples) ||
-      entry.samples.length < contract.minSamples ||
-      entry.samples.length > contract.maxSamples ||
+      entry.samples.length < 1 ||
+      entry.samples.length > PERF_CAPTURE_CONTRACT.limits.maxSamplesPerScenario ||
       !denseArrayEvery(entry.samples, isFiniteNonnegativeNumber)
     ) {
       return new Map();
@@ -673,14 +679,21 @@ function exactLanguageServerStatus(status) {
 
 function shapeCapabilityScenario(scenario, reportedStatusById) {
   const reported = reportedStatusById.get(scenario.id);
+  const observation = {
+    id: scenario.id,
+    unit: "observation",
+    warmups: 0,
+    targets: [],
+    samples: [],
+    method: "metrics-derived-effective-tier",
+  };
 
   if (reported) {
-    return { id: scenario.id, unit: "ms", status: reported.status, reason: reported.reason };
+    return { ...observation, status: reported.status, reason: reported.reason };
   }
 
   return {
-    id: scenario.id,
-    unit: "ms",
+    ...observation,
     status: SCENARIO_STATUS.NOT_RUN,
     reason: CAPABILITY_NOT_CHECKED_REASON,
   };
@@ -700,13 +713,14 @@ export function inPagePerfRunnerSource() {
   const BRIDGE_OPERATION_TIMEOUT_MS = 30000;
   const TYPING_LS_READY_TIMEOUT_MS = 60000;
   const LSP_FIXTURE_FILE = ${JSON.stringify(LSP_TRACKER_FIXTURE_FILE)};
+  const EXPLICIT_INTERACTIVE_FIXTURE_FILE = ${JSON.stringify(EXPLICIT_INTERACTIVE_FIXTURE_FILE)};
   const POLICY_FIXTURE_FILE = ${JSON.stringify(POLICY_DISABLED_FIXTURE_FILE)};
   const POLICY_DISABLED_REASON = ${JSON.stringify(POLICY_DISABLED_REASON)};
   const LSP_SCENARIO_IDS = ${JSON.stringify(LSP_TRACKER_SCENARIO_IDS)};
+  const EXPLICIT_INTERACTIVE_SCENARIO_IDS = ${JSON.stringify(EXPLICIT_INTERACTIVE_SCENARIO_IDS)};
   const CAPABILITY_SCENARIO_IDS = ${JSON.stringify(CAPABILITY_SCENARIO_IDS)};
   const CUT_POINTS = ${JSON.stringify(CUT_POINTS)};
   const TAB_SWITCH_WINDOW_NOTE = ${JSON.stringify(TAB_SWITCH_WINDOW_NOTE)};
-  const TAB_SWITCH_FRAME_SETTLE_FLOOR_MS = ${JSON.stringify(TAB_SWITCH_FRAME_SETTLE_FLOOR_MS)};
   const TYPING_DISPATCH_WINDOW_NOTE = ${JSON.stringify(TYPING_DISPATCH_WINDOW_NOTE)};
   const TYPING_FRAME_WINDOW_NOTE = ${JSON.stringify(TYPING_FRAME_WINDOW_NOTE)};
   const COMPLETION_UNBOUNDED_WINDOW_NOTE = ${JSON.stringify(COMPLETION_UNBOUNDED_WINDOW_NOTE)};
@@ -785,7 +799,6 @@ export function inPagePerfRunnerSource() {
     warmups: largeFilePaths.length,
     targets: switchPaths.map((path) => path.split("/").pop()),
     windowNote: TAB_SWITCH_WINDOW_NOTE,
-    frameSettleFloorMs: TAB_SWITCH_FRAME_SETTLE_FLOOR_MS,
     switchPaths: [...switchPaths],
     previousSwitchPath: largeFilePaths[largeFilePaths.length - 1],
     samples: [...tabSwitchMeasurement.durationsMs],
@@ -1015,16 +1028,22 @@ export function inPagePerfRunnerSource() {
       });
 
       reportProgress("measure references latency");
-      await runProviderBatch({
+      await runMediumProviderBatch({
         id: "references-medium-2k",
         kind: "references",
         languageServerStatus,
         targets: kindNames,
-        invoke: async (index) => {
+        invoke: async (index, authority, batch) => {
           const triggered = await withinDeadline(
-            perf.runReferencesProbe(positionAtOffset(lspSource, kindTargets[index].declOffset)),
+            perf.runReferencesProbe(
+              positionAtOffset(lspSource, kindTargets[index].declOffset),
+              authority,
+              batch,
+            ),
             BRIDGE_OPERATION_TIMEOUT_MS,
             "references provider probe for " + kindTargets[index].name,
+            true,
+            () => perf.cancelProviderProbeBatch(batch),
           );
 
           if (!triggered) {
@@ -1038,19 +1057,23 @@ export function inPagePerfRunnerSource() {
 
       reportProgress("measure rename latency");
       const renameBaseline = qa.getValue() || "";
-      await runProviderBatch({
+      await runMediumProviderBatch({
         id: "rename-medium-2k",
         kind: "rename",
         languageServerStatus,
         targets: kindNames,
-        invoke: async (index) => {
+        invoke: async (index, authority, batch) => {
           const renamed = await withinDeadline(
             perf.runRenameProbe(
               positionAtOffset(lspSource, kindTargets[index].declOffset),
               kindTargets[index].name + "Renamed",
+              authority,
+              batch,
             ),
             BRIDGE_OPERATION_TIMEOUT_MS,
             "rename provider probe for " + kindTargets[index].name,
+            true,
+            () => perf.cancelProviderProbeBatch(batch),
           );
 
           if (!renamed) {
@@ -1079,10 +1102,53 @@ export function inPagePerfRunnerSource() {
     }
   }
 
+  async function runMediumProviderBatch(spec) {
+    const authority = perf.captureActiveDocumentAuthority?.(lspFixturePath);
+    const batch = authority ? perf.beginProviderProbeBatch?.(authority) : null;
+    if (!authority || !batch) {
+      scenarioStatuses.push({
+        id: spec.id,
+        status: "not-run",
+        reason:
+          "The exact document authority and provider batch could not be acquired for " +
+          LSP_FIXTURE_FILE +
+          ", so " +
+          spec.kind +
+          " measurement was not started.",
+      });
+      return false;
+    }
+    try {
+      return await runProviderBatch({
+        ...spec,
+        fixtureFile: LSP_FIXTURE_FILE,
+        invoke: (index) => spec.invoke(index, authority, batch),
+      });
+    } finally {
+      perf.cancelProviderProbeBatch(batch);
+    }
+  }
+
+  const explicitFixturePath = joinPath(options.largeFilesRoot, EXPLICIT_INTERACTIVE_FIXTURE_FILE);
+  reportProgress("measure explicit large-file providers");
+  const explicitFixtureOpened = await openFile(qa, explicitFixturePath);
+  const explicitAuthority = explicitFixtureOpened
+    ? perf.captureActiveDocumentAuthority?.(explicitFixturePath)
+    : null;
+  const explicitCapability = explicitAuthority
+    ? perf.getJavaScriptTypeScriptDocumentCapability?.(explicitAuthority)
+    : null;
+  await measureExplicitLargeFileProviders(explicitCapability, explicitAuthority);
+
   const policyFixturePath = joinPath(options.largeFilesRoot, POLICY_FIXTURE_FILE);
-  reportProgress("inspect large-document policy");
+  reportProgress("inspect editing-only large-file capability");
   const policyFixtureOpened = await openFile(qa, policyFixturePath);
-  recordCapabilityStatuses(policyFixtureOpened ? perf.getLargeSmartDocumentStatus() : null);
+  const policyAuthority = policyFixtureOpened
+    ? perf.captureActiveDocumentAuthority?.(policyFixturePath)
+    : null;
+  recordCapabilityStatuses(
+    policyAuthority ? perf.getJavaScriptTypeScriptDocumentCapability?.(policyAuthority) : null,
+  );
 
   reportProgress("open monorepo workspace");
   const monorepoRootOpened = await ensureWorkspaceRoot(
@@ -1172,23 +1238,166 @@ export function inPagePerfRunnerSource() {
     return false;
   }
 
-  function recordCapabilityStatuses(status) {
-    if (!status) {
-      pushCapabilityStatus("not-run", POLICY_FIXTURE_FILE + " could not be opened, so its large-document policy verdict was never observed.");
+  async function measureExplicitLargeFileProviders(capability, authority) {
+    const pushAll = (status, reason) => {
+      for (const id of EXPLICIT_INTERACTIVE_SCENARIO_IDS) {
+        scenarioStatuses.push({ id, status, reason });
+      }
+    };
+    if (!explicitFixtureOpened || !authority) {
+      pushAll("not-run", EXPLICIT_INTERACTIVE_FIXTURE_FILE + " could not bind an exact active document authority, so its explicit provider tier was never observed.");
+      return;
+    }
+    if (!capability || capability.tier !== "explicit-interactive") {
+      pushAll(
+        "not-run",
+        EXPLICIT_INTERACTIVE_FIXTURE_FILE + " did not expose the required explicit-interactive JS/TS tier; observed " + String(capability && capability.tier || "no capability") + " (" + String(capability && capability.reason || "no reason") + ").",
+      );
+      return;
+    }
+    if (!(await waitForRunningLanguageServer(TYPING_LS_READY_TIMEOUT_MS))) {
+      pushAll("not-run", "The JS/TS language server did not reach running before explicit provider measurement on " + EXPLICIT_INTERACTIVE_FIXTURE_FILE + ".");
+      return;
+    }
+    if (!(await waitForExplicitLargeFileReadiness(authority))) {
+      pushAll("not-run", "An explicit completion never produced a UI-ready result on the active " + EXPLICIT_INTERACTIVE_FIXTURE_FILE + " model, so its synchronization/readiness was not proven.");
       return;
     }
 
-    if (status.reason === "no-active-model") {
-      pushCapabilityStatus("not-run", POLICY_FIXTURE_FILE + " was not the active model when the large-document policy verdict was read.");
+    const languageServerStatus = readLanguageServerStatusKind(perf);
+    const completionPosition = { lineNumber: 2, column: 12 };
+    const symbolPosition = { lineNumber: 2, column: 7 };
+    const completionTargets = repeatedTargets("global:line-2-end@2:12", LSP_SAMPLE_COUNT);
+    const symbolTargets = repeatedTargets("imported:assert@2:7", LSP_SAMPLE_COUNT);
+    const invoke = async (operation, position, batch, newName) => {
+      const method = perf[operation];
+      const result = await withinDeadline(
+        newName === undefined
+          ? method(position, authority, batch)
+          : method(position, newName, authority, batch),
+        BRIDGE_OPERATION_TIMEOUT_MS,
+        operation + " on " + EXPLICIT_INTERACTIVE_FIXTURE_FILE,
+        true,
+        () => perf.cancelProviderProbeBatch(batch),
+      );
+      if (!result) {
+        throw new Error(operation + " was unavailable or returned no result");
+      }
+    };
+
+    reportProgress("measure completion latency on " + EXPLICIT_INTERACTIVE_FIXTURE_FILE);
+    await runExplicitProviderBatch({
+      id: "completion-large-20k",
+      fixtureFile: EXPLICIT_INTERACTIVE_FIXTURE_FILE,
+      kind: "completion",
+      languageServerStatus,
+      targets: completionTargets,
+      invoke: (_index, batch) => invoke("runCompletionProbe", completionPosition, batch),
+    });
+    reportProgress("measure definition latency on " + EXPLICIT_INTERACTIVE_FIXTURE_FILE);
+    await runExplicitProviderBatch({
+      id: "definition-large-20k",
+      fixtureFile: EXPLICIT_INTERACTIVE_FIXTURE_FILE,
+      kind: "definition",
+      languageServerStatus,
+      targets: symbolTargets,
+      invoke: (_index, batch) => invoke("runDefinitionProbe", symbolPosition, batch),
+    });
+    reportProgress("measure references latency on " + EXPLICIT_INTERACTIVE_FIXTURE_FILE);
+    await runExplicitProviderBatch({
+      id: "references-large-20k",
+      fixtureFile: EXPLICIT_INTERACTIVE_FIXTURE_FILE,
+      kind: "references",
+      languageServerStatus,
+      targets: symbolTargets,
+      invoke: (_index, batch) => invoke("runReferencesProbe", symbolPosition, batch),
+    });
+    reportProgress("measure rename latency on " + EXPLICIT_INTERACTIVE_FIXTURE_FILE);
+    await runExplicitProviderBatch({
+      id: "rename-large-20k",
+      fixtureFile: EXPLICIT_INTERACTIVE_FIXTURE_FILE,
+      kind: "rename",
+      languageServerStatus,
+      targets: symbolTargets,
+      invoke: (index, batch) =>
+        invoke("runRenameProbe", symbolPosition, batch, "assertPerf" + index),
+    });
+
+    async function runExplicitProviderBatch(spec) {
+      const batch = perf.beginProviderProbeBatch(authority);
+      if (!batch) {
+        scenarioStatuses.push({
+          id: spec.id,
+          status: "not-run",
+          reason: "The exact provider batch authority could not be acquired for " + EXPLICIT_INTERACTIVE_FIXTURE_FILE + ".",
+        });
+        return false;
+      }
+      try {
+        return await runProviderBatch({
+          ...spec,
+          invoke: (index) => spec.invoke(index, batch),
+        });
+      } finally {
+        perf.cancelProviderProbeBatch(batch);
+      }
+    }
+  }
+
+  async function waitForExplicitLargeFileReadiness(authority) {
+    const deadline = Date.now() + READINESS_TIMEOUT_MS;
+    const position = { lineNumber: 2, column: 12 };
+    while (Date.now() < deadline) {
+      const batch = perf.beginProviderProbeBatch(authority);
+      if (!batch) return false;
+      perf.clearProviderProbeSamples();
+      try {
+        try {
+          const accepted = await withinDeadline(
+            perf.runCompletionProbe(position, authority, batch),
+            Math.min(BRIDGE_OPERATION_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+            "explicit completion readiness on " + EXPLICIT_INTERACTIVE_FIXTURE_FILE,
+            false,
+            () => perf.cancelProviderProbeBatch(batch),
+          );
+          if (!accepted) {
+            perf.clearProviderProbeSamples();
+            await sleep(READINESS_POLL_MS);
+            continue;
+          }
+        } catch {
+          // A starting server may reject the first explicit request. A sample
+          // recorded before that rejection is not accepted as readiness proof.
+          perf.clearProviderProbeSamples();
+          await sleep(READINESS_POLL_MS);
+          continue;
+        }
+      } finally {
+        perf.cancelProviderProbeBatch(batch);
+      }
+      const samples = perf.getProviderProbeSamples("completion");
+      if (samples.length === 1 && samples[0].resultCount > 0) {
+        perf.clearProviderProbeSamples();
+        perf.clearLatencyMetrics();
+        return true;
+      }
+      await sleep(READINESS_POLL_MS);
+    }
+    perf.clearProviderProbeSamples();
+    perf.clearLatencyMetrics();
+    return false;
+  }
+
+  function recordCapabilityStatuses(capability) {
+    if (!capability) {
+      pushCapabilityStatus("not-run", POLICY_FIXTURE_FILE + " could not be opened or exposed no effective JS/TS capability tier.");
       return;
     }
-
-    if (status.degraded) {
+    if (capability.tier === "editing-only" && capability.reason === "full-sync-utf16-limit") {
       pushCapabilityStatus("policy-disabled", POLICY_DISABLED_REASON);
       return;
     }
-
-    pushCapabilityStatus("not-run", "The large-document policy no longer disables JS/TS features on " + POLICY_FIXTURE_FILE + " (" + status.lineCount + " lines / " + status.utf16Length + " chars against limits of " + status.lineLimit + " lines / " + status.characterLimit + " chars); re-enable a real measurement for this file.");
+    pushCapabilityStatus("not-run", POLICY_FIXTURE_FILE + " did not expose the required editing-only/full-sync-utf16-limit capability; observed " + String(capability.tier) + " (" + String(capability.reason) + ").");
   }
 
   function pushCapabilityStatus(status, reason) {
@@ -1236,6 +1445,7 @@ export function inPagePerfRunnerSource() {
   }
 
   async function runProviderBatch(spec) {
+    const fixtureFile = spec.fixtureFile || LSP_FIXTURE_FILE;
     const abandonBatchWithStatus = (status, reason) => {
       scenarioStatuses.push({ id: spec.id, status, reason });
       perf.clearProviderProbeSamples();
@@ -1267,25 +1477,25 @@ export function inPagePerfRunnerSource() {
       const before = perf.getProviderProbeSamples(spec.kind).length;
 
       if (before !== index) {
-        return abandonBatchWithStatus("invalid", "The " + spec.kind + " batch for " + LSP_FIXTURE_FILE + " observed " + before + " probe sample(s) before invocation " + (index + 1) + " where exactly " + index + " were expected, so per-target attribution can no longer be trusted.");
+        return abandonBatchWithStatus("invalid", "The " + spec.kind + " batch for " + fixtureFile + " observed " + before + " probe sample(s) before invocation " + (index + 1) + " where exactly " + index + " were expected, so per-target attribution can no longer be trusted.");
       }
 
       try {
         await spec.invoke(index);
       } catch (error) {
-        return abandonBatch("The " + spec.kind + " batch for " + LSP_FIXTURE_FILE + " stopped after " + index + " of " + LSP_SAMPLE_COUNT + " samples: " + String(error && error.message || error));
+        return abandonBatch("The " + spec.kind + " batch for " + fixtureFile + " stopped after " + index + " of " + LSP_SAMPLE_COUNT + " samples: " + String(error && error.message || error));
       }
 
       const observed = await waitForProbeSample(spec.kind, before, SAMPLE_TIMEOUT_MS);
 
       if (!observed) {
-        return abandonBatch("The " + spec.kind + " batch for " + LSP_FIXTURE_FILE + " stopped after " + index + " of " + LSP_SAMPLE_COUNT + " samples because an attempt produced no UI-ready sample within " + SAMPLE_TIMEOUT_MS + " ms.");
+        return abandonBatch("The " + spec.kind + " batch for " + fixtureFile + " stopped after " + index + " of " + LSP_SAMPLE_COUNT + " samples because an attempt produced no UI-ready sample within " + SAMPLE_TIMEOUT_MS + " ms.");
       }
 
       const after = perf.getProviderProbeSamples(spec.kind).length;
 
       if (after !== before + 1) {
-        return abandonBatchWithStatus("invalid", "Invocation " + (index + 1) + " of the " + spec.kind + " batch for " + LSP_FIXTURE_FILE + " recorded " + (after - before) + " probe sample(s); exactly one UI-ready sample per invocation is required for per-target attribution.");
+        return abandonBatchWithStatus("invalid", "Invocation " + (index + 1) + " of the " + spec.kind + " batch for " + fixtureFile + " recorded " + (after - before) + " probe sample(s); exactly one UI-ready sample per invocation is required for per-target attribution.");
       }
     }
 
@@ -1297,7 +1507,7 @@ export function inPagePerfRunnerSource() {
       scenarioStatuses.push({
         id: spec.id,
         status: "invalid",
-        reason: "The " + spec.kind + " batch for " + LSP_FIXTURE_FILE + " ended with " + probeSamples.length + " probe sample(s) instead of exactly " + LSP_SAMPLE_COUNT + ", so per-target attribution cannot be trusted.",
+        reason: "The " + spec.kind + " batch for " + fixtureFile + " ended with " + probeSamples.length + " probe sample(s) instead of exactly " + LSP_SAMPLE_COUNT + ", so per-target attribution cannot be trusted.",
       });
       return false;
     }
@@ -1569,7 +1779,13 @@ export function inPagePerfRunnerSource() {
     console.info("PERF STAGE", stage);
   }
 
-  async function withinDeadline(promise, timeoutMs, label, throwOnTimeout = true) {
+  async function withinDeadline(
+    promise,
+    timeoutMs,
+    label,
+    throwOnTimeout = true,
+    onTimeout = null,
+  ) {
     let timer = null;
     const framesAtStart = diagnosticFrameTicks;
     const timedOut = Symbol("timed-out");
@@ -1581,6 +1797,7 @@ export function inPagePerfRunnerSource() {
     ]);
     if (timer !== null) clearTimeout(timer);
     if (outcome !== timedOut) return outcome;
+    if (typeof onTimeout === "function") onTimeout();
     const message =
       label + " did not settle within " + timeoutMs + " ms. [diag: rAF frames during wait=" +
       (diagnosticFrameTicks - framesAtStart) + ", " + visibilityDiagnostics() + "]";

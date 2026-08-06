@@ -20,6 +20,7 @@ const environment = {
   hostPlatform: "darwin",
   hostArch: "arm64",
   osRelease: "25.0.0",
+  timerQuantizationMs: 0.001,
   launchState: "cold-fresh-profile",
   workspaceState: "fixture-clean",
   capturedAt: "2026-08-04T00:00:00.000Z",
@@ -69,15 +70,75 @@ function completeScenarios(editor, overridesById = new Map()) {
 describe("production capture contract", () => {
   it("loads one bounded canonical contract with a stable sha256 identity", () => {
     expect(PERF_CAPTURE_CONTRACT.schemaVersion).toBe(1);
+    expect(PERF_CAPTURE_CONTRACT.version).toBe("c7.7-production-v5");
     expect(PERF_CAPTURE_CONTRACT.scenarios.length).toBeLessThanOrEqual(
       PERF_CAPTURE_CONTRACT.limits.maxScenarios,
     );
     expect(PERF_CAPTURE_CONTRACT_SHA256).toMatch(/^[a-f\d]{64}$/);
     expect(captureScenarioContract("file-search-engine")).toMatchObject({
-      cutPointByEditor: { codevo: "file-search-engine", vscode: "file-search-engine" },
+      comparisonKind: "informational-asymmetric",
+      cutPointByEditor: {
+        codevo: "fuzzy-subsequence-ranking-complete",
+        vscode: "workspace-find-files-resolved",
+      },
       cacheState: "warm-explicit",
+      workScope: "asymmetric-codevo-fuzzy-ranked-vs-vscode-glob-substring",
     });
   });
+
+  it("models 20k provider latency separately from the 100k editing-only tier", () => {
+    for (const operation of ["completion", "definition", "references", "rename"]) {
+      expect(captureScenarioContract(`${operation}-large-20k`)).toMatchObject({
+        comparisonKind: "informational-asymmetric",
+        cutPointByEditor: {
+          codevo: "provider-ui-ready",
+          vscode: "provider-command-resolved",
+        },
+        cacheState: "warm-explicit",
+        workScope: "editor-specific-provider-result",
+        minSamples: 10,
+        maxSamples: 10,
+        requiredWarmups: 2,
+        requiredTargets: 10,
+      });
+      expect(captureScenarioContract(`${operation}-large-100k`)).toMatchObject({
+        comparisonKind: "capability",
+        cutPointByEditor: {
+          codevo: "capability-observation",
+          vscode: "capability-observation",
+        },
+        cacheState: "capability-observation",
+        workScope: "editor-specific-large-document-capability",
+        minSamples: 0,
+        maxSamples: 0,
+        requiredWarmups: 0,
+        requiredTargets: 0,
+      });
+    }
+  });
+
+  it.each(["c7.7-production-v4", "c7.7-production-v3", "c7.6-production-v1"])(
+    "rejects legacy capture identity %s fail-closed",
+    (version) => {
+      const reasons = validateCaptureRun(
+        {
+          ...runOf(completeScenarios("vscode")),
+          captureContract: {
+            version,
+            sha256: "0".repeat(64),
+          },
+        },
+        { expectedEditor: "vscode" },
+      );
+
+      expect(reasons).toContain(
+        `captureContract.version mismatch: expected "c7.7-production-v5", got ${JSON.stringify(version)}.`,
+      );
+      expect(reasons).toContain(
+        "captureContract.sha256 does not match the canonical capture contract.",
+      );
+    },
+  );
 
   it("accepts a canonical production-instrumented scenario", () => {
     const scenario = captureScenarioContract("file-search-engine");
@@ -88,10 +149,11 @@ describe("production capture contract", () => {
       comparisonKind: scenario.comparisonKind,
       cacheState: scenario.cacheState,
       workScope: scenario.workScope,
-      samples: [{ ms: 1, resultCount: 2 }],
+      warmups: 2,
+      samples: Array.from({ length: 10 }, () => ({ ms: 1, resultCount: 2 })),
       p50: 1,
       p95: 1,
-      targets: ["index"],
+      targets: Array.from({ length: 10 }, () => "index"),
     };
     expect(
       validateCaptureRun(runOf(completeScenarios("codevo", new Map([[scenario.id, measured]]))), {
@@ -115,6 +177,189 @@ describe("production capture contract", () => {
       { expectedEditor: "codevo" },
     );
     expect(reasons.join(" ")).toContain(reason);
+  });
+
+  it.each([undefined, 0, -1, Number.POSITIVE_INFINITY, 1000.001])(
+    "rejects untrusted timer quantization %s fail-closed",
+    (timerQuantizationMs) => {
+      const reasons = validateCaptureRun(
+        {
+          ...runOf(),
+          environment: { ...environment, timerQuantizationMs },
+        },
+        { expectedEditor: "codevo" },
+      );
+
+      expect(reasons).toContain(
+        "environment.timerQuantizationMs must be finite, strictly positive, and at most 1000 ms.",
+      );
+    },
+  );
+
+  it("rejects an underwarmed one-sample successful baseline before aggregation", () => {
+    const contract = captureScenarioContract("completion-bounded");
+    const forged = {
+      id: contract.id,
+      status: "ok",
+      cutPoint: contract.cutPointByEditor.vscode,
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+      warmups: 1,
+      samples: [{ ms: 1, resultCount: 1 }],
+      targets: ["forged"],
+    };
+    const reasons = validateCaptureRun(
+      runOf(completeScenarios("vscode", new Map([[contract.id, forged]]))),
+      { expectedEditor: "vscode" },
+    );
+
+    expect(reasons).toContain(
+      'Scenario "completion-bounded" must record exactly 10 samples for its completed protocol observation, got 1.',
+    );
+    expect(reasons).toContain(
+      'Scenario "completion-bounded" must record exactly 2 warmups for its completed protocol observation, got 1.',
+    );
+    expect(reasons).toContain(
+      'Scenario "completion-bounded" must record exactly 10 targets for its completed protocol observation, got 1.',
+    );
+  });
+
+  it("requires capability success rows to record exact zero protocol counts", () => {
+    const contract = captureScenarioContract("completion-large-100k");
+    const forged = {
+      id: contract.id,
+      status: "ok",
+      cutPoint: contract.cutPointByEditor.vscode,
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+      warmups: 1,
+      samples: [{ ms: 1, resultCount: 1 }],
+      targets: ["forged"],
+    };
+    const reasons = validateCaptureRun(
+      runOf(completeScenarios("vscode", new Map([[contract.id, forged]]))),
+      { expectedEditor: "vscode" },
+    ).join(" ");
+
+    expect(reasons).toContain("above its 0 sample bound");
+    expect(reasons).toContain("exactly 0 warmups");
+    expect(reasons).toContain("exactly 0 targets");
+  });
+
+  it("rejects a capability success row that omits its explicit zero protocol evidence", () => {
+    const contract = captureScenarioContract("completion-large-100k");
+    const forged = {
+      id: contract.id,
+      status: "ok",
+      cutPoint: contract.cutPointByEditor.vscode,
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+    };
+    const reasons = validateCaptureRun(
+      runOf(completeScenarios("vscode", new Map([[contract.id, forged]]))),
+      { expectedEditor: "vscode" },
+    );
+
+    expect(reasons).toContain(
+      'Scenario "completion-large-100k" completed protocol observation must explicitly record warmups, samples, and targets.',
+    );
+  });
+
+  it("rejects own-but-undefined protocol fields on direct object validation", () => {
+    const contract = captureScenarioContract("completion-large-100k");
+    const forged = {
+      id: contract.id,
+      status: "ok",
+      cutPoint: contract.cutPointByEditor.vscode,
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+      warmups: undefined,
+      samples: undefined,
+      targets: undefined,
+    };
+    const reasons = validateCaptureRun(
+      runOf(completeScenarios("vscode", new Map([[contract.id, forged]]))),
+      { expectedEditor: "vscode" },
+    );
+
+    expect(reasons).toContain(
+      'Scenario "completion-large-100k" completed protocol observation must explicitly record warmups, samples, and targets.',
+    );
+  });
+
+  it.each([
+    ["codevo", "policy-disabled"],
+    ["vscode", "no-result"],
+  ])("rejects forged 99-count %s capability observation with status %s", (editor, status) => {
+    const contract = captureScenarioContract("completion-large-100k");
+    const forged = {
+      id: contract.id,
+      status,
+      reason: "bounded capability observation",
+      cutPoint: contract.cutPointByEditor[editor],
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+      warmups: 99,
+      samples: [],
+      targets: Array.from({ length: 99 }, () => "forged"),
+    };
+    const reasons = validateCaptureRun(
+      runOf(completeScenarios(editor, new Map([[contract.id, forged]]))),
+      { expectedEditor: editor },
+    ).join(" ");
+
+    expect(reasons).toContain("exactly 0 warmups for its completed protocol observation");
+    expect(reasons).toContain("exactly 0 targets for its completed protocol observation");
+  });
+
+  it("requires an explicit zero protocol on a capability no-result observation", () => {
+    const contract = captureScenarioContract("completion-large-100k");
+    const noResult = {
+      id: contract.id,
+      status: "no-result",
+      error: "provider capability returned no result",
+      cutPoint: contract.cutPointByEditor.vscode,
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+    };
+    const reasons = validateCaptureRun(
+      runOf(completeScenarios("vscode", new Map([[contract.id, noResult]]))),
+      { expectedEditor: "vscode" },
+    );
+
+    expect(reasons).toContain(
+      'Scenario "completion-large-100k" completed protocol observation must explicitly record warmups, samples, and targets.',
+    );
+  });
+
+  it("accepts the explicit zero protocol for a policy-disabled capability observation", () => {
+    const contract = captureScenarioContract("completion-large-100k");
+    const observation = {
+      id: contract.id,
+      status: "policy-disabled",
+      reason: "effective JS/TS tier editing-only: full-sync-utf16-limit",
+      cutPoint: contract.cutPointByEditor.codevo,
+      comparisonKind: contract.comparisonKind,
+      cacheState: contract.cacheState,
+      workScope: contract.workScope,
+      warmups: 0,
+      samples: [],
+      targets: [],
+      method: "metrics-derived-effective-tier",
+    };
+
+    expect(
+      validateCaptureRun(
+        runOf(completeScenarios("codevo", new Map([[contract.id, observation]]))),
+        { expectedEditor: "codevo" },
+      ),
+    ).toEqual([]);
   });
 
   it("rejects unknown and duplicate scenario ids", () => {
@@ -191,7 +436,7 @@ describe("production capture contract", () => {
     expect(reasons).toContain("cutPoint");
     expect(reasons).toContain("cacheState");
     expect(reasons).toContain("workScope");
-    expect(reasons).toContain("above its 20 sample bound");
+    expect(reasons).toContain("above its 10 sample bound");
   });
 
   it("rejects an implicit status and enforces the scenario maximum without status ok", () => {
@@ -210,7 +455,7 @@ describe("production capture contract", () => {
     ).join(" ");
 
     expect(reasons).toContain("must record one explicit closed status");
-    expect(reasons).toContain("above its 20 sample bound");
+    expect(reasons).toContain("above its 10 sample bound");
   });
 
   it("rejects an altered contract identity and a scenario count above the global bound", () => {
@@ -272,6 +517,7 @@ describe("production capture contract", () => {
 
   it.each([
     ["scenario", { extra: true }],
+    ["legacy frame floor", { frameSettleFloorMs: 33 }],
     ["sample", { samples: [{ ms: 1, extra: true }], p50: 1, p95: 1 }],
     ["retainedCounts", { retainedCounts: { editors: 1, models: 1, extra: true } }],
     ["memorySample", { memorySample: { usedJsHeapBytes: 1, extra: true } }],

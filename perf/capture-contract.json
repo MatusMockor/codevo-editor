@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "c7.6-production-v1",
+  "version": "c7.7-production-v5",
   "requiredEnvironment": {
     "bundleMode": "production",
     "captureFlavor": "production-instrumented",
@@ -12,6 +12,7 @@
     "maxScenarios": 32,
     "maxSamplesPerScenario": 100,
     "maxTargetsPerScenario": 100,
+    "maxTimerQuantizationMs": 1000,
     "maxMetadataStringBytes": 512
   },
   "scenarios": [
@@ -21,8 +22,10 @@
       "cutPointByEditor": { "codevo": "tab-switch-rendered", "vscode": "tab-switch-open-resolved" },
       "cacheState": "warm-explicit",
       "workScope": "editor-specific-tab-activation",
-      "minSamples": 1,
-      "maxSamples": 60
+      "minSamples": 30,
+      "maxSamples": 30,
+      "requiredWarmups": 5,
+      "requiredTargets": 30
     },
     {
       "id": "typing-large-5k",
@@ -30,8 +33,10 @@
       "cutPointByEditor": { "codevo": "typing-dispatch", "vscode": "typing-dispatch" },
       "cacheState": "warm-explicit",
       "workScope": "document-change-dispatch",
-      "minSamples": 1,
-      "maxSamples": 100
+      "minSamples": 50,
+      "maxSamples": 50,
+      "requiredWarmups": 10,
+      "requiredTargets": 50
     },
     {
       "id": "typing-large-5k-frame",
@@ -39,8 +44,10 @@
       "cutPointByEditor": { "codevo": "typing-frame", "vscode": null },
       "cacheState": "warm-explicit",
       "workScope": "second-animation-frame",
-      "minSamples": 1,
-      "maxSamples": 100
+      "minSamples": 50,
+      "maxSamples": 50,
+      "requiredWarmups": 10,
+      "requiredTargets": 50
     },
     {
       "id": "typing-large-20k",
@@ -48,8 +55,10 @@
       "cutPointByEditor": { "codevo": "typing-dispatch", "vscode": "typing-dispatch" },
       "cacheState": "warm-explicit",
       "workScope": "document-change-dispatch",
-      "minSamples": 1,
-      "maxSamples": 100
+      "minSamples": 50,
+      "maxSamples": 50,
+      "requiredWarmups": 10,
+      "requiredTargets": 50
     },
     {
       "id": "typing-large-20k-frame",
@@ -57,8 +66,10 @@
       "cutPointByEditor": { "codevo": "typing-frame", "vscode": null },
       "cacheState": "warm-explicit",
       "workScope": "second-animation-frame",
-      "minSamples": 1,
-      "maxSamples": 100
+      "minSamples": 50,
+      "maxSamples": 50,
+      "requiredWarmups": 10,
+      "requiredTargets": 50
     },
     {
       "id": "typing-large-100k",
@@ -66,8 +77,10 @@
       "cutPointByEditor": { "codevo": "typing-dispatch", "vscode": "typing-dispatch" },
       "cacheState": "warm-explicit",
       "workScope": "document-change-dispatch",
-      "minSamples": 1,
-      "maxSamples": 100
+      "minSamples": 50,
+      "maxSamples": 50,
+      "requiredWarmups": 10,
+      "requiredTargets": 50
     },
     {
       "id": "typing-large-100k-frame",
@@ -75,8 +88,10 @@
       "cutPointByEditor": { "codevo": "typing-frame", "vscode": null },
       "cacheState": "warm-explicit",
       "workScope": "second-animation-frame",
-      "minSamples": 1,
-      "maxSamples": 100
+      "minSamples": 50,
+      "maxSamples": 50,
+      "requiredWarmups": 10,
+      "requiredTargets": 50
     },
     {
       "id": "completion-bounded",
@@ -84,8 +99,10 @@
       "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
       "cacheState": "warm-explicit",
       "workScope": "editor-specific-provider-result",
-      "minSamples": 1,
-      "maxSamples": 20
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "completion-unbounded",
@@ -93,8 +110,10 @@
       "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
       "cacheState": "warm-explicit",
       "workScope": "editor-specific-unbounded-projection",
-      "minSamples": 1,
-      "maxSamples": 20
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "definition-medium-2k",
@@ -102,8 +121,10 @@
       "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
       "cacheState": "warm-explicit",
       "workScope": "editor-specific-provider-result",
-      "minSamples": 1,
-      "maxSamples": 20
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "references-medium-2k",
@@ -111,8 +132,10 @@
       "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
       "cacheState": "warm-explicit",
       "workScope": "editor-specific-provider-result",
-      "minSamples": 1,
-      "maxSamples": 20
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "rename-medium-2k",
@@ -120,65 +143,124 @@
       "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
       "cacheState": "warm-explicit",
       "workScope": "computed-edit-not-applied",
-      "minSamples": 1,
-      "maxSamples": 20
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "completion-large-20k",
-      "comparisonKind": "capability",
-      "cutPointByEditor": {
-        "codevo": "capability-observation",
-        "vscode": "capability-observation"
-      },
-      "cacheState": "policy-observation",
-      "workScope": "large-document-capability",
-      "minSamples": 0,
-      "maxSamples": 0
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-provider-result",
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "definition-large-20k",
-      "comparisonKind": "capability",
-      "cutPointByEditor": {
-        "codevo": "capability-observation",
-        "vscode": "capability-observation"
-      },
-      "cacheState": "policy-observation",
-      "workScope": "large-document-capability",
-      "minSamples": 0,
-      "maxSamples": 0
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-provider-result",
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "references-large-20k",
-      "comparisonKind": "capability",
-      "cutPointByEditor": {
-        "codevo": "capability-observation",
-        "vscode": "capability-observation"
-      },
-      "cacheState": "policy-observation",
-      "workScope": "large-document-capability",
-      "minSamples": 0,
-      "maxSamples": 0
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-provider-result",
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "rename-large-20k",
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": { "codevo": "provider-ui-ready", "vscode": "provider-command-resolved" },
+      "cacheState": "warm-explicit",
+      "workScope": "editor-specific-provider-result",
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
+    },
+    {
+      "id": "completion-large-100k",
       "comparisonKind": "capability",
       "cutPointByEditor": {
         "codevo": "capability-observation",
         "vscode": "capability-observation"
       },
-      "cacheState": "policy-observation",
-      "workScope": "large-document-capability",
+      "cacheState": "capability-observation",
+      "workScope": "editor-specific-large-document-capability",
       "minSamples": 0,
-      "maxSamples": 0
+      "maxSamples": 0,
+      "requiredWarmups": 0,
+      "requiredTargets": 0
+    },
+    {
+      "id": "definition-large-100k",
+      "comparisonKind": "capability",
+      "cutPointByEditor": {
+        "codevo": "capability-observation",
+        "vscode": "capability-observation"
+      },
+      "cacheState": "capability-observation",
+      "workScope": "editor-specific-large-document-capability",
+      "minSamples": 0,
+      "maxSamples": 0,
+      "requiredWarmups": 0,
+      "requiredTargets": 0
+    },
+    {
+      "id": "references-large-100k",
+      "comparisonKind": "capability",
+      "cutPointByEditor": {
+        "codevo": "capability-observation",
+        "vscode": "capability-observation"
+      },
+      "cacheState": "capability-observation",
+      "workScope": "editor-specific-large-document-capability",
+      "minSamples": 0,
+      "maxSamples": 0,
+      "requiredWarmups": 0,
+      "requiredTargets": 0
+    },
+    {
+      "id": "rename-large-100k",
+      "comparisonKind": "capability",
+      "cutPointByEditor": {
+        "codevo": "capability-observation",
+        "vscode": "capability-observation"
+      },
+      "cacheState": "capability-observation",
+      "workScope": "editor-specific-large-document-capability",
+      "minSamples": 0,
+      "maxSamples": 0,
+      "requiredWarmups": 0,
+      "requiredTargets": 0
     },
     {
       "id": "file-search-engine",
-      "comparisonKind": "cross-editor",
-      "cutPointByEditor": { "codevo": "file-search-engine", "vscode": "file-search-engine" },
+      "comparisonKind": "informational-asymmetric",
+      "cutPointByEditor": {
+        "codevo": "fuzzy-subsequence-ranking-complete",
+        "vscode": "workspace-find-files-resolved"
+      },
       "cacheState": "warm-explicit",
-      "workScope": "bounded-engine-results",
-      "minSamples": 1,
-      "maxSamples": 20
+      "workScope": "asymmetric-codevo-fuzzy-ranked-vs-vscode-glob-substring",
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "quickopen-ui",
@@ -186,8 +268,10 @@
       "cutPointByEditor": { "codevo": "quickopen-ui", "vscode": null },
       "cacheState": "warm-explicit",
       "workScope": "overlay-to-rendered-results",
-      "minSamples": 1,
-      "maxSamples": 20
+      "minSamples": 10,
+      "maxSamples": 10,
+      "requiredWarmups": 2,
+      "requiredTargets": 10
     },
     {
       "id": "memory-sample",
@@ -196,7 +280,9 @@
       "cacheState": "post-run",
       "workScope": "retained-editor-state",
       "minSamples": 0,
-      "maxSamples": 0
+      "maxSamples": 0,
+      "requiredWarmups": 0,
+      "requiredTargets": 0
     }
   ]
 }

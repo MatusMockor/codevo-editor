@@ -87,7 +87,7 @@ function laneDependencies(root, overrides = {}) {
   chmodSync(launcherExecutablePath, 0o700);
   const launchApp = () => ({
     ready: Promise.resolve({ pid: 42, pgid: 42 }),
-    exited: new Promise(() => {}),
+    exited: Promise.resolve({ code: 0, signal: null, error: null }),
     async stop() {},
   });
   return {
@@ -331,7 +331,7 @@ describe("runProductionCaptureLane", () => {
         applicationPlan = plan;
         return {
           ready: Promise.resolve({ pid: 42, pgid: 42 }),
-          exited: new Promise(() => {}),
+          exited: Promise.resolve({ code: 0, signal: null, error: null }),
           async stop() {
             trace.stopped += 1;
           },
@@ -487,7 +487,7 @@ describe("runProductionCaptureLane", () => {
     const deps = laneDependencies(root, {
       launchApp: () => ({
         ready: Promise.reject(new Error("readiness rejected")),
-        exited: new Promise(() => {}),
+        exited: Promise.resolve({ code: 0, signal: null, error: null }),
         async stop() {},
       }),
     });
@@ -607,6 +607,211 @@ describe("runProductionCaptureLane", () => {
     expect(outcome.message).toMatch(/direct application cleanup remains pending/);
     expect(outcome.message).toMatch(/process cleanup failed/);
     expect(trace).toEqual({ snapshotCleaned: 0, rootCleaned: 0 });
+  });
+
+  it("preserves every owned root when the native launch callback never settles", async () => {
+    const root = temporaryRoot();
+    const trace = {
+      appLaunches: 0,
+      interrupts: 0,
+      resultReads: 0,
+      snapshotCleaned: 0,
+      rootCleaned: 0,
+    };
+    const deps = laneDependencies(root, {
+      applicationOwnershipTimeoutMs: 1,
+      applicationTerminalProofTimeoutMs: 1,
+      launchApp: () => {
+        trace.appLaunches += 1;
+        return {
+          ready: new Promise(() => {}),
+          exited: new Promise(() => {}),
+          interrupt() {
+            trace.interrupts += 1;
+          },
+          async stop() {
+            throw new Error("native launch settlement and cleanup remain unproven");
+          },
+        };
+      },
+      waitForResult: async () => {
+        trace.resultReads += 1;
+        return validPayload();
+      },
+      cleanupSnapshot: () => {
+        trace.snapshotCleaned += 1;
+      },
+      removeOwnedRoot: () => {
+        trace.rootCleaned += 1;
+      },
+    });
+
+    const outcome = await runProductionCaptureLane({
+      repoRoot: "/repo",
+      smoke: true,
+      dependencies: deps,
+    });
+
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(outcome.message).toMatch(/ownership timed out/);
+    expect(outcome.message).toMatch(/settlement and cleanup remain unproven/);
+    expect(trace).toEqual({
+      appLaunches: 1,
+      interrupts: 1,
+      resultReads: 0,
+      snapshotCleaned: 0,
+      rootCleaned: 0,
+    });
+  });
+
+  it("accepts only cleanup proof when the native callback arrives after the Node timeout", async () => {
+    const root = temporaryRoot();
+    const trace = {
+      appLaunches: 0,
+      interrupts: 0,
+      resultReads: 0,
+      stops: 0,
+      snapshotCleaned: 0,
+      rootCleaned: 0,
+    };
+    let resolveReady;
+    let resolveExited;
+    let resolveCleanup;
+    const ready = new Promise((resolve) => {
+      resolveReady = resolve;
+    });
+    const exited = new Promise((resolve) => {
+      resolveExited = resolve;
+    });
+    const cleanup = new Promise((resolve) => {
+      resolveCleanup = resolve;
+    });
+    const deps = laneDependencies(root, {
+      applicationOwnershipTimeoutMs: 1,
+      applicationTerminalProofTimeoutMs: 10,
+      launchApp: () => {
+        trace.appLaunches += 1;
+        return {
+          ready,
+          exited,
+          interrupt() {
+            trace.interrupts += 1;
+            Promise.resolve().then(() => {
+              resolveReady({ pid: 42, pgid: 42 });
+              resolveExited({ code: 0, signal: null, error: null });
+              resolveCleanup();
+            });
+          },
+          async stop() {
+            trace.stops += 1;
+            await cleanup;
+          },
+        };
+      },
+      waitForResult: async () => {
+        trace.resultReads += 1;
+        return validPayload();
+      },
+      cleanupSnapshot: () => {
+        trace.snapshotCleaned += 1;
+      },
+      removeOwnedRoot: () => {
+        trace.rootCleaned += 1;
+      },
+    });
+
+    const outcome = await runProductionCaptureLane({
+      repoRoot: "/repo",
+      smoke: true,
+      dependencies: deps,
+    });
+
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(outcome.message).toMatch(/ownership timed out/);
+    expect(trace).toEqual({
+      appLaunches: 1,
+      interrupts: 1,
+      resultReads: 0,
+      stops: 1,
+      snapshotCleaned: 1,
+      rootCleaned: 1,
+    });
+  });
+
+  it("preserves roots when direct supervisor cleanup remains unsettled after ownership", async () => {
+    const root = temporaryRoot();
+    const trace = { appLaunches: 0, snapshotCleaned: 0, rootCleaned: 0 };
+    const deps = laneDependencies(root, {
+      launchApp: () => {
+        trace.appLaunches += 1;
+        return {
+          ready: Promise.resolve({ pid: 42, pgid: 42 }),
+          exited: new Promise(() => {}),
+          async stop() {
+            throw new Error("direct supervisor cleanup remained unsettled");
+          },
+        };
+      },
+      cleanupSnapshot: () => {
+        trace.snapshotCleaned += 1;
+      },
+      removeOwnedRoot: () => {
+        trace.rootCleaned += 1;
+      },
+    });
+
+    const outcome = await runProductionCaptureLane({
+      repoRoot: "/repo",
+      smoke: true,
+      dependencies: deps,
+    });
+
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(outcome.message).toMatch(/direct supervisor cleanup remained unsettled/);
+    expect(trace).toEqual({ appLaunches: 1, snapshotCleaned: 0, rootCleaned: 0 });
+  });
+
+  it("does not retry or delete roots when terminal proof is missing after stop", async () => {
+    const root = temporaryRoot();
+    const trace = { appLaunches: 0, stops: 0, snapshotCleaned: 0, rootCleaned: 0 };
+    const deps = laneDependencies(root, {
+      launchApp: () => {
+        trace.appLaunches += 1;
+        return {
+          ready: Promise.resolve({ pid: 42, pgid: 42 }),
+          exited: Promise.resolve({
+            code: 0,
+            signal: null,
+            error: "supervisor exited without terminal proof",
+          }),
+          async stop() {
+            trace.stops += 1;
+          },
+        };
+      },
+      cleanupSnapshot: () => {
+        trace.snapshotCleaned += 1;
+      },
+      removeOwnedRoot: () => {
+        trace.rootCleaned += 1;
+      },
+    });
+
+    const outcome = await runProductionCaptureLane({
+      repoRoot: "/repo",
+      smoke: true,
+      dependencies: deps,
+    });
+
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(outcome.message).toMatch(/cleanup was not proven/);
+    expect(outcome.message).toMatch(/without terminal proof/);
+    expect(trace).toEqual({
+      appLaunches: 1,
+      stops: 1,
+      snapshotCleaned: 0,
+      rootCleaned: 0,
+    });
   });
 });
 

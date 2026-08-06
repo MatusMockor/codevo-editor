@@ -35,6 +35,8 @@ export const DEFAULT_PRODUCTION_RUN_TIMEOUT_MS = 20 * 60 * 1000;
 export const DEFAULT_PRODUCTION_SMOKE_TIMEOUT_MS = 2 * 60 * 1000;
 export const MAX_PRODUCTION_BUILD_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_PRODUCTION_RUN_TIMEOUT_MS = 30 * 60 * 1000;
+export const DEFAULT_APPLICATION_OWNERSHIP_TIMEOUT_MS = 30_000;
+export const DEFAULT_APPLICATION_TERMINAL_PROOF_TIMEOUT_MS = 1_000;
 const PROCESS_STOP_GRACE_MS = 10_000;
 const RESULT_POLL_MS = 50;
 const CAPTURE_PREFIX = "codevo-perf-production-";
@@ -343,7 +345,10 @@ export async function runProductionCaptureLane({
     });
     ownedProcesses.push(app);
     onProcessOwned(app);
-    await awaitApplicationOwnership(app, { timeoutMs: 30_000, signal });
+    await awaitApplicationOwnership(app, {
+      timeoutMs: deps.applicationOwnershipTimeoutMs,
+      signal,
+    });
     const raw = await awaitCaptureResult({
       resultPath,
       app,
@@ -401,6 +406,11 @@ export async function runProductionCaptureLane({
     for (const processHandle of ownedProcesses.toReversed()) {
       try {
         await processHandle.stop();
+        if (processHandle === app) {
+          await requireApplicationTerminalProof(app, {
+            timeoutMs: deps.applicationTerminalProofTimeoutMs,
+          });
+        }
       } catch (error) {
         processCleanupFailed = true;
         cleanupErrors.push(`process cleanup failed: ${messageOf(error)}`);
@@ -617,6 +627,16 @@ function productionDependencies(overrides) {
     hashFile: overrides.hashFile ?? sha256File,
     captureBundleIdentity: overrides.captureBundleIdentity ?? captureApplicationBundleIdentity,
     readSourceRevision: overrides.readSourceRevision ?? readSourceRevision,
+    applicationOwnershipTimeoutMs: boundedInternalTimeout(
+      overrides.applicationOwnershipTimeoutMs,
+      DEFAULT_APPLICATION_OWNERSHIP_TIMEOUT_MS,
+      "application ownership timeout",
+    ),
+    applicationTerminalProofTimeoutMs: boundedInternalTimeout(
+      overrides.applicationTerminalProofTimeoutMs,
+      DEFAULT_APPLICATION_TERMINAL_PROOF_TIMEOUT_MS,
+      "application terminal-proof timeout",
+    ),
   };
 }
 
@@ -629,12 +649,51 @@ async function awaitApplicationOwnership(app, { timeoutMs, signal }) {
     race.dispose();
   }
   if (outcome.kind === "value") return outcome.value;
-  await app.stop();
+  let interruptFailure = "";
+  try {
+    app.interrupt?.();
+  } catch (error) {
+    interruptFailure = ` Supervisor interrupt failed: ${messageOf(error)}`;
+  }
   throw new Error(
-    outcome.kind === "aborted"
-      ? "Production application ownership was cancelled."
-      : `Production application ownership timed out after ${timeoutMs} ms.`,
+    `${
+      outcome.kind === "aborted"
+        ? "Production application ownership was cancelled."
+        : `Production application ownership timed out after ${timeoutMs} ms.`
+    }${interruptFailure}`,
   );
+}
+
+async function requireApplicationTerminalProof(app, { timeoutMs }) {
+  if (!app || typeof app !== "object" || !(app.exited instanceof Promise)) {
+    throw new Error("Production application supervisor did not expose terminal cleanup proof.");
+  }
+  const race = raceWithTimeoutAndAbort(app.exited, timeoutMs);
+  let outcome;
+  try {
+    outcome = await race.promise;
+  } finally {
+    race.dispose();
+  }
+  if (outcome.kind !== "value") {
+    throw new Error(
+      "Production application supervisor cleanup completed without bounded terminal proof; owned roots were preserved.",
+    );
+  }
+  const status = outcome.value;
+  if (!status || status.error !== null || status.code !== 0 || status.signal !== null) {
+    throw new Error(
+      `Production application supervisor cleanup was not proven (${describeExit(status ?? {})}); owned roots were preserved.`,
+    );
+  }
+}
+
+function boundedInternalTimeout(value, fallback, label) {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > fallback) {
+    throw new Error(`${label} must be a positive integer at or below ${fallback} ms.`);
+  }
+  return value;
 }
 
 function sameBundleIdentity(left, right) {

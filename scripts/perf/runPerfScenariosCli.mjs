@@ -1,6 +1,7 @@
 import path from "node:path";
 import { Buffer } from "node:buffer";
 import {
+  DIAGNOSTIC_SMOKE_EVIDENCE,
   FIXTURE_VERSION,
   LANGUAGE_SERVER_STATUS_KINDS,
   PERF_SMOKE_SCENARIO_IDS,
@@ -8,11 +9,7 @@ import {
   inPagePerfRunnerSource,
   isKnownScenarioStatus,
 } from "./perfScenarios.mjs";
-import {
-  PERF_CAPTURE_CONTRACT,
-  assertBoundedCaptureJson,
-  captureScenarioContract,
-} from "./perfCaptureContract.mjs";
+import { PERF_CAPTURE_CONTRACT, assertBoundedCaptureJson } from "./perfCaptureContract.mjs";
 
 const DEFAULT_WAIT_MS = 10000;
 const DEFAULT_INTERVAL_MS = 100;
@@ -35,7 +32,7 @@ const DIAGNOSTIC_WINDOW_MODE = "always-on-top-diagnostic";
 const CAPABILITY_SCENARIO_KIND = "capability";
 const MAX_RETAINED_EDITOR_OBJECTS = 1_000_000;
 const MAX_REPORTED_HEAP_BYTES = 2 ** 50;
-const MAX_FRAME_SETTLE_FLOOR_MS = 1_000;
+const MAX_TIMER_QUANTIZATION_MS = 1_000;
 const SHA256 = /^[a-f0-9]{64}$/;
 const RUNNER_RESULT_KEYS = [
   "bridgeResults",
@@ -81,7 +78,6 @@ const ENVIRONMENT_KEYS = new Set([
 ]);
 const BRIDGE_RESULT_KEYS = new Set([
   "cutPoint",
-  "frameSettleFloorMs",
   "id",
   "languageServerStatus",
   "previousSwitchPath",
@@ -219,7 +215,7 @@ function validEnvironmentField(field, value) {
     return typeof value === "boolean";
   }
   if (field === "timerQuantizationMs") {
-    return isFiniteNonnegativeNumber(value) && value <= MAX_FRAME_SETTLE_FLOOR_MS;
+    return isFiniteNonnegativeNumber(value) && value <= MAX_TIMER_QUANTIZATION_MS;
   }
   if (field === "windowSize") {
     return (
@@ -295,7 +291,6 @@ function assertBridgeResults(value, label) {
       !validOptionalBoundedString(entry.windowNote) ||
       !validOptionalBoundedString(entry.cutPoint) ||
       !validOptionalWarmups(entry.warmups) ||
-      !validOptionalFrameSettleFloor(entry.frameSettleFloorMs) ||
       !validOptionalSwitchPaths(entry.switchPaths, entry.samples.length) ||
       !validOptionalBoundedString(entry.previousSwitchPath) ||
       !validOptionalLanguageServerStatus(entry.languageServerStatus) ||
@@ -400,16 +395,6 @@ function validOptionalWarmups(value) {
   return (
     value === undefined ||
     isBoundedNonnegativeSafeInteger(value, PERF_CAPTURE_CONTRACT.limits.maxSamplesPerScenario)
-  );
-}
-
-function validOptionalFrameSettleFloor(value) {
-  return (
-    value === undefined ||
-    (typeof value === "number" &&
-      Number.isFinite(value) &&
-      value > 0 &&
-      value <= MAX_FRAME_SETTLE_FLOOR_MS)
   );
 }
 
@@ -610,14 +595,11 @@ export function isBlockingStatus(status) {
 }
 
 export function blockedScenarioIds(shaped, trackerSnapshot, smoke) {
-  return blockedScenarioIdsWithEvidence(shaped, trackerSnapshot, smoke, []);
+  return blockedScenarioIdsWithEvidence(shaped, trackerSnapshot, smoke, null);
 }
 
-function blockedScenarioIdsWithEvidence(shaped, trackerSnapshot, smoke, bridgeResults) {
-  const diagnosticSmokeEvidence =
-    smoke && shaped?.environment?.windowMode === DIAGNOSTIC_WINDOW_MODE
-      ? validatedSmokeBridgeEvidence(bridgeResults)
-      : null;
+function blockedScenarioIdsWithEvidence(shaped, trackerSnapshot, smoke, result) {
+  const diagnosticSmokeEvidence = authenticatedDiagnosticSmokeEvidence(shaped, result, smoke);
 
   return shaped.scenarios
     .filter((scenario) =>
@@ -639,7 +621,11 @@ function isBlockedScenario(scenario, trackerSnapshot, smoke, diagnosticSmokeEvid
     return false;
   }
 
-  if (scenario.status === NON_COMPARABLE_STATUS && diagnosticSmokeEvidence?.has(scenario.id)) {
+  if (
+    scenario.status === NON_COMPARABLE_STATUS &&
+    scenario.diagnosticEvidence === DIAGNOSTIC_SMOKE_EVIDENCE &&
+    diagnosticSmokeEvidence?.has(scenario.id)
+  ) {
     return false;
   }
 
@@ -677,12 +663,69 @@ function validatedSmokeBridgeEvidence(bridgeResults) {
   return SMOKE_SCENARIO_IDS.every((id) => evidence.has(id)) ? evidence : null;
 }
 
-function validSmokeSamples(id, samples) {
-  const contract = captureScenarioContract(id);
-  if (contract === null || !Array.isArray(samples)) {
+function authenticatedDiagnosticSmokeEvidence(shaped, result, smoke) {
+  if (
+    smoke !== true ||
+    result?.environment?.windowMode !== DIAGNOSTIC_WINDOW_MODE ||
+    shaped?.environment?.windowMode !== DIAGNOSTIC_WINDOW_MODE
+  ) {
+    return null;
+  }
+
+  const evidence = validatedSmokeBridgeEvidence(result.bridgeResults);
+  if (evidence === null || !Array.isArray(result.scenarioStatuses)) {
+    return null;
+  }
+
+  for (const id of SMOKE_SCENARIO_IDS) {
+    const rawStatuses = result.scenarioStatuses.filter((entry) => entry?.id === id);
+    const shapedScenarios = shaped.scenarios.filter((scenario) => scenario?.id === id);
+    const rawSamples = evidence.get(id);
+    if (
+      rawStatuses.length !== 1 ||
+      rawStatuses[0].status !== NON_COMPARABLE_STATUS ||
+      shapedScenarios.length !== 1 ||
+      !shapedDiagnosticEvidenceMatches(shapedScenarios[0], rawSamples)
+    ) {
+      return null;
+    }
+  }
+
+  return evidence;
+}
+
+function shapedDiagnosticEvidenceMatches(scenario, rawSamples) {
+  if (
+    scenario.status !== NON_COMPARABLE_STATUS ||
+    scenario.diagnosticEvidence !== DIAGNOSTIC_SMOKE_EVIDENCE ||
+    !Array.isArray(scenario.samples) ||
+    scenario.samples.length !== rawSamples.length
+  ) {
     return false;
   }
-  if (samples.length < contract.minSamples || samples.length > contract.maxSamples) {
+
+  for (let index = 0; index < scenario.samples.length; index += 1) {
+    const sample = scenario.samples[index];
+    if (
+      !Object.hasOwn(scenario.samples, index) ||
+      sample === null ||
+      typeof sample !== "object" ||
+      Object.keys(sample).length !== 1 ||
+      !Object.hasOwn(sample, "ms") ||
+      sample.ms !== rawSamples[index]
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function validSmokeSamples(id, samples) {
+  if (!SMOKE_SCENARIO_IDS.includes(id) || !Array.isArray(samples)) {
+    return false;
+  }
+  if (samples.length < 1 || samples.length > PERF_CAPTURE_CONTRACT.limits.maxSamplesPerScenario) {
     return false;
   }
   return everyOwnArrayEntry(samples, isFiniteNonnegativeNumber);
@@ -735,12 +778,7 @@ export function evaluateRunOutcome({ result, shaped, smoke }) {
     failures.push(pathsFailure);
   }
 
-  const blocked = blockedScenarioIdsWithEvidence(
-    shaped,
-    result.trackerSnapshot,
-    smoke,
-    result.bridgeResults,
-  );
+  const blocked = blockedScenarioIdsWithEvidence(shaped, result.trackerSnapshot, smoke, result);
 
   if (blocked.length > 0) {
     failures.push(

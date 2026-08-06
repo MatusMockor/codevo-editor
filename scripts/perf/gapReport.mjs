@@ -1,4 +1,4 @@
-import { PERF_SCENARIOS } from "./perfScenarios.mjs";
+import { PERF_SCENARIOS, POLICY_DISABLED_REASON } from "./perfScenarios.mjs";
 import { captureScenarioContract, validateCaptureRun } from "./perfCaptureContract.mjs";
 
 export const DEFAULT_TOLERANCES = [
@@ -31,6 +31,7 @@ const UI_ENVIRONMENT_SCENARIO_IDS = new Set([
   "quickopen-ui",
 ]);
 const COUNT_MISMATCH_REASON_PREFIX = "non-comparable-by-counts";
+const POLICY_DISABLED_METHOD = "metrics-derived-effective-tier";
 
 const REPORTED_STATUSES = new Set([
   OK_STATUS,
@@ -450,7 +451,7 @@ function buildRow({
 }) {
   const quantizationLimited = quantizationLimitedSides(codevo, vscode);
   const ratio = ratioFor(codevo.p95, vscode.p95);
-  const capabilityGap = isDeclaredCapabilityGap(id, codevo);
+  const capabilityGap = isProvenCapabilityGap(id, codevo, vscode, verification);
   const resolution = resolveRow({
     id,
     codevo,
@@ -471,8 +472,8 @@ function buildRow({
     vscodeP95: vscode.p95,
     codevoMedian: codevo.median,
     vscodeMedian: vscode.median,
+    vscodeResultCount: vscode.resultCount,
     ratio,
-    floorAdjustedRatio: floorAdjustedRatioFor(codevo, vscode),
     resultCountRatio: resultCountRatioFor(codevo, vscode),
     codevoCutPoint: codevo.cutPoint,
     baselineCutPoint: vscode.cutPoint,
@@ -500,7 +501,7 @@ function resolveRow({
   codevoEnvironment,
   baselineEnvironment,
 }) {
-  const blocking = blockingStatus(codevo, vscode, capabilityGap);
+  const blocking = blockingStatus(id, codevo, vscode, capabilityGap);
 
   if (blocking !== null) {
     return { ...blocking, budget: null, nonComparableReasons: [] };
@@ -543,7 +544,7 @@ function resolveRow({
   };
 }
 
-function blockingStatus(codevo, vscode, capabilityGap) {
+function blockingStatus(id, codevo, vscode, capabilityGap) {
   if (capabilityGap) {
     return null;
   }
@@ -567,6 +568,11 @@ function blockingStatus(codevo, vscode, capabilityGap) {
       status: INVALID_STATUS,
       reason: `The VS Code baseline reports the unknown status "${String(vscode.reportedStatus)}".`,
     };
+  }
+
+  const capabilityBlocker = capabilityObservationBlocker(id, codevo, vscode);
+  if (capabilityBlocker !== null) {
+    return capabilityBlocker;
   }
 
   if (REPORTED_FAILURE_STATUSES.has(codevo.reportedStatus)) {
@@ -619,8 +625,71 @@ function isCodevoOnly(codevo) {
   return codevo.cutPoint !== null && CODEVO_ONLY_CUT_POINTS.has(codevo.cutPoint);
 }
 
-function isDeclaredCapabilityGap(id, codevo) {
-  return codevo.reportedStatus === POLICY_DISABLED_STATUS && CAPABILITY_GAP_SCENARIO_ID_SET.has(id);
+function isProvenCapabilityGap(id, codevo, vscode, verification) {
+  return (
+    verification.comparable &&
+    CAPABILITY_GAP_SCENARIO_ID_SET.has(id) &&
+    isExactCodevoCapabilityDisablement(codevo) &&
+    vscode.present &&
+    vscode.statusExplicit &&
+    vscode.reportedStatus === OK_STATUS &&
+    vscode.resultCount !== null &&
+    vscode.resultCount > 0
+  );
+}
+
+function capabilityObservationBlocker(id, codevo, vscode) {
+  if (!CAPABILITY_GAP_SCENARIO_ID_SET.has(id) || !isExactCodevoCapabilityDisablement(codevo)) {
+    return null;
+  }
+
+  if (!vscode.present) {
+    return {
+      status: NO_BASELINE_STATUS,
+      reason: "The VS Code baseline has no capability observation for this scenario.",
+    };
+  }
+
+  if (!vscode.statusExplicit) {
+    return {
+      status: NO_BASELINE_STATUS,
+      reason: 'The VS Code capability observation did not record explicit status "ok".',
+    };
+  }
+
+  if (vscode.reportedStatus === NO_RESULT_STATUS) {
+    return {
+      status: NO_RESULT_STATUS,
+      reason: `The VS Code capability observation reports no result${vscode.reason === null ? "." : `: ${vscode.reason}`}`,
+    };
+  }
+
+  if (vscode.reportedStatus !== OK_STATUS) {
+    return {
+      status: NO_BASELINE_STATUS,
+      reason: `The VS Code capability observation reports status "${String(vscode.reportedStatus)}".`,
+    };
+  }
+
+  if (vscode.resultCount === null || vscode.resultCount <= 0) {
+    return {
+      status: NO_RESULT_STATUS,
+      reason: "The VS Code capability observation did not record a positive resultCount.",
+    };
+  }
+
+  return null;
+}
+
+function isExactCodevoCapabilityDisablement(codevo) {
+  return (
+    codevo.reportedStatus === POLICY_DISABLED_STATUS &&
+    codevo.method === POLICY_DISABLED_METHOD &&
+    codevo.reason === POLICY_DISABLED_REASON &&
+    codevo.warmups === 0 &&
+    codevo.samplesAreExactEmpty &&
+    codevo.targetsAreExactEmpty
+  );
 }
 
 function comparabilityReasons({
@@ -637,7 +706,7 @@ function comparabilityReasons({
 
   if (capabilityGap) {
     reasons.push(
-      "declared large-file capability gap: Codevo's large-document policy disables the feature on this fixture by design",
+      "proven large-file capability gap: Codevo's exact large-document policy disables the feature while VS Code returned a positive provider result on the same fixture",
     );
     return reasons;
   }
@@ -694,7 +763,11 @@ function captureScenarioComparabilityReasons(id, codevo, vscode, verification) {
   }
 
   const reasons = [];
-  if (contract.comparisonKind !== "cross-editor") {
+  if (contract.comparisonKind === "informational-asymmetric") {
+    reasons.push(
+      `capture contract declares comparisonKind "informational-asymmetric": work scope "${contract.workScope}"; Codevo stops at "${contract.cutPointByEditor.codevo}", VS Code stops at "${contract.cutPointByEditor.vscode}"`,
+    );
+  } else if (contract.comparisonKind !== "cross-editor") {
     reasons.push(`capture contract declares comparisonKind "${contract.comparisonKind}"`);
   }
   if (codevo.comparisonKind !== vscode.comparisonKind) {
@@ -925,6 +998,7 @@ function readSide(scenario, timerQuantizationMs) {
   return {
     present: true,
     reportedStatus: scenario.status === undefined ? OK_STATUS : scenario.status,
+    statusExplicit: typeof scenario.status === "string",
     statusKnown: scenario.status === undefined || REPORTED_STATUSES.has(scenario.status),
     cutPoint: nonEmptyString(scenario.cutPoint),
     comparisonKind: nonEmptyString(scenario.comparisonKind),
@@ -932,14 +1006,17 @@ function readSide(scenario, timerQuantizationMs) {
     workScope: nonEmptyString(scenario.workScope),
     warmups: nonNegativeInteger(scenario.warmups),
     targets: readTargets(scenario),
+    targetsAreExactEmpty: Array.isArray(scenario.targets) && scenario.targets.length === 0,
     samples,
+    samplesAreExactEmpty: Array.isArray(scenario.samples) && scenario.samples.length === 0,
     median: nonNegativeOrNull(percentiles.p50),
     p95: positiveOrNull(percentiles.p95),
+    resultCount: nonNegativeInteger(scenario.resultCount),
+    method: nonEmptyString(scenario.method),
     windowNote: nonEmptyString(scenario.windowNote),
-    frameSettleFloorMs: positiveOrNull(scenario.frameSettleFloorMs),
     languageServerStatus: languageServerStatusOf(scenario),
     timerQuantizationMs,
-    reason: nonEmptyString(scenario.reason),
+    reason: nonEmptyString(scenario.reason) ?? nonEmptyString(scenario.error),
   };
 }
 
@@ -947,6 +1024,7 @@ function emptySide() {
   return {
     present: false,
     reportedStatus: null,
+    statusExplicit: false,
     statusKnown: true,
     cutPoint: null,
     comparisonKind: null,
@@ -954,11 +1032,14 @@ function emptySide() {
     workScope: null,
     warmups: null,
     targets: null,
+    targetsAreExactEmpty: false,
     samples: null,
+    samplesAreExactEmpty: false,
     median: null,
     p95: null,
+    resultCount: null,
+    method: null,
     windowNote: null,
-    frameSettleFloorMs: null,
     languageServerStatus: null,
     timerQuantizationMs: null,
     reason: null,
@@ -1039,20 +1120,6 @@ function languageServerStatusOf(scenario) {
   return status.running ? status.kind : `${status.kind} (not running)`;
 }
 
-function floorAdjustedRatioFor(codevo, vscode) {
-  if (codevo.frameSettleFloorMs === null || codevo.p95 === null || vscode.p95 === null) {
-    return null;
-  }
-
-  const adjusted = codevo.p95 - codevo.frameSettleFloorMs;
-
-  if (adjusted <= 0) {
-    return null;
-  }
-
-  return adjusted / vscode.p95;
-}
-
 function resultCountRatioFor(codevo, vscode) {
   if (codevo.samples === null || vscode.samples === null) {
     return null;
@@ -1087,7 +1154,7 @@ function nonEmptyString(value) {
 }
 
 function nonNegativeInteger(value) {
-  return Number.isInteger(value) && value >= 0 ? value : null;
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function positiveOrNull(value) {
@@ -1116,7 +1183,7 @@ function budgetForId(id, tolerances) {
 export const COMPARABLE_TABLE_HEADER =
   "| Scenario | Codevo p95 | VS Code p95 | Ratio | Budget | Status |";
 export const NON_COMPARABLE_TABLE_HEADER =
-  "| Scenario | Codevo p95 | VS Code p95 | Ratio (info only) | Floor-adj ratio (info only) | Reason |";
+  "| Scenario | Codevo p95 | VS Code p95 | Ratio (info only) | Reason |";
 export const BLOCKED_TABLE_HEADER = "| Scenario | Codevo p95 | VS Code p95 | Status | Reason |";
 
 export function renderGapReportMarkdown(report) {
@@ -1153,10 +1220,6 @@ export function renderGapReportMarkdown(report) {
     renderBudgetLegend(),
     renderNonComparableLegend(),
   ];
-
-  if (nonComparable.some((row) => row.floorAdjustedRatio !== null)) {
-    lines.push(renderFloorAdjustedLegend());
-  }
 
   appendNotes(lines, report.rows);
 
@@ -1210,7 +1273,7 @@ function renderComparableRow(row) {
 }
 
 function renderNonComparableRow(row) {
-  return `| ${row.id} | ${renderCodevoCell(row)} | ${formatNumber(row.vscodeP95)} | ${formatNumber(row.ratio)} | ${formatNumber(row.floorAdjustedRatio)} | ${row.nonComparableReasons.join("; ")} |`;
+  return `| ${row.id} | ${renderCodevoCell(row)} | ${formatNumber(row.vscodeP95)} | ${formatNumber(row.ratio)} | ${row.nonComparableReasons.join("; ")} |`;
 }
 
 function renderBlockedRow(row) {
@@ -1239,14 +1302,6 @@ function renderNonComparableLegend() {
     "no pass, and no VS Code parity claim; the Reason column names what failed join-time " +
     "verification (fixture identity, bundle/platform/architecture/window environment, cut point, warmups, sample " +
     "counts, targets, result counts, timer quantization, or missing metadata)."
-  );
-}
-
-function renderFloorAdjustedLegend() {
-  return (
-    "Floor-adj ratio is informational only and never affects Status: it subtracts the scenario's " +
-    "own declared frameSettleFloorMs from the Codevo p95 before dividing, because the VS Code " +
-    "window excludes the frame production that the Codevo window includes."
   );
 }
 
@@ -1295,8 +1350,9 @@ function renderQuantizationNote(row) {
 
 function renderCapabilityNote(row) {
   const reason = row.reason ?? "the feature is disabled on this file";
+  const resultLabel = row.vscodeResultCount === 1 ? "result" : "results";
 
-  return `Capability gap: ${row.id} - VS Code measured ${formatNumber(row.vscodeP95)} ms on the same file; Codevo disables the feature (${reason}).`;
+  return `Capability gap: ${row.id} - VS Code returned ${row.vscodeResultCount} provider ${resultLabel} on the same file; Codevo disables the feature (${reason}).`;
 }
 
 function renderLanguageServerNote(row) {

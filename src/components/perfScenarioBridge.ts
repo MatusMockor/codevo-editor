@@ -6,6 +6,11 @@ import type {
 } from "monaco-editor";
 import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics } from "../domain/javaScriptTypeScriptLargeDocumentCapability";
+import {
+  createConservativeWorkspaceRootFromPath,
+  parseWorkspacePath,
+} from "../domain/workspacePath";
 import {
   defaultLargeSmartDocumentPolicy,
   largeSmartDocumentStatusFromMetrics,
@@ -49,6 +54,26 @@ export interface PerfLargeSmartDocumentStatus {
   readonly lineLimit: number;
   readonly characterLimit: number;
 }
+
+export type PerfJavaScriptTypeScriptDocumentCapability =
+  | {
+      readonly tier: "full";
+      readonly reason: null;
+      readonly lineCount: number;
+      readonly utf16Length: number;
+    }
+  | {
+      readonly tier: "explicit-interactive";
+      readonly reason: "character-limit" | "line-limit";
+      readonly lineCount: number;
+      readonly utf16Length: number;
+    }
+  | {
+      readonly tier: "editing-only";
+      readonly reason: "full-sync-utf16-limit" | "invalid-metrics" | "no-active-model";
+      readonly lineCount: number | null;
+      readonly utf16Length: number | null;
+    };
 
 export type PerfLanguageServerRuntimeKind = LanguageServerRuntimeStatus["kind"] | "none";
 
@@ -103,7 +128,17 @@ export interface PerfTextPosition {
   readonly column: number;
 }
 
+export interface PerfDocumentAuthorityLease {
+  readonly __codevoPerfDocumentAuthorityLease: "opaque";
+}
+
+export interface PerfProviderProbeBatchLease {
+  readonly __codevoPerfProviderProbeBatchLease: "opaque";
+}
+
 export interface PerfMeasuredLanguageProviders {
+  readonly completion?: MonacoLanguages.CompletionItemProvider;
+  readonly definition?: MonacoLanguages.DefinitionProvider;
   readonly references?: MonacoLanguages.ReferenceProvider;
   readonly rename?: MonacoLanguages.RenameProvider;
 }
@@ -118,12 +153,43 @@ export interface PerfScenarioBridge {
   runQuickOpenUiQuery(query: string): Promise<PerfQuickOpenUiSample | null>;
   runEditorAction(actionId: string): Promise<boolean>;
   runRenameWithNewName(newName: string): Promise<boolean>;
-  runReferencesProbe(position: PerfTextPosition): Promise<boolean>;
-  runRenameProbe(position: PerfTextPosition, newName: string): Promise<boolean>;
+  captureActiveDocumentAuthority(expectedPath: string): PerfDocumentAuthorityLease | null;
+  beginProviderProbeBatch(
+    authority: PerfDocumentAuthorityLease,
+  ): PerfProviderProbeBatchLease | null;
+  cancelProviderProbeBatch(batch: PerfProviderProbeBatchLease): void;
+  runCompletionProbe(
+    position: PerfTextPosition,
+    authority?: PerfDocumentAuthorityLease,
+    batch?: PerfProviderProbeBatchLease,
+  ): Promise<boolean>;
+  runDefinitionProbe(
+    position: PerfTextPosition,
+    authority?: PerfDocumentAuthorityLease,
+    batch?: PerfProviderProbeBatchLease,
+  ): Promise<boolean>;
+  runReferencesProbe(
+    position: PerfTextPosition,
+    authority?: PerfDocumentAuthorityLease,
+    batch?: PerfProviderProbeBatchLease,
+  ): Promise<boolean>;
+  runRenameProbe(
+    position: PerfTextPosition,
+    newName: string,
+    authority?: PerfDocumentAuthorityLease,
+    batch?: PerfProviderProbeBatchLease,
+  ): Promise<boolean>;
   getProviderProbeSamples(kind: PerfProviderProbeKind): PerfProviderProbeSample[];
   clearProviderProbeSamples(): void;
   restoreActiveEditorContent(expectedText: string): boolean;
   getEnvironmentSample(): PerfEnvironmentSample;
+  /**
+   * O(1), metrics-derived observation for the active Monaco model. Raw UTF-8
+   * and Unicode admission remain owned by the document-sync boundary.
+   */
+  getJavaScriptTypeScriptDocumentCapability(
+    authority?: PerfDocumentAuthorityLease,
+  ): PerfJavaScriptTypeScriptDocumentCapability | null;
   getLargeSmartDocumentStatus(): PerfLargeSmartDocumentStatus;
   getRetainedCounts(): PerfRetainedCounts;
   getMemorySample(): PerfMemorySample;
@@ -178,6 +244,8 @@ export interface PerfScenarioBridgeDependencies {
   readonly getLanguageServerRuntimeStatus?: () => LanguageServerRuntimeStatus | null;
   readonly getVisibleRenameInput?: (editor: MonacoEditor.ICodeEditor) => HTMLInputElement | null;
   readonly getActiveDocumentPath?: () => string | null;
+  readonly getActiveDocumentGeneration?: () => number;
+  readonly onDidChangeActiveDocument?: (listener: () => void) => { dispose(): void };
   readonly countQuickOpenResults?: () => number;
   readonly bundleEnvironment?: PerfScenarioBridgeEnvironment;
   readonly scheduleFrame?: (callback: () => void) => void;
@@ -253,6 +321,60 @@ function readLargeSmartDocumentStatus(
   };
 }
 
+function readJavaScriptTypeScriptDocumentCapability(
+  editor: MonacoEditor.ICodeEditor | null,
+): PerfJavaScriptTypeScriptDocumentCapability {
+  const model = editor?.getModel() ?? null;
+  if (!model) {
+    return {
+      tier: "editing-only",
+      reason: "no-active-model",
+      lineCount: null,
+      utf16Length: null,
+    };
+  }
+
+  let lineCount: number;
+  let utf16Length: number;
+  try {
+    lineCount = model.getLineCount();
+    utf16Length = model.getValueLength();
+  } catch {
+    return {
+      tier: "editing-only",
+      reason: "invalid-metrics",
+      lineCount: null,
+      utf16Length: null,
+    };
+  }
+
+  const capability = classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics(
+    { lineCount, utf16Length },
+    defaultLargeSmartDocumentPolicy,
+  );
+  switch (capability.kind) {
+    case "full":
+      return { tier: "full", reason: null, lineCount, utf16Length };
+    case "editing-degraded-interactive-lsp":
+      return {
+        tier: "explicit-interactive",
+        reason: capability.reason,
+        lineCount,
+        utf16Length,
+      };
+    case "editing-only":
+      return {
+        tier: "editing-only",
+        reason:
+          capability.reason === "full-sync-utf16-limit"
+            ? "full-sync-utf16-limit"
+            : "invalid-metrics",
+        lineCount: Number.isSafeInteger(lineCount) && lineCount >= 1 ? lineCount : null,
+        utf16Length: Number.isSafeInteger(utf16Length) && utf16Length >= 0 ? utf16Length : null,
+      };
+  }
+}
+
 const UNKNOWN_LANGUAGE_SERVER_RUNTIME_STATUS: PerfLanguageServerRuntimeStatus = Object.freeze({
   kind: "none",
   running: false,
@@ -291,22 +413,85 @@ function readUsedJsHeapBytes(): number | null {
 interface ProviderProbeState {
   readonly samples: Map<PerfProviderProbeKind, PerfProviderProbeSample[]>;
   dropped: number;
-  renameApplySuppressed: boolean;
+  cleanup?: () => void;
 }
 
 let activeProviderProbe: ProviderProbeState | null = null;
+const interactiveRenameApplySuppressionOwners = new Set<symbol>();
+const providerRenameApplySuppressionOwners = new WeakMap<CancellationToken, Set<symbol>>();
+const measuredProviderTokenState = new WeakMap<CancellationToken, { active: boolean }>();
+
+interface PerfCancellationTokenSource {
+  readonly token: CancellationToken;
+  cancel(): void;
+}
+
+interface PerfProviderOperation {
+  readonly source: PerfCancellationTokenSource;
+  cancel(): void;
+  finish(): void;
+}
+
+function createPerfCancellationTokenSource(): PerfCancellationTokenSource {
+  let cancelled = false;
+  const listeners = new Set<(event: unknown) => unknown>();
+  const token: CancellationToken = {
+    get isCancellationRequested() {
+      return cancelled;
+    },
+    onCancellationRequested: (listener) => {
+      if (cancelled) {
+        queueMicrotask(() => listener(undefined));
+      } else {
+        listeners.add(listener);
+      }
+      return { dispose: () => listeners.delete(listener) };
+    },
+  };
+  return {
+    token,
+    cancel: () => {
+      if (cancelled) return;
+      cancelled = true;
+      for (const listener of listeners) listener(undefined);
+      listeners.clear();
+    },
+  };
+}
 
 function createProviderProbeState(): ProviderProbeState {
-  return { samples: new Map(), dropped: 0, renameApplySuppressed: false };
+  return { samples: new Map(), dropped: 0 };
+}
+
+function acquireRenameApplySuppression(token?: CancellationToken): () => void {
+  const owner = Symbol("perf-rename-apply-suppression");
+  const owners = token
+    ? (providerRenameApplySuppressionOwners.get(token) ?? new Set<symbol>())
+    : interactiveRenameApplySuppressionOwners;
+  if (token) providerRenameApplySuppressionOwners.set(token, owners);
+  owners.add(owner);
+  let owned = true;
+  return () => {
+    if (!owned) return;
+    owned = false;
+    owners.delete(owner);
+    if (token && owners.size === 0) providerRenameApplySuppressionOwners.delete(token);
+  };
 }
 
 export function recordPerfProviderSample(
   kind: PerfProviderProbeKind,
   sample: PerfProviderProbeSample,
+  token?: CancellationToken,
 ): void {
   const state = activeProviderProbe;
 
   if (!state) {
+    return;
+  }
+
+  const measuredToken = token ? measuredProviderTokenState.get(token) : undefined;
+  if (measuredToken && (!measuredToken.active || token?.isCancellationRequested)) {
     return;
   }
 
@@ -337,8 +522,11 @@ export function recordPerfProviderSample(
   existing.push(normalized);
 }
 
-export function perfRenameApplySuppressed(): boolean {
-  return activeProviderProbe?.renameApplySuppressed === true;
+export function perfRenameApplySuppressed(token?: CancellationToken): boolean {
+  return (
+    interactiveRenameApplySuppressionOwners.size > 0 ||
+    (token ? (providerRenameApplySuppressionOwners.get(token)?.size ?? 0) > 0 : false)
+  );
 }
 
 let activeMeasuredProviders: PerfMeasuredLanguageProviders | null = null;
@@ -425,6 +613,14 @@ function defaultActiveDocumentPath(
   }
 }
 
+function exactNormalizedDocumentPath(left: string, right: string): string | null {
+  const leftIdentity = createConservativeWorkspaceRootFromPath(left);
+  if (!leftIdentity.ok) return null;
+  const rightIdentity = parseWorkspacePath(leftIdentity.value, right);
+  if (!rightIdentity.ok || rightIdentity.value.relativePath !== "") return null;
+  return leftIdentity.value.nativePath;
+}
+
 export function createPerfScenarioBridge(
   dependencies: PerfScenarioBridgeDependencies,
 ): PerfScenarioBridge {
@@ -439,8 +635,177 @@ export function createPerfScenarioBridge(
   const probeState = createProviderProbeState();
   activeProviderProbe = probeState;
   const timerQuantizationMs = measureTimerQuantizationMs(now);
+  let providerAuthorityGeneration = 0;
+  let observedEditor: MonacoEditor.ICodeEditor | null = null;
+  let observedModel: MonacoEditor.ITextModel | null = null;
+  let authorityObservationSubscriptions: { dispose(): void }[] = [];
+  const disposeAuthorityObservationSubscriptions = () => {
+    for (const subscription of authorityObservationSubscriptions) subscription.dispose();
+    authorityObservationSubscriptions = [];
+  };
+  const syncAuthorityObservation = () => {
+    const editor = dependencies.getActiveEditor();
+    const model = activeModelOf(editor);
+    if (editor === observedEditor && model === observedModel) return;
+    disposeAuthorityObservationSubscriptions();
+    observedEditor = editor;
+    observedModel = model;
+    providerAuthorityGeneration += 1;
+    const invalidate = () => {
+      providerAuthorityGeneration += 1;
+    };
+    const resync = () => {
+      invalidate();
+      syncAuthorityObservation();
+    };
+    authorityObservationSubscriptions = [
+      model?.onDidChangeContent?.(invalidate),
+      model?.onWillDispose?.(invalidate),
+      editor?.onDidChangeModel?.(resync),
+    ].filter((subscription): subscription is { dispose(): void } => Boolean(subscription));
+  };
+  const captureProviderAuthority = () => {
+    syncAuthorityObservation();
+    const editor = dependencies.getActiveEditor();
+    const model = activeModelOf(editor);
+    const activePath = getActiveDocumentPath();
+    if (!model || !activePath) return null;
+    let activeModelPath: string | null;
+    try {
+      activeModelPath = modelPath(model);
+    } catch {
+      return null;
+    }
+    if (!activeModelPath) return null;
+    const path = exactNormalizedDocumentPath(activeModelPath, activePath);
+    if (!path) return null;
+    let modelVersion: number;
+    try {
+      modelVersion = model.getVersionId();
+    } catch {
+      return null;
+    }
+    const documentGeneration =
+      dependencies.getActiveDocumentGeneration?.() ?? providerAuthorityGeneration;
+    return Number.isSafeInteger(modelVersion) &&
+      modelVersion >= 0 &&
+      Number.isSafeInteger(documentGeneration) &&
+      documentGeneration >= 0
+      ? {
+          editor,
+          model,
+          modelVersion,
+          path,
+          generation: providerAuthorityGeneration,
+          documentGeneration,
+        }
+      : null;
+  };
+  const providerAuthorityIsCurrent = (
+    authority: NonNullable<ReturnType<typeof captureProviderAuthority>>,
+  ) => {
+    syncAuthorityObservation();
+    const currentModel = activeModelOf(dependencies.getActiveEditor());
+    const currentActivePath = getActiveDocumentPath();
+    let currentModelPath: string | null = null;
+    try {
+      currentModelPath = currentModel ? modelPath(currentModel) : null;
+    } catch {
+      return false;
+    }
+    const currentPath =
+      currentModelPath && currentActivePath
+        ? exactNormalizedDocumentPath(currentModelPath, currentActivePath)
+        : null;
+    if (
+      authority.generation !== providerAuthorityGeneration ||
+      authority.documentGeneration !==
+        (dependencies.getActiveDocumentGeneration?.() ?? providerAuthorityGeneration) ||
+      currentModel !== authority.model ||
+      currentPath !== authority.path
+    ) {
+      return false;
+    }
+    try {
+      return authority.model.getVersionId() === authority.modelVersion;
+    } catch {
+      return false;
+    }
+  };
+  const documentAuthorityLeases = new WeakMap<
+    PerfDocumentAuthorityLease,
+    NonNullable<ReturnType<typeof captureProviderAuthority>>
+  >();
+  const providerAuthorityForLease = (lease?: PerfDocumentAuthorityLease) => {
+    if (!lease) return captureProviderAuthority();
+    const authority = documentAuthorityLeases.get(lease) ?? null;
+    return authority && providerAuthorityIsCurrent(authority) ? authority : null;
+  };
+  type ProviderProbeBatchState = {
+    active: boolean;
+    readonly authority: PerfDocumentAuthorityLease;
+    readonly operations: Set<PerfProviderOperation>;
+  };
+  const providerProbeBatches = new WeakMap<PerfProviderProbeBatchLease, ProviderProbeBatchState>();
+  const activeProviderProbeBatches = new Set<ProviderProbeBatchState>();
+  const activeProviderOperations = new Set<PerfProviderOperation>();
+  const cancelProviderProbeBatch = (batch: PerfProviderProbeBatchLease) => {
+    const state = providerProbeBatches.get(batch);
+    if (!state || !state.active) return;
+    state.active = false;
+    activeProviderProbeBatches.delete(state);
+    for (const operation of state.operations) {
+      operation.cancel();
+      operation.finish();
+    }
+    state.operations.clear();
+  };
+  const beginProviderInvocation = (
+    lease?: PerfDocumentAuthorityLease,
+    batch?: PerfProviderProbeBatchLease,
+  ) => {
+    const authority = providerAuthorityForLease(lease);
+    if (!authority) return null;
+    const batchState = batch ? providerProbeBatches.get(batch) : null;
+    if (batch && (!batchState || !batchState.active || !lease || batchState.authority !== lease)) {
+      return null;
+    }
+    const source = createPerfCancellationTokenSource();
+    const tokenState = { active: true };
+    measuredProviderTokenState.set(source.token, tokenState);
+    const cancel = () => {
+      tokenState.active = false;
+      source.cancel();
+    };
+    const subscriptions = [
+      authority.model.onDidChangeContent?.(cancel),
+      authority.model.onWillDispose?.(cancel),
+      authority.editor?.onDidChangeModel?.(cancel),
+      dependencies.onDidChangeActiveDocument?.(cancel),
+    ].filter((subscription): subscription is { dispose(): void } => Boolean(subscription));
+    let finished = false;
+    const operation: PerfProviderOperation = {
+      source,
+      cancel,
+      finish: () => {
+        if (finished) return;
+        finished = true;
+        tokenState.active = false;
+        activeProviderOperations.delete(operation);
+        batchState?.operations.delete(operation);
+        for (const subscription of subscriptions) subscription.dispose();
+      },
+    };
+    activeProviderOperations.add(operation);
+    batchState?.operations.add(operation);
+    return {
+      authority,
+      source,
+      finish: operation.finish,
+    };
+  };
 
-  return {
+  const bridge: PerfScenarioBridge = {
     getLanguageServerRuntimeStatus: () =>
       readLanguageServerRuntimeStatus(dependencies.getLanguageServerRuntimeStatus),
     getLatencySnapshot: () => dependencies.getLatencySnapshot(),
@@ -636,7 +1001,7 @@ export function createPerfScenarioBridge(
         return false;
       }
 
-      probeState.renameApplySuppressed = true;
+      const releaseRenameApplySuppression = acquireRenameApplySuppression();
 
       try {
         let failure: unknown = null;
@@ -692,51 +1057,152 @@ export function createPerfScenarioBridge(
 
         return true;
       } finally {
-        probeState.renameApplySuppressed = false;
+        releaseRenameApplySuppression();
       }
     },
-    async runReferencesProbe(position: PerfTextPosition): Promise<boolean> {
+    captureActiveDocumentAuthority(expectedPath: string): PerfDocumentAuthorityLease | null {
+      const authority = captureProviderAuthority();
+      if (!authority || exactNormalizedDocumentPath(authority.path, expectedPath) === null)
+        return null;
+      const lease = Object.freeze({
+        __codevoPerfDocumentAuthorityLease: "opaque" as const,
+      });
+      documentAuthorityLeases.set(lease, authority);
+      return lease;
+    },
+    beginProviderProbeBatch(
+      authority: PerfDocumentAuthorityLease,
+    ): PerfProviderProbeBatchLease | null {
+      if (!providerAuthorityForLease(authority)) return null;
+      const batch = Object.freeze({
+        __codevoPerfProviderProbeBatchLease: "opaque" as const,
+      });
+      const state = { active: true, authority, operations: new Set<PerfProviderOperation>() };
+      providerProbeBatches.set(batch, state);
+      activeProviderProbeBatches.add(state);
+      return batch;
+    },
+    cancelProviderProbeBatch,
+    async runCompletionProbe(
+      position: PerfTextPosition,
+      lease?: PerfDocumentAuthorityLease,
+      batch?: PerfProviderProbeBatchLease,
+    ): Promise<boolean> {
+      const provider = activeMeasuredProviders?.completion;
+      if (!provider?.provideCompletionItems) {
+        return false;
+      }
+      const invocation = beginProviderInvocation(lease, batch);
+      if (!invocation) return false;
+      try {
+        const list = await provider.provideCompletionItems(
+          invocation.authority.model,
+          position as unknown as Position,
+          { triggerKind: 0 as MonacoLanguages.CompletionTriggerKind },
+          invocation.source.token,
+        );
+        return (
+          !invocation.source.token.isCancellationRequested &&
+          providerAuthorityIsCurrent(invocation.authority) &&
+          Array.isArray(list?.suggestions) &&
+          list.suggestions.length > 0
+        );
+      } finally {
+        invocation.finish();
+      }
+    },
+    async runDefinitionProbe(
+      position: PerfTextPosition,
+      lease?: PerfDocumentAuthorityLease,
+      batch?: PerfProviderProbeBatchLease,
+    ): Promise<boolean> {
+      const provider = activeMeasuredProviders?.definition;
+      if (!provider?.provideDefinition) {
+        return false;
+      }
+      const invocation = beginProviderInvocation(lease, batch);
+      if (!invocation) return false;
+      try {
+        const result = await provider.provideDefinition(
+          invocation.authority.model,
+          position as unknown as Position,
+          invocation.source.token,
+        );
+        return (
+          !invocation.source.token.isCancellationRequested &&
+          providerAuthorityIsCurrent(invocation.authority) &&
+          (Array.isArray(result) ? result.length > 0 : result != null)
+        );
+      } finally {
+        invocation.finish();
+      }
+    },
+    async runReferencesProbe(
+      position: PerfTextPosition,
+      lease?: PerfDocumentAuthorityLease,
+      batch?: PerfProviderProbeBatchLease,
+    ): Promise<boolean> {
       const provider = activeMeasuredProviders?.references;
-      const model = activeModelOf(dependencies.getActiveEditor());
-
-      if (!provider?.provideReferences || !model) {
+      if (!provider?.provideReferences) {
         return false;
       }
-
-      const locations = await provider.provideReferences(
-        model,
-        position as unknown as Position,
-        { includeDeclaration: true },
-        undefined as unknown as CancellationToken,
-      );
-
-      return Array.isArray(locations);
+      const invocation = beginProviderInvocation(lease, batch);
+      if (!invocation) return false;
+      try {
+        const locations = await provider.provideReferences(
+          invocation.authority.model,
+          position as unknown as Position,
+          { includeDeclaration: true },
+          invocation.source.token,
+        );
+        return (
+          !invocation.source.token.isCancellationRequested &&
+          providerAuthorityIsCurrent(invocation.authority) &&
+          Array.isArray(locations)
+        );
+      } finally {
+        invocation.finish();
+      }
     },
-    async runRenameProbe(position: PerfTextPosition, newName: string): Promise<boolean> {
+    async runRenameProbe(
+      position: PerfTextPosition,
+      newName: string,
+      lease?: PerfDocumentAuthorityLease,
+      batch?: PerfProviderProbeBatchLease,
+    ): Promise<boolean> {
       const provider = activeMeasuredProviders?.rename;
-      const model = activeModelOf(dependencies.getActiveEditor());
-
-      if (!provider?.provideRenameEdits || !model) {
+      if (!provider?.provideRenameEdits) {
         return false;
       }
+      const invocation = beginProviderInvocation(lease, batch);
+      if (!invocation) return false;
 
-      probeState.renameApplySuppressed = true;
+      const releaseRenameApplySuppression = acquireRenameApplySuppression(invocation.source.token);
+      const cancellationSubscription = invocation.source.token.onCancellationRequested(
+        releaseRenameApplySuppression,
+      );
 
       try {
         const edit = await provider.provideRenameEdits(
-          model,
+          invocation.authority.model,
           position as unknown as Position,
           newName,
-          undefined as unknown as CancellationToken,
+          invocation.source.token,
         );
 
-        if (!edit) {
+        if (
+          !edit ||
+          invocation.source.token.isCancellationRequested ||
+          !providerAuthorityIsCurrent(invocation.authority)
+        ) {
           return false;
         }
 
         return typeof (edit as MonacoLanguages.Rejection).rejectReason !== "string";
       } finally {
-        probeState.renameApplySuppressed = false;
+        cancellationSubscription.dispose();
+        releaseRenameApplySuppression();
+        invocation.finish();
       }
     },
     getProviderProbeSamples: (kind) => [...(probeState.samples.get(kind) ?? [])],
@@ -769,10 +1235,34 @@ export function createPerfScenarioBridge(
       windowSize: { width: window.innerWidth, height: window.innerHeight },
       platform: typeof navigator.platform === "string" ? navigator.platform : "unknown",
     }),
+    getJavaScriptTypeScriptDocumentCapability: (lease) => {
+      const authority = lease ? providerAuthorityForLease(lease) : captureProviderAuthority();
+      if (lease && !authority) return null;
+      const observation = readJavaScriptTypeScriptDocumentCapability(
+        dependencies.getActiveEditor(),
+      );
+      return authority && !providerAuthorityIsCurrent(authority) ? null : observation;
+    },
     getLargeSmartDocumentStatus: () => readLargeSmartDocumentStatus(dependencies.getActiveEditor()),
     getRetainedCounts: () => dependencies.getRetainedCounts(),
     getMemorySample: () => ({ usedJsHeapBytes: readUsedJsHeapBytes() }),
   };
+
+  probeState.cleanup = () => {
+    providerAuthorityGeneration += 1;
+    disposeAuthorityObservationSubscriptions();
+    for (const state of activeProviderProbeBatches) {
+      state.active = false;
+    }
+    activeProviderProbeBatches.clear();
+    for (const operation of activeProviderOperations) {
+      operation.cancel();
+      operation.finish();
+    }
+    activeProviderOperations.clear();
+  };
+
+  return bridge;
 }
 
 export function installPerfScenarioBridge(
@@ -787,6 +1277,7 @@ export function installPerfScenarioBridge(
   };
 
   return () => {
+    ownedProbe?.cleanup?.();
     if (activeProviderProbe === ownedProbe) {
       activeProviderProbe = null;
     }

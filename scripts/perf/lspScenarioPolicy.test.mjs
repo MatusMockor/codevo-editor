@@ -10,6 +10,10 @@ import {
   POLICY_DISABLED_REASON,
 } from "./perfScenarios.mjs";
 import {
+  MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS,
+  classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics,
+} from "../../src/domain/javaScriptTypeScriptLargeDocumentCapability";
+import {
   defaultLargeSmartDocumentPolicy,
   isLargeSmartDocumentContent,
 } from "../../src/domain/largeDocumentPolicy";
@@ -48,10 +52,16 @@ describe("LSP tracker fixture versus the large-document policy", () => {
     expect(characters).toBeGreaterThan(defaultLargeSmartDocumentPolicy.characterLimit);
   });
 
-  it("keeps the reported reason in sync with the real policy constants", () => {
-    expect(POLICY_DISABLED_REASON).toContain(String(defaultLargeSmartDocumentPolicy.lineLimit));
-    expect(POLICY_DISABLED_REASON).toContain(
-      `${String(defaultLargeSmartDocumentPolicy.characterLimit / 1024)} KiB`,
-    );
+  it("proves the 100k fixture is editing-only at the hard UTF-16 sync boundary", () => {
+    const content = fixtureContent(POLICY_DISABLED_FIXTURE_FILE);
+    const observation = classifyJavaScriptTypeScriptLargeDocumentCapabilityFromMetrics({
+      lineCount: content.split("\n").length,
+      utf16Length: content.length,
+    });
+
+    expect(content.length).toBeGreaterThan(MAX_JAVA_SCRIPT_TYPE_SCRIPT_FULL_SYNC_UTF16_UNITS);
+    expect(observation).toEqual({ kind: "editing-only", reason: "full-sync-utf16-limit" });
+    expect(POLICY_DISABLED_REASON).toContain("editing-only");
+    expect(POLICY_DISABLED_REASON).toContain("full-sync-utf16-limit");
   });
 });

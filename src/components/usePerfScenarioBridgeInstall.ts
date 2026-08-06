@@ -13,6 +13,7 @@ export interface PerfScenarioBridgeHost {
   readonly quickOpenLoading: boolean;
   readonly setQuickOpenOpen: (isOpen: boolean) => void;
   readonly setQuickOpenQuery: (query: string) => void;
+  readonly activePath?: string | null;
 }
 
 export interface PerfMonacoEditorApi {
@@ -33,11 +34,23 @@ export function usePerfScenarioBridgeInstall(
   loadEditorApi: PerfMonacoEditorApiLoader = loadMonacoEditorApi,
 ): void {
   const hostRef = useRef(host);
+  const activeDocumentAuthorityRef = useRef({
+    path: host.activePath ?? null,
+    generation: 0,
+    listeners: new Set<() => void>(),
+  });
 
   usePerfAutorunInstall();
 
   useEffect(() => {
     hostRef.current = host;
+    const authority = activeDocumentAuthorityRef.current;
+    const nextPath = host.activePath ?? null;
+    if (authority.path !== nextPath) {
+      authority.path = nextPath;
+      authority.generation += 1;
+      for (const listener of authority.listeners) listener();
+    }
   }, [host]);
 
   useEffect(() => {
@@ -70,6 +83,13 @@ export function usePerfScenarioBridgeInstall(
         isQuickOpenLoading: () => hostRef.current.quickOpenLoading,
         getLanguageServerRuntimeStatus: () =>
           hostRef.current.javaScriptTypeScriptLanguageServerRuntimeStatus,
+        getActiveDocumentPath: () => activeDocumentAuthorityRef.current.path,
+        getActiveDocumentGeneration: () => activeDocumentAuthorityRef.current.generation,
+        onDidChangeActiveDocument: (listener) => {
+          const listeners = activeDocumentAuthorityRef.current.listeners;
+          listeners.add(listener);
+          return { dispose: () => listeners.delete(listener) };
+        },
         getActiveEditor: () => {
           const editors = monaco.editor.getEditors();
 

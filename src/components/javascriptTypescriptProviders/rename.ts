@@ -81,14 +81,21 @@ export async function provideJavaScriptTypeScriptRenameEdits<Context extends Ren
     const converted = dependencies.toWorkspaceEdit(monaco, model, edit, request.rootPath);
     const durationMs = performance.now() - startedAt;
     context.recordLatency?.("rename", durationMs, request.rootPath);
-    recordPerfProviderSample("rename", {
-      ms: durationMs,
-      resultCount: workspaceEditResourceCount(converted),
-    });
+    recordPerfProviderSample(
+      "rename",
+      {
+        ms: durationMs,
+        resultCount: workspaceEditResourceCount(converted),
+      },
+      token,
+    );
     if (!dependencies.editIsFullyInRoot(edit, request.rootPath)) {
       return null;
     }
-    if (perfRenameApplySuppressed()) {
+    if (token?.isCancellationRequested) {
+      return null;
+    }
+    if (perfRenameApplySuppressed(token)) {
       return { edits: [] };
     }
     if (context.applyWorkspaceEdit) {

@@ -137,12 +137,19 @@ function comparablePair(overrides = {}) {
 
 function canonicalScenarioOf(editor, id, overrides = {}) {
   const contract = captureScenarioContract(id);
+  const requiredTargets = Array.from(
+    { length: contract.requiredTargets },
+    (_, index) => `canonical-target-${index}`,
+  );
   return scenarioOf({
     id,
     cutPoint: contract.cutPointByEditor[editor],
     comparisonKind: contract.comparisonKind,
     cacheState: contract.cacheState,
     workScope: contract.workScope,
+    warmups: contract.requiredWarmups,
+    targets: requiredTargets,
+    count: contract.minSamples,
     ...overrides,
   });
 }
@@ -164,8 +171,34 @@ function canonicalRunOf(editor, scenarios) {
   return { ...run, environment: { ...run.environment, editor } };
 }
 
+function disabledCapabilityScenario(id) {
+  return {
+    id,
+    status: "policy-disabled",
+    reason: "effective JS/TS tier editing-only: full-sync-utf16-limit",
+    method: "metrics-derived-effective-tier",
+    warmups: 0,
+    targets: [],
+    samples: [],
+  };
+}
+
+function vscodeCapabilityScenario(id, overrides = {}) {
+  return {
+    id,
+    status: "ok",
+    unit: "observation",
+    samples: [],
+    targets: [],
+    warmups: 0,
+    method: `observe-${id}`,
+    resultCount: 1,
+    ...overrides,
+  };
+}
+
 describe("run-level fixture verification", () => {
-  it("scores only a canonical cross-editor production scenario", () => {
+  it("keeps file-search informational because the engines and cut points differ", () => {
     const id = "file-search-engine";
     const report = buildGapReport({
       codevo: canonicalRunOf("codevo", [canonicalScenarioOf("codevo", id, { resultCount: 10 })]),
@@ -179,7 +212,11 @@ describe("run-level fixture verification", () => {
       comparable: true,
       canonicalContractRequired: true,
     });
-    expect(rowOf(report, id).status).toBe("pass");
+    const row = rowOf(report, id);
+    expect(row.status).toBe("non-comparable");
+    expect(row.nonComparableReasons).toContain(
+      'capture contract declares comparisonKind "informational-asymmetric": work scope "asymmetric-codevo-fuzzy-ranked-vs-vscode-glob-substring"; Codevo stops at "fuzzy-subsequence-ranking-complete", VS Code stops at "workspace-find-files-resolved"',
+    );
   });
 
   it("fails the whole run closed for duplicate or unknown scenario ids", () => {
@@ -215,8 +252,29 @@ describe("run-level fixture verification", () => {
     expect(report.verification.comparable).toBe(true);
     expect(row.status).toBe("non-comparable");
     expect(row.nonComparableReasons).toContain(
-      'capture contract declares comparisonKind "informational-asymmetric"',
+      'capture contract declares comparisonKind "informational-asymmetric": work scope "editor-specific-tab-activation"; Codevo stops at "tab-switch-rendered", VS Code stops at "tab-switch-open-resolved"',
     );
+  });
+
+  it("rejects a legacy VS Code baseline before scoring any row", () => {
+    const id = "typing-large-5k";
+    const baseline = canonicalRunOf("vscode", [canonicalScenarioOf("vscode", id)]);
+    baseline.captureContract = {
+      version: "c7.6-production-v1",
+      sha256: "0".repeat(64),
+    };
+    const report = buildGapReport({
+      codevo: canonicalRunOf("codevo", [canonicalScenarioOf("codevo", id)]),
+      baseline,
+      tolerances: DEFAULT_TOLERANCES,
+    });
+
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons.join(" ")).toContain(
+      `VS Code capture contract: captureContract.version mismatch: expected "${PERF_CAPTURE_CONTRACT_METADATA.version}", got "c7.6-production-v1".`,
+    );
+    expect(report.failures[0]).toMatchObject({ id: "run-comparability", status: "invalid" });
+    expect(rowOf(report, id).status).toBe("non-comparable");
   });
 
   it("accepts a pair whose fixtureVersion, fixtureHashes, and timer metadata agree", () => {
@@ -829,7 +887,7 @@ describe("timer quantization", () => {
     expect(row.status).toBe("non-comparable");
   });
 
-  it("does not flag a zero median when the side reports a perfect clock", () => {
+  it("fails closed when a side claims an impossible zero timer quantization", () => {
     const report = reportOf({
       codevo: runOf({
         scenarios: [scenarioOf({ samples: [{ ms: 0 }, { ms: 0 }, { ms: 90 }] })],
@@ -844,8 +902,12 @@ describe("timer quantization", () => {
 
     expect(row.codevoMedian).toBe(0);
     expect(row.quantizationLimited).toEqual([]);
-    expect(row.nonComparableReasons).toEqual([]);
-    expect(row.status).toBe("pass");
+    expect(report.verification.comparable).toBe(false);
+    expect(report.verification.reasons.join(" ")).toContain("timerQuantizationMs");
+    expect(row.nonComparableReasons).toContain(
+      "run metadata is not comparable (see the run comparability banner)",
+    );
+    expect(row.status).toBe("non-comparable");
   });
 
   it("marks a row quantization-limited when a median sits under ten timer ticks", () => {
@@ -899,32 +961,188 @@ describe("reported scenario statuses", () => {
     },
   );
 
-  it("exempts a declared large-file capability row from the failure gate", () => {
-    const [capabilityId] = CAPABILITY_GAP_SCENARIO_IDS;
+  it.each(CAPABILITY_GAP_SCENARIO_IDS)(
+    "exempts %s only when VS Code returns a positive provider result",
+    (capabilityId) => {
+      const report = reportOf({
+        codevoScenarios: [disabledCapabilityScenario(capabilityId)],
+        baselineScenarios: [vscodeCapabilityScenario(capabilityId, { resultCount: 27_759 })],
+      });
+      const row = rowOf(report, capabilityId);
+      const markdown = renderGapReportMarkdown(report);
+
+      expect(row).toMatchObject({
+        capabilityGap: true,
+        status: "non-comparable",
+        comparable: false,
+      });
+      expect(row.nonComparableReasons).toEqual([
+        "proven large-file capability gap: Codevo's exact large-document policy disables the feature while VS Code returned a positive provider result on the same fixture",
+      ]);
+      expect(report.failures).toEqual([]);
+      expect(markdown.split("### Blocked rows")[1]).toContain("No blocked rows.");
+      expect(markdown).toContain(`| ${capabilityId} | disabled | n/a |`);
+      expect(markdown).toContain(
+        `Capability gap: ${capabilityId} - VS Code returned 27759 provider results on the same file`,
+      );
+      expect(markdown).not.toContain(`Capability gap: ${capabilityId} - VS Code measured`);
+      expect(markdown).not.toContain(" ms on the same file");
+      expect(markdown).not.toContain("| pass |");
+    },
+  );
+
+  it.each(
+    CAPABILITY_GAP_SCENARIO_IDS.flatMap((id) =>
+      [
+        undefined,
+        "no-result",
+        "invalid",
+        "not-run",
+        "skipped",
+        "policy-disabled",
+        "non-comparable",
+      ].map((status) => [id, status]),
+    ),
+  )("blocks %s when VS Code reports %s", (capabilityId, status) => {
     const report = reportOf({
-      codevoScenarios: [
-        {
-          id: capabilityId,
-          unit: "ms",
-          status: "policy-disabled",
-          reason: "large-document policy (5000 lines / 256 KiB) disables JS/TS features",
-        },
+      codevoScenarios: [disabledCapabilityScenario(capabilityId)],
+      baselineScenarios: [
+        vscodeCapabilityScenario(capabilityId, {
+          status,
+          resultCount: 27_759,
+          error: `VS Code reported ${status}`,
+        }),
       ],
-      baselineScenarios: [scenarioOf({ id: capabilityId, ms: 316, resultCount: 27759 })],
     });
     const row = rowOf(report, capabilityId);
-    const markdown = renderGapReportMarkdown(report);
 
-    expect(row).toMatchObject({ capabilityGap: true, status: "non-comparable", comparable: false });
-    expect(row.nonComparableReasons).toEqual([
-      "declared large-file capability gap: Codevo's large-document policy disables the feature on this fixture by design",
-    ]);
-    expect(report.failures).toEqual([]);
-    expect(markdown.split("### Blocked rows")[1]).toContain("No blocked rows.");
-    expect(markdown).toContain(`| ${capabilityId} | disabled | 316.00 |`);
-    expect(markdown).toContain(`Capability gap: ${capabilityId} - VS Code measured 316.00 ms`);
-    expect(markdown).not.toContain("| pass |");
+    expect(row.capabilityGap).toBe(false);
+    expect(row.status).toBe(status === "no-result" ? "no-result" : "no-baseline");
+    expect(report.failures).toContainEqual(expect.objectContaining({ id: capabilityId }));
+    expect(renderGapReportMarkdown(report)).not.toContain(`Capability gap: ${capabilityId}`);
   });
+
+  it.each(CAPABILITY_GAP_SCENARIO_IDS)(
+    "does not exempt %s when run-level evidence is not comparable",
+    (capabilityId) => {
+      const codevo = runOf({
+        scenarios: [disabledCapabilityScenario(capabilityId)],
+        fixtureHashes: { ...FIXTURE_HASHES, "large-files/medium-2k.ts": "c".repeat(64) },
+      });
+      const baseline = runOf({
+        scenarios: [vscodeCapabilityScenario(capabilityId, { resultCount: 1 })],
+        timerQuantizationMs: 0.001,
+      });
+      const report = reportOf({ codevo, baseline });
+      const row = rowOf(report, capabilityId);
+
+      expect(report.verification.comparable).toBe(false);
+      expect(row).toMatchObject({ capabilityGap: false, status: "policy-disabled" });
+      expect(report.failures).toContainEqual(
+        expect.objectContaining({ id: capabilityId, status: "policy-disabled" }),
+      );
+      expect(renderGapReportMarkdown(report)).not.toContain(`Capability gap: ${capabilityId}`);
+    },
+  );
+
+  it.each(
+    CAPABILITY_GAP_SCENARIO_IDS.flatMap((id) => [
+      [id, "method", "different-policy-source"],
+      [id, "reason", "different disablement reason"],
+    ]),
+  )("does not exempt %s with a noncanonical Codevo %s", (capabilityId, field, value) => {
+    const codevo = disabledCapabilityScenario(capabilityId);
+    codevo[field] = value;
+    const report = reportOf({
+      codevoScenarios: [codevo],
+      baselineScenarios: [vscodeCapabilityScenario(capabilityId, { resultCount: 1 })],
+    });
+    const row = rowOf(report, capabilityId);
+
+    expect(row).toMatchObject({ capabilityGap: false, status: "policy-disabled" });
+    expect(report.failures).toContainEqual(
+      expect.objectContaining({ id: capabilityId, status: "policy-disabled" }),
+    );
+    expect(renderGapReportMarkdown(report)).not.toContain(`Capability gap: ${capabilityId}`);
+  });
+
+  it.each(
+    CAPABILITY_GAP_SCENARIO_IDS.flatMap((id) => [
+      [id, "warmups", 99],
+      [id, "targets", Array.from({ length: 99 }, (_, index) => `forged-target-${index}`)],
+      [id, "samples", [{ ms: 99, resultCount: 1 }]],
+    ]),
+  )("does not exempt %s with forged Codevo %s", (capabilityId, field, value) => {
+    const codevo = disabledCapabilityScenario(capabilityId);
+    codevo[field] = value;
+    const report = reportOf({
+      codevoScenarios: [codevo],
+      baselineScenarios: [vscodeCapabilityScenario(capabilityId, { resultCount: 1 })],
+    });
+    const row = rowOf(report, capabilityId);
+
+    expect(row).toMatchObject({ capabilityGap: false, status: "policy-disabled" });
+    expect(report.failures).toContainEqual(
+      expect.objectContaining({ id: capabilityId, status: "policy-disabled" }),
+    );
+    expect(renderGapReportMarkdown(report)).not.toContain(`Capability gap: ${capabilityId}`);
+  });
+
+  it.each(
+    CAPABILITY_GAP_SCENARIO_IDS.flatMap((id) =>
+      [
+        undefined,
+        -1,
+        0,
+        1.5,
+        Number.MAX_SAFE_INTEGER + 1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+      ].map((resultCount) => [id, resultCount]),
+    ),
+  )("blocks %s when VS Code resultCount is %s", (capabilityId, resultCount) => {
+    const baseline = vscodeCapabilityScenario(capabilityId);
+    if (resultCount === undefined) {
+      delete baseline.resultCount;
+    } else {
+      baseline.resultCount = resultCount;
+    }
+    const report = reportOf({
+      codevoScenarios: [disabledCapabilityScenario(capabilityId)],
+      baselineScenarios: [baseline],
+    });
+    const row = rowOf(report, capabilityId);
+
+    expect(row).toMatchObject({ capabilityGap: false, status: "no-result" });
+    expect(row.reason).toBe(
+      "The VS Code capability observation did not record a positive resultCount.",
+    );
+    expect(report.failures).toContainEqual(
+      expect.objectContaining({ id: capabilityId, status: "no-result" }),
+    );
+    expect(renderGapReportMarkdown(report)).not.toContain(`Capability gap: ${capabilityId}`);
+  });
+
+  it.each(CAPABILITY_GAP_SCENARIO_IDS)(
+    "blocks %s when VS Code recorded no capability observation",
+    (capabilityId) => {
+      const report = reportOf({
+        codevoScenarios: [disabledCapabilityScenario(capabilityId)],
+        baselineScenarios: [],
+      });
+      const row = rowOf(report, capabilityId);
+
+      expect(row).toMatchObject({
+        capabilityGap: false,
+        status: "no-baseline",
+        reason: "The VS Code baseline has no capability observation for this scenario.",
+      });
+      expect(report.failures).toContainEqual(
+        expect.objectContaining({ id: capabilityId, status: "no-baseline" }),
+      );
+      expect(renderGapReportMarkdown(report)).not.toContain(`Capability gap: ${capabilityId}`);
+    },
+  );
 
   it("still fails an unexpected policy-disabled status on a comparable fixture", () => {
     const report = reportOf({
@@ -953,7 +1171,7 @@ describe("reported scenario statuses", () => {
       ),
     );
     expect(CAPABILITY_GAP_SCENARIO_IDS.length).toBeGreaterThan(0);
-    expect(CAPABILITY_GAP_SCENARIO_IDS.every((id) => id.endsWith("-large-20k"))).toBe(true);
+    expect(CAPABILITY_GAP_SCENARIO_IDS.every((id) => id.endsWith("-large-100k"))).toBe(true);
   });
 
   it("treats a declared non-comparable scenario as informational, not a failure", () => {
@@ -1146,14 +1364,13 @@ describe("renderGapReportMarkdown", () => {
     expect(NON_COMPARABLE_TABLE_HEADER).not.toContain("Budget");
   });
 
-  it("keeps the floor-adjusted tab-switch ratio informational with its legend", () => {
+  it("does not invent a frame-floor normalization for an asymmetric tab switch", () => {
     const report = reportOf({
       codevoScenarios: [
         scenarioOf({
           id: "tab-switch",
           cutPoint: "tab-switch-rendered",
           ms: 93,
-          frameSettleFloorMs: 33,
         }),
       ],
       baselineScenarios: [
@@ -1164,11 +1381,10 @@ describe("renderGapReportMarkdown", () => {
     const markdown = renderGapReportMarkdown(report);
 
     expect(row.ratio).toBeCloseTo(93 / 37, 10);
-    expect(row.floorAdjustedRatio).toBeCloseTo((93 - 33) / 37, 10);
-    expect(markdown).toContain("| tab-switch | 93.00 | 37.00 | 2.51 | 1.62 |");
-    expect(markdown).toContain(
-      "Floor-adj ratio is informational only and never affects Status: it subtracts the scenario's own declared frameSettleFloorMs from the Codevo p95 before dividing",
-    );
+    expect(row).not.toHaveProperty("floorAdjustedRatio");
+    expect(markdown).toContain("| tab-switch | 93.00 | 37.00 | 2.51 |");
+    expect(markdown).not.toContain("Floor-adj");
+    expect(markdown).not.toContain("frameSettleFloorMs");
     expect(markdown).not.toContain("| pass |");
   });
 

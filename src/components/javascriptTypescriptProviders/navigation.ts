@@ -135,10 +135,14 @@ async function provideNavigation<Context extends NavigationContext>(
     if (feature === "definition" || feature === "references") {
       const durationMs = performance.now() - startedAt;
       context.recordLatency?.(feature, durationMs, request.rootPath);
-      recordPerfProviderSample(feature, {
-        ms: durationMs,
-        resultCount: navigationResultCount(converted),
-      });
+      recordPerfProviderSample(
+        feature,
+        {
+          ms: durationMs,
+          resultCount: navigationResultCount(converted),
+        },
+        token,
+      );
     }
     return converted;
   } catch (error) {

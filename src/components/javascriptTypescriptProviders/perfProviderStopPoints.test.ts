@@ -229,6 +229,30 @@ describe("rename provider-ui-ready stop point", () => {
     dispose();
   });
 
+  it("never applies a late rename edit after its provider token is cancelled", async () => {
+    const dispose = installPerfScenarioBridge(bridgeDependencies());
+    const applied = { count: 0 };
+    const context = renameContext(true);
+    const token = {
+      isCancellationRequested: true,
+      onCancellationRequested: () => ({ dispose: () => {} }),
+    };
+    const result = await provideJavaScriptTypeScriptRenameEdits(
+      fakeMonaco,
+      context as never,
+      fakeBoundary(),
+      renameDependencies(applied) as never,
+      {} as Monaco.editor.ITextModel,
+      position,
+      "OldKindRenamed",
+      token,
+    );
+
+    expect(result).toBeNull();
+    expect(applied.count).toBe(0);
+    dispose();
+  });
+
   it("records the sample even when the edit is rejected as out of root, without applying", async () => {
     const dispose = installPerfScenarioBridge(bridgeDependencies());
     const applied = { count: 0 };

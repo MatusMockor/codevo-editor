@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import type { editor as MonacoEditor } from "monaco-editor";
+import type { CancellationToken, editor as MonacoEditor } from "monaco-editor";
 import {
   installPerfScenarioBridge,
   perfRenameApplySuppressed,
@@ -12,6 +12,10 @@ import {
 
 function immediateFrame(callback: () => void) {
   callback();
+}
+
+function fakeFileUri(path: string) {
+  return { scheme: "file", fsPath: path, path, toString: () => `file://${path}` };
 }
 
 interface RecordingEditor {
@@ -56,6 +60,13 @@ function createTypingEditor(initialValue: string): TypingEditor {
   const positions: { lineNumber: number; column: number }[] = [];
   const listeners = new Set<() => void>();
   const model = {
+    uri: {
+      scheme: "file",
+      fsPath: "/perf/large-files/large-20k.ts",
+      path: "/perf/large-files/large-20k.ts",
+      toString: () => "file:///perf/large-files/large-20k.ts",
+    },
+    getVersionId: () => 1,
     getValue: () => value,
     setValue: (next: string) => {
       value = next;
@@ -190,6 +201,8 @@ function baseDependencies() {
     setQuickOpenQuery: () => {},
     isQuickOpenLoading: () => false,
     getActiveEditor: () => null,
+    getActiveDocumentPath: () => "/perf/large-files/large-20k.ts",
+    getActiveDocumentGeneration: () => 0,
     getRetainedCounts: () => ({ models: 0, editors: 0 }),
     scheduleFrame: immediateFrame,
     now: () => 0,
@@ -514,6 +527,419 @@ describe("installPerfScenarioBridge", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0][1]).toEqual({ lineNumber: 1, column: 15 });
     expect(calls[0][2]).toEqual({ includeDeclaration: true });
+    expect(calls[0][3]).toEqual(
+      expect.objectContaining({
+        isCancellationRequested: false,
+        onCancellationRequested: expect.any(Function),
+      }),
+    );
+    dispose();
+    unregister?.();
+  });
+
+  it("drives registered completion and definition providers through explicit perf probes", async () => {
+    const typing = createTypingEditor("void assert;");
+    const completion = vi.fn(async () => ({ suggestions: [{ label: "assert" }] }) as never);
+    const definition = vi.fn(async () => [{ uri: {}, range: {} }] as never);
+    const unregister = registerPerfMeasuredProviders(
+      {
+        completion: { provideCompletionItems: completion },
+        definition: { provideDefinition: definition },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => typing.editor,
+    });
+    const position = { lineNumber: 1, column: 7 };
+
+    await expect(window.__codevoPerf!.runCompletionProbe(position)).resolves.toBe(true);
+    await expect(window.__codevoPerf!.runDefinitionProbe(position)).resolves.toBe(true);
+    expect(completion).toHaveBeenCalledWith(
+      expect.anything(),
+      position,
+      { triggerKind: 0 },
+      expect.objectContaining({
+        isCancellationRequested: false,
+        onCancellationRequested: expect.any(Function),
+      }),
+    );
+    expect(definition).toHaveBeenCalledWith(
+      expect.anything(),
+      position,
+      expect.objectContaining({
+        isCancellationRequested: false,
+        onCancellationRequested: expect.any(Function),
+      }),
+    );
+    dispose();
+    unregister?.();
+  });
+
+  it("cancels an in-flight provider batch and rejects its late sample after the next batch is cleared", async () => {
+    let resolveCompletion: ((value: unknown) => void) | undefined;
+    let providerToken: CancellationToken | undefined;
+    const typing = createTypingEditor("void assert;");
+    const unregister = registerPerfMeasuredProviders(
+      {
+        completion: {
+          provideCompletionItems: (_model, _position, _context, token) => {
+            providerToken = token;
+            return new Promise((resolve) => {
+              resolveCompletion = resolve;
+            }) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => typing.editor,
+    });
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(
+      "/perf/large-files/large-20k.ts",
+    );
+    expect(authority).not.toBeNull();
+    const batch = window.__codevoPerf!.beginProviderProbeBatch(authority!);
+    expect(batch).not.toBeNull();
+
+    const pending = window.__codevoPerf!.runCompletionProbe(
+      { lineNumber: 1, column: 7 },
+      authority!,
+      batch!,
+    );
+    expect(providerToken).toBeDefined();
+    const cancelled = vi.fn();
+    providerToken!.onCancellationRequested(cancelled);
+
+    window.__codevoPerf!.cancelProviderProbeBatch(batch!);
+    expect(providerToken!.isCancellationRequested).toBe(true);
+    expect(cancelled).toHaveBeenCalledOnce();
+    window.__codevoPerf!.clearProviderProbeSamples();
+    recordPerfProviderSample("completion", { ms: 999, resultCount: 1 }, providerToken);
+    expect(window.__codevoPerf!.getProviderProbeSamples("completion")).toEqual([]);
+
+    resolveCompletion?.({ suggestions: [{ label: "late" }] });
+    await expect(pending).resolves.toBe(false);
+    await expect(
+      window.__codevoPerf!.runCompletionProbe({ lineNumber: 1, column: 7 }, authority!, batch!),
+    ).resolves.toBe(false);
+    dispose();
+    unregister?.();
+  });
+
+  it("cancels exact document work across an A to B to A editor generation change", async () => {
+    let activeModel: object;
+    let fireModelChange: (() => void) | undefined;
+    let resolveCompletion: ((value: unknown) => void) | undefined;
+    let providerToken: CancellationToken | undefined;
+    const modelA = {
+      uri: fakeFileUri("/perf/large-files/large-20k.ts"),
+      getVersionId: () => 1,
+    };
+    const modelB = {
+      uri: fakeFileUri("/perf/large-files/other.ts"),
+      getVersionId: () => 1,
+    };
+    activeModel = modelA;
+    const editor = {
+      getModel: () => activeModel,
+      onDidChangeModel: (listener: () => void) => {
+        fireModelChange = listener;
+        return { dispose: () => (fireModelChange = undefined) };
+      },
+    } as unknown as MonacoEditor.ICodeEditor;
+    const unregister = registerPerfMeasuredProviders(
+      {
+        completion: {
+          provideCompletionItems: (_model, _position, _context, token) => {
+            providerToken = token;
+            return new Promise((resolve) => {
+              resolveCompletion = resolve;
+            }) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => editor,
+    });
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(
+      "/perf/large-files/large-20k.ts",
+    );
+    expect(authority).not.toBeNull();
+    const batch = window.__codevoPerf!.beginProviderProbeBatch(authority!);
+    const pending = window.__codevoPerf!.runCompletionProbe(
+      { lineNumber: 1, column: 1 },
+      authority!,
+      batch!,
+    );
+
+    activeModel = modelB;
+    fireModelChange?.();
+    activeModel = modelA;
+    fireModelChange?.();
+    expect(providerToken?.isCancellationRequested).toBe(true);
+    resolveCompletion?.({ suggestions: [{ label: "stale" }] });
+
+    await expect(pending).resolves.toBe(false);
+    dispose();
+    unregister?.();
+  });
+
+  it("invalidates an idle authority lease across A to B to A before a batch starts", () => {
+    let activeModel: object;
+    let fireModelChange: (() => void) | undefined;
+    const modelA = {
+      uri: fakeFileUri("/perf/large-files/large-20k.ts"),
+      getVersionId: () => 1,
+    };
+    const modelB = {
+      uri: fakeFileUri("/perf/large-files/other.ts"),
+      getVersionId: () => 1,
+    };
+    activeModel = modelA;
+    const editor = {
+      getModel: () => activeModel,
+      onDidChangeModel: (listener: () => void) => {
+        fireModelChange = listener;
+        return { dispose: () => (fireModelChange = undefined) };
+      },
+    } as unknown as MonacoEditor.ICodeEditor;
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => editor,
+    });
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(
+      "/perf/large-files/large-20k.ts",
+    );
+    expect(authority).not.toBeNull();
+
+    activeModel = modelB;
+    fireModelChange?.();
+    activeModel = modelA;
+    fireModelChange?.();
+
+    expect(window.__codevoPerf!.beginProviderProbeBatch(authority!)).toBeNull();
+    dispose();
+  });
+
+  it("mints no lease or provider call for model A with host path B, then recovers on an exact normalized path", async () => {
+    const typing = createTypingEditor("void assert;");
+    let activePath = "/perf/large-files/other.ts";
+    let generation = 1;
+    let fireDocumentChange: (() => void) | undefined;
+    const completion = vi.fn(async () => ({ suggestions: [{ label: "assert" }] }) as never);
+    const unregister = registerPerfMeasuredProviders(
+      { completion: { provideCompletionItems: completion } },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => typing.editor,
+      getActiveDocumentPath: () => activePath,
+      getActiveDocumentGeneration: () => generation,
+      onDidChangeActiveDocument: (listener) => {
+        fireDocumentChange = listener;
+        return { dispose: () => (fireDocumentChange = undefined) };
+      },
+    });
+
+    expect(
+      window.__codevoPerf!.captureActiveDocumentAuthority("/perf/large-files/other.ts"),
+    ).toBeNull();
+    await expect(
+      window.__codevoPerf!.runCompletionProbe({ lineNumber: 1, column: 7 }),
+    ).resolves.toBe(false);
+    expect(completion).not.toHaveBeenCalled();
+
+    activePath = "/perf/large-files/nested/../large-20k.ts";
+    generation += 1;
+    fireDocumentChange?.();
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(
+      "file:///perf/large-files/large-20k.ts",
+    );
+    expect(authority).not.toBeNull();
+    const batch = window.__codevoPerf!.beginProviderProbeBatch(authority!);
+    await expect(
+      window.__codevoPerf!.runCompletionProbe({ lineNumber: 1, column: 7 }, authority!, batch!),
+    ).resolves.toBe(true);
+    expect(completion).toHaveBeenCalledOnce();
+    dispose();
+    unregister?.();
+  });
+
+  it.each([
+    ["localhost file URI", "/work/App.ts", "file://localhost/work/App.ts"],
+    ["Windows drive alias", "C:\\Workspace\\App.ts", "file:///c:/workspace/App.ts"],
+    ["UNC alias", "\\\\SERVER\\Share\\App.ts", "file://server/share/App.ts"],
+  ])("matches an exact normalized %s", (_label, modelFilePath, hostPath) => {
+    const model = {
+      uri: {
+        scheme: "file",
+        fsPath: modelFilePath,
+        path: modelFilePath,
+        toString: () => hostPath,
+      },
+      getVersionId: () => 1,
+    };
+    const editor = { getModel: () => model } as unknown as MonacoEditor.ICodeEditor;
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => editor,
+      getActiveDocumentPath: () => hostPath,
+    });
+
+    expect(window.__codevoPerf!.captureActiveDocumentAuthority(hostPath)).not.toBeNull();
+    dispose();
+  });
+
+  it("cancels path-only A to B to A work through the active-document generation", async () => {
+    let path = "/perf/large-files/large-20k.ts";
+    let generation = 0;
+    let fireDocumentChange: (() => void) | undefined;
+    let providerToken: CancellationToken | undefined;
+    let resolveCompletion: ((value: unknown) => void) | undefined;
+    const typing = createTypingEditor("void assert;");
+    const unregister = registerPerfMeasuredProviders(
+      {
+        completion: {
+          provideCompletionItems: (_model, _position, _context, token) => {
+            providerToken = token;
+            return new Promise((resolve) => {
+              resolveCompletion = resolve;
+            }) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => typing.editor,
+      getActiveDocumentPath: () => path,
+      getActiveDocumentGeneration: () => generation,
+      onDidChangeActiveDocument: (listener) => {
+        fireDocumentChange = listener;
+        return { dispose: () => (fireDocumentChange = undefined) };
+      },
+    });
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(path)!;
+    const batch = window.__codevoPerf!.beginProviderProbeBatch(authority)!;
+    const pending = window.__codevoPerf!.runCompletionProbe(
+      { lineNumber: 1, column: 7 },
+      authority,
+      batch,
+    );
+
+    path = "/perf/large-files/other.ts";
+    generation += 1;
+    fireDocumentChange?.();
+    path = "/perf/large-files/large-20k.ts";
+    generation += 1;
+    fireDocumentChange?.();
+    expect(providerToken?.isCancellationRequested).toBe(true);
+    recordPerfProviderSample("completion", { ms: 999, resultCount: 1 }, providerToken);
+    resolveCompletion?.({ suggestions: [{ label: "stale" }] });
+
+    await expect(pending).resolves.toBe(false);
+    expect(window.__codevoPerf!.getProviderProbeSamples("completion")).toEqual([]);
+    expect(window.__codevoPerf!.beginProviderProbeBatch(authority)).toBeNull();
+    dispose();
+    unregister?.();
+  });
+
+  it("cancels unbatched provider work on bridge disposal and rejects publication into a new bridge", async () => {
+    let resolveCompletion: ((value: unknown) => void) | undefined;
+    let providerToken: CancellationToken | undefined;
+    const typing = createTypingEditor("void assert;");
+    const unregister = registerPerfMeasuredProviders(
+      {
+        completion: {
+          provideCompletionItems: (_model, _position, _context, token) => {
+            providerToken = token;
+            return new Promise((resolve) => {
+              resolveCompletion = resolve;
+            }) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dependencies = { ...baseDependencies(), getActiveEditor: () => typing.editor };
+    const disposeOld = installPerfScenarioBridge(dependencies);
+    const pending = window.__codevoPerf!.runCompletionProbe({ lineNumber: 1, column: 7 });
+
+    disposeOld();
+    expect(providerToken?.isCancellationRequested).toBe(true);
+    const disposeNew = installPerfScenarioBridge(dependencies);
+    recordPerfProviderSample("completion", { ms: 999, resultCount: 1 }, providerToken);
+    expect(window.__codevoPerf!.getProviderProbeSamples("completion")).toEqual([]);
+    resolveCompletion?.({ suggestions: [{ label: "late" }] });
+    await expect(pending).resolves.toBe(false);
+
+    disposeNew();
+    unregister?.();
+  });
+
+  it("rejects a measured provider result after the exact model authority changes", async () => {
+    let version = 1;
+    let fireContentChange: (() => void) | undefined;
+    let providerToken: CancellationToken | undefined;
+    const deferred: { resolve?: (value: unknown) => void } = {};
+    const model = {
+      uri: fakeFileUri("/perf/large-files/large-20k.ts"),
+      getVersionId: () => version,
+      onDidChangeContent: (listener: () => void) => {
+        fireContentChange = listener;
+        return { dispose: () => (fireContentChange = undefined) };
+      },
+    };
+    const editor = { getModel: () => model } as unknown as MonacoEditor.ICodeEditor;
+    const unregister = registerPerfMeasuredProviders(
+      {
+        completion: {
+          provideCompletionItems: (_model, _position, _context, token) => {
+            providerToken = token;
+            return new Promise((resolve) => {
+              deferred.resolve = resolve;
+            }) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => editor,
+    });
+
+    expect(window.__codevoPerf!.captureActiveDocumentAuthority("/other.ts")).toBeNull();
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(
+      "/perf/large-files/large-20k.ts",
+    );
+    expect(authority).not.toBeNull();
+    const pending = window.__codevoPerf!.runCompletionProbe(
+      { lineNumber: 1, column: 1 },
+      authority!,
+    );
+    version = 2;
+    fireContentChange?.();
+    expect(providerToken?.isCancellationRequested).toBe(true);
+    deferred.resolve?.({ suggestions: [{ label: "stale" }] });
+    await expect(pending).resolves.toBe(false);
+    expect(window.__codevoPerf!.getJavaScriptTypeScriptDocumentCapability(authority!)).toBeNull();
     dispose();
     unregister?.();
   });
@@ -551,11 +977,13 @@ describe("installPerfScenarioBridge", () => {
   it("computes a rename through the provider adapter with the apply suppression armed", async () => {
     const typing = createTypingEditor("const value = 1;");
     const suppressionDuringCall: boolean[] = [];
+    let providerToken: CancellationToken | undefined;
     const unregister = registerPerfMeasuredProviders(
       {
         rename: {
-          provideRenameEdits: async () => {
-            suppressionDuringCall.push(perfRenameApplySuppressed());
+          provideRenameEdits: async (_model, _position, _newName, token) => {
+            providerToken = token;
+            suppressionDuringCall.push(perfRenameApplySuppressed(token));
             return { edits: [] } as never;
           },
         },
@@ -573,7 +1001,157 @@ describe("installPerfScenarioBridge", () => {
     ).resolves.toBe(true);
 
     expect(suppressionDuringCall).toEqual([true]);
+    expect(providerToken).toEqual(
+      expect.objectContaining({
+        isCancellationRequested: false,
+        onCancellationRequested: expect.any(Function),
+      }),
+    );
     expect(perfRenameApplySuppressed()).toBe(false);
+    dispose();
+    unregister?.();
+  });
+
+  it("keeps a newer direct rename suppressed when an older overlapping probe settles", async () => {
+    const typing = createTypingEditor("const value = 1;");
+    const tokens: CancellationToken[] = [];
+    const resolvers: Array<(value: unknown) => void> = [];
+    const unregister = registerPerfMeasuredProviders(
+      {
+        rename: {
+          provideRenameEdits: (_model, _position, _newName, token) => {
+            tokens.push(token);
+            return new Promise((resolve) => resolvers.push(resolve)) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => typing.editor,
+    });
+
+    const older = window.__codevoPerf!.runRenameProbe({ lineNumber: 1, column: 7 }, "olderName");
+    const newer = window.__codevoPerf!.runRenameProbe({ lineNumber: 1, column: 7 }, "newerName");
+    expect(tokens).toHaveLength(2);
+    expect(perfRenameApplySuppressed(tokens[0])).toBe(true);
+    expect(perfRenameApplySuppressed(tokens[1])).toBe(true);
+
+    resolvers[0]({ edits: [] });
+    await expect(older).resolves.toBe(true);
+    expect(perfRenameApplySuppressed(tokens[0])).toBe(false);
+    expect(perfRenameApplySuppressed(tokens[1])).toBe(true);
+
+    resolvers[1]({ edits: [] });
+    await expect(newer).resolves.toBe(true);
+    expect(perfRenameApplySuppressed(tokens[1])).toBe(false);
+    dispose();
+    unregister?.();
+  });
+
+  it("releases only the cancelled direct rename suppression while rejecting its late result", async () => {
+    const typing = createTypingEditor("const value = 1;");
+    let providerToken: CancellationToken | undefined;
+    let resolveRename: ((value: unknown) => void) | undefined;
+    const unregister = registerPerfMeasuredProviders(
+      {
+        rename: {
+          provideRenameEdits: (_model, _position, _newName, token) => {
+            providerToken = token;
+            return new Promise((resolve) => {
+              resolveRename = resolve;
+            }) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => typing.editor,
+    });
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(
+      "/perf/large-files/large-20k.ts",
+    )!;
+    const batch = window.__codevoPerf!.beginProviderProbeBatch(authority)!;
+    const pending = window.__codevoPerf!.runRenameProbe(
+      { lineNumber: 1, column: 7 },
+      "lateName",
+      authority,
+      batch,
+    );
+    expect(perfRenameApplySuppressed(providerToken)).toBe(true);
+
+    window.__codevoPerf!.cancelProviderProbeBatch(batch);
+    expect(providerToken?.isCancellationRequested).toBe(true);
+    expect(perfRenameApplySuppressed(providerToken)).toBe(false);
+    resolveRename?.({ edits: [] });
+
+    await expect(pending).resolves.toBe(false);
+    dispose();
+    unregister?.();
+  });
+
+  it("cancels and unsuppresses a direct rename across an A to B model switch", async () => {
+    let activeModel: object;
+    let fireModelChange: (() => void) | undefined;
+    let providerToken: CancellationToken | undefined;
+    let resolveRename: ((value: unknown) => void) | undefined;
+    const modelA = {
+      uri: fakeFileUri("/perf/large-files/large-20k.ts"),
+      getVersionId: () => 1,
+    };
+    const modelB = {
+      uri: fakeFileUri("/perf/large-files/other.ts"),
+      getVersionId: () => 1,
+    };
+    activeModel = modelA;
+    const editor = {
+      getModel: () => activeModel,
+      onDidChangeModel: (listener: () => void) => {
+        fireModelChange = listener;
+        return { dispose: () => (fireModelChange = undefined) };
+      },
+    } as unknown as MonacoEditor.ICodeEditor;
+    const unregister = registerPerfMeasuredProviders(
+      {
+        rename: {
+          provideRenameEdits: (_model, _position, _newName, token) => {
+            providerToken = token;
+            return new Promise((resolve) => {
+              resolveRename = resolve;
+            }) as never;
+          },
+        },
+      },
+      { DEV: true, VITE_CODEVO_PERF_BRIDGE: "1" },
+      null,
+    );
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => editor,
+    });
+    const authority = window.__codevoPerf!.captureActiveDocumentAuthority(
+      "/perf/large-files/large-20k.ts",
+    )!;
+    const batch = window.__codevoPerf!.beginProviderProbeBatch(authority)!;
+    const pending = window.__codevoPerf!.runRenameProbe(
+      { lineNumber: 1, column: 1 },
+      "staleName",
+      authority,
+      batch,
+    );
+
+    activeModel = modelB;
+    fireModelChange?.();
+    expect(providerToken?.isCancellationRequested).toBe(true);
+    expect(perfRenameApplySuppressed(providerToken)).toBe(false);
+    resolveRename?.({ edits: [] });
+
+    await expect(pending).resolves.toBe(false);
     dispose();
     unregister?.();
   });
@@ -871,6 +1449,96 @@ describe("installPerfScenarioBridge", () => {
       utf16Length: 598021,
       lineLimit: 5000,
       characterLimit: 262144,
+    });
+    dispose();
+  });
+
+  it("reports the closed effective JS/TS tier from O(1) model metrics", () => {
+    const getValue = vi.fn(() => {
+      throw new Error("large-file capability must not read full content");
+    });
+    const model = {
+      getLineCount: vi.fn(() => 20_000),
+      getValueLength: vi.fn(() => 598_021),
+      getValue,
+    };
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => ({ getModel: () => model }) as unknown as MonacoEditor.ICodeEditor,
+    });
+
+    expect(window.__codevoPerf!.getJavaScriptTypeScriptDocumentCapability()).toEqual({
+      tier: "explicit-interactive",
+      reason: "character-limit",
+      lineCount: 20_000,
+      utf16Length: 598_021,
+    });
+    expect(model.getLineCount).toHaveBeenCalledTimes(1);
+    expect(model.getValueLength).toHaveBeenCalledTimes(1);
+    expect(getValue).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("reports hard-limit documents as editing-only and eligible documents as full", () => {
+    const getValue = vi.fn(() => {
+      throw new Error("hard-limit observation must remain O(1)");
+    });
+    const hardLimitModel = {
+      getLineCount: vi.fn(() => 100_000),
+      getValueLength: vi.fn(() => 3_029_826),
+      getValue,
+    };
+    let editor = {
+      getModel: () => hardLimitModel,
+    } as unknown as MonacoEditor.ICodeEditor;
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => editor,
+    });
+
+    expect(window.__codevoPerf!.getJavaScriptTypeScriptDocumentCapability()).toEqual({
+      tier: "editing-only",
+      reason: "full-sync-utf16-limit",
+      lineCount: 100_000,
+      utf16Length: 3_029_826,
+    });
+    expect(getValue).not.toHaveBeenCalled();
+    editor = createModelEditor(2_000, 59_354);
+    expect(window.__codevoPerf!.getJavaScriptTypeScriptDocumentCapability()).toEqual({
+      tier: "full",
+      reason: null,
+      lineCount: 2_000,
+      utf16Length: 59_354,
+    });
+    dispose();
+  });
+
+  it("fails the metrics-derived capability observation closed without trustworthy metrics", () => {
+    let editor: MonacoEditor.ICodeEditor | null = null;
+    const dispose = installPerfScenarioBridge({
+      ...baseDependencies(),
+      getActiveEditor: () => editor,
+    });
+
+    expect(window.__codevoPerf!.getJavaScriptTypeScriptDocumentCapability()).toEqual({
+      tier: "editing-only",
+      reason: "no-active-model",
+      lineCount: null,
+      utf16Length: null,
+    });
+    editor = {
+      getModel: () => ({
+        getLineCount: () => {
+          throw new Error("disposed");
+        },
+        getValueLength: () => 1,
+      }),
+    } as unknown as MonacoEditor.ICodeEditor;
+    expect(window.__codevoPerf!.getJavaScriptTypeScriptDocumentCapability()).toEqual({
+      tier: "editing-only",
+      reason: "invalid-metrics",
+      lineCount: null,
+      utf16Length: null,
     });
     dispose();
   });

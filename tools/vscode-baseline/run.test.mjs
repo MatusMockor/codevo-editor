@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   PERF_CAPTURE_CONTRACT,
   PERF_CAPTURE_CONTRACT_METADATA,
+  validateCaptureRun,
 } from "../../scripts/perf/perfCaptureContract.mjs";
 import {
+  captureExitBeforeOutputError,
   readBoundedCaptureFile,
   readBoundedJsonFile,
   resolveExecutableIdentity,
@@ -30,6 +32,10 @@ const LARGE_FILE_IDS = [
   "definition-large-20k",
   "references-large-20k",
   "rename-large-20k",
+  "completion-large-100k",
+  "definition-large-100k",
+  "references-large-100k",
+  "rename-large-100k",
 ];
 
 function capture(ids = LARGE_FILE_IDS) {
@@ -52,21 +58,23 @@ function canonicalEnvironment() {
     osRelease: "25.5.0",
     launchState: "cold-fresh-profile",
     workspaceState: "fixture-clean",
+    timerQuantizationMs: 0.001,
     capturedAt: "2026-08-04T12:00:00.000Z",
   };
 }
 
 function canonicalScenario(contract) {
   const capability = contract.comparisonKind === "capability";
+  const samples = Array.from({ length: contract.minSamples }, () => ({ ms: 1, resultCount: 1 }));
   return {
     id: contract.id,
     cutPoint: contract.cutPointByEditor.vscode,
     comparisonKind: contract.comparisonKind,
     cacheState: contract.cacheState,
     workScope: contract.workScope,
-    warmups: capability ? 0 : 2,
-    targets: capability ? [] : [contract.id],
-    samples: capability ? [] : [{ ms: 1, resultCount: 1 }],
+    warmups: contract.requiredWarmups,
+    targets: Array(contract.requiredTargets).fill(contract.id),
+    samples,
     ...(capability ? {} : { p50: 1, p95: 1 }),
     status: "ok",
   };
@@ -80,7 +88,7 @@ afterEach(() => {
 
 describe("validateCapturedScenarios", () => {
   it("accepts the exact scenario partition for each fixture root", () => {
-    expect(validateCapturedScenarios("large-files", capture()).scenarios).toHaveLength(13);
+    expect(validateCapturedScenarios("large-files", capture()).scenarios).toHaveLength(17);
     expect(
       validateCapturedScenarios("monorepo", capture(["file-search-engine"])).scenarios,
     ).toHaveLength(1);
@@ -105,6 +113,22 @@ describe("validateCapturedScenarios", () => {
     expect(() =>
       validateCapturedScenarios("large-files", capture(LARGE_FILE_IDS.slice(1))),
     ).toThrow(/missing scenario ids: tab-switch-cycle/);
+  });
+
+  it("accepts the complete canonical VS Code scenario set for the frozen contract", () => {
+    const scenarios = PERF_CAPTURE_CONTRACT.scenarios
+      .filter((scenario) => scenario.cutPointByEditor.vscode !== null)
+      .map(canonicalScenario);
+    expect(
+      validateCaptureRun(
+        {
+          captureContract: PERF_CAPTURE_CONTRACT_METADATA,
+          environment: canonicalEnvironment(),
+          scenarios,
+        },
+        { expectedEditor: "vscode" },
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -145,13 +169,13 @@ describe("readBoundedJsonFile", () => {
         scenarios: [
           {
             id: "file-search-engine",
-            cutPoint: "file-search-engine",
-            comparisonKind: "cross-editor",
+            cutPoint: "workspace-find-files-resolved",
+            comparisonKind: "informational-asymmetric",
             cacheState: "warm-explicit",
-            workScope: "bounded-engine-results",
+            workScope: "asymmetric-codevo-fuzzy-ranked-vs-vscode-glob-substring",
             warmups: 2,
-            targets: ["index"],
-            samples: [{ ms: 1, resultCount: 1 }],
+            targets: Array(10).fill("index"),
+            samples: Array.from({ length: 10 }, () => ({ ms: 1, resultCount: 1 })),
             p50: 1,
             p95: 1,
             status: "ok",
@@ -178,7 +202,30 @@ describe("readBoundedJsonFile", () => {
       }),
     );
     const parsed = readBoundedCaptureFile(outputPath);
-    expect(validateCapturedScenarios("large-files", parsed).scenarios).toHaveLength(13);
+    expect(validateCapturedScenarios("large-files", parsed).scenarios).toHaveLength(17);
+  });
+});
+
+describe("captureExitBeforeOutputError", () => {
+  it("fails promptly and clearly when VS Code exits before publication", () => {
+    const error = captureExitBeforeOutputError(
+      "large-files",
+      "/tmp/missing-vscode-capture.json",
+      0,
+      null,
+      { existsSync: () => false },
+    );
+    expect(error?.message).toMatch(
+      /large-files VS Code process exited before publishing.*exit code 0/i,
+    );
+  });
+
+  it("does not replace a capture that was published before process exit", () => {
+    expect(
+      captureExitBeforeOutputError("large-files", "/tmp/result.json", 0, null, {
+        existsSync: () => true,
+      }),
+    ).toBeNull();
   });
 });
 

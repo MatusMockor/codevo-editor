@@ -98,6 +98,19 @@ async function waitForOutput(outPath, budgetMilliseconds, readLaunchError = () =
   return fs.existsSync(outPath);
 }
 
+export function captureExitBeforeOutputError(label, outPath, exitCode, signal, fileSystem = fs) {
+  if (fileSystem.existsSync(outPath)) {
+    return null;
+  }
+  const outcome = signal === null ? "exit code " + String(exitCode) : "signal " + String(signal);
+  return new Error(
+    label +
+      " VS Code process exited before publishing its capture output (" +
+      outcome +
+      "). Check the inherited extension-host error output above.",
+  );
+}
+
 function readBoundedUtf8File(filePath, maxBytes) {
   const descriptor = fs.openSync(filePath, "r");
   try {
@@ -422,6 +435,9 @@ async function captureRoot(
     );
     child.once("error", (error) => {
       launchError = error;
+    });
+    child.once("exit", (exitCode, signal) => {
+      launchError ??= captureExitBeforeOutputError(label, outPath, exitCode, signal);
     });
     const outputExists = await waitForOutput(outPath, 900000, () => launchError);
     if (!outputExists) {

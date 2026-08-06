@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   inPagePerfRunnerSource,
@@ -11,6 +11,7 @@ import {
   summarizeTabSwitchPairs,
   CAPABILITY_SCENARIO_IDS,
   CUT_POINTS,
+  EXPLICIT_INTERACTIVE_SCENARIO_IDS,
   FILE_SEARCH_QUERIES,
   FIXTURE_VERSION,
   KIND_TARGET_PATTERN_SOURCE,
@@ -20,7 +21,6 @@ import {
   POLICY_DISABLED_FIXTURE_FILE,
   POLICY_DISABLED_REASON,
   SCENARIO_STATUS,
-  TAB_SWITCH_FRAME_SETTLE_FLOOR_MS,
   TAB_SWITCH_WINDOW_NOTE,
   TYPING_PROBE_TEXT,
   TYPING_SAMPLE_KEYSTROKES,
@@ -46,6 +46,10 @@ const CANONICAL_BRIDGE_IDS = [
   "definition-medium-2k",
   "references-medium-2k",
   "rename-medium-2k",
+  "completion-large-20k",
+  "definition-large-20k",
+  "references-large-20k",
+  "rename-large-20k",
   "file-search-engine",
   "quickopen-ui",
 ];
@@ -86,6 +90,8 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
     probe.set(kind, list);
   };
   let workspaceRoot = "/perf/large-files";
+  let activePath = "/perf/large-files/medium-2k.ts";
+  let largeContentReads = 0;
   const qa = {
     getWorkspaceRoot: () => workspaceRoot,
     openWorkspaceRoot: async (root) => {
@@ -93,9 +99,16 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
     },
     openWorkspaceFile: async (path) => {
       events.push(`open:${path}`);
+      activePath = path;
       return true;
     },
-    getValue: () => source,
+    getValue: () => {
+      if (!activePath.endsWith("/medium-2k.ts")) {
+        largeContentReads += 1;
+        throw new Error("large fixture content must not be cloned by the measurement runner");
+      }
+      return source;
+    },
     setCursor: () => {},
     triggerCompletion: () => {
       events.push("completion");
@@ -123,6 +136,31 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
       platform: "MacIntel",
     }),
     getLanguageServerRuntimeStatus: () => ({ kind: "running", running: true }),
+    captureActiveDocumentAuthority: (expectedPath) =>
+      activePath === expectedPath ? Object.freeze({ path: expectedPath }) : null,
+    beginProviderProbeBatch: (authority) =>
+      authority?.path === activePath ? { active: true, authority } : null,
+    cancelProviderProbeBatch: (batch) => {
+      batch.active = false;
+    },
+    getJavaScriptTypeScriptDocumentCapability: (authority) =>
+      authority?.path !== activePath
+        ? null
+        : activePath.endsWith("/large-20k.ts")
+          ? {
+              tier: "explicit-interactive",
+              reason: "character-limit",
+              lineCount: 20_000,
+              utf16Length: 598_021,
+            }
+          : activePath.endsWith("/large-100k.ts")
+            ? {
+                tier: "editing-only",
+                reason: "full-sync-utf16-limit",
+                lineCount: 100_000,
+                utf16Length: 3_029_826,
+              }
+            : { tier: "full", reason: null, lineCount: 2_000, utf16Length: 59_354 },
     getLargeSmartDocumentStatus: () => ({
       degraded: true,
       reason: "line-limit",
@@ -145,11 +183,43 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
         restored: true,
       };
     },
-    runReferencesProbe: async () => {
+    runCompletionProbe: async (_position, authority, batch) => {
+      if (
+        authority?.path !== activePath ||
+        (batch && (!batch.active || batch.authority !== authority))
+      )
+        return false;
+      events.push(`completion-probe:${activePath}`);
+      record("completion", { ms: 1, resultCount: completionResultCount });
+      return true;
+    },
+    runDefinitionProbe: async (_position, authority, batch) => {
+      if (
+        authority?.path !== activePath ||
+        (batch && (!batch.active || batch.authority !== authority))
+      )
+        return false;
+      events.push(`definition-probe:${activePath}`);
+      record("definition", { ms: 1, resultCount: 1 });
+      return true;
+    },
+    runReferencesProbe: async (_position, authority, batch) => {
+      if (
+        (authority && authority.path !== activePath) ||
+        (batch && (!batch.active || batch.authority !== authority))
+      )
+        return false;
+      events.push(`references-probe:${activePath}`);
       record("references", { ms: 1, resultCount: 3 });
       return true;
     },
-    runRenameProbe: async () => {
+    runRenameProbe: async (_position, _newName, authority, batch) => {
+      if (
+        (authority && authority.path !== activePath) ||
+        (batch && (!batch.active || batch.authority !== authority))
+      )
+        return false;
+      events.push(`rename-probe:${activePath}`);
       record("rename", { ms: 2, resultCount: 1 });
       return true;
     },
@@ -162,7 +232,7 @@ function createHarness({ source = buildLspSource(), completionResultCount = 2000
     getMemorySample: () => ({ usedJsHeapBytes: 1 }),
   };
 
-  return { qa, perf, probe, record, events };
+  return { qa, perf, probe, record, events, largeContentReads: () => largeContentReads };
 }
 
 async function runScenarios(harness, options = {}) {
@@ -324,7 +394,7 @@ describe("shapeRunResult", () => {
     expect(rename.status).toBe("skipped");
     expect(rename.reason).toBe("Rename produced no latency tracker data.");
 
-    const capability = scenarioOf(result, "completion-large-20k");
+    const capability = scenarioOf(result, "completion-large-100k");
     expect(capability.status).toBe("not-run");
     expect(capability.reason).toBeTruthy();
   });
@@ -357,7 +427,7 @@ describe("shapeRunResult", () => {
     expect(result.failedPaths).toEqual(["/monorepo/packages/pkg-50/src/extra/file-010.ts"]);
   });
 
-  it("emits the run's policy-disabled capability rows for the large-20k LSP targets", () => {
+  it("emits zero-sample policy observations for the editing-only large-100k targets", () => {
     const result = shapeRunResult({
       capturedAt: "2026-07-31T00:00:00.000Z",
       scenarioStatuses: CAPABILITY_SCENARIO_IDS.map((id) => ({
@@ -371,6 +441,10 @@ describe("shapeRunResult", () => {
       const scenario = scenarioOf(result, id);
       expect(scenario.status).toBe("policy-disabled");
       expect(scenario.reason).toBe(POLICY_DISABLED_REASON);
+      expect(scenario.unit).toBe("observation");
+      expect(scenario.samples).toEqual([]);
+      expect(scenario.targets).toEqual([]);
+      expect(scenario.warmups).toBe(0);
       expect(scenario.p95).toBeUndefined();
     }
   });
@@ -570,7 +644,7 @@ describe("shapeRunResult", () => {
     expect(tabSwitch.windowNote).toBeUndefined();
   });
 
-  it("threads the window note, floor, and switch pairs onto the shaped tab-switch scenario", () => {
+  it("threads the truthful window note and switch pairs onto the shaped tab-switch scenario", () => {
     const result = shapeRunResult({
       capturedAt: "2026-08-02T00:00:00.000Z",
       bridgeResults: [
@@ -578,7 +652,7 @@ describe("shapeRunResult", () => {
           id: "tab-switch-cycle",
           samples: [40, 60],
           windowNote: TAB_SWITCH_WINDOW_NOTE,
-          frameSettleFloorMs: TAB_SWITCH_FRAME_SETTLE_FLOOR_MS,
+          frameSettleFloorMs: 33,
           switchPaths: ["/root/large-5k.ts", "/root/large-20k.ts"],
           previousSwitchPath: "/root/huge-union.ts",
         },
@@ -586,7 +660,7 @@ describe("shapeRunResult", () => {
     });
     const tabSwitch = scenarioOf(result, "tab-switch-cycle");
     expect(tabSwitch.windowNote).toBe(TAB_SWITCH_WINDOW_NOTE);
-    expect(tabSwitch.frameSettleFloorMs).toBe(TAB_SWITCH_FRAME_SETTLE_FLOOR_MS);
+    expect(tabSwitch.frameSettleFloorMs).toBeUndefined();
     expect(tabSwitch.p95).toBe(60);
     expect(tabSwitch.samples).toEqual([{ ms: 40 }, { ms: 60 }]);
     expect(tabSwitch.pairs).toEqual([
@@ -679,8 +753,25 @@ describe("inPagePerfRunnerSource", () => {
     expect(rename.samples).toHaveLength(10);
     expect(rename.resultCounts).toEqual(Array.from({ length: 10 }, () => 1));
 
+    for (const id of EXPLICIT_INTERACTIVE_SCENARIO_IDS) {
+      const measured = entryOf(result, id);
+      expect(measured.cutPoint).toBe("provider-ui-ready");
+      expect(measured.warmups).toBe(2);
+      expect(measured.samples).toHaveLength(10);
+      expect(measured.resultCounts).toHaveLength(10);
+      expect(measured.targets).toHaveLength(10);
+      expect(measured.languageServerStatus).toBe("running");
+    }
+    for (const kind of ["completion", "definition", "references", "rename"]) {
+      const events = harness.events.filter((event) => event.startsWith(kind + "-probe:"));
+      const large20kEvents = events.filter((event) => event.endsWith("/large-20k.ts"));
+      expect(large20kEvents).toHaveLength(kind === "completion" ? 13 : 12);
+      expect(events.some((event) => event.endsWith("/large-100k.ts"))).toBe(false);
+    }
+    expect(harness.largeContentReads()).toBe(0);
+
     const fileSearch = entryOf(result, "file-search-engine");
-    expect(fileSearch.cutPoint).toBe("file-search-engine");
+    expect(fileSearch.cutPoint).toBe("fuzzy-subsequence-ranking-complete");
     expect(fileSearch.warmups).toBe(2);
     expect(fileSearch.targets).toEqual(FILE_SEARCH_QUERIES);
     expect(fileSearch.samples).toHaveLength(10);
@@ -731,6 +822,56 @@ describe("inPagePerfRunnerSource", () => {
     );
     const fileSearch = entryOf(result, "file-search-engine");
     expect(fileSearch.samples).toHaveLength(10);
+  });
+
+  it("does not accept a positive sample from a readiness probe that throws", async () => {
+    const harness = createHarness();
+    const runCompletionProbe = harness.perf.runCompletionProbe;
+    let throwOnce = true;
+    harness.perf.runCompletionProbe = async (...args) => {
+      if (throwOnce) {
+        throwOnce = false;
+        harness.record("completion", { ms: 1, resultCount: 2000 });
+        harness.events.push("completion-probe-threw-after-sample");
+        throw new Error("sample then reject");
+      }
+      return runCompletionProbe(...args);
+    };
+
+    const result = await runScenarios(harness);
+
+    expect(entryOf(result, "completion-large-20k").samples).toHaveLength(10);
+    expect(harness.events).toContain("completion-probe-threw-after-sample");
+    expect(
+      harness.events.filter((event) => event === "completion-probe:/perf/large-files/large-20k.ts"),
+    ).toHaveLength(13);
+  });
+
+  it("cancels a hung explicit readiness attempt and retries with a fresh provider batch", async () => {
+    const harness = createHarness();
+    const runCompletionProbe = harness.perf.runCompletionProbe;
+    let hungBatch = null;
+    harness.perf.runCompletionProbe = async (...args) => {
+      if (!hungBatch && args[1]?.path?.endsWith("/large-20k.ts")) {
+        hungBatch = args[2];
+        return new Promise(() => {});
+      }
+      return runCompletionProbe(...args);
+    };
+    vi.useFakeTimers();
+
+    try {
+      const pending = runScenarios(harness);
+      await vi.advanceTimersByTimeAsync(70_000);
+      const result = await pending;
+
+      expect(hungBatch).not.toBeNull();
+      expect(hungBatch.active).toBe(false);
+      expect(entryOf(result, "completion-large-20k").samples).toHaveLength(10);
+      expect(entryOf(result, "definition-large-20k").samples).toHaveLength(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("proves the JS/TS provider ready on the medium fixture before smoke typing", async () => {
@@ -898,6 +1039,77 @@ describe("inPagePerfRunnerSource", () => {
     }
   });
 
+  it("cancels a hanging medium references batch before starting rename", async () => {
+    const harness = createHarness();
+    const runReferencesProbe = harness.perf.runReferencesProbe;
+    const cancelProviderProbeBatch = harness.perf.cancelProviderProbeBatch;
+    let hungBatch = null;
+    harness.perf.runReferencesProbe = async (...args) => {
+      if (!hungBatch && args[1]?.path?.endsWith("/medium-2k.ts")) {
+        hungBatch = args[2];
+        return new Promise(() => {});
+      }
+      return runReferencesProbe(...args);
+    };
+    harness.perf.cancelProviderProbeBatch = (batch) => {
+      cancelProviderProbeBatch(batch);
+      if (batch === hungBatch) harness.events.push("cancel-hung-medium-references");
+    };
+    vi.useFakeTimers();
+
+    try {
+      const pending = runScenarios(harness, { intervalMs: 100 });
+      await vi.advanceTimersByTimeAsync(120_000);
+      const result = await pending;
+      const cancelIndex = harness.events.indexOf("cancel-hung-medium-references");
+      const renameIndex = harness.events.indexOf("rename-probe:/perf/large-files/medium-2k.ts");
+
+      expect(hungBatch).not.toBeNull();
+      expect(hungBatch.active).toBe(false);
+      expect(cancelIndex).toBeGreaterThanOrEqual(0);
+      expect(renameIndex).toBeGreaterThan(cancelIndex);
+      expect(entryOf(result, "references-medium-2k")).toBeUndefined();
+      expect(entryOf(result, "rename-medium-2k")).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses distinct exact-authority batches for medium references and rename", async () => {
+    const harness = createHarness();
+    const runReferencesProbe = harness.perf.runReferencesProbe;
+    const runRenameProbe = harness.perf.runRenameProbe;
+    const referenceAuthorities = new Set();
+    const referenceBatches = new Set();
+    const renameAuthorities = new Set();
+    const renameBatches = new Set();
+    harness.perf.runReferencesProbe = async (position, authority, batch) => {
+      if (authority?.path?.endsWith("/medium-2k.ts")) {
+        referenceAuthorities.add(authority);
+        referenceBatches.add(batch);
+      }
+      return runReferencesProbe(position, authority, batch);
+    };
+    harness.perf.runRenameProbe = async (position, newName, authority, batch) => {
+      if (authority?.path?.endsWith("/medium-2k.ts")) {
+        renameAuthorities.add(authority);
+        renameBatches.add(batch);
+      }
+      return runRenameProbe(position, newName, authority, batch);
+    };
+
+    const result = await runScenarios(harness);
+
+    expect(entryOf(result, "references-medium-2k")).toBeDefined();
+    expect(entryOf(result, "rename-medium-2k")).toBeDefined();
+    expect(referenceAuthorities.size).toBe(1);
+    expect(referenceBatches.size).toBe(1);
+    expect(renameAuthorities.size).toBe(1);
+    expect(renameBatches.size).toBe(1);
+    expect([...renameAuthorities][0]).not.toBe([...referenceAuthorities][0]);
+    expect([...renameBatches][0]).not.toBe([...referenceBatches][0]);
+  });
+
   it("fails a provider batch closed as invalid when one invocation records more than one sample", async () => {
     const harness = createHarness();
     let calls = 0;
@@ -932,6 +1144,7 @@ describe("inPagePerfRunnerSource", () => {
   it("marks rename invalid and restores the fixture when the batch modifies the buffer", async () => {
     const harness = createHarness();
     const originalGetValue = harness.qa.getValue;
+    const expectedOriginal = originalGetValue();
     let mutated = false;
     harness.qa.getValue = () => (mutated ? `${originalGetValue()}Renamed` : originalGetValue());
     harness.perf.runRenameProbe = async () => {
@@ -951,7 +1164,7 @@ describe("inPagePerfRunnerSource", () => {
     expect(status.status).toBe("invalid");
     expect(status.reason).toContain("must never apply its edit");
     expect(status.reason).toContain("restored afterwards.");
-    expect(restoredWith).toBe(originalGetValue());
+    expect(restoredWith).toBe(expectedOriginal);
 
     const shaped = shapeRunResult({
       capturedAt: "2026-08-03T00:00:00.000Z",
@@ -969,6 +1182,10 @@ describe("inPagePerfRunnerSource", () => {
     expect(source).not.toContain("triggerReferences");
     expect(source).not.toContain("referenceSearch");
     expect(source).not.toContain("runRenameWithNewName");
+    expect(source).toContain("runMediumProviderBatch");
+    expect(source).toContain("perf.runReferencesProbe(");
+    expect(source).toContain("perf.runRenameProbe(");
+    expect(source).toContain("() => perf.cancelProviderProbeBatch(batch)");
   });
 
   it("fails the quick open batch closed when a query never renders a settled result set", async () => {
@@ -1062,11 +1279,11 @@ describe("inPagePerfRunnerSource", () => {
     expect(source).toContain("getProviderProbeSamples");
   });
 
-  it("emits the tab-switch measurement window, floor, and switch order with the samples", () => {
+  it("emits the tab-switch measurement window and switch order without a fixed floor", () => {
     const source = inPagePerfRunnerSource();
     expect(source).toContain(JSON.stringify(TAB_SWITCH_WINDOW_NOTE));
     expect(source).toContain("windowNote: TAB_SWITCH_WINDOW_NOTE");
-    expect(source).toContain("frameSettleFloorMs: TAB_SWITCH_FRAME_SETTLE_FLOOR_MS");
+    expect(source).not.toContain("frameSettleFloorMs");
     expect(source).toContain("switchPaths: [...switchPaths]");
     expect(source).toContain("previousSwitchPath:");
   });
@@ -1096,6 +1313,8 @@ describe("inPagePerfRunnerSource", () => {
     expect(source).toContain("perf.runReferencesProbe");
     expect(source).toContain("perf.runRenameProbe");
     expect(source).toContain("monorepoPerf.runQuickOpenUiQuery");
+    expect(source).toContain("() => perf.cancelProviderProbeBatch(batch)");
+    expect(source).toContain('if (typeof onTimeout === "function") onTimeout()');
   });
 
   it("targets the smart-capable medium fixture for the LSP latency scenarios", () => {
@@ -1137,7 +1356,8 @@ describe("inPagePerfRunnerSource", () => {
       "typing ",
       "open large-file tabs",
       "measure large-file tab switches",
-      "inspect large-document policy",
+      "measure explicit large-file providers",
+      "inspect editing-only large-file capability",
       "prepare JS/TS language server",
       "wait for JS/TS language server",
       "measure completion-bounded latency",
@@ -1156,11 +1376,13 @@ describe("inPagePerfRunnerSource", () => {
 });
 
 describe("tab-switch measurement window notes", () => {
-  it("describes Codevo's asserted two-frame settlement window and its floor", () => {
-    expect(TAB_SWITCH_FRAME_SETTLE_FLOOR_MS).toBe(33);
+  it("describes Codevo's phase-dependent two-RAF settlement without a fixed floor", () => {
     expect(TAB_SWITCH_WINDOW_NOTE).toContain("requestAnimationFrame");
     expect(TAB_SWITCH_WINDOW_NOTE).toContain("asserted active");
-    expect(TAB_SWITCH_WINDOW_NOTE).toContain(String(TAB_SWITCH_FRAME_SETTLE_FLOOR_MS));
+    expect(TAB_SWITCH_WINDOW_NOTE).toContain("two render opportunities");
+    expect(TAB_SWITCH_WINDOW_NOTE).toContain("no fixed latency floor");
+    expect(TAB_SWITCH_WINDOW_NOTE).not.toContain("33");
+    expect(TAB_SWITCH_WINDOW_NOTE).not.toContain("cannot report below");
     expect(TAB_SWITCH_WINDOW_NOTE).not.toBe(VSCODE_TAB_SWITCH_WINDOW_NOTE);
   });
 
@@ -1252,6 +1474,10 @@ describe("PERF_SCENARIOS", () => {
       "definition-large-20k",
       "references-large-20k",
       "rename-large-20k",
+      "completion-large-100k",
+      "definition-large-100k",
+      "references-large-100k",
+      "rename-large-100k",
       "file-search-engine",
       "quickopen-ui",
       "memory-sample",
@@ -1270,6 +1496,9 @@ describe("PERF_SCENARIOS", () => {
     expect(cutPointById.get("definition-medium-2k")).toBe(CUT_POINTS.PROVIDER_UI_READY);
     expect(cutPointById.get("references-medium-2k")).toBe(CUT_POINTS.PROVIDER_UI_READY);
     expect(cutPointById.get("rename-medium-2k")).toBe(CUT_POINTS.PROVIDER_UI_READY);
+    for (const id of EXPLICIT_INTERACTIVE_SCENARIO_IDS) {
+      expect(cutPointById.get(id)).toBe(CUT_POINTS.PROVIDER_UI_READY);
+    }
     expect(cutPointById.get("file-search-engine")).toBe(CUT_POINTS.FILE_SEARCH_ENGINE);
     expect(cutPointById.get("quickopen-ui")).toBe(CUT_POINTS.QUICKOPEN_UI);
   });
@@ -1284,14 +1513,20 @@ describe("PERF_SCENARIOS", () => {
     ]);
   });
 
-  it("keeps the large-20k LSP targets as explicit capability rows", () => {
+  it("measures large-20k explicitly and keeps only large-100k as capability rows", () => {
     const capabilityIds = PERF_SCENARIOS.filter((s) => s.kind === "capability").map((s) => s.id);
     expect(capabilityIds).toEqual([
+      "completion-large-100k",
+      "definition-large-100k",
+      "references-large-100k",
+      "rename-large-100k",
+    ]);
+    expect(CAPABILITY_SCENARIO_IDS).toEqual(capabilityIds);
+    expect(EXPLICIT_INTERACTIVE_SCENARIO_IDS).toEqual([
       "completion-large-20k",
       "definition-large-20k",
       "references-large-20k",
       "rename-large-20k",
     ]);
-    expect(CAPABILITY_SCENARIO_IDS).toEqual(capabilityIds);
   });
 });

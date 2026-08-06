@@ -570,8 +570,17 @@ fn activate_native_window<R: tauri::Runtime>(
 }
 
 #[cfg(target_os = "macos")]
-#[allow(deprecated)]
 fn activate_direct_spawned_application(application: &objc2_app_kit::NSApplication) {
+    if objc2::runtime::NSObjectProtocol::respondsToSelector(application, objc2::sel!(activate)) {
+        application.activate();
+    } else {
+        activate_direct_spawned_application_legacy(application);
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn activate_direct_spawned_application_legacy(application: &objc2_app_kit::NSApplication) {
     application.activateIgnoringOtherApps(true);
 }
 

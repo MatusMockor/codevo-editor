@@ -1,12 +1,15 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
-import { setTimeout } from "node:timers";
+import { clearTimeout, setTimeout } from "node:timers";
 import { assertBoundedCaptureJson } from "./perfCaptureContract.mjs";
 
 const MAX_LAUNCHER_LINE_BYTES = 16 * 1024;
 const MAX_LAUNCHER_ERROR_BYTES = 64 * 1024;
-const LAUNCHER_STOP_TIMEOUT_MS = 25_000;
+const LAUNCHER_STOP_TIMEOUT_MS = 30_000;
+const LAUNCHER_STDIO_DRAIN_TIMEOUT_MS = 1_000;
+const GRACEFUL_STOP_FRACTION = 0.1;
+const TERM_STOP_FRACTION = 0.95;
 
 export function spawnDirectApplicationSupervisor(plan, spawnProcess = spawn) {
   const child = spawnProcess(plan.command, plan.args, {
@@ -17,8 +20,10 @@ export function spawnDirectApplicationSupervisor(plan, spawnProcess = spawn) {
   });
   let running = true;
   let processExited = false;
+  let processExitStatus = null;
   let terminationRequested = false;
   let stopPromise = null;
+  let forcedDrainTimer = null;
   let readyState = null;
   let terminalState = null;
   let protocolFailure = null;
@@ -29,12 +34,16 @@ export function spawnDirectApplicationSupervisor(plan, spawnProcess = spawn) {
   let settleReady;
   let rejectReady;
   let settleExited;
+  let settleProcessExit;
   const ready = new Promise((resolve, reject) => {
     settleReady = resolve;
     rejectReady = reject;
   });
   const exited = new Promise((resolve) => {
     settleExited = resolve;
+  });
+  const processExit = new Promise((resolve) => {
+    settleProcessExit = resolve;
   });
 
   const failReady = (message) => {
@@ -48,6 +57,10 @@ export function spawnDirectApplicationSupervisor(plan, spawnProcess = spawn) {
   const finish = (status) => {
     if (!running) return;
     running = false;
+    if (forcedDrainTimer !== null) {
+      clearTimeout(forcedDrainTimer);
+      forcedDrainTimer = null;
+    }
     if (stdoutBuffer.length > 0) {
       processLauncherLine(stdoutBuffer.toString("utf8"));
       stdoutBuffer = Buffer.alloc(0);
@@ -59,6 +72,18 @@ export function spawnDirectApplicationSupervisor(plan, spawnProcess = spawn) {
     }
     const proofError = protocolFailure ?? validateTerminalProof(terminalState, readyState);
     settleExited({ ...status, error: status.error ?? proofError });
+  };
+  const markProcessExited = (status) => {
+    if (processExited) return;
+    processExited = true;
+    processExitStatus = status;
+    settleProcessExit(status);
+    forcedDrainTimer = setTimeout(() => {
+      forcedDrainTimer = null;
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
+      finish(processExitStatus);
+    }, LAUNCHER_STDIO_DRAIN_TIMEOUT_MS);
   };
   const processLauncherLine = (line) => {
     if (line.length === 0) return;
@@ -130,44 +155,86 @@ export function spawnDirectApplicationSupervisor(plan, spawnProcess = spawn) {
     launchError = error instanceof Error ? error.message : String(error);
     failReady(`Production application supervisor launch failed: ${launchError}`);
   });
-  child.once("exit", () => {
-    processExited = true;
+  child.once("exit", (code, childSignal) => {
+    markProcessExited({ code, signal: childSignal, error: launchError });
   });
-  child.once("close", (code, childSignal) =>
-    finish({ code, signal: childSignal, error: launchError }),
-  );
+  child.once("close", (code, childSignal) => {
+    const status = processExitStatus ?? { code, signal: childSignal, error: launchError };
+    markProcessExited(status);
+    finish(status);
+  });
+
+  const requestGracefulStop = () => {
+    if (!running || processExited || terminationRequested) return;
+    terminationRequested = true;
+    child.stdin?.end();
+  };
+  const signalExactChild = (signal) => {
+    if (!running || processExited) return;
+    try {
+      child.kill(signal);
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+  };
+  const hasTerminalCleanupProof = () =>
+    protocolFailure === null && validateTerminalProof(terminalState, readyState) === null;
+  const stopExactChild = ({
+    delay = defaultDelay,
+    now = monotonicNow,
+    timeoutMs = LAUNCHER_STOP_TIMEOUT_MS,
+  } = {}) => {
+    if (stopPromise !== null) return stopPromise;
+    stopPromise = (async () => {
+      requestGracefulStop();
+      const startedAt = now();
+      const gracefulDeadline = startedAt + timeoutMs * GRACEFUL_STOP_FRACTION;
+      const termDeadline = startedAt + timeoutMs * TERM_STOP_FRACTION;
+      const finalDeadline = startedAt + timeoutMs;
+
+      if (!(await waitForExitUntil(processExit, { delay, now, deadline: gracefulDeadline }))) {
+        signalExactChild("SIGTERM");
+      }
+      if (!(await waitForExitUntil(processExit, { delay, now, deadline: termDeadline }))) {
+        if (!hasTerminalCleanupProof()) {
+          throw new Error(
+            "Production application supervisor did not publish terminal cleanup proof; refusing to SIGKILL its sole cleanup authority, and owned roots must be preserved.",
+          );
+        }
+        signalExactChild("SIGKILL");
+      }
+      if (!(await waitForExitUntil(processExit, { delay, now, deadline: finalDeadline }))) {
+        throw new Error(
+          "Production application supervisor survived exact-child SIGKILL; cleanup remains unproven and owned roots must be preserved.",
+        );
+      }
+
+      let outcome = await waitForExitUntil(exited, { delay, now, deadline: finalDeadline });
+      if (outcome === null) {
+        child.stdout?.destroy?.();
+        child.stderr?.destroy?.();
+        finish(processExitStatus);
+        outcome = await exited;
+      }
+      if (outcome.error || outcome.code !== 0) {
+        throw new Error(
+          `Production application cleanup was not proven (${describeStatus(outcome)}${stderrSuffix(stderr)}).`,
+        );
+      }
+    })();
+    return stopPromise;
+  };
 
   return {
     ready,
     exited,
     interrupt() {
-      if (!running || processExited || terminationRequested) return;
-      child.stdin?.end();
-      terminationRequested = true;
+      const stopping = stopExactChild();
+      void stopping.catch(() => {});
+      return stopping;
     },
-    stop({ delay = defaultDelay, now = monotonicNow, timeoutMs = LAUNCHER_STOP_TIMEOUT_MS } = {}) {
-      if (stopPromise !== null) return stopPromise;
-      stopPromise = (async () => {
-        if (running && !processExited && !terminationRequested) {
-          child.stdin?.end();
-          terminationRequested = true;
-        }
-        const outcome = await waitForExit(exited, { delay, now, timeoutMs });
-        if (outcome === null) {
-          child.unref?.();
-          child.stdout?.unref?.();
-          child.stderr?.unref?.();
-          throw new Error(
-            "Production application supervisor is still retaining an unsettled application; exact cleanup remains pending and owned roots must be preserved.",
-          );
-        }
-        if (outcome.error || outcome.code !== 0) {
-          throw new Error(
-            `Production application cleanup was not proven (${describeStatus(outcome)}${stderrSuffix(stderr)}).`,
-          );
-        }
-      })();
-      return stopPromise;
+    stop(options) {
+      return stopExactChild(options);
     },
   };
 }
@@ -243,14 +310,13 @@ function closedKeys(value, expected) {
   );
 }
 
-async function waitForExit(exited, { delay, now, timeoutMs }) {
+async function waitForExitUntil(exited, { delay, now, deadline }) {
   let completed = false;
   let status;
   exited.then((value) => {
     completed = true;
     status = value;
   });
-  const deadline = now() + timeoutMs;
   while (!completed) {
     const remaining = deadline - now();
     if (remaining <= 0) return null;

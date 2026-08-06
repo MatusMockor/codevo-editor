@@ -14,6 +14,7 @@ const LIMIT_KEYS = [
   "maxSamplesPerScenario",
   "maxScenarios",
   "maxTargetsPerScenario",
+  "maxTimerQuantizationMs",
 ];
 const SCENARIO_KEYS = [
   "cacheState",
@@ -22,6 +23,8 @@ const SCENARIO_KEYS = [
   "id",
   "maxSamples",
   "minSamples",
+  "requiredTargets",
+  "requiredWarmups",
   "workScope",
 ];
 const CUT_POINT_EDITOR_KEYS = ["codevo", "vscode"];
@@ -93,7 +96,6 @@ const SCENARIO_RUN_KEYS = new Set([
   "cutPoint",
   "diagnosticEvidence",
   "error",
-  "frameSettleFloorMs",
   "id",
   "languageServerStatus",
   "memorySample",
@@ -120,7 +122,6 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const MAX_RETAINED_EDITOR_OBJECTS = 1_000_000;
 const MAX_REPORTED_HEAP_BYTES = 2 ** 50;
 const MAX_DURATION_MS = 3_600_000;
-const MAX_FRAME_SETTLE_FLOOR_MS = 1_000;
 const MEMORY_SCENARIO_KEYS = new Set([
   "cacheState",
   "comparisonKind",
@@ -286,9 +287,22 @@ function parseCanonicalContract(raw) {
       scenario.minSamples < 0 ||
       !Number.isInteger(scenario.maxSamples) ||
       scenario.maxSamples < scenario.minSamples ||
-      scenario.maxSamples > parsed.limits.maxSamplesPerScenario
+      scenario.maxSamples > parsed.limits.maxSamplesPerScenario ||
+      scenario.minSamples !== scenario.maxSamples
     ) {
-      throw new Error(`Perf capture contract scenario "${scenario.id}" has invalid sample bounds.`);
+      throw new Error(
+        `Perf capture contract scenario "${scenario.id}" must declare one exact valid sample count.`,
+      );
+    }
+    if (
+      !nonnegativeSafeInteger(scenario.requiredWarmups) ||
+      scenario.requiredWarmups > parsed.limits.maxSamplesPerScenario ||
+      !nonnegativeSafeInteger(scenario.requiredTargets) ||
+      scenario.requiredTargets > parsed.limits.maxTargetsPerScenario
+    ) {
+      throw new Error(
+        `Perf capture contract scenario "${scenario.id}" has invalid exact warmup/target counts.`,
+      );
     }
   }
 
@@ -615,10 +629,13 @@ function validateEnvironment(environment, expectedEditor, maxBytes, reasons) {
     reasons.push("environment.capturedAt must be a UTC ISO-8601 instant.");
   }
   if (
-    environment.timerQuantizationMs !== undefined &&
-    !finiteNonnegative(environment.timerQuantizationMs)
+    !finiteNonnegative(environment.timerQuantizationMs) ||
+    environment.timerQuantizationMs <= 0 ||
+    environment.timerQuantizationMs > PERF_CAPTURE_CONTRACT.limits.maxTimerQuantizationMs
   ) {
-    reasons.push("environment.timerQuantizationMs must be finite and nonnegative.");
+    reasons.push(
+      `environment.timerQuantizationMs must be finite, strictly positive, and at most ${PERF_CAPTURE_CONTRACT.limits.maxTimerQuantizationMs} ms.`,
+    );
   }
   if (environment.strictMode !== undefined && typeof environment.strictMode !== "boolean") {
     reasons.push("environment.strictMode must be boolean when present.");
@@ -841,15 +858,43 @@ function validateCanonicalScenario(scenario, contract, expectedEditor, environme
 
   validateScenarioShape(scenario, id, reasons, environment);
 
+  const exactProtocolObservation =
+    scenario.status === "ok" ||
+    (contract.comparisonKind === "capability" &&
+      (scenario.status === "policy-disabled" || scenario.status === "no-result"));
   const samples = Array.isArray(scenario.samples) ? scenario.samples.length : 0;
   if (samples > contract.maxSamples) {
     reasons.push(
       `Scenario "${id}" records ${samples} samples above its ${contract.maxSamples} sample bound.`,
     );
-  } else if (scenario.status === "ok" && samples < contract.minSamples) {
+  } else if (exactProtocolObservation && samples !== contract.minSamples) {
     reasons.push(
-      `Scenario "${id}" records ${samples} samples outside its ${contract.minSamples}-${contract.maxSamples} bound.`,
+      `Scenario "${id}" must record exactly ${contract.minSamples} samples for its completed protocol observation, got ${samples}.`,
     );
+  }
+  if (exactProtocolObservation) {
+    if (
+      id !== "memory-sample" &&
+      (!nonnegativeSafeInteger(scenario.warmups) ||
+        !Array.isArray(scenario.samples) ||
+        !Array.isArray(scenario.targets))
+    ) {
+      reasons.push(
+        `Scenario "${id}" completed protocol observation must explicitly record warmups, samples, and targets.`,
+      );
+    }
+    const warmups = scenario.warmups === undefined ? 0 : scenario.warmups;
+    const targets = Array.isArray(scenario.targets) ? scenario.targets.length : 0;
+    if (warmups !== contract.requiredWarmups) {
+      reasons.push(
+        `Scenario "${id}" must record exactly ${contract.requiredWarmups} warmups for its completed protocol observation, got ${JSON.stringify(scenario.warmups)}.`,
+      );
+    }
+    if (targets !== contract.requiredTargets) {
+      reasons.push(
+        `Scenario "${id}" must record exactly ${contract.requiredTargets} targets for its completed protocol observation, got ${targets}.`,
+      );
+    }
   }
   if (
     Array.isArray(scenario.samples) &&
@@ -872,18 +917,15 @@ function validateScenarioShape(scenario, id, reasons, environment = null) {
       reasons.push(`Scenario "${id}" ${field} is invalid or unbounded.`);
     }
   }
-  if (scenario.warmups !== undefined && !nonnegativeSafeInteger(scenario.warmups)) {
-    reasons.push(`Scenario "${id}" warmups must be a nonnegative safe integer.`);
+  if (
+    scenario.warmups !== undefined &&
+    (!nonnegativeSafeInteger(scenario.warmups) ||
+      scenario.warmups > PERF_CAPTURE_CONTRACT.limits.maxSamplesPerScenario)
+  ) {
+    reasons.push(`Scenario "${id}" warmups must be a bounded nonnegative safe integer.`);
   }
   if (scenario.resultCount !== undefined && !nonnegativeSafeInteger(scenario.resultCount)) {
     reasons.push(`Scenario "${id}" resultCount must be a nonnegative safe integer.`);
-  }
-  if (
-    scenario.frameSettleFloorMs !== undefined &&
-    (!finiteNonnegative(scenario.frameSettleFloorMs) ||
-      scenario.frameSettleFloorMs > MAX_FRAME_SETTLE_FLOOR_MS)
-  ) {
-    reasons.push(`Scenario "${id}" frameSettleFloorMs must be finite and nonnegative.`);
   }
   if (
     scenario.targets !== undefined &&
