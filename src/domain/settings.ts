@@ -10,6 +10,16 @@ import {
 } from "./largeDocumentPolicy";
 import { normalizeGitCommitMessageHistory } from "./gitCommitMessageHistory";
 import {
+  defaultAgentAppSettings,
+  normalizeAgentCliKind,
+  normalizeAgentCliPath,
+  normalizeAgentIsolationPolicy,
+  normalizeMaxConcurrentAgentTasks,
+  DEFAULT_AGENT_ISOLATION_POLICY,
+  type AgentCliKind,
+  type AgentIsolationPolicy,
+} from "./agentSettings";
+import {
   createInitialEditorGroupsState,
   normalizeEditorGroupsState,
   type EditorGroupId,
@@ -59,9 +69,9 @@ export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView =
   "index" | "problems" | "history" | "terminal" | "runtime" | "search";
-export type WorkspaceSessionSidebarView = "files" | "git" | "php" | "scripts";
+export type WorkspaceSessionSidebarView = "files" | "git" | "php" | "scripts" | "agents";
 export type SettingsSection =
-  "general" | "keymap" | "php" | "git" | "index" | "snippets" | "appearance";
+  "general" | "keymap" | "php" | "git" | "index" | "snippets" | "appearance" | "agents";
 
 export const defaultEditorFontFamily =
   "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
@@ -108,6 +118,9 @@ const genericEditorFontFamilies = new Set([
 ]);
 
 export interface AppSettings {
+  agentCliPath: string | null;
+  agentCliKind: AgentCliKind;
+  maxConcurrentAgentTasks: number;
   editorFontFamily: string;
   editorFontLigatures: boolean;
   editorFontSize: number;
@@ -128,6 +141,7 @@ export interface AppSettings {
 }
 
 export interface WorkspaceSettings {
+  agentIsolationPolicy: AgentIsolationPolicy;
   autoSave: boolean;
   autoSaveConfigured: boolean;
   defaultInsertSpaces: boolean;
@@ -258,6 +272,7 @@ export interface WorkspaceSettingsIdentity {
 
 export function defaultAppSettings(): AppSettings {
   return {
+    ...defaultAgentAppSettings(),
     editorFontFamily: defaultEditorFontFamily,
     editorFontLigatures: defaultEditorFontLigatures,
     editorFontSize: defaultEditorFontSize,
@@ -327,6 +342,7 @@ export function monacoFontLigaturesForEditorSetting(enabled: boolean): string {
 
 export function defaultWorkspaceSettings(): WorkspaceSettings {
   return {
+    agentIsolationPolicy: DEFAULT_AGENT_ISOLATION_POLICY,
     autoSave: true,
     autoSaveConfigured: true,
     defaultInsertSpaces: defaultWorkspaceInsertSpaces,
@@ -442,6 +458,9 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   const workspaceTabs = normalizeWorkspaceTabs(value.workspaceTabs, recentWorkspacePath);
 
   return {
+    agentCliPath: normalizeAgentCliPath(value.agentCliPath),
+    agentCliKind: normalizeAgentCliKind(value.agentCliKind),
+    maxConcurrentAgentTasks: normalizeMaxConcurrentAgentTasks(value.maxConcurrentAgentTasks),
     editorFontFamily,
     editorFontLigatures,
     editorFontSize,
@@ -481,6 +500,7 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
   }
 
   return {
+    agentIsolationPolicy: normalizeAgentIsolationPolicy(value.agentIsolationPolicy),
     autoSave:
       value.autoSaveConfigured === true && typeof value.autoSave === "boolean"
         ? value.autoSave
@@ -1333,7 +1353,13 @@ function isWorkspaceSessionBottomPanelView(
 }
 
 function isWorkspaceSessionSidebarView(value: unknown): value is WorkspaceSessionSidebarView {
-  return value === "files" || value === "git" || value === "php" || value === "scripts";
+  return (
+    value === "files" ||
+    value === "git" ||
+    value === "php" ||
+    value === "scripts" ||
+    value === "agents"
+  );
 }
 
 function normalizeNullableString(value: unknown, fallback: string | null): string | null {

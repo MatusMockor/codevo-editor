@@ -2,6 +2,7 @@ import { RefreshCw } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { useWorkbenchController } from "../application/useWorkbenchController";
 import type { GitChangeStatus } from "../domain/git";
+import { AgentsPanel } from "./AgentsPanel";
 import { FileTree } from "./FileTree";
 import { GitChangesPanel } from "./GitChangesPanel";
 import { PhpTreePanel } from "./PhpTreePanel";
@@ -28,7 +29,7 @@ export function WorkbenchSidebar({
     <section className="sidebar">
       <header className="sidebar-header">
         <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">
-          {(["files", "git", "php", "scripts"] as const).map((view) => (
+          {(["files", "git", "php", "scripts", "agents"] as const).map((view) => (
             <button
               aria-selected={workbench.sidebarView === view}
               className={workbench.sidebarView === view ? "sidebar-tab active" : "sidebar-tab"}
@@ -101,6 +102,12 @@ export function WorkbenchSidebar({
           repositoryStatuses={workbench.gitRepositoryStatuses}
           rootPath={workbench.workspaceRoot}
           status={workbench.gitStatus}
+          workspaceRoot={workbench.workspaceRoot}
+        />
+      ) : workbench.sidebarView === "agents" ? (
+        <AgentsPanel
+          agents={workbench.agents}
+          repositories={workbench.agents.repositories}
           workspaceRoot={workbench.workspaceRoot}
         />
       ) : workbench.sidebarView === "php" ? (

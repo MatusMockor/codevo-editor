@@ -35,6 +35,7 @@ import {
   isDebuggablePhpScriptPath,
   workbenchDebugCommands,
 } from "./workbenchDebugCommands";
+import { workbenchAgentCommands } from "./workbenchAgentCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
@@ -340,7 +341,7 @@ interface UseWorkbenchCommandRegistryOptions {
   setPaletteOpen(open: boolean): void;
   setQuickOpenOpen(open: boolean): void;
   setRecentFilesSwitcherOpen(open: boolean): void;
-  setSidebarView(view: "git" | "php" | "scripts"): void;
+  setSidebarView(view: "git" | "php" | "scripts" | "agents"): void;
   setTextSearchOpen(open: boolean): void;
   setWorkspaceSymbolsOpen(open: boolean): void;
   showBottomPanelView: Parameters<typeof workbenchPanelCommands>[0]["showBottomPanelView"];
@@ -993,6 +994,10 @@ export function useWorkbenchCommandRegistry(
     workbenchGitSidebarCommands({
       showGitSidebar: () => setSidebarView("git"),
       refreshGitStatus,
+    }).forEach((command) => registry.register(command));
+
+    workbenchAgentCommands({
+      showAgentsPanel: () => setSidebarView("agents"),
     }).forEach((command) => registry.register(command));
 
     return registry;

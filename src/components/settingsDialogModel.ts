@@ -12,6 +12,7 @@ export const settingsDialogSections: ReadonlyArray<{
   { id: "index", label: "Index" },
   { id: "snippets", label: "Snippets" },
   { id: "appearance", label: "Appearance" },
+  { id: "agents", label: "Agents" },
 ];
 
 export const newUserSnippet = (): UserSnippet => ({

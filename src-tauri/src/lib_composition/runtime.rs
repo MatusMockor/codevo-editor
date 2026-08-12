@@ -119,6 +119,16 @@ pub fn run() {
             let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
             let trust_service = WorkspaceTrustService::load(trust_path)?;
             app.manage(Mutex::new(trust_service));
+            let agent_task_admission =
+                Arc::new(agent_task_admission::AgentTaskAdmissionRegistry::new());
+            app.manage(Arc::clone(&agent_task_admission));
+            app.manage(agent_task_supervisor::AgentTaskRegistry::new(
+                agent_task_admission,
+                Arc::new(agent_task_spawner::StdAgentProcessSpawner),
+                Arc::new(agent_task_commands::AppHandleAgentTaskEventSink::new(
+                    app.handle().clone(),
+                )),
+            ));
             #[cfg(not(test))]
             app.manage(
                 vscode_process_task_commands::VscodeProcessTaskCommandService::new(
@@ -197,8 +207,8 @@ pub fn run() {
             workspace_commands::workspace_delete_path,
             workspace_commands::workspace_rename_path,
             debug_evaluate,
-            debug_list_node_attach_candidates,
-            debug_start_node_attach_candidate,
+            debug_node_attach_list_command::debug_list_node_attach_candidates,
+            debug_node_attach_start_command::debug_start_node_attach_candidate,
             debug_completions,
             debug_disconnect,
             debug_pause,
@@ -433,7 +443,15 @@ pub fn run() {
             workspace_did_rename_files,
             upsert_workspace_index_file,
             workspace_symbols,
-            terminal_commands::write_terminal_input
+            terminal_commands::write_terminal_input,
+            agent_task_commands::start_agent_task,
+            agent_task_commands::acknowledge_agent_task_start,
+            agent_task_commands::stop_agent_task,
+            agent_task_commands::stop_agent_tasks_for_root,
+            git_worktree_commands::list_git_worktrees,
+            git_worktree_commands::add_git_worktree,
+            git_worktree_commands::remove_git_worktree,
+            git_worktree_commands::prune_git_worktrees
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))

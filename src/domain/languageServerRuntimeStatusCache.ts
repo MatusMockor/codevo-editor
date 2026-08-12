@@ -119,3 +119,16 @@ export function clearCachedLanguageServerRuntimeStatuses(
     delete cache[ownerKey];
   }
 }
+
+export function restoreRuntimeStatusCacheEntry(
+  cache: Record<string, LanguageServerRuntimeStatus>,
+  rootKey: string,
+  status: LanguageServerRuntimeStatus | undefined,
+): void {
+  if (!status) {
+    delete cache[rootKey];
+    return;
+  }
+
+  cache[rootKey] = status;
+}

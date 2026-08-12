@@ -1,3 +1,6 @@
+pub mod agent_task_admission;
+pub mod agent_task_spawner;
+pub mod agent_task_supervisor;
 mod application_commands;
 mod application_menu;
 mod artisan;
@@ -31,6 +34,7 @@ mod file_uri_path;
 pub mod file_watcher;
 pub mod git;
 mod git_commands;
+pub mod git_worktree;
 pub mod ignore_matcher;
 pub mod index;
 pub mod index_reindex;
@@ -132,8 +136,6 @@ mod workspace_typescript;
 use crate::application_menu::application_menu;
 pub(crate) use crate::blocking_command::run_blocking_command;
 use crate::debug_commands::*;
-use crate::debug_node_attach_list_command::debug_list_node_attach_candidates;
-use crate::debug_node_attach_start_command::debug_start_node_attach_candidate;
 use crate::runtime_task_lifecycle::shutdown_runtime_processes;
 use crate::settings_fonts::cached_monospace_font_families;
 

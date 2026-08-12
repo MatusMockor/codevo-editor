@@ -1,4 +1,6 @@
+import type { AgentTaskGateway } from "../domain/agentTask";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
+import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
 import type { NodeRunTaskGateway } from "../domain/nodeRunTask";
 import type { PrettierFormattingGateway } from "../domain/prettierFormatting";
@@ -47,6 +49,8 @@ export interface WorkbenchWorkspaceGateways {
 
 export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
+  agentTaskGateway?: AgentTaskGateway;
+  gitWorktreeGateway?: GitWorktreeGateway;
   javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway?: IncrementalLanguageServerDocumentSyncGateway;
   editorCursorStore?: EditorCursorStorePort;
   cancelJavaScriptTypeScriptLanguageServerRequest?(

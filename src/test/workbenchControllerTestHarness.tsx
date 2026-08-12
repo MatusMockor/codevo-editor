@@ -87,6 +87,8 @@ export type WorkbenchCommitPhase = Parameters<ProfilerOnRenderCallback>[1];
 
 export interface RenderControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
+  agentTaskGateway?: WorkbenchControllerOptions["agentTaskGateway"];
+  gitWorktreeGateway?: WorkbenchControllerOptions["gitWorktreeGateway"];
   appSettings?: ReturnType<typeof defaultAppSettings>;
   debugBreakpointStorage?: WorkbenchControllerOptions["debugBreakpointStorage"];
   debugGateway?: WorkbenchControllerOptions["debugGateway"];
@@ -192,6 +194,8 @@ export function setupWorkbenchControllerTestHarness() {
 
   function renderController({
     activeLiveDocumentSaveCoordinator = fallbackLiveSaveCoordinator(),
+    agentTaskGateway,
+    gitWorktreeGateway,
     appSettings = defaultAppSettings(),
     debugBreakpointStorage,
     debugGateway,
@@ -299,6 +303,8 @@ export function setupWorkbenchControllerTestHarness() {
     dependencies.controllerOptions.prettierFormattingGateway = prettierFormattingGateway;
     dependencies.controllerOptions.debugBreakpointStorage = debugBreakpointStorage;
     dependencies.controllerOptions.debugGateway = debugGateway;
+    dependencies.controllerOptions.agentTaskGateway = agentTaskGateway;
+    dependencies.controllerOptions.gitWorktreeGateway = gitWorktreeGateway;
 
     const getWorkbench = () => {
       if (!workbench) {

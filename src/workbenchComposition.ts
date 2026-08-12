@@ -8,8 +8,10 @@ import { WorkspaceNetteRoutesGateway } from "./application/workspaceNetteRoutesG
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import { BrowserDirtyTextSearchGateway } from "./infrastructure/browserDirtyTextSearchGateway";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
+import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
 import { TauriDebugGateway } from "./infrastructure/tauriDebugGateway";
+import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
 import { TauriGitGateway, TauriGitHistoryGateway } from "./infrastructure/tauriGitGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriIncrementalLanguageServerDocumentSyncGateway } from "./infrastructure/tauriIncrementalLanguageServerDocumentSyncGateway";
@@ -82,6 +84,7 @@ export function createWorkbenchComposition() {
   const quickInputCoordinator = new QuickInputCoordinator();
 
   return {
+    agentTaskGateway: new TauriAgentTaskGateway(),
     cursorStore: new EditorCursorStore(),
     artisanRoutesGateway: new TauriArtisanRoutesGateway(),
     cancelJavaScriptTypeScriptLanguageServerRequest,
@@ -89,6 +92,7 @@ export function createWorkbenchComposition() {
     dirtyCloseDecisionCoordinator: new DirtyCloseDecisionCoordinator(),
     gitGateway: new TauriGitGateway(),
     gitHistoryGateway: new TauriGitHistoryGateway(),
+    gitWorktreeGateway: new TauriGitWorktreeGateway(),
     indexProgressGateway: new TauriIndexProgressGateway(),
     javaScriptTypeScriptLanguageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(
       undefined,

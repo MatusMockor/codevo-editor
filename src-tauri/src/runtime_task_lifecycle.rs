@@ -1,4 +1,5 @@
 use crate::{
+    agent_task_supervisor::AgentTaskRegistry,
     debug_adapter::DebugSessionRegistry,
     eslint,
     job_scheduler::WorkspaceIndexLifecycle,
@@ -56,6 +57,9 @@ pub(crate) fn shutdown_runtime_processes(
     app: &AppHandle,
     js_test_batches: &js_test_run::batch::JsTestBatchRegistry,
 ) {
+    if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
+        agent_tasks.shutdown_all();
+    }
     app.request_stop_all_tasks(js_test_batches);
     if let Some(authorizer) = app.try_state::<LegacyLocalHistoryWorkspaceAuthorizer>() {
         authorizer.clear();

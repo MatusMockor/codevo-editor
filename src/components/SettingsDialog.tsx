@@ -17,37 +17,27 @@ import {
   type JavaScriptTypeScriptQuotePreference,
   type JavaScriptTypeScriptServiceMode,
   type JavaScriptTypeScriptVersionPreference,
-  type PhpBackendPreference,
   type SettingsSection,
   type StatusBarItemVisibility,
   type WorkspaceSettings,
 } from "../domain/settings";
 import {
-  MAX_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-  MAX_LARGE_SMART_DOCUMENT_LINE_LIMIT,
-  MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-  MIN_LARGE_SMART_DOCUMENT_LINE_LIMIT,
-} from "../domain/largeDocumentPolicy";
-import {
   gitDirectoryMappingPaths,
   normalizeGitDirectoryMappings,
 } from "../domain/gitRepositoryMapping";
-import type { UserSnippet } from "../domain/snippets";
-import { snippetLanguageOptions } from "../domain/snippetLanguageOptions";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
 import type {
   IntelligenceMode,
   WorkspaceDescriptor,
   PhpToolAvailability,
-  ToolLocation,
 } from "../domain/workspace";
-import {
-  boundedPositiveIntegerInputValue,
-  newUserSnippet,
-  settingsDialogSections,
-} from "./settingsDialogModel";
+import { settingsDialogSections } from "./settingsDialogModel";
+import { AgentsSettingsSection } from "./AgentsSettingsSection";
+import { IndexSettings } from "./IndexSettingsSection";
 import { KeymapSettingsPanel } from "./KeymapSettingsPanel";
+import { PhpSettings } from "./PhpSettingsSection";
+import { SnippetsSettings } from "./SnippetsSettingsSection";
 
 export interface SettingsSaveInput {
   appSettings: AppSettings;
@@ -559,6 +549,38 @@ export function SettingsDialog({
                     updateAppSettings({
                       ...draftAppSettingsRef.current,
                       userSnippets,
+                    })
+                  }
+                />
+              ) : null}
+
+              {activeSection === "agents" ? (
+                <AgentsSettingsSection
+                  appSettings={draftAppSettings}
+                  hasWorkspace={hasWorkspace}
+                  workspaceSettings={draftWorkspaceSettings}
+                  onChangeAgentCliPath={(agentCliPath) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      agentCliPath,
+                    })
+                  }
+                  onChangeAgentCliKind={(agentCliKind) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      agentCliKind,
+                    })
+                  }
+                  onChangeMaxConcurrentAgentTasks={(maxConcurrentAgentTasks) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      maxConcurrentAgentTasks,
+                    })
+                  }
+                  onChangeAgentIsolationPolicy={(agentIsolationPolicy) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      agentIsolationPolicy,
                     })
                   }
                 />
@@ -1158,141 +1180,6 @@ const statusBarItems: Array<{
   { key: "message", label: "Messages" },
 ];
 
-interface PhpSettingsProps {
-  hasWorkspace: boolean;
-  phpTools: PhpToolAvailability | null;
-  workspaceDescriptor: WorkspaceDescriptor | null;
-  workspaceSettings: WorkspaceSettings;
-  onChangePhpBackend(backend: PhpBackendPreference): void;
-  onChangePhpInlayHints(enabled: boolean): void;
-  onChangePhpstanAnalyseOnSave(enabled: boolean): void;
-  onChangePhpVersionOverride(version: string): void;
-  onChangeToolPath(key: "phpactorPath" | "intelephensePath" | "phpstanPath", value: string): void;
-}
-
-function PhpSettings({
-  hasWorkspace,
-  onChangePhpBackend,
-  onChangePhpInlayHints,
-  onChangePhpstanAnalyseOnSave,
-  onChangePhpVersionOverride,
-  onChangeToolPath,
-  phpTools,
-  workspaceDescriptor,
-  workspaceSettings,
-}: PhpSettingsProps) {
-  const detectedPhpVersion = detectedComposerPhpVersion(workspaceDescriptor);
-  const effectivePhpVersion = workspaceSettings.phpVersionOverride || detectedPhpVersion || "Auto";
-
-  return (
-    <div className="settings-group">
-      <label className="settings-field">
-        <span>Backend</span>
-        <select
-          disabled={!hasWorkspace}
-          onChange={(event) =>
-            onChangePhpBackend(event.currentTarget.value as PhpBackendPreference)
-          }
-          value={workspaceSettings.phpBackend}
-        >
-          <option value="auto">Auto</option>
-          <option value="phpactor">Managed PHP engine</option>
-          <option value="intelephense">Intelephense</option>
-        </select>
-      </label>
-
-      <label className="settings-field">
-        <span>PHP language level override</span>
-        <input
-          disabled={!hasWorkspace}
-          onChange={(event) => onChangePhpVersionOverride(event.currentTarget.value)}
-          placeholder={detectedPhpVersion || "Composer / Auto"}
-          value={workspaceSettings.phpVersionOverride || ""}
-        />
-      </label>
-
-      <label className="settings-field">
-        <span>PHP engine path</span>
-        <input
-          disabled={!hasWorkspace}
-          onChange={(event) => onChangeToolPath("phpactorPath", event.currentTarget.value)}
-          placeholder={detectedToolPath(phpTools?.phpactor)}
-          value={workspaceSettings.phpactorPath || ""}
-        />
-      </label>
-
-      <label className="settings-field">
-        <span>Intelephense path</span>
-        <input
-          disabled={!hasWorkspace}
-          onChange={(event) => onChangeToolPath("intelephensePath", event.currentTarget.value)}
-          placeholder={detectedToolPath(phpTools?.intelephense)}
-          value={workspaceSettings.intelephensePath || ""}
-        />
-      </label>
-
-      <label className="settings-field">
-        <span>PHPStan path</span>
-        <input
-          disabled={!hasWorkspace}
-          onChange={(event) => onChangeToolPath("phpstanPath", event.currentTarget.value)}
-          placeholder="vendor/bin/phpstan / Auto"
-          value={workspaceSettings.phpstanPath || ""}
-        />
-      </label>
-
-      <label className="settings-toggle">
-        <input
-          checked={workspaceSettings.phpstanAnalyseOnSave}
-          disabled={!hasWorkspace}
-          onChange={(event) => onChangePhpstanAnalyseOnSave(event.currentTarget.checked)}
-          type="checkbox"
-        />
-        <span>PHPStan analyse on save</span>
-      </label>
-
-      <label className="settings-toggle">
-        <input
-          checked={workspaceSettings.phpInlayHints}
-          disabled={!hasWorkspace}
-          onChange={(event) => onChangePhpInlayHints(event.currentTarget.checked)}
-          type="checkbox"
-        />
-        <span>PHP inlay hints</span>
-      </label>
-
-      <div className="settings-readout">
-        <span>Composer PHP</span>
-        <code>{detectedPhpVersion || "Not declared"}</code>
-      </div>
-      <div className="settings-readout">
-        <span>Effective PHP level</span>
-        <code>{effectivePhpVersion}</code>
-      </div>
-      <div className="settings-readout">
-        <span>Detected PHP engine</span>
-        <code>{detectedToolPath(phpTools?.phpactor)}</code>
-      </div>
-      <div className="settings-readout">
-        <span>Detected Intelephense</span>
-        <code>{detectedToolPath(phpTools?.intelephense)}</code>
-      </div>
-    </div>
-  );
-}
-
-function detectedComposerPhpVersion(
-  workspaceDescriptor: WorkspaceDescriptor | null,
-): string | null {
-  const php = workspaceDescriptor?.php;
-
-  if (!php) {
-    return null;
-  }
-
-  return php.phpPlatformVersion || php.phpVersionConstraint || null;
-}
-
 interface GitMappingsSettingsProps {
   detectedMappings: string[];
   gitDirectoryMappings: string[];
@@ -1404,208 +1291,6 @@ function GitMappingsSettings({
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-interface IndexSettingsProps {
-  hasWorkspace: boolean;
-  ignorePatternsText: string;
-  largeFileMode: WorkspaceSettings["largeFileMode"];
-  onChangeIgnorePatternsText(value: string): void;
-  onChangeLargeFileModeCharacterLimit(characterLimit: number): void;
-  onChangeLargeFileModeLineLimit(lineLimit: number): void;
-}
-
-function IndexSettings({
-  hasWorkspace,
-  ignorePatternsText,
-  largeFileMode,
-  onChangeIgnorePatternsText,
-  onChangeLargeFileModeCharacterLimit,
-  onChangeLargeFileModeLineLimit,
-}: IndexSettingsProps) {
-  return (
-    <div className="settings-group">
-      <label className="settings-field">
-        <span>Large file character limit</span>
-        <input
-          disabled={!hasWorkspace}
-          max={MAX_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT}
-          min={MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT}
-          onChange={(event) => {
-            const value = boundedPositiveIntegerInputValue(
-              event.currentTarget.value,
-              MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-              MAX_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-            );
-
-            if (value === null) {
-              return;
-            }
-
-            onChangeLargeFileModeCharacterLimit(value);
-          }}
-          step={1024}
-          type="number"
-          value={largeFileMode.characterLimit}
-        />
-      </label>
-
-      <label className="settings-field">
-        <span>Large file line limit</span>
-        <input
-          disabled={!hasWorkspace}
-          max={MAX_LARGE_SMART_DOCUMENT_LINE_LIMIT}
-          min={MIN_LARGE_SMART_DOCUMENT_LINE_LIMIT}
-          onChange={(event) => {
-            const value = boundedPositiveIntegerInputValue(
-              event.currentTarget.value,
-              MIN_LARGE_SMART_DOCUMENT_LINE_LIMIT,
-              MAX_LARGE_SMART_DOCUMENT_LINE_LIMIT,
-            );
-
-            if (value === null) {
-              return;
-            }
-
-            onChangeLargeFileModeLineLimit(value);
-          }}
-          step={100}
-          type="number"
-          value={largeFileMode.lineLimit}
-        />
-      </label>
-
-      <label className="settings-field">
-        <span>Extra ignores</span>
-        <textarea
-          disabled={!hasWorkspace}
-          onChange={(event) => onChangeIgnorePatternsText(event.currentTarget.value)}
-          rows={8}
-          spellCheck={false}
-          value={ignorePatternsText}
-        />
-      </label>
-
-      <div className="settings-readout">
-        <span>Built-in ignores</span>
-        <code>.git, node_modules, vendor, target, dist, build</code>
-      </div>
-    </div>
-  );
-}
-
-interface SnippetsSettingsProps {
-  userSnippets: UserSnippet[];
-  onChangeUserSnippets(snippets: UserSnippet[]): void;
-}
-
-function SnippetsSettings({ userSnippets, onChangeUserSnippets }: SnippetsSettingsProps) {
-  const updateSnippetAt = (index: number, patch: Partial<UserSnippet>) => {
-    onChangeUserSnippets(
-      userSnippets.map((snippet, position) =>
-        position === index ? { ...snippet, ...patch } : snippet,
-      ),
-    );
-  };
-
-  const removeSnippetAt = (index: number) => {
-    onChangeUserSnippets(userSnippets.filter((_snippet, position) => position !== index));
-  };
-
-  const toggleLanguage = (index: number, language: string, on: boolean) => {
-    const current = userSnippets[index].languages;
-    const next = on
-      ? Array.from(new Set([...current, language]))
-      : current.filter((id) => id !== language);
-
-    updateSnippetAt(index, { languages: next });
-  };
-
-  return (
-    <div className="settings-group">
-      <p className="settings-hint">
-        Live templates expand a typed prefix using Monaco snippet syntax (<code>$1</code>,{" "}
-        <code>${"{1:default}"}</code>, <code>$0</code>). User snippets are shared across every
-        project and override a built-in with the same prefix and language.
-      </p>
-
-      <div className="settings-actions">
-        <button
-          onClick={() => onChangeUserSnippets([...userSnippets, newUserSnippet()])}
-          type="button"
-        >
-          Add snippet
-        </button>
-      </div>
-
-      {userSnippets.length === 0 ? (
-        <div className="settings-readout">
-          <span>No user snippets yet</span>
-        </div>
-      ) : null}
-
-      {userSnippets.map((snippet, index) => (
-        <div className="settings-subgroup snippet-editor" key={index}>
-          <label className="settings-field">
-            <span>Prefix</span>
-            <input
-              data-snippet-field="prefix"
-              onChange={(event) => updateSnippetAt(index, { prefix: event.currentTarget.value })}
-              placeholder="myhelper"
-              spellCheck={false}
-              value={snippet.prefix}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Description</span>
-            <input
-              data-snippet-field="description"
-              onChange={(event) =>
-                updateSnippetAt(index, {
-                  description: event.currentTarget.value,
-                })
-              }
-              value={snippet.description}
-            />
-          </label>
-
-          <label className="settings-field">
-            <span>Body</span>
-            <textarea
-              data-snippet-field="body"
-              onChange={(event) => updateSnippetAt(index, { body: event.currentTarget.value })}
-              rows={5}
-              spellCheck={false}
-              value={snippet.body}
-            />
-          </label>
-
-          <div className="settings-subgroup">
-            <span>Languages</span>
-            {snippetLanguageOptions.map((option) => (
-              <label className="settings-toggle" key={option.id}>
-                <input
-                  checked={snippet.languages.includes(option.id)}
-                  onChange={(event) =>
-                    toggleLanguage(index, option.id, event.currentTarget.checked)
-                  }
-                  type="checkbox"
-                />
-                <span>{option.label}</span>
-              </label>
-            ))}
-          </div>
-
-          <div className="settings-actions">
-            <button onClick={() => removeSnippetAt(index)} type="button">
-              Delete snippet
-            </button>
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -1741,14 +1426,6 @@ function uniqueSortedStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort(
     (left, right) => left.localeCompare(right),
   );
-}
-
-function detectedToolPath(tool: ToolLocation | null | undefined): string {
-  if (!tool) {
-    return "Not detected";
-  }
-
-  return tool.path;
 }
 
 function nullableInputValue(value: string): string | null {

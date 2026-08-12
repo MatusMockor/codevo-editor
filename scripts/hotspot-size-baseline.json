@@ -39,7 +39,7 @@
     },
     "src-tauri/src/git.rs": { "rawLines": 7113, "structuralTokens": 44029 },
     "src-tauri/src/index.rs": { "rawLines": 2089, "structuralTokens": 10272 },
-    "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 806 },
+    "src-tauri/src/lib.rs": { "rawLines": 210, "structuralTokens": 802 },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 1260,
       "structuralTokens": 7379
@@ -64,7 +64,7 @@
     },
     "src/application/useWorkbenchController.ts": {
       "rawLines": 8201,
-      "structuralTokens": 29237
+      "structuralTokens": 29234
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 2502,
@@ -79,8 +79,8 @@
       "structuralTokens": 7381
     },
     "src/components/SettingsDialog.tsx": {
-      "rawLines": 1762,
-      "structuralTokens": 6481
+      "rawLines": 1439,
+      "structuralTokens": 5814
     },
     "src/domain/latteLinkNavigation.ts": {
       "rawLines": 2446,

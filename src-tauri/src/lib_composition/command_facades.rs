@@ -1,3 +1,7 @@
+#[path = "agent_task_commands.rs"]
+mod agent_task_commands;
+#[path = "git_worktree_commands.rs"]
+mod git_worktree_commands;
 #[path = "language_features_facade.rs"]
 mod language_features_facade;
 #[path = "language_runtime_facade.rs"]

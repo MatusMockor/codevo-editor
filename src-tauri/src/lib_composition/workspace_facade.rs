@@ -1,4 +1,5 @@
 use super::language_runtime_facade::registered_runtime_root;
+use crate::agent_task_supervisor::AgentTaskRegistry;
 use crate::blocking_command::run_blocking_command;
 use crate::debug_adapter::DebugSessionRegistry;
 use crate::debug_cdp;
@@ -440,6 +441,9 @@ pub(crate) fn dispose_workspace_root(
         .invalidate_listings()
         .map_err(|_| "Node attach candidate invalidation failed.".to_string())?;
     let root = registered_runtime_root(&state.workspace_registry, &root_path);
+    if let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() {
+        agent_tasks.stop_for_root(&root);
+    }
     if let Ok(descriptor) = state
         .workspace_registry
         .descriptor_for_registered_path(&root)

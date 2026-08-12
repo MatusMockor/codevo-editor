@@ -334,9 +334,9 @@ import {
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
 import {
-  DiagnosticsCoalescer,
   animationFrameDiagnosticsFlushScheduler,
-  type DiagnosticsBatchSink,
+  createDiagnosticsCoalescer,
+  type DiagnosticsCoalescer,
   type DiagnosticsFlushScheduler,
 } from "../domain/diagnosticsCoalescer";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
@@ -382,7 +382,11 @@ import {
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
-import { cachedLanguageServerRuntimeStatusForOwner } from "../domain/languageServerRuntimeStatusCache";
+import {
+  cachedLanguageServerRuntimeStatusForOwner,
+  restoreRuntimeStatusCacheEntry,
+} from "../domain/languageServerRuntimeStatusCache";
+import { useWorkbenchAgents } from "./useWorkbenchAgents";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   createLegacyEditorSessionOwnerKey,
@@ -465,25 +469,7 @@ interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
 }
 
-function restoreRuntimeStatusCacheEntry(
-  cache: Record<string, LanguageServerRuntimeStatus>,
-  rootKey: string,
-  status: LanguageServerRuntimeStatus | undefined,
-): void {
-  if (!status) {
-    delete cache[rootKey];
-    return;
-  }
-
-  cache[rootKey] = status;
-}
-
-export type SidebarView = "files" | "git" | "php" | "scripts";
-
-const createDiagnosticsCoalescer = (
-  sink: DiagnosticsBatchSink,
-  scheduler: DiagnosticsFlushScheduler,
-) => new DiagnosticsCoalescer(sink, scheduler);
+export type SidebarView = "files" | "git" | "php" | "scripts" | "agents";
 
 const ignoreLanguageServerRequestCancellation = () => Promise.resolve();
 
@@ -1690,6 +1676,23 @@ export function useWorkbenchController(
     reportError,
     reportErrorForActiveWorkspaceRoot,
     setMessage,
+    workspaceRoot,
+  });
+
+  const agents = useWorkbenchAgents({
+    agentTaskGateway: options.agentTaskGateway,
+    gitWorktreeGateway: options.gitWorktreeGateway,
+    appSettingsRef,
+    workspaceSettingsRef,
+    gitGateway,
+    gitRepositoryMappings,
+    gitRepositoryStatuses,
+    openDocuments,
+    prompter,
+    reportError,
+    setSettingsInitialSection,
+    setSettingsOpen,
+    workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
     workspaceRoot,
   });
 
@@ -8186,6 +8189,7 @@ export function useWorkbenchController(
     updateEditorGroupViewState,
     openPhpTreeNode,
     openSearchResult,
+    agents,
     sidebarView,
     workspaceDescriptor,
     workspaceIdentityDescriptor,

@@ -281,3 +281,8 @@ function isNewerOrEqual(
 
   return candidate.version >= buffered.version;
 }
+
+export const createDiagnosticsCoalescer = (
+  sink: DiagnosticsBatchSink,
+  scheduler: DiagnosticsFlushScheduler,
+) => new DiagnosticsCoalescer(sink, scheduler);

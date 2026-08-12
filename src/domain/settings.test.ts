@@ -33,6 +33,9 @@ import {
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -48,6 +51,7 @@ describe("settings defaults", () => {
       workspaceTabs: [],
     });
     expect(defaultWorkspaceSettings()).toEqual({
+      agentIsolationPolicy: "auto",
       autoSave: true,
       autoSaveConfigured: true,
       defaultInsertSpaces: true,
@@ -156,6 +160,9 @@ describe("normalizeAppSettings", () => {
 
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -184,6 +191,9 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
       editorFontSize: 18,
@@ -207,6 +217,9 @@ describe("normalizeAppSettings", () => {
         theme: "ayuMirage",
       }),
     ).toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -242,6 +255,9 @@ describe("normalizeAppSettings", () => {
         editorFontLigatures: "true",
       }),
     ).toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -291,6 +307,9 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project/api/", "/project/web", "/project/api"],
       }),
     ).toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -459,6 +478,7 @@ describe("normalizeWorkspaceSettings", () => {
         },
       }),
     ).toEqual({
+      agentIsolationPolicy: "auto",
       autoSave: true,
       autoSaveConfigured: true,
       defaultInsertSpaces: false,

@@ -398,6 +398,9 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -413,6 +416,7 @@ describe("BrowserSettingsGateway", () => {
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
+      agentIsolationPolicy: "auto",
       autoSave: true,
       autoSaveConfigured: true,
       defaultInsertSpaces: true,
@@ -492,6 +496,9 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await gateway.saveAppSettings({
+      agentCliPath: null,
+      agentCliKind: "claudeCode",
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
       editorFontSize: 18,
@@ -517,6 +524,7 @@ describe("BrowserSettingsGateway", () => {
       workspaceTabs: ["/project", "/another-project"],
     });
     await gateway.saveWorkspaceSettings("/project", {
+      agentIsolationPolicy: "auto",
       autoSave: true,
       autoSaveConfigured: true,
       defaultInsertSpaces: false,
@@ -595,6 +603,9 @@ describe("BrowserSettingsGateway", () => {
     });
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "Fira Code, monospace",
       editorFontLigatures: true,
       editorFontSize: 18,
@@ -620,6 +631,7 @@ describe("BrowserSettingsGateway", () => {
       workspaceTabs: ["/project", "/another-project"],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
+      agentIsolationPolicy: "auto",
       autoSave: true,
       autoSaveConfigured: true,
       defaultInsertSpaces: false,
@@ -705,6 +717,9 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      agentCliKind: "claudeCode",
+      agentCliPath: null,
+      maxConcurrentAgentTasks: 4,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
@@ -720,6 +735,7 @@ describe("BrowserSettingsGateway", () => {
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
+      agentIsolationPolicy: "auto",
       autoSave: true,
       autoSaveConfigured: true,
       defaultInsertSpaces: true,
