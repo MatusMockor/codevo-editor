@@ -388,7 +388,7 @@ import {
   cachedLanguageServerRuntimeStatusForOwner,
   restoreRuntimeStatusCacheEntry,
 } from "../domain/languageServerRuntimeStatusCache";
-import { useWorkbenchAgents } from "./useWorkbenchAgents";
+import { useWorkbenchControllerAgents } from "./useWorkbenchControllerAgents";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   createLegacyEditorSessionOwnerKey,
@@ -1685,11 +1685,9 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const agents = useWorkbenchAgents({
-    agentTaskGateway: options.agentTaskGateway,
-    gitWorktreeGateway: options.gitWorktreeGateway,
+  const agents = useWorkbenchControllerAgents({
     appSettingsRef,
-    workspaceSettingsRef,
+    controllerOptions: options,
     gitGateway,
     gitRepositoryMappings,
     gitRepositoryStatuses,
@@ -1698,8 +1696,12 @@ export function useWorkbenchController(
     reportError,
     setSettingsInitialSection,
     setSettingsOpen,
-    workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
+    settingsGateway,
+    workspaceIdentityByRootRef,
+    workspaceIdentityDescriptor,
     workspaceRoot,
+    workspaceSettingsRef,
+    workspaceTrustGateway,
   });
 
   const isLanguageServerSessionCurrentForRoot = useCallback(

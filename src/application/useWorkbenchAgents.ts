@@ -1,4 +1,5 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
+import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { GitGateway } from "../domain/git";
 import {
@@ -9,19 +10,40 @@ import {
   type ResolvedGitRepository,
 } from "../domain/gitRepositoryMapping";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
-import type { AppSettings, SettingsSection, WorkspaceSettings } from "../domain/settings";
+import type {
+  AppSettings,
+  SettingsGateway,
+  SettingsSection,
+  WorkspaceSettings,
+} from "../domain/settings";
+import type { WorkspaceTrustGateway } from "../domain/trust";
 import { isDirty, type EditorDocument } from "../domain/workspace";
+import {
+  useAgentProjects,
+  type AgentProjectsSurface,
+  type AgentRepositoryDiscoveryGateway,
+} from "./useAgentProjects";
 import {
   useAgentTasks,
   type AgentRepositoryStatusSnapshot,
   type AgentTasksSurface,
 } from "./useAgentTasks";
+import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { defaultAgentTaskGateway, defaultGitWorktreeGateway } from "./workbenchDefaultGateways";
+
+export interface WorkbenchAgentProjectGateways {
+  readonly settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings">;
+  readonly trustGateway: WorkspaceTrustGateway;
+  readonly repositoryDiscoveryGateway: AgentRepositoryDiscoveryGateway;
+  readonly agentRootLeaseGateway: AgentRootLeaseGateway;
+  readonly descriptorForRoot: (rootPath: string) => WorkspaceIdentityDescriptor | null;
+}
 
 export interface WorkbenchAgentsOptions {
   readonly agentTaskGateway?: AgentTaskGateway;
   readonly gitWorktreeGateway?: GitWorktreeGateway;
+  readonly agentProjectGateways?: WorkbenchAgentProjectGateways;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly workspaceSettingsRef: { readonly current: WorkspaceSettings };
   readonly gitGateway: Pick<GitGateway, "getStatus" | "getDiff">;
@@ -36,7 +58,32 @@ export interface WorkbenchAgentsOptions {
   readonly workspaceRoot: string | null;
 }
 
-export function useWorkbenchAgents(options: WorkbenchAgentsOptions): AgentTasksSurface {
+export interface WorkbenchAgentsSurface extends AgentTasksSurface {
+  readonly agentProjects: AgentProjectsSurface;
+}
+
+const unwiredGatewayError = (): Error =>
+  new Error("Agent project gateways are not wired for this workbench.");
+
+const unwiredSettingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings"> = {
+  loadWorkspaceSettings: () => Promise.reject(unwiredGatewayError()),
+};
+
+const unwiredTrustGateway: WorkspaceTrustGateway = {
+  getTrust: () => Promise.reject(unwiredGatewayError()),
+  setTrust: () => Promise.reject(unwiredGatewayError()),
+};
+
+const unwiredDiscoveryGateway: AgentRepositoryDiscoveryGateway = {
+  detectRepositories: () => Promise.reject(unwiredGatewayError()),
+};
+
+const unwiredLeaseGateway: AgentRootLeaseGateway = {
+  acquireAgentRootLease: () => Promise.reject(unwiredGatewayError()),
+  releaseAgentRootLease: () => Promise.reject(unwiredGatewayError()),
+};
+
+export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAgentsSurface {
   const {
     gitRepositoryMappings,
     gitRepositoryStatuses,
@@ -100,21 +147,67 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): AgentTasksS
     setSettingsOpen(true);
   }, [setSettingsInitialSection, setSettingsOpen]);
 
-  return useAgentTasks({
+  const tasksSurfaceRef = useRef<AgentTasksSurface | null>(null);
+  const projectGateways = options.agentProjectGateways;
+
+  const hasLiveTasksForOwner = useCallback(
+    (ownerId: string): boolean => tasksSurfaceRef.current?.hasLiveTasksForOwner(ownerId) ?? false,
+    [],
+  );
+  const stopProjectTasks = useCallback(
+    (ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void> =>
+      tasksSurfaceRef.current?.stopProjectTasks(ownerId, repositoryRoots) ?? Promise.resolve(),
+    [],
+  );
+  const releaseProjectTasks = useCallback((ownerId: string): void => {
+    tasksSurfaceRef.current?.releaseProjectTasks(ownerId);
+  }, []);
+  const descriptorForRoot = useCallback(
+    (rootPath: string): WorkspaceIdentityDescriptor | null =>
+      projectGateways?.descriptorForRoot(rootPath) ?? null,
+    [projectGateways],
+  );
+
+  const agentProjects = useAgentProjects({
+    enabled: projectGateways !== undefined,
+    appSettingsRef: options.appSettingsRef,
+    activeWorkspaceId: workspaceId,
+    activeWorkspaceRoot: workspaceRoot,
+    activeWorkspaceRepositories: resolvedRepositories,
+    activeIsolationPolicy: options.workspaceSettingsRef.current.agentIsolationPolicy,
+    descriptorForRoot,
+    settingsGateway: projectGateways?.settingsGateway ?? unwiredSettingsGateway,
+    trustGateway: projectGateways?.trustGateway ?? unwiredTrustGateway,
+    repositoryDiscoveryGateway:
+      projectGateways?.repositoryDiscoveryGateway ?? unwiredDiscoveryGateway,
+    agentRootLeaseGateway: projectGateways?.agentRootLeaseGateway ?? unwiredLeaseGateway,
+    hasLiveTasksForOwner,
+    stopProjectTasks,
+    releaseProjectTasks,
+    prompter: options.prompter,
+    reportError: options.reportError,
+  });
+
+  const tasks = useAgentTasks({
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,
     gitGateway: options.gitGateway,
     prompter: options.prompter,
-    resolvedRepositories,
-    getWorkspaceId: () => workspaceId,
-    getWorkspaceRoot: () => workspaceRoot,
+    projects: agentProjects.projects,
     getAgentCliPath: () => options.appSettingsRef.current.agentCliPath,
     getAgentCliKind: () => options.appSettingsRef.current.agentCliKind,
     getMaxConcurrentAgentTasks: () => options.appSettingsRef.current.maxConcurrentAgentTasks,
-    getAgentIsolationPolicy: () => options.workspaceSettingsRef.current.agentIsolationPolicy,
     getRepositoryStatus,
     getDirtyEditorDocumentCount,
+    onProjectDispatchTrustRejected: agentProjects.noteDispatchTrustRejected,
+    ensureProjectLease: agentProjects.ensureProjectLease,
     reportError: options.reportError,
     openAgentSettings,
   });
+
+  useLayoutEffect(() => {
+    tasksSurfaceRef.current = tasks;
+  });
+
+  return useMemo(() => ({ ...tasks, agentProjects }), [agentProjects, tasks]);
 }

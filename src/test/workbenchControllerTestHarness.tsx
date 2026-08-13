@@ -87,6 +87,7 @@ export type WorkbenchCommitPhase = Parameters<ProfilerOnRenderCallback>[1];
 
 export interface RenderControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
+  agentRootLeaseGateway?: WorkbenchControllerOptions["agentRootLeaseGateway"];
   agentTaskGateway?: WorkbenchControllerOptions["agentTaskGateway"];
   gitWorktreeGateway?: WorkbenchControllerOptions["gitWorktreeGateway"];
   appSettings?: ReturnType<typeof defaultAppSettings>;
@@ -194,6 +195,7 @@ export function setupWorkbenchControllerTestHarness() {
 
   function renderController({
     activeLiveDocumentSaveCoordinator = fallbackLiveSaveCoordinator(),
+    agentRootLeaseGateway = fakeAgentRootLeaseGateway(),
     agentTaskGateway,
     gitWorktreeGateway,
     appSettings = defaultAppSettings(),
@@ -303,6 +305,7 @@ export function setupWorkbenchControllerTestHarness() {
     dependencies.controllerOptions.prettierFormattingGateway = prettierFormattingGateway;
     dependencies.controllerOptions.debugBreakpointStorage = debugBreakpointStorage;
     dependencies.controllerOptions.debugGateway = debugGateway;
+    dependencies.controllerOptions.agentRootLeaseGateway = agentRootLeaseGateway;
     dependencies.controllerOptions.agentTaskGateway = agentTaskGateway;
     dependencies.controllerOptions.gitWorktreeGateway = gitWorktreeGateway;
 
@@ -942,6 +945,19 @@ function createControllerDependencies(
         trusted,
       })),
     },
+  };
+}
+
+function fakeAgentRootLeaseGateway(): NonNullable<
+  WorkbenchControllerOptions["agentRootLeaseGateway"]
+> {
+  let nextToken = 0;
+  return {
+    acquireAgentRootLease: async () => {
+      nextToken += 1;
+      return { leaseToken: nextToken };
+    },
+    releaseAgentRootLease: async () => undefined,
   };
 }
 

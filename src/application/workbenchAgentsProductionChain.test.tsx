@@ -221,7 +221,14 @@ describe("workbench agents production chain", () => {
       mountedRoot?.render(
         <AgentModeView
           agents={workbench.agents}
-          repositories={workbench.agents.repositories}
+          onReleaseProject={(projectRootKey) =>
+            void workbench.agents.agentProjects.releaseProject(projectRootKey)
+          }
+          onTrustProject={(projectRootKey) =>
+            void workbench.agents.agentProjects.trustProject(projectRootKey)
+          }
+          overflowRootPaths={workbench.agents.agentProjects.overflowRootPaths}
+          projects={workbench.agents.agentProjects.projects}
           workspaceRoot={workbench.workspaceRoot}
         />,
       );

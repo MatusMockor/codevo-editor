@@ -1,3 +1,4 @@
+import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
@@ -49,6 +50,7 @@ export interface WorkbenchWorkspaceGateways {
 
 export interface WorkbenchControllerOptions extends WorkbenchDebugControllerOptions {
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
+  agentRootLeaseGateway?: AgentRootLeaseGateway;
   agentTaskGateway?: AgentTaskGateway;
   gitWorktreeGateway?: GitWorktreeGateway;
   javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway?: IncrementalLanguageServerDocumentSyncGateway;

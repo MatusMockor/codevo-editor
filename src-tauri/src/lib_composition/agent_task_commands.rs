@@ -1,4 +1,4 @@
-use super::{canonicalize_workspace_root, trusted_for, GitTrustState};
+use super::{canonicalize_workspace_root, trusted_for, workspace_root_for_disposal, GitTrustState};
 use crate::agent_task_admission::AgentTaskAdmissionRegistry;
 use crate::agent_task_spawner::{plan_agent_invocation, AgentCliInvocation, AgentTaskSpawnPlan};
 use crate::agent_task_supervisor::{
@@ -9,12 +9,17 @@ use crate::agent_task_supervisor::{
 use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
 use crate::run_blocking_command;
 use crate::workspace_registry::WorkspaceId;
-use serde::Deserialize;
+use agent_root_lease::AgentRootLeaseRegistry;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+#[path = "../agent_root_lease.rs"]
+pub(crate) mod agent_root_lease;
+
 pub(crate) const MAX_AGENT_TASK_WORKSPACE_ID_BYTES: usize = 1024;
+pub(crate) const MAX_AGENT_ROOT_LEASE_PATH_BYTES: usize = 4096;
 pub(crate) const UNTRUSTED_AGENT_REPOSITORY_ERROR: &str =
     "Agent tasks require a trusted repository.";
 pub(crate) const UNTRUSTED_AGENT_WORKTREE_ERROR: &str =
@@ -231,6 +236,92 @@ pub(crate) fn stop_agent_tasks_for_root(
     Ok(())
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentRootLeaseRequest {
+    root_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentRootLeaseReleaseRequest {
+    root_path: String,
+    lease_token: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentRootLeaseReceipt {
+    lease_token: u64,
+}
+
+fn ensure_agent_root_lease_bounds(root_path: &str) -> Result<(), String> {
+    if root_path.is_empty() {
+        return Err("Agent project root path is required.".to_string());
+    }
+
+    if root_path.len() > MAX_AGENT_ROOT_LEASE_PATH_BYTES {
+        return Err(format!(
+            "Agent project root path must not exceed {MAX_AGENT_ROOT_LEASE_PATH_BYTES} bytes."
+        ));
+    }
+
+    Ok(())
+}
+
+fn ensure_agent_root_lease_trust(root_trusted: bool) -> Result<(), String> {
+    if !root_trusted {
+        return Err(UNTRUSTED_AGENT_REPOSITORY_ERROR.to_string());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn acquire_agent_root_lease(
+    request: AgentRootLeaseRequest,
+    trust: GitTrustState<'_>,
+    leases: State<'_, Arc<AgentRootLeaseRegistry>>,
+) -> Result<AgentRootLeaseReceipt, String> {
+    ensure_agent_root_lease_bounds(&request.root_path)?;
+    let root_trusted = trusted_for(&trust, &request.root_path)?;
+    ensure_agent_root_lease_trust(root_trusted)?;
+    let leases = Arc::clone(&leases);
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&request.root_path)?;
+        let lease_token = leases.acquire(&root)?;
+
+        Ok(AgentRootLeaseReceipt { lease_token })
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) fn release_agent_root_lease(
+    request: AgentRootLeaseReleaseRequest,
+    leases: State<'_, Arc<AgentRootLeaseRegistry>>,
+) -> Result<(), String> {
+    ensure_agent_root_lease_bounds(&request.root_path)?;
+    let root = workspace_root_for_disposal(&request.root_path);
+    leases.release(&root, request.lease_token);
+
+    Ok(())
+}
+
+pub(crate) fn stop_agent_tasks_on_dispose(app: &AppHandle, root: &Path) {
+    let leases = app.try_state::<Arc<AgentRootLeaseRegistry>>();
+    let held = leases.as_ref().map(|state| state.inner().as_ref());
+    if !agent_root_lease::dispose_should_stop_agent_tasks(held, root) {
+        return;
+    }
+
+    let Some(agent_tasks) = app.try_state::<AgentTaskRegistry>() else {
+        return;
+    };
+
+    agent_tasks.stop_for_root(root);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,6 +502,114 @@ mod tests {
             prepared.plan.args(),
             ["-p".to_string(), "--".to_string(), request.prompt.clone()]
         );
+    }
+
+    #[test]
+    fn untrusted_agent_root_lease_is_refused() {
+        let error = ensure_agent_root_lease_trust(false).expect_err("untrusted root must refuse");
+
+        assert_eq!(error, UNTRUSTED_AGENT_REPOSITORY_ERROR);
+        ensure_agent_root_lease_trust(true).expect("trusted root is leasable");
+    }
+
+    #[test]
+    fn agent_root_lease_path_bounds_are_enforced() {
+        let empty = ensure_agent_root_lease_bounds("").expect_err("empty root path");
+        let oversized =
+            ensure_agent_root_lease_bounds(&"p".repeat(MAX_AGENT_ROOT_LEASE_PATH_BYTES + 1))
+                .expect_err("oversized root path");
+
+        assert!(empty.contains("required"), "got: {empty}");
+        assert!(oversized.contains("bytes"), "got: {oversized}");
+        ensure_agent_root_lease_bounds("/workspace/alpha").expect("bounded root path");
+    }
+
+    #[test]
+    fn agent_root_lease_requests_reject_unknown_fields() {
+        let acquire = serde_json::from_str::<AgentRootLeaseRequest>(
+            "{\"rootPath\":\"/workspace/alpha\",\"extra\":1}",
+        );
+        let release = serde_json::from_str::<AgentRootLeaseReleaseRequest>(
+            "{\"rootPath\":\"/workspace/alpha\",\"leaseToken\":1,\"extra\":1}",
+        );
+
+        assert!(acquire.is_err(), "unknown acquire field must be rejected");
+        assert!(release.is_err(), "unknown release field must be rejected");
+    }
+
+    #[test]
+    fn agent_root_lease_wire_shape_is_camel_case() {
+        let request = serde_json::from_str::<AgentRootLeaseReleaseRequest>(
+            "{\"rootPath\":\"/workspace/alpha\",\"leaseToken\":7}",
+        )
+        .expect("deserialize release request");
+        let receipt = serde_json::to_string(&AgentRootLeaseReceipt { lease_token: 7 })
+            .expect("serialize receipt");
+
+        assert_eq!(request.root_path, "/workspace/alpha");
+        assert_eq!(request.lease_token, 7);
+        assert_eq!(receipt, "{\"leaseToken\":7}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn acquire_and_release_converge_on_symlink_aliases() {
+        let workspace = TempWorkspace::create("lease-alias");
+        let real = workspace.root.join("real");
+        let alias = workspace.root.join("alias");
+        fs::create_dir_all(&real).expect("create real root");
+        std::os::unix::fs::symlink(&real, &alias).expect("create alias symlink");
+        let registry = AgentRootLeaseRegistry::new();
+
+        let canonical = canonicalize_workspace_root(&alias.to_string_lossy()).expect("canonical");
+        let token = registry.acquire(&canonical).expect("acquire via alias");
+
+        assert!(registry.is_held(&real));
+
+        let release_root = workspace_root_for_disposal(&alias.to_string_lossy());
+
+        assert!(registry.release(&release_root, token));
+        assert!(!registry.is_held(&real));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn private_var_alias_resolves_to_one_lease() {
+        let aliased = Path::new("/var/tmp");
+        let Ok(canonical) = aliased.canonicalize() else {
+            return;
+        };
+        let registry = AgentRootLeaseRegistry::new();
+
+        let first = registry
+            .acquire(&canonicalize_workspace_root("/var/tmp").expect("canonical /var/tmp"))
+            .expect("acquire via /var");
+        let second = registry
+            .acquire(&canonicalize_workspace_root(&canonical.to_string_lossy()).expect("canonical"))
+            .expect("acquire via /private/var");
+
+        assert_eq!(first, second);
+        assert_eq!(registry.held_root_count(), 1);
+        assert!(registry.release(&workspace_root_for_disposal("/var/tmp"), first));
+    }
+
+    #[test]
+    fn dispose_guard_defers_to_a_held_lease() {
+        let workspace = TempWorkspace::create("lease-dispose-guard");
+        let registry = AgentRootLeaseRegistry::new();
+        let token = registry.acquire(&workspace.root).expect("acquire");
+
+        assert!(!agent_root_lease::dispose_should_stop_agent_tasks(
+            Some(&registry),
+            &workspace.root
+        ));
+
+        registry.release(&workspace.root, token);
+
+        assert!(agent_root_lease::dispose_should_stop_agent_tasks(
+            Some(&registry),
+            &workspace.root
+        ));
     }
 
     #[test]

@@ -1,15 +1,22 @@
+import type {
+  AgentProjectDescriptor,
+  AgentProjectOrigin,
+  AgentProjectTrust,
+} from "../../domain/agentProject";
 import type { AgentTaskIsolation, AgentTaskStatus } from "../../domain/agentTask";
 import type { GitChangeStatus } from "../../domain/git";
-import {
-  gitRepositoryDisplayName,
-  type ResolvedGitRepository,
-} from "../../domain/gitRepositoryMapping";
+import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
 import { localHistoryRelativeTime } from "../../domain/localHistory";
 import type { AgentTaskView, OrphanedWorktreeView } from "../../application/useAgentTasks";
 
 export const MAX_AGENT_THREAD_TITLE_CHARACTERS = 96;
 
+export const DETACHED_AGENT_PROJECT_ROOT_KEY = "agent-project:detached";
+export const DETACHED_AGENT_PROJECT_LABEL = "Removed projects";
+
 export type AgentThreadTone = "running" | "queued" | "done" | "failed" | "stopped";
+
+export type AgentProjectGroupKind = "project" | "detached";
 
 export interface AgentRepositoryGroup {
   readonly repositoryRoot: string;
@@ -17,6 +24,17 @@ export interface AgentRepositoryGroup {
   readonly repositoryResolved: boolean;
   readonly threads: ReadonlyArray<AgentTaskView>;
   readonly orphans: ReadonlyArray<OrphanedWorktreeView>;
+  readonly liveCount: number;
+}
+
+export interface AgentProjectGroup {
+  readonly projectRootKey: string;
+  readonly kind: AgentProjectGroupKind;
+  readonly label: string;
+  readonly trust: AgentProjectTrust;
+  readonly origin: AgentProjectOrigin;
+  readonly singleRepo: boolean;
+  readonly repos: ReadonlyArray<AgentRepositoryGroup>;
   readonly liveCount: number;
 }
 
@@ -126,41 +144,203 @@ export function agentChangeStatusLetter(status: GitChangeStatus): string {
   }
 }
 
-export function agentRepositoryGroups(
-  repositories: ReadonlyArray<ResolvedGitRepository>,
+export function agentProjectTrustNotice(trust: AgentProjectTrust): string | null {
+  switch (trust) {
+    case "trusted":
+      return null;
+    case "untrusted":
+      return "This project is not trusted, so agents cannot start here.";
+    case "unknown":
+      return "This project's trust could not be read, so agents cannot start here.";
+    default:
+      return unsupportedTrust(trust);
+  }
+}
+
+export function agentProjectOriginBadge(origin: AgentProjectOrigin): string | null {
+  switch (origin) {
+    case "active-tab":
+      return null;
+    case "background-tab":
+      return "Background";
+    case "closed-tab-live-tasks":
+      return "Tab closed";
+    default:
+      return unsupportedOrigin(origin);
+  }
+}
+
+export function agentProjectWorktreeOnly(origin: AgentProjectOrigin): boolean {
+  switch (origin) {
+    case "active-tab":
+      return false;
+    case "background-tab":
+      return true;
+    case "closed-tab-live-tasks":
+      return true;
+    default:
+      return unsupportedOrigin(origin);
+  }
+}
+
+export function agentProjectWorktreeOnlyReason(origin: AgentProjectOrigin): string | null {
+  switch (origin) {
+    case "active-tab":
+      return null;
+    case "background-tab":
+      return "This project is not the active tab, so the agent only runs in an isolated worktree.";
+    case "closed-tab-live-tasks":
+      return "This project's tab is closed, so the agent only runs in an isolated worktree.";
+    default:
+      return unsupportedOrigin(origin);
+  }
+}
+
+export function agentProjectGroups(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
   threads: ReadonlyArray<AgentTaskView>,
   orphans: ReadonlyArray<OrphanedWorktreeView>,
-  workspaceRoot: string | null,
   pinnedTaskIds: ReadonlyArray<string> = [],
-): ReadonlyArray<AgentRepositoryGroup> {
+): ReadonlyArray<AgentProjectGroup> {
   const pinRanks = agentThreadPinRanks(pinnedTaskIds);
-  const roots = new Set(repositories.map((repository) => repository.repositoryRoot));
-  const groups = repositories.map((repository) =>
+  const claimedRepositoryRoots = new Set<string>();
+  const claimedProjectRootKeys = new Set<string>();
+  const claimedOwnerIds = new Set<string>();
+  const knownOwnerIds = new Set(projects.map((project) => project.ownerId));
+  const groups: AgentProjectGroup[] = [];
+
+  for (const project of projects) {
+    if (claimedProjectRootKeys.has(project.rootKey)) {
+      continue;
+    }
+    claimedProjectRootKeys.add(project.rootKey);
+    const ownsThreads = !claimedOwnerIds.has(project.ownerId);
+    claimedOwnerIds.add(project.ownerId);
+    const projectThreads = ownsThreads
+      ? threads.filter((thread) => thread.record.owner.workspaceId === project.ownerId)
+      : [];
+    groups.push(
+      buildProjectGroup(project, projectThreads, orphans, pinRanks, claimedRepositoryRoots),
+    );
+  }
+
+  const detachedThreads = threads.filter(
+    (thread) => !knownOwnerIds.has(thread.record.owner.workspaceId),
+  );
+  const detachedOrphans = orphans.filter(
+    (orphan) => !claimedRepositoryRoots.has(orphan.repositoryRoot),
+  );
+  const detachedRoots = [
+    ...new Set([
+      ...detachedThreads.map((thread) => thread.record.owner.repositoryRoot),
+      ...detachedOrphans.map((orphan) => orphan.repositoryRoot),
+    ]),
+  ].sort();
+
+  if (detachedRoots.length === 0) {
+    return groups;
+  }
+
+  const detachedRepos = detachedRoots.map((root) =>
+    buildGroup(
+      root,
+      root,
+      detachedThreads.filter((thread) => thread.record.owner.repositoryRoot === root),
+      detachedOrphans.filter((orphan) => orphan.repositoryRoot === root),
+      false,
+      pinRanks,
+    ),
+  );
+
+  return [
+    ...groups,
+    {
+      projectRootKey: DETACHED_AGENT_PROJECT_ROOT_KEY,
+      kind: "detached",
+      label: DETACHED_AGENT_PROJECT_LABEL,
+      trust: "unknown",
+      origin: "closed-tab-live-tasks",
+      singleRepo: false,
+      repos: detachedRepos,
+      liveCount: totalLiveCount(detachedRepos),
+    },
+  ];
+}
+
+function buildProjectGroup(
+  project: AgentProjectDescriptor,
+  projectThreads: ReadonlyArray<AgentTaskView>,
+  orphans: ReadonlyArray<OrphanedWorktreeView>,
+  pinRanks: ReadonlyMap<string, number>,
+  claimedRepositoryRoots: Set<string>,
+): AgentProjectGroup {
+  const repositories = project.repositories.filter(
+    (repository) => !claimedRepositoryRoots.has(repository.repositoryRoot),
+  );
+  for (const repository of repositories) {
+    claimedRepositoryRoots.add(repository.repositoryRoot);
+  }
+
+  const ownedRoots = new Set(repositories.map((repository) => repository.repositoryRoot));
+  const repos = repositories.map((repository) =>
     buildGroup(
       repository.repositoryRoot,
-      gitRepositoryDisplayName(
-        repository.mapping.rootRelativePath,
-        workspaceRoot ?? repository.repositoryRoot,
+      gitRepositoryDisplayName(repository.mapping.rootRelativePath, project.rootPath),
+      projectThreads.filter(
+        (thread) => thread.record.owner.repositoryRoot === repository.repositoryRoot,
       ),
-      threads,
-      orphans,
+      orphans.filter((orphan) => orphan.repositoryRoot === repository.repositoryRoot),
       true,
       pinRanks,
     ),
   );
 
-  const detachedRoots = new Set(
-    [
-      ...threads.map((thread) => thread.record.owner.repositoryRoot),
-      ...orphans.map((orphan) => orphan.repositoryRoot),
-    ].filter((root) => !roots.has(root)),
+  const strayRoots = [
+    ...new Set(
+      projectThreads
+        .map((thread) => thread.record.owner.repositoryRoot)
+        .filter((root) => !ownedRoots.has(root)),
+    ),
+  ].sort();
+  const strayRepos = strayRoots.map((root) =>
+    buildGroup(
+      root,
+      strayRepositoryLabel(root, project.rootPath),
+      projectThreads.filter((thread) => thread.record.owner.repositoryRoot === root),
+      [],
+      false,
+      pinRanks,
+    ),
   );
 
-  const detached = [...detachedRoots]
-    .sort()
-    .map((root) => buildGroup(root, root, threads, orphans, false, pinRanks));
+  const repoGroups = [...repos, ...strayRepos];
+  return {
+    projectRootKey: project.rootKey,
+    kind: "project",
+    label: project.label,
+    trust: project.trust,
+    origin: project.origin,
+    singleRepo:
+      strayRepos.length === 0 &&
+      repositories.length === 1 &&
+      repositories[0]?.mapping.rootRelativePath === "",
+    repos: repoGroups,
+    liveCount: totalLiveCount(repoGroups),
+  };
+}
 
-  return [...groups, ...detached];
+function strayRepositoryLabel(repositoryRoot: string, projectRootPath: string): string {
+  if (repositoryRoot === projectRootPath) {
+    return gitRepositoryDisplayName("", projectRootPath);
+  }
+  if (repositoryRoot.startsWith(`${projectRootPath}/`)) {
+    return repositoryRoot.slice(projectRootPath.length + 1);
+  }
+  return repositoryRoot;
+}
+
+function totalLiveCount(repos: ReadonlyArray<AgentRepositoryGroup>): number {
+  return repos.reduce((total, repo) => total + repo.liveCount, 0);
 }
 
 function buildGroup(
@@ -171,17 +351,14 @@ function buildGroup(
   repositoryResolved: boolean,
   pinRanks: ReadonlyMap<string, number>,
 ): AgentRepositoryGroup {
-  const groupThreads = orderPinnedThreadsFirst(
-    threads.filter((thread) => thread.record.owner.repositoryRoot === repositoryRoot),
-    pinRanks,
-  );
+  const groupThreads = orderPinnedThreadsFirst(threads, pinRanks);
 
   return {
     repositoryRoot,
     label,
     repositoryResolved,
     threads: groupThreads,
-    orphans: orphans.filter((orphan) => orphan.repositoryRoot === repositoryRoot),
+    orphans,
     liveCount: groupThreads.filter((thread) => !thread.terminal).length,
   };
 }
@@ -211,6 +388,14 @@ function orderPinnedThreadsFirst(
 
 function threadPinRank(thread: AgentTaskView, pinRanks: ReadonlyMap<string, number>): number {
   return pinRanks.get(thread.record.owner.taskId) ?? Number.MAX_SAFE_INTEGER;
+}
+
+function unsupportedTrust(trust: never): never {
+  throw new TypeError(`Unsupported agent project trust: ${String(trust)}.`);
+}
+
+function unsupportedOrigin(origin: never): never {
+  throw new TypeError(`Unsupported agent project origin: ${String(origin)}.`);
 }
 
 function unsupportedStatus(status: never): never {

@@ -93,7 +93,8 @@ export type AgentTasksAction =
   | { readonly kind: "statusEvent"; readonly event: AgentTaskStatusEvent }
   | { readonly kind: "outputEvent"; readonly event: AgentTaskOutputEvent }
   | { readonly kind: "dismissed"; readonly taskId: string }
-  | { readonly kind: "workspaceReplaced"; readonly workspaceId: string };
+  | { readonly kind: "workspaceReplaced"; readonly workspaceId: string }
+  | { readonly kind: "projectReleased"; readonly ownerId: string };
 
 export interface AgentTasksState {
   readonly tasks: ReadonlyMap<string, AgentTaskRecord>;
@@ -201,6 +202,8 @@ export function agentTasksReducer(
       return dismissAgentTask(state, action.taskId);
     case "workspaceReplaced":
       return retainWorkspaceAgentTasks(state, action.workspaceId);
+    case "projectReleased":
+      return releaseProjectAgentTasks(state, action.ownerId);
     default:
       return unsupportedAction(action);
   }
@@ -372,6 +375,18 @@ function retainWorkspaceAgentTasks(state: AgentTasksState, workspaceId: string):
   const retained = new Map<string, AgentTaskRecord>();
   for (const [taskId, task] of state.tasks) {
     if (task.owner.workspaceId !== workspaceId && isTerminalAgentTaskStatus(task.status)) {
+      continue;
+    }
+    retained.set(taskId, task);
+  }
+  if (retained.size === state.tasks.size) return state;
+  return { tasks: retained };
+}
+
+function releaseProjectAgentTasks(state: AgentTasksState, ownerId: string): AgentTasksState {
+  const retained = new Map<string, AgentTaskRecord>();
+  for (const [taskId, task] of state.tasks) {
+    if (task.owner.workspaceId === ownerId && isTerminalAgentTaskStatus(task.status)) {
       continue;
     }
     retained.set(taskId, task);

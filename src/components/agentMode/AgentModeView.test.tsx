@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskView, AgentTasksSurface } from "../../application/useAgentTasks";
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTaskRecord } from "../../domain/agentTask";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
 import { agentThreadPinStorageKey } from "../../application/useAgentThreadPins";
@@ -11,6 +12,7 @@ import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 
 const ROOT = "/workspace/app";
 const NESTED = "/workspace/app/packages/api";
+const OTHER_ROOT = "/workspace/api-service";
 const NOW_TICK_MS = 3_600_000;
 
 describe("AgentModeView", () => {
@@ -93,6 +95,7 @@ describe("AgentModeView", () => {
           repositoryRoot,
           recommended: { kind: "worktree", reason: "dirty-tree" },
           inPlaceGuard: { kind: "unsafe", reasons: ["dirty-tree"] },
+          inPlaceAllowed: true,
           confirmationKey: "dirty-preview-key",
         }),
       }),
@@ -104,6 +107,7 @@ describe("AgentModeView", () => {
     submitForm();
 
     expect(dispatch).toHaveBeenCalledWith({
+      projectRootKey: ROOT,
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
       isolation: "worktree",
@@ -120,6 +124,7 @@ describe("AgentModeView", () => {
           repositoryRoot,
           recommended: { kind: "worktree", reason: "dirty-tree" },
           inPlaceGuard: { kind: "unsafe", reasons: ["dirty-tree"] },
+          inPlaceAllowed: true,
           confirmationKey: "dirty-preview-key",
         }),
       }),
@@ -137,6 +142,7 @@ describe("AgentModeView", () => {
     submitForm();
 
     expect(dispatch).toHaveBeenCalledWith({
+      projectRootKey: ROOT,
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
       isolation: "in-place",
@@ -153,6 +159,7 @@ describe("AgentModeView", () => {
     submitForm();
 
     expect(dispatch).toHaveBeenCalledWith({
+      projectRootKey: ROOT,
       repositoryRoot: NESTED,
       prompt: "Update the router",
       isolation: "in-place",
@@ -315,8 +322,127 @@ describe("AgentModeView", () => {
     expect(threadOrder()).toEqual(["agt-2"]);
   });
 
+  it("renders one project section per registered root and keeps the active tab first", () => {
+    render({ projects: [activeProject(), backgroundProject()] });
+
+    expect(host.querySelector('section[aria-label="Project app"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Project api-service"]')).not.toBeNull();
+    expect(
+      [...host.querySelectorAll(".agent-project__name")].map((element) => element.textContent),
+    ).toEqual(["app", "api-service"]);
+  });
+
+  it("dispatches into the project chosen in the composer and forces its worktree rule", async () => {
+    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
+    render({ agents: surface({ dispatch }), projects: [activeProject(), backgroundProject()] });
+
+    selectProject(OTHER_ROOT);
+
+    expect(checkbox("agent-isolation").disabled).toBe(true);
+    expect(host.textContent).toContain("not the active tab");
+
+    typePrompt("Fix the parser");
+    await submitFormAsync();
+
+    expect(dispatch).toHaveBeenCalledWith({
+      projectRootKey: OTHER_ROOT,
+      repositoryRoot: OTHER_ROOT,
+      prompt: "Fix the parser",
+      isolation: "worktree",
+      unsafeInPlaceConfirmationKey: null,
+    });
+  });
+
+  it("dispatches the active project without a project-level picker", async () => {
+    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
+    render({ agents: surface({ dispatch }), projects: [activeProject()] });
+
+    expect(host.querySelector("select#agent-project")).toBeNull();
+
+    typePrompt("Fix the parser");
+    await submitFormAsync();
+
+    expect(dispatch).toHaveBeenCalledWith({
+      projectRootKey: ROOT,
+      repositoryRoot: ROOT,
+      prompt: "Fix the parser",
+      isolation: "in-place",
+      unsafeInPlaceConfirmationKey: null,
+    });
+  });
+
+  it("keeps an untrusted project out of the composer and routes its trust action", () => {
+    const onTrustProject = vi.fn();
+    render({
+      onTrustProject,
+      projects: [{ ...backgroundProject(), trust: "untrusted" }],
+    });
+
+    expect(host.textContent).toContain("This project is not trusted");
+    expect(host.querySelector(".agent-composer__chip--empty")?.textContent).toBe("No project");
+    expect(submitButton().disabled).toBe(true);
+
+    click('[aria-label="Trust project api-service"]');
+
+    expect(onTrustProject).toHaveBeenCalledWith(OTHER_ROOT);
+  });
+
+  it("keeps a closed-tab draining project out of the composer picker", () => {
+    render({
+      projects: [activeProject(), { ...backgroundProject(), origin: "closed-tab-live-tasks" }],
+    });
+
+    expect(host.querySelector("select#agent-project")).toBeNull();
+    expect(host.querySelector('section[aria-label="Project api-service"]')).not.toBeNull();
+  });
+
+  it("shows no dispatch target when only a closed-tab draining project remains", () => {
+    render({ projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }] });
+
+    expect(host.querySelector(".agent-composer__chip--empty")?.textContent).toBe("No project");
+    expect(submitButton().disabled).toBe(true);
+  });
+
+  it("releases a closed-tab project through the surface callback", () => {
+    const onReleaseProject = vi.fn();
+    render({
+      onReleaseProject,
+      projects: [{ ...backgroundProject(), origin: "closed-tab-live-tasks" }],
+    });
+
+    click('[aria-label="Release project api-service"]');
+
+    expect(onReleaseProject).toHaveBeenCalledWith(OTHER_ROOT);
+  });
+
+  it("reports the roots beyond the project limit truthfully", () => {
+    render({ overflowRootPaths: ["/workspace/nine"] });
+
+    expect(host.querySelector(".agent-rail__overflow")?.textContent).toBe(
+      "1 more project is not shown (limit 8)",
+    );
+  });
+
   function render(overrides: Partial<AgentModeViewProps> = {}): void {
     act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
+  }
+
+  function checkbox(id: string): HTMLInputElement {
+    const element = host.querySelector<HTMLInputElement>(`input#${id}`);
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("input");
+  }
+
+  function selectProject(value: string): void {
+    const element = host.querySelector<HTMLSelectElement>("select#agent-project");
+    expect(element).not.toBeNull();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
+        element,
+        value,
+      );
+      element?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
   }
 
   function threadOrder(): readonly string[] {
@@ -407,9 +533,57 @@ describe("AgentModeView", () => {
 function defaultProps(): AgentModeViewProps {
   return {
     agents: surface({}),
-    repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
+    onReleaseProject: () => undefined,
+    onTrustProject: () => undefined,
+    overflowRootPaths: [],
+    projects: [defaultActiveProject()],
     workspaceRoot: ROOT,
     nowTickMs: NOW_TICK_MS,
+  };
+}
+
+function defaultActiveProject(): AgentProjectDescriptor {
+  return {
+    rootKey: ROOT,
+    rootPath: ROOT,
+    ownerId: "agent-root:app",
+    label: "app",
+    generation: 0,
+    trust: "trusted",
+    origin: "active-tab",
+    repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
+    isolationPolicy: "auto",
+    leaseToken: null,
+  };
+}
+
+function activeProject(): AgentProjectDescriptor {
+  return {
+    rootKey: ROOT,
+    rootPath: ROOT,
+    ownerId: "agent-root:app",
+    label: "app",
+    generation: 0,
+    trust: "trusted",
+    origin: "active-tab",
+    repositories: [repository(ROOT, "")],
+    isolationPolicy: "auto",
+    leaseToken: null,
+  };
+}
+
+function backgroundProject(): AgentProjectDescriptor {
+  return {
+    rootKey: OTHER_ROOT,
+    rootPath: OTHER_ROOT,
+    ownerId: "agent-root:api-service",
+    label: "api-service",
+    generation: 0,
+    trust: "trusted",
+    origin: "background-tab",
+    repositories: [repository(OTHER_ROOT, "")],
+    isolationPolicy: "auto",
+    leaseToken: 7,
   };
 }
 
@@ -427,12 +601,16 @@ function surface(overrides: Partial<AgentTasksSurface>): AgentTasksSurface {
       repositoryRoot,
       recommended: { kind: "in-place" },
       inPlaceGuard: { kind: "safe" },
+      inPlaceAllowed: true,
       confirmationKey: null,
     }),
     refreshIsolationStatus: async () => undefined,
     dispatch: async () => ({ taskId: "agt-default" }),
     stop: async () => undefined,
     dismiss: () => undefined,
+    hasLiveTasksForOwner: () => false,
+    stopProjectTasks: async () => undefined,
+    releaseProjectTasks: () => undefined,
     removeOrphanedWorktree: async () => undefined,
     pruneOrphanedWorktrees: async () => undefined,
     showChanges: async () => undefined,
@@ -457,7 +635,7 @@ function taskView(
 ): AgentTaskView {
   return {
     record: {
-      owner: { taskId, workspaceId: "workspace-a", repositoryRoot },
+      owner: { taskId, workspaceId: "agent-root:app", repositoryRoot },
       isolation: "worktree",
       worktreePath: `${repositoryRoot}/.worktrees/${taskId}`,
       prompt: "Refactor the parser",

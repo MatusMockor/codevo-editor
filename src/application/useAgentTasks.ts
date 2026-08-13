@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { AgentProjectDescriptor } from "../domain/agentProject";
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   agentTasksReducer,
@@ -17,7 +18,6 @@ import {
   mintAgentTaskId,
   type AgentCliKind,
   type AgentIsolationDefault,
-  type AgentIsolationPolicy,
   type AgentTaskGateway,
   type AgentTaskIsolation,
   type AgentTaskIsolationContext,
@@ -102,10 +102,12 @@ export interface AgentIsolationPreview {
   readonly repositoryRoot: string;
   readonly recommended: AgentIsolationDefault;
   readonly inPlaceGuard: InPlaceDispatchGuard;
+  readonly inPlaceAllowed: boolean;
   readonly confirmationKey: string | null;
 }
 
 export interface AgentTaskDispatchRequest {
+  readonly projectRootKey: string;
   readonly repositoryRoot: string;
   readonly prompt: string;
   readonly isolation: AgentTaskIsolation;
@@ -121,15 +123,14 @@ export interface AgentTasksDependencies {
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly gitGateway: Pick<GitGateway, "getStatus" | "getDiff">;
   readonly prompter: WorkbenchPrompter;
-  readonly resolvedRepositories: ReadonlyArray<ResolvedGitRepository>;
-  readonly getWorkspaceId: () => string | null;
-  readonly getWorkspaceRoot: () => string | null;
+  readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly getAgentCliPath: () => string | null;
   readonly getAgentCliKind: () => AgentCliKind;
   readonly getMaxConcurrentAgentTasks: () => number;
-  readonly getAgentIsolationPolicy: () => AgentIsolationPolicy;
   readonly getRepositoryStatus: (repositoryRoot: string) => AgentRepositoryStatusSnapshot;
   readonly getDirtyEditorDocumentCount: (repositoryRoot: string) => number;
+  readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
+  readonly ensureProjectLease?: (projectRootKey: string) => Promise<boolean>;
   readonly reportError: (source: string, error: unknown) => void;
   readonly openAgentSettings: () => void;
   readonly now?: () => number;
@@ -150,6 +151,9 @@ export interface AgentTasksSurface {
   dispatch(request: AgentTaskDispatchRequest): Promise<AgentTaskDispatchResult | null>;
   stop(taskId: string): Promise<void>;
   dismiss(taskId: string): void;
+  hasLiveTasksForOwner(ownerId: string): boolean;
+  stopProjectTasks(ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void>;
+  releaseProjectTasks(ownerId: string): void;
   removeOrphanedWorktree(worktreePath: string): Promise<void>;
   pruneOrphanedWorktrees(repositoryRoot: string): Promise<void>;
   showChanges(taskId: string): Promise<void>;
@@ -162,6 +166,13 @@ export interface AgentTasksSurface {
 }
 
 const AGENT_TASKS_SOURCE = "Agents";
+const UNTRUSTED_REPOSITORY_ERROR_MARKER = "Agent tasks require a trusted repository.";
+const LEASE_REFUSED_NOTICE =
+  "This project could not be protected from tab close, so the agent was not started.";
+const SUMMARY_AUTHORITY_DROPPED_ERROR =
+  "This project no longer owns the repository, so its changes could not be read.";
+const DIFF_AUTHORITY_DROPPED_ERROR =
+  "This project no longer owns the repository, so the file diff could not be read.";
 const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder("utf-8");
 const EMPTY_SUMMARY: AgentTaskChangeSummary = Object.freeze({
@@ -198,17 +209,10 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
   const orphanCandidatesRef = useRef(orphanCandidates);
   orphanCandidatesRef.current = orphanCandidates;
   const uncertainWorktreePathsRef = useRef<ReadonlySet<string>>(new Set());
-  const workspaceId = dependencies.getWorkspaceId();
-  const workspaceRoot = dependencies.getWorkspaceRoot();
   const mountedRef = useRef(true);
   const dispatchingRef = useRef(false);
   const isolationStatusesRef = useRef<ReadonlyMap<string, FreshIsolationStatus>>(new Map());
   const isolationStatusRequestGenerationRef = useRef<ReadonlyMap<string, number>>(new Map());
-  const workspaceAuthorityRef = useRef<WorkspaceAuthority>({
-    generation: 1,
-    workspaceId,
-    workspaceRoot,
-  });
   const [, publishIsolationStatusGeneration] = useReducer(
     (generation: number) => generation + 1,
     0,
@@ -220,16 +224,8 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
   const agentCliConfigured = normalizeAgentCliPath(dependencies.getAgentCliPath()) !== null;
 
   useLayoutEffect(() => {
-    const current = workspaceAuthorityRef.current;
     dependenciesRef.current = dependencies;
-    if (current.workspaceId !== workspaceId || current.workspaceRoot !== workspaceRoot) {
-      workspaceAuthorityRef.current = {
-        generation: current.generation + 1,
-        workspaceId,
-        workspaceRoot,
-      };
-    }
-  }, [dependencies, workspaceId, workspaceRoot]);
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -238,100 +234,129 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
     };
   }, []);
 
-  useEffect(() => {
-    if (workspaceId === null) return;
-    dispatchAction({ kind: "workspaceReplaced", workspaceId });
-  }, [workspaceId]);
-
   const refreshOrphanedWorktrees = useCallback(async (): Promise<void> => {
-    const authority = captureWorkspaceAuthority(workspaceAuthorityRef);
-    if (authority === null) {
+    const projects = dependenciesRef.current.projects;
+    if (projects.length === 0) {
       if (mountedRef.current) setOrphanCandidates(new Map());
       return;
     }
-    const repositories = dependenciesRef.current.resolvedRepositories;
     const collected = new Map<string, OrphanedWorktreeCandidate>();
-    for (const repository of repositories) {
-      if (
-        !isCurrentWorkspaceAuthority(dependenciesRef, mountedRef, workspaceAuthorityRef, authority)
-      )
-        return;
-      const listed = await tryOrReport(
-        () => dependenciesRef.current.gitWorktreeGateway.listWorktrees(repository.repositoryRoot),
-        dependenciesRef,
-      );
-      if (
-        !isCurrentWorkspaceAuthority(dependenciesRef, mountedRef, workspaceAuthorityRef, authority)
-      ) {
-        return;
-      }
-      if (!listed.ok) continue;
-      for (const descriptor of listed.value) {
-        if (descriptor.isPrimary) continue;
-        if (!isAgentWorktreePath(repository.repositoryRoot, descriptor.worktreePath)) continue;
-        collected.set(descriptor.worktreePath, {
-          repositoryRoot: repository.repositoryRoot,
-          worktreePath: descriptor.worktreePath,
-          branch: descriptor.branch,
-          prunable: descriptor.prunable,
-        });
+    for (const project of projects) {
+      if (project.trust !== "trusted") continue;
+      const authority = projectAuthority(project);
+      for (const repository of project.repositories) {
+        if (
+          !isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repository.repositoryRoot)
+        ) {
+          break;
+        }
+        const listed = await tryOrReport(
+          () => dependenciesRef.current.gitWorktreeGateway.listWorktrees(repository.repositoryRoot),
+          dependenciesRef,
+        );
+        if (
+          !isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repository.repositoryRoot)
+        ) {
+          break;
+        }
+        if (!listed.ok) continue;
+        for (const descriptor of listed.value) {
+          if (descriptor.isPrimary) continue;
+          if (!isAgentWorktreePath(repository.repositoryRoot, descriptor.worktreePath)) continue;
+          collected.set(descriptor.worktreePath, {
+            repositoryRoot: repository.repositoryRoot,
+            worktreePath: descriptor.worktreePath,
+            branch: descriptor.branch,
+            prunable: descriptor.prunable,
+          });
+        }
       }
     }
+    if (!mountedRef.current) return;
     setOrphanCandidates(collected);
   }, []);
 
-  const resolvedRepositories = dependencies.resolvedRepositories;
+  const projectsSignature = useMemo(
+    () =>
+      dependencies.projects
+        .map((project) =>
+          [
+            project.rootKey,
+            project.generation,
+            project.ownerId,
+            project.trust,
+            project.repositories.map((repository) => repository.repositoryRoot).join(","),
+          ].join("#"),
+        )
+        .join(";"),
+    [dependencies.projects],
+  );
+
   useEffect(() => {
     void refreshOrphanedWorktrees();
-  }, [refreshOrphanedWorktrees, workspaceId, resolvedRepositories]);
+  }, [refreshOrphanedWorktrees, projectsSignature]);
 
-  const refreshChangeSummary = useCallback(async (taskId: string): Promise<void> => {
-    const deps = dependenciesRef.current;
-    const authority = captureWorkspaceAuthority(workspaceAuthorityRef);
-    const task = stateRef.current.tasks.get(taskId);
-    if (authority === null || task === undefined || task.worktreePath === null) return;
-    const owner = task.owner;
-    const worktreePath = task.worktreePath;
+  const dropSummaryAuthority = useCallback((taskId: string): void => {
+    if (!mountedRef.current) return;
+    setSummaries((current) => {
+      const summary = current.get(taskId);
+      if (summary === undefined || !summary.loading) return current;
+      return withSummary(current, taskId, {
+        ...summary,
+        loading: false,
+        error: SUMMARY_AUTHORITY_DROPPED_ERROR,
+      });
+    });
+  }, []);
 
-    setSummaries((current) =>
-      withSummary(current, taskId, { ...summaryOf(current, taskId), loading: true, error: null }),
-    );
-
-    try {
-      const status = await deps.gitGateway.getStatus(worktreePath);
-      if (
-        !isCurrentOwner(
-          dependenciesRef,
-          mountedRef,
-          workspaceAuthorityRef,
-          authority,
-          owner.repositoryRoot,
-        )
-      ) {
+  const refreshChangeSummary = useCallback(
+    async (taskId: string): Promise<void> => {
+      const deps = dependenciesRef.current;
+      const task = stateRef.current.tasks.get(taskId);
+      if (task === undefined || task.worktreePath === null) return;
+      const project = projectByOwnerId(deps.projects, task.owner.workspaceId);
+      if (project === undefined) {
+        dropSummaryAuthority(taskId);
         return;
       }
-      const files = status.changes.slice(0, MAX_AGENT_TASK_CHANGE_ROWS);
+      const authority = projectAuthority(project);
+      const owner = task.owner;
+      const worktreePath = task.worktreePath;
+
       setSummaries((current) =>
-        withSummary(current, taskId, {
-          ...summaryOf(current, taskId),
-          loading: false,
-          error: null,
-          files,
-          truncated: status.changes.length > MAX_AGENT_TASK_CHANGE_ROWS,
-        }),
+        withSummary(current, taskId, { ...summaryOf(current, taskId), loading: true, error: null }),
       );
-    } catch (error) {
-      dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
-      if (!mountedRef.current) return;
-      setSummaries((current) =>
-        withSummary(current, taskId, {
-          ...summaryOf(current, taskId),
-          loading: false,
-          error: "The worktree changes could not be read.",
-        }),
-      );
-    }
-  }, []);
+
+      try {
+        const status = await deps.gitGateway.getStatus(worktreePath);
+        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, owner.repositoryRoot)) {
+          dropSummaryAuthority(taskId);
+          return;
+        }
+        const files = status.changes.slice(0, MAX_AGENT_TASK_CHANGE_ROWS);
+        setSummaries((current) =>
+          withSummary(current, taskId, {
+            ...summaryOf(current, taskId),
+            loading: false,
+            error: null,
+            files,
+            truncated: status.changes.length > MAX_AGENT_TASK_CHANGE_ROWS,
+          }),
+        );
+      } catch (error) {
+        dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error);
+        if (!mountedRef.current) return;
+        setSummaries((current) =>
+          withSummary(current, taskId, {
+            ...summaryOf(current, taskId),
+            loading: false,
+            error: "The worktree changes could not be read.",
+          }),
+        );
+      }
+    },
+    [dropSummaryAuthority],
+  );
 
   const handleStatusEvent = useCallback(
     (event: AgentTaskStatusEvent): void => {
@@ -376,20 +401,21 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
 
   const isolationContext = useCallback((repositoryRoot: string): AgentTaskIsolationContext => {
     const deps = dependenciesRef.current;
-    const authority = workspaceAuthorityRef.current;
+    const project = owningProjectForRepository(deps.projects, repositoryRoot);
+    const authority = project === undefined ? null : projectAuthority(project);
     const fresh = isolationStatusesRef.current.get(repositoryRoot);
     const status =
-      fresh && sameWorkspaceAuthority(fresh.authority, authority)
+      fresh && authority !== null && sameProjectAuthority(fresh.authority, authority)
         ? fresh.snapshot
         : deps.getRepositoryStatus(repositoryRoot);
     return {
-      workspacePolicy: normalizeAgentIsolationPolicy(deps.getAgentIsolationPolicy()),
+      workspacePolicy: normalizeAgentIsolationPolicy(project?.isolationPolicy ?? "auto"),
       repositoryStatusKnown: status.known,
       repositoryDirty: status.dirty,
-      dirtyEditorDocumentsInRepository: Math.max(
-        0,
-        Math.trunc(deps.getDirtyEditorDocumentCount(repositoryRoot)),
-      ),
+      dirtyEditorDocumentsInRepository:
+        project?.origin === "active-tab"
+          ? Math.max(0, Math.trunc(deps.getDirtyEditorDocumentCount(repositoryRoot)))
+          : 0,
       liveAgentTasksInRepository: liveTasksInRepository(stateRef.current.tasks, repositoryRoot),
       plannedParallelDispatch: false,
     };
@@ -397,13 +423,9 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
 
   const refreshIsolationStatus = useCallback(async (repositoryRoot: string): Promise<void> => {
     const deps = dependenciesRef.current;
-    const authority = captureWorkspaceAuthority(workspaceAuthorityRef);
-    if (
-      authority === null ||
-      !deps.resolvedRepositories.some((repository) => repository.repositoryRoot === repositoryRoot)
-    ) {
-      return;
-    }
+    const project = owningProjectForRepository(deps.projects, repositoryRoot);
+    if (project === undefined) return;
+    const authority = projectAuthority(project);
 
     const requestGeneration =
       (isolationStatusRequestGenerationRef.current.get(repositoryRoot) ?? 0) + 1;
@@ -411,15 +433,9 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
       isolationStatusRequestGenerationRef.current,
     ).set(repositoryRoot, requestGeneration);
 
-    if (
-      !isCurrentOwner(dependenciesRef, mountedRef, workspaceAuthorityRef, authority, repositoryRoot)
-    )
-      return;
+    if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
     const result = await attempt(() => deps.gitGateway.getStatus(repositoryRoot));
-    if (
-      !isCurrentOwner(dependenciesRef, mountedRef, workspaceAuthorityRef, authority, repositoryRoot)
-    )
-      return;
+    if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return;
     if (isolationStatusRequestGenerationRef.current.get(repositoryRoot) !== requestGeneration) {
       return;
     }
@@ -438,17 +454,26 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
 
   const isolationPreview = useCallback(
     (repositoryRoot: string): AgentIsolationPreview => {
+      const deps = dependenciesRef.current;
+      const project = owningProjectForRepository(deps.projects, repositoryRoot);
+      const inPlaceAllowed = project?.origin === "active-tab";
       const context = isolationContext(repositoryRoot);
+      const authority = project === undefined ? null : projectAuthority(project);
       return {
         repositoryRoot,
-        recommended: defaultAgentTaskIsolation(context),
+        recommended: inPlaceAllowed
+          ? defaultAgentTaskIsolation(context)
+          : { kind: "worktree", reason: "policy" },
         inPlaceGuard: inPlaceDispatchGuard(context),
-        confirmationKey: sameOptionalWorkspaceAuthority(
-          isolationStatusesRef.current.get(repositoryRoot)?.authority,
-          workspaceAuthorityRef.current,
-        )
-          ? isolationConfirmationKey(repositoryRoot, context, workspaceAuthorityRef.current)
-          : null,
+        inPlaceAllowed,
+        confirmationKey:
+          authority !== null &&
+          sameOptionalProjectAuthority(
+            isolationStatusesRef.current.get(repositoryRoot)?.authority,
+            authority,
+          )
+            ? isolationConfirmationKey(repositoryRoot, context, authority)
+            : null,
       };
     },
     [isolationContext],
@@ -461,18 +486,30 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
         setNotice(warning("A dispatch is already in progress."));
         return null;
       }
-      const authority = captureWorkspaceAuthority(workspaceAuthorityRef);
-      if (authority === null) {
+      if (deps.projects.length === 0) {
         setNotice(warning("Open a workspace before starting an agent."));
         return null;
       }
-      const repository = deps.resolvedRepositories.find(
-        (candidate) => candidate.repositoryRoot === request.repositoryRoot,
-      );
-      if (repository === undefined) {
+      const project = projectByRootKey(deps.projects, request.projectRootKey);
+      if (
+        project === undefined ||
+        !project.repositories.some(
+          (repository) => repository.repositoryRoot === request.repositoryRoot,
+        )
+      ) {
         setNotice(warning("Select a repository from this workspace."));
         return null;
       }
+      if (project.origin === "closed-tab-live-tasks") {
+        setNotice(warning("This project is being released, so a new agent cannot start in it."));
+        return null;
+      }
+      if (project.origin !== "active-tab" && request.isolation === "in-place") {
+        setNotice(warning("In-place agents can run only in the active project. Use a worktree."));
+        return null;
+      }
+      const authority = projectAuthority(project);
+      const repositoryRoot = request.repositoryRoot;
       const prompt = request.prompt.trim();
       if (prompt === "") {
         setNotice(warning("Write a prompt before starting an agent."));
@@ -509,39 +546,37 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
       dispatchingRef.current = true;
       setDispatching(true);
       try {
+        const ensureProjectLease = deps.ensureProjectLease;
+        if (project.leaseToken === null && ensureProjectLease !== undefined) {
+          const leased = await attempt(() => ensureProjectLease(request.projectRootKey));
+          if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
+            return null;
+          }
+          if (!leased.ok) {
+            deps.reportError(AGENT_TASKS_SOURCE, leased.error);
+            setNotice(failure(LEASE_REFUSED_NOTICE));
+            return null;
+          }
+          if (!leased.value) {
+            setNotice(failure(LEASE_REFUSED_NOTICE));
+            return null;
+          }
+        }
         if (request.isolation === "in-place") {
           const requestGeneration =
-            (isolationStatusRequestGenerationRef.current.get(repository.repositoryRoot) ?? 0) + 1;
+            (isolationStatusRequestGenerationRef.current.get(repositoryRoot) ?? 0) + 1;
           isolationStatusRequestGenerationRef.current = new Map(
             isolationStatusRequestGenerationRef.current,
-          ).set(repository.repositoryRoot, requestGeneration);
-          if (
-            !isCurrentOwner(
-              dependenciesRef,
-              mountedRef,
-              workspaceAuthorityRef,
-              authority,
-              repository.repositoryRoot,
-            )
-          )
+          ).set(repositoryRoot, requestGeneration);
+          if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
             return null;
-          const freshStatus = await attempt(() =>
-            deps.gitGateway.getStatus(repository.repositoryRoot),
-          );
-          if (
-            !isCurrentOwner(
-              dependenciesRef,
-              mountedRef,
-              workspaceAuthorityRef,
-              authority,
-              repository.repositoryRoot,
-            )
-          ) {
+          }
+          const freshStatus = await attempt(() => deps.gitGateway.getStatus(repositoryRoot));
+          if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
             return null;
           }
           if (
-            isolationStatusRequestGenerationRef.current.get(repository.repositoryRoot) !==
-            requestGeneration
+            isolationStatusRequestGenerationRef.current.get(repositoryRoot) !== requestGeneration
           ) {
             return null;
           }
@@ -554,23 +589,15 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
             );
             return null;
           }
-          const fresh = freshIsolationStatus(
-            authority,
-            repository.repositoryRoot,
-            freshStatus.value,
-          );
+          const fresh = freshIsolationStatus(authority, repositoryRoot, freshStatus.value);
           const next = new Map(isolationStatusesRef.current);
-          next.set(repository.repositoryRoot, fresh);
+          next.set(repositoryRoot, fresh);
           isolationStatusesRef.current = next;
           if (mountedRef.current) publishIsolationStatusGeneration();
 
-          const context = isolationContext(repository.repositoryRoot);
+          const context = isolationContext(repositoryRoot);
           const guard = inPlaceDispatchGuard(context);
-          const confirmationKey = isolationConfirmationKey(
-            repository.repositoryRoot,
-            context,
-            authority,
-          );
+          const confirmationKey = isolationConfirmationKey(repositoryRoot, context, authority);
           if (
             guard.kind === "unsafe" &&
             (confirmationKey === null || request.unsafeInPlaceConfirmationKey !== confirmationKey)
@@ -578,15 +605,7 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
             setNotice(warning(`Running in place is unsafe: ${guardReasonsLabel(guard.reasons)}.`));
             return null;
           }
-          if (
-            !isCurrentOwner(
-              dependenciesRef,
-              mountedRef,
-              workspaceAuthorityRef,
-              authority,
-              repository.repositoryRoot,
-            )
-          ) {
+          if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
             return null;
           }
         }
@@ -598,11 +617,10 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
           isolation: request.isolation,
           mountedRef,
           prompt,
-          repositoryRoot: repository.repositoryRoot,
+          repositoryRoot,
           setNotice,
           taskId,
           authority,
-          workspaceAuthorityRef,
           uncertainWorktreePathsRef,
         });
         if (!dispatched && request.isolation === "worktree" && mountedRef.current) {
@@ -643,19 +661,62 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
     [refreshOrphanedWorktrees],
   );
 
+  const hasLiveTasksForOwner = useCallback((ownerId: string): boolean => {
+    for (const task of stateRef.current.tasks.values()) {
+      if (task.owner.workspaceId !== ownerId) continue;
+      if (!isTerminalAgentTaskStatus(task.status)) return true;
+    }
+    return false;
+  }, []);
+
+  const stopProjectTasks = useCallback(
+    async (ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void> => {
+      const roots = new Set(repositoryRoots);
+      for (const task of stateRef.current.tasks.values()) {
+        if (task.owner.workspaceId !== ownerId) continue;
+        if (isTerminalAgentTaskStatus(task.status)) continue;
+        roots.add(task.owner.repositoryRoot);
+      }
+      for (const repositoryRoot of roots) {
+        const stopped = await attempt(() =>
+          dependenciesRef.current.agentTaskGateway.stopAgentTasksForRoot({
+            workspaceId: ownerId,
+            repositoryRoot,
+          }),
+        );
+        if (!stopped.ok) {
+          dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, stopped.error);
+        }
+      }
+    },
+    [],
+  );
+
+  const releaseProjectTasks = useCallback(
+    (ownerId: string): void => {
+      dispatchAction({ kind: "projectReleased", ownerId });
+      void refreshOrphanedWorktrees();
+    },
+    [refreshOrphanedWorktrees],
+  );
+
   const removeOrphanedWorktree = useCallback(
     async (worktreePath: string): Promise<void> => {
       const deps = dependenciesRef.current;
       const candidate = orphanCandidatesRef.current.get(worktreePath);
       if (candidate === undefined) return;
-      const ownerWorkspaceId = deps.getWorkspaceId();
-      if (ownerWorkspaceId === null) return;
+      const project = owningProjectForRepository(deps.projects, candidate.repositoryRoot);
+      if (project === undefined) return;
+      const authority = projectAuthority(project);
       setRemovingOrphans((current) => new Set(current).add(worktreePath));
 
       try {
         const status = await deps.gitGateway.getStatus(worktreePath);
-        if (!mountedRef.current) return;
-        if (dependenciesRef.current.getWorkspaceId() !== ownerWorkspaceId) return;
+        if (
+          !isCurrentProjectOwner(dependenciesRef, mountedRef, authority, candidate.repositoryRoot)
+        ) {
+          return;
+        }
         const dirty = status.changes.length > 0;
         if (
           dirty &&
@@ -744,9 +805,11 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
   const showFileDiff = useCallback(
     async (taskId: string, change: GitChangedFile): Promise<void> => {
       const deps = dependenciesRef.current;
-      const authority = captureWorkspaceAuthority(workspaceAuthorityRef);
       const task = stateRef.current.tasks.get(taskId);
-      if (authority === null || task === undefined || task.worktreePath === null) return;
+      if (task === undefined || task.worktreePath === null) return;
+      const project = projectByOwnerId(deps.projects, task.owner.workspaceId);
+      if (project === undefined) return;
+      const authority = projectAuthority(project);
       const owner = task.owner;
       const worktreePath = task.worktreePath;
       setSummaries((current) =>
@@ -758,15 +821,8 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
 
       try {
         const diff = await deps.gitGateway.getDiff(worktreePath, change);
-        if (
-          !isCurrentOwner(
-            dependenciesRef,
-            mountedRef,
-            workspaceAuthorityRef,
-            authority,
-            owner.repositoryRoot,
-          )
-        ) {
+        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, owner.repositoryRoot)) {
+          dropFileDiffAuthority(taskId, change.relativePath, mountedRef, setSummaries);
           return;
         }
         setSummaries((current) =>
@@ -803,13 +859,15 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
   const removeWorktree = useCallback(
     async (taskId: string): Promise<void> => {
       const deps = dependenciesRef.current;
-      const authority = captureWorkspaceAuthority(workspaceAuthorityRef);
       const task = stateRef.current.tasks.get(taskId);
-      if (authority === null || task === undefined || task.worktreePath === null) return;
+      if (task === undefined || task.worktreePath === null) return;
       if (!isTerminalAgentTaskStatus(task.status)) {
         setNotice(warning("Stop the agent before removing its worktree."));
         return;
       }
+      const project = projectByOwnerId(deps.projects, task.owner.workspaceId);
+      if (project === undefined) return;
+      const authority = projectAuthority(project);
       const owner = task.owner;
       const worktreePath = task.worktreePath;
       setSummaries((current) =>
@@ -818,15 +876,7 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
 
       try {
         const status = await deps.gitGateway.getStatus(worktreePath);
-        if (
-          !isCurrentOwner(
-            dependenciesRef,
-            mountedRef,
-            workspaceAuthorityRef,
-            authority,
-            owner.repositoryRoot,
-          )
-        ) {
+        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, owner.repositoryRoot)) {
           return;
         }
         const dirty = status.changes.length > 0;
@@ -846,15 +896,7 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
           worktreePath,
           dirty,
         );
-        if (
-          !isCurrentOwner(
-            dependenciesRef,
-            mountedRef,
-            workspaceAuthorityRef,
-            authority,
-            owner.repositoryRoot,
-          )
-        ) {
+        if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, owner.repositoryRoot)) {
           return;
         }
         setSummaries((current) => withoutSummary(current, taskId));
@@ -880,8 +922,13 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
   const dismissNotice = useCallback((): void => setNotice(null), []);
 
   const tasks = useMemo(
-    () => agentTaskViews(state.tasks, summaries, removedWorktrees, workspaceRoot, workspaceId),
-    [removedWorktrees, state.tasks, summaries, workspaceId, workspaceRoot],
+    () => agentTaskViews(state.tasks, summaries, removedWorktrees, dependencies.projects),
+    [dependencies.projects, removedWorktrees, state.tasks, summaries],
+  );
+
+  const repositories = useMemo(
+    () => flattenProjectRepositories(dependencies.projects),
+    [dependencies.projects],
   );
 
   const orphanedWorktrees = useMemo(
@@ -897,7 +944,7 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
 
   return {
     tasks,
-    repositories: dependencies.resolvedRepositories,
+    repositories,
     orphanedWorktrees,
     notice,
     dispatching,
@@ -909,6 +956,9 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
     dispatch,
     stop,
     dismiss,
+    hasLiveTasksForOwner,
+    stopProjectTasks,
+    releaseProjectTasks,
     removeOrphanedWorktree,
     pruneOrphanedWorktrees,
     showChanges,
@@ -932,56 +982,33 @@ interface DispatchRun {
   readonly repositoryRoot: string;
   readonly setNotice: (notice: AgentTasksNotice | null) => void;
   readonly taskId: string;
-  readonly authority: WorkspaceAuthority & { readonly workspaceId: string };
-  readonly workspaceAuthorityRef: { readonly current: WorkspaceAuthority };
+  readonly authority: AgentProjectAuthority;
   readonly uncertainWorktreePathsRef: { current: ReadonlySet<string> };
 }
 
 async function runDispatch(run: DispatchRun): Promise<boolean> {
   const { authority, dependenciesRef, mountedRef, repositoryRoot, taskId } = run;
-  const workspaceId = authority.workspaceId;
+  const workspaceId = authority.ownerId;
   const agentTaskGateway = dependenciesRef.current.agentTaskGateway;
   let worktreePath: string | null = null;
   let createdWorktree: CreatedAgentWorktree | null = null;
 
   if (run.isolation === "worktree") {
-    if (
-      !isCurrentOwner(
-        dependenciesRef,
-        mountedRef,
-        run.workspaceAuthorityRef,
-        authority,
-        repositoryRoot,
-      )
-    )
+    if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
       return false;
+    }
     const gateway = dependenciesRef.current.gitWorktreeGateway;
     const receipt = await attempt(() => gateway.addAgentWorktree(repositoryRoot, taskId));
     if (!receipt.ok) {
-      if (
-        isCurrentOwner(
-          dependenciesRef,
-          mountedRef,
-          run.workspaceAuthorityRef,
-          authority,
-          repositoryRoot,
-        )
-      ) {
+      noteDispatchTrustRejection(run, receipt.error);
+      if (isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
         dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, receipt.error);
         run.setNotice(failure(worktreeCreationFailureNotice(receipt.error)));
       }
       return false;
     }
     createdWorktree = { gateway, receipt: receipt.value, repositoryRoot };
-    if (
-      !isCurrentOwner(
-        dependenciesRef,
-        mountedRef,
-        run.workspaceAuthorityRef,
-        authority,
-        repositoryRoot,
-      )
-    ) {
+    if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
       await compensateCreatedWorktree(run, createdWorktree);
       return false;
     }
@@ -1003,15 +1030,7 @@ async function runDispatch(run: DispatchRun): Promise<boolean> {
     worktreePath = receipt.value.worktreePath;
   }
 
-  if (
-    !isCurrentOwner(
-      dependenciesRef,
-      mountedRef,
-      run.workspaceAuthorityRef,
-      authority,
-      repositoryRoot,
-    )
-  ) {
+  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
     if (createdWorktree !== null) await compensateCreatedWorktree(run, createdWorktree);
     return false;
   }
@@ -1028,16 +1047,9 @@ async function runDispatch(run: DispatchRun): Promise<boolean> {
     }),
   );
   if (!started.ok) {
+    noteDispatchTrustRejection(run, started.error);
     if (createdWorktree !== null) retainUncertainWorktree(run, createdWorktree);
-    if (
-      isCurrentOwner(
-        dependenciesRef,
-        mountedRef,
-        run.workspaceAuthorityRef,
-        authority,
-        repositoryRoot,
-      )
-    ) {
+    if (isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
       dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, started.error);
       run.setNotice(
         failure(
@@ -1052,15 +1064,7 @@ async function runDispatch(run: DispatchRun): Promise<boolean> {
   if (started.value.taskId !== taskId) {
     const stopped = await attempt(() => agentTaskGateway.stopAgentTask({ taskId, workspaceId }));
     if (createdWorktree !== null) retainUncertainWorktree(run, createdWorktree);
-    if (
-      isCurrentOwner(
-        dependenciesRef,
-        mountedRef,
-        run.workspaceAuthorityRef,
-        authority,
-        repositoryRoot,
-      )
-    ) {
+    if (isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
       if (!stopped.ok) dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, stopped.error);
       run.setNotice(
         failure(
@@ -1072,15 +1076,7 @@ async function runDispatch(run: DispatchRun): Promise<boolean> {
     }
     return false;
   }
-  if (
-    !isCurrentOwner(
-      dependenciesRef,
-      mountedRef,
-      run.workspaceAuthorityRef,
-      authority,
-      repositoryRoot,
-    )
-  ) {
+  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
     const stopped = await attempt(() => agentTaskGateway.stopAgentTask({ taskId, workspaceId }));
     if (createdWorktree !== null) retainUncertainWorktree(run, createdWorktree);
     void stopped;
@@ -1107,15 +1103,7 @@ async function runDispatch(run: DispatchRun): Promise<boolean> {
   const acknowledged = await attempt(() =>
     agentTaskGateway.acknowledgeAgentTaskStart({ taskId, workspaceId }),
   );
-  if (
-    !isCurrentOwner(
-      dependenciesRef,
-      mountedRef,
-      run.workspaceAuthorityRef,
-      authority,
-      repositoryRoot,
-    )
-  ) {
+  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) {
     const stopped = await attempt(() => agentTaskGateway.stopAgentTask({ taskId, workspaceId }));
     if (createdWorktree !== null) retainUncertainWorktree(run, createdWorktree);
     void stopped;
@@ -1137,6 +1125,11 @@ interface CreatedAgentWorktree {
   readonly repositoryRoot: string;
 }
 
+function noteDispatchTrustRejection(run: DispatchRun, error: unknown): void {
+  if (!errorMessageOf(error).includes(UNTRUSTED_REPOSITORY_ERROR_MARKER)) return;
+  run.dependenciesRef.current.onProjectDispatchTrustRejected?.(run.authority.rootKey);
+}
+
 function retainUncertainWorktree(run: DispatchRun, created: CreatedAgentWorktree): void {
   run.uncertainWorktreePathsRef.current = new Set(run.uncertainWorktreePathsRef.current).add(
     created.receipt.worktreePath,
@@ -1152,10 +1145,9 @@ async function compensateCreatedWorktree(
   );
   if (
     !removed.ok &&
-    isCurrentOwner(
+    isCurrentProjectOwner(
       run.dependenciesRef,
       run.mountedRef,
-      run.workspaceAuthorityRef,
       run.authority,
       created.repositoryRoot,
     )
@@ -1168,6 +1160,31 @@ async function compensateCreatedWorktree(
 
 function orphanedWorktreeNotice(prefix: string): string {
   return `${prefix} Cleanup could not be confirmed, so its worktree may remain orphaned.`;
+}
+
+function dropFileDiffAuthority(
+  taskId: string,
+  relativePath: string,
+  mountedRef: { current: boolean },
+  setSummaries: (
+    update: (
+      current: ReadonlyMap<string, AgentTaskChangeSummary>,
+    ) => ReadonlyMap<string, AgentTaskChangeSummary>,
+  ) => void,
+): void {
+  if (!mountedRef.current) return;
+  setSummaries((current) => {
+    const summary = current.get(taskId);
+    if (summary === undefined || summary.diff === null || !summary.diff.loading) return current;
+    return withSummary(current, taskId, {
+      ...summary,
+      diff: {
+        ...loadingFileDiff(relativePath),
+        loading: false,
+        error: DIFF_AUTHORITY_DROPPED_ERROR,
+      },
+    });
+  });
 }
 
 type Attempt<TValue> =
@@ -1211,62 +1228,70 @@ function isAgentWorktreePath(repositoryRoot: string, worktreePath: string): bool
   return worktreePath.startsWith(`${repositoryRoot}/${WORKTREE_BASE_DIR_NAME}/`);
 }
 
-interface WorkspaceAuthority {
+interface AgentProjectAuthority {
+  readonly rootKey: string;
+  readonly ownerId: string;
   readonly generation: number;
-  readonly workspaceId: string | null;
-  readonly workspaceRoot: string | null;
 }
 
-function captureWorkspaceAuthority(workspaceAuthorityRef: {
-  readonly current: WorkspaceAuthority;
-}): (WorkspaceAuthority & { readonly workspaceId: string }) | null {
-  const authority = workspaceAuthorityRef.current;
-  return authority.workspaceId === null
-    ? null
-    : { ...authority, workspaceId: authority.workspaceId };
+function projectAuthority(project: AgentProjectDescriptor): AgentProjectAuthority {
+  return {
+    rootKey: project.rootKey,
+    ownerId: project.ownerId,
+    generation: project.generation,
+  };
 }
 
-function sameWorkspaceAuthority(left: WorkspaceAuthority, right: WorkspaceAuthority): boolean {
-  return (
-    left.generation === right.generation &&
-    left.workspaceId === right.workspaceId &&
-    left.workspaceRoot === right.workspaceRoot
+function projectByRootKey(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  rootKey: string,
+): AgentProjectDescriptor | undefined {
+  return projects.find((project) => project.rootKey === rootKey);
+}
+
+function projectByOwnerId(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  ownerId: string,
+): AgentProjectDescriptor | undefined {
+  return projects.find((project) => project.ownerId === ownerId);
+}
+
+function owningProjectForRepository(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+  repositoryRoot: string,
+): AgentProjectDescriptor | undefined {
+  return projects.find((project) =>
+    project.repositories.some((repository) => repository.repositoryRoot === repositoryRoot),
   );
 }
 
-function sameOptionalWorkspaceAuthority(
-  left: WorkspaceAuthority | undefined,
-  right: WorkspaceAuthority,
-): boolean {
-  return left !== undefined && sameWorkspaceAuthority(left, right);
+function sameProjectAuthority(left: AgentProjectAuthority, right: AgentProjectAuthority): boolean {
+  return (
+    left.rootKey === right.rootKey &&
+    left.ownerId === right.ownerId &&
+    left.generation === right.generation
+  );
 }
 
-function isCurrentWorkspaceAuthority(
-  dependenciesRef: { current: AgentTasksDependencies },
-  mountedRef: { current: boolean },
-  workspaceAuthorityRef: { readonly current: WorkspaceAuthority },
-  authority: WorkspaceAuthority,
+function sameOptionalProjectAuthority(
+  left: AgentProjectAuthority | undefined,
+  right: AgentProjectAuthority,
 ): boolean {
-  if (!mountedRef.current) return false;
-  if (!sameWorkspaceAuthority(workspaceAuthorityRef.current, authority)) return false;
-  const deps = dependenciesRef.current;
-  if (deps.getWorkspaceId() !== authority.workspaceId) return false;
-  return deps.getWorkspaceRoot() === authority.workspaceRoot;
+  return left !== undefined && sameProjectAuthority(left, right);
 }
 
-function isCurrentOwner(
+function isCurrentProjectOwner(
   dependenciesRef: { current: AgentTasksDependencies },
   mountedRef: { current: boolean },
-  workspaceAuthorityRef: { readonly current: WorkspaceAuthority },
-  authority: WorkspaceAuthority,
+  authority: AgentProjectAuthority,
   repositoryRoot: string,
 ): boolean {
-  if (!isCurrentWorkspaceAuthority(dependenciesRef, mountedRef, workspaceAuthorityRef, authority))
-    return false;
-  const deps = dependenciesRef.current;
-  return deps.resolvedRepositories.some(
-    (repository) => repository.repositoryRoot === repositoryRoot,
-  );
+  if (!mountedRef.current) return false;
+  const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
+  if (project === undefined) return false;
+  if (project.generation !== authority.generation) return false;
+  if (project.ownerId !== authority.ownerId) return false;
+  return project.repositories.some((repository) => repository.repositoryRoot === repositoryRoot);
 }
 
 function mintUnusedAgentTaskId(
@@ -1296,12 +1321,12 @@ interface OrphanedWorktreeCandidate {
 }
 
 interface FreshIsolationStatus {
-  readonly authority: WorkspaceAuthority;
+  readonly authority: AgentProjectAuthority;
   readonly snapshot: AgentRepositoryStatusSnapshot;
 }
 
 function freshIsolationStatus(
-  authority: WorkspaceAuthority,
+  authority: AgentProjectAuthority,
   repositoryRoot: string,
   status: GitStatus,
 ): FreshIsolationStatus {
@@ -1316,7 +1341,7 @@ function freshIsolationStatus(
   };
 }
 
-function unknownIsolationStatus(authority: WorkspaceAuthority): FreshIsolationStatus {
+function unknownIsolationStatus(authority: AgentProjectAuthority): FreshIsolationStatus {
   return {
     authority,
     snapshot: { known: false, dirty: false },
@@ -1326,9 +1351,9 @@ function unknownIsolationStatus(authority: WorkspaceAuthority): FreshIsolationSt
 function isolationConfirmationKey(
   repositoryRoot: string,
   context: AgentTaskIsolationContext,
-  authority: WorkspaceAuthority,
+  authority: AgentProjectAuthority,
 ): string | null {
-  if (authority.workspaceId === null || !context.repositoryStatusKnown) return null;
+  if (!context.repositoryStatusKnown) return null;
   return JSON.stringify({ authority, repositoryRoot, ...context });
 }
 
@@ -1356,26 +1381,47 @@ function agentTaskViews(
   tasks: ReadonlyMap<string, AgentTaskRecord>,
   summaries: ReadonlyMap<string, AgentTaskChangeSummary>,
   removedWorktrees: ReadonlySet<string>,
-  workspaceRoot: string | null,
-  workspaceId: string | null,
+  projects: ReadonlyArray<AgentProjectDescriptor>,
 ): ReadonlyArray<AgentTaskView> {
-  return [...tasks.values()]
-    .filter((record) => record.owner.workspaceId === workspaceId)
-    .sort((left, right) => right.startedAtEpochMs - left.startedAtEpochMs)
-    .map((record) => ({
+  const projectsByOwnerId = new Map<string, AgentProjectDescriptor>();
+  for (const project of projects) {
+    if (projectsByOwnerId.has(project.ownerId)) continue;
+    projectsByOwnerId.set(project.ownerId, project);
+  }
+  const views: AgentTaskView[] = [];
+  for (const record of tasks.values()) {
+    const project = projectsByOwnerId.get(record.owner.workspaceId);
+    if (project === undefined) continue;
+    views.push({
       record,
-      repositoryLabel: repositoryLabel(record.owner.repositoryRoot, workspaceRoot),
+      repositoryLabel: repositoryLabel(record.owner.repositoryRoot, project.rootPath),
       terminal: isTerminalAgentTaskStatus(record.status),
       worktreeRemoved: removedWorktrees.has(record.owner.taskId),
       changeSummary: summaries.get(record.owner.taskId) ?? null,
-    }));
+    });
+  }
+  return views.sort((left, right) => right.record.startedAtEpochMs - left.record.startedAtEpochMs);
 }
 
-function repositoryLabel(repositoryRoot: string, workspaceRoot: string | null): string {
-  if (workspaceRoot === null) return repositoryRoot;
-  if (repositoryRoot === workspaceRoot) return lastSegment(workspaceRoot);
-  if (!repositoryRoot.startsWith(`${workspaceRoot}/`)) return repositoryRoot;
-  return repositoryRoot.slice(workspaceRoot.length + 1);
+function flattenProjectRepositories(
+  projects: ReadonlyArray<AgentProjectDescriptor>,
+): ReadonlyArray<ResolvedGitRepository> {
+  const seen = new Set<string>();
+  const repositories: ResolvedGitRepository[] = [];
+  for (const project of projects) {
+    for (const repository of project.repositories) {
+      if (seen.has(repository.repositoryRoot)) continue;
+      seen.add(repository.repositoryRoot);
+      repositories.push(repository);
+    }
+  }
+  return repositories;
+}
+
+function repositoryLabel(repositoryRoot: string, projectRootPath: string): string {
+  if (repositoryRoot === projectRootPath) return lastSegment(projectRootPath);
+  if (!repositoryRoot.startsWith(`${projectRootPath}/`)) return repositoryRoot;
+  return repositoryRoot.slice(projectRootPath.length + 1);
 }
 
 function lastSegment(path: string): string {

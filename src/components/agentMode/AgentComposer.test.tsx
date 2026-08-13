@@ -22,7 +22,7 @@ describe("AgentComposer", () => {
     host.remove();
   });
 
-  it("lists every repository and reflects the selected one", () => {
+  it("lists every repository of the selected project and reflects the selection", () => {
     render();
 
     const select = host.querySelector<HTMLSelectElement>("select#agent-repository");
@@ -32,21 +32,142 @@ describe("AgentComposer", () => {
       "packages/api",
     ]);
     expect(select?.value).toBe("/workspace/app");
+    expect(host.querySelector(".agent-composer__chip")?.textContent).toContain("app");
+  });
+
+  it("keeps the picker one level deep while a single project holds a single repository", () => {
+    render({
+      projects: [{ projectRootKey: "/workspace/app", label: "app", repositories: [repo("app")] }],
+      selectedRepositoryRoot: "/workspace/app",
+    });
+
+    expect(host.querySelector("select#agent-project")).toBeNull();
+    expect(host.querySelector("select#agent-repository")).toBeNull();
+    expect(host.querySelector(".agent-composer__chip")?.textContent).toBe("app");
+  });
+
+  it("offers a project level as soon as a second project is dispatchable", () => {
+    render({
+      projects: [
+        { projectRootKey: "/workspace/app", label: "app", repositories: [repo("app")] },
+        {
+          projectRootKey: "/workspace/api",
+          label: "api-service",
+          repositories: [{ repositoryRoot: "/workspace/api", label: "api-service" }],
+        },
+      ],
+      selectedRepositoryRoot: "/workspace/app",
+    });
+
+    const select = host.querySelector<HTMLSelectElement>("select#agent-project");
+
+    expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
+      "app",
+      "api-service",
+    ]);
+    expect(select?.value).toBe("/workspace/app");
+    expect(host.querySelector("select#agent-repository")).toBeNull();
+  });
+
+  it("names both levels in the chip when neither level has a picker", () => {
+    render({
+      projects: [
+        {
+          projectRootKey: "/workspace/app",
+          label: "monorepo",
+          repositories: [{ repositoryRoot: "/workspace/app/packages/api", label: "packages/api" }],
+        },
+      ],
+      selectedRepositoryRoot: "/workspace/app/packages/api",
+    });
+
+    expect(host.querySelector(".agent-composer__chip")?.textContent).toBe("monorepo/packages/api");
+  });
+
+  it("drops the chip once both levels are already visible as pickers", () => {
+    render({
+      projects: [
+        {
+          projectRootKey: "/workspace/app",
+          label: "app",
+          repositories: [
+            { repositoryRoot: "/workspace/app", label: "app" },
+            { repositoryRoot: "/workspace/app/packages/api", label: "packages/api" },
+          ],
+        },
+        {
+          projectRootKey: "/workspace/api",
+          label: "api-service",
+          repositories: [{ repositoryRoot: "/workspace/api", label: "api-service" }],
+        },
+      ],
+      selectedRepositoryRoot: "/workspace/app",
+    });
+
+    expect(host.querySelector("select#agent-project")).not.toBeNull();
+    expect(host.querySelector("select#agent-repository")).not.toBeNull();
+    expect(host.querySelector(".agent-composer__chip")).toBeNull();
   });
 
   it("explains an empty repository list instead of offering a blank picker", () => {
-    render({ repositories: [], selectedRepositoryRoot: null });
+    render({
+      projects: [{ projectRootKey: "/workspace/app", label: "app", repositories: [] }],
+      selectedRepositoryRoot: null,
+    });
 
     expect(host.textContent).toContain("No Git repository detected");
+    expect(host.querySelector("select#agent-repository")).toBeNull();
   });
 
   it("changes the repository of the next thread", () => {
     const onSelectRepository = vi.fn();
     render({ onSelectRepository });
 
-    selectValue("/workspace/app/packages/api");
+    selectValue("select#agent-repository", "/workspace/app/packages/api");
 
     expect(onSelectRepository).toHaveBeenCalledWith("/workspace/app/packages/api");
+  });
+
+  it("changes the project of the next thread", () => {
+    const onSelectProject = vi.fn();
+    render({
+      onSelectProject,
+      projects: [
+        { projectRootKey: "/workspace/app", label: "app", repositories: [repo("app")] },
+        {
+          projectRootKey: "/workspace/api",
+          label: "api-service",
+          repositories: [{ repositoryRoot: "/workspace/api", label: "api-service" }],
+        },
+      ],
+      selectedRepositoryRoot: "/workspace/app",
+    });
+
+    selectValue("select#agent-project", "/workspace/api");
+
+    expect(onSelectProject).toHaveBeenCalledWith("/workspace/api");
+  });
+
+  it("locks a background project to an isolated worktree and says why", () => {
+    render({
+      isolation: "worktree",
+      isolationReason: "The working tree is clean.",
+      worktreeOnly: true,
+      worktreeOnlyReason:
+        "This project is not the active tab, so the agent only runs in an isolated worktree.",
+    });
+
+    expect(checkbox("agent-isolation").disabled).toBe(true);
+    expect(checkbox("agent-isolation").checked).toBe(true);
+    expect(host.textContent).toContain("only runs in an isolated worktree");
+    expect(host.textContent).not.toContain("The working tree is clean.");
+  });
+
+  it("keeps the isolation toggle usable for the active project", () => {
+    render({ isolation: "worktree", isolationReason: "The working tree is clean." });
+
+    expect(checkbox("agent-isolation").disabled).toBe(false);
+    expect(host.textContent).toContain("The working tree is clean.");
   });
 
   it("reports the prompt size in UTF-8 bytes and warns above the cap", () => {
@@ -163,8 +284,8 @@ describe("AgentComposer", () => {
     });
   }
 
-  function selectValue(value: string): void {
-    const element = host.querySelector<HTMLSelectElement>("select#agent-repository");
+  function selectValue(selector: string, value: string): void {
+    const element = host.querySelector<HTMLSelectElement>(selector);
     expect(element).not.toBeNull();
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
@@ -199,21 +320,35 @@ describe("AgentComposer", () => {
   }
 });
 
+function repo(label: string): { readonly repositoryRoot: string; readonly label: string } {
+  return { repositoryRoot: "/workspace/app", label };
+}
+
 function defaultProps(): AgentComposerProps {
   return {
-    repositories: [
-      { repositoryRoot: "/workspace/app", label: "app" },
-      { repositoryRoot: "/workspace/app/packages/api", label: "packages/api" },
+    projects: [
+      {
+        projectRootKey: "/workspace/app",
+        label: "app",
+        repositories: [
+          { repositoryRoot: "/workspace/app", label: "app" },
+          { repositoryRoot: "/workspace/app/packages/api", label: "packages/api" },
+        ],
+      },
     ],
+    selectedProjectRootKey: "/workspace/app",
     selectedRepositoryRoot: "/workspace/app",
     prompt: "",
     promptBytes: 0,
     isolation: "in-place",
     isolationReason: null,
+    worktreeOnly: false,
+    worktreeOnlyReason: null,
     guard: { kind: "safe" },
     unsafeConfirmed: false,
     dispatching: false,
     submitBlocked: false,
+    onSelectProject: () => undefined,
     onSelectRepository: () => undefined,
     onPromptChange: () => undefined,
     onIsolationChange: () => undefined,

@@ -111,13 +111,14 @@ import { createInitialEditorGroupsState, type EditorGroupId } from "./domain/edi
 import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
-import { AgentModeView } from "./components/agentMode/AgentModeView";
+import { AgentModeScreen } from "./components/agentMode/AgentModeScreen";
 import { AgentStatusBar } from "./components/agentMode/AgentStatusBar";
 import { WorkbenchToolbar } from "./components/WorkbenchToolbar";
 import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
 
 const {
+  agentRootLeaseGateway,
   artisanRoutesGateway,
   cancelJavaScriptTypeScriptLanguageServerRequest,
   cursorStore,
@@ -256,6 +257,7 @@ function App() {
     settingsGateway,
     workbenchPrompter,
     {
+      agentRootLeaseGateway,
       editorMenuCommandRunner,
       editorCursorStore: cursorStore,
       cancelJavaScriptTypeScriptLanguageServerRequest,
@@ -1191,11 +1193,7 @@ function App() {
           />
         ) : null}
         {workbench.agentModeActive ? (
-          <AgentModeView
-            agents={workbench.agents}
-            repositories={workbench.agents.repositories}
-            workspaceRoot={workbench.workspaceRoot}
-          />
+          <AgentModeScreen agents={workbench.agents} workspaceRoot={workbench.workspaceRoot} />
         ) : null}
         <div
           aria-hidden={workbench.agentModeActive || undefined}

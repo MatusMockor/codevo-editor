@@ -3,6 +3,11 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import type {
+  AgentProjectDescriptor,
+  AgentProjectOrigin,
+  AgentProjectTrust,
+} from "../domain/agentProject";
 import {
   MAX_AGENT_TASK_PROMPT_BYTES,
   type AgentCliKind,
@@ -36,9 +41,14 @@ const WORKTREE_PATH = "/workspace/app/.worktrees/agt-1";
 const CLI_PATH = "/usr/local/bin/claude";
 
 interface Environment {
-  workspaceId: string | null;
-  workspaceRoot: string | null;
+  present: boolean;
+  generation: number;
+  ownerId: string;
+  workspaceRoot: string;
+  trust: AgentProjectTrust;
+  origin: AgentProjectOrigin;
   repositories: ReadonlyArray<ResolvedGitRepository>;
+  extraProjects: ReadonlyArray<AgentProjectDescriptor>;
   worktrees: ReadonlyArray<GitWorktreeDescriptor>;
   cliPath: string | null;
   cliKind: AgentCliKind;
@@ -47,6 +57,7 @@ interface Environment {
   status: AgentRepositoryStatusSnapshot;
   dirtyEditors: number;
   confirmResult: boolean;
+  leaseToken: number | null;
 }
 
 function createDeferred<T>() {
@@ -125,8 +136,8 @@ describe("useAgentTasks dispatch", () => {
     harness.unmount();
   });
 
-  it("drops a late preflight rejection after workspace replacement without reporting into it", async () => {
-    const harness = renderAgentTasks();
+  it("drops a late preflight rejection after the project is released without reporting into it", async () => {
+    const harness = renderAgentTasks({ leaseToken: 7 });
     const pending = createRejectableDeferred<GitStatus>();
     harness.git.getStatus.mockImplementationOnce(() => pending.promise);
     let dispatched!: ReturnType<AgentTasksSurface["dispatch"]>;
@@ -134,7 +145,7 @@ describe("useAgentTasks dispatch", () => {
     act(() => {
       dispatched = harness.hook().dispatch(request({ isolation: "in-place" }));
     });
-    harness.environment.workspaceId = "workspace-b";
+    harness.environment.present = false;
     harness.rerender();
     await act(async () => {
       pending.reject(new Error("late A failure"));
@@ -147,8 +158,8 @@ describe("useAgentTasks dispatch", () => {
     harness.unmount();
   });
 
-  it("drops an A preflight after an A to B to A workspace generation cycle", async () => {
-    const harness = renderAgentTasks();
+  it("drops an A preflight after a per-root release and re-add generation cycle", async () => {
+    const harness = renderAgentTasks({ leaseToken: 7 });
     const pending = createDeferred<GitStatus>();
     harness.git.getStatus.mockImplementationOnce(() => pending.promise);
     let dispatched!: ReturnType<AgentTasksSurface["dispatch"]>;
@@ -156,9 +167,10 @@ describe("useAgentTasks dispatch", () => {
     act(() => {
       dispatched = harness.hook().dispatch(request({ isolation: "in-place" }));
     });
-    harness.environment.workspaceId = "workspace-b";
+    harness.environment.present = false;
     harness.rerender();
-    harness.environment.workspaceId = "workspace-a";
+    harness.environment.present = true;
+    harness.environment.generation += 1;
     harness.rerender();
     await act(async () => {
       pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: PRIMARY_ROOT });
@@ -170,20 +182,21 @@ describe("useAgentTasks dispatch", () => {
     harness.unmount();
   });
 
-  it.each(["workspace-b", "workspace-a"] as const)(
-    "does not report a late worktree creation rejection into %s after replacement",
-    async (returnWorkspace) => {
-      const harness = renderAgentTasks();
+  it.each(["released", "re-added"] as const)(
+    "does not report a late worktree creation rejection into a %s project",
+    async (returnState) => {
+      const harness = renderAgentTasks({ leaseToken: 7 });
       const pending = createRejectableDeferred<AgentWorktreeReceipt>();
       harness.worktree.addAgentWorktree.mockImplementationOnce(() => pending.promise);
       let dispatched!: ReturnType<AgentTasksSurface["dispatch"]>;
       act(() => {
         dispatched = harness.hook().dispatch(request({ isolation: "worktree" }));
       });
-      harness.environment.workspaceId = "workspace-b";
+      harness.environment.present = false;
       harness.rerender();
-      if (returnWorkspace === "workspace-a") {
-        harness.environment.workspaceId = "workspace-a";
+      if (returnState === "re-added") {
+        harness.environment.present = true;
+        harness.environment.generation += 1;
         harness.rerender();
       }
       await act(async () => {
@@ -196,7 +209,7 @@ describe("useAgentTasks dispatch", () => {
     },
   );
 
-  it("does not report late start or acknowledgement rejection into a replacement workspace", async () => {
+  it("does not report late start or acknowledgement rejection into a replaced project generation", async () => {
     const startHarness = renderAgentTasks();
     const pendingStart = createRejectableDeferred<{ taskId: string }>();
     startHarness.agent.startAgentTask.mockImplementationOnce(() => pendingStart.promise);
@@ -205,7 +218,7 @@ describe("useAgentTasks dispatch", () => {
       startDispatch = startHarness.hook().dispatch(request({ isolation: "in-place" }));
     });
     await act(async () => {});
-    startHarness.environment.workspaceId = "workspace-b";
+    startHarness.environment.generation += 1;
     startHarness.rerender();
     await act(async () => {
       pendingStart.reject(new Error("late start failure"));
@@ -222,7 +235,7 @@ describe("useAgentTasks dispatch", () => {
       ackDispatch = ackHarness.hook().dispatch(request({ isolation: "in-place" }));
     });
     await act(async () => {});
-    ackHarness.environment.workspaceId = "workspace-b";
+    ackHarness.environment.generation += 1;
     ackHarness.rerender();
     await act(async () => {
       pendingAck.reject(new Error("late ack failure"));
@@ -484,10 +497,10 @@ describe("useAgentTasks dispatch", () => {
     harness.unmount();
   });
 
-  it("drops a dispatch whose workspace was replaced mid-flight and stops the started task", async () => {
+  it("drops a dispatch whose project generation was replaced mid-flight and stops the started task", async () => {
     const harness = renderAgentTasks();
     harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
-      harness.environment.workspaceId = "workspace-b";
+      harness.environment.generation += 1;
       return { taskId: payload.taskId };
     });
 
@@ -573,7 +586,7 @@ describe("useAgentTasks dispatch", () => {
     harness.unmount();
   });
 
-  it("hides live tasks of another workspace and re-adopts them with a working stop handle", async () => {
+  it("hides live tasks of a removed project and re-adopts them with a working stop handle", async () => {
     const harness = renderAgentTasks();
 
     await act(async () => {
@@ -582,11 +595,12 @@ describe("useAgentTasks dispatch", () => {
     expect(harness.hook().tasks).toHaveLength(1);
     const taskId = harness.startedRequests[0]?.taskId ?? "";
 
-    harness.environment.workspaceId = "workspace-b";
+    harness.environment.present = false;
     harness.rerender();
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(0));
 
-    harness.environment.workspaceId = "workspace-a";
+    harness.environment.present = true;
+    harness.environment.generation += 1;
     harness.rerender();
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(1));
 
@@ -600,7 +614,7 @@ describe("useAgentTasks dispatch", () => {
     harness.unmount();
   });
 
-  it("drops the terminal history of another workspace on replacement", async () => {
+  it("drops released terminal history and does not resurrect it when the root is re-added", async () => {
     const harness = renderAgentTasks();
 
     await act(async () => {
@@ -611,11 +625,13 @@ describe("useAgentTasks dispatch", () => {
       harness.emitStatus(statusEvent(taskId, 1, { kind: "exited", exitCode: 0 }));
     });
 
-    harness.environment.workspaceId = "workspace-b";
+    act(() => harness.hook().releaseProjectTasks("workspace-a"));
+    harness.environment.present = false;
     harness.rerender();
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(0));
 
-    harness.environment.workspaceId = "workspace-a";
+    harness.environment.present = true;
+    harness.environment.generation += 1;
     harness.rerender();
     await waitForReact(() => expect(harness.hook().tasks).toHaveLength(0));
     harness.unmount();
@@ -792,6 +808,44 @@ describe("useAgentTasks change review", () => {
 
     expect(harness.hook().tasks[0]?.changeSummary?.error).toContain("could not be read");
     expect(harness.reportError).toHaveBeenCalledWith("Agents", expect.any(Error));
+    harness.unmount();
+  });
+
+  it("clears the loading flag truthfully when the owner drops during a changes refresh", async () => {
+    const harness = renderAgentTasks();
+    const taskId = await dispatchTerminalWorktreeTask(harness);
+
+    await act(async () => {
+      const pending = harness.hook().showChanges(taskId);
+      harness.environment.generation = 2;
+      await pending;
+    });
+
+    expect(harness.hook().tasks[0]?.changeSummary?.loading).toBe(false);
+    expect(harness.hook().tasks[0]?.changeSummary?.error).toContain("no longer owns");
+    expect(harness.hook().tasks[0]?.changeSummary?.files).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("clears the diff loading flag truthfully when the owner drops during a diff read", async () => {
+    const harness = renderAgentTasks();
+    const taskId = await dispatchTerminalWorktreeTask(harness);
+    await act(async () => {
+      await harness.hook().showChanges(taskId);
+    });
+    const change = harness.hook().tasks[0]?.changeSummary?.files[0];
+    expect(change).toBeDefined();
+    if (change === undefined) return;
+
+    await act(async () => {
+      const pending = harness.hook().showFileDiff(taskId, change);
+      harness.environment.generation = 2;
+      await pending;
+    });
+
+    const diff = harness.hook().tasks[0]?.changeSummary?.diff;
+    expect(diff?.loading).toBe(false);
+    expect(diff?.error).toContain("no longer owns");
     harness.unmount();
   });
 
@@ -1207,6 +1261,316 @@ describe("useAgentTasks isolation preview", () => {
   });
 });
 
+describe("useAgentTasks multi-root projects", () => {
+  const BACKGROUND_ROOT = "/workspace/api";
+  const BACKGROUND_OWNER = "agent-root:api";
+
+  function backgroundProject(
+    overrides: Partial<AgentProjectDescriptor> = {},
+  ): AgentProjectDescriptor {
+    return {
+      rootKey: BACKGROUND_ROOT,
+      rootPath: BACKGROUND_ROOT,
+      ownerId: BACKGROUND_OWNER,
+      label: "api",
+      generation: 1,
+      trust: "trusted",
+      origin: "background-tab",
+      repositories: [repository(BACKGROUND_ROOT, "")],
+      isolationPolicy: "auto",
+      leaseToken: 7,
+      ...overrides,
+    };
+  }
+
+  function backgroundRequest(
+    overrides: Partial<Parameters<AgentTasksSurface["dispatch"]>[0]> = {},
+  ): Parameters<AgentTasksSurface["dispatch"]>[0] {
+    return {
+      projectRootKey: BACKGROUND_ROOT,
+      repositoryRoot: BACKGROUND_ROOT,
+      prompt: "Refactor the API",
+      isolation: "worktree",
+      unsafeInPlaceConfirmationKey: null,
+      ...overrides,
+    };
+  }
+
+  it("dispatches into a background project without touching the active project", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject()];
+    harness.rerender();
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(backgroundRequest())).not.toBeNull();
+    });
+
+    expect(harness.startedRequests[0]?.workspaceId).toBe(BACKGROUND_OWNER);
+    expect(harness.startedRequests[0]?.repositoryRoot).toBe(BACKGROUND_ROOT);
+    expect(harness.hook().tasks).toHaveLength(1);
+    expect(harness.hook().tasks[0]?.repositoryLabel).toBe("api");
+    expect(harness.environment.generation).toBe(1);
+    expect(harness.hook().repositories.map((entry) => entry.repositoryRoot)).toContain(
+      PRIMARY_ROOT,
+    );
+    harness.unmount();
+  });
+
+  it("keeps active and background tasks visible side by side", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject()];
+    harness.rerender();
+
+    await act(async () => {
+      await harness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    await act(async () => {
+      await harness.hook().dispatch(backgroundRequest());
+    });
+
+    expect(harness.hook().tasks).toHaveLength(2);
+    const owners = harness.hook().tasks.map((task) => task.record.owner.workspaceId);
+    expect(owners).toContain("workspace-a");
+    expect(owners).toContain(BACKGROUND_OWNER);
+    harness.unmount();
+  });
+
+  it("fails closed on in-place dispatch into a background project", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject()];
+    harness.rerender();
+
+    await act(async () => {
+      expect(
+        await harness.hook().dispatch(backgroundRequest({ isolation: "in-place" })),
+      ).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("active project");
+    harness.unmount();
+  });
+
+  it("refuses dispatch into a project that is being released", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject({ origin: "closed-tab-live-tasks" })];
+    harness.rerender();
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(backgroundRequest())).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("released");
+    harness.unmount();
+  });
+
+  it("acquires the missing project lease before starting a leaseless dispatch", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject({ leaseToken: null })];
+    harness.rerender();
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(backgroundRequest())).not.toBeNull();
+    });
+
+    expect(harness.ensureProjectLease).toHaveBeenCalledWith(BACKGROUND_ROOT);
+    const leaseOrder = harness.ensureProjectLease.mock.invocationCallOrder[0] ?? Infinity;
+    const startOrder = harness.agent.startAgentTask.mock.invocationCallOrder[0] ?? 0;
+    expect(leaseOrder).toBeLessThan(startOrder);
+    expect(harness.hook().tasks).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("skips the lease preflight when the project already holds a lease", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject()];
+    harness.rerender();
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(backgroundRequest())).not.toBeNull();
+    });
+
+    expect(harness.ensureProjectLease).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("refuses a leaseless dispatch fail-closed when the lease cannot be acquired", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject({ leaseToken: null })];
+    harness.rerender();
+    harness.ensureProjectLease.mockResolvedValueOnce(false);
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(backgroundRequest())).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.kind).toBe("error");
+    expect(harness.hook().notice?.message).toContain("could not be protected from tab close");
+    harness.unmount();
+  });
+
+  it("refuses a leaseless dispatch when the lease acquisition itself fails", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject({ leaseToken: null })];
+    harness.rerender();
+    harness.ensureProjectLease.mockRejectedValueOnce(new Error("lease gateway down"));
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(backgroundRequest())).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.reportError).toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("could not be protected from tab close");
+    harness.unmount();
+  });
+
+  it("previews worktree-only isolation for background repositories", async () => {
+    const harness = renderAgentTasks({ status: { known: true, dirty: false } });
+    harness.environment.extraProjects = [backgroundProject()];
+    harness.rerender();
+
+    const preview = harness.hook().isolationPreview(BACKGROUND_ROOT);
+
+    expect(preview.inPlaceAllowed).toBe(false);
+    expect(preview.recommended.kind).toBe("worktree");
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).inPlaceAllowed).toBe(true);
+    harness.unmount();
+  });
+
+  it("drops a background dispatch when that project generation is replaced mid-flight", async () => {
+    const harness = renderAgentTasks();
+    harness.environment.extraProjects = [backgroundProject()];
+    harness.rerender();
+    harness.worktree.addAgentWorktree.mockImplementationOnce(async () => {
+      harness.environment.extraProjects = [backgroundProject({ generation: 2 })];
+      return { worktreePath: WORKTREE_PATH, branch: "agent/agt-1", trusted: true };
+    });
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(backgroundRequest())).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.worktree.removeWorktree).toHaveBeenCalledWith(
+      BACKGROUND_ROOT,
+      WORKTREE_PATH,
+      false,
+    );
+    harness.unmount();
+  });
+
+  it("releases terminal tasks of an owner and retains its live tasks", async () => {
+    const harness = renderAgentTasks();
+
+    await act(async () => {
+      await harness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    await act(async () => {
+      await harness
+        .hook()
+        .dispatch(request({ isolation: "in-place", repositoryRoot: NESTED_ROOT }));
+    });
+    const terminalTaskId = harness.startedRequests[0]?.taskId ?? "";
+    const liveTaskId = harness.startedRequests[1]?.taskId ?? "";
+    await act(async () => {
+      harness.emitStatus(statusEvent(terminalTaskId, 1, { kind: "exited", exitCode: 0 }));
+    });
+    expect(harness.hook().tasks).toHaveLength(2);
+
+    act(() => harness.hook().releaseProjectTasks("workspace-a"));
+
+    expect(harness.hook().tasks).toHaveLength(1);
+    expect(harness.hook().tasks[0]?.record.owner.taskId).toBe(liveTaskId);
+    expect(harness.hook().hasLiveTasksForOwner("workspace-a")).toBe(true);
+    harness.unmount();
+  });
+
+  it("stops project tasks for the passed roots united with live task roots", async () => {
+    const harness = renderAgentTasks();
+
+    await act(async () => {
+      await harness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    await act(async () => {
+      await harness.hook().stopProjectTasks("workspace-a", [NESTED_ROOT]);
+    });
+
+    expect(harness.agent.stopAgentTasksForRoot).toHaveBeenCalledWith({
+      workspaceId: "workspace-a",
+      repositoryRoot: NESTED_ROOT,
+    });
+    expect(harness.agent.stopAgentTasksForRoot).toHaveBeenCalledWith({
+      workspaceId: "workspace-a",
+      repositoryRoot: PRIMARY_ROOT,
+    });
+    harness.unmount();
+  });
+
+  it("reports whether an owner still holds live tasks", async () => {
+    const harness = renderAgentTasks();
+
+    await act(async () => {
+      await harness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    const taskId = harness.startedRequests[0]?.taskId ?? "";
+    expect(harness.hook().hasLiveTasksForOwner("workspace-a")).toBe(true);
+    expect(harness.hook().hasLiveTasksForOwner("someone-else")).toBe(false);
+
+    await act(async () => {
+      harness.emitStatus(statusEvent(taskId, 1, { kind: "stopped" }));
+    });
+
+    expect(harness.hook().hasLiveTasksForOwner("workspace-a")).toBe(false);
+    harness.unmount();
+  });
+
+  it("downgrades the project trust when the backend rejects an untrusted dispatch", async () => {
+    const harness = renderAgentTasks();
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new Error("Agent tasks require a trusted repository."),
+    );
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBeNull();
+    });
+
+    expect(harness.onProjectDispatchTrustRejected).toHaveBeenCalledWith(WORKSPACE_ROOT);
+    harness.unmount();
+  });
+
+  it("keeps failing closed on foreign, duplicate, and stale status events", async () => {
+    const harness = renderAgentTasks();
+
+    await act(async () => {
+      await harness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    const taskId = harness.startedRequests[0]?.taskId ?? "";
+
+    await act(async () => {
+      harness.emitStatus({
+        ...statusEvent(taskId, 1, { kind: "running" }),
+        workspaceId: "intruder",
+      });
+    });
+    expect(harness.hook().tasks[0]?.record.status).toEqual({ kind: "pending" });
+
+    await act(async () => {
+      harness.emitStatus(statusEvent(taskId, 1, { kind: "running" }));
+    });
+    expect(harness.hook().tasks[0]?.record.status).toEqual({ kind: "running" });
+
+    await act(async () => {
+      harness.emitStatus(statusEvent(taskId, 1, { kind: "exited", exitCode: 0 }));
+    });
+    expect(harness.hook().tasks[0]?.record.status).toEqual({ kind: "running" });
+    harness.unmount();
+  });
+});
+
 async function dispatchTerminalWorktreeTask(
   harness: ReturnType<typeof renderAgentTasks>,
 ): Promise<string> {
@@ -1224,6 +1588,7 @@ function request(
   overrides: Partial<Parameters<AgentTasksSurface["dispatch"]>[0]> = {},
 ): Parameters<AgentTasksSurface["dispatch"]>[0] {
   return {
+    projectRootKey: WORKSPACE_ROOT,
     repositoryRoot: PRIMARY_ROOT,
     prompt: "Refactor the parser",
     isolation: "worktree",
@@ -1304,9 +1669,14 @@ function renderAgentTasks(
   receiptOverrides: Partial<AgentWorktreeReceipt> = {},
 ) {
   const environment: Environment = {
-    workspaceId: "workspace-a",
+    present: true,
+    generation: 1,
+    ownerId: "workspace-a",
     workspaceRoot: WORKSPACE_ROOT,
+    trust: "trusted",
+    origin: "active-tab",
     repositories: [repository(PRIMARY_ROOT, ""), repository(NESTED_ROOT, "packages/api")],
+    extraProjects: [],
     worktrees: [],
     cliPath: CLI_PATH,
     cliKind: "claudeCode",
@@ -1315,6 +1685,7 @@ function renderAgentTasks(
     status: { known: true, dirty: false },
     dirtyEditors: 0,
     confirmResult: true,
+    leaseToken: null,
     ...overrides,
   };
 
@@ -1394,24 +1765,39 @@ function renderAgentTasks(
   const confirm = vi.fn(() => environment.confirmResult);
   const reportError = vi.fn();
   const openAgentSettings = vi.fn();
+  const onProjectDispatchTrustRejected = vi.fn();
+  const ensureProjectLease = vi.fn(async (): Promise<boolean> => true);
   let entropy = 0;
+
+  const primaryProject = (): AgentProjectDescriptor => ({
+    rootKey: environment.workspaceRoot,
+    rootPath: environment.workspaceRoot,
+    ownerId: environment.ownerId,
+    label: "app",
+    generation: environment.generation,
+    trust: environment.trust,
+    origin: environment.origin,
+    repositories: environment.repositories,
+    isolationPolicy: environment.policy,
+    leaseToken: environment.leaseToken,
+  });
 
   const dependencies: AgentTasksDependencies = {
     agentTaskGateway: agent as unknown as AgentTaskGateway,
     gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
     gitGateway: git,
     prompter: { confirm, prompt: () => null },
-    get resolvedRepositories() {
-      return environment.repositories;
+    get projects() {
+      const primary = environment.present ? [primaryProject()] : [];
+      return [...primary, ...environment.extraProjects];
     },
-    getWorkspaceId: () => environment.workspaceId,
-    getWorkspaceRoot: () => environment.workspaceRoot,
     getAgentCliPath: () => environment.cliPath,
     getAgentCliKind: () => environment.cliKind,
     getMaxConcurrentAgentTasks: () => environment.maxConcurrent,
-    getAgentIsolationPolicy: () => environment.policy,
     getRepositoryStatus: () => environment.status,
     getDirtyEditorDocumentCount: () => environment.dirtyEditors,
+    onProjectDispatchTrustRejected,
+    ensureProjectLease,
     reportError,
     openAgentSettings,
     now: () => 1_700_000_000_000 + entropy,
@@ -1438,6 +1824,7 @@ function renderAgentTasks(
     calls,
     confirm,
     dependencies,
+    ensureProjectLease,
     environment,
     git,
     get gitStatus() {
@@ -1452,6 +1839,7 @@ function renderAgentTasks(
     set gitDiff(next: GitFileDiff) {
       state.gitDiff = next;
     },
+    onProjectDispatchTrustRejected,
     openAgentSettings,
     reportError,
     startedRequests,

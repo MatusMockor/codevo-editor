@@ -907,7 +907,12 @@ describe("App command routing", () => {
 
     mocks.workbenchOverrides = {
       agentModeActive: true,
-      agents: { liveTaskCount: 1, maxConcurrentAgentTasks: 3, repositories: [] },
+      agents: {
+        liveTaskCount: 1,
+        maxConcurrentAgentTasks: 3,
+        repositories: [],
+        agentProjects: { projects: [], overflowRootPaths: [] },
+      },
     };
     await act(async () => {
       root.render(<App />);
@@ -1039,7 +1044,12 @@ function createWorkbench() {
       activeDocument: null,
       activeFrameworkActivityLabel: null,
       agentModeActive: false,
-      agents: { liveTaskCount: 0, maxConcurrentAgentTasks: 4, repositories: [] },
+      agents: {
+        liveTaskCount: 0,
+        maxConcurrentAgentTasks: 4,
+        repositories: [],
+        agentProjects: { projects: [], overflowRootPaths: [] },
+      },
       activePath: null,
       appSettings: {
         editorFontFamily: "Menlo, monospace",

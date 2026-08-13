@@ -266,6 +266,52 @@ describe("agentTasksReducer", () => {
     );
   });
 
+  it("drops terminal tasks owned by a released project", () => {
+    const state = stateWith(
+      taskRecord({ status: { kind: "exited", exitCode: 0 } }),
+      taskRecord({
+        owner: { taskId: "agt-2-0a1b", workspaceId: "ws-1", repositoryRoot: "/repo" },
+        status: { kind: "failed", message: "boom" },
+      }),
+    );
+
+    expect(agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-1" }).tasks.size).toBe(
+      0,
+    );
+  });
+
+  it("retains live tasks owned by a released project", () => {
+    const state = stateWith(
+      taskRecord({ status: { kind: "running" } }),
+      taskRecord({
+        owner: { taskId: "agt-2-0a1b", workspaceId: "ws-1", repositoryRoot: "/repo" },
+        status: { kind: "stopped" },
+      }),
+    );
+    const released = agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-1" });
+
+    expect([...released.tasks.keys()]).toEqual(["agt-1-0a1b"]);
+  });
+
+  it("leaves tasks owned by other projects untouched on project release", () => {
+    const state = stateWith(
+      taskRecord({ status: { kind: "exited", exitCode: 0 } }),
+      taskRecord({
+        owner: { taskId: "agt-2-0a1b", workspaceId: "ws-2", repositoryRoot: "/repo" },
+        status: { kind: "stopped" },
+      }),
+    );
+    const released = agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-1" });
+
+    expect([...released.tasks.keys()]).toEqual(["agt-2-0a1b"]);
+    expect(released.tasks.get("agt-2-0a1b")).toBe(state.tasks.get("agt-2-0a1b"));
+  });
+
+  it("leaves the state untouched when a released project owns no tasks", () => {
+    const state = stateWith(taskRecord());
+    expect(agentTasksReducer(state, { kind: "projectReleased", ownerId: "ws-2" })).toBe(state);
+  });
+
   it("evicts the oldest terminal task first and never a live one", () => {
     const terminal = (index: number, startedAtEpochMs: number): AgentTaskRecord =>
       taskRecord({
