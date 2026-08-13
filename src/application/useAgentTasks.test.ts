@@ -49,12 +49,30 @@ interface Environment {
   confirmResult: boolean;
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
+function createRejectableDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
+}
+
 describe("useAgentTasks dispatch", () => {
   it("starts an in-place task in the repository root and acknowledges it", async () => {
     const harness = renderAgentTasks();
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBe(true);
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).not.toBeNull();
     });
 
     expect(harness.worktree.addAgentWorktree).not.toHaveBeenCalled();
@@ -72,11 +90,170 @@ describe("useAgentTasks dispatch", () => {
     harness.unmount();
   });
 
+  it("refreshes the exact repository status immediately before an in-place start", async () => {
+    const harness = renderAgentTasks({ status: { known: false, dirty: false } });
+    const order: string[] = [];
+    harness.git.getStatus.mockImplementationOnce(async (rootPath: string) => {
+      order.push(`status:${rootPath}`);
+      return { branch: "main", changes: [], isRepository: true, rootPath };
+    });
+    harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
+      order.push("start");
+      harness.startedRequests.push(payload);
+      return { taskId: payload.taskId };
+    });
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).not.toBeNull();
+    });
+
+    expect(order).toEqual([`status:${PRIMARY_ROOT}`, "start"]);
+    harness.unmount();
+  });
+
+  it("fails closed when the authoritative status refresh fails before in-place start", async () => {
+    const harness = renderAgentTasks();
+    harness.git.getStatus.mockRejectedValueOnce(new Error("status unavailable"));
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("could not be refreshed");
+    expect(harness.reportError).toHaveBeenCalledWith("Agents", expect.any(Error));
+    harness.unmount();
+  });
+
+  it("drops a late preflight rejection after workspace replacement without reporting into it", async () => {
+    const harness = renderAgentTasks();
+    const pending = createRejectableDeferred<GitStatus>();
+    harness.git.getStatus.mockImplementationOnce(() => pending.promise);
+    let dispatched!: ReturnType<AgentTasksSurface["dispatch"]>;
+
+    act(() => {
+      dispatched = harness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    harness.environment.workspaceId = "workspace-b";
+    harness.rerender();
+    await act(async () => {
+      pending.reject(new Error("late A failure"));
+      expect(await dispatched).toBeNull();
+    });
+
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice).toBeNull();
+    harness.unmount();
+  });
+
+  it("drops an A preflight after an A to B to A workspace generation cycle", async () => {
+    const harness = renderAgentTasks();
+    const pending = createDeferred<GitStatus>();
+    harness.git.getStatus.mockImplementationOnce(() => pending.promise);
+    let dispatched!: ReturnType<AgentTasksSurface["dispatch"]>;
+
+    act(() => {
+      dispatched = harness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    harness.environment.workspaceId = "workspace-b";
+    harness.rerender();
+    harness.environment.workspaceId = "workspace-a";
+    harness.rerender();
+    await act(async () => {
+      pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: PRIMARY_ROOT });
+      expect(await dispatched).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice).toBeNull();
+    harness.unmount();
+  });
+
+  it.each(["workspace-b", "workspace-a"] as const)(
+    "does not report a late worktree creation rejection into %s after replacement",
+    async (returnWorkspace) => {
+      const harness = renderAgentTasks();
+      const pending = createRejectableDeferred<AgentWorktreeReceipt>();
+      harness.worktree.addAgentWorktree.mockImplementationOnce(() => pending.promise);
+      let dispatched!: ReturnType<AgentTasksSurface["dispatch"]>;
+      act(() => {
+        dispatched = harness.hook().dispatch(request({ isolation: "worktree" }));
+      });
+      harness.environment.workspaceId = "workspace-b";
+      harness.rerender();
+      if (returnWorkspace === "workspace-a") {
+        harness.environment.workspaceId = "workspace-a";
+        harness.rerender();
+      }
+      await act(async () => {
+        pending.reject(new Error("late add failure"));
+        expect(await dispatched).toBeNull();
+      });
+      expect(harness.reportError).not.toHaveBeenCalled();
+      expect(harness.hook().notice).toBeNull();
+      harness.unmount();
+    },
+  );
+
+  it("does not report late start or acknowledgement rejection into a replacement workspace", async () => {
+    const startHarness = renderAgentTasks();
+    const pendingStart = createRejectableDeferred<{ taskId: string }>();
+    startHarness.agent.startAgentTask.mockImplementationOnce(() => pendingStart.promise);
+    let startDispatch!: ReturnType<AgentTasksSurface["dispatch"]>;
+    act(() => {
+      startDispatch = startHarness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    await act(async () => {});
+    startHarness.environment.workspaceId = "workspace-b";
+    startHarness.rerender();
+    await act(async () => {
+      pendingStart.reject(new Error("late start failure"));
+      expect(await startDispatch).toBeNull();
+    });
+    expect(startHarness.reportError).not.toHaveBeenCalled();
+    startHarness.unmount();
+
+    const ackHarness = renderAgentTasks();
+    const pendingAck = createRejectableDeferred<void>();
+    ackHarness.agent.acknowledgeAgentTaskStart.mockImplementationOnce(() => pendingAck.promise);
+    let ackDispatch!: ReturnType<AgentTasksSurface["dispatch"]>;
+    act(() => {
+      ackDispatch = ackHarness.hook().dispatch(request({ isolation: "in-place" }));
+    });
+    await act(async () => {});
+    ackHarness.environment.workspaceId = "workspace-b";
+    ackHarness.rerender();
+    await act(async () => {
+      pendingAck.reject(new Error("late ack failure"));
+      expect(await ackDispatch).toBeNull();
+    });
+    expect(ackHarness.reportError).not.toHaveBeenCalled();
+    ackHarness.unmount();
+  });
+
+  it("does not treat a null confirmation as approval for an unknown fresh status", async () => {
+    const harness = renderAgentTasks({ status: { known: false, dirty: false } });
+
+    await act(async () => {
+      expect(
+        await harness.hook().dispatch({
+          ...request({ isolation: "in-place" }),
+          unsafeInPlaceConfirmationKey: null,
+        }),
+      ).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("repository status is unknown");
+    harness.unmount();
+  });
+
   it("creates a worktree and starts an isolated task inside it", async () => {
     const harness = renderAgentTasks();
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBe(true);
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).not.toBeNull();
     });
 
     expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(1);
@@ -108,7 +285,7 @@ describe("useAgentTasks dispatch", () => {
       await harness.hook().dispatch(request({ isolation: "in-place" }));
     });
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
     });
 
     expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
@@ -120,7 +297,7 @@ describe("useAgentTasks dispatch", () => {
     const harness = renderAgentTasks({ cliPath: null });
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBeNull();
     });
 
     expect(harness.hook().agentCliConfigured).toBe(false);
@@ -137,9 +314,9 @@ describe("useAgentTasks dispatch", () => {
     const harness = renderAgentTasks();
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ repositoryRoot: "/elsewhere/repo" }))).toBe(
-        false,
-      );
+      expect(
+        await harness.hook().dispatch(request({ repositoryRoot: "/elsewhere/repo" })),
+      ).toBeNull();
     });
 
     expect(harness.hook().notice?.message).toContain("Select a repository");
@@ -151,7 +328,7 @@ describe("useAgentTasks dispatch", () => {
     const harness = renderAgentTasks();
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ prompt: "   \n  " }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ prompt: "   \n  " }))).toBeNull();
     });
 
     expect(harness.hook().notice?.message).toContain("Write a prompt");
@@ -164,7 +341,7 @@ describe("useAgentTasks dispatch", () => {
     await act(async () => {
       expect(
         await harness.hook().dispatch(request({ prompt: "é".repeat(MAX_AGENT_TASK_PROMPT_BYTES) })),
-      ).toBe(false);
+      ).toBeNull();
     });
 
     expect(harness.hook().notice?.message).toContain("too long");
@@ -177,7 +354,7 @@ describe("useAgentTasks dispatch", () => {
     harness.agent.acknowledgeAgentTaskStart.mockRejectedValueOnce(new Error("no listener"));
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBe(true);
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).not.toBeNull();
     });
 
     expect(harness.hook().tasks).toHaveLength(1);
@@ -190,22 +367,48 @@ describe("useAgentTasks dispatch", () => {
     const harness = renderAgentTasks({ status: { known: true, dirty: true }, dirtyEditors: 2 });
 
     await act(async () => {
-      expect(await harness.hook().dispatch({ ...request({ isolation: "in-place" }) })).toBe(false);
+      expect(await harness.hook().dispatch({ ...request({ isolation: "in-place" }) })).toBeNull();
     });
 
     expect(harness.hook().notice?.message).toContain("uncommitted changes");
     expect(harness.hook().notice?.message).toContain("unsaved editors");
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
 
+    const confirmationKey = harness.hook().isolationPreview(PRIMARY_ROOT).confirmationKey;
+    expect(confirmationKey).not.toBeNull();
     await act(async () => {
       expect(
-        await harness
-          .hook()
-          .dispatch({ ...request({ isolation: "in-place" }), unsafeInPlaceConfirmed: true }),
-      ).toBe(true);
+        await harness.hook().dispatch({
+          ...request({ isolation: "in-place" }),
+          unsafeInPlaceConfirmationKey: confirmationKey,
+        }),
+      ).not.toBeNull();
     });
 
     expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("rejects a confirmation when the fresh repository safety snapshot changed", async () => {
+    const harness = renderAgentTasks({ status: { known: true, dirty: true } });
+    await act(async () => {
+      await harness.hook().refreshIsolationStatus(PRIMARY_ROOT);
+    });
+    const confirmationKey = harness.hook().isolationPreview(PRIMARY_ROOT).confirmationKey;
+    expect(confirmationKey).not.toBeNull();
+    harness.environment.dirtyEditors = 1;
+
+    await act(async () => {
+      expect(
+        await harness.hook().dispatch({
+          ...request({ isolation: "in-place" }),
+          unsafeInPlaceConfirmationKey: confirmationKey,
+        }),
+      ).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("unsaved editors");
     harness.unmount();
   });
 
@@ -213,7 +416,7 @@ describe("useAgentTasks dispatch", () => {
     const harness = renderAgentTasks({}, { trusted: false });
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
     });
 
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
@@ -232,12 +435,52 @@ describe("useAgentTasks dispatch", () => {
     harness.agent.startAgentTask.mockRejectedValueOnce(new Error("spawn refused"));
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBeNull();
     });
 
     expect(harness.reportError).toHaveBeenCalledWith("Agents", expect.any(Error));
     expect(harness.hook().notice?.kind).toBe("error");
     expect(harness.hook().tasks).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("stops an unexpected backend task id but retains its worktree without terminal proof", async () => {
+    const harness = renderAgentTasks();
+    harness.agent.startAgentTask.mockResolvedValueOnce({ taskId: "foreign-task-id" });
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
+    });
+
+    const requestedTaskId = harness.agent.startAgentTask.mock.calls[0]?.[0].taskId;
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
+      taskId: requestedTaskId,
+      workspaceId: "workspace-a",
+    });
+    expect(harness.worktree.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("unexpected task id");
+    expect(harness.hook().tasks).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("uses the exact agent gateway that accepted start for mismatch cleanup", async () => {
+    const harness = renderAgentTasks();
+    const replacementStop = vi.fn(async () => undefined);
+    const replacementGateway = { ...harness.agent, stopAgentTask: replacementStop };
+    harness.agent.startAgentTask.mockImplementationOnce(async () => {
+      Object.defineProperty(harness.dependencies, "agentTaskGateway", {
+        configurable: true,
+        value: replacementGateway as unknown as AgentTaskGateway,
+      });
+      return { taskId: "foreign-task-id" };
+    });
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBeNull();
+    });
+
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    expect(replacementStop).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -249,7 +492,7 @@ describe("useAgentTasks dispatch", () => {
     });
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBeNull();
     });
 
     expect(harness.agent.acknowledgeAgentTaskStart).not.toHaveBeenCalled();
@@ -266,10 +509,67 @@ describe("useAgentTasks dispatch", () => {
     });
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
     });
 
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.worktree.removeWorktree).toHaveBeenCalledWith(
+      PRIMARY_ROOT,
+      WORKTREE_PATH,
+      false,
+    );
+    harness.unmount();
+  });
+
+  it("compensates a stale worktree receipt through the exact gateway that created it", async () => {
+    const harness = renderAgentTasks();
+    const creatingGateway = harness.worktree;
+    const replacementRemove = vi.fn(async () => undefined);
+    const replacementGateway = {
+      ...creatingGateway,
+      removeWorktree: replacementRemove,
+    };
+    creatingGateway.addAgentWorktree.mockImplementationOnce(async () => {
+      harness.environment.repositories = [];
+      Object.defineProperty(harness.dependencies, "gitWorktreeGateway", {
+        configurable: true,
+        value: replacementGateway as unknown as GitWorktreeGateway,
+      });
+      return {
+        worktreePath: `${PRIMARY_ROOT}/.worktrees/exact-receipt`,
+        branch: "agent/exact-receipt",
+        trusted: true,
+      };
+    });
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
+    });
+
+    expect(creatingGateway.removeWorktree).toHaveBeenCalledWith(
+      PRIMARY_ROOT,
+      `${PRIMARY_ROOT}/.worktrees/exact-receipt`,
+      false,
+    );
+    expect(replacementRemove).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not leak an uncertain stale-receipt cleanup into the current workspace", async () => {
+    const harness = renderAgentTasks();
+    harness.worktree.addAgentWorktree.mockImplementationOnce(async () => {
+      harness.environment.repositories = [];
+      return { worktreePath: WORKTREE_PATH, branch: "agent/agt-1", trusted: true };
+    });
+    harness.worktree.removeWorktree.mockRejectedValueOnce(new Error("cleanup response lost"));
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
+    });
+
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.hook().notice).toBeNull();
     harness.unmount();
   });
 
@@ -708,21 +1008,36 @@ describe("useAgentTasks orphaned worktrees", () => {
     harness.unmount();
   });
 
-  it("cleans up the created worktree when the agent start fails", async () => {
+  it("retains the created worktree when the agent start settlement is uncertain", async () => {
     const harness = renderAgentTasks();
     harness.agent.startAgentTask.mockRejectedValueOnce(new Error("spawn refused"));
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
     });
 
-    expect(harness.worktree.removeWorktree).toHaveBeenCalledWith(
-      PRIMARY_ROOT,
-      WORKTREE_PATH,
-      false,
-    );
-    expect(harness.hook().notice?.message).toContain("could not be started");
+    expect(harness.worktree.removeWorktree).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("start result was uncertain");
     expect(harness.hook().tasks).toHaveLength(0);
+    harness.unmount();
+  });
+
+  it("does not expose or prune an uncertain-start worktree as an ordinary orphan", async () => {
+    const harness = renderAgentTasks({
+      worktrees: [worktreeDescriptor(WORKTREE_PATH, { branch: "agent/agt-1" })],
+    });
+    harness.agent.startAgentTask.mockRejectedValueOnce(new Error("start response lost"));
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
+    });
+
+    expect(harness.hook().orphanedWorktrees).toHaveLength(0);
+    await act(async () => {
+      await harness.hook().pruneOrphanedWorktrees(PRIMARY_ROOT);
+    });
+    expect(harness.worktree.pruneWorktrees).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toContain("terminal cleanup is proven");
     harness.unmount();
   });
 
@@ -733,7 +1048,7 @@ describe("useAgentTasks orphaned worktrees", () => {
     );
 
     await act(async () => {
-      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBe(false);
+      expect(await harness.hook().dispatch(request({ isolation: "worktree" }))).toBeNull();
     });
 
     expect(harness.hook().notice?.message).toContain("maximum of 16 worktrees");
@@ -743,6 +1058,109 @@ describe("useAgentTasks orphaned worktrees", () => {
 });
 
 describe("useAgentTasks isolation preview", () => {
+  it("refreshes an unknown preview to clean for the exact selected repository", async () => {
+    const harness = renderAgentTasks({ status: { known: false, dirty: false } });
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).recommended).toEqual({
+      kind: "worktree",
+      reason: "status-unknown",
+    });
+    harness.environment.status = { known: true, dirty: false };
+
+    await act(async () => {
+      await harness.hook().refreshIsolationStatus(PRIMARY_ROOT);
+    });
+
+    expect(harness.git.getStatus).toHaveBeenCalledWith(PRIMARY_ROOT);
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).recommended).toEqual({ kind: "in-place" });
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).confirmationKey).not.toBeNull();
+    harness.unmount();
+  });
+
+  it("publishes unknown and keeps in-place unsafe when preview refresh fails", async () => {
+    const harness = renderAgentTasks();
+    harness.git.getStatus.mockRejectedValueOnce(new Error("offline"));
+
+    await act(async () => {
+      await harness.hook().refreshIsolationStatus(PRIMARY_ROOT);
+    });
+
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).recommended).toEqual({
+      kind: "worktree",
+      reason: "status-unknown",
+    });
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).confirmationKey).toBeNull();
+    harness.unmount();
+  });
+
+  it("drops a reordered stale refresh for the same repository", async () => {
+    const harness = renderAgentTasks({ status: { known: false, dirty: false } });
+    const stale = createDeferred<GitStatus>();
+    harness.git.getStatus
+      .mockImplementationOnce(() => stale.promise)
+      .mockResolvedValueOnce({
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath: PRIMARY_ROOT,
+      });
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+
+    act(() => {
+      first = harness.hook().refreshIsolationStatus(PRIMARY_ROOT);
+      second = harness.hook().refreshIsolationStatus(PRIMARY_ROOT);
+    });
+    await act(async () => {
+      await second;
+      stale.resolve({
+        branch: "main",
+        changes: [changedFile("src/stale.ts")],
+        isRepository: true,
+        rootPath: PRIMARY_ROOT,
+      });
+      await first;
+    });
+
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).recommended).toEqual({ kind: "in-place" });
+    harness.unmount();
+  });
+
+  it("does not let a pending preview overwrite a newer dispatch preflight", async () => {
+    const harness = renderAgentTasks({ status: { known: true, dirty: false } });
+    const stalePreview = createDeferred<GitStatus>();
+    harness.git.getStatus
+      .mockImplementationOnce(() => stalePreview.promise)
+      .mockResolvedValueOnce({
+        branch: "main",
+        changes: [changedFile("src/fresh-dirty.ts")],
+        isRepository: true,
+        rootPath: PRIMARY_ROOT,
+      });
+    let preview!: Promise<void>;
+    act(() => {
+      preview = harness.hook().refreshIsolationStatus(PRIMARY_ROOT);
+    });
+
+    await act(async () => {
+      expect(await harness.hook().dispatch(request({ isolation: "in-place" }))).toBeNull();
+    });
+    await act(async () => {
+      stalePreview.resolve({
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath: PRIMARY_ROOT,
+      });
+      await preview;
+    });
+
+    expect(harness.hook().isolationPreview(PRIMARY_ROOT).recommended).toEqual({
+      kind: "worktree",
+      reason: "dirty-tree",
+    });
+    harness.unmount();
+  });
+
   it("recommends in-place for a clean repository with no live agents", () => {
     const harness = renderAgentTasks();
 
@@ -809,7 +1227,7 @@ function request(
     repositoryRoot: PRIMARY_ROOT,
     prompt: "Refactor the parser",
     isolation: "worktree",
-    unsafeInPlaceConfirmed: false,
+    unsafeInPlaceConfirmationKey: null,
     ...overrides,
   };
 }
@@ -961,7 +1379,15 @@ function renderAgentTasks(
   };
 
   const git = {
-    getStatus: vi.fn(async () => state.gitStatus),
+    getStatus: vi.fn(async (rootPath: string) => {
+      if (rootPath !== PRIMARY_ROOT && rootPath !== NESTED_ROOT) return state.gitStatus;
+      return {
+        branch: "main",
+        changes: environment.status.dirty ? [changedFile("src/dirty.ts")] : [],
+        isRepository: environment.status.known,
+        rootPath,
+      } satisfies GitStatus;
+    }),
     getDiff: vi.fn(async () => state.gitDiff),
   };
 
@@ -1011,6 +1437,7 @@ function renderAgentTasks(
     agent,
     calls,
     confirm,
+    dependencies,
     environment,
     git,
     get gitStatus() {

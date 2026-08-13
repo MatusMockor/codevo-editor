@@ -91,8 +91,7 @@ import { ReferencesPanel } from "./components/ReferencesPanel";
 import { TodoPanel } from "./components/TodoPanel";
 import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
-import { WorkbenchActivityBar } from "./components/WorkbenchActivityBar";
-import { WorkbenchSidebar } from "./components/WorkbenchSidebar";
+import { WorkbenchNavigationChrome } from "./components/WorkbenchNavigationChrome";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import { useAppActiveLargeDocumentPresentation } from "./components/useAppActiveLargeDocumentPresentation";
 import { languageServerStatusLabel } from "./domain/languageServerRuntime";
@@ -1159,27 +1158,18 @@ function App() {
         onQuitApplication={workbench.quitApplication}
       />
 
-      {workbench.agentModeActive ? null : (
-        <>
-          <WorkbenchActivityBar
-            hasWorkspace={!!workbench.workspaceRoot}
-            onOpenSettings={openSettings}
-            onOpenWorkspace={openWorkspace}
-            onShowCommands={showCommands}
-            onShowGitHistory={() => workbench.showBottomPanelView("history")}
-            onShowTodoPanel={workbench.openTodoPanel}
-          />
-
-          <WorkbenchSidebar
-            activeFileRevealSignal={activeFileRevealSignal}
-            fileStatusesByPath={fileStatusesByPath}
-            onOpenWorkspace={openWorkspace}
-            onResizeStart={startSidebarResize}
-            onShowGit={showGit}
-            workbench={workbench}
-          />
-        </>
-      )}
+      <WorkbenchNavigationChrome
+        activeFileRevealSignal={activeFileRevealSignal}
+        fileStatusesByPath={fileStatusesByPath}
+        onOpenSettings={openSettings}
+        onOpenWorkspace={openWorkspace}
+        onResizeStart={startSidebarResize}
+        onShowCommands={showCommands}
+        onShowGit={showGit}
+        onShowGitHistory={() => workbench.showBottomPanelView("history")}
+        onShowTodoPanel={workbench.openTodoPanel}
+        workbench={workbench}
+      />
 
       <section className="editor-workbench">
         <ProjectTabs
@@ -1224,92 +1214,95 @@ function App() {
             repositories={workbench.agents.repositories}
             workspaceRoot={workbench.workspaceRoot}
           />
-        ) : (
-          <>
-            <WorkbenchEditorHost
-              {...workbenchEditorHostProps({
-                activeGroupId: editorGroupsState.activeGroupId,
-                contentRevisionForGroup: editorContentRevisionForGroup,
-                documents: editorAreaDocuments,
-                editorHost,
-                editorSessionOwnerKey,
-                fileStatusesByPath,
-                liveDocumentRuntime,
-                onActiveLiveDocumentBindingChange,
-                onGroupFocusRunnerChange: updateEditorGroupFocusRunner,
-                renderContent: renderEditorGroupContent,
-                state: editorGroupsState,
-              })}
+        ) : null}
+        <div
+          aria-hidden={workbench.agentModeActive || undefined}
+          className="editor-mode-surface"
+          hidden={workbench.agentModeActive}
+        >
+          <WorkbenchEditorHost
+            {...workbenchEditorHostProps({
+              activeGroupId: editorGroupsState.activeGroupId,
+              contentRevisionForGroup: editorContentRevisionForGroup,
+              documents: editorAreaDocuments,
+              editorHost,
+              editorSessionOwnerKey,
+              fileStatusesByPath,
+              liveDocumentRuntime,
+              onActiveLiveDocumentBindingChange,
+              onGroupFocusRunnerChange: updateEditorGroupFocusRunner,
+              renderContent: renderEditorGroupContent,
+              state: editorGroupsState,
+            })}
+          />
+          {workbench.bottomPanelVisible ? (
+            <BottomPanel
+              {...frameworkBottomPanels}
+              {...phpTestPanel}
+              activeView={workbench.bottomPanelView}
+              artisanRoutes={artisanRoutes.filteredRoutes}
+              artisanRoutesError={artisanRoutes.error}
+              artisanRoutesLoading={artisanRoutes.loading}
+              artisanRoutesQuery={artisanRoutes.query}
+              artisanRoutesTotal={artisanRoutes.total}
+              artisanRoutesUnavailable={artisanRoutes.unavailable}
+              debug={debugPanel}
+              expressRoutesPanel={expressRoutesPanel}
+              hasArtisan={workbench.hasArtisan}
+              hasPhpWorkspace={!!workbench.workspaceDescriptor?.php}
+              indexHealthLogs={workbench.indexHealthLogs}
+              indexProgress={workbench.indexProgress}
+              notices={workbench.notices}
+              search={
+                <TextSearch
+                  {...dockedTextSearchProps({
+                    setOpen: setDockedTextSearchOpen,
+                    workbench,
+                  })}
+                />
+              }
+              onClearProblems={workbench.clearNotices}
+              onClose={() => {
+                artisanRoutes.clear();
+                phpTestResults.clear();
+                if (workbench.bottomPanelView === "search") {
+                  setDockedTextSearchOpen(false);
+                  return;
+                }
+                workbench.hideBottomPanel();
+              }}
+              onHardReindex={workbench.startHardReindex}
+              onArtisanRoutesQueryChange={artisanRoutes.setQuery}
+              onOpenArtisanController={(action) => {
+                void workbench.openArtisanController(action);
+              }}
+              onRefreshArtisanRoutes={artisanRoutes.refresh}
+              jsTestExplorer={jsTestExplorerPanel}
+              onOpenProblem={workbench.openProblemNotice}
+              onPhpReindex={workbench.startPhpReindex}
+              onRevealDirectoryInTree={workbench.revealDirectoryInTree}
+              onResizeStart={startBottomPanelResize}
+              onSelectView={selectBottomPanelView}
+              onSoftReindex={workbench.startIndexScan}
+              workspacePackageDiscovery={workbench.workspacePackageDiscovery}
+              gitHistoryGateway={gitHistoryGateway}
+              runtimeObservabilityGateway={runtimeObservabilityGateway}
+              runtimeMode={workbench.intelligenceMode}
+              getLatencySnapshot={workbench.getLatencySnapshot}
+              onOpenCommitFileDiff={gitHistoryDiffDocuments.openCommitDiff}
+              onTerminalSessionReady={workbench.registerActiveTerminalSession}
+              onTrustWorkspace={trustWorkspace}
+              terminalGateway={terminalGateway}
+              terminalOwnerKey={workspaceId}
+              terminalShellIntegrationEnabled={
+                workbench.appSettings.terminalShellIntegrationEnabled
+              }
+              terminalTheme={terminalTheme}
+              workspaceTrusted={workspaceTrusted}
+              workspaceRoot={workbench.workspaceRoot}
             />
-            {workbench.bottomPanelVisible ? (
-              <BottomPanel
-                {...frameworkBottomPanels}
-                {...phpTestPanel}
-                activeView={workbench.bottomPanelView}
-                artisanRoutes={artisanRoutes.filteredRoutes}
-                artisanRoutesError={artisanRoutes.error}
-                artisanRoutesLoading={artisanRoutes.loading}
-                artisanRoutesQuery={artisanRoutes.query}
-                artisanRoutesTotal={artisanRoutes.total}
-                artisanRoutesUnavailable={artisanRoutes.unavailable}
-                debug={debugPanel}
-                expressRoutesPanel={expressRoutesPanel}
-                hasArtisan={workbench.hasArtisan}
-                hasPhpWorkspace={!!workbench.workspaceDescriptor?.php}
-                indexHealthLogs={workbench.indexHealthLogs}
-                indexProgress={workbench.indexProgress}
-                notices={workbench.notices}
-                search={
-                  <TextSearch
-                    {...dockedTextSearchProps({
-                      setOpen: setDockedTextSearchOpen,
-                      workbench,
-                    })}
-                  />
-                }
-                onClearProblems={workbench.clearNotices}
-                onClose={() => {
-                  artisanRoutes.clear();
-                  phpTestResults.clear();
-                  if (workbench.bottomPanelView === "search") {
-                    setDockedTextSearchOpen(false);
-                    return;
-                  }
-                  workbench.hideBottomPanel();
-                }}
-                onHardReindex={workbench.startHardReindex}
-                onArtisanRoutesQueryChange={artisanRoutes.setQuery}
-                onOpenArtisanController={(action) => {
-                  void workbench.openArtisanController(action);
-                }}
-                onRefreshArtisanRoutes={artisanRoutes.refresh}
-                jsTestExplorer={jsTestExplorerPanel}
-                onOpenProblem={workbench.openProblemNotice}
-                onPhpReindex={workbench.startPhpReindex}
-                onRevealDirectoryInTree={workbench.revealDirectoryInTree}
-                onResizeStart={startBottomPanelResize}
-                onSelectView={selectBottomPanelView}
-                onSoftReindex={workbench.startIndexScan}
-                workspacePackageDiscovery={workbench.workspacePackageDiscovery}
-                gitHistoryGateway={gitHistoryGateway}
-                runtimeObservabilityGateway={runtimeObservabilityGateway}
-                runtimeMode={workbench.intelligenceMode}
-                getLatencySnapshot={workbench.getLatencySnapshot}
-                onOpenCommitFileDiff={gitHistoryDiffDocuments.openCommitDiff}
-                onTerminalSessionReady={workbench.registerActiveTerminalSession}
-                onTrustWorkspace={trustWorkspace}
-                terminalGateway={terminalGateway}
-                terminalOwnerKey={workspaceId}
-                terminalShellIntegrationEnabled={
-                  workbench.appSettings.terminalShellIntegrationEnabled
-                }
-                terminalTheme={terminalTheme}
-                workspaceTrusted={workspaceTrusted}
-                workspaceRoot={workbench.workspaceRoot}
-              />
-            ) : null}
-          </>
-        )}
+          ) : null}
+        </div>
       </section>
 
       <StatusBar

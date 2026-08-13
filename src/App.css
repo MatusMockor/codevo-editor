@@ -1989,6 +1989,14 @@ button {
   background: var(--color-app);
 }
 
+.editor-mode-surface {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .project-tabs {
   display: flex;
   min-height: 34px;
@@ -7678,9 +7686,8 @@ kbd {
 }
 
 .agent-mode__center {
-  position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   background: var(--agent-surface);
@@ -8120,7 +8127,7 @@ kbd {
   gap: 22px;
   margin: 0 auto;
   max-width: 760px;
-  padding: 28px 28px 148px;
+  padding: 28px;
 }
 
 .agent-session__body--empty {
@@ -8399,20 +8406,17 @@ kbd {
   word-break: break-word;
 }
 
-/* Sticky composer floating above the session. */
+/* Composer owns a real layout row, so a resized prompt cannot cover the session tail. */
 .agent-composer {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  overflow-y: auto;
+  max-height: min(44vh, 320px);
   padding: 16px 28px 18px;
-  pointer-events: none;
+  border-top: 1px solid var(--agent-hairline);
   background: linear-gradient(
     180deg,
     transparent,
     color-mix(in srgb, var(--agent-surface) 94%, transparent) 46%
   );
-  z-index: 5;
 }
 
 .agent-composer__box {
@@ -8424,7 +8428,6 @@ kbd {
   box-shadow:
     0 0 0 1px var(--agent-hairline-strong),
     0 -10px 30px rgba(0, 0, 0, 0.28);
-  pointer-events: auto;
 }
 
 .agent-composer__box:focus-within {
@@ -8712,4 +8715,115 @@ kbd {
 .workbench-mode-switch button[aria-pressed="true"] {
   background: var(--color-active);
   color: var(--color-active-text);
+}
+
+/*
+  Responsive order is deliberate: discard the supplementary info rail before
+  changing primary navigation. On phone-sized windows the thread rail becomes a
+  bounded row above the session, keeping both navigation and the composer usable.
+*/
+@media (max-width: 1180px) {
+  .agent-mode__grid {
+    grid-template-columns: 248px minmax(0, 1fr);
+  }
+
+  .agent-info {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .agent-mode__grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(112px, 28vh) minmax(0, 1fr);
+  }
+
+  .agent-rail {
+    overflow: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--agent-hairline);
+  }
+
+  .agent-rail__head {
+    padding-block: 9px 6px;
+  }
+
+  .agent-session__head {
+    padding-inline: 16px;
+  }
+
+  .agent-session__body,
+  .agent-composer {
+    padding-inline: 16px;
+  }
+
+  .agent-composer__row {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .agent-composer__repo {
+    flex: 1 1 160px;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .agent-composer__spacer {
+    display: none;
+  }
+
+  .workbench-toolbar {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .workbench-mode-switch {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+
+  .toolbar-status {
+    display: none;
+  }
+
+  .toolbar-progress {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 460px) {
+  .agent-mode__grid {
+    grid-template-rows: minmax(86px, 22vh) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 460px), (max-height: 540px) {
+  .agent-session__head {
+    gap: 8px;
+    padding-block: 8px;
+  }
+
+  .agent-session__body {
+    gap: 14px;
+    padding-block: 16px;
+  }
+
+  .agent-composer {
+    max-height: min(48vh, 260px);
+    padding-block: 10px 12px;
+  }
+
+  .agent-composer__textarea {
+    min-height: 48px;
+  }
+
+  .agent-composer__vsep {
+    display: none;
+  }
+
+  .smart-mode-switch > span:first-child {
+    display: none;
+  }
 }

@@ -14,6 +14,7 @@ export type AgentThreadTone = "running" | "queued" | "done" | "failed" | "stoppe
 export interface AgentRepositoryGroup {
   readonly repositoryRoot: string;
   readonly label: string;
+  readonly repositoryResolved: boolean;
   readonly threads: ReadonlyArray<AgentTaskView>;
   readonly orphans: ReadonlyArray<OrphanedWorktreeView>;
   readonly liveCount: number;
@@ -141,6 +142,7 @@ export function agentRepositoryGroups(
       ),
       threads,
       orphans,
+      true,
     ),
   );
 
@@ -153,7 +155,7 @@ export function agentRepositoryGroups(
 
   const detached = [...detachedRoots]
     .sort()
-    .map((root) => buildGroup(root, root, threads, orphans));
+    .map((root) => buildGroup(root, root, threads, orphans, false));
 
   return [...groups, ...detached];
 }
@@ -163,6 +165,7 @@ function buildGroup(
   label: string,
   threads: ReadonlyArray<AgentTaskView>,
   orphans: ReadonlyArray<OrphanedWorktreeView>,
+  repositoryResolved: boolean,
 ): AgentRepositoryGroup {
   const groupThreads = threads.filter(
     (thread) => thread.record.owner.repositoryRoot === repositoryRoot,
@@ -171,6 +174,7 @@ function buildGroup(
   return {
     repositoryRoot,
     label,
+    repositoryResolved,
     threads: groupThreads,
     orphans: orphans.filter((orphan) => orphan.repositoryRoot === repositoryRoot),
     liveCount: groupThreads.filter((thread) => !thread.terminal).length,

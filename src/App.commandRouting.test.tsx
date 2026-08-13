@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialIndexProgress } from "./domain/indexProgress";
@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
   },
   editorSurfaceProps: [] as Record<string, unknown>[],
   renderEditorAreaContent: false,
+  runtimeHostMounts: 0,
+  runtimeHostUnmounts: 0,
   expressPanelOptions: null as Record<string, unknown> | null,
   packageDiscoveryState: {
     authority: "complete",
@@ -255,7 +257,34 @@ vi.mock("./components/EditorArea", () => ({
 }));
 
 vi.mock("./components/EditorRuntimeHost", () => ({
-  EditorRuntimeHost: ({ children }: { children: React.ReactNode }) => children,
+  EditorRuntimeHost: ({ children }: { children: React.ReactNode }) => {
+    const identity = useRef<number | null>(null);
+    if (identity.current === null) {
+      identity.current = ++mocks.runtimeHostMounts;
+    }
+    const [editorState, setEditorState] = useState("undo=1;cursor=8:4;scroll=720;dirty=true");
+    useEffect(
+      () => () => {
+        mocks.runtimeHostUnmounts += 1;
+      },
+      [],
+    );
+    return (
+      <div
+        data-editor-state={editorState}
+        data-runtime-identity={identity.current}
+        data-testid="editor-runtime-host"
+      >
+        <button
+          onClick={() => setEditorState("undo=2;cursor=12:9;scroll=1440;dirty=true")}
+          type="button"
+        >
+          mutate-editor-state
+        </button>
+        {children}
+      </div>
+    );
+  },
 }));
 
 vi.mock("./components/ScopedEditorSurface", () => ({
@@ -334,6 +363,8 @@ describe("App command routing", () => {
     mocks.jsExplorerState.unavailable = null;
     mocks.editorSurfaceProps = [];
     mocks.renderEditorAreaContent = false;
+    mocks.runtimeHostMounts = 0;
+    mocks.runtimeHostUnmounts = 0;
     mocks.jsCoverageClear.mockClear();
     mocks.jsCoverageRun.mockClear();
     mocks.jsCoverageState.error = null;
@@ -895,6 +926,46 @@ describe("App command routing", () => {
     expect(host.querySelector(".app-shell")?.className).not.toContain("app-shell--agent-mode");
   });
 
+  it("keeps the editor runtime and its state mounted across Code to Agents to Code", async () => {
+    const initialRuntime = requiredElement<HTMLElement>(
+      host,
+      '[data-testid="editor-runtime-host"]',
+    );
+    click(buttonByText("mutate-editor-state"));
+    expect(initialRuntime.dataset.editorState).toBe("undo=2;cursor=12:9;scroll=1440;dirty=true");
+    expect(mocks.runtimeHostMounts).toBe(1);
+    expect(mocks.runtimeHostUnmounts).toBe(0);
+
+    mocks.workbenchOverrides = { agentModeActive: true };
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    const hiddenRuntime = requiredElement<HTMLElement>(host, '[data-testid="editor-runtime-host"]');
+    expect(hiddenRuntime).toBe(initialRuntime);
+    expect(hiddenRuntime.closest(".editor-mode-surface")?.hasAttribute("hidden")).toBe(true);
+    expect(hiddenRuntime.dataset.editorState).toBe("undo=2;cursor=12:9;scroll=1440;dirty=true");
+    expect(mocks.runtimeHostMounts).toBe(1);
+    expect(mocks.runtimeHostUnmounts).toBe(0);
+
+    mocks.workbenchOverrides = {};
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    const restoredRuntime = requiredElement<HTMLElement>(
+      host,
+      '[data-testid="editor-runtime-host"]',
+    );
+    expect(restoredRuntime).toBe(initialRuntime);
+    expect(restoredRuntime.closest(".editor-mode-surface")?.hasAttribute("hidden")).toBe(false);
+    expect(restoredRuntime.dataset.editorState).toBe("undo=2;cursor=12:9;scroll=1440;dirty=true");
+    expect(mocks.runtimeHostMounts).toBe(1);
+    expect(mocks.runtimeHostUnmounts).toBe(0);
+  });
+
   it("keeps an external file conflict visible while agent mode is active", async () => {
     mocks.workbenchOverrides = {
       agentModeActive: true,
@@ -936,6 +1007,12 @@ describe("App command routing", () => {
 function click(button: HTMLButtonElement | null): void {
   expect(button).not.toBeNull();
   act(() => button?.click());
+}
+
+function requiredElement<T extends Element>(host: ParentNode, selector: string): T {
+  const element = host.querySelector<T>(selector);
+  expect(element).not.toBeNull();
+  return element as T;
 }
 
 function createWorkbench() {

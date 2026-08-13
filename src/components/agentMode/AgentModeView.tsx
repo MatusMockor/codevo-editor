@@ -40,21 +40,12 @@ export function AgentModeView({
   const [prompt, setPrompt] = useState("");
   const [isolationChoice, setIsolationChoice] = useState<IsolationChoice | null>(null);
   const [unsafeConfirmed, setUnsafeConfirmed] = useState<string | null>(null);
-  const [pendingSelection, setPendingSelection] = useState<ReadonlySet<string> | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), nowTickMs);
     return () => clearInterval(timer);
   }, [nowTickMs]);
-
-  useEffect(() => {
-    if (pendingSelection === null) return;
-    const created = agents.tasks.find((task) => !pendingSelection.has(task.record.owner.taskId));
-    if (!created) return;
-    setSelectedTaskId(created.record.owner.taskId);
-    setPendingSelection(null);
-  }, [agents.tasks, pendingSelection]);
 
   const groups = useMemo(
     () =>
@@ -69,6 +60,11 @@ export function AgentModeView({
   const composerLabel =
     groups.find((group) => group.repositoryRoot === composerRoot)?.label ?? null;
   const preview = composerRoot === null ? null : agents.isolationPreview(composerRoot);
+  const refreshIsolationStatus = agents.refreshIsolationStatus;
+  useEffect(() => {
+    if (composerRoot === null) return;
+    void refreshIsolationStatus(composerRoot);
+  }, [composerRoot, refreshIsolationStatus]);
   const recommended: AgentTaskIsolation =
     preview === null || preview.recommended.kind === "in-place" ? "in-place" : "worktree";
   const isolation: AgentTaskIsolation =
@@ -76,7 +72,8 @@ export function AgentModeView({
       ? isolationChoice.isolation
       : recommended;
   const guard = preview?.inPlaceGuard ?? { kind: "safe" as const };
-  const confirmed = unsafeConfirmed === composerRoot;
+  const confirmed =
+    preview?.confirmationKey !== null && unsafeConfirmed === preview?.confirmationKey;
   const promptBytes = agentPromptByteLength(prompt);
   const submitBlocked =
     agents.dispatching ||
@@ -116,21 +113,20 @@ export function AgentModeView({
 
   const submit = useCallback(() => {
     if (composerRoot === null) return;
-    const known = new Set(agents.tasks.map((task) => task.record.owner.taskId));
     void agents
       .dispatch({
         repositoryRoot: composerRoot,
         prompt,
         isolation,
-        unsafeInPlaceConfirmed: confirmed,
+        unsafeInPlaceConfirmationKey: confirmed ? (preview?.confirmationKey ?? null) : null,
       })
       .then((dispatched) => {
         if (!dispatched) return;
         setPrompt("");
         setUnsafeConfirmed(null);
-        setPendingSelection(known);
+        setSelectedTaskId(dispatched.taskId);
       });
-  }, [agents, composerRoot, confirmed, isolation, prompt]);
+  }, [agents, composerRoot, confirmed, isolation, preview?.confirmationKey, prompt]);
 
   return (
     <section aria-label="Agent mode" className="agent-mode">
@@ -184,7 +180,9 @@ export function AgentModeView({
               setUnsafeConfirmed(null);
             }}
             onSubmit={submit}
-            onUnsafeConfirmedChange={(next) => setUnsafeConfirmed(next ? composerRoot : null)}
+            onUnsafeConfirmedChange={(next) =>
+              setUnsafeConfirmed(next ? (preview?.confirmationKey ?? null) : null)
+            }
             prompt={prompt}
             promptBytes={promptBytes}
             repositories={composerOptions}

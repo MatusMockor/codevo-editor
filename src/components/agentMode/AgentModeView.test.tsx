@@ -83,7 +83,7 @@ describe("AgentModeView", () => {
   });
 
   it("dispatches the prompt with the recommended isolation of the selected repository", () => {
-    const dispatch = vi.fn(async () => true);
+    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
     render({
       agents: surface({
         dispatch,
@@ -91,6 +91,7 @@ describe("AgentModeView", () => {
           repositoryRoot,
           recommended: { kind: "worktree", reason: "dirty-tree" },
           inPlaceGuard: { kind: "unsafe", reasons: ["dirty-tree"] },
+          confirmationKey: "dirty-preview-key",
         }),
       }),
     });
@@ -104,12 +105,12 @@ describe("AgentModeView", () => {
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
       isolation: "worktree",
-      unsafeInPlaceConfirmed: false,
+      unsafeInPlaceConfirmationKey: null,
     });
   });
 
   it("blocks an unsafe in-place dispatch until it is confirmed", () => {
-    const dispatch = vi.fn(async () => true);
+    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
     render({
       agents: surface({
         dispatch,
@@ -117,6 +118,7 @@ describe("AgentModeView", () => {
           repositoryRoot,
           recommended: { kind: "worktree", reason: "dirty-tree" },
           inPlaceGuard: { kind: "unsafe", reasons: ["dirty-tree"] },
+          confirmationKey: "dirty-preview-key",
         }),
       }),
     });
@@ -136,12 +138,12 @@ describe("AgentModeView", () => {
       repositoryRoot: ROOT,
       prompt: "Fix the parser",
       isolation: "in-place",
-      unsafeInPlaceConfirmed: true,
+      unsafeInPlaceConfirmationKey: "dirty-preview-key",
     });
   });
 
   it("dispatches into the repository chosen in the composer", () => {
-    const dispatch = vi.fn(async () => true);
+    const dispatch = vi.fn(async () => ({ taskId: "agt-new" }));
     render({ agents: surface({ dispatch }) });
 
     selectRepository(NESTED);
@@ -152,12 +154,12 @@ describe("AgentModeView", () => {
       repositoryRoot: NESTED,
       prompt: "Update the router",
       isolation: "in-place",
-      unsafeInPlaceConfirmed: false,
+      unsafeInPlaceConfirmationKey: null,
     });
   });
 
   it("clears the prompt and opens the created thread after a dispatch", async () => {
-    const dispatch = vi.fn(async () => true);
+    const dispatch = vi.fn(async () => ({ taskId: "agt-1" }));
     render({ agents: surface({ dispatch }) });
 
     typePrompt("Fix the parser");
@@ -172,13 +174,47 @@ describe("AgentModeView", () => {
   });
 
   it("keeps the prompt when the dispatch is refused", async () => {
-    const dispatch = vi.fn(async () => false);
+    const dispatch = vi.fn(async () => null);
     render({ agents: surface({ dispatch }) });
 
     typePrompt("Fix the parser");
     await submitFormAsync();
 
     expect(promptField().value).toBe("Fix the parser");
+  });
+
+  it("opens only the exact dispatched thread when another unknown thread arrives concurrently", async () => {
+    let resolveDispatch: ((result: { readonly taskId: string }) => void) | null = null;
+    const dispatch = vi.fn(
+      () =>
+        new Promise<{ readonly taskId: string }>((resolve) => {
+          resolveDispatch = resolve;
+        }),
+    );
+    render({ agents: surface({ dispatch, tasks: [taskView("agt-existing", ROOT)] }) });
+
+    typePrompt("Fix the parser");
+    submitForm();
+    render({
+      agents: surface({
+        dispatch,
+        tasks: [
+          taskView("agt-existing", ROOT),
+          taskView("agt-recovered-foreign", ROOT),
+          taskView("agt-dispatched", ROOT),
+        ],
+      }),
+    });
+
+    await act(async () => {
+      resolveDispatch?.({ taskId: "agt-dispatched" });
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('section[aria-label="Agent thread agt-dispatched"]')).not.toBeNull();
+    expect(
+      host.querySelector('section[aria-label="Agent thread agt-recovered-foreign"]'),
+    ).toBeNull();
   });
 
   it("opens a selected thread and returns to a new thread from the group affordance", () => {
@@ -341,8 +377,10 @@ function surface(overrides: Partial<AgentTasksSurface>): AgentTasksSurface {
       repositoryRoot,
       recommended: { kind: "in-place" },
       inPlaceGuard: { kind: "safe" },
+      confirmationKey: null,
     }),
-    dispatch: async () => true,
+    refreshIsolationStatus: async () => undefined,
+    dispatch: async () => ({ taskId: "agt-default" }),
     stop: async () => undefined,
     dismiss: () => undefined,
     removeOrphanedWorktree: async () => undefined,

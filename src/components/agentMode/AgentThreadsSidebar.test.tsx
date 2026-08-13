@@ -82,6 +82,38 @@ describe("AgentThreadsSidebar", () => {
     expect(onNewThread).toHaveBeenCalledWith(ROOT);
   });
 
+  it("fails closed when a detached repository group is no longer resolved", () => {
+    const onNewThread = vi.fn();
+    render({
+      groups: [
+        group({}),
+        group({
+          repositoryRoot: "/detached/repository",
+          label: "detached/repository",
+          repositoryResolved: false,
+        }),
+      ],
+      onNewThread,
+    });
+
+    const detachedGroup = host.querySelector<HTMLElement>(
+      '[aria-label="Repository detached/repository"]',
+    );
+    expect(detachedGroup).not.toBeNull();
+    expect(detachedGroup?.querySelector(".agent-group__new")).toBeNull();
+    expect(detachedGroup?.textContent).toContain(
+      "This repository is no longer available in the current workspace.",
+    );
+
+    clickText("+ New thread");
+    expect(onNewThread).toHaveBeenCalledWith(ROOT);
+    expect(onNewThread).not.toHaveBeenCalledWith("/detached/repository");
+    onNewThread.mockClear();
+
+    detachedGroup?.querySelector<HTMLElement>(".agent-rail__empty")?.click();
+    expect(onNewThread).not.toHaveBeenCalled();
+  });
+
   it("removes an orphaned worktree listed under its repository", () => {
     const onRemoveOrphan = vi.fn();
     render({ groups: [group({ orphans: [orphan(false)] })], onRemoveOrphan });
@@ -118,11 +150,15 @@ describe("AgentThreadsSidebar", () => {
   }
 
   function clickText(text: string): void {
+    act(() => buttonWithText(text).click());
+  }
+
+  function buttonWithText(text: string): HTMLButtonElement {
     const element = [...host.querySelectorAll("button")].find((candidate) =>
       (candidate.textContent ?? "").includes(text),
     );
     expect(element).toBeDefined();
-    act(() => element?.click());
+    return element as HTMLButtonElement;
   }
 });
 
@@ -146,6 +182,7 @@ function group(overrides: Partial<AgentRepositoryGroup>): AgentRepositoryGroup {
   return {
     repositoryRoot: ROOT,
     label: "app",
+    repositoryResolved: true,
     threads: [thread({ kind: "running" })],
     orphans: [],
     liveCount: 1,

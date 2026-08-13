@@ -103,6 +103,7 @@ describe("agentModePresentation", () => {
 
     expect(groups.map((group) => group.label)).toEqual(["app", "packages/api"]);
     expect(groups[0]?.threads.map((thread) => thread.record.owner.taskId)).toEqual(["agt-1"]);
+    expect(groups[0]?.repositoryResolved).toBe(true);
     expect(groups[0]?.liveCount).toBe(1);
     expect(groups[1]?.orphans).toHaveLength(1);
     expect(groups[1]?.liveCount).toBe(0);
@@ -118,6 +119,7 @@ describe("agentModePresentation", () => {
 
     expect(groups.map((group) => group.repositoryRoot)).toEqual([ROOT, "/elsewhere/repo"]);
     expect(groups[1]?.threads).toHaveLength(1);
+    expect(groups[1]?.repositoryResolved).toBe(false);
   });
 });
 

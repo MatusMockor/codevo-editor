@@ -114,13 +114,19 @@ function AgentRepositoryGroupSection({
               thread={thread}
             />
           ))}
-          <button
-            className="agent-group__new"
-            onClick={() => onNewThread(group.repositoryRoot)}
-            type="button"
-          >
-            + New thread
-          </button>
+          {group.repositoryResolved ? (
+            <button
+              className="agent-group__new"
+              onClick={() => onNewThread(group.repositoryRoot)}
+              type="button"
+            >
+              + New thread
+            </button>
+          ) : (
+            <p className="agent-rail__empty">
+              This repository is no longer available in the current workspace.
+            </p>
+          )}
           {group.orphans.length > 0 && (
             <AgentOrphanList
               group={group}
