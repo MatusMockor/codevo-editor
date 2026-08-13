@@ -1,12 +1,3 @@
-import {
-  FolderOpen,
-  ListChecks,
-  LoaderCircle,
-  History,
-  Search,
-  Settings as SettingsIcon,
-  TriangleAlert,
-} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
@@ -53,7 +44,6 @@ import { jsTestEditorSurfaceProps } from "./components/jsTestEditorSurfaceProps"
 import {
   areFileStatusesByPathEqual,
   clamp,
-  indexToolbarLabel,
   isJavaScriptTypeScriptLanguage,
   maxBottomPanelHeight,
   toolSourceLabel,
@@ -101,6 +91,7 @@ import { ReferencesPanel } from "./components/ReferencesPanel";
 import { TodoPanel } from "./components/TodoPanel";
 import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
+import { WorkbenchActivityBar } from "./components/WorkbenchActivityBar";
 import { WorkbenchSidebar } from "./components/WorkbenchSidebar";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import { useAppActiveLargeDocumentPresentation } from "./components/useAppActiveLargeDocumentPresentation";
@@ -122,7 +113,8 @@ import { createInitialEditorGroupsState, type EditorGroupId } from "./domain/edi
 import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
-import { smartModeSummary } from "./components/appSmartModeSummary";
+import { AgentModeView } from "./components/agentMode/AgentModeView";
+import { WorkbenchToolbar } from "./components/WorkbenchToolbar";
 import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
 
@@ -1154,7 +1146,11 @@ function App() {
   });
 
   return (
-    <main className="app-shell" data-theme={workbench.appSettings.theme} style={shellStyle}>
+    <main
+      className={workbench.agentModeActive ? "app-shell app-shell--agent-mode" : "app-shell"}
+      data-theme={workbench.appSettings.theme}
+      style={shellStyle}
+    >
       <WindowChrome
         appTitle={windowTitle}
         commandContext={editorMenuCommandContext}
@@ -1163,47 +1159,27 @@ function App() {
         onQuitApplication={workbench.quitApplication}
       />
 
-      <aside className="activity-bar" aria-label="Primary navigation">
-        <button onClick={openWorkspace} title="Open workspace" type="button">
-          <FolderOpen aria-hidden="true" size={20} />
-        </button>
-        <button onClick={showCommands} title="Commands" type="button">
-          <Search aria-hidden="true" size={20} />
-        </button>
-        <button
-          disabled={!workbench.workspaceRoot}
-          onClick={workbench.openTodoPanel}
-          title="TODO comments"
-          type="button"
-        >
-          <ListChecks aria-hidden="true" size={20} />
-        </button>
-        <button
-          disabled={!workbench.workspaceRoot}
-          onClick={() => workbench.showBottomPanelView("history")}
-          title="Git history"
-          type="button"
-        >
-          <History aria-hidden="true" size={20} />
-        </button>
-        <button
-          className="activity-bar-secondary"
-          onClick={openSettings}
-          title="Settings"
-          type="button"
-        >
-          <SettingsIcon aria-hidden="true" size={20} />
-        </button>
-      </aside>
+      {workbench.agentModeActive ? null : (
+        <>
+          <WorkbenchActivityBar
+            hasWorkspace={!!workbench.workspaceRoot}
+            onOpenSettings={openSettings}
+            onOpenWorkspace={openWorkspace}
+            onShowCommands={showCommands}
+            onShowGitHistory={() => workbench.showBottomPanelView("history")}
+            onShowTodoPanel={workbench.openTodoPanel}
+          />
 
-      <WorkbenchSidebar
-        activeFileRevealSignal={activeFileRevealSignal}
-        fileStatusesByPath={fileStatusesByPath}
-        onOpenWorkspace={openWorkspace}
-        onResizeStart={startSidebarResize}
-        onShowGit={showGit}
-        workbench={workbench}
-      />
+          <WorkbenchSidebar
+            activeFileRevealSignal={activeFileRevealSignal}
+            fileStatusesByPath={fileStatusesByPath}
+            onOpenWorkspace={openWorkspace}
+            onResizeStart={startSidebarResize}
+            onShowGit={showGit}
+            workbench={workbench}
+          />
+        </>
+      )}
 
       <section className="editor-workbench">
         <ProjectTabs
@@ -1213,57 +1189,20 @@ function App() {
           onClose={workbench.closeWorkspaceTab}
           workspaceTabs={workbench.workspaceTabs}
         />
-        <header className="workbench-toolbar">
-          <button
-            aria-pressed={workbench.intelligenceMode === "fullSmart"}
-            className={
-              workbench.intelligenceMode === "fullSmart"
-                ? "smart-mode-switch active"
-                : "smart-mode-switch"
-            }
-            disabled={!workbench.workspaceRoot}
-            onClick={toggleSmartMode}
-            type="button"
-          >
-            <span>IDE Mode</span>
-            <span className="switch-track" aria-hidden="true">
-              <span className="switch-thumb" />
-            </span>
-          </button>
-          <span className="toolbar-status">
-            {smartModeSummary(
-              workbench.workspaceRoot,
-              workbench.intelligenceMode,
-              workbench.languageServerRuntimeStatus,
-              workbench.languageServerPlan,
-              workspaceTrusted,
-            )}
-          </span>
-          {ideProgress.text ? (
-            <button
-              aria-live="polite"
-              className={`toolbar-progress ${ideProgress.state}`}
-              onClick={showProgressPanel}
-              title={ideProgress.text}
-              type="button"
-            >
-              {ideProgress.state === "problem" ? (
-                <TriangleAlert aria-hidden="true" size={14} />
-              ) : (
-                <LoaderCircle aria-hidden="true" className="toolbar-progress-spinner" size={14} />
-              )}
-              <span className="toolbar-progress-text">{ideProgress.text}</span>
-            </button>
-          ) : null}
-          {workbench.workspaceRoot ? (
-            <span className="toolbar-status">{indexToolbarLabel(workbench.indexProgress)}</span>
-          ) : null}
-          {workbench.workspaceRoot && !workspaceTrusted ? (
-            <button className="toolbar-action" onClick={trustWorkspace} type="button">
-              Trust
-            </button>
-          ) : null}
-        </header>
+        <WorkbenchToolbar
+          agentModeActive={workbench.agentModeActive}
+          ideProgress={ideProgress}
+          indexProgress={workbench.indexProgress}
+          intelligenceMode={workbench.intelligenceMode}
+          languageServerPlan={workbench.languageServerPlan}
+          languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+          onSelectAgentMode={workbench.setAgentModeActive}
+          onShowProgressPanel={showProgressPanel}
+          onToggleSmartMode={toggleSmartMode}
+          onTrustWorkspace={trustWorkspace}
+          workspaceRoot={workbench.workspaceRoot}
+          workspaceTrusted={workspaceTrusted}
+        />
         {workbench.externalFileConflictState.conflict ? (
           <ExternalFileConflictBar
             busyAction={
@@ -1279,86 +1218,98 @@ function App() {
             onAction={workbench.handleExternalFileConflictAction}
           />
         ) : null}
-        <WorkbenchEditorHost
-          {...workbenchEditorHostProps({
-            activeGroupId: editorGroupsState.activeGroupId,
-            contentRevisionForGroup: editorContentRevisionForGroup,
-            documents: editorAreaDocuments,
-            editorHost,
-            editorSessionOwnerKey,
-            fileStatusesByPath,
-            liveDocumentRuntime,
-            onActiveLiveDocumentBindingChange,
-            onGroupFocusRunnerChange: updateEditorGroupFocusRunner,
-            renderContent: renderEditorGroupContent,
-            state: editorGroupsState,
-          })}
-        />
-        {workbench.bottomPanelVisible ? (
-          <BottomPanel
-            {...frameworkBottomPanels}
-            {...phpTestPanel}
-            activeView={workbench.bottomPanelView}
-            artisanRoutes={artisanRoutes.filteredRoutes}
-            artisanRoutesError={artisanRoutes.error}
-            artisanRoutesLoading={artisanRoutes.loading}
-            artisanRoutesQuery={artisanRoutes.query}
-            artisanRoutesTotal={artisanRoutes.total}
-            artisanRoutesUnavailable={artisanRoutes.unavailable}
-            debug={debugPanel}
-            expressRoutesPanel={expressRoutesPanel}
-            hasArtisan={workbench.hasArtisan}
-            hasPhpWorkspace={!!workbench.workspaceDescriptor?.php}
-            indexHealthLogs={workbench.indexHealthLogs}
-            indexProgress={workbench.indexProgress}
-            notices={workbench.notices}
-            search={
-              <TextSearch
-                {...dockedTextSearchProps({
-                  setOpen: setDockedTextSearchOpen,
-                  workbench,
-                })}
-              />
-            }
-            onClearProblems={workbench.clearNotices}
-            onClose={() => {
-              artisanRoutes.clear();
-              phpTestResults.clear();
-              if (workbench.bottomPanelView === "search") {
-                setDockedTextSearchOpen(false);
-                return;
-              }
-              workbench.hideBottomPanel();
-            }}
-            onHardReindex={workbench.startHardReindex}
-            onArtisanRoutesQueryChange={artisanRoutes.setQuery}
-            onOpenArtisanController={(action) => {
-              void workbench.openArtisanController(action);
-            }}
-            onRefreshArtisanRoutes={artisanRoutes.refresh}
-            jsTestExplorer={jsTestExplorerPanel}
-            onOpenProblem={workbench.openProblemNotice}
-            onPhpReindex={workbench.startPhpReindex}
-            onRevealDirectoryInTree={workbench.revealDirectoryInTree}
-            onResizeStart={startBottomPanelResize}
-            onSelectView={selectBottomPanelView}
-            onSoftReindex={workbench.startIndexScan}
-            workspacePackageDiscovery={workbench.workspacePackageDiscovery}
-            gitHistoryGateway={gitHistoryGateway}
-            runtimeObservabilityGateway={runtimeObservabilityGateway}
-            runtimeMode={workbench.intelligenceMode}
-            getLatencySnapshot={workbench.getLatencySnapshot}
-            onOpenCommitFileDiff={gitHistoryDiffDocuments.openCommitDiff}
-            onTerminalSessionReady={workbench.registerActiveTerminalSession}
-            onTrustWorkspace={trustWorkspace}
-            terminalGateway={terminalGateway}
-            terminalOwnerKey={workspaceId}
-            terminalShellIntegrationEnabled={workbench.appSettings.terminalShellIntegrationEnabled}
-            terminalTheme={terminalTheme}
-            workspaceTrusted={workspaceTrusted}
+        {workbench.agentModeActive ? (
+          <AgentModeView
+            agents={workbench.agents}
+            repositories={workbench.agents.repositories}
             workspaceRoot={workbench.workspaceRoot}
           />
-        ) : null}
+        ) : (
+          <>
+            <WorkbenchEditorHost
+              {...workbenchEditorHostProps({
+                activeGroupId: editorGroupsState.activeGroupId,
+                contentRevisionForGroup: editorContentRevisionForGroup,
+                documents: editorAreaDocuments,
+                editorHost,
+                editorSessionOwnerKey,
+                fileStatusesByPath,
+                liveDocumentRuntime,
+                onActiveLiveDocumentBindingChange,
+                onGroupFocusRunnerChange: updateEditorGroupFocusRunner,
+                renderContent: renderEditorGroupContent,
+                state: editorGroupsState,
+              })}
+            />
+            {workbench.bottomPanelVisible ? (
+              <BottomPanel
+                {...frameworkBottomPanels}
+                {...phpTestPanel}
+                activeView={workbench.bottomPanelView}
+                artisanRoutes={artisanRoutes.filteredRoutes}
+                artisanRoutesError={artisanRoutes.error}
+                artisanRoutesLoading={artisanRoutes.loading}
+                artisanRoutesQuery={artisanRoutes.query}
+                artisanRoutesTotal={artisanRoutes.total}
+                artisanRoutesUnavailable={artisanRoutes.unavailable}
+                debug={debugPanel}
+                expressRoutesPanel={expressRoutesPanel}
+                hasArtisan={workbench.hasArtisan}
+                hasPhpWorkspace={!!workbench.workspaceDescriptor?.php}
+                indexHealthLogs={workbench.indexHealthLogs}
+                indexProgress={workbench.indexProgress}
+                notices={workbench.notices}
+                search={
+                  <TextSearch
+                    {...dockedTextSearchProps({
+                      setOpen: setDockedTextSearchOpen,
+                      workbench,
+                    })}
+                  />
+                }
+                onClearProblems={workbench.clearNotices}
+                onClose={() => {
+                  artisanRoutes.clear();
+                  phpTestResults.clear();
+                  if (workbench.bottomPanelView === "search") {
+                    setDockedTextSearchOpen(false);
+                    return;
+                  }
+                  workbench.hideBottomPanel();
+                }}
+                onHardReindex={workbench.startHardReindex}
+                onArtisanRoutesQueryChange={artisanRoutes.setQuery}
+                onOpenArtisanController={(action) => {
+                  void workbench.openArtisanController(action);
+                }}
+                onRefreshArtisanRoutes={artisanRoutes.refresh}
+                jsTestExplorer={jsTestExplorerPanel}
+                onOpenProblem={workbench.openProblemNotice}
+                onPhpReindex={workbench.startPhpReindex}
+                onRevealDirectoryInTree={workbench.revealDirectoryInTree}
+                onResizeStart={startBottomPanelResize}
+                onSelectView={selectBottomPanelView}
+                onSoftReindex={workbench.startIndexScan}
+                workspacePackageDiscovery={workbench.workspacePackageDiscovery}
+                gitHistoryGateway={gitHistoryGateway}
+                runtimeObservabilityGateway={runtimeObservabilityGateway}
+                runtimeMode={workbench.intelligenceMode}
+                getLatencySnapshot={workbench.getLatencySnapshot}
+                onOpenCommitFileDiff={gitHistoryDiffDocuments.openCommitDiff}
+                onTerminalSessionReady={workbench.registerActiveTerminalSession}
+                onTrustWorkspace={trustWorkspace}
+                terminalGateway={terminalGateway}
+                terminalOwnerKey={workspaceId}
+                terminalShellIntegrationEnabled={
+                  workbench.appSettings.terminalShellIntegrationEnabled
+                }
+                terminalTheme={terminalTheme}
+                workspaceTrusted={workspaceTrusted}
+                workspaceRoot={workbench.workspaceRoot}
+              />
+            ) : null}
+          </>
+        )}
       </section>
 
       <StatusBar

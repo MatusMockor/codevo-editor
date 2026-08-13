@@ -1,19 +1,19 @@
 import type { Command } from "./commandRegistry";
 
 interface WorkbenchAgentCommandsOptions {
-  showAgentsPanel: Command["run"];
+  toggleAgentMode: Command["run"];
 }
 
 export function workbenchAgentCommands({
-  showAgentsPanel,
+  toggleAgentMode,
 }: WorkbenchAgentCommandsOptions): Command[] {
   return [
     {
       id: "panel.showAgents",
-      title: "Show Agents",
+      title: "Toggle Agent Mode",
       category: "Agents",
       isEnabled: (context) => context.hasWorkspace,
-      run: showAgentsPanel,
+      run: toggleAgentMode,
     },
   ];
 }

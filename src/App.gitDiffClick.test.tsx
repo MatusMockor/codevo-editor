@@ -317,6 +317,7 @@ function createWorkbench(overrides: Record<string, unknown>) {
     {
       activeDocument: null,
       activeDocumentGitBaseline: null,
+      agentModeActive: false,
       activePath: null,
       appSettings: {
         editorFontFamily: "Menlo, monospace",

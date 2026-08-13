@@ -101,6 +101,8 @@ import { useGitStatusSurface } from "./useGitStatusSurface";
 import { useGitOperationCurrency } from "./useGitOperationCurrency";
 import { runEslintDisableAtCursor } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
+import { useAgentModeState } from "./useAgentModeState";
+import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
 import { useWorkbenchCommandContext } from "./useWorkbenchCommandContext";
 import { useWorkbenchDebugOrchestration } from "./useWorkbenchDebugOrchestration";
 import { useWorkbenchNodePackageScripts } from "./useNodePackageScriptWorkbench";
@@ -469,7 +471,7 @@ interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
 }
 
-export type SidebarView = "files" | "git" | "php" | "scripts" | "agents";
+export type SidebarView = "files" | "git" | "php" | "scripts";
 
 const ignoreLanguageServerRequestCancellation = () => Promise.resolve();
 
@@ -610,6 +612,10 @@ export function useWorkbenchController(
     Record<string, LanguageServerDiagnostic[]>
   >({});
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
+  const { agentModeActive, setAgentModeActive, toggleAgentMode } = useAgentModeState(
+    editorSessionOwnerKey,
+    workspaceRoot !== null,
+  );
   const [bottomPanelView, setBottomPanelView] = useState<BottomPanelView>("problems");
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
   const bottomPanelViewRef = useRef(bottomPanelView);
@@ -7372,6 +7378,7 @@ export function useWorkbenchController(
     startLanguageServer,
     startPhpReindex,
     stopLanguageServer,
+    toggleAgentMode,
     toggleBookmarkAtCursor,
     toggleBookmarksPanel,
     toggleBottomPanel,
@@ -7419,32 +7426,13 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  useEffect(() => {
-    if (sidebarView !== "php") {
-      return;
-    }
-
-    if (indexProgress.rootPath && !workspaceRootKeysEqual(indexProgress.rootPath, workspaceRoot)) {
-      return;
-    }
-
-    void refreshPhpTree();
-  }, [
-    indexProgress.indexedFiles,
-    indexProgress.rootPath,
-    indexProgress.status,
+  useWorkbenchSidebarDataRefresh({
+    indexProgress,
+    refreshGitStatus,
     refreshPhpTree,
     sidebarView,
     workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (sidebarView !== "git") {
-      return;
-    }
-
-    void refreshGitStatus();
-  }, [refreshGitStatus, sidebarView, workspaceRoot]);
+  });
 
   useEffect(() => {
     if (!workspaceRoot) {
@@ -8180,6 +8168,9 @@ export function useWorkbenchController(
     togglePhpFileOutline,
     togglePhpFileOutlineNode,
     togglePhpTreeNode,
+    toggleAgentMode,
+    agentModeActive,
+    setAgentModeActive,
     toggleSmartMode,
     toggleWorkspaceTrust,
     updateActiveDocument,

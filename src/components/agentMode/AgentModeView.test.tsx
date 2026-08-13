@@ -1,0 +1,388 @@
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentTaskView, AgentTasksSurface } from "../../application/useAgentTasks";
+import type { AgentTaskRecord } from "../../domain/agentTask";
+import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
+import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
+
+const ROOT = "/workspace/app";
+const NESTED = "/workspace/app/packages/api";
+const NOW_TICK_MS = 3_600_000;
+
+describe("AgentModeView", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("renders the three columns of the threads layout", () => {
+    render();
+
+    expect(host.querySelector('section[aria-label="Agent mode"]')).not.toBeNull();
+    expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
+    expect(host.querySelector('aside[aria-label="Agent thread details"]')).not.toBeNull();
+    expect(host.querySelector('form[aria-label="New agent thread"]')).not.toBeNull();
+  });
+
+  it("surfaces the agent CLI notice with a settings deep link and a dismiss action", () => {
+    const configureAgentCli = vi.fn();
+    const dismissNotice = vi.fn();
+    render({
+      agents: surface({
+        configureAgentCli,
+        dismissNotice,
+        notice: {
+          kind: "error",
+          message: "Set the agent CLI path in Settings.",
+          action: "configure-agent-cli",
+        },
+      }),
+    });
+
+    expect(host.textContent).toContain("Set the agent CLI path in Settings.");
+    click('[aria-label="Open agent settings"]');
+    click('[aria-label="Dismiss agent notice"]');
+
+    expect(configureAgentCli).toHaveBeenCalledTimes(1);
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a notice without a settings action free of the deep link", () => {
+    render({
+      agents: surface({
+        notice: { kind: "warning", message: "The agent limit is reached.", action: null },
+      }),
+    });
+
+    expect(host.textContent).toContain("The agent limit is reached.");
+    expect(host.querySelector('[aria-label="Open agent settings"]')).toBeNull();
+  });
+
+  it("blocks the dispatch until the prompt has content", () => {
+    render();
+
+    expect(submitButton().disabled).toBe(true);
+
+    typePrompt("Fix the parser");
+
+    expect(submitButton().disabled).toBe(false);
+  });
+
+  it("dispatches the prompt with the recommended isolation of the selected repository", () => {
+    const dispatch = vi.fn(async () => true);
+    render({
+      agents: surface({
+        dispatch,
+        isolationPreview: (repositoryRoot: string) => ({
+          repositoryRoot,
+          recommended: { kind: "worktree", reason: "dirty-tree" },
+          inPlaceGuard: { kind: "unsafe", reasons: ["dirty-tree"] },
+        }),
+      }),
+    });
+
+    expect(host.textContent).toContain("The working tree has uncommitted changes.");
+
+    typePrompt("Fix the parser");
+    submitForm();
+
+    expect(dispatch).toHaveBeenCalledWith({
+      repositoryRoot: ROOT,
+      prompt: "Fix the parser",
+      isolation: "worktree",
+      unsafeInPlaceConfirmed: false,
+    });
+  });
+
+  it("blocks an unsafe in-place dispatch until it is confirmed", () => {
+    const dispatch = vi.fn(async () => true);
+    render({
+      agents: surface({
+        dispatch,
+        isolationPreview: (repositoryRoot: string) => ({
+          repositoryRoot,
+          recommended: { kind: "worktree", reason: "dirty-tree" },
+          inPlaceGuard: { kind: "unsafe", reasons: ["dirty-tree"] },
+        }),
+      }),
+    });
+
+    typePrompt("Fix the parser");
+    toggleCheckbox("agent-isolation", false);
+
+    expect(submitButton().disabled).toBe(true);
+
+    toggleCheckbox("agent-unsafe-confirm", true);
+
+    expect(submitButton().disabled).toBe(false);
+
+    submitForm();
+
+    expect(dispatch).toHaveBeenCalledWith({
+      repositoryRoot: ROOT,
+      prompt: "Fix the parser",
+      isolation: "in-place",
+      unsafeInPlaceConfirmed: true,
+    });
+  });
+
+  it("dispatches into the repository chosen in the composer", () => {
+    const dispatch = vi.fn(async () => true);
+    render({ agents: surface({ dispatch }) });
+
+    selectRepository(NESTED);
+    typePrompt("Update the router");
+    submitForm();
+
+    expect(dispatch).toHaveBeenCalledWith({
+      repositoryRoot: NESTED,
+      prompt: "Update the router",
+      isolation: "in-place",
+      unsafeInPlaceConfirmed: false,
+    });
+  });
+
+  it("clears the prompt and opens the created thread after a dispatch", async () => {
+    const dispatch = vi.fn(async () => true);
+    render({ agents: surface({ dispatch }) });
+
+    typePrompt("Fix the parser");
+    await submitFormAsync();
+
+    expect(promptField().value).toBe("");
+
+    render({ agents: surface({ dispatch, tasks: [taskView("agt-1", ROOT)] }) });
+
+    expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).not.toBeNull();
+    expect(host.querySelector('[aria-current="true"]')).not.toBeNull();
+  });
+
+  it("keeps the prompt when the dispatch is refused", async () => {
+    const dispatch = vi.fn(async () => false);
+    render({ agents: surface({ dispatch }) });
+
+    typePrompt("Fix the parser");
+    await submitFormAsync();
+
+    expect(promptField().value).toBe("Fix the parser");
+  });
+
+  it("opens a selected thread and returns to a new thread from the group affordance", () => {
+    render({ agents: surface({ tasks: [taskView("agt-1", ROOT)] }) });
+
+    clickText("Refactor the parser");
+
+    expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).not.toBeNull();
+
+    clickText("+ New thread");
+
+    expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
+  });
+
+  it("routes orphan recovery to the surface", () => {
+    const removeOrphanedWorktree = vi.fn(async () => undefined);
+    render({
+      agents: surface({
+        orphanedWorktrees: [
+          {
+            repositoryRoot: ROOT,
+            worktreePath: `${ROOT}/.worktrees/agt-9`,
+            branch: "agent/agt-9",
+            prunable: false,
+            removing: false,
+          },
+        ],
+        removeOrphanedWorktree,
+      }),
+    });
+
+    click(`[aria-label="Remove orphaned worktree ${ROOT}/.worktrees/agt-9"]`);
+
+    expect(removeOrphanedWorktree).toHaveBeenCalledWith(`${ROOT}/.worktrees/agt-9`);
+  });
+
+  it("routes thread actions to the surface", () => {
+    const stop = vi.fn(async () => undefined);
+    render({ agents: surface({ stop, tasks: [taskView("agt-1", ROOT, { kind: "running" })] }) });
+
+    clickText("Refactor the parser");
+    click('[aria-label="Stop agent agt-1"]');
+
+    expect(stop).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("drops the selection when the thread is dismissed elsewhere", () => {
+    render({ agents: surface({ tasks: [taskView("agt-1", ROOT)] }) });
+
+    clickText("Refactor the parser");
+    render({ agents: surface({ tasks: [] }) });
+
+    expect(host.querySelector('section[aria-label="Agent thread agt-1"]')).toBeNull();
+    expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
+  });
+
+  function render(overrides: Partial<AgentModeViewProps> = {}): void {
+    act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
+  }
+
+  function promptField(): HTMLTextAreaElement {
+    const element = host.querySelector<HTMLTextAreaElement>("textarea#agent-prompt");
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("textarea");
+  }
+
+  function submitButton(): HTMLButtonElement {
+    const element = host.querySelector<HTMLButtonElement>('button[type="submit"]');
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("button");
+  }
+
+  function typePrompt(value: string): void {
+    const element = promptField();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+        element,
+        value,
+      );
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function selectRepository(value: string): void {
+    const element = host.querySelector<HTMLSelectElement>("select#agent-repository");
+    expect(element).not.toBeNull();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(
+        element,
+        value,
+      );
+      element?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  function toggleCheckbox(id: string, checked: boolean): void {
+    const element = host.querySelector<HTMLInputElement>(`input#${id}`);
+    expect(element).not.toBeNull();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set?.call(
+        element,
+        checked,
+      );
+      element?.dispatchEvent(new Event("click", { bubbles: true }));
+    });
+  }
+
+  function submitForm(): void {
+    const form = host.querySelector("form");
+    expect(form).not.toBeNull();
+    act(() => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  async function submitFormAsync(): Promise<void> {
+    const form = host.querySelector("form");
+    expect(form).not.toBeNull();
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+  }
+
+  function click(selector: string): void {
+    const element = host.querySelector<HTMLElement>(selector);
+    expect(element).not.toBeNull();
+    act(() => element?.click());
+  }
+
+  function clickText(text: string): void {
+    const element = [...host.querySelectorAll("button")].find((candidate) =>
+      (candidate.textContent ?? "").includes(text),
+    );
+    expect(element).toBeDefined();
+    act(() => element?.click());
+  }
+});
+
+function defaultProps(): AgentModeViewProps {
+  return {
+    agents: surface({}),
+    repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
+    workspaceRoot: ROOT,
+    nowTickMs: NOW_TICK_MS,
+  };
+}
+
+function surface(overrides: Partial<AgentTasksSurface>): AgentTasksSurface {
+  return {
+    tasks: [],
+    repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
+    orphanedWorktrees: [],
+    notice: null,
+    dispatching: false,
+    agentCliConfigured: true,
+    liveTaskCount: 0,
+    maxConcurrentAgentTasks: 4,
+    isolationPreview: (repositoryRoot: string) => ({
+      repositoryRoot,
+      recommended: { kind: "in-place" },
+      inPlaceGuard: { kind: "safe" },
+    }),
+    dispatch: async () => true,
+    stop: async () => undefined,
+    dismiss: () => undefined,
+    removeOrphanedWorktree: async () => undefined,
+    pruneOrphanedWorktrees: async () => undefined,
+    showChanges: async () => undefined,
+    hideChanges: () => undefined,
+    showFileDiff: async () => undefined,
+    hideFileDiff: () => undefined,
+    removeWorktree: async () => undefined,
+    configureAgentCli: () => undefined,
+    dismissNotice: () => undefined,
+    ...overrides,
+  };
+}
+
+function repository(repositoryRoot: string, rootRelativePath: string): ResolvedGitRepository {
+  return { mapping: { rootRelativePath }, repositoryRoot, repositoryRelativePath: "" };
+}
+
+function taskView(
+  taskId: string,
+  repositoryRoot: string,
+  status: AgentTaskRecord["status"] = { kind: "exited", exitCode: 0 },
+): AgentTaskView {
+  return {
+    record: {
+      owner: { taskId, workspaceId: "workspace-a", repositoryRoot },
+      isolation: "worktree",
+      worktreePath: `${repositoryRoot}/.worktrees/${taskId}`,
+      prompt: "Refactor the parser",
+      status,
+      outputTail: "",
+      outputTruncated: false,
+      lastStatusSequence: 0,
+      lastOutputSequence: 0,
+      startedAtEpochMs: 1_700_000_000_000,
+    },
+    repositoryLabel: "app",
+    terminal: status.kind !== "running" && status.kind !== "pending",
+    worktreeRemoved: false,
+    changeSummary: null,
+  };
+}

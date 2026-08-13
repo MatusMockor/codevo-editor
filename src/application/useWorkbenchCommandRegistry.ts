@@ -341,7 +341,8 @@ interface UseWorkbenchCommandRegistryOptions {
   setPaletteOpen(open: boolean): void;
   setQuickOpenOpen(open: boolean): void;
   setRecentFilesSwitcherOpen(open: boolean): void;
-  setSidebarView(view: "git" | "php" | "scripts" | "agents"): void;
+  setSidebarView(view: "git" | "php" | "scripts"): void;
+  toggleAgentMode(): void;
   setTextSearchOpen(open: boolean): void;
   setWorkspaceSymbolsOpen(open: boolean): void;
   showBottomPanelView: Parameters<typeof workbenchPanelCommands>[0]["showBottomPanelView"];
@@ -523,6 +524,7 @@ export function useWorkbenchCommandRegistry(
     toggleBookmarkAtCursor,
     toggleBookmarksPanel,
     toggleBottomPanel,
+    toggleAgentMode,
     toggleEditorFontLigatures,
     toggleGitBlame,
     toggleSmartMode,
@@ -997,7 +999,7 @@ export function useWorkbenchCommandRegistry(
     }).forEach((command) => registry.register(command));
 
     workbenchAgentCommands({
-      showAgentsPanel: () => setSidebarView("agents"),
+      toggleAgentMode,
     }).forEach((command) => registry.register(command));
 
     return registry;
@@ -1140,6 +1142,7 @@ export function useWorkbenchCommandRegistry(
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,
+    toggleAgentMode,
     toggleBookmarksPanel,
     toggleSmartMode,
     toggleWorkspaceTrust,

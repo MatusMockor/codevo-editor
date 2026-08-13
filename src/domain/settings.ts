@@ -69,7 +69,7 @@ export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView =
   "index" | "problems" | "history" | "terminal" | "runtime" | "search";
-export type WorkspaceSessionSidebarView = "files" | "git" | "php" | "scripts" | "agents";
+export type WorkspaceSessionSidebarView = "files" | "git" | "php" | "scripts";
 export type SettingsSection =
   "general" | "keymap" | "php" | "git" | "index" | "snippets" | "appearance" | "agents";
 
@@ -1353,13 +1353,7 @@ function isWorkspaceSessionBottomPanelView(
 }
 
 function isWorkspaceSessionSidebarView(value: unknown): value is WorkspaceSessionSidebarView {
-  return (
-    value === "files" ||
-    value === "git" ||
-    value === "php" ||
-    value === "scripts" ||
-    value === "agents"
-  );
+  return value === "files" || value === "git" || value === "php" || value === "scripts";
 }
 
 function normalizeNullableString(value: unknown, fallback: string | null): string | null {

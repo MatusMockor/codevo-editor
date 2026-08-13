@@ -11,7 +11,7 @@ import type {
 } from "../domain/agentTask";
 import type { AgentWorktreeReceipt, GitWorktreeGateway } from "../domain/gitWorktree";
 import { defaultAppSettings } from "../domain/settings";
-import { WorkbenchSidebar } from "../components/WorkbenchSidebar";
+import { AgentModeView } from "../components/agentMode/AgentModeView";
 import { waitForReact } from "../test/reactTestLifecycle";
 import {
   flushAsyncTurns,
@@ -50,7 +50,7 @@ describe("workbench agents production chain", () => {
     mountedHost?.remove();
   });
 
-  it("renders the Agents sidebar tab and dispatch reaches the gateway through the real hook chain", async () => {
+  it("enters agent mode and dispatches a thread through the real hook chain", async () => {
     const agentTaskGateway = fakeAgentTaskGateway();
     const gitWorktreeGateway = fakeGitWorktreeGateway();
     const { getWorkbench } = renderController({
@@ -67,66 +67,162 @@ describe("workbench agents production chain", () => {
     await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
 
     await act(async () => {
-      getWorkbench().setSidebarView("agents");
+      getWorkbench().toggleAgentMode();
       await Promise.resolve();
     });
-    await waitForReact(() => expect(getWorkbench().sidebarView).toBe("agents"));
+    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
+    expect(getWorkbench().sidebarView).toBe("files");
 
-    renderSidebar(getWorkbench());
+    renderAgentMode(getWorkbench());
     const host = getPanelHost();
-    const tabs = Array.from(host.querySelectorAll('[role="tab"]')).map(
-      (tab) => tab.textContent ?? "",
-    );
-    expect(tabs).toContain("Agents");
-    expect(host.querySelector('section[aria-label="Agents"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Agent mode"]')).not.toBeNull();
+    expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
+    expect(host.textContent).toContain("Threads");
 
-    let dispatched = false;
-    await act(async () => {
-      dispatched = await getWorkbench().agents.dispatch({
-        repositoryRoot: "/workspace-a",
-        prompt: "Fix the failing unit test.",
-        isolation: "worktree",
-        unsafeInPlaceConfirmed: false,
-      });
-    });
+    await typePrompt(host, "Fix the failing unit test.");
+    await submitComposer(host);
     await flushAsyncTurns();
 
-    expect(dispatched).toBe(true);
     expect(gitWorktreeGateway.added).toHaveLength(1);
     expect(gitWorktreeGateway.added[0]?.repositoryRoot).toBe("/workspace-a");
     expect(agentTaskGateway.started).toHaveLength(1);
     const started = agentTaskGateway.started[0];
-    expect(started.repositoryRoot).toBe("/workspace-a");
-    expect(started.workspaceId).toBe("workspace-a");
-    expect(started.isolation).toBe("worktree");
-    expect(started.cwd).toBe(`/workspace-a/.worktrees/${started.taskId}`);
-    expect(started.prompt).toBe("Fix the failing unit test.");
-    expect(agentTaskGateway.acknowledged).toEqual([started.taskId]);
+    expect(started?.repositoryRoot).toBe("/workspace-a");
+    expect(started?.workspaceId).toBe("workspace-a");
+    expect(started?.isolation).toBe("worktree");
+    expect(started?.cwd).toBe(`/workspace-a/.worktrees/${started?.taskId}`);
+    expect(started?.prompt).toBe("Fix the failing unit test.");
+    expect(agentTaskGateway.acknowledged).toEqual([started?.taskId]);
     expect(getWorkbench().agents.tasks).toHaveLength(1);
-    expect(getWorkbench().agents.tasks[0]?.record.owner.taskId).toBe(started.taskId);
+    expect(getWorkbench().agents.tasks[0]?.record.owner.taskId).toBe(started?.taskId);
+
+    renderAgentMode(getWorkbench());
+    expect(host.textContent).toContain("Fix the failing unit test.");
+  });
+
+  it("leaves agent mode when the mode is toggled back", async () => {
+    const { getWorkbench } = renderController({
+      agentTaskGateway: fakeAgentTaskGateway().gateway,
+      gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      appSettings: {
+        ...defaultAppSettings(),
+        agentCliPath: "/usr/local/bin/claude",
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a"],
+      },
+      workspaceIdentityGateway: identityGateway(),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+
+    await act(async () => {
+      getWorkbench().toggleAgentMode();
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
+
+    await act(async () => {
+      getWorkbench().setAgentModeActive(false);
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(false));
+  });
+
+  it("keeps the previously selected sidebar view across an agent mode round trip", async () => {
+    const { getWorkbench } = renderController({
+      agentTaskGateway: fakeAgentTaskGateway().gateway,
+      gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      appSettings: {
+        ...defaultAppSettings(),
+        agentCliPath: "/usr/local/bin/claude",
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a"],
+      },
+      workspaceIdentityGateway: identityGateway(),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+
+    await act(async () => {
+      getWorkbench().setSidebarView("git");
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().sidebarView).toBe("git"));
+
+    await act(async () => {
+      getWorkbench().toggleAgentMode();
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
+
+    await act(async () => {
+      getWorkbench().toggleAgentMode();
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(false));
+    expect(getWorkbench().sidebarView).toBe("git");
+  });
+
+  it("returns to code mode when the active workspace tab changes", async () => {
+    const { getWorkbench } = renderController({
+      agentTaskGateway: fakeAgentTaskGateway().gateway,
+      gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      appSettings: {
+        ...defaultAppSettings(),
+        agentCliPath: "/usr/local/bin/claude",
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+
+    await act(async () => {
+      getWorkbench().toggleAgentMode();
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().agentModeActive).toBe(true));
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().agentModeActive).toBe(false);
   });
 
   function getPanelHost(): HTMLDivElement {
-    if (!panelHost) {
-      throw new Error("Panel host was not mounted.");
-    }
-    return panelHost;
+    expect(panelHost).not.toBeNull();
+    return panelHost ?? document.createElement("div");
   }
 
-  function renderSidebar(workbench: WorkbenchController): void {
+  async function typePrompt(host: HTMLDivElement, value: string): Promise<void> {
+    const textarea = host.querySelector<HTMLTextAreaElement>("textarea#agent-prompt");
+    expect(textarea).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+        textarea,
+        value,
+      );
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function submitComposer(host: HTMLDivElement): Promise<void> {
+    const form = host.querySelector("form");
+    expect(form).not.toBeNull();
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function renderAgentMode(workbench: WorkbenchController): void {
     const mountedRoot = panelRoot;
-    if (!mountedRoot) {
-      throw new Error("Panel root was not mounted.");
-    }
+    expect(mountedRoot).not.toBeNull();
     act(() => {
-      mountedRoot.render(
-        <WorkbenchSidebar
-          activeFileRevealSignal={0}
-          fileStatusesByPath={{}}
-          onOpenWorkspace={() => undefined}
-          onResizeStart={() => undefined}
-          onShowGit={() => undefined}
-          workbench={workbench}
+      mountedRoot?.render(
+        <AgentModeView
+          agents={workbench.agents}
+          repositories={workbench.agents.repositories}
+          workspaceRoot={workbench.workspaceRoot}
         />,
       );
     });

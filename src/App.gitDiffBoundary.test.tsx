@@ -147,6 +147,7 @@ function createWorkbench() {
   return new Proxy(
     {
       activeDocument: gitDiffBoundaryMockState.activeDocument,
+      agentModeActive: false,
       activeDocumentGitBaseline: null,
       activePath: "mockor-git-diff:worktree:/workspace/README.md",
       appSettings: {

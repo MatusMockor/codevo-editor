@@ -1034,6 +1034,15 @@ describe("normalizeWorkspaceSession", () => {
     ).toBe("scripts");
   });
 
+  it("falls back to the Files sidebar view for a legacy persisted agents view", () => {
+    expect(
+      normalizeWorkspaceSession({
+        ...defaultWorkspaceSessionState(),
+        sidebarView: "agents",
+      }).sidebarView,
+    ).toBe("files");
+  });
+
   it("migrates legacy flat fields into the primary group and unpins preview", () => {
     const normalized = normalizeWorkspaceSession({
       activePath: "/project/Preview.php",

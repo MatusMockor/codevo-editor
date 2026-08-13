@@ -15,15 +15,15 @@ const enabledContext: CommandContext = {
 };
 
 describe("workbenchAgentCommands", () => {
-  it("returns the agents panel command with registry metadata", () => {
-    const commands = workbenchAgentCommands({ showAgentsPanel: vi.fn() });
+  it("returns the agent mode command with registry metadata", () => {
+    const commands = workbenchAgentCommands({ toggleAgentMode: vi.fn() });
 
     expect(
       commands.map(({ id, title, category, shortcut }) => ({ id, title, category, shortcut })),
     ).toEqual([
       {
         id: "panel.showAgents",
-        title: "Show Agents",
+        title: "Toggle Agent Mode",
         category: "Agents",
         shortcut: undefined,
       },
@@ -31,40 +31,40 @@ describe("workbenchAgentCommands", () => {
   });
 
   it("disables the command without a workspace", () => {
-    const commands = workbenchAgentCommands({ showAgentsPanel: vi.fn() });
+    const commands = workbenchAgentCommands({ toggleAgentMode: vi.fn() });
 
     expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual([false]);
   });
 
   it("enables the command with a workspace", () => {
-    const commands = workbenchAgentCommands({ showAgentsPanel: vi.fn() });
+    const commands = workbenchAgentCommands({ toggleAgentMode: vi.fn() });
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([true]);
   });
 
   it("invokes the injected callback exactly once per run", async () => {
-    const showAgentsPanel = vi.fn();
-    const commands = workbenchAgentCommands({ showAgentsPanel });
+    const toggleAgentMode = vi.fn();
+    const commands = workbenchAgentCommands({ toggleAgentMode });
 
     for (const command of commands) {
       await command.run();
     }
 
-    expect(showAgentsPanel).toHaveBeenCalledTimes(1);
+    expect(toggleAgentMode).toHaveBeenCalledTimes(1);
   });
 
   it("registers into the command registry and runs through it", async () => {
-    const showAgentsPanel = vi.fn();
+    const toggleAgentMode = vi.fn();
     const registry = new CommandRegistry();
 
-    for (const command of workbenchAgentCommands({ showAgentsPanel })) {
+    for (const command of workbenchAgentCommands({ toggleAgentMode })) {
       registry.register(command);
     }
 
-    expect(registry.get("panel.showAgents")?.title).toBe("Show Agents");
+    expect(registry.get("panel.showAgents")?.title).toBe("Toggle Agent Mode");
 
     await registry.get("panel.showAgents")?.run();
 
-    expect(showAgentsPanel).toHaveBeenCalledTimes(1);
+    expect(toggleAgentMode).toHaveBeenCalledTimes(1);
   });
 });

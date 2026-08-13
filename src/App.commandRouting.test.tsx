@@ -301,6 +301,10 @@ vi.mock("./components/WindowChrome", () => ({
   WindowChrome: () => <div data-testid="window-chrome" />,
 }));
 
+vi.mock("./components/agentMode/AgentModeView", () => ({
+  AgentModeView: () => <div data-testid="agent-mode-view" />,
+}));
+
 import App from "./App";
 
 describe("App command routing", () => {
@@ -862,6 +866,60 @@ describe("App command routing", () => {
     expect(mocks.openGitBranchPanel).toHaveBeenCalledOnce();
   });
 
+  it("gives agent mode the full window and restores the IDE chrome on return", async () => {
+    expect(host.querySelector(".activity-bar")).not.toBeNull();
+    expect(host.querySelector(".sidebar")).not.toBeNull();
+    expect(host.querySelector('[data-testid="agent-mode-view"]')).toBeNull();
+
+    mocks.workbenchOverrides = { agentModeActive: true };
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="agent-mode-view"]')).not.toBeNull();
+    expect(host.querySelector(".activity-bar")).toBeNull();
+    expect(host.querySelector(".sidebar")).toBeNull();
+    expect(host.querySelector(".app-shell")?.className).toContain("app-shell--agent-mode");
+
+    mocks.workbenchOverrides = {};
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="agent-mode-view"]')).toBeNull();
+    expect(host.querySelector(".activity-bar")).not.toBeNull();
+    expect(host.querySelector(".sidebar")).not.toBeNull();
+    expect(host.querySelector(".sidebar-tab.active")?.textContent).toBe("Files");
+    expect(host.querySelector(".app-shell")?.className).not.toContain("app-shell--agent-mode");
+  });
+
+  it("keeps an external file conflict visible while agent mode is active", async () => {
+    mocks.workbenchOverrides = {
+      agentModeActive: true,
+      externalFileConflictState: {
+        conflict: {
+          baseline: { content: "before", path: "/workspace/src/a.ts" },
+          disk: { content: "after", path: "/workspace/src/a.ts" },
+          id: 1,
+          kind: "modified",
+          revision: 1,
+        },
+        error: null,
+        status: "idle",
+      },
+    };
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="agent-mode-view"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="External file conflict"]')).not.toBeNull();
+  });
+
   function buttonByText(text: string): HTMLButtonElement | null {
     return (
       Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
@@ -887,6 +945,7 @@ function createWorkbench() {
     {
       activeDocument: null,
       activeFrameworkActivityLabel: null,
+      agentModeActive: false,
       activePath: null,
       appSettings: {
         editorFontFamily: "Menlo, monospace",
