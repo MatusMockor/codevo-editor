@@ -253,18 +253,16 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
     const collected = new Map<string, OrphanedWorktreeCandidate>();
     for (const repository of repositories) {
       if (
-        !isCurrentWorkspaceAuthority(
-          dependenciesRef,
-          mountedRef,
-          workspaceAuthorityRef,
-          authority,
-        )
-      ) return;
+        !isCurrentWorkspaceAuthority(dependenciesRef, mountedRef, workspaceAuthorityRef, authority)
+      )
+        return;
       const listed = await tryOrReport(
         () => dependenciesRef.current.gitWorktreeGateway.listWorktrees(repository.repositoryRoot),
         dependenciesRef,
       );
-      if (!isCurrentWorkspaceAuthority(dependenciesRef, mountedRef, workspaceAuthorityRef, authority)) {
+      if (
+        !isCurrentWorkspaceAuthority(dependenciesRef, mountedRef, workspaceAuthorityRef, authority)
+      ) {
         return;
       }
       if (!listed.ok) continue;
@@ -414,24 +412,14 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
     ).set(repositoryRoot, requestGeneration);
 
     if (
-      !isCurrentOwner(
-        dependenciesRef,
-        mountedRef,
-        workspaceAuthorityRef,
-        authority,
-        repositoryRoot,
-      )
-    ) return;
+      !isCurrentOwner(dependenciesRef, mountedRef, workspaceAuthorityRef, authority, repositoryRoot)
+    )
+      return;
     const result = await attempt(() => deps.gitGateway.getStatus(repositoryRoot));
     if (
-      !isCurrentOwner(
-        dependenciesRef,
-        mountedRef,
-        workspaceAuthorityRef,
-        authority,
-        repositoryRoot,
-      )
-    ) return;
+      !isCurrentOwner(dependenciesRef, mountedRef, workspaceAuthorityRef, authority, repositoryRoot)
+    )
+      return;
     if (isolationStatusRequestGenerationRef.current.get(repositoryRoot) !== requestGeneration) {
       return;
     }
@@ -455,13 +443,12 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
         repositoryRoot,
         recommended: defaultAgentTaskIsolation(context),
         inPlaceGuard: inPlaceDispatchGuard(context),
-        confirmationKey:
-          sameOptionalWorkspaceAuthority(
-            isolationStatusesRef.current.get(repositoryRoot)?.authority,
-            workspaceAuthorityRef.current,
-          )
-            ? isolationConfirmationKey(repositoryRoot, context, workspaceAuthorityRef.current)
-            : null,
+        confirmationKey: sameOptionalWorkspaceAuthority(
+          isolationStatusesRef.current.get(repositoryRoot)?.authority,
+          workspaceAuthorityRef.current,
+        )
+          ? isolationConfirmationKey(repositoryRoot, context, workspaceAuthorityRef.current)
+          : null,
       };
     },
     [isolationContext],
@@ -536,7 +523,8 @@ export function useAgentTasks(dependencies: AgentTasksDependencies): AgentTasksS
               authority,
               repository.repositoryRoot,
             )
-          ) return null;
+          )
+            return null;
           const freshStatus = await attempt(() =>
             deps.gitGateway.getStatus(repository.repositoryRoot),
           );
@@ -965,7 +953,8 @@ async function runDispatch(run: DispatchRun): Promise<boolean> {
         authority,
         repositoryRoot,
       )
-    ) return false;
+    )
+      return false;
     const gateway = dependenciesRef.current.gitWorktreeGateway;
     const receipt = await attempt(() => gateway.addAgentWorktree(repositoryRoot, taskId));
     if (!receipt.ok) {
@@ -1026,18 +1015,17 @@ async function runDispatch(run: DispatchRun): Promise<boolean> {
     if (createdWorktree !== null) await compensateCreatedWorktree(run, createdWorktree);
     return false;
   }
-  const started = await attempt(
-    () =>
-      agentTaskGateway.startAgentTask({
-        taskId,
-        workspaceId,
-        repositoryRoot,
-        cwd: worktreePath ?? repositoryRoot,
-        isolation: run.isolation,
-        prompt: run.prompt,
-        agentCliPath: run.agentCliPath,
-        agentCliKind: run.agentCliKind,
-      }),
+  const started = await attempt(() =>
+    agentTaskGateway.startAgentTask({
+      taskId,
+      workspaceId,
+      repositoryRoot,
+      cwd: worktreePath ?? repositoryRoot,
+      isolation: run.isolation,
+      prompt: run.prompt,
+      agentCliPath: run.agentCliPath,
+      agentCliKind: run.agentCliKind,
+    }),
   );
   if (!started.ok) {
     if (createdWorktree !== null) retainUncertainWorktree(run, createdWorktree);
@@ -1229,11 +1217,13 @@ interface WorkspaceAuthority {
   readonly workspaceRoot: string | null;
 }
 
-function captureWorkspaceAuthority(
-  workspaceAuthorityRef: { readonly current: WorkspaceAuthority },
-): (WorkspaceAuthority & { readonly workspaceId: string }) | null {
+function captureWorkspaceAuthority(workspaceAuthorityRef: {
+  readonly current: WorkspaceAuthority;
+}): (WorkspaceAuthority & { readonly workspaceId: string }) | null {
   const authority = workspaceAuthorityRef.current;
-  return authority.workspaceId === null ? null : { ...authority, workspaceId: authority.workspaceId };
+  return authority.workspaceId === null
+    ? null
+    : { ...authority, workspaceId: authority.workspaceId };
 }
 
 function sameWorkspaceAuthority(left: WorkspaceAuthority, right: WorkspaceAuthority): boolean {
@@ -1271,14 +1261,8 @@ function isCurrentOwner(
   authority: WorkspaceAuthority,
   repositoryRoot: string,
 ): boolean {
-  if (
-    !isCurrentWorkspaceAuthority(
-      dependenciesRef,
-      mountedRef,
-      workspaceAuthorityRef,
-      authority,
-    )
-  ) return false;
+  if (!isCurrentWorkspaceAuthority(dependenciesRef, mountedRef, workspaceAuthorityRef, authority))
+    return false;
   const deps = dependenciesRef.current;
   return deps.resolvedRepositories.some(
     (repository) => repository.repositoryRoot === repositoryRoot,

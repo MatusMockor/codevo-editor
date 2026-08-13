@@ -62,4 +62,37 @@ describe("formatWindowTitle", () => {
   ])("formats $expected", ({ input, expected }) => {
     expect(formatWindowTitle(input)).toBe(expected);
   });
+
+  it("names the window after the workspace while agent mode is active", () => {
+    expect(
+      formatWindowTitle({
+        activeFilePath: "/projects/myproject/src/index.ts",
+        agentModeActive: true,
+        isDirty: true,
+        workspaceName: "/projects/myproject",
+      }),
+    ).toBe("Agents - myproject");
+  });
+
+  it("stays truthful in agent mode without a workspace", () => {
+    expect(
+      formatWindowTitle({
+        activeFilePath: null,
+        agentModeActive: true,
+        isDirty: false,
+        workspaceName: null,
+      }),
+    ).toBe("Agents");
+  });
+
+  it("restores the editor title when agent mode ends", () => {
+    const input = {
+      activeFilePath: "/projects/myproject/src/index.ts",
+      isDirty: false,
+      workspaceName: "/projects/myproject",
+    };
+
+    expect(formatWindowTitle({ ...input, agentModeActive: true })).toBe("Agents - myproject");
+    expect(formatWindowTitle({ ...input, agentModeActive: false })).toBe("index.ts - myproject");
+  });
 });

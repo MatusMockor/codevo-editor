@@ -44,9 +44,8 @@ import { jsTestEditorSurfaceProps } from "./components/jsTestEditorSurfaceProps"
 import {
   areFileStatusesByPathEqual,
   clamp,
-  isJavaScriptTypeScriptLanguage,
   maxBottomPanelHeight,
-  toolSourceLabel,
+  workspaceInfoLabel,
 } from "./components/appPresentation";
 import { useOwnedWorkspaceExpressRoutesWorkbenchPanel } from "./components/useWorkspaceExpressRoutesWorkbenchPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
@@ -106,13 +105,14 @@ import {
 import type { GitChangeStatus } from "./domain/git";
 import { createWorkspaceEditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import { monacoThemeForAppTheme, terminalThemeForAppTheme } from "./domain/settings";
-import { isDirty, javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
+import { isDirty } from "./domain/workspace";
 import type { EditorDocument, ImageTab } from "./domain/workspace";
 import { createInitialEditorGroupsState, type EditorGroupId } from "./domain/editorGroups";
 import { isGitHistoryDiffDocumentPath } from "./domain/editorDocumentSchemes";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
 import { AgentModeView } from "./components/agentMode/AgentModeView";
+import { AgentStatusBar } from "./components/agentMode/AgentStatusBar";
 import { WorkbenchToolbar } from "./components/WorkbenchToolbar";
 import { workbenchComposition } from "./workbenchComposition";
 import "./App.css";
@@ -405,10 +405,16 @@ function App() {
     () =>
       formatWindowTitle({
         activeFilePath: workbench.activeDocument?.path ?? null,
+        agentModeActive: workbench.agentModeActive,
         isDirty: activeDocumentIsDirty,
         workspaceName: workbench.workspaceRoot,
       }),
-    [workbench.activeDocument?.path, activeDocumentIsDirty, workbench.workspaceRoot],
+    [
+      workbench.activeDocument?.path,
+      workbench.agentModeActive,
+      activeDocumentIsDirty,
+      workbench.workspaceRoot,
+    ],
   );
   useAppWindowTitle(windowTitle);
   usePerfScenarioBridgeInstall(workbench);
@@ -550,49 +556,23 @@ function App() {
       .filter((bookmark) => bookmark.path === activePath)
       .map((bookmark) => bookmark.lineNumber);
   }, [workbench.activeDocument?.path, workbench.bookmarks]);
-  const workspaceLabel = useMemo(() => {
-    const jsTs = workbench.workspaceDescriptor?.javaScriptTypeScript;
-    const php = workbench.workspaceDescriptor?.php;
-
-    if (jsTs && isJavaScriptTypeScriptLanguage(activeLanguage)) {
-      return javaScriptTypeScriptWorkspaceLabel(
-        jsTs,
-        workbench.workspaceSettings.javaScriptTypeScriptVersion,
-      );
-    }
-
-    if (!php) {
-      return jsTs
-        ? javaScriptTypeScriptWorkspaceLabel(
-            jsTs,
-            workbench.workspaceSettings.javaScriptTypeScriptVersion,
-          )
-        : null;
-    }
-
-    const packageName = php.packageName || "PHP Composer";
-    const phpLevel =
-      workbench.workspaceSettings.phpVersionOverride ||
-      php.phpPlatformVersion ||
-      php.phpVersionConstraint;
-    const packageLabel = phpLevel ? `${packageName} · PHP ${phpLevel}` : packageName;
-
-    if (workbench.phpTools?.phpactor) {
-      return `${packageLabel} · ${toolSourceLabel(workbench.phpTools.phpactor.source)}`;
-    }
-
-    if (workbench.phpTools?.intelephense) {
-      return `${packageLabel} · Intelephense`;
-    }
-
-    return `${packageLabel} · PHP tools missing`;
-  }, [
-    activeLanguage,
-    workbench.phpTools,
-    workbench.workspaceDescriptor,
-    workbench.workspaceSettings.javaScriptTypeScriptVersion,
-    workbench.workspaceSettings.phpVersionOverride,
-  ]);
+  const workspaceLabel = useMemo(
+    () =>
+      workspaceInfoLabel({
+        activeLanguage,
+        javaScriptTypeScriptVersion: workbench.workspaceSettings.javaScriptTypeScriptVersion,
+        phpTools: workbench.phpTools,
+        phpVersionOverride: workbench.workspaceSettings.phpVersionOverride,
+        workspaceDescriptor: workbench.workspaceDescriptor,
+      }),
+    [
+      activeLanguage,
+      workbench.phpTools,
+      workbench.workspaceDescriptor,
+      workbench.workspaceSettings.javaScriptTypeScriptVersion,
+      workbench.workspaceSettings.phpVersionOverride,
+    ],
+  );
   const languageServerLabel = useMemo(
     () =>
       phpLanguageServerActivityLabel(
@@ -1172,13 +1152,15 @@ function App() {
       />
 
       <section className="editor-workbench">
-        <ProjectTabs
-          activeRoot={workbench.workspaceRoot}
-          dirtyCount={workbench.dirtyCount}
-          onActivate={workbench.activateWorkspaceTab}
-          onClose={workbench.closeWorkspaceTab}
-          workspaceTabs={workbench.workspaceTabs}
-        />
+        {workbench.agentModeActive ? null : (
+          <ProjectTabs
+            activeRoot={workbench.workspaceRoot}
+            dirtyCount={workbench.dirtyCount}
+            onActivate={workbench.activateWorkspaceTab}
+            onClose={workbench.closeWorkspaceTab}
+            workspaceTabs={workbench.workspaceTabs}
+          />
+        )}
         <WorkbenchToolbar
           agentModeActive={workbench.agentModeActive}
           ideProgress={ideProgress}
@@ -1305,39 +1287,50 @@ function App() {
         </div>
       </section>
 
-      <StatusBar
-        activeLanguage={activeLanguage}
-        activePath={workbench.activePath}
-        cursorAuthority={cursorAuthority}
-        cursorStore={cursorStore}
-        dirtyCount={workbench.dirtyCount}
-        dirtyCountProjection={workbench.documentSessionAuthorityRevision.ownerDirtyCountProjection}
-        errorCount={workbench.diagnosticsSummary.errors}
-        gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch}
-        gitBranchRepositoryLabel={workbench.gitBranchRepositoryLabel}
-        intelligenceMode={workbench.intelligenceMode}
-        largeDocumentStatus={activeEditorDegradedStatus}
-        message={workbench.message}
-        nodeRunStatus={presentOptionalNodeRunWithoutDebugging(
-          workbench.nodeRunWithoutDebugging.state,
-        )}
-        onChangeVisibility={workbench.setStatusBarItemVisibility}
-        onOpenRuntimePanel={openRuntimePanel}
-        onStopNodeRun={workbench.nodeRunWithoutDebugging.stop}
-        onShowGitBranches={workbench.openGitBranchPanel}
-        onShowGoToLine={showGoToLine}
-        onShowProblems={showProblemsPanel}
-        statusBar={workbench.workspaceSettings.statusBar}
-        warningCount={workbench.diagnosticsSummary.warnings}
-        workspaceRoot={workbench.workspaceRoot}
-        workspaceInfoLabel={workspaceLabel}
-        ideActivityDetail={ideActivityChipDetail}
-        ideActivityLabel={ideActivity.label}
-        ideActivityState={ideActivity.state}
-        workspaceTrustLabel={
-          workbench.workspaceRoot ? (workspaceTrusted ? "Trusted" : "Untrusted") : null
-        }
-      />
+      {workbench.agentModeActive ? (
+        <AgentStatusBar
+          liveTaskCount={workbench.agents.liveTaskCount}
+          maxConcurrentAgentTasks={workbench.agents.maxConcurrentAgentTasks}
+          workspaceRoot={workbench.workspaceRoot}
+          workspaceTrusted={workspaceTrusted}
+        />
+      ) : (
+        <StatusBar
+          activeLanguage={activeLanguage}
+          activePath={workbench.activePath}
+          cursorAuthority={cursorAuthority}
+          cursorStore={cursorStore}
+          dirtyCount={workbench.dirtyCount}
+          dirtyCountProjection={
+            workbench.documentSessionAuthorityRevision.ownerDirtyCountProjection
+          }
+          errorCount={workbench.diagnosticsSummary.errors}
+          gitBranch={workbench.gitBranch ?? workbench.gitStatus?.branch}
+          gitBranchRepositoryLabel={workbench.gitBranchRepositoryLabel}
+          intelligenceMode={workbench.intelligenceMode}
+          largeDocumentStatus={activeEditorDegradedStatus}
+          message={workbench.message}
+          nodeRunStatus={presentOptionalNodeRunWithoutDebugging(
+            workbench.nodeRunWithoutDebugging.state,
+          )}
+          onChangeVisibility={workbench.setStatusBarItemVisibility}
+          onOpenRuntimePanel={openRuntimePanel}
+          onStopNodeRun={workbench.nodeRunWithoutDebugging.stop}
+          onShowGitBranches={workbench.openGitBranchPanel}
+          onShowGoToLine={showGoToLine}
+          onShowProblems={showProblemsPanel}
+          statusBar={workbench.workspaceSettings.statusBar}
+          warningCount={workbench.diagnosticsSummary.warnings}
+          workspaceRoot={workbench.workspaceRoot}
+          workspaceInfoLabel={workspaceLabel}
+          ideActivityDetail={ideActivityChipDetail}
+          ideActivityLabel={ideActivity.label}
+          ideActivityState={ideActivity.state}
+          workspaceTrustLabel={
+            workbench.workspaceRoot ? (workspaceTrusted ? "Trusted" : "Untrusted") : null
+          }
+        />
+      )}
 
       <WorkbenchOverlayHosts
         composition={workbenchComposition}

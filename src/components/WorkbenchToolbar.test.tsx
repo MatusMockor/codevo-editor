@@ -65,6 +65,29 @@ describe("WorkbenchToolbar", () => {
     expect(onToggleSmartMode).toHaveBeenCalledTimes(1);
   });
 
+  it("strips editor-only toolbar content in agent mode", () => {
+    render({
+      agentModeActive: true,
+      ideProgress: { busy: true, state: "active", text: "Indexing" },
+    });
+
+    expect(host.querySelector(".workbench-toolbar--agent")).not.toBeNull();
+    expect(host.querySelector(".smart-mode-switch")).toBeNull();
+    expect(host.querySelector(".toolbar-status")).toBeNull();
+    expect(host.querySelector(".toolbar-progress")).toBeNull();
+    expect(modeButton("Agents").getAttribute("aria-pressed")).toBe("true");
+    expect(modeButton("Code").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("keeps the trust affordance reachable in agent mode", () => {
+    const onTrustWorkspace = vi.fn();
+    render({ agentModeActive: true, onTrustWorkspace, workspaceTrusted: false });
+
+    act(() => host.querySelector<HTMLButtonElement>(".toolbar-action")?.click());
+
+    expect(onTrustWorkspace).toHaveBeenCalledTimes(1);
+  });
+
   it("offers to trust an untrusted workspace", () => {
     const onTrustWorkspace = vi.fn();
     render({ onTrustWorkspace, workspaceTrusted: false });

@@ -901,8 +901,14 @@ describe("App command routing", () => {
     expect(host.querySelector(".activity-bar")).not.toBeNull();
     expect(host.querySelector(".sidebar")).not.toBeNull();
     expect(host.querySelector('[data-testid="agent-mode-view"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="status-bar"]')).not.toBeNull();
+    expect(document.title).toBe("workspace");
 
-    mocks.workbenchOverrides = { agentModeActive: true };
+    mocks.workbenchOverrides = {
+      agentModeActive: true,
+      agents: { liveTaskCount: 1, maxConcurrentAgentTasks: 3, repositories: [] },
+    };
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
@@ -911,7 +917,13 @@ describe("App command routing", () => {
     expect(host.querySelector('[data-testid="agent-mode-view"]')).not.toBeNull();
     expect(host.querySelector(".activity-bar")).toBeNull();
     expect(host.querySelector(".sidebar")).toBeNull();
+    expect(host.querySelector('[data-testid="project-tabs"]')).toBeNull();
+    expect(host.querySelector('[data-testid="status-bar"]')).toBeNull();
+    expect(host.querySelector(".status-bar--agent")?.textContent).toContain("1/3 agents running");
+    expect(host.querySelector(".workbench-toolbar--agent")).not.toBeNull();
+    expect(host.querySelector(".smart-mode-switch")).toBeNull();
     expect(host.querySelector(".app-shell")?.className).toContain("app-shell--agent-mode");
+    expect(document.title).toBe("Agents - workspace");
 
     mocks.workbenchOverrides = {};
     await act(async () => {
@@ -922,8 +934,12 @@ describe("App command routing", () => {
     expect(host.querySelector('[data-testid="agent-mode-view"]')).toBeNull();
     expect(host.querySelector(".activity-bar")).not.toBeNull();
     expect(host.querySelector(".sidebar")).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-tabs"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="status-bar"]')).not.toBeNull();
+    expect(host.querySelector(".status-bar--agent")).toBeNull();
     expect(host.querySelector(".sidebar-tab.active")?.textContent).toBe("Files");
     expect(host.querySelector(".app-shell")?.className).not.toContain("app-shell--agent-mode");
+    expect(document.title).toBe("workspace");
   });
 
   it("keeps the editor runtime and its state mounted across Code to Agents to Code", async () => {
@@ -1023,6 +1039,7 @@ function createWorkbench() {
       activeDocument: null,
       activeFrameworkActivityLabel: null,
       agentModeActive: false,
+      agents: { liveTaskCount: 0, maxConcurrentAgentTasks: 4, repositories: [] },
       activePath: null,
       appSettings: {
         editorFontFamily: "Menlo, monospace",

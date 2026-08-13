@@ -121,6 +121,7 @@ function AgentThreadSessionEmpty({ repositoryLabel }: { readonly repositoryLabel
       </header>
       <div className="agent-session__scroll">
         <div className="agent-session__body agent-session__body--empty">
+          <AgentEmptyFigure />
           <h2 className="agent-empty__title">
             {repositoryLabel === null
               ? "No Git repository detected"
@@ -130,9 +131,61 @@ function AgentThreadSessionEmpty({ repositoryLabel }: { readonly repositoryLabel
             Describe the change. The agent picks up the repository below, works through the task,
             and comes back with output you can review.
           </p>
+          {repositoryLabel !== null && (
+            <p className="agent-empty__hints">
+              <span className="agent-empty__hint">
+                <kbd>⌘</kbd>
+                <kbd>↩</kbd> starts the run
+              </span>
+              <span aria-hidden="true" className="agent-prompt__sep" />
+              <span className="agent-empty__hint">
+                <span className="agent-empty__chip">worktree</span> keeps your working tree
+                untouched
+              </span>
+            </p>
+          )}
         </div>
       </div>
     </section>
+  );
+}
+
+function AgentEmptyFigure() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="agent-empty__figure"
+      fill="none"
+      height="56"
+      viewBox="0 0 72 56"
+      width="72"
+    >
+      <path d="M8 8v40" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+      <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="8" cy="48" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M8 20c0 10 22 4 30 10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.5"
+      />
+      <path
+        className="agent-empty__accent"
+        d="M38 30h18"
+        stroke="currentColor"
+        strokeDasharray="1 5"
+        strokeLinecap="round"
+        strokeWidth="1.5"
+      />
+      <circle
+        className="agent-empty__accent"
+        cx="61"
+        cy="30"
+        r="3.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
   );
 }
 

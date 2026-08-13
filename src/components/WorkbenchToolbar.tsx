@@ -36,25 +36,30 @@ export function WorkbenchToolbar({
   workspaceRoot,
   workspaceTrusted,
 }: WorkbenchToolbarProps) {
+  if (agentModeActive) {
+    return (
+      <header className="workbench-toolbar workbench-toolbar--agent">
+        <WorkbenchModeSwitch
+          agentModeActive={agentModeActive}
+          onSelectAgentMode={onSelectAgentMode}
+          workspaceRoot={workspaceRoot}
+        />
+        {workspaceRoot && !workspaceTrusted ? (
+          <button className="toolbar-action" onClick={onTrustWorkspace} type="button">
+            Trust
+          </button>
+        ) : null}
+      </header>
+    );
+  }
+
   return (
     <header className="workbench-toolbar">
-      <div aria-label="Workbench mode" className="workbench-mode-switch" role="group">
-        <button
-          aria-pressed={!agentModeActive}
-          onClick={() => onSelectAgentMode(false)}
-          type="button"
-        >
-          Code
-        </button>
-        <button
-          aria-pressed={agentModeActive}
-          disabled={!workspaceRoot}
-          onClick={() => onSelectAgentMode(true)}
-          type="button"
-        >
-          Agents
-        </button>
-      </div>
+      <WorkbenchModeSwitch
+        agentModeActive={agentModeActive}
+        onSelectAgentMode={onSelectAgentMode}
+        workspaceRoot={workspaceRoot}
+      />
       <button
         aria-pressed={intelligenceMode === "fullSmart"}
         className={
@@ -103,5 +108,35 @@ export function WorkbenchToolbar({
         </button>
       ) : null}
     </header>
+  );
+}
+
+function WorkbenchModeSwitch({
+  agentModeActive,
+  onSelectAgentMode,
+  workspaceRoot,
+}: {
+  readonly agentModeActive: boolean;
+  readonly workspaceRoot: string | null;
+  onSelectAgentMode(active: boolean): void;
+}) {
+  return (
+    <div aria-label="Workbench mode" className="workbench-mode-switch" role="group">
+      <button
+        aria-pressed={!agentModeActive}
+        onClick={() => onSelectAgentMode(false)}
+        type="button"
+      >
+        Code
+      </button>
+      <button
+        aria-pressed={agentModeActive}
+        disabled={!workspaceRoot}
+        onClick={() => onSelectAgentMode(true)}
+        type="button"
+      >
+        Agents
+      </button>
+    </div>
   );
 }

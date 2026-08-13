@@ -13,6 +13,8 @@ export function useAppSyntaxHighlighterPreload(
 
 export function useAppWindowTitle(windowTitle: string): void {
   useEffect(() => {
+    document.title = windowTitle;
+
     if (!isTauri()) {
       return;
     }

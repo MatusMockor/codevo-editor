@@ -1,5 +1,53 @@
+import type { JavaScriptTypeScriptVersionPreference } from "../domain/settings";
+import {
+  javaScriptTypeScriptWorkspaceLabel,
+  type PhpToolAvailability,
+  type WorkspaceDescriptor,
+} from "../domain/workspace";
+
 export function isJavaScriptTypeScriptLanguage(language: string | null): boolean {
   return language === "javascript" || language === "typescript";
+}
+
+export interface WorkspaceInfoLabelInput {
+  readonly activeLanguage: string | null;
+  readonly javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
+  readonly phpTools: PhpToolAvailability | null;
+  readonly phpVersionOverride: string | null;
+  readonly workspaceDescriptor: WorkspaceDescriptor | null;
+}
+
+export function workspaceInfoLabel({
+  activeLanguage,
+  javaScriptTypeScriptVersion,
+  phpTools,
+  phpVersionOverride,
+  workspaceDescriptor,
+}: WorkspaceInfoLabelInput): string | null {
+  const jsTs = workspaceDescriptor?.javaScriptTypeScript;
+  const php = workspaceDescriptor?.php;
+
+  if (jsTs && isJavaScriptTypeScriptLanguage(activeLanguage)) {
+    return javaScriptTypeScriptWorkspaceLabel(jsTs, javaScriptTypeScriptVersion);
+  }
+
+  if (!php) {
+    return jsTs ? javaScriptTypeScriptWorkspaceLabel(jsTs, javaScriptTypeScriptVersion) : null;
+  }
+
+  const packageName = php.packageName || "PHP Composer";
+  const phpLevel = phpVersionOverride || php.phpPlatformVersion || php.phpVersionConstraint;
+  const packageLabel = phpLevel ? `${packageName} · PHP ${phpLevel}` : packageName;
+
+  if (phpTools?.phpactor) {
+    return `${packageLabel} · ${toolSourceLabel(phpTools.phpactor.source)}`;
+  }
+
+  if (phpTools?.intelephense) {
+    return `${packageLabel} · Intelephense`;
+  }
+
+  return `${packageLabel} · PHP tools missing`;
 }
 
 export function toolSourceLabel(source: string): string {
