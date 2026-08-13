@@ -109,6 +109,62 @@ describe("agentModePresentation", () => {
     expect(groups[1]?.liveCount).toBe(0);
   });
 
+  it("floats pinned threads to the top of their own repository group", () => {
+    const groups = agentRepositoryGroups(
+      [
+        { mapping: { rootRelativePath: "" }, repositoryRoot: ROOT, repositoryRelativePath: "" },
+        {
+          mapping: { rootRelativePath: "packages/api" },
+          repositoryRoot: NESTED,
+          repositoryRelativePath: "",
+        },
+      ],
+      [
+        threadView("agt-1", ROOT),
+        threadView("agt-2", ROOT),
+        threadView("agt-3", ROOT),
+        threadView("agt-4", NESTED),
+        threadView("agt-5", NESTED),
+      ],
+      [],
+      ROOT,
+      ["agt-5", "agt-3"],
+    );
+
+    expect(groups[0]?.threads.map((thread) => thread.record.owner.taskId)).toEqual([
+      "agt-3",
+      "agt-1",
+      "agt-2",
+    ]);
+    expect(groups[1]?.threads.map((thread) => thread.record.owner.taskId)).toEqual([
+      "agt-5",
+      "agt-4",
+    ]);
+  });
+
+  it("orders pinned threads by pin time and keeps the incoming order for the rest", () => {
+    const groups = agentRepositoryGroups(
+      [{ mapping: { rootRelativePath: "" }, repositoryRoot: ROOT, repositoryRelativePath: "" }],
+      [
+        threadView("agt-1", ROOT),
+        threadView("agt-2", ROOT),
+        threadView("agt-3", ROOT),
+        threadView("agt-4", ROOT),
+      ],
+      [],
+      ROOT,
+      ["agt-4", "agt-1", "agt-9"],
+    );
+
+    expect(groups[0]?.threads.map((thread) => thread.record.owner.taskId)).toEqual([
+      "agt-4",
+      "agt-1",
+      "agt-2",
+      "agt-3",
+    ]);
+    expect(groups[0]?.liveCount).toBe(0);
+  });
+
   it("keeps threads of an unresolved repository visible in a detached group", () => {
     const groups = agentRepositoryGroups(
       [{ mapping: { rootRelativePath: "" }, repositoryRoot: ROOT, repositoryRelativePath: "" }],

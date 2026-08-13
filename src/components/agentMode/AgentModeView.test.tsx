@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTaskView, AgentTasksSurface } from "../../application/useAgentTasks";
 import type { AgentTaskRecord } from "../../domain/agentTask";
 import type { ResolvedGitRepository } from "../../domain/gitRepositoryMapping";
+import { agentThreadPinStorageKey } from "../../application/useAgentThreadPins";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 
 const ROOT = "/workspace/app";
@@ -18,6 +19,7 @@ describe("AgentModeView", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    window.localStorage.clear();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -271,8 +273,56 @@ describe("AgentModeView", () => {
     expect(host.querySelector('section[aria-label="New agent thread"]')).not.toBeNull();
   });
 
+  it("pins a thread to the top of its repository group and restores it after a remount", () => {
+    const tasks = [taskView("agt-1", ROOT), taskView("agt-2", ROOT), taskView("agt-3", NESTED)];
+    render({ agents: surface({ tasks }) });
+
+    expect(threadOrder()).toEqual(["agt-1", "agt-2", "agt-3"]);
+
+    click('[aria-label="Pin thread agt-2"]');
+
+    expect(threadOrder()).toEqual(["agt-2", "agt-1", "agt-3"]);
+    expect(window.localStorage.getItem(agentThreadPinStorageKey(ROOT))).toBe('["agt-2"]');
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    render({ agents: surface({ tasks }) });
+
+    expect(threadOrder()).toEqual(["agt-2", "agt-1", "agt-3"]);
+  });
+
+  it("shares the pin state between the thread row and the details column", () => {
+    render({ agents: surface({ tasks: [taskView("agt-1", ROOT)] }) });
+
+    clickText("Refactor the parser");
+    click('[aria-label="Pin agent agt-1"]');
+
+    expect(host.querySelector('[aria-label="Unpin thread agt-1"]')).not.toBeNull();
+
+    click('[aria-label="Unpin thread agt-1"]');
+
+    expect(host.querySelector('[aria-label="Pin agent agt-1"]')).not.toBeNull();
+    expect(window.localStorage.getItem(agentThreadPinStorageKey(ROOT))).toBeNull();
+  });
+
+  it("forgets the pin of a thread that was dismissed elsewhere", () => {
+    render({ agents: surface({ tasks: [taskView("agt-1", ROOT), taskView("agt-2", ROOT)] }) });
+
+    click('[aria-label="Pin thread agt-1"]');
+    render({ agents: surface({ tasks: [taskView("agt-2", ROOT)] }) });
+
+    expect(window.localStorage.getItem(agentThreadPinStorageKey(ROOT))).toBeNull();
+    expect(threadOrder()).toEqual(["agt-2"]);
+  });
+
   function render(overrides: Partial<AgentModeViewProps> = {}): void {
     act(() => root.render(<AgentModeView {...defaultProps()} {...overrides} />));
+  }
+
+  function threadOrder(): readonly string[] {
+    return [...host.querySelectorAll(".agent-thread__pin")].map((element) =>
+      (element.getAttribute("aria-label") ?? "").replace(/^(?:Un)?[Pp]in thread /, ""),
+    );
   }
 
   function promptField(): HTMLTextAreaElement {

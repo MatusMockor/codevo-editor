@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Pin } from "lucide-react";
 import type { AgentTaskView } from "../../application/useAgentTasks";
 import {
   agentThreadStatusLabel,
@@ -12,11 +12,13 @@ export interface AgentThreadsSidebarProps {
   readonly groups: ReadonlyArray<AgentRepositoryGroup>;
   readonly collapsedRepositoryRoots: ReadonlySet<string>;
   readonly selectedTaskId: string | null;
+  readonly pinnedTaskIds: ReadonlySet<string>;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
   readonly now: number;
   onToggleGroup(repositoryRoot: string): void;
   onSelectThread(taskId: string): void;
+  onTogglePin(taskId: string): void;
   onNewThread(repositoryRoot: string): void;
   onRemoveOrphan(worktreePath: string): void;
   onPruneOrphans(repositoryRoot: string): void;
@@ -33,6 +35,8 @@ export function AgentThreadsSidebar({
   onRemoveOrphan,
   onSelectThread,
   onToggleGroup,
+  onTogglePin,
+  pinnedTaskIds,
   selectedTaskId,
 }: AgentThreadsSidebarProps) {
   return (
@@ -59,6 +63,8 @@ export function AgentThreadsSidebar({
             onRemoveOrphan={onRemoveOrphan}
             onSelectThread={onSelectThread}
             onToggleGroup={onToggleGroup}
+            onTogglePin={onTogglePin}
+            pinnedTaskIds={pinnedTaskIds}
             selectedTaskId={selectedTaskId}
           />
         ))}
@@ -76,14 +82,18 @@ function AgentRepositoryGroupSection({
   onRemoveOrphan,
   onSelectThread,
   onToggleGroup,
+  onTogglePin,
+  pinnedTaskIds,
   selectedTaskId,
 }: {
   readonly collapsed: boolean;
   readonly group: AgentRepositoryGroup;
   readonly now: number;
+  readonly pinnedTaskIds: ReadonlySet<string>;
   readonly selectedTaskId: string | null;
   onToggleGroup(repositoryRoot: string): void;
   onSelectThread(taskId: string): void;
+  onTogglePin(taskId: string): void;
   onNewThread(repositoryRoot: string): void;
   onRemoveOrphan(worktreePath: string): void;
   onPruneOrphans(repositoryRoot: string): void;
@@ -110,6 +120,8 @@ function AgentRepositoryGroupSection({
               key={thread.record.owner.taskId}
               now={now}
               onSelect={onSelectThread}
+              onTogglePin={onTogglePin}
+              pinned={pinnedTaskIds.has(thread.record.owner.taskId)}
               selected={selectedTaskId === thread.record.owner.taskId}
               thread={thread}
             />
@@ -143,33 +155,51 @@ function AgentRepositoryGroupSection({
 function AgentThreadRow({
   now,
   onSelect,
+  onTogglePin,
+  pinned,
   selected,
   thread,
 }: {
   readonly now: number;
+  readonly pinned: boolean;
   readonly selected: boolean;
   readonly thread: AgentTaskView;
   onSelect(taskId: string): void;
+  onTogglePin(taskId: string): void;
 }) {
   const tone = agentThreadTone(thread.record.status);
+  const taskId = thread.record.owner.taskId;
   const className = selected ? "agent-thread agent-thread--on" : "agent-thread";
+  const pinClassName = pinned ? "agent-thread__pin agent-thread__pin--on" : "agent-thread__pin";
 
   return (
-    <button
-      aria-current={selected}
-      className={className}
-      onClick={() => onSelect(thread.record.owner.taskId)}
-      type="button"
-    >
-      <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
-      <span className="agent-thread__text">
-        <span className="agent-thread__title">{agentThreadTitle(thread.record.prompt)}</span>
-        <span className="agent-thread__meta agent-num">
-          {agentThreadStatusLabel(thread.record.status)} ·{" "}
-          {agentThreadTimeLabel(thread.record.startedAtEpochMs, now)}
+    <div className="agent-thread-slot">
+      <button
+        aria-current={selected}
+        className={className}
+        onClick={() => onSelect(taskId)}
+        type="button"
+      >
+        <span aria-hidden="true" className={`agent-dot agent-dot--${tone}`} />
+        <span className="agent-thread__text">
+          <span className="agent-thread__title">{agentThreadTitle(thread.record.prompt)}</span>
+          <span className="agent-thread__meta agent-num">
+            {agentThreadStatusLabel(thread.record.status)} ·{" "}
+            {agentThreadTimeLabel(thread.record.startedAtEpochMs, now)}
+          </span>
         </span>
-      </span>
-    </button>
+      </button>
+      <button
+        aria-label={pinned ? `Unpin thread ${taskId}` : `Pin thread ${taskId}`}
+        aria-pressed={pinned}
+        className={pinClassName}
+        onClick={() => onTogglePin(taskId)}
+        title={pinned ? "Unpin thread" : "Pin thread"}
+        type="button"
+      >
+        <Pin aria-hidden="true" size={11} />
+      </button>
+    </div>
   );
 }
 

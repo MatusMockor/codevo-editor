@@ -133,6 +133,45 @@ describe("AgentThreadsSidebar", () => {
     expect(onPruneOrphans).toHaveBeenCalledWith(ROOT);
   });
 
+  it("pins and unpins a thread from its row", () => {
+    const onTogglePin = vi.fn();
+    render({ onTogglePin });
+
+    click('[aria-label="Pin thread agt-1"]');
+
+    expect(onTogglePin).toHaveBeenCalledWith("agt-1");
+    expect(
+      host.querySelector('[aria-label="Pin thread agt-1"]')?.getAttribute("aria-pressed"),
+    ).toBe("false");
+
+    render({ onTogglePin, pinnedTaskIds: new Set(["agt-1"]) });
+
+    const pinned = host.querySelector('[aria-label="Unpin thread agt-1"]');
+    expect(pinned?.getAttribute("aria-pressed")).toBe("true");
+    expect(pinned?.className).toContain("agent-thread__pin--on");
+
+    click('[aria-label="Unpin thread agt-1"]');
+    expect(onTogglePin).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps selecting a thread separate from pinning it", () => {
+    const onSelectThread = vi.fn();
+    const onTogglePin = vi.fn();
+    render({ onSelectThread, onTogglePin });
+
+    click('[aria-label="Pin thread agt-1"]');
+
+    expect(onSelectThread).not.toHaveBeenCalled();
+    expect(onTogglePin).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("offers no pin action for orphaned worktrees", () => {
+    render({ groups: [group({ threads: [], orphans: [orphan(false)] })] });
+
+    expect(host.textContent).toContain("Orphaned worktrees");
+    expect(host.querySelector(".agent-thread__pin")).toBeNull();
+  });
+
   it("explains an empty workspace without repositories", () => {
     render({ groups: [] });
 
@@ -167,11 +206,13 @@ function defaultProps(): AgentThreadsSidebarProps {
     groups: [group({})],
     collapsedRepositoryRoots: new Set(),
     selectedTaskId: null,
+    pinnedTaskIds: new Set(),
     liveTaskCount: 1,
     maxConcurrentAgentTasks: 4,
     now: NOW,
     onToggleGroup: () => undefined,
     onSelectThread: () => undefined,
+    onTogglePin: () => undefined,
     onNewThread: () => undefined,
     onRemoveOrphan: () => undefined,
     onPruneOrphans: () => undefined,

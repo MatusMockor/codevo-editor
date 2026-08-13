@@ -137,6 +137,34 @@ describe("AgentThreadInfoColumn", () => {
     expect(onDismiss).toHaveBeenCalledWith("agt-1");
   });
 
+  it("pins a running thread and unpins a pinned terminal thread", () => {
+    const onTogglePin = vi.fn();
+    render({ onTogglePin, thread: threadView({ status: { kind: "running" } }) });
+
+    click('[aria-label="Pin agent agt-1"]');
+
+    expect(onTogglePin).toHaveBeenCalledWith("agt-1");
+    expect(host.textContent).toContain("Pin thread");
+
+    render({
+      onTogglePin,
+      pinned: true,
+      thread: threadView({ status: { kind: "stopped" }, terminal: true }),
+    });
+
+    const unpin = host.querySelector('[aria-label="Unpin agent agt-1"]');
+    expect(unpin?.getAttribute("aria-pressed")).toBe("true");
+    click('[aria-label="Unpin agent agt-1"]');
+
+    expect(onTogglePin).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers no pin action while no thread is selected", () => {
+    render({ thread: null });
+
+    expect(host.querySelector('[aria-label^="Pin agent"]')).toBeNull();
+  });
+
   function render(overrides: Partial<AgentThreadInfoColumnProps> = {}): void {
     act(() => root.render(<AgentThreadInfoColumn {...defaultProps()} {...overrides} />));
   }
@@ -151,6 +179,7 @@ describe("AgentThreadInfoColumn", () => {
 function defaultProps(): AgentThreadInfoColumnProps {
   return {
     thread: threadView({}),
+    pinned: false,
     now: NOW,
     liveTaskCount: 0,
     maxConcurrentAgentTasks: 4,
@@ -161,6 +190,7 @@ function defaultProps(): AgentThreadInfoColumnProps {
     onDismiss: () => undefined,
     onShowChanges: () => undefined,
     onRemoveWorktree: () => undefined,
+    onTogglePin: () => undefined,
   };
 }
 

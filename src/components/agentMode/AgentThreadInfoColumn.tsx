@@ -1,4 +1,4 @@
-import { Eye, Square, Trash2, X } from "lucide-react";
+import { Eye, Pin, Square, Trash2, X } from "lucide-react";
 import type { AgentTaskView } from "../../application/useAgentTasks";
 import {
   agentIsolationBadgeLabel,
@@ -10,6 +10,7 @@ import {
 
 export interface AgentThreadInfoColumnProps {
   readonly thread: AgentTaskView | null;
+  readonly pinned: boolean;
   readonly now: number;
   readonly liveTaskCount: number;
   readonly maxConcurrentAgentTasks: number;
@@ -20,6 +21,7 @@ export interface AgentThreadInfoColumnProps {
   onDismiss(taskId: string): void;
   onShowChanges(taskId: string): void;
   onRemoveWorktree(taskId: string): void;
+  onTogglePin(taskId: string): void;
 }
 
 export function AgentThreadInfoColumn({
@@ -33,6 +35,8 @@ export function AgentThreadInfoColumn({
   onRemoveWorktree,
   onShowChanges,
   onStop,
+  onTogglePin,
+  pinned,
   thread,
 }: AgentThreadInfoColumnProps) {
   if (thread === null) {
@@ -108,6 +112,15 @@ export function AgentThreadInfoColumn({
       <section className="agent-info__section">
         <span className="agent-microlabel">actions</span>
         <div className="agent-info__actions">
+          <button
+            aria-label={pinned ? `Unpin agent ${taskId}` : `Pin agent ${taskId}`}
+            aria-pressed={pinned}
+            className={pinned ? "agent-info__action--pinned" : undefined}
+            onClick={() => onTogglePin(taskId)}
+            type="button"
+          >
+            <Pin aria-hidden="true" size={12} /> {pinned ? "Unpin thread" : "Pin thread"}
+          </button>
           {!thread.terminal && (
             <button
               aria-label={`Stop agent ${taskId}`}

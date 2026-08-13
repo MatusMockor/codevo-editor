@@ -7973,6 +7973,10 @@ kbd {
   color: var(--color-text);
 }
 
+.agent-thread-slot {
+  position: relative;
+}
+
 .agent-thread {
   position: relative;
   display: flex;
@@ -7983,7 +7987,7 @@ kbd {
   color: inherit;
   cursor: pointer;
   font: inherit;
-  padding: 8px 16px 8px 30px;
+  padding: 8px 34px 8px 30px;
   text-align: left;
   transition:
     background-color 160ms var(--ease-standard),
@@ -8003,8 +8007,50 @@ kbd {
 }
 
 .agent-thread:hover,
-.agent-thread--on {
+.agent-thread--on,
+.agent-thread-slot:hover .agent-thread {
   background: var(--color-hover);
+}
+
+.agent-thread__pin {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+  transition:
+    opacity 160ms var(--ease-standard),
+    border-color 160ms var(--ease-standard),
+    color 160ms var(--ease-standard);
+}
+
+.agent-thread-slot:hover .agent-thread__pin,
+.agent-thread__pin:focus-visible,
+.agent-thread__pin--on {
+  opacity: 1;
+}
+
+.agent-thread__pin:hover {
+  border-color: var(--agent-hairline-strong);
+  color: var(--color-text-strong);
+}
+
+.agent-thread__pin--on {
+  color: var(--color-text-muted);
+}
+
+.agent-thread__pin--on svg {
+  fill: color-mix(in srgb, currentColor 24%, transparent);
 }
 
 .agent-thread--on::before {
@@ -8790,6 +8836,14 @@ kbd {
 
 .agent-info__action--danger {
   color: var(--color-danger);
+}
+
+.agent-info__action--pinned {
+  color: var(--color-text-strong);
+}
+
+.agent-info__action--pinned svg {
+  fill: color-mix(in srgb, currentColor 24%, transparent);
 }
 
 .workbench-toolbar--agent {

@@ -131,7 +131,9 @@ export function agentRepositoryGroups(
   threads: ReadonlyArray<AgentTaskView>,
   orphans: ReadonlyArray<OrphanedWorktreeView>,
   workspaceRoot: string | null,
+  pinnedTaskIds: ReadonlyArray<string> = [],
 ): ReadonlyArray<AgentRepositoryGroup> {
+  const pinRanks = agentThreadPinRanks(pinnedTaskIds);
   const roots = new Set(repositories.map((repository) => repository.repositoryRoot));
   const groups = repositories.map((repository) =>
     buildGroup(
@@ -143,6 +145,7 @@ export function agentRepositoryGroups(
       threads,
       orphans,
       true,
+      pinRanks,
     ),
   );
 
@@ -155,7 +158,7 @@ export function agentRepositoryGroups(
 
   const detached = [...detachedRoots]
     .sort()
-    .map((root) => buildGroup(root, root, threads, orphans, false));
+    .map((root) => buildGroup(root, root, threads, orphans, false, pinRanks));
 
   return [...groups, ...detached];
 }
@@ -166,9 +169,11 @@ function buildGroup(
   threads: ReadonlyArray<AgentTaskView>,
   orphans: ReadonlyArray<OrphanedWorktreeView>,
   repositoryResolved: boolean,
+  pinRanks: ReadonlyMap<string, number>,
 ): AgentRepositoryGroup {
-  const groupThreads = threads.filter(
-    (thread) => thread.record.owner.repositoryRoot === repositoryRoot,
+  const groupThreads = orderPinnedThreadsFirst(
+    threads.filter((thread) => thread.record.owner.repositoryRoot === repositoryRoot),
+    pinRanks,
   );
 
   return {
@@ -179,6 +184,33 @@ function buildGroup(
     orphans: orphans.filter((orphan) => orphan.repositoryRoot === repositoryRoot),
     liveCount: groupThreads.filter((thread) => !thread.terminal).length,
   };
+}
+
+function agentThreadPinRanks(pinnedTaskIds: ReadonlyArray<string>): ReadonlyMap<string, number> {
+  const ranks = new Map<string, number>();
+  for (const [rank, taskId] of pinnedTaskIds.entries()) {
+    if (ranks.has(taskId)) {
+      continue;
+    }
+    ranks.set(taskId, rank);
+  }
+  return ranks;
+}
+
+function orderPinnedThreadsFirst(
+  threads: ReadonlyArray<AgentTaskView>,
+  pinRanks: ReadonlyMap<string, number>,
+): ReadonlyArray<AgentTaskView> {
+  if (pinRanks.size === 0) {
+    return threads;
+  }
+  return [...threads].sort(
+    (left, right) => threadPinRank(left, pinRanks) - threadPinRank(right, pinRanks),
+  );
+}
+
+function threadPinRank(thread: AgentTaskView, pinRanks: ReadonlyMap<string, number>): number {
+  return pinRanks.get(thread.record.owner.taskId) ?? Number.MAX_SAFE_INTEGER;
 }
 
 function unsupportedStatus(status: never): never {

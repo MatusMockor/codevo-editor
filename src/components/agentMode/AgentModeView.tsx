@@ -11,6 +11,7 @@ import {
   type AgentTasksNotice,
   type AgentTasksSurface,
 } from "../../application/useAgentTasks";
+import { useAgentThreadPins } from "../../application/useAgentThreadPins";
 import { AgentComposer } from "./AgentComposer";
 import { AgentThreadInfoColumn } from "./AgentThreadInfoColumn";
 import { AgentThreadSession } from "./AgentThreadSession";
@@ -47,10 +48,31 @@ export function AgentModeView({
     return () => clearInterval(timer);
   }, [nowTickMs]);
 
+  const pinnableTaskIds = useMemo(
+    () => agents.tasks.map((task) => task.record.owner.taskId),
+    [agents.tasks],
+  );
+  const pins = useAgentThreadPins(workspaceRoot, pinnableTaskIds);
+  const pinnedTaskIds = pins.pinnedTaskIds;
+  const pinnedTaskIdSet = useMemo(() => new Set(pinnedTaskIds), [pinnedTaskIds]);
+  const togglePin = pins.toggle;
+  const onTogglePin = useCallback(
+    (taskId: string) => {
+      togglePin(taskId);
+    },
+    [togglePin],
+  );
+
   const groups = useMemo(
     () =>
-      agentRepositoryGroups(repositories, agents.tasks, agents.orphanedWorktrees, workspaceRoot),
-    [agents.orphanedWorktrees, agents.tasks, repositories, workspaceRoot],
+      agentRepositoryGroups(
+        repositories,
+        agents.tasks,
+        agents.orphanedWorktrees,
+        workspaceRoot,
+        pinnedTaskIds,
+      ),
+    [agents.orphanedWorktrees, agents.tasks, pinnedTaskIds, repositories, workspaceRoot],
   );
 
   const selectedThread =
@@ -149,6 +171,8 @@ export function AgentModeView({
           onRemoveOrphan={(worktreePath) => void agents.removeOrphanedWorktree(worktreePath)}
           onSelectThread={setSelectedTaskId}
           onToggleGroup={toggleGroup}
+          onTogglePin={onTogglePin}
+          pinnedTaskIds={pinnedTaskIdSet}
           selectedTaskId={selectedThread?.record.owner.taskId ?? null}
         />
 
@@ -205,6 +229,10 @@ export function AgentModeView({
           onRemoveWorktree={(taskId) => void agents.removeWorktree(taskId)}
           onShowChanges={(taskId) => void agents.showChanges(taskId)}
           onStop={(taskId) => void agents.stop(taskId)}
+          onTogglePin={onTogglePin}
+          pinned={
+            selectedThread !== null && pinnedTaskIdSet.has(selectedThread.record.owner.taskId)
+          }
           thread={selectedThread}
         />
       </div>
